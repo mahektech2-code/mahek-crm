@@ -3,9 +3,11 @@ import { View } from 'react-native';
 import { router } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { NavigateButton } from '../src/components/ui/navigate';
 import { color as C, radius, weight } from '../src/theme/tokens';
 import { whatIsNearby, type NearbyAnswer } from '../src/data/nearby';
-import { navigateTo } from '../src/lib/messaging';
+/* No `navigateTo` here either — both buttons on this screen are
+   `NavigateButton`, so one failure message cannot drift from the other. */
 import { inrFromPaise } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
@@ -27,24 +29,46 @@ function metresLabel(m: number): string {
   return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km';
 }
 
+/**
+ * How many of them are drawn at once.
+ *
+ * The list was every pinned shop inside the circle that carried a reason, and
+ * at the widest radius on a real book that is hundreds of cards — each with two
+ * buttons and four text nodes — mounted in one pass inside the frame's own
+ * scroll view. Seconds of freeze on open, on the one screen whose whole point
+ * is a quick answer while somebody is standing in a lane. Nobody walks to the
+ * hundredth-nearest shop off this screen; what a cap costs is a row he would
+ * have reached by scrolling, and the sentence underneath says it is there.
+ */
+const NEARBY_PAGE = 30;
+
 export default function Nearby() {
   const back = useCameFrom('customers');
   const set = useStore((s) => s.set);
-  const notify = useStore((s) => s.notify);
 
   const [answer, setAnswer] = React.useState<NearbyAnswer | null>(null);
   /* `within`, not `radius` — the design tokens already export a `radius`
      scale, and shadowing it here made `radius.xl` resolve to a number. */
   const [within, setWithin] = React.useState<number | null>(null);
   const [busy, setBusy] = React.useState(true);
+  /* A read that threw. There was no rejection path at all, so a SQLite or a
+     config failure left `busy` true and the screen reading "Looking…" for
+     ever — which is a broken handset with nothing on it to press. */
+  const [failed, setFailed] = React.useState(false);
 
   const load = React.useCallback((metres?: number) => {
     setBusy(true);
-    void whatIsNearby(metres).then((a) => {
-      setAnswer(a);
-      setWithin(a.radiusMetres);
-      setBusy(false);
-    });
+    setFailed(false);
+    void whatIsNearby(metres)
+      .then((a) => {
+        setAnswer(a);
+        setWithin(a.radiusMetres);
+        setBusy(false);
+      })
+      .catch(() => {
+        setBusy(false);
+        setFailed(true);
+      });
   }, []);
 
   React.useEffect(() => load(), [load]);
@@ -73,6 +97,18 @@ export default function Nearby() {
 
       {busy ? (
         <T s="caption" style={{ marginTop: 16 }}>Looking…</T>
+      ) : failed ? (
+        <Card style={{ marginTop: 16 }}>
+          <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>That did not come back</T>
+          <T s="caption" style={{ marginTop: 4 }}>
+            Nothing is wrong with your book — the list could not be worked out just now.
+          </T>
+          <DashedButton
+            label="Try again"
+            onPress={() => load(within ?? undefined)}
+            style={{ marginTop: 12 }}
+          />
+        </Card>
       ) : !answer?.from ? (
         /* No fix is a recorded fact and the screen says WHICH — refused, off, or
            simply not known yet. "Nothing nearby" would read as a book with no
@@ -105,15 +141,21 @@ export default function Nearby() {
               <T s="caption" style={{ marginTop: 2 }}>
                 {metresLabel(answer.best.metres) + ' · ' + answer.best.reasons.join(' · ')}
               </T>
+              {/* THE ONE Navigate, not a third hand-rolled one. `navigate.tsx`
+                  exists precisely so a second `openMaps` call site cannot let
+                  the failure message on one screen drift from the other's — and
+                  these two were worse than drift: they called `navigateTo`,
+                  which needs a coordinate and falls back to the clipboard,
+                  while every other Navigate in the app searches the shop's name
+                  and town when there is no pin. Half this book has no pin, and
+                  both of these began `if (!coords) return` — a tap that
+                  acknowledged nothing at all. */}
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-                <DashedButton
-                  label="Navigate"
-                  onPress={async () => {
-                    const c = answer.best!.shop.coords;
-                    if (!c) return;
-                    const r = await navigateTo(c, answer.best!.shop.name);
-                    if (r.status === 'copied') notify(r.reason);
-                  }}
+                <NavigateButton
+                  lat={answer.best.shop.coords?.lat}
+                  lng={answer.best.shop.coords?.lng}
+                  name={answer.best.shop.name}
+                  variant="button"
                   style={{ flex: 1 }}
                 />
                 <PrimaryButton
@@ -128,11 +170,17 @@ export default function Nearby() {
           <T s="caption" style={{ marginTop: 16 }}>
             {answer.shops.length
               ? answer.shops.length + ' worth stopping at within ' + metresLabel(answer.radiusMetres)
-              : 'Nothing within ' + metresLabel(answer.radiusMetres) + ' has anything outstanding. Try a wider circle.'}
+              : /* The advice only where there IS a wider circle. On the widest
+                   the sentence named the one action that does not exist, which
+                   is an empty state whose only instruction is a dead end. */
+                'Nothing within ' +
+                metresLabel(answer.radiusMetres) +
+                ' has anything outstanding.' +
+                (answer.radiusMetres < Math.max(...answer.options, 0) ? ' Try a wider circle.' : '')}
           </T>
 
           <View style={{ gap: 12, marginTop: 8 }}>
-            {answer.shops.map((r) => (
+            {answer.shops.slice(0, NEARBY_PAGE).map((r) => (
               <Card key={r.shop.id}>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                   <View style={{ flex: 1, minWidth: 0 }}>
@@ -153,13 +201,11 @@ export default function Nearby() {
                 ) : null}
 
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-                  <DashedButton
-                    label="Navigate"
-                    onPress={async () => {
-                      if (!r.shop.coords) return;
-                      const out = await navigateTo(r.shop.coords, r.shop.name);
-                      if (out.status === 'copied') notify(out.reason);
-                    }}
+                  <NavigateButton
+                    lat={r.shop.coords?.lat}
+                    lng={r.shop.coords?.lng}
+                    name={r.shop.name}
+                    variant="button"
                     style={{ flex: 1 }}
                   />
                   <DashedButton label="Open" onPress={() => open(r.shop.id)} style={{ flex: 1 }} />
@@ -167,6 +213,15 @@ export default function Nearby() {
               </Card>
             ))}
           </View>
+
+          {/* What the list is a slice OF — the same sentence the pick screen
+              prints for the same reason. A capped list that counts itself is
+              how a screen shows thirty of a hundred and says nothing. */}
+          {answer.shops.length > NEARBY_PAGE ? (
+            <T s="caption" style={{ marginTop: 12, textAlign: 'center' }}>
+              {`${NEARBY_PAGE} of ${answer.shops.length}, best first. Narrow the circle for the ones around you.`}
+            </T>
+          ) : null}
         </>
       )}
     </AppFrame>

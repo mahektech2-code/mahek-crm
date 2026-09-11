@@ -1325,6 +1325,20 @@ async function openSamples(userId: string, customerIds: string[], since?: string
            pr.name as "productName",
            s.quantity_cans as "quantityCans",
            s.requested_date::text as "requestedDate",
+           -- THE OFFICE'S OWN WORD FOR WHERE THIS SAMPLE IS.
+           --
+           -- It was not sent, and the handset re-derived it from the
+           -- timestamps instead — which can never produce the approved state,
+           -- because approval has no timestamp behind it. So a sample accounts
+           -- had approved and the godown had put on a lorry still told the
+           -- salesman the office has to approve it before anything goes out
+           -- and there is nothing for him to do; and the It-has-gone-out
+           -- button, which only draws at that state, was reachable for one
+           -- pull and then gone.
+           --
+           -- The handset prefers this and keeps the derivation as a fallback,
+           -- so a build that predates this column carries on working.
+           s.state,
            -- Three assertions by three parties, and never collapsed: we sent
            -- it, the carrier says it arrived, the shop says it has it. Only
            -- the third starts the review clock.

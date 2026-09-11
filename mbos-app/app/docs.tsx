@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { View, Pressable, Linking } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, ListCard, T } from '../src/components/ui/primitives';
@@ -28,6 +28,45 @@ export default function DocsScreen() {
     }, []),
   );
 
+  /**
+   * A TAP HAS TO REACH THE PAPER, or say why it cannot.
+   *
+   * Every row here used to raise one of two toasts and do nothing else —
+   * "already on this phone" or "needs signal to download" — chosen off
+   * `availableOffline`, which is a CLAIM. The file itself is `localUri`, and
+   * nothing in the app has ever read it: no viewer, no `openURL`, and no
+   * download path either. So the first toast asserted a paper was here that he
+   * could not reach, and the second named an action that does not exist. He
+   * taps the price list standing in front of a customer and gets a grey pill.
+   *
+   * The file is now the only thing that decides, at both ends: the row says
+   * what is actually openable and the tap opens it. There is still no way to
+   * FETCH one — the bytes live behind `/api/attachments/[id]`, which takes a
+   * browser session and not this handset's device token — so the other half
+   * says so in words rather than promising a download nothing can start.
+   */
+  const open = React.useCallback(
+    (d: DocumentRow) => {
+      const uri = d.localUri?.trim();
+      if (!uri) {
+        notify(d.title + ' is not on this phone — ask the office to send it to you.');
+        return;
+      }
+      void (async () => {
+        try {
+          if (!(await Linking.canOpenURL(uri))) {
+            notify('Nothing on this phone can open ' + d.title + '.');
+            return;
+          }
+          await Linking.openURL(uri);
+        } catch {
+          notify(d.title + ' could not be opened.');
+        }
+      })();
+    },
+    [notify],
+  );
+
   return (
     <AppFrame title="Documents" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
@@ -54,13 +93,14 @@ export default function DocsScreen() {
       ) : (
         <ListCard style={{ marginTop: 12 }}>
           {docs.map((d, i) => {
-            const offline = d.availableOffline === 1;
+            /* The FILE, not `availableOffline`. The flag is what the row claims
+               and the uri is what can actually be opened, and where those two
+               disagree the flag is the one that reads as a lie. */
+            const onPhone = !!d.localUri?.trim();
             return (
               <Pressable
                 key={d.id}
-                onPress={() =>
-                  notify(offline ? d.title + ' · already on this phone' : d.title + ' · needs signal to download')
-                }
+                onPress={() => open(d)}
                 accessibilityRole="button"
                 style={{
                   flexDirection: 'row',
@@ -82,7 +122,11 @@ export default function DocsScreen() {
                     { fontSize: 13, color: d.expiresOn ? C.warn : C.muted },
                     weight(d.expiresOn ? 500 : 400),
                   ]}>
-                  {d.expiresOn ? 'Expires ' + d.expiresOn : offline ? 'Offline' : 'Online'}
+                  {d.expiresOn
+                    ? 'Expires ' + d.expiresOn
+                    : onPhone
+                      ? 'Offline'
+                      : 'Not downloaded'}
                 </T>
               </Pressable>
             );

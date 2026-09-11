@@ -216,6 +216,36 @@ async function maybeDeleteLocal(row: MediaRow): Promise<void> {
   }
 }
 
+/**
+ * PUT A PHOTOGRAPH THAT GAVE UP BACK IN THE QUEUE.
+ *
+ * `failed` was terminal and nothing in the app could lift it: `runMediaQueue`
+ * selects `state = 'queued'` only, `recoverInterrupted` resets `'syncing'`
+ * only, and the outbox row's own Retry is a `sync_queue` function. So a file
+ * that exhausted its six attempts — a tower that dropped six times in a market
+ * lane, which is an ordinary afternoon — was dead on the handset, and the one
+ * screen built to tell him so described it as still uploading.
+ *
+ * It matters most for the file that IS a record rather than an attachment to
+ * one. An attendance selfie is the only evidence that the person who marked
+ * the day is the person who worked it; a cheque photograph is what accounts
+ * match a receipt against. Neither can be taken again tomorrow.
+ *
+ * Attempts go back to zero deliberately. The backoff schedule is there to stop
+ * a queue hammering a dead connection, and a person pressing Retry is a person
+ * who knows something has changed — he has walked into signal, or onto Wi-Fi.
+ */
+export async function retryFailedMedia(now = Date.now()): Promise<number> {
+  const rows = await all<{ id: string }>("SELECT id FROM media_queue WHERE state = 'failed'");
+  if (!rows.length) return 0;
+  await run(
+    `UPDATE media_queue SET state = 'queued', attempts = 0, nextAttemptAt = ?, failureReason = NULL
+      WHERE state = 'failed'`,
+    [now],
+  );
+  return rows.length;
+}
+
 export async function mediaCounts(): Promise<{ pending: number; failed: number }> {
   const rows = await all<{ state: string; n: number }>('SELECT state, COUNT(*) AS n FROM media_queue GROUP BY state');
   const map = Object.fromEntries(rows.map((r) => [r.state, r.n]));

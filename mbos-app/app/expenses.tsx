@@ -7,7 +7,7 @@ import { Badge, Choice, ListCard, PrimaryButton, SecondaryButton, T } from '../s
 import { VoiceField } from '../src/components/ui/dictate';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
-import { claimExpense, expensesOn, listExpenses, type Expense } from '../src/data/requests';
+import { claimExpense, expenseTotals, expensesOn, listExpenses, type Expense } from '../src/data/requests';
 import { getConfig } from '../src/data/config';
 import { activePolicy, previewClaim, CLAIM_KINDS, type ClaimedLine, type LocalPolicy } from '../src/data/travel';
 import type { ExpenseKind } from '../src/engines/generated/expense-policy';
@@ -28,12 +28,31 @@ import { color as C, radius, weight, tabular, type BadgeTone } from '../src/them
  * nobody finds out.
  */
 
-const EX_RULE =
-  'Every claim needs a photograph of the bill or proof of payment. Claims older than 30 days are not accepted.';
+/* The rule under the Add button, built from the SAME configured number the
+   calendar a few lines below it reads. It was a literal string carrying "30
+   days", so an office that set 15 had two contradictory sentences on one
+   screen — and he plans around the wrong one and the claim is refused. */
+const exRule = (maxAgeDays: number) =>
+  'Every claim needs a photograph of the bill or proof of payment. Claims older than ' +
+  maxAgeDays +
+  ' days are not accepted.';
+
+/** How much of the history this screen mounts. See `listExpenses`. */
+const EX_PAGE = 60;
 
 type Draft = { kind: string; amt: string; note: string; when: string; whenIso: string; billMediaId: string | null; billLabel: string | null };
 
 const EMPTY: Draft = { kind: '', amt: '', note: '', when: '', whenIso: '', billMediaId: null, billLabel: null };
+
+/** The four things a claim has to carry, named the way he would say them. */
+type FieldKey = 'amt' | 'bill' | 'when' | 'note';
+
+const MISSING_WORDS: Record<FieldKey, string> = {
+  amt: 'what you spent',
+  bill: 'the bill',
+  when: 'the day',
+  note: 'what it was for',
+};
 
 export default function ExpensesScreen() {
   const back = useCameFrom('more');
@@ -41,6 +60,12 @@ export default function ExpensesScreen() {
   const boot = useBoot();
 
   const [rows, setRows] = React.useState<Expense[]>([]);
+  /* What the capped list cannot say for itself: how many claims there are in
+     all, and what is genuinely outstanding. Totalling the pending ones off
+     `rows` would drop a claim that has sat with a manager for two months —
+     the one most worth chasing — out of the headline as it aged past the
+     window. */
+  const [totals, setTotals] = React.useState<{ count: number; pendingPaise: number } | null>(null);
   /* What he is allowed comes from the POLICY, not from configuration.
      This screen used to read `mbos.expenses.categoryCapsPaise` and show a
      monthly headroom off it — a different number, from a different source,
@@ -59,13 +84,26 @@ export default function ExpensesScreen() {
      correcting a ₹300 claim must not read as ₹300 already spent. */
   const [fixingId, setFixingId] = React.useState<string | null>(null);
   const [ex, setEx] = React.useState<Draft>(EMPTY);
-  const [err, setErr] = React.useState<'amt' | 'bill' | 'when' | 'note' | null>(null);
+  /* EVERY failing field, not the first one. See `send`. */
+  const [err, setErr] = React.useState<FieldKey[]>([]);
+  /* The day's own refusal, which is NOT a missing field and must not be folded
+     into `err` — "Still needed: the day" with a day plainly on the button is
+     the sort of message that sends somebody to fix what is not broken. */
+  const [whenWhy, setWhenWhy] = React.useState<string | null>(null);
   const [cal, setCal] = React.useState(false);
+  /* One claim per press. `PrimaryButton` carries no busy state of its own and
+     the sheet stays open for the whole await, so a second tap while nothing
+     has visibly happened wrote a second identical claim — on a screen whose
+     entire subject is money, and he is the one who has to explain it. */
+  const [sending, setSending] = React.useState(false);
+
+  const bad = (k: FieldKey) => err.includes(k);
 
   const load = React.useCallback(() => {
     let live = true;
     void Promise.all([
-      listExpenses(),
+      listExpenses(EX_PAGE),
+      expenseTotals(),
       activePolicy(),
       /* The key the SERVER enforces, not a second one spelled differently.
          This screen read `mbos.expenses.maxClaimAgeDays`, which the office has
@@ -75,9 +113,10 @@ export default function ExpensesScreen() {
          60 would have moved the sync and left the date picker greying out the
          same days. One question, one key. */
       getConfig<number>('mbos.expenses.backdatedDaysAllowed', 30),
-    ]).then(([e, p, age]) => {
+    ]).then(([e, t, p, age]) => {
       if (!live) return;
       setRows(e);
+      setTotals(t);
       setPolicy(p);
       setMaxAgeDays(age);
     });
@@ -90,10 +129,13 @@ export default function ExpensesScreen() {
 
   const patch = (p: Partial<Draft>) => {
     setEx((d) => ({ ...d, ...p }));
-    setErr(null);
+    setErr([]);
+    /* Only a change of DAY answers the day's refusal. Clearing it on a
+       keystroke in the note would hide a real one. */
+    if (p.whenIso !== undefined) setWhenWhy(null);
   };
 
-  const pending = rows.filter((r) => r.state === 'Pending').reduce((n, r) => n + r.amountPaise, 0);
+  const pending = totals?.pendingPaise ?? 0;
 
   const kinds = CLAIM_KINDS;
   const kind = ex.kind || kinds[0]!.key;
@@ -127,39 +169,94 @@ export default function ExpensesScreen() {
 
   /* The same engine the office prices the day with, run on the real day. A
      second reading of the rules here is how a salesman is told one figure and
-     paid another. */
-  const preview = previewClaim({
-    policy,
-    kind: kind as ExpenseKind,
-    claimedPaise: exAmtPaise,
-    hasBill: ex.billMediaId != null,
-    day: claimDay,
-    alreadyClaimed,
-  });
+     paid another.
+
+     MEMOISED, because it was called in the component body and so re-ran on
+     every keystroke in the NOTE field as well as the amount box, and while the
+     sheet was shut — and where the chosen kind has no per-day cap its probe
+     loop never converges, so each of those runs priced a stack of synthetic
+     lines. Typing on a mid-range Android stuttered on a form he is filling in
+     with a shop owner waiting. */
+  const preview = React.useMemo(
+    () =>
+      previewClaim({
+        policy,
+        kind: kind as ExpenseKind,
+        claimedPaise: exAmtPaise,
+        hasBill: ex.billMediaId != null,
+        day: claimDay,
+        alreadyClaimed,
+      }),
+    [policy, kind, exAmtPaise, ex.billMediaId, claimDay, alreadyClaimed],
+  );
   const exOver = preview.excessPaise > 0;
   const capLine = preview.line;
+
+  /* The two refusals the design writes out, so a greyed day always says why.
+     Declared ABOVE `fix` and `send` because both ask it: a rejected claim is
+     routinely reopened weeks after it was spent, and the original day may no
+     longer be one the office will take. */
+  const oldestIso = React.useMemo(() => {
+    const o = new Date();
+    o.setDate(o.getDate() - maxAgeDays);
+    return isoDate(o);
+  }, [maxAgeDays]);
+  const refuse = (iso: string) =>
+    iso < oldestIso
+      ? 'Older than ' + maxAgeDays + ' days — this cannot be claimed'
+      : iso > todayIso
+        ? 'That day has not happened yet'
+        : null;
 
   const add = () => {
     setFixing(false);
     setFixingId(null);
-    setErr(null);
+    setErr([]);
+    setWhenWhy(null);
     const today = new Date();
     setEx({ ...EMPTY, kind: kinds[0]!.key, when: dmy(isoDate(today)), whenIso: isoDate(today) });
     setOpen(true);
   };
 
+  /**
+   * Reopen a rejected claim.
+   *
+   * **THE BILL COMES WITH IT.** This set `billMediaId: null` while `send`
+   * refuses a claim without one, so a claim turned down for a wrong amount, a
+   * wrong note or a wrong day could only be resent by photographing a paper
+   * bill he may have handed over or lost — the one path that exists for
+   * putting a rejected claim right was the one most likely to fail, and it
+   * failed after he had retyped everything. The photograph is already on this
+   * handset and already belongs to him; it is offered back with the Change
+   * button beside it, exactly as a fresh claim's is.
+   *
+   * **AND THE DAY IS CHECKED AS IT OPENS.** A claim rejected forty days after
+   * it was spent carries a date the calendar itself now refuses, so it was
+   * re-sent on a day the office would decline for age with nothing on the
+   * screen saying so. Said here, before he types, rather than on the press.
+   *
+   * **AND IT REOPENS AS THE SAME KIND.** This seeded the draft from
+   * `category`, which is the legacy four-value column — `local_transport` is
+   * stored under the category `travel`, so a rejected auto fare came back with
+   * no chip selected, priced against a rule it was never claimed under, and
+   * was resent as `other`. The stored kind is what it was claimed as; the
+   * category is the fallback for rows written before that column existed.
+   */
   const fix = (x: Expense) => {
+    const was =
+      kinds.find((k) => k.key === x.kind) ?? kinds.find((k) => k.category === x.category) ?? kinds[0]!;
     setFixing(true);
     setFixingId(x.id);
-    setErr(null);
+    setErr([]);
+    setWhenWhy(refuse(x.spentOn));
     setEx({
-      kind: x.category,
+      kind: was.key,
       amt: String(Math.round(x.amountPaise / 100)),
       note: x.remarks ?? '',
       when: dmy(x.spentOn),
       whenIso: x.spentOn,
-      billMediaId: null,
-      billLabel: null,
+      billMediaId: x.billPhotoId,
+      billLabel: x.billPhotoId ? 'Bill attached' : null,
     });
     setOpen(true);
   };
@@ -167,7 +264,8 @@ export default function ExpensesScreen() {
   const close = () => {
     setOpen(false);
     setEx(EMPTY);
-    setErr(null);
+    setErr([]);
+    setWhenWhy(null);
     setFixing(false);
     setFixingId(null);
     setCal(false);
@@ -185,49 +283,66 @@ export default function ExpensesScreen() {
   };
 
   const send = async () => {
-    if (!exAmtPaise) return setErr('amt');
-    if (!ex.billMediaId) return setErr('bill');
-    if (!ex.whenIso.trim()) return setErr('when');
-    if (!ex.note.trim()) return setErr('note');
+    /* One claim per press, and the second press ANSWERS rather than doing
+       nothing — `whyDisabled` keeps the button pressable for exactly this. */
+    if (sending) return notify('This claim is on its way — give it a moment.');
 
-    await claimExpense({
-      userId: boot.session?.user.id ?? '',
-      spentOn: ex.whenIso,
-      category: kinds.find((k) => k.key === kind)?.category ?? 'other',
-      kind,
-      amountPaise: exAmtPaise,
-      billPhotoId: ex.billMediaId,
-      remarks: ex.note.trim(),
-      /* Requirement 43 — asking for something outside policy takes a reason,
-         and it is the note he has already written rather than a second box. */
-      exceptionReason: exOver ? ex.note.trim() : null,
-    });
+    /* EVERY failing field at once, and a summary above the button.
+       Returning on the first one meant a claim missing both a bill and a note
+       took press → fix → press → fix → press — and with the keyboard up the
+       sheet's scroll area is barely half the screen, so the amount error at
+       the top of it is off-screen from the button at the bottom and the press
+       appeared to do nothing at all. `BottomSheet` owns its own ScrollView and
+       hands out no ref, so the list of what is still missing goes where his
+       thumb already is rather than the sheet scrolling to the first mark. */
+    const missing: FieldKey[] = [];
+    if (!exAmtPaise) missing.push('amt');
+    if (!ex.billMediaId) missing.push('bill');
+    if (!ex.whenIso.trim()) missing.push('when');
+    if (!ex.note.trim()) missing.push('note');
+    if (missing.length) return setErr(missing);
 
-    close();
-    load();
-    /* The SAME verdict the box under the amount has been showing him, from the
-       same policy the office will pay on. `claimExpense` used to answer this
-       itself, off a monthly sum of the retired category caps — a second number
-       from a second source, and the one he read at the end was the wrong one. */
-    notify(
-      exOver
-        ? 'Claimed ' + inrFromPaise(exAmtPaise) + ' · over the cap, your manager has to allow it'
-        : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · with your manager',
-    );
+    /* The day the claim is FOR, checked here as well as in the calendar. The
+       calendar greys a refused day, but a corrected claim arrives carrying the
+       day the original was spent on and never passes through it. */
+    const dayRefusal = refuse(ex.whenIso);
+    if (dayRefusal) return setWhenWhy(dayRefusal);
+
+    setSending(true);
+    try {
+      await claimExpense({
+        userId: boot.session?.user.id ?? '',
+        spentOn: ex.whenIso,
+        category: kinds.find((k) => k.key === kind)?.category ?? 'other',
+        kind,
+        amountPaise: exAmtPaise,
+        billPhotoId: ex.billMediaId,
+        remarks: ex.note.trim(),
+        /* Requirement 43 — asking for something outside policy takes a reason,
+           and it is the note he has already written rather than a second box. */
+        exceptionReason: exOver ? ex.note.trim() : null,
+      });
+
+      close();
+      load();
+      /* ONE source for what he is told, before and after.
+         The toast used to read `overCap` off `claimExpense`, which prices
+         against `mbos.expenses.categoryCapsPaise` — the monthly per-category
+         configuration this screen deliberately stopped reading because the
+         office does not pay on it. So the box under the amount could say "the
+         other ₹200 needs your manager to agree it" and the toast two seconds
+         later said "with your manager" with no mention of it, and the config
+         cap could fire on a claim the policy called within limits. Same
+         engine, same day, same sentence. */
+      notify(
+        exOver
+          ? 'Claimed ' + inrFromPaise(exAmtPaise) + ' · over the cap, your manager has to allow it'
+          : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · with your manager',
+      );
+    } finally {
+      setSending(false);
+    }
   };
-
-  /* The two refusals the design writes out, so a greyed day always says why. */
-  const oldestIso = React.useMemo(() => {
-    const o = new Date();
-    o.setDate(o.getDate() - maxAgeDays);
-    return isoDate(o);
-  }, [maxAgeDays]);
-  const refuse = (iso: string) =>
-    iso < oldestIso
-      ? 'Older than ' + maxAgeDays + ' days — this cannot be claimed'
-      : iso > todayIso
-        ? 'That day has not happened yet'
-        : null;
 
   return (
     <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
@@ -239,7 +354,7 @@ export default function ExpensesScreen() {
 
       <PrimaryButton label="Add an expense" style={{ marginTop: 12, borderRadius: radius.xl }} onPress={add} />
       <T s="caption" style={{ marginTop: 10 }}>
-        {EX_RULE}
+        {exRule(maxAgeDays)}
       </T>
 
       <ListCard style={{ marginTop: 16 }}>
@@ -263,8 +378,12 @@ export default function ExpensesScreen() {
               </T>
               {e.state === 'Rejected' ? (
                 <>
+                  {/* A rejection with no reason is NOT a missing bill. That
+                      guess was printed in danger red, sometimes directly under
+                      a row reading "Bill attached", and it sent him to
+                      photograph a bill that was never the problem. */}
                   <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
-                    {e.rejectionReason ?? 'Sent back — no bill attached'}
+                    {e.rejectionReason ?? 'Sent back — your manager has not said why'}
                   </T>
                   <Pressable
                     accessibilityRole="button"
@@ -279,20 +398,33 @@ export default function ExpensesScreen() {
         })}
       </ListCard>
 
+      {/* A capped list says what it is a slice of — a screen showing sixty of
+          seven hundred claims with nothing saying so is a screen that has lost
+          the one he is looking for. */}
+      {totals && totals.count > rows.length ? (
+        <T s="caption" style={{ marginTop: 10 }}>
+          {'The ' + rows.length + ' most recent of ' + totals.count + ' claims. The office holds them all.'}
+        </T>
+      ) : null}
+
       {/* ------------------------------------------------------ claim sheet */}
       <BottomSheet open={open} onClose={close} scroll>
         <T s="h2">{fixing ? 'Correct this claim' : 'Claim an expense'}</T>
 
         <View style={{ marginTop: 14 }}>
           <T s="label">What for</T>
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+          {/* WRAPPED, not four equal columns. At `flex: 1` inside a sheet
+              padded 20 either side, each chip is about 74dp less 24dp of its
+              own padding — some 50dp of text at 14px — and "Local transport"
+              broke mid-word inside a 48dp chip. The travel screen has always
+              done it this way. */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
             {kinds.map((k) => (
               <Choice
                 key={k.key}
                 label={k.label}
                 selected={kind === k.key}
                 onPress={() => patch({ kind: k.key })}
-                style={{ flex: 1 }}
               />
             ))}
           </View>
@@ -311,7 +443,7 @@ export default function ExpensesScreen() {
               height: 52,
               paddingHorizontal: 12,
               borderWidth: 1,
-              borderColor: err === 'amt' ? C.danger : C.border,
+              borderColor: bad('amt') ? C.danger : C.border,
               borderRadius: radius.lg,
               backgroundColor: C.surface,
             }}>
@@ -325,7 +457,7 @@ export default function ExpensesScreen() {
               style={[{ flex: 1, minWidth: 0, alignSelf: 'stretch', fontSize: 18, color: C.ink, padding: 0 }, weight(600), tabular]}
             />
           </View>
-          {err === 'amt' ? <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Enter what you spent.</T> : null}
+          {bad('amt') ? <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Enter what you spent.</T> : null}
           <T style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: exOver ? C.warnInk : C.muted }}>{capLine}</T>
         </View>
 
@@ -376,7 +508,7 @@ export default function ExpensesScreen() {
                     minHeight: 52,
                     borderWidth: 1,
                     borderStyle: 'dashed',
-                    borderColor: err === 'bill' ? C.danger : C.faint,
+                    borderColor: bad('bill') ? C.danger : C.faint,
                     borderRadius: radius.lg,
                     backgroundColor: C.surface,
                   }}>
@@ -386,10 +518,10 @@ export default function ExpensesScreen() {
               ))}
             </View>
           )}
-          <T style={{ fontSize: 13, lineHeight: 19, marginTop: 6, color: err === 'bill' ? C.danger : C.muted }}>
+          <T style={{ fontSize: 13, lineHeight: 19, marginTop: 6, color: bad('bill') ? C.danger : C.muted }}>
             Required on every claim — photo, PDF or a payment screenshot.
           </T>
-          {err === 'bill' ? (
+          {bad('bill') ? (
             <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Attach the bill or proof of payment.</T>
           ) : null}
         </View>
@@ -401,7 +533,7 @@ export default function ExpensesScreen() {
           <Pressable
             accessibilityRole="button"
             onPress={() => {
-              setErr(null);
+              setErr([]);
               setCal(true);
             }}
             style={{
@@ -412,15 +544,22 @@ export default function ExpensesScreen() {
               minHeight: 52,
               paddingHorizontal: 14,
               borderWidth: 1,
-              borderColor: err === 'when' ? C.danger : cal ? C.primary : C.border,
+              borderColor: bad('when') || whenWhy ? C.danger : cal ? C.primary : C.border,
               borderRadius: radius.lg,
               backgroundColor: C.surface,
             }}>
             <T style={{ fontSize: 16, color: ex.when ? C.ink : C.muted }}>{ex.when || 'Pick the day'}</T>
             <T style={{ fontSize: 18, color: C.muted }}>▾</T>
           </Pressable>
-          {err === 'when' ? (
+          {bad('when') ? (
             <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Pick the day you spent it.</T>
+          ) : whenWhy ? (
+            /* The day is filled in and still will not do — a rejected claim
+               reopened weeks later carries the day it was spent on. Say which
+               rule refuses it, and that it has to be re-picked. */
+            <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 6 }}>
+              {whenWhy + '. Pick a day the office will still take, or ask your manager.'}
+            </T>
           ) : null}
         </View>
 
@@ -431,20 +570,36 @@ export default function ExpensesScreen() {
           <VoiceField
             value={ex.note}
             onChangeText={(v) => patch({ note: v })}
-            invalid={err === 'note'}
+            invalid={bad('note')}
             placeholder="Nagpur – Kamptee – Nagpur, 84 km"
             style={{ minHeight: 72 }}
           />
-          {err === 'note' ? (
+          {bad('note') ? (
             <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
               Say what it was for — your manager approves on this.
             </T>
           ) : null}
         </View>
 
+        {/* Everything still missing, beside the button that refused. The marks
+            above are on the fields and the fields are off-screen behind the
+            keyboard; this is the half he can actually read at the moment he
+            presses. */}
+        {err.length ? (
+          <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 16 }}>
+            {'Still needed: ' + err.map((k) => MISSING_WORDS[k]).join(', ') + '.'}
+          </T>
+        ) : null}
+
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <SecondaryButton label="Cancel" onPress={close} style={{ flex: 1 }} />
-          <PrimaryButton label={fixing ? 'Send it again' : 'Send the claim'} onPress={send} style={{ flex: 1 }} />
+          <PrimaryButton
+            label={sending ? 'Sending…' : fixing ? 'Send it again' : 'Send the claim'}
+            onPress={send}
+            disabled={sending}
+            whyDisabled="This claim is on its way — give it a moment."
+            style={{ flex: 1 }}
+          />
         </View>
       </BottomSheet>
 
@@ -459,8 +614,13 @@ export default function ExpensesScreen() {
             setCal(false);
           }}
         />
+        {/* BOTH refusals, because `Calendar` computes the sentence for a greyed
+            day and never renders it — so the only place either rule can be read
+            is here, and this line covered one of the two. */}
         <T s="caption" style={{ marginTop: 10 }}>
-          {'Anything older than ' + maxAgeDays + ' days cannot be claimed.'}
+          {'Anything older than ' +
+            maxAgeDays +
+            ' days cannot be claimed, and neither can a day that has not happened yet.'}
         </T>
         <SecondaryButton label="Close" onPress={() => setCal(false)} style={{ minHeight: 48, height: 48, marginTop: 10 }} />
       </BottomSheet>

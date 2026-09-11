@@ -1,4 +1,4 @@
-import { all, newId, run } from '../db';
+import { all, newId, one, run } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
 import { leaveDays, overlaps, balanceAfter } from '../engines/leave';
 import { isoDate } from '../lib/format';
@@ -63,12 +63,60 @@ export async function raiseApproval(args: {
 
 export type Expense = {
   id: string; spentOn: string; category: string; amountPaise: number;
+  /**
+   * The PRECISE kind the policy prices on, as opposed to the legacy four-value
+   * `category` beside it. The column has been written by `claimExpense` since
+   * the policy module landed and this type never named it, so the one screen
+   * that reopens a claim had to fall back to the category — and `travel` is
+   * the category `local_transport` is stored under, so correcting a rejected
+   * auto fare silently resent it as something else. Null on rows written
+   * before the column existed.
+   */
+  kind: string | null;
   billPhotoId: string | null; remarks: string | null; state: string;
   approvedAmountPaise: number | null; rejectionReason: string | null; syncState: string;
 };
 
-export async function listExpenses(): Promise<Expense[]> {
-  return all<Expense>('SELECT * FROM expenses ORDER BY spentOn DESC');
+/**
+ * What this handset holds, newest first.
+ *
+ * **CAPPED WHERE A SCREEN ASKS FOR A CAP, and the screen says what it is a
+ * slice of.** Every claim ever made was selected and mounted at once inside the
+ * Expenses screen's single ScrollView — at two claims a day that is some seven
+ * hundred rows of five `Text` nodes each after a year, with no paging and no
+ * filter, and the claim somebody is looking for is the newest one anyway.
+ *
+ * The limit is OPTIONAL rather than a default, because `more.tsx` counts the
+ * pending claims off the whole list for a badge and a cap there would quietly
+ * undercount it. A capped caller reads its totals from `expenseTotals` instead,
+ * which is SQL over every row — a figure derived from a slice is a figure that
+ * silently shrinks as the slice ages out.
+ *
+ * `clientCreatedAt` is the tiebreaker: `spentOn` is a DATE, so a day with three
+ * claims on it has three rows the planner may order however it likes, and two
+ * of them can swap places between one read and the next.
+ */
+export async function listExpenses(limit?: number): Promise<Expense[]> {
+  return limit == null
+    ? all<Expense>('SELECT * FROM expenses ORDER BY spentOn DESC, clientCreatedAt DESC')
+    : all<Expense>('SELECT * FROM expenses ORDER BY spentOn DESC, clientCreatedAt DESC LIMIT ?', [limit]);
+}
+
+/**
+ * The two figures a capped list cannot answer for itself.
+ *
+ * "₹4,200 waiting on your manager" is a statement about the whole book, and
+ * reading it off the rows the screen happens to be holding would drop a claim
+ * that has been pending for two months — the one most worth chasing — out of
+ * the total the moment it fell past the window.
+ */
+export async function expenseTotals(): Promise<{ count: number; pendingPaise: number }> {
+  const row = await one<{ n: number; pending: number }>(
+    `SELECT count(*) AS n,
+            COALESCE(SUM(CASE WHEN state = 'Pending' THEN amountPaise ELSE 0 END), 0) AS pending
+       FROM expenses`,
+  );
+  return { count: row?.n ?? 0, pendingPaise: row?.pending ?? 0 };
 }
 
 /**

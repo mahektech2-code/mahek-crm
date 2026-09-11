@@ -59,6 +59,21 @@ export default function ProspectForm() {
   const back = useCameFrom('lead');
   const notify = useStore((s) => s.notify);
 
+  /*
+   * THE CHEVRON CARRIES THE LEAD'S ID, and it did not.
+   *
+   * This screen is only ever opened as `/lead-prospect?id=X&from=lead`, and
+   * `useCameFrom` builds its destination from the word alone — `/lead`, with no
+   * id. `/lead` then reads an empty id, loads nothing, and draws "This lead is
+   * not on this phone": the first control on the screen said the shop he is
+   * standing in front of had vanished. One function for the header chevron and
+   * the inline link, so the label and where it lands cannot drift apart.
+   */
+  const goBack = () => {
+    if (back.from === 'lead' && id) return router.replace(`/lead?id=${id}&from=leads`);
+    back.go();
+  };
+
   const [view, setView] = React.useState<LeadFunnelView | null>(null);
   const [me, setMe] = React.useState<{ id: string; name: string } | null>(null);
   const [ready, setReady] = React.useState(false);
@@ -91,11 +106,19 @@ export default function ProspectForm() {
          resetting state in an effect on a prop change for the same reason. */
       if (!ready) {
         setCustomerType(v.lead.customerType ?? '');
-        setLitres(v.lead.monthlyLitres != null ? String(v.lead.monthlyLitres) : '');
+        /* TWO COLUMNS, ONE FACT — the capture form writes what he was told in
+           the shop into `monthlyVolumeLitres`/`competitorName` and the office
+           writes the same two into `monthlyLitres`/`competitor`. Reading only
+           the second pair opened this form with both boxes empty ten minutes
+           after he had answered them, and the outstanding list below then
+           printed both as still to answer. `leadGateInput` coalesces the same
+           way, so the boxes and the gate agree. */
+        const litresHere = v.lead.monthlyLitres ?? v.lead.monthlyVolumeLitres;
+        setLitres(litresHere != null ? String(litresHere) : '');
         setPotential(
           v.lead.estimatedPotentialPaise != null ? String(Math.round(v.lead.estimatedPotentialPaise / 100)) : '',
         );
-        setCompetitor(v.lead.competitor ?? '');
+        setCompetitor(v.lead.competitor ?? v.lead.competitorName ?? '');
         setProduct(
           v.lead.requiredProductId
             ? { id: v.lead.requiredProductId, name: v.lead.requiredProductName ?? 'Chosen product' }
@@ -132,8 +155,8 @@ export default function ProspectForm() {
 
   if (!view) {
     return (
-      <AppFrame title="Prospect details" activeTab={null} onBack={back.go} contentStyle={{ padding: 16 }}>
-        <BackLink label={back.label} onPress={back.go} />
+      <AppFrame title="Prospect details" activeTab={null} onBack={goBack} contentStyle={{ padding: 16 }}>
+        <BackLink label={back.label} onPress={goBack} />
         <Card style={{ paddingVertical: 32 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
             This lead is not on this phone
@@ -189,9 +212,9 @@ export default function ProspectForm() {
     <AppFrame
       title="Prospect details"
       activeTab={null}
-      onBack={back.go}
+      onBack={goBack}
       contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
+      <BackLink label={back.label} onPress={goBack} />
 
       <Card>
         <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink }, weight(600)]}>

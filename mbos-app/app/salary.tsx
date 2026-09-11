@@ -54,7 +54,27 @@ export default function SalaryScreen() {
         Read from the office. Raise anything that looks wrong directly with them.
       </T>
 
-      {!months ? null : !hasFigures ? (
+      {/* THREE ANSWERS, NOT TWO. The read being in flight, the table being
+          empty and the account being unmatched used to share one card — the
+          most accusing of the three — so a phone that simply had not pulled
+          since HR published told him to ring the office about an account fault
+          that did not exist, on the screen where a wrong statement is least
+          forgivable. And before the read landed there was nothing on screen at
+          all. */}
+      {!months ? (
+        <Card style={{ paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
+          <T s="small" style={{ color: C.muted, textAlign: 'center' }}>Reading…</T>
+        </Card>
+      ) : months.length === 0 ? (
+        <Card style={{ paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
+            No payslip has reached this phone yet
+          </T>
+          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
+            It arrives on the next sync once the office has published the month.
+          </T>
+        </Card>
+      ) : !hasFigures ? (
         <Card style={{ paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
             Not matched to an employee record yet

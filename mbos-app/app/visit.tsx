@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, Pressable, TextInput } from 'react-native';
-import { router } from 'expo-router';
+import { router, useNavigation } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Card, Choice, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
@@ -20,7 +20,7 @@ import {
 } from '../src/data/travel';
 import { arrivalPrompt, checkFare, legLine, navigationLine, travellingFor } from '../src/lib/travel-leg';
 import { suspectFor, visitCapThresholds } from '../src/data/leads';
-import { visitCapState, type VisitCapThresholds } from '../src/engines/leads';
+import { visitCapLabel, visitCapState, type VisitCapThresholds } from '../src/engines/leads';
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { isoDate, pretty } from '../src/lib/format';
@@ -109,6 +109,32 @@ export default function Visit() {
   const [draft, setDraft] = React.useState<Record<string, string>>({});
   const [formErr, setFormErr] = React.useState<string | null>(null);
   const [calOpen, setCalOpen] = React.useState<'next' | 'trial' | null>(null);
+  /*
+   * ONE COMPLAINT PER PRESS, and one sample.
+   *
+   * Both sheets wrote on a bare async handler with nothing disabled while it
+   * ran, and `logComplaint` mints a fresh id on every call — so a second tap
+   * on a slow write produced two complaints, of which `setLinked` kept only
+   * the second. The first reached the desk team attached to no visit at all.
+   *
+   * The ref is what actually guards, because it is set synchronously: a
+   * `useState` flag is read from the closure of the render that drew the
+   * button, which is exactly the render where it was still false. The state
+   * beside it is only what the label and the disabled look are drawn from.
+   *
+   * One pair for both sheets: `form` holds one or the other, never both.
+   */
+  const formBusy = React.useRef(false);
+  const [formSaving, setFormSaving] = React.useState(false);
+  /*
+   * A week out, worked out ONCE when the screen opens.
+   *
+   * `defaultTrial()` was called from the render path — a clock read during
+   * render, which this app forbids and the compiler lint watches for — and it
+   * was called again from the save, so a screen open across midnight could
+   * offer one date and store another.
+   */
+  const [trialDefault] = React.useState(defaultTrial);
 
   /* Everything captured here that is not yet a visit: the fix, the recording,
      the records punched from inside it. `saveVisit` binds the lot in one
@@ -154,9 +180,36 @@ export default function Visit() {
      it without an answer, which is a different thing and the thing §B wants. */
   const capState =
     suspect && capCfg ? visitCapState(suspect.stage, suspect.visits, capCfg) : 'ok';
+  /*
+   * "Visit 3 / 3" — the visit being MADE, not the ones already made.
+   *
+   * `suspect.visits` is the count the office holds and `visitCapState` adds
+   * this one before it compares, so on the third visit to a Suspect the card
+   * demanded the decision under a heading reading "Visit 2 / 3" — a counter
+   * saying he still had one in hand. The number and the demand contradicted
+   * each other on one card, which reads as a bug and gets the answer picked at
+   * random to get past it. Asked of the engine rather than retyped here, so
+   * the wording and the rule cannot drift apart.
+   */
+  const capLabel =
+    suspect && capCfg ? visitCapLabel(suspect.stage, suspect.visits + 1, capCfg) : null;
   const [linked, setLinked] = React.useState<{ complaintId?: string; sampleId?: string }>({});
   const [products, setProducts] = React.useState<Product[]>([]);
   const [stopId, setStopId] = React.useState<string | null>(null);
+  /*
+   * ONE VISIT PER PRESS.
+   *
+   * Four call sites reach `saveAndGo` — the save bar, the unverified path, the
+   * ticket sheet's Skip and its scrim, and `claimTicket`'s own `finally` — and
+   * the guard was a `useState` flag, which is read from the closure of the
+   * render that drew the control. While the ticket was being attached, a tap on
+   * Skip saved the visit and the `finally` then saved it AGAIN from an older
+   * closure where `saving` was still false: two rows, two queue items, two
+   * timeline events, and the office seeing one shop visited twice in a minute.
+   * The ref is set synchronously, so whichever call arrives first shuts the
+   * others out; the state beside it is only what the screen is drawn from.
+   */
+  const savingRef = React.useRef(false);
   const [saving, setSaving] = React.useState(false);
   const [lastTime, setLastTime] = React.useState<PreviousNote | null>(null);
 
@@ -179,6 +232,48 @@ export default function Visit() {
     return () => clearInterval(t);
   }, []);
 
+  /**
+   * LEAVING A VISIT IN PROGRESS IS ASKED ABOUT, because there is no way back
+   * into one.
+   *
+   * The screen draws the full tab bar and a back chevron, and a tab tap is a
+   * `replace` — so one mis-tap while standing in the shop took the note, both
+   * photographs, the outcome and the dwell clock with it. Nothing anywhere
+   * warned, and every route back in goes through `beginVisit`, which blanks all
+   * of that and opens a SECOND journey with a second odometer photograph. The
+   * journey screen's "Continue" only shows while the leg is still open, so once
+   * he has arrived there is no path back at all.
+   *
+   * It hangs off the navigator's own `beforeRemove` rather than off the back
+   * button, because the back button is the one departure that already looks
+   * deliberate — the tab bar is the one that does not, and it is the same event.
+   * `leavingRef` is what lets the departures this screen itself makes through:
+   * the action is re-dispatched unchanged, and it carries the set of routes it
+   * has already asked, so it cannot come back round a second time.
+   *
+   * Only once he has ARRIVED. On the way there the clock has not started and
+   * nothing has been typed, and the trip is called off with its own button.
+   */
+  const navigation = useNavigation();
+  const leavingRef = React.useRef(false);
+  React.useEffect(() => {
+    if (visitStart == null) return;
+    return navigation.addListener('beforeRemove', (e) => {
+      if (leavingRef.current) return;
+      e.preventDefault();
+      askConfirm({
+        title: 'Leave this visit?',
+        body:
+          'Your note, your photographs and the time since you arrived are all lost — none of it has been saved yet, and starting the visit again means a fresh journey and another meter reading.',
+        confirmLabel: 'Leave and lose it',
+        run: () => {
+          leavingRef.current = true;
+          navigation.dispatch(e.data.action);
+        },
+      });
+    });
+  }, [navigation, visitStart, askConfirm]);
+
   /* ---- the journey that got him here ----
      Read from SQLite, not the store: the app is routinely killed on the road
      and a leg held in memory would be gone by the time he walked in. `null`
@@ -197,6 +292,20 @@ export default function Visit() {
    */
   const [refused, setRefused] = React.useState<CheckInVerdict | null>(null);
   /*
+   * The distance he was refused at, kept past the refusal for the pin question
+   * that follows an override.
+   *
+   * That sheet reads `verdictGeo`, which is computed from a SECOND, fresh
+   * reading taken when he says he is at the shop — and that one can come back
+   * with nothing, leaving the sheet asking him to move a pin "about ? m",
+   * which is the one number that makes the question answerable. This reading
+   * was measured, seconds earlier, from the same spot.
+   *
+   * Display only. It is deliberately NOT fed into `metresFromShop`, which has
+   * to describe the fix actually stored on the row.
+   */
+  const [refusedMetres, setRefusedMetres] = React.useState<number | null>(null);
+  /*
    * What he said to get past it, and what he was asked next.
    *
    * `overrideReason` rides all the way to the save — it is what makes the
@@ -214,6 +323,7 @@ export default function Visit() {
   const [fare, setFare] = React.useState('');
   const [ticketRef, setTicketRef] = React.useState('');
   const [fareErr, setFareErr] = React.useState<string | null>(null);
+  const ticketBusyRef = React.useRef(false);
   const [ticketBusy, setTicketBusy] = React.useState(false);
   /* Carried across the ticket question so an unverified save that detours
      through it still saves as unverified. Losing it here would silently
@@ -237,14 +347,21 @@ export default function Visit() {
   const loadLeg = React.useCallback(() => {
     let live = true;
     if (!custId || !userId) return;
-    void Promise.all([openLegOf(userId), arrivedLegFor(userId, custId), travelModes()]).then(
-      ([running, arrived, rows]) => {
+    void Promise.all([openLegOf(userId), arrivedLegFor(userId, custId), travelModes()])
+      .then(([running, arrived, rows]) => {
         if (!live) return;
         setModes(rows);
         setLeg(running && running.customerId === custId ? running : arrived);
         setLegLoaded(true);
-      },
-    );
+      })
+      .catch(() => {
+        /* A read that FAILED is not a journey still loading, and the screen
+           below holds everything until this flag is set. `leg` is left exactly
+           as it stands — null on the first pass, which is the "no leg behind
+           this visit" case the note above describes, so the form opens as it
+           always did rather than the screen reading "Reading…" for ever. */
+        if (live) setLegLoaded(true);
+      });
     return () => {
       live = false;
     };
@@ -428,6 +545,10 @@ export default function Visit() {
            photographed — so pressing the button again from the right place
            costs him nothing and leaves nothing behind. */
         setRefused(gate);
+        /* Kept for the pin question that an override leads to — see
+           `refusedMetres`. `too_far` is the only refusal there is, and it
+           always carries the distance. */
+        if (gate.metresAway != null) setRefusedMetres(Math.round(gate.metresAway));
         return;
       }
       setRefused(null);
@@ -547,6 +668,70 @@ export default function Visit() {
     set({ shots: { ...shots, [which]: shot.mediaId } });
   };
 
+  /* ---- the two records punched from inside the visit ----
+   *
+   * Named rather than written inline on the button, because both need the
+   * in-flight lock above and a failure has to be SAID: a bottom sheet is a
+   * Modal and the app's toast lives underneath it, so a `notify` raised while
+   * the sheet is open is a sentence nobody sees. The message goes in the
+   * sheet, beside the button that was pressed.
+   */
+  const submitComplaint = async () => {
+    if (formBusy.current) return;
+    if (!draft.cat) return setFormErr('cat');
+    if (!(draft.what ?? '').trim()) return setFormErr('what');
+    if (!c) return;
+    formBusy.current = true;
+    setFormSaving(true);
+    try {
+      const id = await logComplaint({
+        customerId: c.id,
+        category: draft.cat,
+        description: draft.what.trim(),
+      });
+      setLinked((l) => ({ ...l, complaintId: id }));
+      markVisitDone('complaint', draft.cat + ' · with the desk team');
+      setForm(null);
+      setDraft({});
+      notify('Complaint logged · the desk team sees it today');
+    } catch {
+      setFormErr('save');
+    } finally {
+      formBusy.current = false;
+      setFormSaving(false);
+    }
+  };
+
+  const submitSample = async () => {
+    if (formBusy.current) return;
+    if (!draft.sku) return setFormErr('sku');
+    if (!(draft.why ?? '').trim()) return setFormErr('why');
+    if (!c) return;
+    formBusy.current = true;
+    setFormSaving(true);
+    const trial = draft.trial ?? trialDefault;
+    try {
+      const id = await requestSample({
+        customerId: c.id,
+        productId: draft.sku,
+        productName: draft.skuName ?? '',
+        cans: 1,
+        reason: draft.why.trim(),
+        followUpDate: trial,
+      });
+      setLinked((l) => ({ ...l, sampleId: id }));
+      markVisitDone('sample', (draft.skuName ?? '') + ' · sent for approval');
+      setForm(null);
+      notify('Sample requested · follow-up set for ' + pretty(trial));
+      setDraft({});
+    } catch {
+      setFormErr('save');
+    } finally {
+      formBusy.current = false;
+      setFormSaving(false);
+    }
+  };
+
   const dwellSeconds = visitStart ? Math.max(0, Math.floor((now - visitStart) / 1000)) : 0;
   const gpsLocked = gps === 'locked';
 
@@ -570,9 +755,40 @@ export default function Visit() {
     outcome,
     followOnCaptured: !!(outcome && visitDone[outcome]),
   });
-  const verdict = visitVerdict(checks);
+  const verdict = visitVerdict(checks, { checkInOverridden: !!overrideReason });
   const followOn = outcome ? FOLLOW_ON[outcome] : undefined;
   const doneLine = outcome ? visitDone[outcome] : undefined;
+
+  /**
+   * §B's one refusal, asked BEFORE anything else happens rather than after.
+   *
+   * It is the only thing that stops a save on this screen, and it stops it to
+   * ask rather than to refuse — but the asking was invisible: `saveAndGo` set
+   * an error that renders inside the Suspect card, six hundred points above the
+   * button he had just pressed, with no toast and no change to the button. He
+   * pressed Save, nothing appeared to happen, and the ordinary conclusion is
+   * that the handset is broken. Worse down the ticket path, where the fare was
+   * attached and toasted "Ticket added" while the visit silently did not save.
+   *
+   * So it is a function both entry points ask, the sentence goes to the bottom
+   * of the screen as well as into the card, and the ticket sheet never opens on
+   * a save that cannot go through.
+   */
+  function missingDecision(): string | null {
+    if (capState === 'decide' && !decision) {
+      return 'Say which way this one goes before you close the visit.';
+    }
+    if (decision === 'still_suspect' && !decisionWhy.trim()) {
+      return 'Say why we are still going — somebody will ask.';
+    }
+    return null;
+  }
+
+  function refuseForDecision(why: string) {
+    setDecisionErr(why);
+    /* The card is above the fold; the button is not. Said in both places. */
+    notify(why);
+  }
 
   /**
    * The ticket, asked once, on the way out.
@@ -589,6 +805,10 @@ export default function Visit() {
    * somebody claims it twice.
    */
   function askTicketThenSave(unverifiedReason: string | null = null) {
+    /* Asked here as well as in the save, so the fare is never collected against
+       a visit that is about to be turned back. */
+    const missing = missingDecision();
+    if (missing) return refuseForDecision(missing);
     const wants = leg && legMode?.requiresTicket && leg.ticketAmountPaise == null;
     if (!wants) {
       void saveAndGo(elapsedLabel(dwellSeconds), unverifiedReason);
@@ -618,12 +838,16 @@ export default function Visit() {
   };
 
   const claimTicket = async () => {
-    if (!leg || ticketBusy) return;
+    /* The ref, for the same reason as `savingRef`: `PrimaryButton` keeps a
+       button with a `whyDisabled` pressable on purpose, so a second tap runs
+       this handler from the render where `ticketBusy` was still false. */
+    if (!leg || ticketBusyRef.current) return;
     const verdict = checkFare(fare);
     if (!verdict.ok) {
       setFareErr(verdict.why);
       return;
     }
+    ticketBusyRef.current = true;
     setTicketBusy(true);
     try {
       await attachTicketToLeg({
@@ -642,13 +866,14 @@ export default function Visit() {
       notify('The ticket could not be added just now — save the visit and add it from Travel.');
       setTicketOpen(false);
     } finally {
+      ticketBusyRef.current = false;
       setTicketBusy(false);
       void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
     }
   };
 
   async function saveAndGo(spent: string, unverifiedReason: string | null) {
-    if (!c || saving) return;
+    if (!c || savingRef.current) return;
 
     /*
      * The one thing that stops a save here, and it stops it to ASK rather than
@@ -657,24 +882,40 @@ export default function Visit() {
      * same form, not a rejection — and the server checks the same rule against
      * the same two configured numbers.
      */
-    if (capState === 'decide' && !decision) {
-      setDecisionErr('Say which way this one goes before you close the visit.');
-      return;
-    }
-    if (decision === 'still_suspect' && !decisionWhy.trim()) {
-      setDecisionErr('Say why we are still going — somebody will ask.');
-      return;
-    }
+    const missing = missingDecision();
+    if (missing) return refuseForDecision(missing);
 
+    savingRef.current = true;
     setSaving(true);
+    /* The coordinates only. WHEN comes off the dwell clock below — a visit made
+       where there is no signal is still a visit that happened at a time. */
     const checkOut: Fix | null = fix ? { ...fix, at: now } : null;
+    let visitId: string;
     try {
-      const visitId = await saveVisit({
+      visitId = await saveVisit({
         customerId: c.id,
         customerName: c.name,
         userId: boot.session?.user.id ?? '',
         checkIn: fix,
         checkOut,
+        /*
+         * THE CLOCK, NOT THE FIX.
+         *
+         * Both instants used to be read off `Fix.at`, so a visit made inside a
+         * godown — no fix, which is the case this whole app is designed around
+         * — was stored with no check-in instant, no duration and left open for
+         * ever: absent from the day's count, never closed by the day-boundary
+         * sweep, and printing 1 Jan 1970 on the next visit's "Last time" card.
+         * `visitStart` is the moment he said he had arrived, and it exists
+         * whether or not the radio answered.
+         *
+         * Where there was no arrival at all — a visit opened by a path that
+         * never asked, which is the only way `visitStart` is null here — the
+         * row is stamped at the save and left OPEN rather than claiming a
+         * duration of zero that nobody measured.
+         */
+        checkInAt: visitStart ?? now,
+        checkOutAt: visitStart == null ? null : now,
         outcome: outcome ?? 'visited',
         notes: note.trim() || null,
         transcript: null,
@@ -727,21 +968,47 @@ export default function Visit() {
         monthlyVolumeLitres: Number(reqLitres.replace(/[^\d]/g, '')) || null,
         quantityCans: Number(reqCans.replace(/[^\d]/g, '')) || null,
       });
-      /* Spent, whether or not it was used — a reason typed for one shop must
-         not attach itself to the next unrelated visit hours later. */
-      set({ visitSpent: spent, offPlanReason: null });
-      /* The journey is spent on this visit, locally, so the record reads
-         correctly on this handset without waiting for a pull — and so the
-         next visit to this shop does not pick the same leg up again.
-         Deliberately AFTER the save: a leg bound to a visit that failed to
-         write would be a journey pointing at nothing. */
-      if (leg) await bindLegToVisit(leg.id, visitId);
-
-      router.replace('/saved');
     } catch {
+      savingRef.current = false;
       setSaving(false);
       notify('The visit could not be saved on this phone. Nothing has been lost — try again.');
+      return;
     }
+
+    /*
+     * PAST HERE THE VISIT IS IN THE LEDGER, and nothing below may claim
+     * otherwise.
+     *
+     * `saveVisit` commits its own transaction and returns an id; everything
+     * that follows is tidying up around a record that already exists. All of it
+     * used to sit inside the try above, so a failure binding the leg raised
+     * "Nothing has been lost — try again" — a sentence that is false in exactly
+     * that case, and an instruction that writes the visit a second time.
+     */
+
+    /* Spent, whether or not it was used — a reason typed for one shop must
+       not attach itself to the next unrelated visit hours later. */
+    set({ visitSpent: spent, offPlanReason: null });
+    /* The journey is spent on this visit, locally, so the record reads
+       correctly on this handset without waiting for a pull — and so the
+       next visit to this shop does not pick the same leg up again.
+       Deliberately AFTER the save: a leg bound to a visit that failed to
+       write would be a journey pointing at nothing. */
+    if (leg) {
+      try {
+        await bindLegToVisit(leg.id, visitId);
+      } catch {
+        /* Said rather than swallowed, and NOT as a failure of the visit: the
+           journey is still on today's travel, it is simply not attached to the
+           visit it was made for. */
+        notify('The visit is saved. The journey could not be attached to it — check today’s travel.');
+      }
+    }
+
+    /* This screen asks before it lets a visit in progress be left. The visit is
+       saved, so the question no longer applies. */
+    leavingRef.current = true;
+    router.replace('/saved');
   }
 
   /*
@@ -921,22 +1188,32 @@ export default function Visit() {
       contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}
       footer={
         <View style={{ backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.hairline, paddingHorizontal: 16, paddingVertical: 12, boxShadow: shadow.saveBar }}>
-          {!verdict.verified ? (
-            <Text style={{ fontSize: 13, lineHeight: 18, color: C.warnInk, marginBottom: 8 }}>{verdict.firstFailure}</Text>
+          {/* `warning` rather than `firstFailure`: a visit whose check-in was
+              overridden has nothing outstanding and is still not a clean one,
+              and that line used to be blank — the bar said nothing while the
+              panel above it said "Everything checks out". */}
+          {verdict.warning ? (
+            <Text style={{ fontSize: 13, lineHeight: 18, color: C.warnInk, marginBottom: 8 }}>{verdict.warning}</Text>
           ) : null}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={type.label}>In the shop</Text>
               <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{elapsedLabel(dwellSeconds)}</Text>
             </View>
+            {/* Live on `complete`, never on `verified`. An override is not a
+                missing requirement, and greying the button on one would demand
+                a second typed reason for a question already answered at the
+                door. */}
             <Pressable
-              onPress={() => (verdict.verified ? askTicketThenSave() : notify(verdict.firstFailure))}
-              accessibilityLabel={verdict.verified ? 'Save visit' : verdict.firstFailure}
+              onPress={() => (verdict.complete ? askTicketThenSave() : notify(verdict.firstFailure))}
+              accessibilityLabel={verdict.complete ? 'Save visit' : verdict.firstFailure}
               style={[
-                { height: 52, paddingHorizontal: 24, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.verified ? C.primary : C.hairline },
-                verdict.verified && { boxShadow: shadow.primary },
+                { height: 52, paddingHorizontal: 24, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.complete ? C.primary : C.hairline },
+                verdict.complete && { boxShadow: shadow.primary },
               ]}>
-              <Text style={[{ fontSize: 16, color: verdict.verified ? '#FFFFFF' : C.faint }, weight(600)]}>Save visit</Text>
+              <Text style={[{ fontSize: 16, color: verdict.complete ? '#FFFFFF' : C.faint }, weight(600)]}>
+                {saving ? 'Saving…' : 'Save visit'}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -1057,16 +1334,20 @@ export default function Visit() {
           salesman whose visit is blocked stops recording visits, and the
           company loses the GPS, the competitor note and the reason in order to
           stop a number reaching four. */}
-      {capState !== 'ok' && suspect && capCfg ? (
+      {/* `capLabel` in the guard costs nothing and buys the type: anything that
+          makes `capState` something other than `ok` is a Suspect stage, which
+          is the only thing `visitCapLabel` returns null for. */}
+      {capState !== 'ok' && suspect && capLabel ? (
         <Card
           style={{
             marginTop: 12,
             borderLeftWidth: 3,
             borderLeftColor: capState === 'decide' ? C.warnInk : C.hairline,
           }}>
-          <Text style={type.label}>
-            {'Visit ' + suspect.visits + ' / ' + capCfg.maxSuspectVisits + ' · still a Suspect'}
-          </Text>
+          {/* The engine's own wording, counting the visit being MADE. Retyped
+              here it read "Visit 2 / 3" on the third visit — one in hand,
+              under a card demanding the decision. */}
+          <Text style={type.label}>{capLabel + ' · still a Suspect'}</Text>
           <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
             {capState === 'decide'
               ? 'Say which way this one goes before you close the visit. The visit is recorded either way.'
@@ -1399,10 +1680,15 @@ export default function Visit() {
           <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
             Is this shop in the wrong place?
           </Text>
+          {/* The distance, from the refusal where the fresh reading has none.
+              `metresAway` comes off a SECOND acquisition taken at the save and
+              can be null while the refusal that opened this sheet was measured
+              — leaving the question reading "about ? m", which is the one
+              number that makes it answerable. */}
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
-            MahekOne has {c?.name ?? 'this shop'} about {metresAway ?? '?'} m from where you
-            checked in. If the shop is here and the map is wrong, ask your manager to move
-            it — the next visit will not be questioned, and nor will anybody else&rsquo;s.
+            MahekOne has {c?.name ?? 'this shop'} about {metresAway ?? refusedMetres ?? '?'} m from
+            where you checked in. If the shop is here and the map is wrong, ask your manager to
+            move it — the next visit will not be questioned, and nor will anybody else&rsquo;s.
           </Text>
 
           <View style={{ marginTop: 16, gap: 8 }}>
@@ -1454,28 +1740,30 @@ export default function Visit() {
           <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what the customer actually said.</Text>
         ) : null}
 
+        {/* Said HERE and not in a toast: this sheet is a Modal and the toast
+            lives underneath it, so a failure raised through `notify` while it
+            is open is a sentence nobody ever sees. */}
+        {formErr === 'save' ? (
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 10 }}>
+            That could not be saved on this phone. Nothing has been sent — try again.
+          </Text>
+        ) : null}
+
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <Pressable onPress={() => setForm(null)} style={{ flex: 1, height: 52, borderWidth: 1, borderColor: C.border, borderRadius: radius.xl, alignItems: 'center', justifyContent: 'center' }}>
             <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>Cancel</Text>
           </Pressable>
+          {/* ONE COMPLAINT PER PRESS. `submitComplaint` holds the ref guard —
+              see the note beside it. Written inline here, a second tap on a
+              slow write logged two complaints and kept only the second. */}
           <Pressable
-            onPress={async () => {
-              if (!draft.cat) return setFormErr('cat');
-              if (!(draft.what ?? '').trim()) return setFormErr('what');
-              if (!c) return;
-              const id = await logComplaint({
-                customerId: c.id,
-                category: draft.cat,
-                description: draft.what.trim(),
-              });
-              setLinked((l) => ({ ...l, complaintId: id }));
-              markVisitDone('complaint', draft.cat + ' · with the desk team');
-              setForm(null);
-              setDraft({});
-              notify('Complaint logged · the desk team sees it today');
-            }}
-            style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: shadow.primaryLift }}>
-            <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>Log it</Text>
+            onPress={() => void submitComplaint()}
+            disabled={formSaving}
+            accessibilityState={{ disabled: formSaving }}
+            style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: formSaving ? C.hairline : C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: formSaving ? undefined : shadow.primaryLift }}>
+            <Text style={[{ fontSize: 16, color: formSaving ? C.faint : '#FFFFFF' }, weight(600)]}>
+              {formSaving ? 'Logging…' : 'Log it'}
+            </Text>
           </Pressable>
         </View>
       </BottomSheet>
@@ -1513,39 +1801,35 @@ export default function Visit() {
         <Pressable
           onPress={() => setCalOpen('trial')}
           style={{ width: '100%', height: 52, borderWidth: 1, borderColor: C.border, borderRadius: radius.lg, paddingHorizontal: 14, justifyContent: 'center', backgroundColor: C.surface }}>
-          <Text style={{ fontSize: 16, color: C.ink }}>{pretty(draft.trial ?? defaultTrial())}</Text>
+          {/* `trialDefault`, the day worked out when the screen opened, and not
+              a fresh clock read — the date shown here and the one `submitSample`
+              stores have to be the same day on a screen open across midnight. */}
+          <Text style={{ fontSize: 16, color: C.ink }}>{pretty(draft.trial ?? trialDefault)}</Text>
         </Pressable>
 
         <Text style={[type.caption, { marginTop: 10 }]}>
           Samples need your manager’s approval. The trial follow-up is set for you.
         </Text>
 
+        {formErr === 'save' ? (
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 10 }}>
+            That could not be saved on this phone. Nothing has been sent — try again.
+          </Text>
+        ) : null}
+
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <Pressable onPress={() => setForm(null)} style={{ flex: 1, height: 52, borderWidth: 1, borderColor: C.border, borderRadius: radius.xl, alignItems: 'center', justifyContent: 'center' }}>
             <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>Cancel</Text>
           </Pressable>
+          {/* ONE SAMPLE PER PRESS, the same guard as the complaint above. */}
           <Pressable
-            onPress={async () => {
-              if (!draft.sku) return setFormErr('sku');
-              if (!(draft.why ?? '').trim()) return setFormErr('why');
-              if (!c) return;
-              const trial = draft.trial ?? defaultTrial();
-              const id = await requestSample({
-                customerId: c.id,
-                productId: draft.sku,
-                productName: draft.skuName ?? '',
-                cans: 1,
-                reason: draft.why.trim(),
-                followUpDate: trial,
-              });
-              setLinked((l) => ({ ...l, sampleId: id }));
-              markVisitDone('sample', (draft.skuName ?? '') + ' · sent for approval');
-              setForm(null);
-              notify('Sample requested · follow-up set for ' + pretty(trial));
-              setDraft({});
-            }}
-            style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: shadow.primaryLift }}>
-            <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>Request it</Text>
+            onPress={() => void submitSample()}
+            disabled={formSaving}
+            accessibilityState={{ disabled: formSaving }}
+            style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: formSaving ? C.hairline : C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: formSaving ? undefined : shadow.primaryLift }}>
+            <Text style={[{ fontSize: 16, color: formSaving ? C.faint : '#FFFFFF' }, weight(600)]}>
+              {formSaving ? 'Requesting…' : 'Request it'}
+            </Text>
           </Pressable>
         </View>
       </BottomSheet>
@@ -1556,7 +1840,7 @@ export default function Visit() {
           {calOpen === 'trial' ? 'Trial follow-up' : 'Come back on'}
         </Text>
         <Calendar
-          selected={calOpen === 'trial' ? draft.trial ?? defaultTrial() : nextDate}
+          selected={calOpen === 'trial' ? draft.trial ?? trialDefault : nextDate}
           onPick={(iso) => {
             if (calOpen === 'trial') setDraft({ ...draft, trial: iso });
             else set({ nextDate: iso });
@@ -1574,6 +1858,10 @@ export default function Visit() {
           outside, and find nothing had happened.
         */
         onClose={() => {
+          /* Not while the fare is being written. The scrim and Skip stayed live
+             through `attachTicketToLeg`, so a tap here started the save and
+             `claimTicket`'s own `finally` started a second one. */
+          if (ticketBusy) return;
           setTicketOpen(false);
           void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
         }}>
@@ -1673,6 +1961,7 @@ export default function Visit() {
             <SecondaryButton
               label="Skip — I will add it later"
               onPress={() => {
+                if (ticketBusy) return;
                 setTicketOpen(false);
                 void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
               }}

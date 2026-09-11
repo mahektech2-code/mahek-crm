@@ -8,10 +8,12 @@ import * as trail from '../sync/trail';
 import { currentSession, type Session } from '../data/session';
 import { autoCloseMissedCheckouts, dayState } from '../data/attendance';
 import { closeOpenVisits } from '../data/visits';
+import { closeStaleLegs } from '../data/travel';
 import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
 import { registerForPush } from '../native/push';
 import { fetchUpdateInBackground } from '../native/updates';
+import { restoreOffPlanReason } from './store';
 
 /**
  * Starting up.
@@ -54,6 +56,12 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
         startBackgroundSync();
         void registerBackgroundSync();
         void runDayBoundaryWork(existing.user.id).then(() => resumeTrailIfDayOpen(existing.user.id));
+        /* Half-finished work put back on the screen that took it. An off-plan
+           reason is typed on the route screen and spent by a visit two screens
+           later, and this app is reaped between the two routinely — restoring
+           it here is what stops the sentence being lost in silence. It expires
+           itself at the day boundary; see `restoreOffPlanReason`. */
+        void restoreOffPlanReason();
         void registerForPush();
         /* Behind the app, never in front of it: `setReady(true)` has already
            run, so the salesman is looking at his day while this downloads. It
@@ -142,6 +150,10 @@ async function runDayBoundaryWork(userId: string): Promise<void> {
     startOfToday.setHours(0, 0, 0, 0);
 
     await closeOpenVisits(startOfToday.getTime());
+    /* A journey nobody arrived at, closed for the same reason a visit nobody
+       checked out of is. Nothing else ever ends a leg, so one left open
+       overnight was read as this morning's — see `openLegOf`. */
+    await closeStaleLegs(userId, startOfToday.getTime());
     await autoCloseMissedCheckouts(userId);
     /* `mbos.tasks.escalationHours`, which is the PUBLISHED key. This read
        `mbos.tasks.escalateAfterHours` — the same question, one word apart, and

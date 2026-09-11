@@ -21,11 +21,14 @@ import {
   type PlanDay,
 } from '../src/data/journey';
 import { listTours, requestTour, type Tour } from '../src/data/requests';
+import { getCustomer, type Customer } from '../src/data/customers';
 import { getConfig } from '../src/data/config';
 import { optimiseRoute } from '../src/engines/route';
 import { fixOf, getFix } from '../src/native/location';
 import { dayLabel, dayLabelRelative, dmy, inrFromPaise, isoDate, plural } from '../src/lib/format';
-import { openMaps, openRoute, shareText } from '../src/lib/messaging';
+/* No `openMaps` here. Every stop row and every card on this screen navigates
+   through `NavigateButton`, which is the one call site — see `StopMapButton`. */
+import { openRoute, shareText } from '../src/lib/messaging';
 import { NavigateButton } from '../src/components/ui/navigate';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
@@ -50,10 +53,16 @@ import { useStore } from '../src/state/store';
  * Null where the office did not record when it asked — every plan written
  * before the negotiation existed is in that state, and "proposed 20,214 days
  * ago" from a null read as an epoch is worse than saying nothing.
+ *
+ * `now` is passed in rather than read here: this is called during render, and
+ * the clock is state on the screen already. Reading `Date.now()` from inside
+ * a render is what the React Compiler rules in this app forbid, and it also
+ * meant this label was measured against a different instant from every other
+ * figure on the screen.
  */
-function waitingLabel(proposedAt: number | null): string | null {
+function waitingLabel(proposedAt: number | null, now: number): string | null {
   if (!proposedAt) return null;
-  const days = Math.floor((Date.now() - proposedAt) / 86_400_000);
+  const days = Math.floor((now - proposedAt) / 86_400_000);
   if (days <= 0) return 'asked today';
   if (days === 1) return 'asked yesterday';
   return 'waiting ' + days + ' days';
@@ -67,6 +76,11 @@ export default function JourneyScreen() {
   /* Still needed for the Continue button below: the leg is already open, so
      that path only prepares the visit screen — it does not ask again. */
   const beginVisit = useStore((s) => s.beginVisit);
+  /* The reason typed for an off-plan stop, waiting for a shop to be chosen.
+     Read here so the screen that TOOK it can show it is still pending and let
+     it go — see the strip below. */
+  const offPlanReason = useStore((s) => s.offPlanReason);
+  const offPlanReasonAt = useStore((s) => s.offPlanReasonAt);
   const boot = useBoot();
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [tourOpen, setTourOpen] = React.useState(false);
@@ -94,9 +108,24 @@ export default function JourneyScreen() {
    * place.
    */
   const [leg, setLeg] = React.useState<TravelLeg | null>(null);
+  /*
+   * The shop that leg is heading for, as a RECORD rather than as a label.
+   *
+   * Navigate used to pass `next.gpsLat`/`next.gpsLng` — the coordinates of the
+   * planned stop — under `leg.toLabel`, the name of the shop he actually set
+   * off for. `openMaps` prefers coordinates over a name, so the label was
+   * ignored and Maps started turn-by-turn to the shop the plan had queued. The
+   * leg's own `toLat`/`toLng` cannot answer it either: those are the ARRIVAL
+   * fix, written when he gets there, and they are null for the whole of the
+   * journey this button exists for. The shop's own pin is the answer.
+   */
+  const [legShop, setLegShop] = React.useState<Customer | null>(null);
   const [days, setDays] = React.useState<PlanDay[]>([]);
   const [tours, setTours] = React.useState<Tour[]>([]);
   const [pastCounts, setPastCounts] = React.useState<Record<string, { total: number; done: number }>>({});
+  /* In flight, and it has to be state rather than a ref: the sheet item reads
+     it, and nothing else on the screen would re-render to notice. */
+  const [reordering, setReordering] = React.useState(false);
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000);
@@ -107,6 +136,17 @@ export default function JourneyScreen() {
   /* A fortnight back, matching the server's own PLAN_HISTORY_DAYS — the two
      have to agree, or this screen would ask for history the pull never sent. */
   const historyFrom = isoDate(new Date(now - 15 * 86_400_000));
+  /*
+   * Local midnight, derived from the DATE STRING rather than from `now`.
+   *
+   * `now` ticks every minute, so a boundary computed off it directly would be a
+   * fresh number sixty times an hour and would re-run the read below with it.
+   * `today` is stable across those ticks, and `<date>T00:00:00` with no zone on
+   * it is local time — the same midnight `runDayBoundaryWork` and
+   * `minutesSinceMidnight` use, and deliberately not `Date.parse` of a bare
+   * date, which the spec reads as UTC.
+   */
+  const dayStart = React.useMemo(() => new Date(today + 'T00:00:00').getTime(), [today]);
 
   const load = React.useCallback(() => {
     let live = true;
@@ -115,7 +155,17 @@ export default function JourneyScreen() {
     });
     const uid = boot.session?.user.id;
     if (uid) {
-      void openLegOf(uid).then((r) => {
+      /*
+       * TODAY'S journey, and the bound is the fix.
+       *
+       * Nothing closes a leg but arriving or calling it off, so one he set off
+       * on yesterday and never arrived at stayed open for ever — and this
+       * screen read it as this morning's, greeting him with "On your way to
+       * <yesterday's shop> · 19h 47m" and replacing today's first "Start visit"
+       * with a "Continue" into the wrong shop. `closeStaleLegs` tidies those at
+       * launch; the bound is what makes the card honest in between.
+       */
+      void openLegOf(uid, dayStart).then((r) => {
         if (live) setLeg(r);
       });
     }
@@ -135,9 +185,34 @@ export default function JourneyScreen() {
     return () => {
       live = false;
     };
-  }, [historyFrom, boot.session?.user.id]);
+  }, [historyFrom, dayStart, boot.session?.user.id]);
 
   useFocusEffect(load);
+
+  /*
+   * The shop behind the open leg, read once per leg rather than on every focus.
+   *
+   * Keyed on the customer id alone: the leg row itself is re-read constantly
+   * (the clock ticks, the screen refocuses) and the shop behind it changes only
+   * when he sets off for a different one. Clearing it where there is no leg is
+   * the same shape `useCustomer` uses — an id that has gone must not leave the
+   * previous shop's pin sitting under the next leg's name, which is the exact
+   * failure this state exists to correct.
+   */
+  const legCustomerId = leg?.customerId ?? null;
+  React.useEffect(() => {
+    let live = true;
+    if (!legCustomerId) {
+      setLegShop(null);
+      return;
+    }
+    void getCustomer(legCustomerId).then((c) => {
+      if (live) setLegShop(c);
+    });
+    return () => {
+      live = false;
+    };
+  }, [legCustomerId]);
 
   /*
    * The days the office has asked about.
@@ -164,6 +239,20 @@ export default function JourneyScreen() {
   const sentBack = days.filter((d) => d.dayState === 'refused' && d.planDate >= today);
 
   /*
+   * TODAY'S agreed day, if there is one, and it is not the same question as
+   * `toPick`.
+   *
+   * The empty state at the bottom of this screen answers "what about today",
+   * and it was reading `toPick` — any agreed day from today onward. So with a
+   * day agreed for next Tuesday and nothing at all today, the card under
+   * "0 of 0 done" read "A day is waiting for its shops · You have agreed Tue 15
+   * Sep" with a Pick button, about the same day already listed as a tappable
+   * row two inches above it. One day offered twice, and the only sentence that
+   * says what to do TODAY suppressed by a card about next week.
+   */
+  const pickToday = toPick.find((d) => d.planDate === today);
+
+  /*
    * Today's day, once it HAS been routed.
    *
    * `pickShops` moves the day to `planned` on this handset immediately, and
@@ -186,6 +275,15 @@ export default function JourneyScreen() {
    */
   const startOwnDay = async () => {
     if (ownBusy) return;
+    /*
+     * WHICH DAY, FIRST.
+     *
+     * `own.date` starts empty and `createDay` checks the city before the date,
+     * so pressing "Plan it" with a city typed and nothing picked came back
+     * "That day has already gone. Pick today or a day ahead." — a refusal
+     * naming a cause that was not his, about a day he had never chosen.
+     */
+    if (!own.date) return setOwnErr('Pick which day first.');
     setOwnBusy(true);
     setOwnErr(null);
     const out = await createDay(own.date, own.city);
@@ -250,6 +348,15 @@ export default function JourneyScreen() {
      not narrow on `Boolean`, and a cast across that gap is the shape of bug
      AGENTS.md names — the compiler stops looking exactly where the value is
      wrong. */
+  /* Opening the shop is what a row tap means. A visited stop used to answer
+     with a toast and nothing else, so the route was a dead end the moment the
+     work was done — and the record behind it is where the phone number, the
+     outstanding and the last visit's note actually live. */
+  const openStop = (x: JourneyStop) => {
+    set({ custId: x.customerId });
+    router.push('/customer?from=journey');
+  };
+
   const areas = Array.from(
     new Set(
       stops
@@ -271,12 +378,33 @@ export default function JourneyScreen() {
   const awaitingRoute = stops.length === 0 ? todayPlanned : undefined;
 
   const reorder = async () => {
+    /*
+     * THE SHEET CLOSES BEFORE THIS RUNS, and everything below is awaited.
+     *
+     * `ActionSheet` dismisses and then calls the item, and this reads four
+     * configuration values and then waits on `getFix`, which sits for up to ten
+     * seconds looking for a satellite. Nothing was drawn in between — no
+     * spinner, no toast, no disabled state — so he tapped, the sheet shut, and
+     * the screen sat there long enough for him to open it and tap again; two
+     * passes then raced to rewrite the same `seq`.
+     */
+    if (reordering) return notify('Still working out the order…');
     /* Nothing to reorder is not an empty reorder. It toasted
        "Reordered · 0 km and 0 minutes on the plan", which is a confident
        answer to a question that was never askable. */
     if (!stops.some((x) => x.status === 'planned')) {
       return notify('There are no stops left to reorder today.');
     }
+    setReordering(true);
+    notify('Finding where you are…');
+    try {
+      await runReorder();
+    } finally {
+      setReordering(false);
+    }
+  };
+
+  const runReorder = async () => {
     const [speed, passes, maxStops, perStop] = await Promise.all([
       getConfig<number>('mbos.route.averageSpeedKmph', 22),
       getConfig<number>('mbos.route.maxTwoOptPasses', 4),
@@ -373,7 +501,12 @@ export default function JourneyScreen() {
           <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
             {asking.length === 1 ? 'A day to agree' : plural(asking.length, 'day') + ' to agree'}
           </T>
-          {asking.map((d) => (
+          {asking.map((d) => {
+            /* Worked out once. It used to be called twice in one expression —
+               and both calls read the clock, so the two halves of one sentence
+               could be measured against different instants. */
+            const waiting = waitingLabel(d.proposedAt, now);
+            return (
             <View
               key={d.id}
               style={{
@@ -396,7 +529,7 @@ export default function JourneyScreen() {
                     something that arrived a moment ago — so a request four days
                     old looks identical to one from this morning, and gets the
                     same non-answer. */}
-                {waitingLabel(d.proposedAt) ? ' · ' + waitingLabel(d.proposedAt) : ''}
+                {waiting ? ' · ' + waiting : ''}
               </T>
               <T s="small" style={{ color: C.muted, marginTop: 6 }}>
                 You pick the shops once you agree — you know the city.
@@ -410,7 +543,8 @@ export default function JourneyScreen() {
                 </View>
               </View>
             </View>
-          ))}
+            );
+          })}
         </View>
       ) : null}
 
@@ -557,9 +691,7 @@ export default function JourneyScreen() {
             {awaitingRoute
               ? (awaitingRoute.city ? awaitingRoute.city + ' · ' : '') +
                 'sent to the office — the stops arrive on the next sync'
-              : areas.length
-                ? saidAsList(areas)
-                : 'Nothing planned for today'}
+              : routeSubline(stops.length, doneCount, areas)}
           </T>
         </View>
         {/* `Icon name="dots"`, not the character `⋯`.
@@ -603,7 +735,185 @@ export default function JourneyScreen() {
         </View>
       ) : null}
 
-      {next ? (
+      {/*
+        ON THE ROAD — ITS OWN CARD, AND THAT IS THE FIX.
+
+        This block used to live INSIDE the Next stop card, in one arm of a
+        ternary that only draws when there is a planned stop left. A leg is
+        routinely open when there is not: going off the plan is exactly what
+        this screen's own dashed button pushes him into, and visiting the last
+        planned stop leaves `next` undefined too. In both cases the whole card
+        was skipped and the screen underneath said "No route for today" while he
+        was mid-journey with the meter already photographed — no "Call it off",
+        no "Continue", and if Android had reaped the app the store's `custId`
+        was gone with it, so `/visit` could not be reached from anywhere. The
+        only way out was to start a SECOND journey to the same shop from the
+        Customers list, which re-opens the odometer camera and throws the
+        reading away.
+
+        It is keyed on the leg alone now, and the Next stop card below is
+        suppressed while it is drawn: two cards each offering to start a visit
+        is how a second leg gets opened by accident, and opening one closes the
+        first.
+      */}
+      {leg ? (
+        <View
+          style={{
+            backgroundColor: C.surface,
+            borderWidth: 1,
+            borderColor: C.primaryEdge,
+            borderRadius: radius.card,
+            boxShadow: shadow.nextStop,
+            padding: 16,
+            marginTop: 16,
+          }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Icon name="nav" size={18} color={C.primaryDeep} strokeWidth={1.8} />
+            <T
+              style={[
+                { fontSize: 12, lineHeight: 16, letterSpacing: 0.48, textTransform: 'uppercase', color: C.primaryDeep },
+                weight(600),
+              ]}>
+              On your way
+            </T>
+          </View>
+          <T style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.3, color: C.ink, marginTop: 10 }, weight(600)]}>
+            {leg.toLabel ?? legShop?.name ?? 'The shop'}
+          </T>
+          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+            {legLine({
+              modeLabel: leg.modeKey,
+              odometerStartKm: null,
+              odometerEndKm: null,
+              ticketAmountPaise: null,
+            }) +
+              ' · ' +
+              /* `now`, not `Date.now()`. The clock is state on this screen and
+                 reading it again inside the render is what the React Compiler
+                 rules here forbid — it also meant this duration was measured
+                 against a different instant from the "waiting N days" labels
+                 above it. A leg with no start reads as nothing elapsed, which
+                 is the honest answer: there is no departure to count from. */
+              travellingFor(leg.startedAt ?? now, now) +
+              (leg.odometerStartKm != null
+                ? ' · set off on ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'
+                : '')}
+          </T>
+          {/*
+            NAVIGATION SURVIVES THE DEPARTURE, and it goes where HE is going.
+            It was in the other arm of the old ternary — the one drawn BEFORE he
+            sets off — so pressing "Start visit" took navigation away at the one
+            moment it is for. Worse, when it was first moved in here it kept
+            reading the planned stop's coordinates under the leg's shop name,
+            and `openMaps` prefers a coordinate to a name: he pressed the one
+            button that says it will take him there and rode to the shop the
+            plan had queued. The shop's own pin answers it; with no pin at all
+            the name and the town are passed instead, which is a worse answer
+            and an honest one.
+          */}
+          <NavigateButton
+            variant="button"
+            lat={legShop?.gpsLat}
+            lng={legShop?.gpsLng}
+            name={leg.toLabel ?? legShop?.name}
+            city={legShop?.area ?? legShop?.city}
+            style={{ marginTop: 14 }}
+          />
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+            <SecondaryButton
+              label="Call it off"
+              onPress={() =>
+                askConfirm({
+                  title: 'Not going after all?',
+                  body:
+                    'The trip stays on your record with the reason you give, measuring nothing — the meter has already moved, and a journey that vanished would leave the next one following on from a gap.',
+                  reasonLabel: 'Why · required',
+                  confirmLabel: 'Call off the trip',
+                  run: (reason) => {
+                    void abandonLeg(leg.id, reason).then(() => {
+                      setLeg(null);
+                      notify('Trip called off');
+                    });
+                  },
+                })
+              }
+              style={{ flex: 1, borderRadius: radius.xl }}
+            />
+            <PrimaryButton
+              label="Continue"
+              /* A leg with no shop against it cannot open a visit screen, and
+                 the button says so rather than acknowledging the tap and doing
+                 nothing. Every leg this screen can draw is one `departForVisit`
+                 wrote, which always names a shop — this is the guard, not the
+                 expected case. */
+              disabled={!legCustomerId}
+              whyDisabled="This journey has no shop recorded against it. Call it off and set off again from the shop."
+              onPress={() => {
+                if (!legCustomerId) return;
+                beginVisit(legCustomerId);
+                router.push('/visit');
+              }}
+              style={{ flex: 1, borderRadius: radius.xl }}
+            />
+          </View>
+        </View>
+      ) : null}
+
+      {/*
+        PICKED, AND NOT YET ROUTED — a headline with no way back into it.
+
+        `pickShops` moves the day to `planned` on this handset the moment he
+        saves, and the office mints the stops on the next pull. In between, the
+        twelve shops he had just chosen could not be seen or changed from
+        anywhere: the empty-state card is suppressed by `!awaitingRoute`, the
+        pips and the Next stop card by there being no stops, and today's day
+        appears in none of `toPick`, `comingUp` or `recent`. A morning without
+        signal can last hours.
+      */}
+      {awaitingRoute ? (
+        <View style={{ marginTop: 16 }}>
+          <SecondaryButton
+            label="See the shops you picked"
+            onPress={() =>
+              router.push({ pathname: '/pick', params: { day: awaitingRoute.id } })
+            }
+          />
+        </View>
+      ) : null}
+
+      {/*
+        THE DAY IS DONE, and the screen used to go quiet at exactly this point:
+        `next` is undefined so the Next stop card is gone, and the empty state
+        is suppressed because there ARE stops. Every stop walked is the one
+        moment this screen has something unambiguous to say — and closing the
+        day was reachable only from More → Your day, which is two taps and a
+        guess away from the tab he is looking at.
+
+        Not while a leg is open: "every stop is visited, close the day off" is
+        the wrong sentence to put in front of somebody who is on a bike on his
+        way to an off-plan shop.
+      */}
+      {!leg && !next && stops.length ? (
+        <Card style={{ marginTop: 16 }}>
+          <T style={[type.body, weight(600), { color: C.ink }]}>Day done</T>
+          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+            {'Every stop on the plan is visited. Close the day off while it is fresh.'}
+          </T>
+          <PrimaryButton
+            label="Close the day"
+            onPress={() => router.push('/eod')}
+            style={{ marginTop: 12 }}
+          />
+        </Card>
+      ) : null}
+
+      {/*
+        NOT WHILE HE IS TRAVELLING. The On-your-way card above is the same
+        journey at a later moment, and two cards on one screen each offering to
+        start a visit is how a second leg gets opened by accident — opening one
+        closes the first, and the meter photograph taken for it is thrown away.
+      */}
+      {next && !leg ? (
         <View
           style={{
             backgroundColor: C.surface,
@@ -645,95 +955,6 @@ export default function JourneyScreen() {
                 ? 'They owe ' + inrFromPaise(next.outstandingPaise) + ' — collection is the reason this stop is on the list.'
                 : 'Nothing outstanding against them.')}
           </T>
-          {/*
-            ON THE ROAD, this card stops offering to start a journey and
-            reports the one he is on.
-
-            Two buttons both reading "Start visit" — one for the shop he is
-            riding towards and one for the next stop — is how a second leg gets
-            opened by accident, and opening one closes the first. So while a
-            leg is running the card says where he is going, how long he has
-            been going there, and gives him the two things he can actually do.
-          */}
-          {leg ? (
-            <View style={{ marginTop: 14, gap: 10 }}>
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 10,
-                  backgroundColor: C.primaryTint,
-                  borderRadius: radius.md,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                }}>
-                <Icon name="nav" size={18} color={C.primaryDeep} strokeWidth={1.8} />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(600)]}>
-                    {'On your way to ' + (leg.toLabel ?? 'the shop')}
-                  </T>
-                  <T style={{ fontSize: 12, lineHeight: 16, color: C.primaryDeep }}>
-                    {legLine({
-                      modeLabel: leg.modeKey,
-                      odometerStartKm: null,
-                      odometerEndKm: null,
-                      ticketAmountPaise: null,
-                    }) +
-                      ' · ' +
-                      travellingFor(leg.startedAt ?? Date.now(), now) +
-                      (leg.odometerStartKm != null
-                        ? ' · set off on ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'
-                        : '')}
-                  </T>
-                </View>
-              </View>
-              {/*
-                NAVIGATION SURVIVES THE DEPARTURE, which it did not until now.
-                The Navigate button below is in the other arm of this ternary —
-                the one that draws BEFORE he sets off — so pressing "Start
-                visit" swapped this card in and took navigation away with it.
-                It was offered at every moment except the one where somebody is
-                actually on the road.
-              */}
-              <NavigateButton
-                variant="button"
-                lat={next.gpsLat}
-                lng={next.gpsLng}
-                name={leg.toLabel ?? next.customerName}
-                city={next.area}
-                style={{ marginTop: 12 }}
-              />
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                <SecondaryButton
-                  label="Call it off"
-                  onPress={() =>
-                    askConfirm({
-                      title: 'Not going after all?',
-                      body:
-                        'The trip stays on your record with the reason you give, measuring nothing — the meter has already moved, and a journey that vanished would leave the next one following on from a gap.',
-                      reasonLabel: 'Why · required',
-                      confirmLabel: 'Call off the trip',
-                      run: (reason) => {
-                        void abandonLeg(leg.id, reason).then(() => {
-                          setLeg(null);
-                          notify('Trip called off');
-                        });
-                      },
-                    })
-                  }
-                  style={{ flex: 1, borderRadius: radius.xl }}
-                />
-                <PrimaryButton
-                  label="Continue"
-                  onPress={() => {
-                    beginVisit(leg.customerId ?? next.customerId);
-                    router.push('/visit');
-                  }}
-                  style={{ flex: 1, borderRadius: radius.xl }}
-                />
-              </View>
-            </View>
-          ) : (
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
             <NavigateButton
               variant="button"
@@ -753,7 +974,6 @@ export default function JourneyScreen() {
               style={{ flex: 1, borderRadius: radius.xl }}
             />
           </View>
-          )}
         </View>
       ) : null}
 
@@ -790,64 +1010,76 @@ export default function JourneyScreen() {
                   )}
                 </View>
 
-                <Pressable
-                  onPress={async () => {
-                    /* A stop already walked answers with what happened; one still
-                       ahead answers by opening the way to it. Both used to answer
-                       with a toast. */
-                    if (done) return notify(x.customerName + ' · visit already logged today');
-                    const out = await openMaps({
-                      lat: x.gpsLat,
-                      lng: x.gpsLng,
-                      name: x.customerName,
-                      city: x.area,
-                    });
-                    if (out.status !== 'opened') notify(out.reason);
-                  }}
-                  accessibilityRole="button"
+                {/*
+                  THE ROW OPENS THE SHOP, and the glyph beside it opens maps.
+
+                  It was one unlabelled `Pressable` with no chevron and no map
+                  glyph on it, whose press threw him out of the app into Google
+                  Maps — and a stop already visited answered with a toast and
+                  nothing else, so a done stop was a dead end with no route to
+                  the record, the outstanding or the phone number. A tap on a
+                  name should open the thing it names; leaving the app is a
+                  control that says so.
+                */}
+                <View
                   style={{
                     flex: 1,
                     minWidth: 0,
                     flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 12,
-                    paddingVertical: 12,
-                    paddingHorizontal: 14,
+                    alignItems: 'stretch',
                     marginBottom: 8,
                     borderRadius: radius.lg,
                     borderWidth: 1,
                     borderColor: isNext ? C.primaryEdge : C.hairline,
                     backgroundColor: isNext ? C.primaryTint : C.surface,
+                    overflow: 'hidden',
                   }}>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <T
-                      numberOfLines={1}
-                      style={[{ fontSize: 15, color: done ? C.muted : C.ink }, weight(isNext ? 600 : 500)]}>
-                      {x.customerName}
-                    </T>
-                    {/* Joined rather than concatenated. With no area recorded —
-                        which is most of an imported book — these read
-                        " · arrived 10:15", opening on a separator with nothing
-                        in front of it. */}
-                    <T s="caption" style={{ marginTop: 1 }}>
-                      {[
-                        x.area,
-                        done
-                          ? 'arrived ' + (x.actualAt ? hhmm(x.actualAt) : '—')
-                          : x.plannedAt
-                            ? 'planned ' + x.plannedAt
-                            : null,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </T>
-                  </View>
-                  {done || isNext ? (
-                    <T style={[{ fontSize: 13, color: done ? C.success : C.primaryDeep }, weight(500)]}>
-                      {done ? 'Done' : 'Now'}
-                    </T>
-                  ) : null}
-                </Pressable>
+                  <Pressable
+                    onPress={() => openStop(x)}
+                    accessibilityRole="button"
+                    accessibilityLabel={'Open ' + x.customerName}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 10,
+                      paddingVertical: 12,
+                      paddingLeft: 14,
+                      paddingRight: 6,
+                    }}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <T
+                        numberOfLines={1}
+                        style={[{ fontSize: 15, color: done ? C.muted : C.ink }, weight(isNext ? 600 : 500)]}>
+                        {x.customerName}
+                      </T>
+                      {/* Joined rather than concatenated. With no area recorded —
+                          which is most of an imported book — these read
+                          " · arrived 10:15", opening on a separator with nothing
+                          in front of it. */}
+                      <T s="caption" style={{ marginTop: 1 }}>
+                        {[
+                          x.area,
+                          done
+                            ? 'arrived ' + (x.actualAt ? hhmm(x.actualAt) : '—')
+                            : x.plannedAt
+                              ? 'planned ' + x.plannedAt
+                              : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </T>
+                    </View>
+                    {done || isNext ? (
+                      <T style={[{ fontSize: 13, color: done ? C.success : C.primaryDeep }, weight(500)]}>
+                        {done ? 'Done' : 'Now'}
+                      </T>
+                    ) : null}
+                    <Icon name="forward" size={18} color={C.muted} strokeWidth={1.5} />
+                  </Pressable>
+                  <StopMapButton lat={x.gpsLat} lng={x.gpsLng} name={x.customerName} city={x.area} />
+                </View>
               </View>
             );
           })}
@@ -893,29 +1125,32 @@ export default function JourneyScreen() {
             }}>
             <Icon name="route" size={22} color={C.primaryDeep} strokeWidth={1.6} />
           </View>
+          {/* `pickToday`, never `toPick`. This card answers "what about TODAY",
+              and read against any agreed day from today onward it announced a
+              day agreed for next Tuesday — the same row already listed two
+              inches above — while suppressing the only sentence that says what
+              to do this morning. */}
           <T style={[type.body, weight(600), { color: C.ink, textAlign: 'center' }]}>
-            {toPick.length
+            {pickToday
               ? 'A day is waiting for its shops'
               : asking.length
                 ? 'A day is waiting for your answer'
                 : 'No route for today'}
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6, maxWidth: 280 }}>
-            {toPick.length
-              ? 'You have agreed ' +
-                dayLabel(toPick[0]!.planDate) +
-                '. Pick the shops and it becomes a route.'
+            {pickToday
+              ? 'You have agreed today. Pick the shops and it becomes a route.'
               : asking.length
                 ? 'Say yes or send it back — either answer lets your manager get on with it.'
                 : 'Your manager has not proposed one. You can still walk in and log a visit — anything you do today is recorded against it.'}
           </T>
-          {toPick.length ? (
+          {pickToday ? (
             <View style={{ marginTop: 14, alignSelf: 'stretch' }}>
               <PrimaryButton
                 label="Pick your shops"
                 fullWidth
                 onPress={() =>
-                  router.push({ pathname: '/pick', params: { day: toPick[0]!.id } })
+                  router.push({ pathname: '/pick', params: { day: pickToday.id } })
                 }
               />
             </View>
@@ -935,6 +1170,59 @@ export default function JourneyScreen() {
         onPress={deviate}
         style={{ marginTop: 16 }}
       />
+
+      {/*
+        A REASON TYPED AND NOT YET SPENT, SAID OUT LOUD.
+
+        `deviate` above takes the sentence and sends him to the Customers list
+        to choose the shop, and nothing anywhere showed that it was still
+        waiting — so backing out without visiting left it sitting in the store,
+        to attach itself to the next unplanned visit he logged, hours later and
+        about a different shop. The manager then read a deviation reason
+        belonging to somewhere else, on a record whose own words are "your
+        manager sees the reason".
+
+        Here, under the button that took it, with the time it was typed and a
+        way to let it go. It survives the app being killed now — see
+        `restoreOffPlanReason` — and expires at the day boundary, so the other
+        half of the leak, a Tuesday sentence arriving on Wednesday, is closed by
+        the store rather than by this screen remembering to check.
+      */}
+      {offPlanReason ? (
+        <View
+          style={{
+            marginTop: 12,
+            backgroundColor: C.warnBg,
+            borderRadius: radius.card,
+            padding: 14,
+          }}>
+          <T s="small" style={[{ color: C.warnInk }, weight(600)]}>
+            An off-plan reason is waiting for a shop
+          </T>
+          <T s="small" style={{ color: C.body, marginTop: 4 }}>
+            “{offPlanReason}”
+          </T>
+          <T s="caption" style={{ marginTop: 4 }}>
+            {(offPlanReasonAt ? 'Typed at ' + hhmm(offPlanReasonAt) + '. ' : '') +
+              'It goes onto the next visit you log at a shop that is not on today’s plan.'}
+          </T>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+            <SecondaryButton
+              label="Let it go"
+              onPress={() => {
+                set({ offPlanReason: null });
+                notify('Off-plan reason dropped.');
+              }}
+              style={{ flex: 1 }}
+            />
+            <PrimaryButton
+              label="Pick the shop"
+              onPress={() => router.push('/customers?from=journey')}
+              style={{ flex: 1 }}
+            />
+          </View>
+        </View>
+      ) : null}
 
       {/* The last fortnight, most recent first — what was asked, what was
           said, and for a day that was actually routed, how much of it got
@@ -1089,6 +1377,11 @@ export default function JourneyScreen() {
         </T>
         <Calendar
           selected={own.date}
+          /* Refused AT THE CELL, which is the only place a refusal costs
+             nothing. Every past day was selectable and the form then took the
+             city, the date and a press of "Plan it" before saying the day had
+             gone — refused after doing the work rather than before it. */
+          disabledReason={(iso) => (iso < today ? 'That day has gone' : null)}
           onPick={(iso) => {
             setOwn((d) => ({ ...d, date: iso }));
             setOwnErr(null);
@@ -1277,6 +1570,62 @@ function saidAsList(items: string[]): string {
   if (items.length <= 1) return items[0] ?? '';
   if (items.length === 2) return items[0] + ' and ' + items[1];
   return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1];
+}
+
+/**
+ * THE LINE UNDER THE COUNT, AND WHY IT LEADS ON STOPS RATHER THAN AREAS.
+ *
+ * It used to be `areas.length ? saidAsList(areas) : 'Nothing planned for
+ * today'`, and `areas` is built only from stops still PLANNED that carry a
+ * non-null `area`. Most of this imported book has no area recorded, so an
+ * ordinary route printed "Nothing planned for today" directly beneath "2 of 8
+ * done" — and once the last stop was visited `areas` was empty by
+ * construction, so every finished day ended on that same sentence too.
+ *
+ * The stop count is the fact that is always true, so it answers first. The
+ * areas are the detail, appended only when there are any.
+ */
+function routeSubline(total: number, done: number, areas: string[]): string {
+  if (total === 0) return 'Nothing planned for today';
+  if (done >= total) return 'All ' + plural(total, 'stop') + ' done';
+  const left = total - done + ' still to go';
+  return areas.length ? left + ' · ' + saidAsList(areas) : left;
+}
+
+/**
+ * The map affordance on a stop row.
+ *
+ * The row itself opens the shop — it is a record with a phone number, an
+ * outstanding and a history, and tapping an unlabelled row used to throw him
+ * out of the app into Google Maps instead. Navigating is its own control,
+ * drawn as one, and it goes through `NavigateButton` rather than calling
+ * `openMaps` here: a second inline call site is how the failure message on one
+ * of them stops matching the other, which is the whole reason that component
+ * exists.
+ */
+function StopMapButton({
+  lat,
+  lng,
+  name,
+  city,
+}: {
+  lat: number | null;
+  lng: number | null;
+  name: string;
+  city: string | null;
+}) {
+  return (
+    <View
+      style={{
+        width: 104,
+        borderLeftWidth: 1,
+        borderLeftColor: C.hairline,
+        justifyContent: 'center',
+        paddingHorizontal: 8,
+      }}>
+      <NavigateButton lat={lat} lng={lng} name={name} city={city} variant="button" />
+    </View>
+  );
 }
 
 /** What a past day comes down to, in one line. */

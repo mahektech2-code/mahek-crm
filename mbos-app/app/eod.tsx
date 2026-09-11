@@ -31,18 +31,31 @@ export default function EodScreen() {
   const boot = useBoot();
   const notify = useStore((s) => s.notify);
   const userId = boot.session?.user.id ?? '';
-  const day = isoDate(new Date());
+  /* ONE reading of the clock for the life of the screen. Read in the component
+     body it re-derived on every render, so a day that rolled over while the
+     sheet was open silently re-triggered the load against a different date —
+     and the React Compiler rules forbid it outright. */
+  const day = React.useMemo(() => isoDate(new Date()), []);
 
+  /** Null means the read has not landed. That is NOT "nothing recorded today",
+   *  which is what this screen used to say while it was still reading. */
   const [priced, setPriced] = React.useState<Awaited<ReturnType<typeof priceDay>> | null>(null);
+  const [readFailed, setReadFailed] = React.useState(false);
   const [note, setNote] = React.useState('');
   const [confirming, setConfirming] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
 
   const load = React.useCallback(() => {
     let live = true;
-    void priceDay(userId, day).then((p) => {
-      if (live) setPriced(p);
-    });
+    setReadFailed(false);
+    void priceDay(userId, day)
+      .then((p) => {
+        if (live) setPriced(p);
+      })
+      /* "Reading…" that never resolves reads as a broken handset. */
+      .catch(() => {
+        if (live) setReadFailed(true);
+      });
     return () => {
       live = false;
     };
@@ -54,14 +67,37 @@ export default function EodScreen() {
   const locked = priced?.day?.lockedAt != null;
   const noReturn = priced?.day != null && priced.day.returnedAt == null;
 
+  /**
+   * The lock is a REF, and the sheet closes before the await rather than after.
+   *
+   * `ConfirmSheet` draws a plain `PrimaryButton` with no disabled state, and it
+   * stayed up, unchanged and still pressable, for the whole of the write —
+   * `setConfirming(false)` only ran once `submitDay` had returned. `submitDay`
+   * re-reads the day before it checks `lockedAt`, so two overlapping calls both
+   * read `lockedAt === null` and both enqueue a claim: two claims for one day
+   * reach the office, the day locks, and only his manager can unpick it.
+   *
+   * A `busy` flag alone would not have held it — two taps inside one frame both
+   * read a `busy` React has not re-rendered yet. The ref is set synchronously.
+   * `busy` still disables the button underneath, which is what he is looking at
+   * once the sheet has gone.
+   */
+  const sending = React.useRef(false);
+
   const send = async () => {
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
-    const r = await submitDay(userId, day, note.trim() || null);
-    setBusy(false);
     setConfirming(false);
-    if (!r.ok) return notify(r.reason ?? 'That could not be sent.');
-    notify('Sent to the office.');
-    load();
+    try {
+      const r = await submitDay(userId, day, note.trim() || null);
+      if (!r.ok) return notify(r.reason ?? 'That could not be sent.');
+      notify('Sent to the office.');
+      load();
+    } finally {
+      sending.current = false;
+      setBusy(false);
+    }
   };
 
   const line = (label: string, paise: number, sub?: string) => (
@@ -83,7 +119,19 @@ export default function EodScreen() {
         it.
       </T>
 
-      {!priced?.day ? (
+      {priced === null ? (
+        /* Still reading, which is a different fact from nothing recorded — and
+           the two looked identical. He opens this after a full day on the road,
+           reads "Nothing recorded today", takes the button underneath it and
+           leaves the screen. */
+        <Card style={{ paddingVertical: 28 }}>
+          <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
+            {readFailed
+              ? 'Today could not be read just now. Come back to this screen to try again.'
+              : 'Reading…'}
+          </T>
+        </Card>
+      ) : !priced.day ? (
         <Card style={{ paddingVertical: 28 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
             Nothing recorded today

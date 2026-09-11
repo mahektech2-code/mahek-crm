@@ -4,6 +4,7 @@ import {
   cityOriginsQuery,
   customerCountQuery,
   customerPageQuery,
+  customerTimelineQuery,
   type BookView,
   type Origin,
 } from './customer-query';
@@ -32,6 +33,23 @@ export { accountLine, accountType, customerStage } from '../lib/account-label';
  */
 export type HealthBandValue = 'active' | 'at-risk' | 'dormant' | 'lost';
 
+/**
+ * WHERE OUTSTANDING TURNS RED — ONE NUMBER, NOT TWO.
+ *
+ * `dues > 300000` was written out as a literal on the list card and again on
+ * the record head, in two files, which is a business number living in a screen
+ * and a second copy of it waiting to disagree. The day one moves, the list and
+ * the record say different things about the same shop one tap apart — the
+ * drift the health thresholds beside it were made configuration to end.
+ *
+ * It is PAISE, like every other money figure on the handset, and it is a
+ * constant here rather than a `getConfig` key because there is no such key in
+ * MahekOne's own registry to read: an `mbos.*` key the server never sends is a
+ * setting a manager can see and cannot change, which is worse than an honest
+ * constant. Adding it there is the fix; this is the half that stops the two
+ * copies drifting in the meantime.
+ */
+export const OUTSTANDING_ALERT_PAISE = 30_000_000;
 
 /**
  * Reading the book.
@@ -322,22 +340,17 @@ export type TimelineEvent = {
  * A telecaller's call from yesterday sits in here beside this morning's visit,
  * which is the entire reason the two apps share a table rather than each
  * keeping their own history.
+ *
+ * THE FILTER IS THE DATABASE'S, and `customerTimelineQuery` carries the whole
+ * argument for why. It used to be a window of a hundred rows narrowed in the
+ * screen, which answered "nothing" for a kind that simply was not in the
+ * window — and the screen then said so as a fact. The cap is `TIMELINE_PAGE`
+ * of the kind asked for, newest first, so a full page means there is older
+ * history rather than none of this kind.
  */
 export async function customerTimeline(customerId: string, filter = 'All'): Promise<TimelineEvent[]> {
-  const rows = await all<TimelineEvent>(
-    'SELECT * FROM timeline_events WHERE customerId = ? ORDER BY occurredAt DESC LIMIT 100',
-    [customerId],
-  );
-  if (filter === 'All') return rows;
-  const wanted: Record<string, string[]> = {
-    Visits: ['visit'],
-    Orders: ['order'],
-    Payments: ['payment'],
-    Calls: ['call', 'telecaller_call'],
-    Complaints: ['complaint'],
-  };
-  const kinds = wanted[filter];
-  return kinds ? rows.filter((r) => kinds.includes(r.eventType)) : rows;
+  const q = customerTimelineQuery(customerId, filter);
+  return all<TimelineEvent>(q.sql, q.params);
 }
 
 export async function competitorRecords(customerId: string) {

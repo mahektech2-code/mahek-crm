@@ -5,9 +5,9 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
-import { plural } from '../src/lib/format';
+import { isoDate, plural, pretty } from '../src/lib/format';
 import { conflictCount, listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
-import { mediaCounts } from '../src/sync/media';
+import { mediaCounts, retryFailedMedia } from '../src/sync/media';
 import { syncNow } from '../src/sync/engine';
 import { useStore } from '../src/state/store';
 import { runningBuild } from '../src/native/updates';
@@ -21,21 +21,51 @@ import { runningBuild } from '../src/native/updates';
  * record somebody else overwrote is stated plainly rather than silently
  * dropped.
  *
- * "Send now" fires a sync and returns. It does not wait for it: a screen that
- * blocked on the network to show a queue would be the one thing in this app
- * that does.
+ * "Send now" waits on the pass only far enough to say what came of it, and the
+ * screen is never blocked on the network while it does — one button goes quiet
+ * and everything else stays live. That much is worth waiting for: this is the
+ * screen somebody opens BECAUSE he thinks his work is stuck, and a toast fired
+ * before the call could only ever repeat what he already hoped.
  */
 
-function stateLabel(s: string): string {
-  return s === 'failed'
+/**
+ * What state a row is in, in a word.
+ *
+ * `markFailure` puts an item back as `queued` for the first five attempts, so
+ * everything that had tried and failed read "Waiting" — exactly like a record
+ * saved a second ago. An order that has been refused by the tower five times
+ * and one taken thirty seconds ago are the same badge, and the difference
+ * between them is the whole reason somebody opens this screen.
+ */
+function stateLabel(q: QueueItem): string {
+  return q.state === 'failed'
     ? 'Failed'
-    : s === 'syncing'
+    : q.state === 'syncing'
       ? 'Sending'
-      : s === 'rejected'
+      : q.state === 'rejected'
         ? 'Refused'
-        : s === 'blocked'
+        : q.state === 'blocked'
           ? 'Held back'
-          : 'Waiting';
+          : q.attempts > 0
+            ? 'Retrying'
+            : 'Waiting';
+}
+
+/**
+ * WHY IT IS STUCK, which nothing on this screen used to say.
+ *
+ * `failureReason` is written on every failure, every block and every refusal —
+ * the tower's own words, the office's refusal, and for a held-back item the
+ * sentence that names the real problem: a record it depends on did not go
+ * through. All of it was in the table and read by nobody, so a salesman pressed
+ * Retry on a payment for ever rather than being sent to the visit behind it.
+ * The attempt count rides with it, because "tried 5 times" and "tried once" are
+ * a different afternoon.
+ */
+function whyStuck(q: QueueItem): string | null {
+  const tries = q.attempts > 0 ? 'Tried ' + plural(q.attempts, 'time') : null;
+  const parts = [tries, q.failureReason].filter((p): p is string => !!p);
+  return parts.length ? parts.join(' · ') : null;
 }
 
 function stateTone(s: string): BadgeTone {
@@ -63,9 +93,21 @@ function describe(item: QueueItem): string {
   return p.customerName ?? p.title ?? p.reason ?? item.entityId.slice(-6).toUpperCase();
 }
 
-function hhmm(ms: number): string {
+/**
+ * `09:14` for something saved today, `9 Sep 09:14` for anything older.
+ *
+ * A time on its own made every row read as this morning — and the case this
+ * screen exists for is precisely the one where that is wrong: a week offline,
+ * or a queue that has stopped draining, where every row is from a different day
+ * and all of them printed the same shape. Telling an order taken twenty minutes
+ * ago from one stuck since Tuesday is the whole signal that something is wrong
+ * rather than merely slow.
+ */
+function when(ms: number, today: string): string {
   const d = new Date(ms);
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const day = isoDate(d);
+  return day === today ? hm : pretty(day) + ' ' + hm;
 }
 
 export default function SyncScreen() {
@@ -78,6 +120,12 @@ export default function SyncScreen() {
   const [counts, setCounts] = React.useState<Record<string, number>>({});
   const [media, setMedia] = React.useState({ pending: 0, failed: 0 });
   const [conflicts, setConflicts] = React.useState(0);
+  /* A pass is in flight. The button used to stay live throughout, so he could
+     fire it six times and be told six times that everything was sending. */
+  const [sending, setSending] = React.useState(false);
+  /* Read once rather than during render — the clock is impure, and every row
+     on the list is compared against this one value. */
+  const [today] = React.useState(() => isoDate(new Date()));
 
   const load = React.useCallback(() => {
     let live = true;
@@ -96,7 +144,45 @@ export default function SyncScreen() {
 
   useFocusEffect(load);
 
-  const waiting = rows.length + media.pending + media.failed;
+  /**
+   * SEND, AND THEN SAY WHAT CAME OF IT.
+   *
+   * The toast used to be raised BEFORE the call and `SyncOutcome.reason` thrown
+   * on the floor — so "Sending everything now" appeared with no signal at all,
+   * and again while a pass was already running, and again on the sixth press.
+   * This is the one screen a salesman opens BECAUSE he suspects his work is
+   * stuck, and it answered a real question with a reassurance: he walked away
+   * believing the day had gone up.
+   *
+   * `syncNow` has always answered why it did not run. It simply had nowhere to
+   * be read.
+   */
+  const sendNow = React.useCallback(async () => {
+    setSending(true);
+    try {
+      const outcome = await syncNow({ manual: true });
+      load();
+      notify(
+        !outcome.ran
+          ? (outcome.reason ?? 'Nothing could be sent just now')
+          : outcome.pushed === 0
+            ? 'Nothing was waiting to go up'
+            : outcome.accepted > 0
+              ? plural(outcome.accepted, 'record') + ' sent'
+              : outcome.rejected > 0
+                ? plural(outcome.rejected, 'record') + ' the office would not accept'
+                : (outcome.reason ?? 'Nothing went up — your work is still safe on this phone'),
+      );
+    } finally {
+      setSending(false);
+    }
+  }, [load, notify]);
+
+  /* The headline counts the QUEUE, not the rows drawn — `listQueue` caps at
+     fifty, so a hundred and twenty waiting items said "50 things waiting"
+     directly above a caption reading "of 120 waiting". `depth` and the status
+     strip's own `pendingCount` are now one predicate, so all three agree. */
+  const waiting = depth + media.pending + media.failed;
   const rejected = counts.rejected ?? 0;
 
   return (
@@ -111,27 +197,95 @@ export default function SyncScreen() {
           Everything you save works offline. It goes out on its own when you have signal.
         </T>
         <PrimaryButton
-          label="Send now"
-          onPress={() => {
-            /* Fired, not awaited. The queue on screen refreshes when it lands. */
-            void syncNow({ manual: true }).then(load);
-            notify('Sending everything now');
-          }}
+          label={sending ? 'Sending…' : 'Send now'}
+          disabled={sending}
+          onPress={() => void sendNow()}
           style={{ marginTop: 14, borderRadius: radius.xl }}
         />
       </Card>
 
-      {media.pending + media.failed > 0 ? (
+      {media.pending > 0 ? (
         <T s="caption" style={{ marginTop: 10 }}>
-          {plural(media.pending + media.failed, 'photo or recording') +
+          {/* The plural form is given rather than derived: appending an `s` to
+              the whole phrase reads "2 photo or recordings". */}
+          {plural(media.pending, 'photo or recording', 'photos and recordings') +
             ' uploading separately — records always go first.'}
         </T>
       ) : null}
 
+      {/* A PHOTOGRAPH THAT GAVE UP IS NOT ONE STILL UPLOADING.
+          Both halves were added together under the word "uploading", and
+          `failed` was terminal — nothing in the app moved a media row back, so
+          the sentence was describing a file that was never going anywhere
+          again. It matters most for the one file that IS the record: an
+          attendance selfie is the only evidence that whoever marked the day
+          worked it, and a cheque photograph is what accounts match a receipt
+          against. Neither can be taken a second time tomorrow. */}
+      {media.failed > 0 ? (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+            minHeight: 56,
+            paddingHorizontal: 16,
+            marginTop: 12,
+            borderWidth: 1,
+            borderColor: C.dangerBg,
+            backgroundColor: C.dangerBg,
+            borderRadius: radius.card,
+          }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>Could not be sent</T>
+            <T s="caption" style={{ color: C.danger }}>
+              {plural(media.failed, 'photo or recording', 'photos and recordings') +
+                ' gave up — they are still on this phone.'}
+            </T>
+          </View>
+          <Pressable
+            onPress={() => {
+              void retryFailedMedia().then((n) => {
+                load();
+                notify(
+                  n === 0
+                    ? 'Nothing left to try again'
+                    : plural(n, 'photo or recording', 'photos and recordings') + ' back in the queue',
+                );
+                /* Media rides out on the back of a pass — see the `finally` in
+                   `syncNow`. Queuing them and never asking for one would leave
+                   him pressing a button that changed a column and nothing else. */
+                void syncNow({ manual: true }).then(load);
+              });
+            }}
+            accessibilityRole="button"
+            style={{
+              height: 48,
+              paddingHorizontal: 12,
+              borderWidth: 1,
+              borderColor: C.danger,
+              borderRadius: radius.md,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            <T style={{ fontSize: 15, color: C.danger }}>Retry</T>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* An empty outbox drew an empty card: a bordered, rounded, shadowed slab
+          two points tall sitting directly under the sentence saying everything
+          has gone up, which reads as a row that failed to draw. `listQueue` and
+          `queueDepth` ask the same question, so no rows means no depth and the
+          caption below cannot be lost with it. */}
+      {rows.length > 0 ? (
       <ListCard style={{ marginTop: 12 }}>
         {depth > rows.length ? (
           <T s="caption" style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-            {`Showing the ${rows.length} most urgent of ${depth} waiting.`}
+            {/* "records" rather than a bare count: photographs are counted in
+                the headline above and called out in their own line, and a
+                second unqualified number on one screen is how this screen came
+                to disagree with itself three ways in the first place. */}
+            {`Showing the ${rows.length} most urgent of ${plural(depth, 'record')} waiting.`}
           </T>
         ) : null}
         {rows.map((q, i) => (
@@ -148,16 +302,25 @@ export default function SyncScreen() {
             }}>
             <View style={{ flex: 1, minWidth: 0 }}>
               <T style={{ fontSize: 15, color: C.ink }}>{KIND[q.entityType] ?? q.entityType}</T>
-              <T s="caption">{describe(q) + ' · ' + hhmm(q.createdAt)}</T>
+              <T s="caption">{describe(q) + ' · ' + when(q.createdAt, today)}</T>
+              {/* Coloured to match the badge beside it — an item still
+                  retrying is amber, not red. */}
+              {whyStuck(q) ? (
+                <T s="caption" style={{ color: stateTone(q.state) === 'danger' ? C.danger : C.warnInk, marginTop: 2 }}>
+                  {whyStuck(q)}
+                </T>
+              ) : null}
             </View>
-            <Badge tone={stateTone(q.state)}>{stateLabel(q.state)}</Badge>
+            <Badge tone={stateTone(q.state)}>{stateLabel(q)}</Badge>
             {q.state === 'failed' || q.state === 'blocked' ? (
               <Pressable
                 onPress={async () => {
                   await retryItem(q.id);
                   load();
-                  notify('Trying again');
-                  void syncNow({ manual: true }).then(load);
+                  /* The local half is true whatever the radio is doing — the
+                     item is back in the queue. What the pass itself managed is
+                     the half that used to be discarded. */
+                  await sendNow();
                 }}
                 accessibilityRole="button"
                 style={{
@@ -176,6 +339,7 @@ export default function SyncScreen() {
           </View>
         ))}
       </ListCard>
+      ) : null}
 
       {/* A refusal is not a queue item to retry blindly — it goes to the screen
           that says what the office objected to and how to correct it. */}

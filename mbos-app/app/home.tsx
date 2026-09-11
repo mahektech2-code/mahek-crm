@@ -30,6 +30,7 @@ import { cashInHand } from '../src/data/payments';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
 import { followUpCounts, visitsToday } from '../src/data/visits';
 import { stopCounts } from '../src/data/journey';
+import { lastPullAt } from '../src/sync/api';
 import { withinGeofence } from '../src/engines/geo';
 import { fixOf, getFix } from '../src/native/location';
 import { ensureLocationPermission } from '../src/native/permissions';
@@ -101,6 +102,33 @@ function greetingFor(hour: number): string {
   return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 }
 
+/** `September 2026` from the row's own `2026-09`, off the list already here. */
+function monthLabel(period: string): string {
+  const [y, m] = period.split('-').map(Number);
+  const name = MONTHS[m - 1];
+  return y && name ? name + ' ' + y : period;
+}
+
+/**
+ * When the office last worked the score out.
+ *
+ * Asia/Kolkata by name, like everything else that turns a stored instant into
+ * a wall clock here: the phone's own zone is whatever the handset is set to,
+ * and a figure a salesman is appraised on must not read differently because he
+ * crossed a border. The same shape `/performance` prints.
+ */
+function asAt(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return 'unknown';
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: 'numeric',
+    minute: '2-digit',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'Asia/Kolkata',
+  }).format(at);
+}
+
 export default function Home() {
   const boot = useBoot();
   const userId = boot.session?.user.id ?? null;
@@ -108,11 +136,46 @@ export default function Home() {
   const notify = useStore((s) => s.notify);
   const askConfirm = useStore((s) => s.askConfirm);
 
-  const [day, setDay] = React.useState<Day>(EMPTY);
+  /*
+   * `undefined` IS STILL READING, and every figure on this screen now says so.
+   *
+   * The reasoning three lines below was written for `month` and applied to that
+   * card alone. `day` started at `EMPTY` — every figure a literal zero — and
+   * was rendered immediately while ten SQLite reads were still in flight, so
+   * the first screen after sign-in read "₹0 · 0 orders", "0 of 0 · No plan
+   * today", "₹0 · Nothing to deposit". On a handset whose pull has never landed
+   * those zeros were not a frame, they were permanent, and the status strip
+   * said "All sent" over them because that pip counts the outbox and not the
+   * inbox. He opens the app at 9am and reads a screen saying he has no work,
+   * which is the one failure nobody reports: it looks like having nothing to
+   * do.
+   *
+   * `EMPTY` survives as the stand-in for the mechanical reads below — the
+   * ticker interval and the worked-time sum need a shape, not a sentence — and
+   * nothing DISPLAYED comes from it.
+   */
+  const [day, setDay] = React.useState<Day | undefined>(undefined);
   /* `undefined` is still reading, `null` is read and there is nothing. Two
      different sentences, and collapsing them shows "no target" for a frame to
      somebody who has one. */
   const [month, setMonth] = React.useState<PerformanceMonth | null | undefined>(undefined);
+  /*
+   * Nothing has ever come down from the office onto this handset.
+   *
+   * Answered by the pull's own marker rather than guessed at from the figures:
+   * a salesman with no plan and no orders at 9am has honest zeros, and a
+   * handset that has never synced has no book at all. Drawing those two the
+   * same way is what made a broken install indistinguishable from a quiet
+   * morning.
+   */
+  const [neverPulled, setNeverPulled] = React.useState(false);
+  /*
+   * A READ THAT FAILED IS NOT A READ STILL RUNNING. `load` had no `catch` at
+   * all, so one rejected promise among the eleven left this screen reading
+   * "Reading…" for the rest of the session — which is a spinner that never
+   * resolves, and reads as a dead handset with nothing saying what to do.
+   */
+  const [readErr, setReadErr] = React.useState<string | null>(null);
   const [starting, setStarting] = React.useState(false);
 
   /*
@@ -130,8 +193,11 @@ export default function Home() {
    * The duration is derived from the sessions and this clock now, so it moves
    * because the day is running rather than because something re-fetched.
    */
-  const now = useTicker(day.running ? 1000 : 60_000);
-  const workedSoFarMs = workedMs(day.sessions, now);
+  /* The shape the clock and the worked-time sum need, before the read lands.
+     Nothing on the screen is drawn from it — see the note on `day` above. */
+  const dayOrEmpty = day ?? EMPTY;
+  const now = useTicker(dayOrEmpty.running ? 1000 : 60_000);
+  const workedSoFarMs = workedMs(dayOrEmpty.sessions, now);
 
   /*
    * Location is asked for HERE, on the first open, and not at the check-in.
@@ -165,7 +231,13 @@ export default function Home() {
          than on a focus of its own so the card and the six figures above it
          describe the same moment. */
       listPerformance(),
-    ]).then(([stops, due, follow, orders, visits, cash, tasks, attendance, state, months]) => {
+      /* Whether anything has EVER arrived on this phone. Read beside the
+         figures rather than on its own, so the sentence under them and the
+         figures themselves describe the same moment. */
+      lastPullAt(),
+    ]).then(([stops, due, follow, orders, visits, cash, tasks, attendance, state, months, pulledAt]) => {
+      setReadErr(null);
+      setNeverPulled(pulledAt === 0);
       setMonth(months[0] ?? null);
       setDay({
         stops: stops.total,
@@ -188,34 +260,69 @@ export default function Home() {
         sessionCount: state.sessionCount,
         sessions: state.sessions,
       });
+    }).catch(() => {
+      /* Left `undefined` on purpose: the screen below draws the sentence rather
+         than a grid of zeros or a spinner that will never stop. `month` is
+         settled too, or its card would read "Reading…" for ever beside it. */
+      setMonth(null);
+      setReadErr('Your day could not be read on this phone. Close MBOS and open it again.');
     });
   }, [userId]);
 
   useFocusEffect(load);
 
-  const checkedIn = day.sessionCount > 0;
+  const checkedIn = !!day && day.sessionCount > 0;
 
   const today = new Date(now);
   const dateLine = `${WEEKDAYS[today.getDay()]}, ${today.getDate()} ${MONTHS[today.getMonth()]}`;
 
-  /* The six figures, labelled by the design and valued by the store. */
-  const dashValues: { v: string; s: string }[] = [
+  /*
+   * The six figures — or, until there are six figures, six dashes.
+   *
+   * Three states and they are three different sentences. Still reading is a
+   * moment; a read that failed is a handset to restart; and a handset nothing
+   * has ever reached is one to find signal for. A zero is none of those, and a
+   * zero is what all three used to print.
+   */
+  const figuresPending = !day || neverPulled;
+  const dashValues: { v: string; s: string; small?: boolean }[] = !day
+    ? DASH_CARDS.map(() => ({ v: '—', s: readErr ? 'Not read' : 'Reading…' }))
+    : neverPulled
+      ? DASH_CARDS.map(() => ({ v: '—', s: 'Nothing here yet' }))
+      : [
     {
+      /* "Not known yet" is a SENTENCE in a slot sized for ₹1,24,500 — one line,
+         tabular, in half of a 328-point card — so at Android's larger font
+         settings it truncated to "Not known y…". It is the honest answer this
+         tile exists to give, so it is drawn smaller rather than cut off. */
       v: day.orderValueUnknown ? 'Not known yet' : inrFromPaise(day.orderValuePaise),
       s: plural(day.orders, 'order'),
+      small: day.orderValueUnknown,
     },
-    { v: `${day.visits} of ${day.stops}`, s: day.stops ? 'On the plan' : 'No plan today' },
+    {
+      /* THE NUMERATOR IS STOPS DONE, not visits. `visitsToday` counts every
+         visit logged today, off-plan walk-ins included, and it was printed
+         against a denominator of today's PLANNED stops — so after two calls
+         nobody planned the tile legitimately read "5 of 3", while the day card
+         four lines above said "3 of 3 done" about the same morning. One
+         question, two numerators, both on one screen. The visits are still
+         here; they are the subtitle now. With no plan at all there is no
+         denominator to print, so the count stands on its own. */
+      v: day.stops ? `${day.stopsDone} of ${day.stops}` : String(day.visits),
+      s: day.stops ? plural(day.visits, 'visit') + ' logged' : 'No plan today',
+    },
     { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer') },
     { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit' },
     { v: String(day.tasks), s: day.tasksOverdue ? plural(day.tasksOverdue, 'overdue') : 'None overdue' },
     { v: String(day.followUps), s: `${day.followUpsToday} today` },
   ];
 
-  const dayAheadValues = [
-    String(day.stops),
-    compactInrFromPaise(day.collectPaise),
-    String(day.followUpsToday),
-  ];
+  /* Same rule, on the strip under the Start day button: a dash where there is
+     no answer yet, never a nought. */
+  const dayAheadValues =
+    !day || neverPulled
+      ? DAY_AHEAD.map(() => '—')
+      : [String(day.stops), compactInrFromPaise(day.collectPaise), String(day.followUpsToday)];
 
   /*
    * The selfie camera is a COMPONENT, and `startDay` needs a value from it, so
@@ -467,8 +574,22 @@ export default function Home() {
         </View>
       </View>
 
-      {/* ---- start the day, or what is left of it ---- */}
-      {!checkedIn ? (
+      {/* ---- start the day, or what is left of it ----
+
+          THE MOST CONSEQUENTIAL ZERO WAS THIS ONE. `checkedIn` is
+          `sessionCount > 0`, and before the read landed that was false — so a
+          salesman who had marked his attendance an hour earlier was shown
+          "Start day", and pressing it in that window opens a SECOND session
+          against his own record. Neither of the two answers is drawn until
+          there is one. */}
+      {!day ? (
+        <Card style={{ marginTop: 14, padding: 14 }}>
+          <Text style={type.label}>Your day</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 4 }}>
+            {readErr ?? 'Reading…'}
+          </Text>
+        </Card>
+      ) : !checkedIn ? (
         <View style={{ marginTop: 14 }}>
           <Pressable
             onPress={startDay}
@@ -513,10 +634,18 @@ export default function Home() {
                 <Text style={[type.caption, { marginTop: 2 }]}>{plural(day.sessionCount, 'session')} today</Text>
               ) : null}
             </View>
+            {/* NAMED FOR WHERE IT GOES. It read "Navigate", which is the word
+                `NavigateButton` uses two taps away on the journey and visit
+                screens — and that one launches turn-by-turn in Google Maps.
+                One word, two things, pressed on a bike. This opens the list,
+                so it is called what the list is called. */}
             <Pressable
               onPress={() => router.push('/journey')}
+              accessibilityRole="button"
               style={{ height: HIT, paddingHorizontal: 16, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(500)]}>Navigate</Text>
+              <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(500)]}>
+                Today’s route
+              </Text>
             </Pressable>
           </View>
 
@@ -574,7 +703,25 @@ export default function Home() {
               <Text
                 numberOfLines={1}
                 style={[
-                  { fontSize: 20, lineHeight: 26, marginVertical: 2, color: d.tone === 'danger' ? C.danger : d.tone === 'amber' ? C.warnInk : C.ink },
+                  /* The line height does not move with the size, so a tile
+                     saying a sentence is exactly as tall as one saying a
+                     number and the grid cannot jump. */
+                  /* A tile's tone belongs to its FIGURE. Left on, the em-dash
+                     standing in for a figure nobody has yet read drew in red
+                     under "Collection due" — an alarm about a number that does
+                     not exist. */
+                  {
+                    fontSize: dashValues[i].small ? 15 : 20,
+                    lineHeight: 26,
+                    marginVertical: 2,
+                    color: figuresPending
+                      ? C.muted
+                      : d.tone === 'danger'
+                        ? C.danger
+                        : d.tone === 'amber'
+                          ? C.warnInk
+                          : C.ink,
+                  },
                   weight(600),
                   tabular,
                 ]}>
@@ -585,6 +732,27 @@ export default function Home() {
           ))}
         </View>
       </Card>
+
+      {/*
+        NOTHING HAS COME DOWN FROM THE OFFICE YET, SAID IN WORDS.
+
+        This is the state the zeros hid, and it is permanent rather than a
+        frame: a handset whose pull has never landed has no customers, no plan
+        and no tasks, so every tile answered nought and the status strip said
+        "All sent" over the top of them — because that pip counts the outbox and
+        has nothing to say about the inbox. A salesman reads that as a day with
+        no work in it and gets on with something else.
+      */}
+      {day && neverPulled ? (
+        <Card style={{ marginTop: 12, padding: 14 }}>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Your book has not arrived</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
+            Nothing has come down from the office onto this phone yet, so these figures are empty
+            rather than nought. Find some signal and leave MBOS open for a minute — your customers,
+            today&rsquo;s plan and your tasks all arrive together.
+          </Text>
+        </Card>
+      ) : null}
 
       {/* ---- how the period is going ----
 
@@ -607,7 +775,13 @@ export default function Home() {
         style={{ marginTop: 12 }}>
         <Card style={{ padding: 14 }}>
           <Text style={type.label}>Your target</Text>
-          {month === undefined ? (
+          {readErr ? (
+            /* The read failed, and "the office has not set one" would be a
+               claim about the office rather than about this phone. */
+            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
+              Not read on this phone.
+            </Text>
+          ) : month === undefined ? (
             <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>Reading…</Text>
           ) : month === null || !month.hasTarget ? (
             <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
@@ -634,8 +808,24 @@ export default function Home() {
               <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
                 {shortfalls(month)[0] ?? 'You are at or above every target set for you.'}
               </Text>
+              {/*
+                WHICH MONTH, AND WHEN IT WAS WORKED OUT.
+
+                `load` takes the newest row the handset holds, which on the 3rd
+                is still last month's — and this card printed a score at 22
+                points with neither the period nor the as-at on it, so a big
+                number read as this month's live standing. `computedAt` was
+                here all along and was used as a BOOLEAN, to decide whether to
+                append "tap for the rest", and never printed. AGENTS.md states
+                the rule in as many words: the handset is sent the cache with
+                its `computed_at` and prints it, because a screen that implied
+                it was live would be believed. `/performance`, one tap away,
+                has done both since it shipped.
+              */}
               <Text style={[type.caption, { marginTop: 4 }]}>
-                {'As the office scored it' + (month.computedAt ? ' · tap for the rest' : '')}
+                {monthLabel(month.period) +
+                  (month.computedAt ? ' · as at ' + asAt(month.computedAt) : '') +
+                  ' · tap for the rest'}
               </Text>
             </>
           )}

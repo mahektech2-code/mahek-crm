@@ -610,6 +610,12 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
       followUpDate?: string | null;
       feedbackNotes?: string | null;
       convertedOrderId?: string | null;
+      /* THE OFFICE'S OWN WORD, which the wire did not carry until now.
+         `localSampleState` prefers it and keeps its timestamp derivation as
+         the fallback — that derivation can never produce the approved state,
+         because approval leaves no timestamp behind it, so a sample already on
+         a lorry read as one still waiting to be approved. */
+      state?: string | null;
       /* The lifecycle, §I–§K. `receivedAt` is the shop's own word and is what
          the review call is dated from — never inferred from `deliveredAt`. */
       dispatchedAt?: string | null;

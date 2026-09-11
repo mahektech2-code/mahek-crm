@@ -360,18 +360,45 @@ export const PICK_PAGE = 60;
  * origin at all it keeps the query's own ordering rather than inventing a
  * point, because a list sorted around a made-up origin looks right and is
  * wrong.
+ *
+ * THE ORIGIN IS THE CITY'S, AND THE PAGE IS ORDERED AROUND IT IN SQL. Both
+ * halves of that sentence are corrections, and they are the same bug read from
+ * either end.
+ *
+ *   The centroid used to be taken over whatever rows had just come back, which
+ *   is the SEARCH RESULT and not the city. So typing a letter moved the point
+ *   every distance on the screen was measured from, and the figure printed
+ *   against a shop nobody had touched changed as he typed. It is one
+ *   `AVG(gpsLat), AVG(gpsLng)` over the city's pinned shops now — the same
+ *   answer whatever is in the search box, which is what makes the number a
+ *   fact about the shop rather than about the query.
+ *
+ *   And the PAGE was still chosen by longest-unseen and only then re-sorted by
+ *   distance, so "nearest first" ordered the sixty shops he had not seen in
+ *   longest — a shop two hundred metres away that he called on last week was
+ *   not on the list at all, on a screen whose header says nearest sorts first.
+ *   The LIMIT has to sort by the same thing the screen does or the cap and the
+ *   order disagree, exactly as the city filter had to move into SQL for the
+ *   cap to mean anything.
+ *
+ * The SQL orders on a flat-earth square of the distance rather than the great
+ * circle: SQLite here has no trigonometry to call, and over one town a plain
+ * `Δlat² + (Δlng · cos lat)²` is monotone in the real distance, which is all an
+ * ORDER BY needs. The exact haversine still decides the order of the rows that
+ * come back — the held ticks are merged in there — so the number on the screen
+ * and the order it is in cannot disagree.
  */
 export async function pickCandidates(
   city: string | null,
   query = '',
   keep: string[] = [],
   opts: { forToday?: boolean; fix?: { lat: number; lng: number } | null } = {},
-): Promise<{ rows: Candidate[]; total: number }> {
+): Promise<{ rows: Candidate[]; total: number; origin: { lat: number; lng: number } | null }> {
   const q = query.trim().toLowerCase();
   const here = (city ?? '').trim().toLowerCase();
 
   const clauses: string[] = [];
-  const args: string[] = [];
+  const args: (string | number)[] = [];
   if (here) {
     clauses.push(`lower(trim(COALESCE(city,''))) = ?`);
     args.push(here);
@@ -384,16 +411,47 @@ export async function pickCandidates(
 
   const COLS = `id, name, area, city, beat, outstandingPaise, lastVisitDate, lastOrderDate, gpsLat, gpsLng`;
 
+  /* The middle of our business in that town, asked of the CITY and never of
+     the page. The search box narrows what is listed; it must not move what the
+     listing is measured from. */
+  const centre = await one<{ lat: number | null; lng: number | null }>(
+    `SELECT AVG(gpsLat) AS lat, AVG(gpsLng) AS lng
+       FROM customers
+      WHERE gpsLat IS NOT NULL AND gpsLng IS NOT NULL
+            ${here ? `AND lower(trim(COALESCE(city,''))) = ?` : ''}`,
+    here ? [here] : [],
+  );
+
+  const origin = pickOrigin({
+    fix: opts.fix ?? null,
+    forToday: opts.forToday ?? false,
+    /* One element, and it is already the mean of them — `pickOrigin` averages
+       what it is given, so handing it the centroid hands it the centroid. The
+       rule about WHICH point to use stays in the engine, where the route screen
+       can read it too. */
+    cityShops:
+      centre?.lat != null && centre?.lng != null ? [{ lat: centre.lat, lng: centre.lng }] : [],
+  });
+
   /* Asked of SQLite rather than of the array. A capped list that counts itself
      reports sixty shops on a book of a thousand and nothing says otherwise. */
   const counted = await one<{ n: number }>(`SELECT COUNT(*) AS n FROM customers ${where}`, args);
 
+  /* A shop with no pin cannot be measured and sorts LAST rather than being
+     dropped — the route engine's rule, for its reason: a shop missing from the
+     day's list is a shop nobody visits and nobody ever finds out why. */
+  const squash = origin ? Math.cos((origin.lat * Math.PI) / 180) ** 2 : 0;
+  const nearestFirst = `(gpsLat IS NULL OR gpsLng IS NULL) ASC,
+        ((gpsLat - ?) * (gpsLat - ?)) + ((gpsLng - ?) * (gpsLng - ?) * ?) ASC,
+        name ASC`;
+  const longestUnseen = `lastVisitDate IS NULL DESC, lastVisitDate ASC, name ASC`;
+
   const page = await all<Candidate>(
     `SELECT ${COLS}
        FROM customers ${where}
-      ORDER BY lastVisitDate IS NULL DESC, lastVisitDate ASC, name ASC
+      ORDER BY ${origin ? nearestFirst : longestUnseen}
       LIMIT ${PICK_PAGE}`,
-    args,
+    origin ? [...args, origin.lat, origin.lat, origin.lng, origin.lng, squash] : args,
   );
 
   /* Already-ticked shops are never cut. A shop ticked, then searched past, then
@@ -410,26 +468,15 @@ export async function pickCandidates(
   const rows = [...held, ...page];
   const total = counted?.n ?? rows.length;
 
-  const origin = pickOrigin({
-    fix: opts.fix ?? null,
-    forToday: opts.forToday ?? false,
-    cityShops: rows
-      .filter((r) => r.gpsLat != null && r.gpsLng != null)
-      .map((r) => ({ lat: r.gpsLat as number, lng: r.gpsLng as number })),
-  });
+  if (!origin) return { rows, total, origin };
 
-  if (!origin) return { rows, total };
-
-  /* A shop with no pin cannot be measured and sorts LAST rather than being
-     dropped — the route engine's rule, for its reason: a shop missing from the
-     day's list is a shop nobody visits and nobody ever finds out why. */
   const far = Number.POSITIVE_INFINITY;
   const away = (r: Candidate) =>
     r.gpsLat != null && r.gpsLng != null
       ? haversineMetres(origin, { lat: r.gpsLat, lng: r.gpsLng })
       : far;
 
-  return { rows: [...rows].sort((x, y) => away(x) - away(y)), total };
+  return { rows: [...rows].sort((x, y) => away(x) - away(y)), total, origin };
 }
 
 /**

@@ -3,7 +3,7 @@ import { View, Text, Pressable, Platform, ScrollView, StyleSheet } from 'react-n
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, usePathname } from 'expo-router';
 import { color as C, type, weight } from '../../theme/tokens';
-import { Header, StatusStrip, TabBar, type StripTone, type TabKey } from './Chrome';
+import { Header, StatusStrip, TabBar, TabBarAction, type StripTone, type TabKey } from './Chrome';
 import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
 import { useKeyboardHeight } from '../ui/keyboard';
 import { Appear } from '../ui/motion';
@@ -50,6 +50,7 @@ export const FROM_LABEL: Record<string, string> = {
   'lead-qualify': 'Qualification',
   maps: 'Offline maps',
   pick: 'Pick your shops',
+  nearby: 'Near me',
 };
 
 /** Reads the recorded entry route, so the label and the destination agree. */
@@ -134,6 +135,7 @@ export function AppFrame({
   const checkedIn = checkInAt != null;
   const gps = useStore((s) => s.gps);
   const toast = useStore((s) => s.toast);
+  const toastTone = useStore((s) => s.toastTone);
   const clearToast = useStore((s) => s.clearToast);
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
@@ -149,7 +151,16 @@ export function AppFrame({
   const strip: { key: string; label: string; tone: StripTone; onPress: () => void }[] = [
     {
       key: 'att',
-      label: checkInAt != null ? 'In since ' + hhmm(checkInAt) : 'Not checked in',
+      /*
+       * SHORT ENOUGH FOR THE CELL IT HAS.
+       *
+       * Three cells share the width: on a 360pt handset each gets about 117,
+       * less 16 of padding, less the dot and its gap, which leaves roughly 88
+       * for the text. "Not checked in" and "In since 09:12" both measure about
+       * that at 12pt, so the one fact somebody looks for first thing in the
+       * morning rendered as "Not checked i…". These fit with room to spare.
+       */
+      label: checkInAt != null ? 'In ' + hhmm(checkInAt) : 'Not in',
       tone: checkedIn ? 'ok' : 'idle',
       onPress: () => router.push(`/attendance${fromHere}`),
     },
@@ -157,7 +168,19 @@ export function AppFrame({
       key: 'gps',
       label: gps === 'locked' ? 'GPS locked' : gps === 'off' ? 'GPS off' : 'Finding GPS',
       tone: gps === 'locked' ? 'ok' : gps === 'off' ? 'warn' : 'idle',
-      onPress: () => router.push('/home'),
+      /*
+       * Home IS the screen that explains this one — it is where the location
+       * permission is asked for on first open, and where starting the day
+       * takes the fix that sets this light. What it was not is a PUSH:
+       * standing on Home, which is where he is most of the day, tapping "GPS
+       * off" stacked a second copy of the page underneath itself, exactly the
+       * defect the bell was rewritten to avoid two files down. Home is a tab
+       * root, so it is reached the way the tab bar reaches one, and from Home
+       * there is nowhere to go.
+       */
+      onPress: () => {
+        if (here !== 'home') router.replace('/home');
+      },
     },
     {
       key: 'sync',
@@ -169,8 +192,15 @@ export function AppFrame({
        * light stops meaning anything: the one state worth noticing looked
        * exactly like the ordinary one. And "0 to send" is a count of nothing,
        * where the fact somebody wants is that the handset is clear.
+       *
+       * "Waiting" rather than "to send" because `pendingCount` now counts a
+       * refused record too, and a refusal is not going to be sent — it is
+       * waiting for him. It is also the word the Sync card's own headline uses
+       * for the same number, and the two disagreeing about one queue on one
+       * screen is what this was: three refusals read "3 things waiting" on the
+       * card under a green "All sent" thirty points above it.
        */
-      label: waiting === 0 ? 'All sent' : `${waiting} to send`,
+      label: waiting === 0 ? 'All sent' : `${waiting} waiting`,
       tone: waiting === 0 ? 'ok' : 'warn',
       onPress: () => router.push(`/sync${fromHere}`),
     },
@@ -252,17 +282,23 @@ export function AppFrame({
       {/* The tab bar is hidden while typing. Left in place it floats over the
           keyboard on Android, covering the top row of keys. */}
       {keyboardHeight === 0 ? (
-        <TabBar
-          active={activeTab}
-          bottomInset={insets.bottom}
-          onTab={(k) => router.replace(`/${k}`)}
-          onAction={() => set({ sheet: 'action' })}
-          /* The office proposes a day and waits on the answer to plan a week.
-             The Journey screen has always listed those days at the top; what
-             it could not do was say so from anywhere else in the app, so being
-             asked and never noticing looked identical to having no plan. */
-          badges={{ journey: daysToAgree }}
-        />
+        <>
+          <TabBar
+            active={activeTab}
+            bottomInset={insets.bottom}
+            onTab={(k) => router.replace(`/${k}`)}
+            /* The office proposes a day and waits on the answer to plan a week.
+               The Journey screen has always listed those days at the top; what
+               it could not do was say so from anywhere else in the app, so being
+               asked and never noticing looked identical to having no plan. */
+            badges={{ journey: daysToAgree }}
+          />
+          {/* Beside the bar rather than inside it, because it is taller than
+              the bar is — see `TabBarAction`. Same pixel, same behaviour, and
+              it no longer depends on a renderer being willing to hit-test
+              outside a parent's bounds. */}
+          <TabBarAction bottomInset={insets.bottom} onPress={() => set({ sheet: 'action' })} />
+        </>
       ) : null}
 
       <ActionSheet
@@ -297,7 +333,7 @@ export function AppFrame({
           would be four gates, and three of them would be right. */}
       <TravelGate />
 
-      <Toast message={toast} onDone={clearToast} lift={footerHeight} />
+      <Toast message={toast} tone={toastTone} onDone={clearToast} lift={footerHeight} />
     </View>
   );
 }

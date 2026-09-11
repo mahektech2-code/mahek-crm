@@ -67,6 +67,16 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
     {
       label: 'Work',
       items: [
+        /* THE SCREEN NOTHING ROUTED TO. `/nearby` answers the one question a
+           salesman standing in a lane actually has — of the shops around me,
+           which one now and why — and it was finished, tested and reachable
+           from nowhere in the app. The only "near me" he could get to was the
+           customers list's distance SORT, which answers the same question by
+           the opposite rule: this one orders by what is worth doing and treats
+           distance as a cost, and a shop with no reason to call is not on it at
+           all. No badge, because working the answer out needs a fix and a read
+           of every pinned shop, and a menu will not wait for either. */
+        { label: 'Near me', badge: '', route: 'nearby' },
         { label: 'Tasks', badge: n.overdueTasks ? plural(n.overdueTasks, 'overdue', 'overdue') : '', route: 'tasks' },
         { label: 'Leads', badge: n.openLeads ? plural(n.openLeads, 'open', 'open') : '', route: 'leads' },
         /* These two named a LIST and opened a capture form — the only two
@@ -156,6 +166,13 @@ export default function MoreScreen() {
 
   const [counts, setCounts] = React.useState<Counts>(EMPTY);
 
+  /* Read here rather than inside the callback below, which held an empty
+     dependency array — so a focus that landed before the session was restored
+     passed '' to `priceDay` and `cashInHand`, and nothing re-ran when it
+     arrived. The badges are the point of this screen, and the two that were
+     silently empty are the cash he is carrying and the day he has to close. */
+  const userId = boot.session?.user.id ?? '';
+
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
@@ -168,11 +185,11 @@ export default function MoreScreen() {
         listSamples(),
         pendingCount(),
         queueCounts(),
-        priceDay(boot.session?.user.id ?? '', today),
+        priceDay(userId, today),
         savedMaps().catch(() => []),
         /* Cash he is carrying, as a COUNT of collections rather than a figure:
            a rupee amount in a menu badge reads as something owed to him. */
-        cashInHand(boot.session?.user.id ?? ''),
+        cashInHand(userId),
         overdueSamples(today),
       ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue, today_, maps, cash, late]) => {
         if (!live) return;
@@ -195,7 +212,7 @@ export default function MoreScreen() {
       return () => {
         live = false;
       };
-    }, []),
+    }, [userId]),
   );
 
   const GROUPS = groupsFor(counts);

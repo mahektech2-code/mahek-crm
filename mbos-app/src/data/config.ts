@@ -28,8 +28,21 @@ const DEFAULTS: Record<string, unknown> = {
      base there is nothing to be outside of, and a check-in is never refused
      for want of one. */
   'mbos.attendance.baseLocation': null,
-  'mbos.location.gpsAccuracyThresholdM': 100,
-  'mbos.location.visitMismatchM': 150,
+  /*
+   * BOTH OF THESE WERE WIDER THAN THE OFFICE'S OWN NUMBERS, and the second
+   * decides whether a salesman is let through the door.
+   *
+   * `getConfig` returns `DEFAULTS[key]` whenever the key is present, so a
+   * caller's own fallback argument never fires — these two values ARE what the
+   * app runs on until the first pull lands, and they said 100 and 150 where
+   * `lib/config/registry.ts` says 50 and 100. The accuracy one is the worse
+   * half: a fix the office would call untrustworthy was being trusted, and the
+   * check-in gate is measured against it, so on a handset signing in for the
+   * first time a man standing in the right shop could be refused on a reading
+   * nobody should have believed.
+   */
+  'mbos.location.gpsAccuracyThresholdM': 50,
+  'mbos.location.visitMismatchM': 100,
   'mbos.location.routeDeviationM': 2000,
   'mbos.location.unplannedVisitsPerDay': 3,
   /* Following the route while the day is open. The office decides; this is
@@ -173,6 +186,19 @@ const DEFAULTS: Record<string, unknown> = {
   'mbos.leads.staleDays': 30,
   'mbos.leads.archiveDays': 90,
   'mbos.leads.escalateAfterDays': 7,
+  /*
+   * §B's two, and their absence printed the database on a lead card.
+   *
+   * `visitCapThresholds()` reads both and returns an object either way, so the
+   * `capCfg &&` guard on the Leads list passed with `maxSuspectVisits`
+   * undefined and `visitCapLabel` concatenated it: "Visit 2 / undefined", on a
+   * salesman's first day. Worse quietly: `visitCapState` compares against
+   * undefined, every comparison is false, and the answer is always `ok` — so
+   * nobody was ever asked to decide. Both are copied from the registry, which
+   * warns at two and demands an answer at three.
+   */
+  'mbos.leads.visitsBeforeDecision': 2,
+  'mbos.leads.maxSuspectVisits': 3,
 
   /*
    * The funnel's own thresholds and its four coded lists.

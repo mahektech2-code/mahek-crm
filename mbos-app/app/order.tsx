@@ -41,6 +41,20 @@ import { useBoot } from '../src/state/boot';
  * is typed over.
  */
 
+/**
+ * How many search results are offered at once.
+ *
+ * It was five, and five is a SLICE of this catalogue rather than an answer to
+ * it: one finished good is several SKUs differing only by pack — "Nano Thinner
+ * - 5 Liter (6 Can/Box)", "… (Loose)", "… 20 Liter" — and the search matches
+ * the formulation and the brand as well as the name, so "nano" alone matches
+ * far more than five. Nothing on the screen said the list was cut, so mid-call
+ * he read five rows that did not include the pack the customer asked for and
+ * concluded we do not stock it. The line under the list is the other half of
+ * the fix: a cap nobody is told about is the same bug at twenty.
+ */
+const SEARCH_LIMIT = 20;
+
 type Product = {
   id: string;
   name: string;
@@ -91,6 +105,17 @@ export default function OrderScreen() {
   const [billingOptions, setBillingOptions] = React.useState<BillingChoice[] | null>(null);
   const [billing, setBilling] = React.useState<string | null>(null);
   const [pickingBiller, setPickingBiller] = React.useState(false);
+  /**
+   * The order is being written.
+   *
+   * `saveOrder` awaits a transaction, a dynamic import and an enqueue before
+   * the cart is cleared, and nothing moved `canSubmit` during that window —
+   * so a second tap on a slow phone ran the whole handler again. Each call
+   * takes a fresh `stamp()` id, so the two payloads differ and the queue's
+   * idempotency key cannot dedupe them: the office receives two orders, and
+   * the customer is billed for both.
+   */
+  const [busy, setBusy] = React.useState(false);
 
   const remember = React.useCallback((rows: Product[]) => {
     setKnown((prev) => {
@@ -169,7 +194,7 @@ export default function OrderScreen() {
   React.useEffect(() => {
     if (!query) return;
     let live = true;
-    void searchProducts(query, 5).then((rows) => {
+    void searchProducts(query, SEARCH_LIMIT).then((rows) => {
       if (!live) return;
       setResults(rows);
       setResultsFor(query);
@@ -230,8 +255,33 @@ export default function OrderScreen() {
     );
   }
 
-  const dues = c.outstandingPaise / 100;
-  const limit = c.creditLimitPaise != null ? c.creditLimitPaise / 100 : null;
+  /*
+   * THE CREDIT ON THIS SCREEN IS THE BILLER'S, and it was the shop's.
+   *
+   * `assessCart` has always computed the block, the limit and the approval off
+   * whoever is INVOICED; the two figures drawn beside them came off
+   * `useCustomer()`, which is the shop the salesman is standing in. On an
+   * account served through a distributor that put the shop's balance under the
+   * distributor's name and drew a bar out of the shop's limit — comfortably
+   * half full, over an assessment saying the order needed approval, or reading
+   * "nothing owing" over a distributor already past their limit. The figures
+   * come out of the assessment now, from the row the verdict was reached on.
+   *
+   * The id is checked because an assessment for the PREVIOUS biller is still
+   * in state for a frame after the choice changes, and one frame of the wrong
+   * party's balance is the same lie told faster. Until the answer lands the
+   * shop's own figures stand only where the shop IS the biller; otherwise
+   * nothing is asserted.
+   */
+  const credit =
+    assessment && assessment.billingCustomerId === billing
+      ? { outstandingPaise: assessment.billingOutstandingPaise, creditLimitPaise: assessment.billingCreditLimitPaise }
+      : billing === c.id
+        ? { outstandingPaise: c.outstandingPaise, creditLimitPaise: c.creditLimitPaise }
+        : null;
+
+  const dues = (credit?.outstandingPaise ?? 0) / 100;
+  const limit = credit?.creditLimitPaise != null ? credit.creditLimitPaise / 100 : null;
   const blocked = !!assessment && !assessment.canOrder;
   const valueUnavailable = assessment?.valueUnavailable ?? true;
   const cartTotal = (assessment?.valuePaise ?? 0) / 100;
@@ -268,6 +318,10 @@ export default function OrderScreen() {
   };
 
   const submit = async () => {
+    /* `whyDisabled` keeps this button pressable so the handler can refuse in
+       words, which means the in-flight lock has to be checked here as well as
+       drawn on the button. */
+    if (busy) return notify('Still sending the last one…');
     if (!inCart.length) return notify('Add something first');
     if (blank) return notify('Every line needs a quantity');
     if (!assessment || blocked) return notify(assessment?.blockReason ?? 'This customer cannot be ordered for');
@@ -279,27 +333,32 @@ export default function OrderScreen() {
       );
     }
 
-    const { needsApproval: sentForApproval } = await saveOrder({
-      customerId: biller.id,
-      customerName: biller.name,
-      deliveryCustomerId: deliverTo?.id ?? null,
-      deliveryCustomerName: deliverTo?.name ?? null,
-      userId: boot.session?.user.id ?? '',
-      lines: inCart,
-      assessment,
-    });
+    setBusy(true);
+    try {
+      const { needsApproval: sentForApproval } = await saveOrder({
+        customerId: biller.id,
+        customerName: biller.name,
+        deliveryCustomerId: deliverTo?.id ?? null,
+        deliveryCustomerName: deliverTo?.name ?? null,
+        userId: boot.session?.user.id ?? '',
+        lines: inCart,
+        assessment,
+      });
 
-    markVisitDone(
-      'order',
-      plural(inCart.length, 'line') + (valueUnavailable ? '' : ' · ' + inr(cartTotal)),
-    );
-    set({ cart: {} });
-    notify(
-      sentForApproval
-        ? 'Sent to your manager · queued until approved'
-        : 'Order placed · queued, syncs when you have signal',
-    );
-    back.go();
+      markVisitDone(
+        'order',
+        plural(inCart.length, 'line') + (valueUnavailable ? '' : ' · ' + inr(cartTotal)),
+      );
+      set({ cart: {} });
+      notify(
+        sentForApproval
+          ? 'Sent to your manager · queued until approved'
+          : 'Order placed · queued, syncs when you have signal',
+      );
+      back.go();
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -310,14 +369,31 @@ export default function OrderScreen() {
           owing" under a shop's name while the distributor paying for it is
           over their limit is the misreading this line exists to prevent. */}
       <T s="caption">
-        {(biller?.name ?? c.name) + ' · ' + (dues ? inr(dues) + ' already owing' : 'nothing owing')}
+        {(biller?.name ?? c.name) +
+          ' · ' +
+          (credit === null
+            ? 'checking what they owe'
+            : dues
+              ? inr(dues) + ' already owing'
+              : 'nothing owing')}
       </T>
 
       {/* --------------------------------------------- who pays, who receives
-          Drawn ONLY where the two differ or there is a choice to make. On an
-          ordinary direct customer both answers are the customer whose screen
-          this is, and a row restating that twice is furniture. */}
-      {billingOptions && (deliverTo || billingOptions.filter((o) => o.onBook).length > 1) ? (
+          Drawn ONLY where the two differ or there is somebody else in the
+          arrangement. On an ordinary direct customer both answers are the
+          customer whose screen this is, and a row restating that twice is
+          furniture.
+
+          IT USED TO ASK HOW MANY OF THEM WERE ON HIS BOOK, and that is the
+          case it most needed to be drawn for: `billingChoicesFor` always
+          appends the shop itself with `onBook: true`, so a third-party shop
+          whose only distributor belongs to somebody else fell straight through
+          to billing the shop — one on-book option, no card, no chooser, and
+          the red sentence inside written for exactly that case can never fire
+          because `biller` is never null. He raised an invoice against a shop
+          the office says we deliver to and do not bill, with nothing anywhere
+          on the screen saying so. */}
+      {billingOptions && (deliverTo || billingOptions.length > 1) ? (
         <Card style={{ marginTop: 12 }}>
           <SectionLabel style={{ marginBottom: 8 }}>Who pays for this</SectionLabel>
 
@@ -330,7 +406,11 @@ export default function OrderScreen() {
                 {deliverTo ? 'Deliver to ' + deliverTo.name : 'Delivered to them'}
               </T>
             </View>
-            {billingOptions.filter((o) => o.onBook).length > 1 ? (
+            {/* Opened on the whole arrangement rather than on the choosable
+                half of it. Where the only other party is off his book there is
+                nothing here to pick, and the list is still the one place the
+                screen says who the office has invoicing this shop. */}
+            {billingOptions.length > 1 ? (
               <Pressable
                 onPress={() => setPickingBiller((v) => !v)}
                 style={{ paddingHorizontal: 10, paddingVertical: 6 }}
@@ -374,6 +454,21 @@ export default function OrderScreen() {
                 </Pressable>
               ))}
             </View>
+          ) : null}
+
+          {/* A shop the office calls one we deliver to and do not bill, about
+              to be billed. It is a legitimate thing to do — a third-party shop
+              that starts buying direct is a good day — and it is not a thing
+              to do without noticing, so it is said rather than refused. The
+              commonest way in is not a deliberate pick at all: his only
+              distributor is somebody else's account, and the choice falls
+              through to the shop on its own. */}
+          {!!c.thirdParty && biller?.id === c.id ? (
+            <T s="caption" style={{ color: C.danger, marginTop: 8 }}>
+              {'The office has this shop billed to ' +
+                (billingOptions.find((o) => o.id !== c.id)?.name ?? 'somebody else') +
+                '. This order invoices the shop itself — check with the office if that is wrong.'}
+            </T>
           ) : null}
 
           {/* The dead end, said plainly. His shop is billed to somebody whose
@@ -528,6 +623,21 @@ export default function OrderScreen() {
                   </T>
                 </View>
               ) : null}
+              {/* A full page is a list that is probably CUT, and a cut list
+                  nobody is told about reads as the whole catalogue. */}
+              {shown.length >= SEARCH_LIMIT ? (
+                <View
+                  style={{
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                    borderTopWidth: 1,
+                    borderTopColor: C.wash,
+                  }}>
+                  <T s="caption">
+                    {'Showing the first ' + SEARCH_LIMIT + ' — narrow it with the pack size, or the code.'}
+                  </T>
+                </View>
+              ) : null}
             </ListCard>
           ) : null}
 
@@ -562,12 +672,25 @@ export default function OrderScreen() {
                    the SKU's own packing, never stored. The list rate is shown
                    only where the CRM's own valuation has nothing to say — two
                    figures on one line would read as a disagreement, not as a
-                   fallback. */
+                   fallback.
+                   LITRES were what that sentence claimed and the line never
+                   printed: `derivedQuantities` returns them and the orders
+                   list already renders them, and this is the only screen where
+                   the number is still editable. Pack sizes run half a litre to
+                   210, so litres beside the cans is the one figure that catches
+                   a customer who said "two hundred litres" against a salesman
+                   typing 200 into a cans box.
+                   And BOXES are dropped where there are none rather than
+                   printed as zero: `boxes` is whole boxes, so a loose SKU, a
+                   drum and any quantity under one box all derive 0, and "6 cans
+                   · 0 boxes" reads as a fault rather than as a pack with no box
+                   to count. `Math.ceil` was a no-op on an integer. */
                 const derived = !qty
                   ? 'Set the quantity'
                   : [
                       plural(qty, 'can'),
-                      priced ? plural(Math.ceil(priced.boxes), 'box', 'boxes') : null,
+                      priced?.litres != null ? Math.round(priced.litres) + ' L' : null,
+                      priced && priced.boxes > 0 ? plural(priced.boxes, 'box', 'boxes') : null,
                       priced?.valuePaise != null
                         ? inrFromPaise(priced.valuePaise)
                         : listRatePaise != null
@@ -615,6 +738,13 @@ export default function OrderScreen() {
                           disabled={qty === 0}
                           accessibilityRole="button"
                           accessibilityLabel="One less"
+                          /* 44 is under the 48 floor, on the one control that
+                             changes what is ordered — and it sits flush against
+                             a text field, so a thumb that misses opens a
+                             keyboard over the line he was reading. Same
+                             treatment as the remove button above: the drawing
+                             stays, the thumb gets the area. */
+                          hitSlop={4}
                           style={{ width: 44, height: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: C.wash }}>
                           <T style={{ fontSize: 20, lineHeight: 20, color: qty > 0 ? C.primaryDeep : C.faint }}>−</T>
                         </Pressable>
@@ -645,6 +775,7 @@ export default function OrderScreen() {
                           onPress={() => setQty(line.productId, String(qty + 1))}
                           accessibilityRole="button"
                           accessibilityLabel="One more"
+                          hitSlop={4}
                           style={{ width: 44, height: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: C.wash }}>
                           <T style={{ fontSize: 20, lineHeight: 20, color: C.primaryDeep }}>+</T>
                         </Pressable>
@@ -719,10 +850,14 @@ export default function OrderScreen() {
           </Card>
 
           <PrimaryButton
-            label={needsApproval ? 'Send for approval' : 'Submit order'}
+            label={busy ? 'Sending…' : needsApproval ? 'Send for approval' : 'Submit order'}
             onPress={submit}
-            disabled={!canSubmit}
-            whyDisabled="Add a product and set a quantity on every line first."
+            disabled={!canSubmit || busy}
+            whyDisabled={
+              busy
+                ? 'The last one is still being sent.'
+                : 'Add a product and set a quantity on every line first.'
+            }
             tone={needsApproval ? 'warn' : 'primary'}
             style={{ marginTop: 16 }}
           />

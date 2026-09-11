@@ -8,7 +8,6 @@ import {
   gateForNext,
   gateTo,
   mustDecideSuspect,
-  nextStage,
   type CodedOption,
   type GateVerdict,
   type LeadGateInput,
@@ -158,9 +157,19 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
     stage: stageOf(lead),
 
     customerType: lead.customerType,
-    monthlyLitres: lead.monthlyLitres,
+    /* TWO COLUMNS, ONE FACT — see `monthlyLitres` on the `Lead` type for why
+       both pairs exist. The capture form writes what he was told standing in
+       the shop into `monthlyVolumeLitres`/`competitorName`; the office writes
+       the same two facts into `monthlyLitres`/`competitor`, and the gate only
+       ever read the office's pair. So a salesman who had just answered "how
+       much a month" and "who they buy from now" on the New lead form was asked
+       for both again ten minutes later, out of the shop, with the boxes empty
+       and the outstanding list naming them as still to answer.
+       The funnel's own column wins where it has been filled in, because
+       Prospect details is where somebody corrects the first reading. */
+    monthlyLitres: lead.monthlyLitres ?? lead.monthlyVolumeLitres,
     potentialPaise: lead.estimatedPotentialPaise,
-    competitor: lead.competitor,
+    competitor: lead.competitor ?? lead.competitorName,
     requiredProductId: lead.requiredProductId,
     contactPerson: lead.contactPerson,
     decisionMaker: lead.decisionMaker,
@@ -247,17 +256,56 @@ export async function leadFunnelView(id: string): Promise<LeadFunnelView | null>
   ]);
   const salesType = salesTypeOf(lead);
   const stage = stageOf(lead);
+  const gate = gateForNext(input);
   return {
     lead,
     input,
     salesType,
     stage,
-    next: nextStage(stage, salesType),
-    gate: gateForNext(input),
+    /*
+     * THE NEXT RUNG COMES OFF THE GATE, and it used to come off `nextStage`.
+     *
+     * `gateForNext` deliberately refuses to answer for a stage that is on no
+     * ladder — terminal, or PARKED — and says so with `noNextRung`. Asking
+     * `nextStage` the same question separately got the other answer: it
+     * replies with the FOOT of the ladder for a rung it cannot find, which is
+     * right for a lead whose sales type somebody has just changed and wrong
+     * for one on hold. So an On-hold lead half way up its ladder drew "Move up
+     * to Suspect", disabled, over a list of what was still to do with nothing
+     * in it — the gate had already said there was nothing to say.
+     *
+     * One reading now, and it is the gate's. `gate.to` is the destination
+     * where there is one and the lead's own stage where there is not, which is
+     * exactly what the flag is for.
+     */
+    next: gate.noNextRung ? null : gate.to,
+    gate,
     mustDecide: mustDecideSuspect(input, config.suspectMaxVisits),
     visits,
     config,
   };
+}
+
+/**
+ * The shop front, and whether the picture is still on this phone.
+ *
+ * He stood in the street to take it and no screen here ever showed it back to
+ * him. What CAN be shown depends on where the file is: `runMediaQueue` deletes
+ * the local copy once the bytes are safely with the office, so a `synced` row
+ * names a path that no longer exists — and an `<Image>` pointed at one is a
+ * grey rectangle with nothing to say for itself, which is worse than a
+ * sentence. Null means no photograph was taken at all; `{ uri: null }` means
+ * one was and it is not here any more, and those are different facts.
+ */
+export async function shopPhoto(leadId: string): Promise<{ uri: string | null } | null> {
+  const row = await one<{ localUri: string; state: string }>(
+    `SELECT localUri, state FROM media_queue
+      WHERE parentId = ? AND kind = 'shop_photo'
+      ORDER BY createdAt DESC LIMIT 1`,
+    [leadId],
+  );
+  if (!row) return null;
+  return { uri: row.state === 'synced' ? null : row.localUri };
 }
 
 /* -------------------------------------------------------------- the trail */
@@ -590,7 +638,22 @@ export async function decideSuspect(
 ): Promise<LeadResult<null>> {
   const lead = await getLead(id);
   if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
-  if (!decision.reasonCode) {
+  /*
+   * A CODE OR A SENTENCE, and it used to be a code or nothing.
+   *
+   * The four reason lists are configuration and an office can empty one. Past
+   * the cap this decision is the whole record, so a code demanded against a
+   * list with nothing in it left the lead permanently unanswerable — see the
+   * note in `reason-sheet.tsx`. Either answer is accepted here and on the
+   * server, which refuses only when both are missing.
+   *
+   * What a sentence alone does NOT satisfy is the `prospect_reason` gate one
+   * rung up, which reads the code. That is the honest consequence: the record
+   * comes back and the gate says in words what it still wants, rather than the
+   * lead being stuck with no screen at all.
+   */
+  const said = decision.note?.trim() || null;
+  if (!decision.reasonCode && !said) {
     return {
       ok: false,
       message: decision.prospect
@@ -611,10 +674,15 @@ export async function decideSuspect(
     patch: {
       suspectDecidedAt: now,
       suspectIsProspect: decision.prospect,
-      suspectReasonCode: decision.reasonCode,
-      prospectReasonCode: decision.prospect ? decision.reasonCode : lead.prospectReasonCode,
-      lostReasonCode: decision.prospect ? lead.lostReasonCode : decision.reasonCode,
-      lostReason: decision.prospect ? lead.lostReason : (decision.note?.trim() || decision.reasonCode),
+      /* An empty code keeps whatever was already on the row rather than
+         blanking it — the answer came as a sentence, which is not a reason to
+         forget a code somebody recorded earlier. */
+      suspectReasonCode: decision.reasonCode || lead.suspectReasonCode,
+      prospectReasonCode: decision.prospect
+        ? decision.reasonCode || lead.prospectReasonCode
+        : lead.prospectReasonCode,
+      lostReasonCode: decision.prospect ? lead.lostReasonCode : decision.reasonCode || lead.lostReasonCode,
+      lostReason: decision.prospect ? lead.lostReason : (said || decision.reasonCode),
       funnelStage: stage,
       stage: legacyStageFor(stage, salesType),
       stageSince: today,
@@ -625,11 +693,13 @@ export async function decideSuspect(
       /* `handleLeadUpdate` refuses a loss with no reason, and rightly — the
          code is what gets counted and the sentence is what gets read, so both
          travel. */
-      lostReason: decision.prospect ? undefined : (decision.note?.trim() || decision.reasonCode),
+      lostReason: decision.prospect ? undefined : (said || decision.reasonCode),
       /* The CODE, whichever way the answer went — why it is worth pursuing,
          or why it is not. One field, because the schema keeps one: what it
-         means is read off the stage that arrived with it. */
-      reasonCode: decision.reasonCode,
+         means is read off the stage that arrived with it. Omitted rather than
+         sent empty where there was nothing to pick, so the server reads the
+         sentence instead of an empty string. */
+      reasonCode: decision.reasonCode || undefined,
     },
   });
 
@@ -637,7 +707,7 @@ export async function decideSuspect(
     leadId: id,
     kind: 'suspect_decision',
     summary: decision.prospect ? 'Worth pursuing — now a Prospect' : 'Not a prospect',
-    detail: decision.note?.trim() || decision.reasonCode,
+    detail: said || decision.reasonCode,
     fromStage: 'suspect',
     toStage: stage,
   });
@@ -715,16 +785,19 @@ export async function markLost(
   reasonCode: string,
   note?: string | null,
 ): Promise<LeadResult<null>> {
-  if (!reasonCode) {
-    return { ok: false, message: 'Pick a reason — nobody rings this shop again after this.' };
+  const said = note?.trim() || null;
+  /* A code OR a sentence — see `decideSuspect` above for why both are accepted
+     and why neither is. The code is still what gets counted; the sentence is
+     what a lost lead is left with where the office has configured no codes. */
+  if (!reasonCode && !said) {
+    return { ok: false, message: 'Say why — nobody rings this shop again after this.' };
   }
   const lead = await getLead(id);
   if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
 
   const today = isoDate(new Date());
-  const said = note?.trim() || null;
   const notes = notesOf(lead);
-  notes.push({ at: Date.now(), text: 'Lost — ' + reasonCode + (said ? ' · ' + said : '') });
+  notes.push({ at: Date.now(), text: 'Lost — ' + [reasonCode, said].filter(Boolean).join(' · ') });
 
   await updateAndQueue({
     table: 'leads',
@@ -734,7 +807,7 @@ export async function markLost(
       funnelStage: 'lost',
       stage: 'Lost',
       stageSince: today,
-      lostReasonCode: reasonCode,
+      lostReasonCode: reasonCode || lead.lostReasonCode,
       lostReason: said ?? reasonCode,
       notes,
       lastActivityDate: today,
@@ -743,7 +816,7 @@ export async function markLost(
       stage: 'lost',
       lostReason: said ?? reasonCode,
       notes: wireNotes(notes),
-      reasonCode,
+      reasonCode: reasonCode || undefined,
     },
   });
 

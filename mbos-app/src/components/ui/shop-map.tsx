@@ -120,6 +120,17 @@ const SQUARE = {
   justifyContent: 'center',
 } as const;
 
+/**
+ * What a shop pin is actually PRESSED on, as against what it is drawn as.
+ *
+ * Transparent and centred, so the dot inside keeps its 16 points and the target
+ * reaches a thumb. It is 44 rather than the design's `HIT` of 48 for the reason
+ * the zoom pair below carries in its own note — 44 is what a map can spare —
+ * and here that reason is sharper: every extra point is a point of the map that
+ * stops panning and a point of overlap with the shop next door.
+ */
+const TARGET = { ...SQUARE, backgroundColor: 'transparent' } as const;
+
 /** A control that stands on its own, rather than one half of the zoom pair. */
 const CONTROL = {
   ...SQUARE,
@@ -427,22 +438,38 @@ export function ShopMap({
 
           {placed.map((p) => (
             <Marker key={p.id} id={p.id} lngLat={[p.lng, p.lat]} onPress={() => onPress(p)}>
-              {/* Drawn here rather than as a symbol layer so a lead and a
-                  picked stop are told apart at a glance without a legend. */}
-              <View
-                style={{
-                  width: p.picked ? 22 : 16,
-                  height: p.picked ? 22 : 16,
-                  borderRadius: 11,
-                  borderWidth: 2,
-                  borderColor: '#fff',
-                  backgroundColor: p.picked
-                    ? C.primary
-                    : p.isLead
-                      ? C.warn
-                      : C.ink,
-                }}
-              />
+              {/* THE DOT IS 16dp AND THE TARGET IS NOT.
+                  A Marker's touch area is exactly its child, and React Native
+                  does not expand one — so the whole of this was 16 points
+                  across, against the design's own `HIT` floor of 48, on a
+                  control aimed at with a thumb while standing up. In a market
+                  lane two shops' dots overlap at that size, and he either
+                  misses or opens the neighbour's record; on the journey picker
+                  the same miss adds the wrong stop.
+
+                  `hitSlop` is not the fix here — it is a Pressable's property
+                  and this is a native annotation — so the target is the
+                  transparent square, and the dot is centred inside it. The
+                  marker anchors on its CENTRE, so growing the child moves
+                  nothing: the dot still sits on the coordinate. */}
+              <View style={TARGET}>
+                {/* Drawn here rather than as a symbol layer so a lead and a
+                    picked stop are told apart at a glance without a legend. */}
+                <View
+                  style={{
+                    width: p.picked ? 22 : 16,
+                    height: p.picked ? 22 : 16,
+                    borderRadius: 11,
+                    borderWidth: 2,
+                    borderColor: '#fff',
+                    backgroundColor: p.picked
+                      ? C.primary
+                      : p.isLead
+                        ? C.warn
+                        : C.ink,
+                  }}
+                />
+              </View>
             </Marker>
           ))}
 

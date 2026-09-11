@@ -2,7 +2,7 @@ import React from 'react';
 import { View, ScrollView } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, Choice, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T, Toggle } from '../src/components/ui/primitives';
+import { Card, Choice, Divider, Input, PrimaryButton, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
 import { color as C, radius, weight } from '../src/theme/tokens';
 import {
   distributorProfileOf,
@@ -104,10 +104,21 @@ const GROUP_TITLE: Record<string, string> = {
  */
 const SHOP_COLUMNS: Record<string, { reads: (v: LeadFunnelView) => boolean; where: string }> = {
   gst_verified: { reads: (v) => Boolean(v.lead.gstin?.trim()), where: 'GST number, on Prospect details' },
-  monthly_requirement: { reads: (v) => v.lead.monthlyLitres != null, where: 'Litres a month, on Prospect details' },
+  /* Both columns, for the two that have two. The capture form writes what he
+     was told in the shop into `monthlyVolumeLitres`/`competitorName` and the
+     office writes the same facts into `monthlyLitres`/`competitor` —
+     `leadGateInput` coalesces them, so reading one pair here would say "Not
+     yet" about an answer the gate had already accepted. */
+  monthly_requirement: {
+    reads: (v) => (v.lead.monthlyLitres ?? v.lead.monthlyVolumeLitres) != null,
+    where: 'Litres a month, on Prospect details',
+  },
   monthly_potential: { reads: (v) => v.lead.estimatedPotentialPaise != null, where: 'What they could be worth, on Prospect details' },
   required_product: { reads: (v) => Boolean(v.lead.requiredProductId), where: 'Which of ours, on Prospect details' },
-  competitor_identified: { reads: (v) => Boolean(v.lead.competitor?.trim()), where: 'Whose product now, on Prospect details' },
+  competitor_identified: {
+    reads: (v) => Boolean(v.lead.competitor?.trim() || v.lead.competitorName?.trim()),
+    where: 'Whose product now, on Prospect details',
+  },
   credit_days: { reads: (v) => v.lead.creditDaysWanted != null, where: 'Credit they want, on Prospect details' },
   decision_maker: { reads: (v) => Boolean(v.lead.decisionMaker?.trim()), where: 'Who signs off, on Prospect details' },
   application_understood: { reads: (v) => Boolean(v.lead.application?.trim()), where: 'What they use it on, on Prospect details' },
@@ -118,6 +129,20 @@ export default function QualifyScreen() {
   const id = params.id ?? '';
   const back = useCameFrom('lead');
   const notify = useStore((s) => s.notify);
+
+  /*
+   * THE CHEVRON CARRIES THE LEAD'S ID, and it did not.
+   *
+   * This screen is only ever opened as `/lead-qualify?id=X&from=lead`, and
+   * `useCameFrom` builds its destination from the word alone — `/lead`, with no
+   * id — so `/lead` loaded nothing and drew "This lead is not on this phone".
+   * On a checklist that is the worst place for it: the unsaved draft goes with
+   * it. One function for the header chevron and the inline link.
+   */
+  const goBack = () => {
+    if (back.from === 'lead' && id) return router.replace(`/lead?id=${id}&from=leads`);
+    back.go();
+  };
 
   const [view, setView] = React.useState<LeadFunnelView | null>(null);
   const [ready, setReady] = React.useState(false);
@@ -164,8 +189,8 @@ export default function QualifyScreen() {
 
   if (!view) {
     return (
-      <AppFrame title="Qualification" activeTab={null} onBack={back.go} contentStyle={{ padding: 16 }}>
-        <BackLink label={back.label} onPress={back.go} />
+      <AppFrame title="Qualification" activeTab={null} onBack={goBack} contentStyle={{ padding: 16 }}>
+        <BackLink label={back.label} onPress={goBack} />
         <Card style={{ paddingVertical: 32 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
             This lead is not on this phone
@@ -179,26 +204,51 @@ export default function QualifyScreen() {
   const conditions = checklistFor(salesType, 'qualification');
   const isDistributor = salesType === 'distributor';
 
-  /* Whether one condition is answered, asked the same way the gate asks it. */
-  const answered = (c: Condition): boolean => {
+  /*
+   * Whether one condition is answered, asked the same way the gate asks it.
+   *
+   * `live` is the whole point of the parameter. A ROW on the screen shows what
+   * is in the box in front of him, because a switch that did not move when it
+   * was pressed reads as a broken switch. Every COUNT — the header and each
+   * group chip — shows what has been KEPT, read off the record. They used to be
+   * one reading of the draft, so a group filled in and not yet saved reported
+   * "8/8" for answers the database had never seen, under a caption saying it
+   * saves as you go.
+   */
+  const savedProfile = distributorProfileOf(lead);
+  const savedQualification = qualificationOf(lead);
+
+  const answeredIn = (c: Condition, live: boolean): boolean => {
     if (isDistributor) {
       const f = DISTRIBUTOR_FIELDS[c.id];
       if (!f) return false;
-      if (f.kind === 'confirm') return ticks[c.id] === true;
-      /* Both answers count — see `conflict_checked` above. A yes/no is
-         answered once it has been TOUCHED, which is why it is stored as a key
-         that exists rather than as a boolean that defaults to false. */
-      if (f.kind === 'yesno') return c.id in ticks;
-      return Boolean((draft[c.id] ?? '').trim());
+      if (live) {
+        if (f.kind === 'confirm') return ticks[c.id] === true;
+        /* Both answers count — see `conflict_checked` above. A yes/no is
+           answered once it has been TOUCHED, which is why it is stored as a key
+           that exists rather than as a boolean that defaults to false. */
+        if (f.kind === 'yesno') return c.id in ticks;
+        return Boolean((draft[c.id] ?? '').trim());
+      }
+      const raw = savedProfile[f.field];
+      if (f.kind === 'confirm') return raw === true;
+      if (f.kind === 'yesno') return raw === true || raw === false;
+      return raw !== null && raw !== undefined && String(raw).trim().length > 0;
     }
     const col = SHOP_COLUMNS[c.id];
     if (col) {
       /* The GST is the one that needs both halves — a number written down and
          somebody saying they checked it are two different facts. */
-      return c.id === 'gst_verified' ? col.reads(view) && ticks[c.id] === true : col.reads(view);
+      const tick = live ? ticks[c.id] === true : savedQualification[c.id] === true;
+      return c.id === 'gst_verified' ? col.reads(view) && tick : col.reads(view);
     }
-    return ticks[c.id] === true;
+    if (live) return ticks[c.id] === true;
+    const said = savedQualification[c.id];
+    return said === true || (typeof said === 'string' && said.trim().length > 0);
   };
+
+  /** What is KEPT — the number the counts are allowed to quote. */
+  const answered = (c: Condition): boolean => answeredIn(c, false);
 
   const done = conditions.filter(answered).length;
   const shown = isDistributor ? conditions.filter((c) => c.group === group) : conditions;
@@ -206,7 +256,19 @@ export default function QualifyScreen() {
   const saveGroup = async () => {
     if (isDistributor) {
       const patch: Record<string, unknown> = {};
-      for (const c of shown) {
+      /*
+       * EVERY condition, not the group on the screen.
+       *
+       * It built the patch from `shown`, so filling in Commercial capability,
+       * switching to Territory and pressing Save wrote Territory and dropped
+       * the eight commercial answers — while the header and the chips, reading
+       * the draft, went on reporting all of them as answered. Thirty questions
+       * gathered over several visits is exactly the form that loses. The write
+       * MERGES into what is stored and an untouched condition is skipped
+       * rather than written null, so saving the lot costs nothing and cannot
+       * blank a group he has not opened.
+       */
+      for (const c of conditions) {
         const f = DISTRIBUTOR_FIELDS[c.id];
         if (!f) continue;
         if (f.kind === 'confirm' || f.kind === 'yesno') {
@@ -222,10 +284,13 @@ export default function QualifyScreen() {
               ? Number(raw.replace(/[^\d]/g, ''))
               : raw;
       }
-      const r = await saveDistributorProfile(lead.id, patch, GROUP_TITLE[group]);
+      /* No group name on the trail any more: the write is the whole checklist,
+         and "saved — Territory" against a row that carried all five groups is
+         a line somebody would read back as a partial save. */
+      const r = await saveDistributorProfile(lead.id, patch);
       if (!r.ok) return notify(r.message);
       load();
-      return notify(GROUP_TITLE[group] + ' saved');
+      return notify('Saved — every answer on this checklist');
     }
 
     const answers: Record<string, boolean | string> = {};
@@ -244,9 +309,9 @@ export default function QualifyScreen() {
     <AppFrame
       title={isDistributor ? 'Distributor qualification' : 'Qualification'}
       activeTab={null}
-      onBack={back.go}
+      onBack={goBack}
       contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
+      <BackLink label={back.label} onPress={goBack} />
 
       <Card>
         <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink }, weight(600)]}>
@@ -258,10 +323,14 @@ export default function QualifyScreen() {
         <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(600)]}>
           {done + ' of ' + conditions.length + ' answered'}
         </T>
+        {/* KEPT, not typed. The count is what the phone is holding, so it does
+            not move until Save has been pressed — and Save writes the whole
+            checklist, not the group on the screen. */}
         <T s="caption" style={{ marginTop: 2 }}>
           {done === conditions.length
-            ? 'All of them. The rung above is open from the record.'
-            : plural(conditions.length - done, 'question') + ' still to go. It saves as you go.'}
+            ? 'All of them, saved. The rung above is open from the record.'
+            : plural(conditions.length - done, 'question') +
+              ' still to go. This counts what is saved — press Save and it keeps the lot.'}
         </T>
       </Card>
 
@@ -292,7 +361,10 @@ export default function QualifyScreen() {
         {shown.map((c) => {
           const col = isDistributor ? undefined : SHOP_COLUMNS[c.id];
           const f = isDistributor ? DISTRIBUTOR_FIELDS[c.id] : undefined;
-          const met = answered(c);
+          /* The ROW reads the boxes on the screen — a switch that did not move
+             when it was pressed reads as a broken switch. The counts above read
+             the record. */
+          const met = answeredIn(c, true);
 
           return (
             <Card key={c.id}>
@@ -359,11 +431,10 @@ export default function QualifyScreen() {
           </T>
         </Card>
       ) : (
-        <PrimaryButton
-          label={isDistributor ? 'Save ' + GROUP_TITLE[group].toLowerCase() : 'Save the checklist'}
-          onPress={saveGroup}
-          style={{ marginTop: 18 }}
-        />
+        /* One button, and it saves the WHOLE checklist however many groups are
+           half filled in. It used to name the group it was standing on, which
+           was an honest label for a save that dropped the other four. */
+        <PrimaryButton label="Save the checklist" onPress={saveGroup} style={{ marginTop: 18 }} />
       )}
 
       <SecondaryButton

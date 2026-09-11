@@ -5,7 +5,7 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Badge, Bar, Card, ListCard, SectionLabel, T } from '../src/components/ui/primitives';
 import { ConfirmSheet } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
-import { color as C, radius, weight } from '../src/theme/tokens';
+import { color as C, HIT, radius, weight } from '../src/theme/tokens';
 import { dataSize, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import {
@@ -67,6 +67,43 @@ export default function MapsScreen() {
   const [blocked, setBlocked] = React.useState<string | null>(null);
   const [live, setLive] = React.useState<Live>({});
   const [confirm, setConfirm] = React.useState<{ id: string; label: string } | null>(null);
+  /*
+   * A DOWNLOAD THAT STOPPED ON AN ERROR, by row.
+   *
+   * Two things were wrong and they compounded. MapLibre's own English message
+   * was toasted straight at somebody standing in a market — the `catch` around
+   * starting a pack deliberately refuses to quote a reason for exactly that
+   * reason, and the progress callback did it anyway. And the row's state is
+   * derived from `status.state !== 'complete'` alone, so a failed pack sits
+   * `inactive` and draws a stalled bar at 34% with a Resume button and the
+   * word "Paused" — indistinguishable from a download somebody stopped
+   * themselves, with the toast long gone by the time he looks.
+   */
+  const [failed, setFailed] = React.useState<Record<string, true>>({});
+  const clearFailure = React.useCallback((key: string) => {
+    setFailed((f) => {
+      if (!f[key]) return f;
+      const next = { ...f };
+      delete next[key];
+      return next;
+    });
+  }, []);
+
+  /*
+   * DROP THE LAST PROGRESS EVENT FOR A PACK THAT HAS STOPPED.
+   *
+   * The row reads `live[id] ?? saved.status`, and a paused pack sends nothing
+   * further — so the last `active` event it ever sent went on drawing a moving
+   * bar and a "Pause" button over a download that had already stopped. Dropped,
+   * the row falls back to the status the reload reads off the pack itself.
+   */
+  const forget = React.useCallback((ids: string[]) => {
+    setLive((l) => {
+      const next = { ...l };
+      ids.forEach((id) => delete next[id]);
+      return next;
+    });
+  }, []);
 
   const load = React.useCallback(() => {
     let alive = true;
@@ -94,32 +131,66 @@ export default function MapsScreen() {
     let alive = true;
     const stops: (() => void)[] = [];
 
-    const follow = (id: string) => {
+    /* `row` is the AREA this pack answers for, which is what the failure has
+       to be drawn against — the pack id alone could not find the row again. */
+    const follow = (id: string, row: string) => {
       void watchMap(
         id,
-        (status) => alive && setLive((l) => ({ ...l, [id]: status })),
-        (message) => alive && notify(message),
+        (status) => {
+          if (!alive) return;
+          setLive((l) => ({ ...l, [id]: status }));
+          /* Progress after a failure means it is going again — and a pack that
+             reached `complete` plainly did, whatever failed on the way. A row
+             telling somebody a finished map is broken is the one direction this
+             mark must never fail in. */
+          if (status.state === 'active' || status.state === 'complete') clearFailure(row);
+        },
+        () => alive && setFailed((f) => ({ ...f, [row]: true })),
       ).then((stop) => {
         if (alive) stops.push(stop);
         else stop();
       });
     };
 
-    const unfinished = [
-      ...listing.areas.map((a) => a.saved).filter((p): p is SavedMap => Boolean(p)),
-      ...listing.orphans,
-    ].filter((p) => p.status && p.status.state !== 'complete');
+    const packs: { pack: SavedMap; row: string }[] = [];
+    for (const a of listing.areas) if (a.saved) packs.push({ pack: a.saved, row: a.id });
+    for (const p of listing.orphans) packs.push({ pack: p, row: p.id });
+    const unfinished = packs.filter(
+      ({ pack }) => pack.status && pack.status.state !== 'complete',
+    );
 
-    unfinished.forEach((p) => follow(p.id));
+    unfinished.forEach(({ pack, row }) => follow(pack.id, row));
     if (unfinished.length) void resumeUnfinished();
 
     return () => {
       alive = false;
       stops.forEach((stop) => stop());
     };
-    /* `notify` is stable from the store; the list is what decides who to
-       follow. */
-  }, [listing, notify]);
+    /* The list is what decides who to follow; `clearFailure` is stable. */
+  }, [listing, clearFailure]);
+
+  /*
+   * PAUSING HAS TO STICK, and it did not.
+   *
+   * `pauseMap` then `load()` sets a new listing, the effect above re-runs on it,
+   * every pack short of complete counts as unfinished — a paused one does — and
+   * `resumeUnfinished` started it again within about a second. `useFocusEffect`
+   * did the same on every visit to the screen. So the bar kept climbing after
+   * he pressed Pause, and because the only control that abandons a download
+   * draws while it is paused, undoing the pause took that away too. The pause
+   * is recorded in `pauseMap` now and `resumeUnfinished` skips what he stopped.
+   */
+  const pause = React.useCallback(
+    (id: string) => {
+      void pauseMap(id)
+        .then(() => {
+          forget([id]);
+          load();
+        })
+        .catch(() => notify('That download would not stop. Try again in a moment.'));
+    },
+    [forget, load, notify],
+  );
 
   const start = async (area: OfflineArea) => {
     if (!listing) return;
@@ -135,6 +206,7 @@ export default function MapsScreen() {
     setBlocked(null);
     if (area.tooBig) return notify(tooBigSentence(area, listing));
 
+    clearFailure(area.id);
     try {
       /* Keyed off the status's OWN id rather than the one `saveArea` is about
          to return: a progress event can arrive before the promise settles, and
@@ -142,7 +214,11 @@ export default function MapsScreen() {
       await saveArea(
         area,
         (status) => setLive((l) => ({ ...l, [status.id]: status })),
-        (message) => notify(message),
+        /* The reason is MapLibre's own English and is not worth quoting at
+           somebody in a market — the same judgement the `catch` below makes.
+           What is worth saying is that it stopped, and it is said on the row
+           rather than in a toast he has already looked away from. */
+        () => setFailed((f) => ({ ...f, [area.id]: true })),
       );
       notify(`Saving ${area.label} — you can leave this screen.`);
       load();
@@ -155,6 +231,77 @@ export default function MapsScreen() {
   };
 
   const settings = listing?.settings;
+
+  /* Which packs are actually moving, by pack id. Read from the live status
+     where there is one and from the listing's own otherwise. */
+  const downloading = React.useMemo(() => {
+    const out: string[] = [];
+    const add = (p: SavedMap | null | undefined) => {
+      if (!p) return;
+      const st = live[p.id] ?? p.status;
+      if (st && st.state !== 'complete' && st.percentage < 100) out.push(p.id);
+    };
+    listing?.areas.forEach((a) => add(a.saved));
+    listing?.orphans.forEach(add);
+    return out;
+  }, [listing, live]);
+
+  /* Read inside the network listener, so a fix every few seconds of progress
+     does not tear down and rebuild the subscription. */
+  const downloadingRef = React.useRef<string[]>([]);
+  downloadingRef.current = downloading;
+  const anyDownloading = downloading.length > 0;
+  const wifiOnly = Boolean(settings?.wifiOnly);
+
+  /*
+   * WI-FI ONLY HAS TO HOLD AFTER THE DOWNLOAD STARTS, and it held only before.
+   *
+   * The rule was asked twice — when the screen loads, and again as Save is
+   * pressed — and then never again: once MapLibre is fetching tiles there is
+   * no network constraint on the pack anywhere, so several hundred megabytes
+   * carries straight on when he walks out of the office onto mobile data. The
+   * card at the top of this screen promises the opposite in as many words:
+   * "Save the places you work once, on Wi-Fi". It is his data allowance, and a
+   * promise the screen makes has to survive the walk to the door.
+   *
+   * Pausing is the whole intervention — the pack keeps what it has downloaded
+   * and picks up where it stopped, and `resumeUnfinished` refuses to restart it
+   * while the phone is still on mobile data, so it stays stopped until there is
+   * Wi-Fi again.
+   */
+  React.useEffect(() => {
+    if (!anyDownloading || !wifiOnly) return;
+    let alive = true;
+    let off: (() => void) | undefined;
+
+    void import('@react-native-community/netinfo').then(({ default: NetInfo }) => {
+      if (!alive) return;
+      off = NetInfo.addEventListener((state) => {
+        /* An unknown or absent connection is left alone, exactly as
+           `downloadBlockedBecause` leaves it alone: a download with no
+           connection is spending nothing, and stopping somebody over a network
+           type the phone would not name is a dead end he cannot get out of. */
+        if (!alive || !state.isConnected || state.type === 'wifi') return;
+        const ids = downloadingRef.current;
+        if (!ids.length) return;
+        setBlocked('Map downloads are set to Wi-Fi only, and this phone is on mobile data.');
+        notify('Paused the map download — this phone is on mobile data.');
+        /* `network`, not the salesman: this one is meant to pick up again the
+           moment there is Wi-Fi, and a pause recorded as his own would never be
+           resumed by anything. */
+        void Promise.all(ids.map((id) => pauseMap(id, 'network').catch(() => undefined))).then(() => {
+          if (!alive) return;
+          forget(ids);
+          load();
+        });
+      });
+    });
+
+    return () => {
+      alive = false;
+      off?.();
+    };
+  }, [anyDownloading, wifiOnly, notify, load, forget]);
 
   return (
     <AppFrame
@@ -219,11 +366,20 @@ export default function MapsScreen() {
                 area={area}
                 first={i === 0}
                 status={area.saved ? live[area.saved.id] ?? area.saved.status : undefined}
+                failed={!!failed[area.id]}
                 staleAfterDays={settings?.refreshAfterDays ?? 120}
                 readAt={readAt}
                 onSave={() => void start(area)}
-                onPause={() => area.saved && void pauseMap(area.saved.id).then(load)}
-                onResume={() => area.saved && void resumeMap(area.saved.id).then(load)}
+                onPause={() => area.saved && pause(area.saved.id)}
+                onResume={() => {
+                  if (!area.saved) return;
+                  /* Cleared as the tap lands rather than waiting for the first
+                     progress event: between the two the row would go on saying
+                     the download had stopped, under a button he had just
+                     pressed. A second failure sets it again. */
+                  clearFailure(area.id);
+                  void resumeMap(area.saved.id).then(load);
+                }}
                 onRefresh={() => {
                   if (!area.saved) return;
                   void refreshMap(area.saved.id).then(() => {
@@ -326,6 +482,7 @@ function AreaRow({
   area,
   first,
   status,
+  failed,
   staleAfterDays,
   readAt,
   onSave,
@@ -338,6 +495,8 @@ function AreaRow({
   area: OfflineArea;
   first: boolean;
   status: OfflinePackStatus | null | undefined;
+  /** This pack stopped on an error. See `stopped` below. */
+  failed: boolean;
   staleAfterDays: number;
   /** The clock, read once where the data was. Never read during render. */
   readAt: number;
@@ -352,6 +511,19 @@ function AreaRow({
   const downloading = status ? status.state !== 'complete' && status.percentage < 100 : false;
   const running = downloading && status?.state === 'active';
   const complete = Boolean(saved) && !downloading;
+  /*
+   * STOPPED ON AN ERROR, as against stopped by somebody.
+   *
+   * MapLibre reports both identically — `inactive`, short of 100% — so a failed
+   * download drew a stalled bar, the word "Paused" and a Resume button, and the
+   * only thing that had ever said otherwise was a toast raised at the moment it
+   * happened, which nobody is looking at. "It picks up where it stopped" is
+   * then a sentence that is simply false: nothing is going to pick it up.
+   *
+   * A pack the store calls complete wins over the mark. Telling somebody a
+   * finished map is broken is the one direction this must not fail in.
+   */
+  const stopped = failed && !complete;
 
   const ageDays =
     saved?.savedAt != null ? Math.floor((readAt - saved.savedAt) / 86_400_000) : null;
@@ -373,7 +545,8 @@ function AreaRow({
             </T>
             {complete && area.coverage.state === 'full' ? <Badge tone="success">Saved</Badge> : null}
             {complete && area.coverage.state === 'partial' ? <Badge tone="amber">Part saved</Badge> : null}
-            {downloading ? <Badge tone="info">Saving</Badge> : null}
+            {stopped ? <Badge tone="danger">Stopped</Badge> : null}
+            {downloading && !stopped ? <Badge tone="info">Saving</Badge> : null}
             {complete && stale ? <Badge tone="amber">Old</Badge> : null}
           </View>
           <T s="caption">
@@ -392,6 +565,12 @@ function AreaRow({
             tone={area.tooBig ? 'muted' : 'primary'}
             onPress={onSave}
           />
+        ) : stopped ? (
+          /* "Resume" is the wrong word for something that did not pause. It is
+             the same call underneath — the pack keeps what it has and carries
+             on from there — and what changes is that the row asks for the tap
+             rather than looking as though it is already handling it. */
+          <RowButton label="Try again" tone="primary" onPress={onResume} />
         ) : downloading ? (
           <RowButton
             label={running ? 'Pause' : 'Resume'}
@@ -404,7 +583,10 @@ function AreaRow({
 
       {downloading && status ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
-          <Bar pct={status.percentage} fill={C.primary} />
+          {/* A bar in the primary colour reads as a download in progress. What
+              is left of a stopped one is how far it got, which is a different
+              statement. */}
+          <Bar pct={status.percentage} fill={stopped ? C.faint : C.primary} />
           <T s="caption" style={{ width: 42, textAlign: 'right' }}>
             {Math.round(status.percentage)}%
           </T>
@@ -420,14 +602,31 @@ function AreaRow({
         </T>
       ) : null}
 
-      {/* A DOWNLOAD SOMEBODY WANTS TO ABANDON. Only offered once it is
-          paused: while it is running the thing to press is Pause, and a
-          Remove beside it is the mis-tap that throws away twenty minutes of
-          somebody's Wi-Fi. */}
-      {downloading && !running ? (
+      {/* A DOWNLOAD SOMEBODY WANTS TO ABANDON, in either state.
+          It was drawn only while the download was PAUSED, on the reasoning
+          that a Remove beside a running one is the mis-tap that throws away
+          twenty minutes of somebody's Wi-Fi. The mis-tap is real and is
+          answered by the confirmation this opens; what the rule actually did
+          was hide the only way out behind a pause that immediately undid
+          itself, so there was no reachable way to stop several hundred
+          megabytes at all. It stays off the row itself — the one button there
+          is still Pause or Resume — and sits on its own line with the sentence
+          that says which state it is in. */}
+      {downloading ? (
         <Secondary
-          sentence="Paused. It picks up where it stopped."
+          sentence={
+            stopped
+              ? /* MapLibre's own English is not quoted at somebody standing in
+                   a market — the same judgement `start` makes. What is worth
+                   saying is that it stopped, that the part already saved is
+                   still there, and that trying again costs only what is left. */
+                'The download stopped before it finished. What it has already saved is kept — try again on a better connection.'
+              : running
+                ? 'Saving now. Removing it stops the download and gives the space back.'
+                : 'Paused. It picks up where it stopped.'
+          }
           label="Remove"
+          note={stopped ? 'warn' : 'plain'}
           onPress={onRemove}
         />
       ) : null}
@@ -543,7 +742,10 @@ function RowButton({
       accessibilityRole="button"
       style={({ pressed }) => [
         {
-          height: 44,
+          /* `HIT`, not 44. Every control on this screen is one of these, and
+             four points under the floor is four points on a row somebody taps
+             on a moving bus. */
+          height: HIT,
           paddingHorizontal: 14,
           borderWidth: 1,
           borderColor: tone === 'primary' ? C.primaryEdge : C.border,

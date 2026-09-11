@@ -8,6 +8,7 @@ import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
 import { plural, pretty } from '../src/lib/format';
 import { OUTCOMES } from '../src/data/fixtures';
+import { pendingCount } from '../src/sync/queue';
 
 /**
  * The receipt for a visit.
@@ -32,6 +33,42 @@ export default function Saved() {
   const shotCount = (shots.shop ? 1 : 0) + (shots.cust ? 1 : 0);
   const spent = visitSpent ?? '';
 
+  /*
+   * THE MANAGER HAS NOT BEEN TOLD UNTIL THE OUTBOX HAS DRAINED.
+   *
+   * Saving a visit ENQUEUES it; nothing reaches the office until the queue
+   * goes out, which on a day with no signal is hours. This card asserted "Your
+   * manager notified" in green — done — unconditionally, on the same list
+   * where it correctly draws a queued photograph and a queued voice note in
+   * amber, under a header saying exactly what the two colours mean. So a
+   * salesman walked away from a shop believing the office knew, with the
+   * status strip at the top of the same screen counting the very record that
+   * had not gone.
+   *
+   * It reads the same outbox the strip does. It starts TRUE — assumed still
+   * queued — because at the moment this screen opens that is simply what is
+   * true, and the safe direction for a wrong first paint is amber: "saved, not
+   * finished yet" is never a lie about a visit written a second ago, and green
+   * would be.
+   */
+  const [queued, setQueued] = React.useState(true);
+  React.useEffect(() => {
+    let live = true;
+    const tick = () => {
+      void pendingCount()
+        .then((n) => {
+          if (live) setQueued(n > 0);
+        })
+        .catch(() => undefined);
+    };
+    tick();
+    const t = setInterval(tick, 5_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, []);
+
   const items = [
     gps === 'locked'
       ? { l: 'Location and time recorded', ok: true }
@@ -46,7 +83,9 @@ export default function Saved() {
         ? { l: 'Voice note kept — the office writes it out when you are back on', ok: false }
         : null,
     { l: 'Follow-up set for ' + pretty(nextDate), ok: true },
-    { l: 'Your manager notified', ok: true },
+    queued
+      ? { l: 'Your manager sees it the next time this phone sends', ok: false }
+      : { l: 'Your manager notified', ok: true },
   ].filter((x): x is { l: string; ok: boolean } => x !== null);
 
   return (

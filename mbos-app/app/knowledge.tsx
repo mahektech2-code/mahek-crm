@@ -27,19 +27,23 @@ export default function KnowledgeScreen() {
     }, []),
   );
 
-  const due = courses?.filter((c) => c.completedAt == null && c.mandatory === 1).length ?? 0;
-
   return (
     <AppFrame title="Knowledge centre" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
 
       <T style={type.h1}>Knowledge centre</T>
-      {/* The old line said "One module is due" whatever was on the screen. It
-          counts now, and says nothing where there is nothing to count. */}
+      {/* THE NAG IS GONE, because nothing on this screen can answer it.
+          It read "2 modules are due. Your manager sees who has finished." on a
+          screen where a module can be neither opened nor ticked off — the
+          course's material is not on the wire at all, and `completedAt` is read
+          here and written by nobody, in the office or on the phone. So the
+          count could never fall, and being chased for work with no way to do it
+          and a manager named as watching is worse than not being told. What it
+          says instead is what is true: this is the list, and the doing is not
+          here yet. It comes back the day something writes a completion. */}
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        {due > 0
-          ? `${due} ${due === 1 ? 'module is' : 'modules are'} due. Your manager sees who has finished.`
-          : 'Your manager sees who has finished.'}
+        What the office has published, and when each is due. Reading a module and
+        marking it off are not on the phone yet.
       </T>
 
       {courses === null ? (
@@ -62,18 +66,20 @@ export default function KnowledgeScreen() {
             return (
               <Pressable
                 key={k.id}
-                /* A course is a title and, usually, something to read. Where
-                   there is nothing attached it is a briefing somebody gave in a
-                   room — a real thing to record and tick off, and not a broken
-                   row — so it says which it is instead of doing nothing. */
-                onPress={() =>
-                  notify(
-                    k.minutes
-                      ? `${k.title} — about ${k.minutes} minutes` +
-                          (k.deadline ? `, due ${k.deadline}` : '')
-                      : `${k.title} — nothing attached to open`,
-                  )
-                }
+                /* A DURATION CANNOT SAY WHETHER THERE IS ANYTHING TO OPEN, and
+                   it was the thing deciding. This chose between "about 20
+                   minutes" and "nothing attached to open" on `minutes`, so a
+                   course with material and no stated length said there was
+                   nothing there, and one with a length and no material said how
+                   long it would take and then did nothing at all.
+
+                   The handset cannot answer that question either way:
+                   `mbos_courses.attachment_id` exists in the office and is not
+                   on the wire, so there is no file reference on this row to
+                   branch on. Until it is sent, the tap says the one thing that
+                   is true of every row — which is a refusal, and better than a
+                   confident wrong sentence about somebody's training. */
+                onPress={() => notify(k.title + ' cannot be opened on the phone yet.')}
                 accessibilityRole="button"
                 style={{
                   flexDirection: 'row',
