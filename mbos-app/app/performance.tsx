@@ -5,7 +5,7 @@ import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, T } from '../src/components/ui/primitives';
 import { color as C, radius, weight, tabular } from '../src/theme/tokens';
-import { inr, plural } from '../src/lib/format';
+import { inrFromPaise, plural } from '../src/lib/format';
 import {
   listPerformance,
   litres,
@@ -143,8 +143,8 @@ export default function PerformanceScreen() {
           <Card padded={false} style={{ marginTop: 12, flexDirection: 'row', overflow: 'hidden' }}>
             <Figure
               label="Revenue"
-              value={inr(current.revenueActualPaise / 100)}
-              target={current.revenueTargetPaise ? inr(current.revenueTargetPaise / 100) : null}
+              value={inrFromPaise(current.revenueActualPaise)}
+              target={current.revenueTargetPaise ? inrFromPaise(current.revenueTargetPaise) : null}
               bp={current.revenueAchievementBp}
             />
             <Figure
@@ -184,11 +184,9 @@ export default function PerformanceScreen() {
             <Figure
               half
               label="Collected"
-              value={inr(current.collectionActualPaise / 100)}
+              value={inrFromPaise(current.collectionActualPaise)}
               target={
-                current.collectionTargetPaise
-                  ? inr(current.collectionTargetPaise / 100)
-                  : null
+                current.collectionTargetPaise ? inrFromPaise(current.collectionTargetPaise) : null
               }
               bp={null}
             />
@@ -281,7 +279,7 @@ export default function PerformanceScreen() {
               ))}
               {current.unmatchedRevenuePaise ? (
                 <T s="micro" style={{ marginTop: 12 }}>
-                  {inr(current.unmatchedRevenuePaise / 100)} of this month is on products the
+                  {inrFromPaise(current.unmatchedRevenuePaise)} of this month is on products the
                   catalogue does not recognise. It counts as revenue and adds no litres.
                 </T>
               ) : null}

@@ -6,7 +6,9 @@ import { Badge, Card, Choice, DashedButton, PrimaryButton, SectionLabel, T } fro
 import { NavigateButton } from '../src/components/ui/navigate';
 import { color as C, radius, weight } from '../src/theme/tokens';
 import { whatIsNearby, type NearbyAnswer } from '../src/data/nearby';
-import { inr } from '../src/lib/format';
+/* No `navigateTo` here either — both buttons on this screen are
+   `NavigateButton`, so one failure message cannot drift from the other. */
+import { inrFromPaise } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
 /**
@@ -194,7 +196,7 @@ export default function Nearby() {
 
                 {r.shop.outstandingPaise > 0 ? (
                   <T style={[{ fontSize: 14, marginTop: 8, color: C.danger }, weight(500)]}>
-                    {inr(r.shop.outstandingPaise / 100) + ' outstanding'}
+                    {inrFromPaise(r.shop.outstandingPaise) + ' outstanding'}
                   </T>
                 ) : null}
 

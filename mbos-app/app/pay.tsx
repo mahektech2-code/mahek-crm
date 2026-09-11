@@ -6,7 +6,7 @@ import { Card, Choice, Input, PrimaryButton, SectionLabel, T } from '../src/comp
 import { Calendar } from '../src/components/ui/overlays';
 import { Icon, type IconName } from '../src/components/ui/Icon';
 import { color as C, radius, shadow, tabular, weight } from '../src/theme/tokens';
-import { dmy, inr, isoDate, plural, pretty } from '../src/lib/format';
+import { dmy, inr, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
 import { customerBills, type Customer, type CustomerBill } from '../src/data/customers';
 import { copyToClipboard, openWhatsApp, receiptMessage } from '../src/lib/messaging';
@@ -315,7 +315,7 @@ export default function PayScreen() {
             the reminder this card exists to give. Nothing is asserted until
             the read lands. */}
         <T style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.65, color: C.ink, marginTop: 4 }, weight(600), tabular]}>
-          {cash === null ? '—' : inr(cash.totalPaise / 100)}
+          {cash === null ? '—' : inrFromPaise(cash.totalPaise)}
         </T>
         <T style={{ fontSize: 15, color: C.warnInk, marginTop: 2 }}>
           {cash?.sentence ?? (cashFailed ? 'What you are carrying could not be read just now.' : 'Reading…')}
@@ -406,7 +406,7 @@ export default function PayScreen() {
                     </T>
                   ) : (
                     <T style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
-                      {inr((b.balancePaise ?? 0) / 100)}
+                      {inrFromPaise(b.balancePaise ?? 0)}
                     </T>
                   )}
                 </Pressable>
@@ -433,7 +433,7 @@ export default function PayScreen() {
             {chosen.length === 0
               ? 'Name none and it goes against their oldest bills first.'
               : onAccountPaise > 0 && amt > 0
-                ? `${chosen.length} named · ${inr(onAccountPaise / 100)} more than they cover, which sits on account.`
+                ? `${chosen.length} named · ${inrFromPaise(onAccountPaise)} more than they cover, which sits on account.`
                 : `${chosen.length} named.`}
           </T>
         </View>

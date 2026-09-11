@@ -12,7 +12,7 @@ import { getConfig } from '../src/data/config';
 import { activePolicy, previewClaim, CLAIM_KINDS, type ClaimedLine, type LocalPolicy } from '../src/data/travel';
 import type { ExpenseKind } from '../src/engines/generated/expense-policy';
 import { takePhoto } from '../src/native/capture';
-import { dmy, inr, isoDate } from '../src/lib/format';
+import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight, tabular, type BadgeTone } from '../src/theme/tokens';
@@ -105,7 +105,14 @@ export default function ExpensesScreen() {
       listExpenses(EX_PAGE),
       expenseTotals(),
       activePolicy(),
-      getConfig<number>('mbos.expenses.maxClaimAgeDays', 30),
+      /* The key the SERVER enforces, not a second one spelled differently.
+         This screen read `mbos.expenses.maxClaimAgeDays`, which the office has
+         never been able to publish — so the refusal a salesman met here was a
+         compiled 30 standing in front of `handleExpense`'s real
+         `mbos.expenses.backdatedDaysAllowed`, and raising the published one to
+         60 would have moved the sync and left the date picker greying out the
+         same days. One question, one key. */
+      getConfig<number>('mbos.expenses.backdatedDaysAllowed', 30),
     ]).then(([e, t, p, age]) => {
       if (!live) return;
       setRows(e);
@@ -329,8 +336,8 @@ export default function ExpensesScreen() {
          engine, same day, same sentence. */
       notify(
         exOver
-          ? 'Claimed ' + inr(exAmtPaise / 100) + ' · over what the policy allows, your manager has to agree it'
-          : 'Claimed ' + inr(exAmtPaise / 100) + ' · with your manager',
+          ? 'Claimed ' + inrFromPaise(exAmtPaise) + ' · over the cap, your manager has to allow it'
+          : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · with your manager',
       );
     } finally {
       setSending(false);
@@ -342,7 +349,7 @@ export default function ExpensesScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Expenses</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        {inr(pending / 100) + ' waiting on your manager'}
+        {inrFromPaise(pending) + ' waiting on your manager'}
       </T>
 
       <PrimaryButton label="Add an expense" style={{ marginTop: 12, borderRadius: radius.xl }} onPress={add} />
@@ -359,7 +366,7 @@ export default function ExpensesScreen() {
               style={{ paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <T style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>
-                  {e.category + ' · ' + inr(e.amountPaise / 100)}
+                  {e.category + ' · ' + inrFromPaise(e.amountPaise)}
                 </T>
                 <Badge tone={tone}>{e.state}</Badge>
               </View>

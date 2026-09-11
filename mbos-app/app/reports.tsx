@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, T } from '../src/components/ui/primitives';
 import { color as C, weight, tabular } from '../src/theme/tokens';
-import { inr, plural } from '../src/lib/format';
+import { inrFromPaise, plural } from '../src/lib/format';
 import { monthReport, type MonthReport } from '../src/data/reports';
 import { useBoot } from '../src/state/boot';
 
@@ -92,10 +92,10 @@ function ReportCard({ title, r, muted }: { title: string; r: MonthReport; muted?
               ? r.ordersTaken > 0
                 ? `${plural(r.ordersUnvalued, 'order')} not priced yet`
                 : '—'
-              : inr(r.valuePaise / 100)
+              : inrFromPaise(r.valuePaise)
           }
         />
-        <Row label="Collected, reported" value={inr(r.collectedPaise / 100) + ' · ' + plural(r.collectedCount, 'receipt')} />
+        <Row label="Collected, reported" value={inrFromPaise(r.collectedPaise) + ' · ' + plural(r.collectedCount, 'receipt')} />
         {r.ordersRejected > 0 ? (
           <Row label="Rejected" value={plural(r.ordersRejected, 'order')} tone={C.danger} />
         ) : null}

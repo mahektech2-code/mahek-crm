@@ -2,6 +2,7 @@ import { all, one, run } from '../db';
 import { enqueue } from '../sync/queue';
 import { stamp, updateAndQueue } from './write';
 import { getConfig } from './config';
+import type { DayMayOpen } from './day-gate';
 import { withinGeofence } from '../engines/geo';
 import { deriveStatus } from '../engines/attendance';
 import type { Fix } from '../native/location';
@@ -21,6 +22,16 @@ export { workedLabel } from '../engines/attendance';
  * fix is recorded as missing and the day starts. A salesman who cannot mark
  * attendance cannot work, and an app that stops him is an app the company
  * stops using.
+ *
+ * **A PHONE THAT CANNOT RECORD THE DAY IS THE OTHER EXCEPTION, and it is not
+ * a contradiction of the paragraph above.** A missing fix costs one coordinate
+ * on one mark and the day is still a day; a handset whose OEM battery manager
+ * kills the tracking service costs the entire record of where a man went, and
+ * he finds that out in the evening when nothing can be done about it. So the
+ * day does not open until the phone can prove it will record — see
+ * `day-gate.ts` for the incident, the reversal and the configuration behind
+ * it. Where it genuinely cannot, the answer is a dead end said in words rather
+ * than a skip button, exactly as a refused camera is below.
  *
  * **The SELFIE is the exception, and it is deliberate.** Every check-in and
  * every check-out takes one, and there is no path through this module that
@@ -188,6 +199,29 @@ export async function checkIn(args: {
    * rule.
    */
   selfieMediaId: string;
+  /**
+   * REQUIRED, and unforgeable — which is one step past the selfie beside it.
+   *
+   * A phone that will not run the tracking service loses the whole record of
+   * where a man spent a working day, and he finds out at six in the evening
+   * when there is nothing left to do about it. So the question has to be asked
+   * before a day opens, and the one way to be sure it was asked is to make it
+   * impossible to open one without the answer: `DayMayOpen` carries a property
+   * keyed on a `unique symbol` that only `day-gate.ts` can write, so
+   * `mayOpenDay()` is the only thing in the app that can produce one. A
+   * `readiness: boolean` would have been just as unomittable and just as
+   * easily answered `true` by a screen in a hurry.
+   *
+   * It is not re-checked here. The token IS the check, and asking the native
+   * layer a second time inside the write would be a second reading that can
+   * disagree with the one the salesman was actually shown.
+   *
+   * BOTH DOORS GO THROUGH IT. The afternoon's check-in is this same function
+   * — resuming appends a session rather than opening a second day — so the
+   * type gates the lunch break as well as the morning, which is the only way a
+   * gate survives: one of two doors is a door people learn to use.
+   */
+  mayOpen: DayMayOpen;
   homeLocation?: { lat: number; lng: number } | null;
   overrideReason?: string | null;
 }): Promise<{ id: string; withinRadius: boolean | null; needsOverride: boolean }> {
@@ -198,6 +232,30 @@ export async function checkIn(args: {
   if (args.fix && args.homeLocation) {
     withinRadius = withinGeofence(args.fix, args.homeLocation, radius).inside;
   }
+
+  /*
+   * WHAT THE PHONE SAID ABOUT ITSELF AS THE DAY OPENED, sent with the mark.
+   *
+   * A gate that blocks a man's day is a support call, and a support call
+   * nobody in the office can answer is worse than the fault it came from. So
+   * the reading travels: whether everything checkable was in order, whether he
+   * claimed to have done the steps nothing can check, and what was still
+   * outstanding when he claimed it. The claim is a CLAIM — no Android API
+   * reports whether an OEM battery manager will kill a foreground service —
+   * and the office pairs it with the only evidence there is, which is whether
+   * a trail then appeared.
+   *
+   * It is NOT kept in a column on this handset. Nothing here reads it back,
+   * and a local copy would be a second answer to a question the office asks
+   * once; the payload carries it, and the outbox is what makes that reliable.
+   * `undefined` rather than null where there is nothing to say, so a re-sent
+   * payload never writes an absent claim over a real one.
+   */
+  const setup = {
+    setupReady: args.mayOpen.ready,
+    setupAcknowledgedAt: args.mayOpen.acknowledgedAt ?? undefined,
+    setupUnverified: args.mayOpen.unverified.length ? [...args.mayOpen.unverified] : undefined,
+  };
 
   const existing = await todayRow(args.userId);
   if (existing) {
@@ -232,6 +290,10 @@ export async function checkIn(args: {
         day,
         sessions,
         resumedAt: Date.now(),
+        /* The afternoon's check-in is its own reading. A phone whose battery
+           manager has since been turned back on is a phone that stopped being
+           able to record at lunchtime, and the day should say so. */
+        ...setup,
         /* Every session and both of its photographs, so the office holds the
            same list this handset does rather than a first-and-last summary of
            it. */
@@ -284,6 +346,7 @@ export async function checkIn(args: {
          nowhere. A check-in outside the radius is never blocked; it is marked,
          and the mark is the whole point of having asked. */
       withinGeofence: withinRadius ?? undefined,
+      ...setup,
       regularisationRequested: withinRadius === false,
       regularisationReason: args.overrideReason ?? undefined,
       deviceId: base.deviceId,

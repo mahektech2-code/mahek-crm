@@ -7,7 +7,7 @@ import { Badge, Card, Divider, Input, Field, PrimaryButton, SecondaryButton, T }
 import { ConfirmSheet } from '../src/components/ui/overlays';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
-import { inr, isoDate } from '../src/lib/format';
+import { inrFromPaise, isoDate } from '../src/lib/format';
 import { color as C, weight, tabular } from '../src/theme/tokens';
 import { priceDay, submitDay } from '../src/data/travel';
 
@@ -104,7 +104,7 @@ export default function EodScreen() {
     <View key={label} style={{ marginTop: 10 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <T s="small" style={{ color: C.muted }}>{label}</T>
-        <T style={[{ fontSize: 16, color: C.ink }, weight(600), tabular]}>{inr(paise / 100)}</T>
+        <T style={[{ fontSize: 16, color: C.ink }, weight(600), tabular]}>{inrFromPaise(paise)}</T>
       </View>
       {sub ? <T s="caption" style={{ marginTop: 1 }}>{sub}</T> : null}
     </View>
@@ -168,12 +168,12 @@ export default function EodScreen() {
 
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
                   <T s="small" style={{ color: C.muted }}>You claimed</T>
-                  <T style={[{ fontSize: 18 }, weight(600), tabular]}>{inr(c.totalClaimedPaise / 100)}</T>
+                  <T style={[{ fontSize: 18 }, weight(600), tabular]}>{inrFromPaise(c.totalClaimedPaise)}</T>
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 6 }}>
                   <T s="small" style={{ color: C.muted }}>The policy allows</T>
                   <T style={[{ fontSize: 22, color: C.ink }, weight(600), tabular]}>
-                    {inr(c.totalEligiblePaise / 100)}
+                    {inrFromPaise(c.totalEligiblePaise)}
                   </T>
                 </View>
 
@@ -181,7 +181,7 @@ export default function EodScreen() {
                 {c.totalExcessPaise > 0 ? (
                   <Card style={{ marginTop: 12, backgroundColor: C.warnBg }}>
                     <T s="small" style={{ color: C.ink }}>
-                      {inr(c.totalExcessPaise / 100)} of what you claimed is above what the policy
+                      {inrFromPaise(c.totalExcessPaise)} of what you claimed is above what the policy
                       allows. It is still sent — your manager decides it, and can allow it.
                     </T>
                   </Card>
@@ -256,7 +256,7 @@ export default function EodScreen() {
         title="Send today in?"
         body={
           c
-            ? `You are sending ${inr(c.totalClaimedPaise / 100)}. After this the day is locked and only your manager can reopen it.`
+            ? `You are sending ${inrFromPaise(c.totalClaimedPaise)}. After this the day is locked and only your manager can reopen it.`
             : 'After this the day is locked and only your manager can reopen it.'
         }
         confirmLabel="Send it"

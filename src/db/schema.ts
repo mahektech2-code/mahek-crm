@@ -6025,6 +6025,38 @@ export const mbosAttendanceDays = pgTable(
     /** A correction the employee asked for. The decision lives in `mbos_approvals`. */
     regularisationRequested: boolean("regularisation_requested").notNull().default(false),
     regularisationReason: text("regularisation_reason"),
+
+    /**
+     * WHETHER THE PHONE COULD SHOW IT WOULD RECORD THE DAY, as it stood when
+     * the day opened.
+     *
+     * The handset refuses to open a day that will not be tracked — a salesman
+     * on a vivo checked in at 04:16 and posted not one position, with every
+     * permission reading correct and the OEM battery manager quietly killing
+     * the service the OS had started. A gate that stops a man working is a
+     * support call, and this is how the office answers it.
+     *
+     * True is a clean start. False is a day that opened anyway: on the claim
+     * below, or because a manager has `mbos.location.startOfDayGate` at
+     * `warn`. NULL is a build too old to say, which every handset in the field
+     * is until it is updated — never read it as an answer.
+     */
+    setupReady: boolean("setup_ready"),
+    /**
+     * HE SAID HE HAD DONE THE STEPS NOTHING CAN CHECK — a CLAIM, and no screen
+     * may render it as a proof.
+     *
+     * No Android API reports whether an OEM battery manager will kill a
+     * foreground service, so the only evidence available is the man saying he
+     * went into the autostart and battery screens and allowed it, followed by
+     * a trail either appearing or not. The office holds both halves, and the
+     * pairing is the point: a day opened on a claim that then produced no
+     * trail is a phone whose owner has pressed the button and is still not
+     * being recorded. See `handset-health.ts`.
+     */
+    setupAcknowledgedAt: timestamp("setup_acknowledged_at", { withTimezone: true }),
+    /** What he was still being asked for at the moment he claimed it. */
+    setupUnverified: jsonb("setup_unverified").$type<string[]>(),
   },
   (t) => [
     uniqueIndex("mbos_attendance_days_user_day_key").on(t.userId, t.day),

@@ -24,7 +24,7 @@ import {
 } from '../src/data/customers';
 import { TIMELINE_PAGE } from '../src/data/customer-query';
 import { getConfig } from '../src/data/config';
-import { inr, isoDate, pretty, shopName } from '../src/lib/format';
+import { inr, inrFromPaise, isoDate, pretty, shopName } from '../src/lib/format';
 import { callNumber, openWhatsApp } from '../src/lib/messaging';
 
 /**
@@ -450,7 +450,7 @@ export default function CustomerRecord() {
                    the one place it could not be read. */
                 {
                   label: 'Outstanding',
-                  value: c.outstandingPaise ? inr(c.outstandingPaise / 100) : 'Nothing outstanding',
+                  value: c.outstandingPaise ? inrFromPaise(c.outstandingPaise) : 'Nothing outstanding',
                 },
                 { label: 'Contact', value: c.contactPerson ?? '—' },
                 { label: 'Phone', value: c.phone ?? '—' },
@@ -460,7 +460,7 @@ export default function CustomerRecord() {
                 { label: 'Dealer code', value: c.dealerCode ?? '—' },
                 {
                   label: 'Credit limit',
-                  value: c.creditLimitPaise != null ? inr(c.creditLimitPaise / 100) : 'Not set',
+                  value: c.creditLimitPaise != null ? inrFromPaise(c.creditLimitPaise) : 'Not set',
                 },
                 { label: 'Credit days', value: c.creditDays != null ? c.creditDays + ' days' : '—' },
                 { label: 'Price list', value: c.priceTag ?? '—' },
@@ -662,7 +662,7 @@ export default function CustomerRecord() {
                   <Card key={o.id} style={{ gap: 4 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
                       <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-                        {o.valuePaise != null ? inr(o.valuePaise / 100) : 'Value not recorded'}
+                        {o.valuePaise != null ? inrFromPaise(o.valuePaise) : 'Value not recorded'}
                       </Text>
                       <Text style={type.caption}>{pretty(o.orderedAt)}</Text>
                     </View>
@@ -709,7 +709,7 @@ export default function CustomerRecord() {
                           },
                           weight(600),
                         ]}>
-                        {r.amountPaise != null ? inr(r.amountPaise / 100) : '—'}
+                        {r.amountPaise != null ? inrFromPaise(r.amountPaise) : '—'}
                       </Text>
                       <Text style={type.caption}>{pretty(r.receivedAt)}</Text>
                     </View>
@@ -899,7 +899,7 @@ export default function CustomerRecord() {
                   <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
                     <Text style={[{ fontSize: 15, color: C.ink, flexShrink: 1 }, weight(500)]}>{k.competitorName}</Text>
                     <Text style={[{ fontSize: 15, color: C.ink }, weight(500), tabular]}>
-                      {k.ratePaise != null ? inr(k.ratePaise / 100) : (k.rateNote ?? '')}
+                      {k.ratePaise != null ? inrFromPaise(k.ratePaise) : (k.rateNote ?? '')}
                     </Text>
                   </View>
                   <Text style={[type.caption, { marginTop: 2 }]}>

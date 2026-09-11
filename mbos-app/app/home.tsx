@@ -7,7 +7,7 @@ import { Card } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { compactInr, inr, isoDate, plural } from '../src/lib/format';
+import { compactInrFromPaise, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { DASH_CARDS, DAY_AHEAD } from '../src/data/fixtures';
 import {
   checkIn,
@@ -24,6 +24,7 @@ import { useTicker } from '../src/components/ui/use-ticker';
 import { collectionDue } from '../src/data/customers';
 import { listPerformance, shortfalls, type PerformanceMonth } from '../src/data/performance';
 import { getConfig } from '../src/data/config';
+import { mayOpenDay } from '../src/data/day-gate';
 import { ordersToday } from '../src/data/orders';
 import { cashInHand } from '../src/data/payments';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
@@ -294,7 +295,7 @@ export default function Home() {
          tabular, in half of a 328-point card — so at Android's larger font
          settings it truncated to "Not known y…". It is the honest answer this
          tile exists to give, so it is drawn smaller rather than cut off. */
-      v: day.orderValueUnknown ? 'Not known yet' : inr(day.orderValuePaise / 100),
+      v: day.orderValueUnknown ? 'Not known yet' : inrFromPaise(day.orderValuePaise),
       s: plural(day.orders, 'order'),
       small: day.orderValueUnknown,
     },
@@ -310,8 +311,8 @@ export default function Home() {
       v: day.stops ? `${day.stopsDone} of ${day.stops}` : String(day.visits),
       s: day.stops ? plural(day.visits, 'visit') + ' logged' : 'No plan today',
     },
-    { v: inr(day.collectPaise / 100), s: plural(day.collectCustomers, 'customer') },
-    { v: inr(day.cashPaise / 100), s: day.cashSentence || 'Nothing to deposit' },
+    { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer') },
+    { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit' },
     { v: String(day.tasks), s: day.tasksOverdue ? plural(day.tasksOverdue, 'overdue') : 'None overdue' },
     { v: String(day.followUps), s: `${day.followUpsToday} today` },
   ];
@@ -321,7 +322,7 @@ export default function Home() {
   const dayAheadValues =
     !day || neverPulled
       ? DAY_AHEAD.map(() => '—')
-      : [String(day.stops), compactInr(day.collectPaise / 100), String(day.followUpsToday)];
+      : [String(day.stops), compactInrFromPaise(day.collectPaise), String(day.followUpsToday)];
 
   /*
    * The selfie camera is a COMPONENT, and `startDay` needs a value from it, so
@@ -375,7 +376,10 @@ export default function Home() {
   /**
    * Starting the day: GPS, then attendance with a selfie, then the timer.
    *
-   * Check-in is NEVER blocked. Outside the radius the day starts all the same
+   * Check-in is never blocked BY A LOCATION, which is not the same sentence it
+   * used to be: a phone that cannot run the tracking service is stopped at the
+   * gate below, because the cost there is the whole day's record rather than
+   * one coordinate. Outside the radius the day starts all the same
    * and the override reason is asked for afterwards — asking first and losing
    * the check-in to a dismissed dialog is exactly the failure this module
    * exists to avoid. A refused camera or a missing fix is recorded as what it
@@ -388,6 +392,20 @@ export default function Home() {
       const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
       const radius = await getConfig<number>('mbos.attendance.geofenceRadiusM', 200);
       const base = await getConfig<{ lat: number; lng: number } | null>('mbos.attendance.baseLocation', null);
+
+      /* THE GATE COMES BEFORE THE CAMERA, and before anything is written.
+         A phone that cannot run the tracking service loses the whole record of
+         where the day was spent, and a man finds that out in the evening — so
+         the day does not open at all until it can. Asked first because nothing
+         else has happened yet: no photograph taken for a day that will not
+         start, no half-written row, nothing to undo. `mayOpenDay` is the only
+         thing that can produce what `checkIn` requires, so this is not a check
+         this screen could forget to make — leaving it out does not compile. */
+      const gate = await mayOpenDay(userId);
+      if (!gate.ok) {
+        router.push('/phone-setup');
+        return;
+      }
 
       /* Started, not awaited: it settles while the photograph is being taken.
          `void` on the promise would drop the value, so it is held. */
@@ -422,6 +440,7 @@ export default function Home() {
         userId,
         fix,
         selfieMediaId: selfie.id,
+        mayOpen: gate.gate,
         homeLocation: base,
       });
 
@@ -498,6 +517,18 @@ export default function Home() {
     if (!userId || starting) return;
     setStarting(true);
     try {
+      /* THE SAME GATE, on the same terms. Coming back after lunch opens a
+         session that is tracked exactly like the morning's, so a phone that
+         has stopped being able to record must not be able to open one — and a
+         rule enforced at one of two doors is a rule salesmen learn to walk
+         round. Nothing here is a second copy of it: both doors call the one
+         function, and `checkIn` takes what only that function can make. */
+      const gate = await mayOpenDay(userId);
+      if (!gate.ok) {
+        router.push('/phone-setup');
+        return;
+      }
+
       const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
       const fixing = getFix({ accuracyThresholdM: threshold });
 
@@ -517,7 +548,7 @@ export default function Home() {
       }
 
       const fix = fixOf(await fixing);
-      await checkIn({ userId, fix, selfieMediaId: selfie.id, homeLocation: null });
+      await checkIn({ userId, fix, selfieMediaId: selfie.id, mayOpen: gate.gate, homeLocation: null });
       set({ gps: fix ? 'locked' : 'off' });
       load();
       notify('Back on the clock');

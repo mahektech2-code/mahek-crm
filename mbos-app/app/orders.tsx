@@ -6,7 +6,7 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import { listOrders, orderLines, type PunchedLine, type PunchedOrder } from '../src/data/orders';
-import { dmy, inr, isoDate, plural } from '../src/lib/format';
+import { dmy, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { color as C, radius, tabular, weight, type BadgeTone } from '../src/theme/tokens';
 
 /**
@@ -134,7 +134,7 @@ export default function OrdersScreen() {
                     <T style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
                       {o.valueUnavailable || o.netTotalPaise == null
                         ? 'Not valued'
-                        : inr(o.netTotalPaise / 100)}
+                        : inrFromPaise(o.netTotalPaise)}
                     </T>
                   </View>
 

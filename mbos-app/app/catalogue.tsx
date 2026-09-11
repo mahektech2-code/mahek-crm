@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Input, ListCard, T } from '../src/components/ui/primitives';
 import { color as C, type, weight } from '../src/theme/tokens';
-import { inr, plural } from '../src/lib/format';
+import { inrFromPaise, plural } from '../src/lib/format';
 import { searchProducts } from '../src/data/customers';
 import { useStore } from '../src/state/store';
 
@@ -121,7 +121,7 @@ export default function CatalogueScreen() {
         </T>
       </View>
       <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-        {(x.sellingPricePaise != null ? inr(x.sellingPricePaise / 100) + ' / ' : '') + (x.packSize ?? '')}
+        {(x.sellingPricePaise != null ? inrFromPaise(x.sellingPricePaise) + ' / ' : '') + (x.packSize ?? '')}
       </T>
     </View>
   );

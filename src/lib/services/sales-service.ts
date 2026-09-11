@@ -1784,6 +1784,36 @@ export type LastKnown = {
    * and this is the silence measured.
    */
   lastHeardAt: Date | null;
+  /**
+   * THE TRAIL'S OWN NEWEST FIX, which `seenAt` above cannot answer.
+   *
+   * `seenAt` is the newest of three sources — the trail, the check-in and each
+   * visit — and that is right for "where is he", which is what it is for. It
+   * is the wrong reading of "is his tracking working", because a check-in
+   * leaves a fix whatever the trail is doing: a salesman whose tracking never
+   * started once ran a whole day with a pin, a place and a time on this list
+   * and not one position in `mbos_positions`, and nothing on any screen could
+   * tell that apart from a man standing still. Null means the trail has
+   * produced nothing at all today — see `trailIsDead` in `handset-health`.
+   */
+  trailSeenAt: Date | null;
+  /**
+   * WHETHER THE DAY OPENED ON A PHONE THAT COULD SHOW IT WOULD RECORD IT.
+   *
+   * The handset gates its own check-in now, and the three facts behind that
+   * decision ride the attendance row: what it could check, whether the man
+   * claimed to have done the steps nothing can check, and what was still
+   * outstanding when he claimed it. They are here because a gate that stops a
+   * man working is a support call, and the office has to be able to answer it
+   * — and because the claim is only worth anything read against the trail that
+   * did or did not follow it.
+   *
+   * Null throughout on a handset too old to say, which is every handset in the
+   * field until it is updated. Never read null as "nothing was wrong".
+   */
+  setupReady: boolean | null;
+  setupAcknowledgedAt: Date | null;
+  setupUnverified: string[] | null;
 };
 
 /**
@@ -1826,6 +1856,15 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
     latest as (
       select distinct on (uid) uid, lat, lng, at, place, acc
         from fixes order by uid, at desc
+    ),
+    /* The trail ALONE, deliberately not folded into the fixes above: the whole
+       point of it is to be readable apart from the check-in and the visits
+       that would otherwise stand in for it. See trailSeenAt on the type. */
+    trail as (
+      select p.user_id as uid, max(p.at) as at
+        from mbos_positions p
+       where (p.at ${IST_DAY})::date = ${day}::date
+       group by p.user_id
     )
     select u.id as "salesmanId", u.name as "salesmanName", u.initials, u.active,
            d.check_in_at as "checkInAt", d.check_out_at as "checkOutAt",
@@ -1839,11 +1878,16 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
            dev.battery_percent as "batteryPercent",
            dev.battery_charging as "batteryCharging",
            dev.device_state_at as "deviceStateAt",
-           dev.last_seen_at as "lastHeardAt"
+           dev.last_seen_at as "lastHeardAt",
+           tr.at as "trailSeenAt",
+           d.setup_ready as "setupReady",
+           d.setup_acknowledged_at as "setupAcknowledgedAt",
+           d.setup_unverified as "setupUnverified"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
       left join latest f on f.uid = u.id
+      left join trail tr on tr.uid = u.id
       left join mbos_devices dev on dev.user_id = u.id and dev.active
      where u.active ${onlyMine(scope, "u.id")}
      order by f.at desc nulls last, u.name asc
@@ -2809,6 +2853,8 @@ export type FieldSetting = {
   min?: number;
   max?: number;
   options?: readonly string[];
+  /** Structured settings where an empty box is an answer rather than a typo. */
+  nullable?: boolean;
 };
 
 /** The section headings, in the order somebody would work through them. */
@@ -2822,7 +2868,14 @@ const SETTING_GROUPS: Array<{ category: string; label: string; blurb: string }> 
   {
     category: "mbos-attendance",
     label: "The working day",
-    blurb: "What counts as a full day, a half day, and how far a check-in may be from base.",
+    blurb:
+      "What counts as a full day, a half day, and how far a check-in may be from base — including WHERE base is, which was the one number on this screen that had no box. Leave the coordinates empty and no check-in is measured against anything, which is better than measuring every one of them against a guess.",
+  },
+  {
+    category: "mbos-route",
+    label: "The order a day is walked in",
+    blurb:
+      "How the handset sorts today's stops, and what it reckons the day will take. The two speeds price the day in minutes and never change the order; the two below them bound the tidy-up pass, which is work a phone has to do on the spot. Nothing here decides which shops are on the list.",
   },
   {
     category: "mbos-orders",
@@ -2844,7 +2897,8 @@ const SETTING_GROUPS: Array<{ category: string; label: string; blurb: string }> 
   {
     category: "mbos-expenses",
     label: "Expenses",
-    blurb: "Daily caps by category, the bill-photo threshold, and how far back a claim may be dated.",
+    blurb:
+      "The bill-photo threshold, and how far back a claim may be dated. What a claim is WORTH is not here and must not come back here — that is the published expense policy, which has versions and effective dates so an old claim keeps the rules it was made under.",
   },
   {
     category: "mbos-leave",
@@ -2921,6 +2975,7 @@ export async function fieldSettings(): Promise<
           min: "min" in s ? (s.min as number) : undefined,
           max: "max" in s ? (s.max as number) : undefined,
           options: "options" in s ? (s.options as readonly string[]) : undefined,
+          nullable: "nullable" in s ? (s.nullable as boolean) : undefined,
         };
       }),
   })).filter((g) => g.settings.length > 0);
@@ -2947,6 +3002,7 @@ export async function fieldSettings(): Promise<
         min: "min" in s ? (s.min as number) : undefined,
         max: "max" in s ? (s.max as number) : undefined,
         options: "options" in s ? (s.options as readonly string[]) : undefined,
+        nullable: "nullable" in s ? (s.nullable as boolean) : undefined,
       })),
     });
   }

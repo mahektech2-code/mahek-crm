@@ -7,7 +7,7 @@ import { color as C, radius, type, weight } from '../src/theme/tokens';
 import { listRejections, retryItem, type QueueItem } from '../src/sync/queue';
 import { syncNow } from '../src/sync/engine';
 import { useStore } from '../src/state/store';
-import { inr } from '../src/lib/format';
+import { inrFromPaise } from '../src/lib/format';
 
 /**
  * Records the office refused.
@@ -132,7 +132,7 @@ export default function Rejections() {
           const valueLine = payload.valueUnavailable
             ? 'Not valued'
             : value != null
-              ? inr(value / 100)
+              ? inrFromPaise(value)
               : null;
           const said = row.failureReason?.trim() || null;
           const guidance = row.failureCode ? WHAT_TO_DO[row.failureCode] ?? null : null;
