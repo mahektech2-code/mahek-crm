@@ -110,6 +110,16 @@ async function store(lat: number, lng: number, accuracyM: number | null, at: num
 
 const LAST_KEPT = 'trailLastKeptAt';
 
+/**
+ * When the watchdog last caught the background task accepted and silent.
+ *
+ * Persisted rather than held in memory, unlike `backgroundStartedAt` beside
+ * it: that describes a registration THIS process made, and a fresh process
+ * must not inherit a verdict about it. This describes the HANDSET, and it is
+ * still true after the OS reaps the app — which is exactly when it happens.
+ */
+const STALLED_AT = 'keepalive.stalledAt';
+
 /** Milliseconds between kept fixes, from configuration. */
 async function minGapMs(): Promise<number> {
   const minutes = await getConfig<number>('mbos.location.trackEveryMinutes', 5);
@@ -340,7 +350,18 @@ async function watch(): Promise<void> {
       backgroundStartedAt = Date.now();
       return;
     }
-    if (verdict === 'stalled') await fallBackToFloor();
+    if (verdict === 'stalled') {
+      /* MARKED, not just worked around.
+      
+         Falling back to the foreground floor keeps SOME of the day and hides
+         the cause: the phone is killing the tracker, and the only cure is two
+         switches nobody has been asked to touch. The mark is what lets the
+         Sync screen say so and what rides up to the office on the device
+         report, so a handset going quiet is a support call somebody can
+         answer rather than a fortnight of silence. */
+      await setKv(STALLED_AT, String(Date.now()));
+      await fallBackToFloor();
+    }
   } catch {
     /* A watchdog is not allowed to cost a fix or break a day. Whatever could
        not be read here is read again on the next tick. */
@@ -612,4 +633,20 @@ export async function flush(): Promise<number> {
   } finally {
     flushing = false;
   }
+}
+
+
+/**
+ * When this handset was last caught with its tracker silenced, or null.
+ *
+ * Read by the Sync screen and by the device report. Never cleared by a
+ * successful fix on purpose: one fix arriving does not mean the battery
+ * manager has changed its mind, and a mark that clears itself on the first
+ * good reading would flicker off every time the salesman opened the app —
+ * which is the one moment tracking always works.
+ */
+export async function stalledAt(): Promise<number | null> {
+  const raw = await getKv(STALLED_AT);
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) ? n : null;
 }
