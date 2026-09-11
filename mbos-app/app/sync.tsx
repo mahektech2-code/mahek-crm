@@ -4,6 +4,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
+import { stalledAt as trackerStalledAt } from '../src/sync/trail';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import { isoDate, plural, pretty } from '../src/lib/format';
 import { conflictCount, listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
@@ -119,6 +120,10 @@ export default function SyncScreen() {
   const [depth, setDepth] = React.useState(0);
   const [counts, setCounts] = React.useState<Record<string, number>>({});
   const [media, setMedia] = React.useState({ pending: 0, failed: 0 });
+  /* Whether this phone has been CAUGHT killing the tracker, rather than
+     merely never set up — see `stalledAt`. The two read very differently and
+     only one of them is urgent. */
+  const [stalled, setStalled] = React.useState<number | null>(null);
   const [conflicts, setConflicts] = React.useState(0);
   /* A pass is in flight. The button used to stay live throughout, so he could
      fire it six times and be told six times that everything was sending. */
@@ -129,13 +134,21 @@ export default function SyncScreen() {
 
   const load = React.useCallback(() => {
     let live = true;
-    void Promise.all([listQueue(), queueCounts(), mediaCounts(), conflictCount(), queueDepth()]).then(([q, c, m, k, d]) => {
+    void Promise.all([
+      listQueue(),
+      queueCounts(),
+      mediaCounts(),
+      conflictCount(),
+      queueDepth(),
+      trackerStalledAt(),
+    ]).then(([q, c, m, k, d, s]) => {
       if (!live) return;
       setRows(q);
       setCounts(c);
       setMedia(m);
       setConflicts(k);
       setDepth(d);
+      setStalled(s);
     });
     return () => {
       live = false;
@@ -340,6 +353,33 @@ export default function SyncScreen() {
         ))}
       </ListCard>
       ) : null}
+
+      {/* WHY A DAY GOES QUIET, and the two switches that decide it.
+          
+          Everything else on this screen is about work that is waiting to go
+          up. This one is about the handset being allowed to record at all —
+          which is upstream of all of it, and is the commonest reason a trail
+          has a two-hour hole in it with every permission reading granted. */}
+      <Pressable
+        onPress={() => router.push('/tracking-setup?from=sync')}
+        accessibilityRole="button"
+        style={{
+          marginTop: 14,
+          padding: 16,
+          borderRadius: radius.lg,
+          borderWidth: 1,
+          borderColor: stalled ? C.danger : C.border,
+          backgroundColor: C.surface,
+        }}>
+        <T style={[{ fontSize: 15, color: stalled ? C.danger : C.ink }, weight(600)]}>
+          {stalled ? 'Your phone stopped the tracker' : 'Keep tracking on'}
+        </T>
+        <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>
+          {stalled
+            ? 'Your route stopped being recorded while the app was in your pocket. Two settings stop it happening again.'
+            : 'If your route has holes in it, your phone is stopping MahekOne to save battery. Two settings fix it.'}
+        </T>
+      </Pressable>
 
       {/* A refusal is not a queue item to retry blindly — it goes to the screen
           that says what the office objected to and how to correct it. */}
