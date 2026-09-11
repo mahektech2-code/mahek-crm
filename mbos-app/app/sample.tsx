@@ -11,12 +11,15 @@ import {
   feedbackFor,
   getSample,
   markDispatched,
+  markTrialStarted,
   markTried,
   recordFeedback,
   whatIsOwed,
   type FunnelSample,
   type SampleFeedback,
+  type TrialVerdict,
 } from '../src/data/lead-samples';
+import { VoiceField } from '../src/components/ui/dictate';
 import { getCustomer } from '../src/data/customers';
 import { getLead } from '../src/data/leads';
 import { takePhoto } from '../src/native/capture';
@@ -49,6 +52,22 @@ import { useStore } from '../src/state/store';
  * sends `receivedAt` up the wire under the name the office reads.
  */
 
+/**
+ * The verdict, in words — one sentence for each of the FOUR the office takes.
+ *
+ * `more_testing` is not a shrug and must not be drawn as one: "they want to
+ * try it again on a different substrate" is an answer, and rendering it as
+ * "No verdict yet" says on the customer's record that nobody asked.
+ */
+function verdictSentence(outcome: string | null): string {
+  switch (outcome) {
+    case 'approved': return 'They were happy with it';
+    case 'rejected': return 'They were not happy with it';
+    case 'more_testing': return 'They want to try it again';
+    default: return 'No verdict yet';
+  }
+}
+
 function toneFor(state: string): BadgeTone {
   switch (state) {
     case 'Converted':
@@ -72,22 +91,38 @@ export default function SampleRecord() {
   const [sample, setSample] = React.useState<FunnelSample | null>(null);
   const [review, setReview] = React.useState<SampleFeedback | null>(null);
   const [who, setWho] = React.useState<string>('');
+  /* READING is not the same answer as NOT HERE. Both start with an empty row,
+     and this screen used to draw "This sample is not on this phone" on the
+     first frame of every open — a definitive sentence about a record that was
+     still being read out of SQLite, on a screen whose only control is a way
+     back. It is never reset to `reading` on a refocus: the row is already on
+     screen by then and a flash of "Reading…" over it says nothing true. */
+  const [status, setStatus] = React.useState<'reading' | 'ready' | 'failed'>('reading');
   const [dispatchOpen, setDispatchOpen] = React.useState(false);
   const [reviewOpen, setReviewOpen] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
 
   const load = React.useCallback(() => {
     let live = true;
-    if (!id) return;
-    void Promise.all([getSample(id), feedbackFor(id)]).then(async ([s, f]) => {
-      if (!live) return;
-      setSample(s);
-      setReview(f);
-      if (s) {
-        const c = await getCustomer(s.customerId);
-        const name = c?.name ?? (await getLead(s.customerId).then((l) => (l ? l.company?.trim() || l.name : '')));
-        if (live) setWho(name ?? '');
-      }
-    });
+    if (!id) {
+      setStatus('ready');
+      return;
+    }
+    void Promise.all([getSample(id), feedbackFor(id)])
+      .then(async ([s, f]) => {
+        if (!live) return;
+        setSample(s);
+        setReview(f);
+        setStatus('ready');
+        if (s) {
+          const c = await getCustomer(s.customerId);
+          const name = c?.name ?? (await getLead(s.customerId).then((l) => (l ? l.company?.trim() || l.name : '')));
+          if (live) setWho(name ?? '');
+        }
+      })
+      .catch(() => {
+        if (live) setStatus('failed');
+      });
     return () => {
       live = false;
     };
@@ -101,7 +136,11 @@ export default function SampleRecord() {
         <BackLink label={back.label} onPress={back.go} />
         <Card style={{ paddingVertical: 32 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-            This sample is not on this phone
+            {status === 'reading'
+              ? 'Reading…'
+              : status === 'failed'
+                ? 'That could not be read off this phone'
+                : 'This sample is not on this phone'}
           </T>
         </Card>
       </AppFrame>
@@ -142,6 +181,16 @@ export default function SampleRecord() {
           {s.receivedConfirmedAt ? (
             <Line label="They have it" value={pretty(isoDate(new Date(s.receivedConfirmedAt)))} />
           ) : null}
+          {/* BOTH trial dates, because the gap between them is the point. A can
+              opened three weeks ago and never finished reads here as exactly
+              that instead of looking identical to one nobody has touched. */}
+          {s.trialStartedAt ? (
+            <Line label="Trial started" value={pretty(isoDate(new Date(s.trialStartedAt)))} />
+          ) : null}
+          {s.trialCompletedAt ? (
+            <Line label="Trial finished" value={pretty(isoDate(new Date(s.trialCompletedAt)))} />
+          ) : null}
+          {s.reviewedAt ? <Line label="Reviewed" value={pretty(isoDate(new Date(s.reviewedAt)))} /> : null}
           {s.cancelReason ? <Line label="Cancelled" value={s.cancelReason} /> : null}
         </View>
       </Card>
@@ -166,26 +215,42 @@ export default function SampleRecord() {
           {s.state === 'Dispatched' ? (
             <>
               <PrimaryButton
-                label="They have it — confirm with a photo"
+                label={busy ? 'Saving…' : 'They have it — confirm with a photo'}
+                disabled={busy}
                 onPress={async () => {
-                  const shot = await takePhoto({ parentType: 'sample', parentId: s.id, kind: 'sample_proof' });
-                  /* A refused camera or a cancelled picker is not a reason to
-                     lose the fact: the delivery is confirmed either way and
-                     only the photograph is poorer for it. Every attachment in
-                     this app follows that rule. */
-                  const r = await confirmReceived(s.id, shot.ok ? shot.mediaId : null);
-                  if (!r.ok) return notify(r.message);
-                  load();
-                  notify(shot.ok ? 'Delivered, with a photo' : 'Delivered — no photo taken');
+                  /* One press, one mark. Nothing here disabled while the write
+                     was in flight and the sheet only closes once it returns,
+                     so a double tap on a slow phone queued the mark twice. */
+                  if (busy) return;
+                  setBusy(true);
+                  try {
+                    const shot = await takePhoto({ parentType: 'sample', parentId: s.id, kind: 'sample_proof' });
+                    /* A refused camera or a cancelled picker is not a reason to
+                       lose the fact: the delivery is confirmed either way and
+                       only the photograph is poorer for it. Every attachment in
+                       this app follows that rule. */
+                    const r = await confirmReceived(s.id, shot.ok ? shot.mediaId : null);
+                    if (!r.ok) return notify(r.message);
+                    load();
+                    notify(shot.ok ? 'Delivered, with a photo' : 'Delivered — no photo taken');
+                  } finally {
+                    setBusy(false);
+                  }
                 }}
               />
               <SecondaryButton
                 label="They have it — no photo"
                 onPress={async () => {
-                  const r = await confirmReceived(s.id, null);
-                  if (!r.ok) return notify(r.message);
-                  load();
-                  notify('Delivered');
+                  if (busy) return;
+                  setBusy(true);
+                  try {
+                    const r = await confirmReceived(s.id, null);
+                    if (!r.ok) return notify(r.message);
+                    load();
+                    notify('Delivered');
+                  } finally {
+                    setBusy(false);
+                  }
                 }}
               />
             </>
@@ -194,13 +259,41 @@ export default function SampleRecord() {
           {s.state === 'Awaiting feedback' ? (
             <>
               <PrimaryButton label="Write down what they thought" onPress={() => setReviewOpen(true)} />
+              {/* STARTED and FINISHED are two marks. Without the first, a shop
+                  that opened the can three weeks ago and never got to the end
+                  of it looks exactly like one that has not touched it — and
+                  that stall is the commonest way a sample goes quiet. It is
+                  offered once: the date is already on the record afterwards. */}
+              {s.trialStartedAt ? null : (
+                <SecondaryButton
+                  label="They have started using it"
+                  onPress={async () => {
+                    if (busy) return;
+                    setBusy(true);
+                    try {
+                      const r = await markTrialStarted(s.id);
+                      if (!r.ok) return notify(r.message);
+                      load();
+                      notify('Trial started — the review is still what is owed');
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                />
+              )}
               <SecondaryButton
                 label="They have tried it — I will ask later"
                 onPress={async () => {
-                  const r = await markTried(s.id);
-                  if (!r.ok) return notify(r.message);
-                  load();
-                  notify('Tried — the review is what is owed now');
+                  if (busy) return;
+                  setBusy(true);
+                  try {
+                    const r = await markTried(s.id);
+                    if (!r.ok) return notify(r.message);
+                    load();
+                    notify('Tried — the review is what is owed now');
+                  } finally {
+                    setBusy(false);
+                  }
                 }}
               />
             </>
@@ -249,12 +342,23 @@ export default function SampleRecord() {
               })}
             </View>
             <Divider style={{ marginVertical: 12 }} />
-            <T style={[{ fontSize: 15, color: review.trialOutcome === 'approved' ? C.success : C.ink }, weight(600)]}>
-              {review.trialOutcome === 'approved'
-                ? 'They were happy with it'
-                : review.trialOutcome === 'rejected'
-                  ? 'They were not happy with it'
-                  : 'No verdict yet'}
+            {/* FOUR verdicts. "They want to try it again" drawn as "No verdict
+                yet" filed a trial that really happened as an unanswered one —
+                which is the one reading of it that loses the trial. */}
+            <T
+              style={[
+                {
+                  fontSize: 15,
+                  color:
+                    review.trialOutcome === 'approved'
+                      ? C.success
+                      : review.trialOutcome === 'more_testing'
+                        ? C.warnInk
+                        : C.ink,
+                },
+                weight(600),
+              ]}>
+              {verdictSentence(review.trialOutcome)}
             </T>
             {review.photoId ? (
               <T s="caption" style={{ marginTop: 6 }}>A photograph was taken and is queued to upload.</T>
@@ -328,13 +432,18 @@ function DispatchSheet({
 }: {
   open: boolean;
   onClose: () => void;
-  onSave: (d: { courierName: string; courierDocket: string; expectedDeliveryDate: string }) => void;
+  onSave: (d: {
+    courierName: string;
+    courierDocket: string;
+    expectedDeliveryDate: string;
+  }) => Promise<void> | void;
 }) {
   const [courier, setCourier] = React.useState('');
   const [docket, setDocket] = React.useState('');
   const [date, setDate] = React.useState<string | null>(null);
   const [cal, setCal] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
@@ -375,12 +484,21 @@ function DispatchSheet({
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
         <PrimaryButton
-          label="Sent"
-          onPress={() => {
+          label={saving ? 'Saving…' : 'Sent'}
+          disabled={saving}
+          onPress={async () => {
+            if (saving) return;
             if (!courier.trim()) return setErr('Who is carrying it?');
             if (!docket.trim()) return setErr('The docket number — without it nobody can trace it.');
             if (!date) return setErr('When should it get there?');
-            onSave({ courierName: courier.trim(), courierDocket: docket.trim(), expectedDeliveryDate: date });
+            /* The sheet closes only after the write returns; a second tap
+               before that queued a second dispatch mark for one parcel. */
+            setSaving(true);
+            try {
+              await onSave({ courierName: courier.trim(), courierDocket: docket.trim(), expectedDeliveryDate: date });
+            } finally {
+              setSaving(false);
+            }
           }}
           style={{ flex: 1, borderRadius: radius.xl }}
         />
@@ -411,11 +529,7 @@ function ReviewSheet({
   open: boolean;
   existing: SampleFeedback | null;
   onClose: () => void;
-  onSave: (
-    fields: Record<string, string>,
-    outcome: 'approved' | 'rejected' | 'pending',
-    photoId: string | null,
-  ) => void;
+  onSave: (fields: Record<string, string>, outcome: TrialVerdict, photoId: string | null) => Promise<void> | void;
   onPhoto: () => Promise<{ mediaId: string; uri: string } | null>;
 }) {
   const [fields, setFields] = React.useState<Record<string, string>>(() => {
@@ -424,11 +538,12 @@ function ReviewSheet({
     for (const f of FEEDBACK_FIELDS) out[f.id] = from[f.id] ?? '';
     return out;
   });
-  const [outcome, setOutcome] = React.useState<'approved' | 'rejected' | 'pending'>(
-    (existing?.trialOutcome as 'approved' | 'rejected' | 'pending') ?? 'pending',
+  const [outcome, setOutcome] = React.useState<TrialVerdict>(
+    (existing?.trialOutcome as TrialVerdict) ?? 'pending',
   );
   const [photo, setPhoto] = React.useState<{ mediaId: string; uri: string } | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
@@ -439,14 +554,18 @@ function ReviewSheet({
         Their words, not a summary. Anything you leave empty stays empty.
       </T>
 
+      {/* All seven are prose and all seven get the microphone. Six of them were
+          single-line boxes, so a sentence scrolled sideways out of view as it
+          was typed — on a sheet whose own instruction is "their words, not a
+          summary", read by somebody typing slowly in a language he does not
+          write. `VoiceField` is the same `Input` with a mic in it. */}
       {FEEDBACK_FIELDS.map((f) => (
         <View key={f.id} style={{ marginTop: 12 }}>
           <SectionLabel style={{ marginBottom: 6 }}>{f.label}</SectionLabel>
-          <Input
+          <VoiceField
             value={fields[f.id] ?? ''}
             onChangeText={(v) => { setFields({ ...fields, [f.id]: v }); setErr(null); }}
-            placeholder={f.id === 'otherComments' ? 'Anything else worth knowing' : ''}
-            multiline={f.id === 'otherComments'}
+            placeholder={f.id === 'otherComments' ? 'Anything else worth knowing' : 'In their words'}
           />
         </View>
       ))}
@@ -456,6 +575,15 @@ function ReviewSheet({
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           <Choice label="Yes" selected={outcome === 'approved'} onPress={() => setOutcome('approved')} style={{ paddingHorizontal: 16 }} />
           <Choice label="No" selected={outcome === 'rejected'} onPress={() => setOutcome('rejected')} style={{ paddingHorizontal: 16 }} />
+          {/* The third real verdict. Without it a trial that happened and
+              produced "again, on something else" had to be filed as though
+              nobody had answered. */}
+          <Choice
+            label="They want to try it again"
+            selected={outcome === 'more_testing'}
+            onPress={() => setOutcome('more_testing')}
+            style={{ paddingHorizontal: 16 }}
+          />
           <Choice label="Not decided" selected={outcome === 'pending'} onPress={() => setOutcome('pending')} style={{ paddingHorizontal: 16 }} />
         </View>
         <T s="caption" style={{ marginTop: 6 }}>
@@ -487,11 +615,20 @@ function ReviewSheet({
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
         <PrimaryButton
-          label="Save the review"
-          onPress={() => {
+          label={saving ? 'Saving…' : 'Save the review'}
+          disabled={saving}
+          onPress={async () => {
+            if (saving) return;
             const any = FEEDBACK_FIELDS.some((f) => (fields[f.id] ?? '').trim());
             if (!any) return setErr('Write down at least one thing they said about it.');
-            onSave(fields, outcome, photo?.mediaId ?? null);
+            /* The sheet only closes once the write returns, so without this a
+               second tap on a slow phone saved the review twice. */
+            setSaving(true);
+            try {
+              await onSave(fields, outcome, photo?.mediaId ?? null);
+            } finally {
+              setSaving(false);
+            }
           }}
           style={{ flex: 1, borderRadius: radius.xl }}
         />

@@ -20,7 +20,7 @@ import {
 } from '../src/data/travel';
 import { arrivalPrompt, checkFare, legLine, navigationLine, travellingFor } from '../src/lib/travel-leg';
 import { suspectFor, visitCapThresholds } from '../src/data/leads';
-import { visitCapState, type VisitCapThresholds } from '../src/engines/leads';
+import { visitCapLabel, visitCapState, type VisitCapThresholds } from '../src/engines/leads';
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { isoDate, pretty } from '../src/lib/format';
@@ -109,6 +109,32 @@ export default function Visit() {
   const [draft, setDraft] = React.useState<Record<string, string>>({});
   const [formErr, setFormErr] = React.useState<string | null>(null);
   const [calOpen, setCalOpen] = React.useState<'next' | 'trial' | null>(null);
+  /*
+   * ONE COMPLAINT PER PRESS, and one sample.
+   *
+   * Both sheets wrote on a bare async handler with nothing disabled while it
+   * ran, and `logComplaint` mints a fresh id on every call — so a second tap
+   * on a slow write produced two complaints, of which `setLinked` kept only
+   * the second. The first reached the desk team attached to no visit at all.
+   *
+   * The ref is what actually guards, because it is set synchronously: a
+   * `useState` flag is read from the closure of the render that drew the
+   * button, which is exactly the render where it was still false. The state
+   * beside it is only what the label and the disabled look are drawn from.
+   *
+   * One pair for both sheets: `form` holds one or the other, never both.
+   */
+  const formBusy = React.useRef(false);
+  const [formSaving, setFormSaving] = React.useState(false);
+  /*
+   * A week out, worked out ONCE when the screen opens.
+   *
+   * `defaultTrial()` was called from the render path — a clock read during
+   * render, which this app forbids and the compiler lint watches for — and it
+   * was called again from the save, so a screen open across midnight could
+   * offer one date and store another.
+   */
+  const [trialDefault] = React.useState(defaultTrial);
 
   /* Everything captured here that is not yet a visit: the fix, the recording,
      the records punched from inside it. `saveVisit` binds the lot in one
@@ -154,6 +180,19 @@ export default function Visit() {
      it without an answer, which is a different thing and the thing §B wants. */
   const capState =
     suspect && capCfg ? visitCapState(suspect.stage, suspect.visits, capCfg) : 'ok';
+  /*
+   * "Visit 3 / 3" — the visit being MADE, not the ones already made.
+   *
+   * `suspect.visits` is the count the office holds and `visitCapState` adds
+   * this one before it compares, so on the third visit to a Suspect the card
+   * demanded the decision under a heading reading "Visit 2 / 3" — a counter
+   * saying he still had one in hand. The number and the demand contradicted
+   * each other on one card, which reads as a bug and gets the answer picked at
+   * random to get past it. Asked of the engine rather than retyped here, so
+   * the wording and the rule cannot drift apart.
+   */
+  const capLabel =
+    suspect && capCfg ? visitCapLabel(suspect.stage, suspect.visits + 1, capCfg) : null;
   const [linked, setLinked] = React.useState<{ complaintId?: string; sampleId?: string }>({});
   const [products, setProducts] = React.useState<Product[]>([]);
   const [stopId, setStopId] = React.useState<string | null>(null);
@@ -197,6 +236,20 @@ export default function Visit() {
    */
   const [refused, setRefused] = React.useState<CheckInVerdict | null>(null);
   /*
+   * The distance he was refused at, kept past the refusal for the pin question
+   * that follows an override.
+   *
+   * That sheet reads `verdictGeo`, which is computed from a SECOND, fresh
+   * reading taken when he says he is at the shop — and that one can come back
+   * with nothing, leaving the sheet asking him to move a pin "about ? m",
+   * which is the one number that makes the question answerable. This reading
+   * was measured, seconds earlier, from the same spot.
+   *
+   * Display only. It is deliberately NOT fed into `metresFromShop`, which has
+   * to describe the fix actually stored on the row.
+   */
+  const [refusedMetres, setRefusedMetres] = React.useState<number | null>(null);
+  /*
    * What he said to get past it, and what he was asked next.
    *
    * `overrideReason` rides all the way to the save — it is what makes the
@@ -237,14 +290,21 @@ export default function Visit() {
   const loadLeg = React.useCallback(() => {
     let live = true;
     if (!custId || !userId) return;
-    void Promise.all([openLegOf(userId), arrivedLegFor(userId, custId), travelModes()]).then(
-      ([running, arrived, rows]) => {
+    void Promise.all([openLegOf(userId), arrivedLegFor(userId, custId), travelModes()])
+      .then(([running, arrived, rows]) => {
         if (!live) return;
         setModes(rows);
         setLeg(running && running.customerId === custId ? running : arrived);
         setLegLoaded(true);
-      },
-    );
+      })
+      .catch(() => {
+        /* A read that FAILED is not a journey still loading, and the screen
+           below holds everything until this flag is set. `leg` is left exactly
+           as it stands — null on the first pass, which is the "no leg behind
+           this visit" case the note above describes, so the form opens as it
+           always did rather than the screen reading "Reading…" for ever. */
+        if (live) setLegLoaded(true);
+      });
     return () => {
       live = false;
     };
@@ -428,6 +488,10 @@ export default function Visit() {
            photographed — so pressing the button again from the right place
            costs him nothing and leaves nothing behind. */
         setRefused(gate);
+        /* Kept for the pin question that an override leads to — see
+           `refusedMetres`. `too_far` is the only refusal there is, and it
+           always carries the distance. */
+        if (gate.metresAway != null) setRefusedMetres(Math.round(gate.metresAway));
         return;
       }
       setRefused(null);
@@ -545,6 +609,70 @@ export default function Visit() {
       return;
     }
     set({ shots: { ...shots, [which]: shot.mediaId } });
+  };
+
+  /* ---- the two records punched from inside the visit ----
+   *
+   * Named rather than written inline on the button, because both need the
+   * in-flight lock above and a failure has to be SAID: a bottom sheet is a
+   * Modal and the app's toast lives underneath it, so a `notify` raised while
+   * the sheet is open is a sentence nobody sees. The message goes in the
+   * sheet, beside the button that was pressed.
+   */
+  const submitComplaint = async () => {
+    if (formBusy.current) return;
+    if (!draft.cat) return setFormErr('cat');
+    if (!(draft.what ?? '').trim()) return setFormErr('what');
+    if (!c) return;
+    formBusy.current = true;
+    setFormSaving(true);
+    try {
+      const id = await logComplaint({
+        customerId: c.id,
+        category: draft.cat,
+        description: draft.what.trim(),
+      });
+      setLinked((l) => ({ ...l, complaintId: id }));
+      markVisitDone('complaint', draft.cat + ' · with the desk team');
+      setForm(null);
+      setDraft({});
+      notify('Complaint logged · the desk team sees it today');
+    } catch {
+      setFormErr('save');
+    } finally {
+      formBusy.current = false;
+      setFormSaving(false);
+    }
+  };
+
+  const submitSample = async () => {
+    if (formBusy.current) return;
+    if (!draft.sku) return setFormErr('sku');
+    if (!(draft.why ?? '').trim()) return setFormErr('why');
+    if (!c) return;
+    formBusy.current = true;
+    setFormSaving(true);
+    const trial = draft.trial ?? trialDefault;
+    try {
+      const id = await requestSample({
+        customerId: c.id,
+        productId: draft.sku,
+        productName: draft.skuName ?? '',
+        cans: 1,
+        reason: draft.why.trim(),
+        followUpDate: trial,
+      });
+      setLinked((l) => ({ ...l, sampleId: id }));
+      markVisitDone('sample', (draft.skuName ?? '') + ' · sent for approval');
+      setForm(null);
+      notify('Sample requested · follow-up set for ' + pretty(trial));
+      setDraft({});
+    } catch {
+      setFormErr('save');
+    } finally {
+      formBusy.current = false;
+      setFormSaving(false);
+    }
   };
 
   const dwellSeconds = visitStart ? Math.max(0, Math.floor((now - visitStart) / 1000)) : 0;

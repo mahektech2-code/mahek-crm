@@ -3,7 +3,7 @@ import { View, Text, Pressable, Platform, ScrollView, StyleSheet } from 'react-n
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, usePathname } from 'expo-router';
 import { color as C, type, weight } from '../../theme/tokens';
-import { Header, StatusStrip, TabBar, type StripTone, type TabKey } from './Chrome';
+import { Header, StatusStrip, TabBar, TabBarAction, type StripTone, type TabKey } from './Chrome';
 import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
 import { useKeyboardHeight } from '../ui/keyboard';
 import { Appear } from '../ui/motion';
@@ -149,7 +149,16 @@ export function AppFrame({
   const strip: { key: string; label: string; tone: StripTone; onPress: () => void }[] = [
     {
       key: 'att',
-      label: checkInAt != null ? 'In since ' + hhmm(checkInAt) : 'Not checked in',
+      /*
+       * SHORT ENOUGH FOR THE CELL IT HAS.
+       *
+       * Three cells share the width: on a 360pt handset each gets about 117,
+       * less 16 of padding, less the dot and its gap, which leaves roughly 88
+       * for the text. "Not checked in" and "In since 09:12" both measure about
+       * that at 12pt, so the one fact somebody looks for first thing in the
+       * morning rendered as "Not checked i…". These fit with room to spare.
+       */
+      label: checkInAt != null ? 'In ' + hhmm(checkInAt) : 'Not in',
       tone: checkedIn ? 'ok' : 'idle',
       onPress: () => router.push(`/attendance${fromHere}`),
     },
@@ -157,7 +166,19 @@ export function AppFrame({
       key: 'gps',
       label: gps === 'locked' ? 'GPS locked' : gps === 'off' ? 'GPS off' : 'Finding GPS',
       tone: gps === 'locked' ? 'ok' : gps === 'off' ? 'warn' : 'idle',
-      onPress: () => router.push('/home'),
+      /*
+       * Home IS the screen that explains this one — it is where the location
+       * permission is asked for on first open, and where starting the day
+       * takes the fix that sets this light. What it was not is a PUSH:
+       * standing on Home, which is where he is most of the day, tapping "GPS
+       * off" stacked a second copy of the page underneath itself, exactly the
+       * defect the bell was rewritten to avoid two files down. Home is a tab
+       * root, so it is reached the way the tab bar reaches one, and from Home
+       * there is nowhere to go.
+       */
+      onPress: () => {
+        if (here !== 'home') router.replace('/home');
+      },
     },
     {
       key: 'sync',
@@ -252,17 +273,23 @@ export function AppFrame({
       {/* The tab bar is hidden while typing. Left in place it floats over the
           keyboard on Android, covering the top row of keys. */}
       {keyboardHeight === 0 ? (
-        <TabBar
-          active={activeTab}
-          bottomInset={insets.bottom}
-          onTab={(k) => router.replace(`/${k}`)}
-          onAction={() => set({ sheet: 'action' })}
-          /* The office proposes a day and waits on the answer to plan a week.
-             The Journey screen has always listed those days at the top; what
-             it could not do was say so from anywhere else in the app, so being
-             asked and never noticing looked identical to having no plan. */
-          badges={{ journey: daysToAgree }}
-        />
+        <>
+          <TabBar
+            active={activeTab}
+            bottomInset={insets.bottom}
+            onTab={(k) => router.replace(`/${k}`)}
+            /* The office proposes a day and waits on the answer to plan a week.
+               The Journey screen has always listed those days at the top; what
+               it could not do was say so from anywhere else in the app, so being
+               asked and never noticing looked identical to having no plan. */
+            badges={{ journey: daysToAgree }}
+          />
+          {/* Beside the bar rather than inside it, because it is taller than
+              the bar is — see `TabBarAction`. Same pixel, same behaviour, and
+              it no longer depends on a renderer being willing to hit-test
+              outside a parent's bounds. */}
+          <TabBarAction bottomInset={insets.bottom} onPress={() => set({ sheet: 'action' })} />
+        </>
       ) : null}
 
       <ActionSheet

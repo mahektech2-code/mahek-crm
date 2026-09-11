@@ -100,6 +100,33 @@ function greetingFor(hour: number): string {
   return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 }
 
+/** `September 2026` from the row's own `2026-09`, off the list already here. */
+function monthLabel(period: string): string {
+  const [y, m] = period.split('-').map(Number);
+  const name = MONTHS[m - 1];
+  return y && name ? name + ' ' + y : period;
+}
+
+/**
+ * When the office last worked the score out.
+ *
+ * Asia/Kolkata by name, like everything else that turns a stored instant into
+ * a wall clock here: the phone's own zone is whatever the handset is set to,
+ * and a figure a salesman is appraised on must not read differently because he
+ * crossed a border. The same shape `/performance` prints.
+ */
+function asAt(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return 'unknown';
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: 'numeric',
+    minute: '2-digit',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'Asia/Kolkata',
+  }).format(at);
+}
+
 export default function Home() {
   const boot = useBoot();
   const userId = boot.session?.user.id ?? null;
@@ -198,12 +225,28 @@ export default function Home() {
   const dateLine = `${WEEKDAYS[today.getDay()]}, ${today.getDate()} ${MONTHS[today.getMonth()]}`;
 
   /* The six figures, labelled by the design and valued by the store. */
-  const dashValues: { v: string; s: string }[] = [
+  const dashValues: { v: string; s: string; small?: boolean }[] = [
     {
+      /* "Not known yet" is a SENTENCE in a slot sized for ₹1,24,500 — one line,
+         tabular, in half of a 328-point card — so at Android's larger font
+         settings it truncated to "Not known y…". It is the honest answer this
+         tile exists to give, so it is drawn smaller rather than cut off. */
       v: day.orderValueUnknown ? 'Not known yet' : inr(day.orderValuePaise / 100),
       s: plural(day.orders, 'order'),
+      small: day.orderValueUnknown,
     },
-    { v: `${day.visits} of ${day.stops}`, s: day.stops ? 'On the plan' : 'No plan today' },
+    {
+      /* THE NUMERATOR IS STOPS DONE, not visits. `visitsToday` counts every
+         visit logged today, off-plan walk-ins included, and it was printed
+         against a denominator of today's PLANNED stops — so after two calls
+         nobody planned the tile legitimately read "5 of 3", while the day card
+         four lines above said "3 of 3 done" about the same morning. One
+         question, two numerators, both on one screen. The visits are still
+         here; they are the subtitle now. With no plan at all there is no
+         denominator to print, so the count stands on its own. */
+      v: day.stops ? `${day.stopsDone} of ${day.stops}` : String(day.visits),
+      s: day.stops ? plural(day.visits, 'visit') + ' logged' : 'No plan today',
+    },
     { v: inr(day.collectPaise / 100), s: plural(day.collectCustomers, 'customer') },
     { v: inr(day.cashPaise / 100), s: day.cashSentence || 'Nothing to deposit' },
     { v: String(day.tasks), s: day.tasksOverdue ? plural(day.tasksOverdue, 'overdue') : 'None overdue' },
@@ -482,10 +525,18 @@ export default function Home() {
                 <Text style={[type.caption, { marginTop: 2 }]}>{plural(day.sessionCount, 'session')} today</Text>
               ) : null}
             </View>
+            {/* NAMED FOR WHERE IT GOES. It read "Navigate", which is the word
+                `NavigateButton` uses two taps away on the journey and visit
+                screens — and that one launches turn-by-turn in Google Maps.
+                One word, two things, pressed on a bike. This opens the list,
+                so it is called what the list is called. */}
             <Pressable
               onPress={() => router.push('/journey')}
+              accessibilityRole="button"
               style={{ height: HIT, paddingHorizontal: 16, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(500)]}>Navigate</Text>
+              <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(500)]}>
+                Today’s route
+              </Text>
             </Pressable>
           </View>
 
@@ -543,7 +594,10 @@ export default function Home() {
               <Text
                 numberOfLines={1}
                 style={[
-                  { fontSize: 20, lineHeight: 26, marginVertical: 2, color: d.tone === 'danger' ? C.danger : d.tone === 'amber' ? C.warnInk : C.ink },
+                  /* The line height does not move with the size, so a tile
+                     saying a sentence is exactly as tall as one saying a
+                     number and the grid cannot jump. */
+                  { fontSize: dashValues[i].small ? 15 : 20, lineHeight: 26, marginVertical: 2, color: d.tone === 'danger' ? C.danger : d.tone === 'amber' ? C.warnInk : C.ink },
                   weight(600),
                   tabular,
                 ]}>
@@ -603,8 +657,24 @@ export default function Home() {
               <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
                 {shortfalls(month)[0] ?? 'You are at or above every target set for you.'}
               </Text>
+              {/*
+                WHICH MONTH, AND WHEN IT WAS WORKED OUT.
+
+                `load` takes the newest row the handset holds, which on the 3rd
+                is still last month's — and this card printed a score at 22
+                points with neither the period nor the as-at on it, so a big
+                number read as this month's live standing. `computedAt` was
+                here all along and was used as a BOOLEAN, to decide whether to
+                append "tap for the rest", and never printed. AGENTS.md states
+                the rule in as many words: the handset is sent the cache with
+                its `computed_at` and prints it, because a screen that implied
+                it was live would be believed. `/performance`, one tap away,
+                has done both since it shipped.
+              */}
               <Text style={[type.caption, { marginTop: 4 }]}>
-                {'As the office scored it' + (month.computedAt ? ' · tap for the rest' : '')}
+                {monthLabel(month.period) +
+                  (month.computedAt ? ' · as at ' + asAt(month.computedAt) : '') +
+                  ' · tap for the rest'}
               </Text>
             </>
           )}

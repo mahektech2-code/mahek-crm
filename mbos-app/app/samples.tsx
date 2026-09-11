@@ -13,6 +13,7 @@ import {
   whatIsOwed,
   type FunnelSample,
 } from '../src/data/lead-samples';
+import { VoiceField } from '../src/components/ui/dictate';
 import { getLead } from '../src/data/leads';
 import { getCustomer, searchProducts } from '../src/data/customers';
 import { isoDate, plural } from '../src/lib/format';
@@ -53,10 +54,25 @@ export default function SamplesScreen() {
 
   const [rows, setRows] = React.useState<FunnelSample[]>([]);
   const [names, setNames] = React.useState<Record<string, string>>({});
-  const [today] = React.useState(() => isoDate(new Date()));
+  /* The day is READ ON EVERY FOCUS rather than frozen at mount. This process
+     lives for days — the salesman opens the app he left open last night — and
+     a `today` from yesterday makes the overdue flag a day late, in the
+     direction that hides what is late. `now` beside it already ticked, so the
+     "N days ago" line moved while the flag under it did not. */
+  const [today, setToday] = React.useState(() => isoDate(new Date()));
   const [now, setNow] = React.useState(() => Date.now());
   const [askOpen, setAskOpen] = React.useState(params.ask === '1');
   const [reasons, setReasons] = React.useState<CodedOption[]>([]);
+  /* READING is not NOTHING. Both start with an empty array, and "No samples
+     out" on the first frame is a definitive sentence about a read still in
+     flight. */
+  const [status, setStatus] = React.useState<'reading' | 'ready' | 'failed'>('reading');
+  /* The list is a WORKLIST by default. Reviewed and cancelled rows draw no
+     sentence at all — `whatIsOwed` returns null for them — so an unfiltered
+     list buries the two trials that need chasing under a year of finished
+     ones, on the one screen that exists because a sample nobody chased is a
+     sample that was given away. */
+  const [view, setView] = React.useState<'open' | 'all'>('open');
 
   React.useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000);
@@ -65,25 +81,31 @@ export default function SamplesScreen() {
 
   const load = React.useCallback(() => {
     let live = true;
-    void Promise.all([listFunnelSamples(), sampleReasons()]).then(async ([r, why]) => {
-      if (!live) return;
-      setRows(r);
-      setReasons(why);
-      /* The row says whose shop it is, so the name is fetched for the ids on
-         screen rather than joined into every sample query. A lead is not in
-         `customers` yet, so both books are asked. */
-      const map: Record<string, string> = {};
-      for (const id of Array.from(new Set(r.map((x) => x.customerId)))) {
-        const c = await getCustomer(id);
-        if (c) {
-          map[id] = c.name;
-          continue;
+    setToday(isoDate(new Date()));
+    void Promise.all([listFunnelSamples(), sampleReasons()])
+      .then(async ([r, why]) => {
+        if (!live) return;
+        setRows(r);
+        setReasons(why);
+        setStatus('ready');
+        /* The row says whose shop it is, so the name is fetched for the ids on
+           screen rather than joined into every sample query. A lead is not in
+           `customers` yet, so both books are asked. */
+        const map: Record<string, string> = {};
+        for (const id of Array.from(new Set(r.map((x) => x.customerId)))) {
+          const c = await getCustomer(id);
+          if (c) {
+            map[id] = c.name;
+            continue;
+          }
+          const l = await getLead(id);
+          if (l) map[id] = l.company?.trim() || l.name;
         }
-        const l = await getLead(id);
-        if (l) map[id] = l.company?.trim() || l.name;
-      }
-      if (live) setNames(map);
-    });
+        if (live) setNames(map);
+      })
+      .catch(() => {
+        if (live) setStatus('failed');
+      });
     return () => {
       live = false;
     };
@@ -92,10 +114,29 @@ export default function SamplesScreen() {
   useFocusEffect(load);
 
   const subject = params.lead ?? custId ?? '';
+  const open = rows.filter((x) => whatIsOwed(x) !== null);
+  const shown = view === 'open' ? open : rows;
+
+  /*
+   * BACK TO THE LEAD HE CAME FROM, not to a lead screen with no lead in it.
+   *
+   * `useCameFrom` rebuilds the route out of the `from` word alone, so the link
+   * labelled "‹ Lead" performed `router.replace('/lead')` with no id and the
+   * lead record answered "this lead is not on this phone" — about the lead he
+   * had just asked for a sample from. The id is already in the query string
+   * here, so the destination is built from it rather than from the word.
+   */
+  const goBack = () => {
+    if (back.from === 'lead' && params.lead) {
+      router.replace(`/lead?id=${params.lead}`);
+      return;
+    }
+    back.go();
+  };
 
   return (
-    <AppFrame title="Samples" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
-      <BackLink label={back.label} onPress={back.go} />
+    <AppFrame title="Samples" activeTab={null} onBack={goBack} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+      <BackLink label={back.label} onPress={goBack} />
 
       <DashedButton
         label="+ Request a sample"
@@ -106,17 +147,51 @@ export default function SamplesScreen() {
         }}
       />
 
-      {rows.length === 0 ? (
+      {rows.length > 0 ? (
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
+          <Choice
+            label={'Needs chasing · ' + open.length}
+            selected={view === 'open'}
+            onPress={() => setView('open')}
+            style={{ flex: 1 }}
+          />
+          <Choice
+            label={'All · ' + rows.length}
+            selected={view === 'all'}
+            onPress={() => setView('all')}
+            style={{ flex: 1 }}
+          />
+        </View>
+      ) : null}
+
+      {status === 'reading' ? (
+        <Card style={{ marginTop: 16, paddingVertical: 32 }}>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Reading…</T>
+        </Card>
+      ) : status === 'failed' ? (
+        <Card style={{ marginTop: 16, paddingVertical: 32 }}>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
+            The samples could not be read off this phone
+          </T>
+        </Card>
+      ) : rows.length === 0 ? (
         <Card style={{ marginTop: 16, paddingVertical: 32 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>No samples out</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
             A trial is asked for from a lead once its twelve questions are answered.
           </T>
         </Card>
+      ) : shown.length === 0 ? (
+        <Card style={{ marginTop: 16, paddingVertical: 32 }}>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing waiting on you</T>
+          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
+            {plural(rows.length, 'sample') + ' here, all of them finished. Tap All to read them.'}
+          </T>
+        </Card>
       ) : null}
 
       <View style={{ gap: 12, marginTop: 16 }}>
-        {rows.map((x) => {
+        {shown.map((x) => {
           const days = Math.max(0, Math.round((now - x.requestedAt) / 86_400_000));
           const name = names[x.customerId] ?? 'Unknown shop';
           const owed = whatIsOwed(x);
@@ -218,7 +293,7 @@ function RequestSheet({
     cans: number;
     application: string;
     reasonCode: string;
-  }) => void;
+  }) => Promise<void> | void;
 }) {
   const [query, setQuery] = React.useState('');
   const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null }[]>([]);
@@ -227,6 +302,7 @@ function RequestSheet({
   const [application, setApplication] = React.useState('');
   const [reasonCode, setReasonCode] = React.useState<string | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
 
   React.useEffect(() => {
     let live = true;
@@ -242,18 +318,27 @@ function RequestSheet({
     };
   }, [query]);
 
-  const submit = () => {
+  const submit = async () => {
+    /* The sheet closes only once the write returns, so a second tap on a slow
+       phone raised a second sample request — and a second approval behind it —
+       for one trial. Only one of the two would ever be chased. */
+    if (saving) return;
     if (!product) return setErr('Which product is the trial of?');
     if (!(Number(cans) > 0)) return setErr('How many cans?');
     if (!application.trim()) return setErr('What will they use it on? Without that nobody can judge the trial.');
     if (!reasonCode) return setErr('Say why they want a trial.');
-    onSubmit({
-      productId: product.id,
-      productName: product.name,
-      cans: Number(cans),
-      application: application.trim(),
-      reasonCode,
-    });
+    setSaving(true);
+    try {
+      await onSubmit({
+        productId: product.id,
+        productName: product.name,
+        cans: Number(cans),
+        application: application.trim(),
+        reasonCode,
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -301,11 +386,13 @@ function RequestSheet({
 
       <View style={{ marginTop: 12 }}>
         <SectionLabel style={{ marginBottom: 6 }}>What they will use it on</SectionLabel>
-        <Input
+        {/* Prose, so it gets the microphone: this is the sample's own "why he
+            wants it", typed one-handed in a shop by somebody who speaks the
+            answer far better than he writes it. */}
+        <VoiceField
           value={application}
           onChangeText={(v) => { setApplication(v); setErr(null); }}
           placeholder="Spray booth, furniture polish, wooden doors"
-          multiline
         />
       </View>
 
@@ -332,7 +419,12 @@ function RequestSheet({
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
-        <PrimaryButton label="Ask for it" onPress={submit} style={{ flex: 1, borderRadius: radius.xl }} />
+        <PrimaryButton
+          label={saving ? 'Asking…' : 'Ask for it'}
+          disabled={saving}
+          onPress={submit}
+          style={{ flex: 1, borderRadius: radius.xl }}
+        />
       </View>
     </BottomSheet>
   );

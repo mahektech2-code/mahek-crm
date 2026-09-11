@@ -590,7 +590,22 @@ export async function decideSuspect(
 ): Promise<LeadResult<null>> {
   const lead = await getLead(id);
   if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
-  if (!decision.reasonCode) {
+  /*
+   * A CODE OR A SENTENCE, and it used to be a code or nothing.
+   *
+   * The four reason lists are configuration and an office can empty one. Past
+   * the cap this decision is the whole record, so a code demanded against a
+   * list with nothing in it left the lead permanently unanswerable — see the
+   * note in `reason-sheet.tsx`. Either answer is accepted here and on the
+   * server, which refuses only when both are missing.
+   *
+   * What a sentence alone does NOT satisfy is the `prospect_reason` gate one
+   * rung up, which reads the code. That is the honest consequence: the record
+   * comes back and the gate says in words what it still wants, rather than the
+   * lead being stuck with no screen at all.
+   */
+  const said = decision.note?.trim() || null;
+  if (!decision.reasonCode && !said) {
     return {
       ok: false,
       message: decision.prospect
@@ -611,10 +626,15 @@ export async function decideSuspect(
     patch: {
       suspectDecidedAt: now,
       suspectIsProspect: decision.prospect,
-      suspectReasonCode: decision.reasonCode,
-      prospectReasonCode: decision.prospect ? decision.reasonCode : lead.prospectReasonCode,
-      lostReasonCode: decision.prospect ? lead.lostReasonCode : decision.reasonCode,
-      lostReason: decision.prospect ? lead.lostReason : (decision.note?.trim() || decision.reasonCode),
+      /* An empty code keeps whatever was already on the row rather than
+         blanking it — the answer came as a sentence, which is not a reason to
+         forget a code somebody recorded earlier. */
+      suspectReasonCode: decision.reasonCode || lead.suspectReasonCode,
+      prospectReasonCode: decision.prospect
+        ? decision.reasonCode || lead.prospectReasonCode
+        : lead.prospectReasonCode,
+      lostReasonCode: decision.prospect ? lead.lostReasonCode : decision.reasonCode || lead.lostReasonCode,
+      lostReason: decision.prospect ? lead.lostReason : (said || decision.reasonCode),
       funnelStage: stage,
       stage: legacyStageFor(stage, salesType),
       stageSince: today,
@@ -625,11 +645,13 @@ export async function decideSuspect(
       /* `handleLeadUpdate` refuses a loss with no reason, and rightly — the
          code is what gets counted and the sentence is what gets read, so both
          travel. */
-      lostReason: decision.prospect ? undefined : (decision.note?.trim() || decision.reasonCode),
+      lostReason: decision.prospect ? undefined : (said || decision.reasonCode),
       /* The CODE, whichever way the answer went — why it is worth pursuing,
          or why it is not. One field, because the schema keeps one: what it
-         means is read off the stage that arrived with it. */
-      reasonCode: decision.reasonCode,
+         means is read off the stage that arrived with it. Omitted rather than
+         sent empty where there was nothing to pick, so the server reads the
+         sentence instead of an empty string. */
+      reasonCode: decision.reasonCode || undefined,
     },
   });
 
@@ -637,7 +659,7 @@ export async function decideSuspect(
     leadId: id,
     kind: 'suspect_decision',
     summary: decision.prospect ? 'Worth pursuing — now a Prospect' : 'Not a prospect',
-    detail: decision.note?.trim() || decision.reasonCode,
+    detail: said || decision.reasonCode,
     fromStage: 'suspect',
     toStage: stage,
   });
@@ -715,16 +737,19 @@ export async function markLost(
   reasonCode: string,
   note?: string | null,
 ): Promise<LeadResult<null>> {
-  if (!reasonCode) {
-    return { ok: false, message: 'Pick a reason — nobody rings this shop again after this.' };
+  const said = note?.trim() || null;
+  /* A code OR a sentence — see `decideSuspect` above for why both are accepted
+     and why neither is. The code is still what gets counted; the sentence is
+     what a lost lead is left with where the office has configured no codes. */
+  if (!reasonCode && !said) {
+    return { ok: false, message: 'Say why — nobody rings this shop again after this.' };
   }
   const lead = await getLead(id);
   if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
 
   const today = isoDate(new Date());
-  const said = note?.trim() || null;
   const notes = notesOf(lead);
-  notes.push({ at: Date.now(), text: 'Lost — ' + reasonCode + (said ? ' · ' + said : '') });
+  notes.push({ at: Date.now(), text: 'Lost — ' + [reasonCode, said].filter(Boolean).join(' · ') });
 
   await updateAndQueue({
     table: 'leads',
@@ -734,7 +759,7 @@ export async function markLost(
       funnelStage: 'lost',
       stage: 'Lost',
       stageSince: today,
-      lostReasonCode: reasonCode,
+      lostReasonCode: reasonCode || lead.lostReasonCode,
       lostReason: said ?? reasonCode,
       notes,
       lastActivityDate: today,
@@ -743,7 +768,7 @@ export async function markLost(
       stage: 'lost',
       lostReason: said ?? reasonCode,
       notes: wireNotes(notes),
-      reasonCode,
+      reasonCode: reasonCode || undefined,
     },
   });
 

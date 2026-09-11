@@ -41,6 +41,20 @@ import { useBoot } from '../src/state/boot';
  * is typed over.
  */
 
+/**
+ * How many search results are offered at once.
+ *
+ * It was five, and five is a SLICE of this catalogue rather than an answer to
+ * it: one finished good is several SKUs differing only by pack — "Nano Thinner
+ * - 5 Liter (6 Can/Box)", "… (Loose)", "… 20 Liter" — and the search matches
+ * the formulation and the brand as well as the name, so "nano" alone matches
+ * far more than five. Nothing on the screen said the list was cut, so mid-call
+ * he read five rows that did not include the pack the customer asked for and
+ * concluded we do not stock it. The line under the list is the other half of
+ * the fix: a cap nobody is told about is the same bug at twenty.
+ */
+const SEARCH_LIMIT = 20;
+
 type Product = {
   id: string;
   name: string;
@@ -169,7 +183,7 @@ export default function OrderScreen() {
   React.useEffect(() => {
     if (!query) return;
     let live = true;
-    void searchProducts(query, 5).then((rows) => {
+    void searchProducts(query, SEARCH_LIMIT).then((rows) => {
       if (!live) return;
       setResults(rows);
       setResultsFor(query);
@@ -528,6 +542,21 @@ export default function OrderScreen() {
                   </T>
                 </View>
               ) : null}
+              {/* A full page is a list that is probably CUT, and a cut list
+                  nobody is told about reads as the whole catalogue. */}
+              {shown.length >= SEARCH_LIMIT ? (
+                <View
+                  style={{
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                    borderTopWidth: 1,
+                    borderTopColor: C.wash,
+                  }}>
+                  <T s="caption">
+                    {'Showing the first ' + SEARCH_LIMIT + ' — narrow it with the pack size, or the code.'}
+                  </T>
+                </View>
+              ) : null}
             </ListCard>
           ) : null}
 
@@ -562,12 +591,25 @@ export default function OrderScreen() {
                    the SKU's own packing, never stored. The list rate is shown
                    only where the CRM's own valuation has nothing to say — two
                    figures on one line would read as a disagreement, not as a
-                   fallback. */
+                   fallback.
+                   LITRES were what that sentence claimed and the line never
+                   printed: `derivedQuantities` returns them and the orders
+                   list already renders them, and this is the only screen where
+                   the number is still editable. Pack sizes run half a litre to
+                   210, so litres beside the cans is the one figure that catches
+                   a customer who said "two hundred litres" against a salesman
+                   typing 200 into a cans box.
+                   And BOXES are dropped where there are none rather than
+                   printed as zero: `boxes` is whole boxes, so a loose SKU, a
+                   drum and any quantity under one box all derive 0, and "6 cans
+                   · 0 boxes" reads as a fault rather than as a pack with no box
+                   to count. `Math.ceil` was a no-op on an integer. */
                 const derived = !qty
                   ? 'Set the quantity'
                   : [
                       plural(qty, 'can'),
-                      priced ? plural(Math.ceil(priced.boxes), 'box', 'boxes') : null,
+                      priced?.litres != null ? Math.round(priced.litres) + ' L' : null,
+                      priced && priced.boxes > 0 ? plural(priced.boxes, 'box', 'boxes') : null,
                       priced?.valuePaise != null
                         ? inr(priced.valuePaise / 100)
                         : listRatePaise != null
@@ -615,6 +657,13 @@ export default function OrderScreen() {
                           disabled={qty === 0}
                           accessibilityRole="button"
                           accessibilityLabel="One less"
+                          /* 44 is under the 48 floor, on the one control that
+                             changes what is ordered — and it sits flush against
+                             a text field, so a thumb that misses opens a
+                             keyboard over the line he was reading. Same
+                             treatment as the remove button above: the drawing
+                             stays, the thumb gets the area. */
+                          hitSlop={4}
                           style={{ width: 44, height: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: C.wash }}>
                           <T style={{ fontSize: 20, lineHeight: 20, color: qty > 0 ? C.primaryDeep : C.faint }}>−</T>
                         </Pressable>
@@ -645,6 +694,7 @@ export default function OrderScreen() {
                           onPress={() => setQty(line.productId, String(qty + 1))}
                           accessibilityRole="button"
                           accessibilityLabel="One more"
+                          hitSlop={4}
                           style={{ width: 44, height: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: C.wash }}>
                           <T style={{ fontSize: 20, lineHeight: 20, color: C.primaryDeep }}>+</T>
                         </Pressable>

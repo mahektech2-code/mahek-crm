@@ -1,10 +1,11 @@
 import React from 'react';
-import { View, Pressable, ScrollView } from 'react-native';
+import { View, Pressable, ScrollView, FlatList } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { Icon } from '../src/components/ui/Icon';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
-import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
+import { color as C, HIT, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import { createLead, leadThresholds, listLeads, visitCapThresholds, type Lead } from '../src/data/leads';
 import { takePhoto } from '../src/native/capture';
 import { CUSTOMER_TYPES, LEAD_FILTERS, LEAD_SOURCES, leadAlert, visitCapLabel, visitCapState, type DuplicateMatch, type LeadFilter, type LeadThresholds, type VisitCapThresholds } from '../src/engines/leads';

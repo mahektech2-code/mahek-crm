@@ -4,9 +4,9 @@ import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Choice, Input, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { Calendar } from '../src/components/ui/overlays';
-import { Icon } from '../src/components/ui/Icon';
+import { Icon, type IconName } from '../src/components/ui/Icon';
 import { color as C, radius, shadow, tabular, weight } from '../src/theme/tokens';
-import { dmy, inr, isoDate, pretty } from '../src/lib/format';
+import { dmy, inr, isoDate, plural, pretty } from '../src/lib/format';
 import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
 import { customerBills, type Customer, type CustomerBill } from '../src/data/customers';
 import { copyToClipboard, openWhatsApp, receiptMessage } from '../src/lib/messaging';
@@ -36,7 +36,10 @@ import { useBoot } from '../src/state/boot';
  * first, which is the right default and is now SAID rather than assumed.
  */
 
-const MODES: { label: PaymentMode; glyph: string }[] = [
+/* `IconName` rather than `string`: a glyph that is not in the map falls back to
+   the three-dot "more" symbol without complaining, which is exactly how the
+   ticked bill below came to draw an ellipsis. */
+const MODES: { label: PaymentMode; glyph: IconName }[] = [
   { label: 'Cash', glyph: 'money' },
   { label: 'Cheque', glyph: 'note' },
   { label: 'UPI', glyph: 'spark' },
@@ -44,6 +47,16 @@ const MODES: { label: PaymentMode; glyph: string }[] = [
 ];
 
 const CHEQUE_PHOTO_LINE = 'Photograph the cheque before you hand it back.';
+
+/**
+ * How many bills are drawn before the rest are folded away.
+ *
+ * `customerBills` has no LIMIT, so every open bill for the shop sat between the
+ * outstanding line and the amount box: on an account with thirty of them that
+ * is thirty rows to scroll past with money in his hand, and nothing on the
+ * screen counting them.
+ */
+const BILLS_SHOWN = 5;
 /**
  * A cheque has two dates and they answer different questions: the day it was
  * handed over, and the day written across it. A cheque given on the 3rd and
@@ -67,10 +80,16 @@ export default function PayScreen() {
   const markVisitDone = useStore((s) => s.markVisitDone);
   const askConfirm = useStore((s) => s.askConfirm);
 
+  /** Null means the read has not landed yet, which is NOT the same fact as
+   *  "no cash on you" — see the card below. */
   const [cash, setCash] = React.useState<{ totalPaise: number; sentence: string; nextDeadline: number | null } | null>(null);
+  const [cashFailed, setCashFailed] = React.useState(false);
   const [chequePhotoId, setChequePhotoId] = React.useState<string | null>(null);
   const [bills, setBills] = React.useState<CustomerBill[]>([]);
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
+  /** One way: folding a ticked bill back out of sight is how a receipt gets
+   *  named against something he can no longer see. */
+  const [allBills, setAllBills] = React.useState(false);
 
   const userId = boot.session?.user.id ?? null;
   const customerId = c?.id ?? null;
@@ -78,9 +97,15 @@ export default function PayScreen() {
     React.useCallback(() => {
       let live = true;
       if (!userId) return;
-      void cashInHand(userId).then((p) => {
-        if (live) setCash({ totalPaise: p.totalPaise, sentence: p.sentence, nextDeadline: p.nextDeadline });
-      });
+      setCashFailed(false);
+      void cashInHand(userId)
+        .then((p) => {
+          if (live) setCash({ totalPaise: p.totalPaise, sentence: p.sentence, nextDeadline: p.nextDeadline });
+        })
+        /* A card that says "Reading…" for ever reads as a broken handset. */
+        .catch(() => {
+          if (live) setCashFailed(true);
+        });
       /* The office's open bills for this shop. No reset of `picked` here — a
          tick against a bill that is no longer on the list simply does not
          match one, which `chosen` below works out on every render. Clearing
@@ -104,6 +129,22 @@ export default function PayScreen() {
    * `bill_settled`.
    */
   const chosen = bills.filter((b) => picked.has(b.id));
+
+  /*
+   * NEWEST FIRST, which is presentation and nothing else.
+   *
+   * `customerBills` reads them oldest first because that is the order the
+   * automatic spread settles them in — and naming nothing still spreads oldest
+   * first on the server, which the line under the list says. But the bill the
+   * customer is actually paying against is the one he was just handed, and
+   * oldest-first put it at the bottom of a list with no cap on it.
+   */
+  const newestFirst = React.useMemo(
+    () => [...bills].sort((a, b) => (b.billDate ?? '').localeCompare(a.billDate ?? '')),
+    [bills],
+  );
+  const shownBills = allBills ? newestFirst : newestFirst.slice(0, BILLS_SHOWN);
+
   const namedPaise = chosen.reduce((n, b) => n + (b.balancePaise ?? 0), 0);
   const onAccountPaise = Math.max(0, amt * 100 - namedPaise);
   /* A cheque with no number and no photograph is a promise, not an
@@ -204,10 +245,16 @@ export default function PayScreen() {
           ]}>
           Cash on you
         </T>
+        {/* "₹0 · No cash on you" is a definite claim, and it was being made
+            while `cashInHand` was still reading — so he took more cash without
+            the reminder this card exists to give. Nothing is asserted until
+            the read lands. */}
         <T style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.65, color: C.ink, marginTop: 4 }, weight(600), tabular]}>
-          {inr((cash?.totalPaise ?? 0) / 100)}
+          {cash === null ? '—' : inr(cash.totalPaise / 100)}
         </T>
-        <T style={{ fontSize: 15, color: C.warnInk, marginTop: 2 }}>{cash?.sentence ?? 'No cash on you.'}</T>
+        <T style={{ fontSize: 15, color: C.warnInk, marginTop: 2 }}>
+          {cash?.sentence ?? (cashFailed ? 'What you are carrying could not be read just now.' : 'Reading…')}
+        </T>
       </View>
 
       <T style={{ fontSize: 15, color: C.body, marginTop: 16 }}>
@@ -222,9 +269,19 @@ export default function PayScreen() {
         */}
       {c && bills.length > 0 ? (
         <View style={{ marginTop: 16 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>What is this against</SectionLabel>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'baseline',
+              justifyContent: 'space-between',
+              gap: 12,
+              marginBottom: 10,
+            }}>
+            <SectionLabel>What is this against</SectionLabel>
+            <T s="caption">{plural(bills.length, 'open bill')}</T>
+          </View>
           <View style={{ gap: 8 }}>
-            {bills.map((b) => {
+            {shownBills.map((b) => {
               const on = picked.has(b.id);
               /*
                * An `unstated` bill is NOT a debt. Its balance is the full
@@ -260,7 +317,14 @@ export default function PayScreen() {
                     paddingVertical: 12,
                     paddingHorizontal: 14,
                   }}>
-                  <Icon name={on ? 'check' : 'note'} size={20} color={on ? C.primaryDeep : C.muted} />
+                  {/* `tick`, not `check` — there is no `check` in the glyph
+                      map, and `Icon` falls back with `ICONS[name] ?? ICONS.dots`
+                      without complaining, so the SELECTED state of a bill drew
+                      the three-dot "more" glyph. Which bills the money is named
+                      against is the one decision on this screen that changes
+                      where the payment lands, and its affordance read as a
+                      menu. */}
+                  <Icon name={on ? 'tick' : 'note'} size={20} color={on ? C.primaryDeep : C.muted} />
                   <View style={{ flex: 1 }}>
                     <T style={[{ fontSize: 15, color: C.ink }, weight(on ? 600 : 500)]}>
                       {b.billNo ?? 'Bill'}
@@ -284,6 +348,18 @@ export default function PayScreen() {
               );
             })}
           </View>
+
+          {!allBills && newestFirst.length > BILLS_SHOWN ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setAllBills(true)}
+              hitSlop={8}
+              style={{ paddingVertical: 12 }}>
+              <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(500)]}>
+                {'Show the other ' + (newestFirst.length - BILLS_SHOWN)}
+              </T>
+            </Pressable>
+          ) : null}
 
           {/* What naming nothing DOES, said rather than assumed — and what a
               remainder becomes, because money on account is a real outcome the

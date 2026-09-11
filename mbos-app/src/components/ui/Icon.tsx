@@ -17,7 +17,18 @@ type Shape =
   | { c: [number, number, number] }
   | { r: [number, number, number, number, number] };
 
-const ICONS: Record<string, Shape[]> = {
+/*
+ * `satisfies` RATHER THAN AN ANNOTATION, and that is the whole of why the type
+ * below is worth anything.
+ *
+ * This was `const ICONS: Record<string, Shape[]>`, whose `keyof` is `string` —
+ * so `IconName` was an alias for `string`, `name: IconName` checked nothing,
+ * and a glyph that does not exist was caught by neither the compiler nor the
+ * eye, because `ICONS[name] ?? ICONS.dots` quietly draws the "there is more
+ * here" symbol instead of failing. Written this way the keys survive as a
+ * union and a name that is not in the set stops the build.
+ */
+const ICONS = {
   visit: [
     { p: 'M12 21s7-6.4 7-11.5A7 7 0 0 0 5 9.5C5 14.6 12 21 12 21z' },
     { c: [12, 9.5, 2.5] },
@@ -106,6 +117,22 @@ const ICONS: Record<string, Shape[]> = {
     { p: 'M16 14v1a8 8 0 0 1-.5 2.8' },
   ],
   lock: [{ r: [4, 11, 16, 10, 2] }, { p: 'M8 11V8a4 4 0 0 1 8 0v3' }],
+  /* A DAY, and a REFUSAL — the two glyphs the design never had to draw because
+     it has no tour request and no failing toast in it.
+
+     Both were being asked for by name and neither existed, which the fallback
+     on `Icon` hides rather than reports: `ICONS[name] ?? ICONS.dots` drew the
+     three-dot "there is more here" symbol instead. "Request a tour" in the
+     journey overflow sheet carried the same glyph as the More button that had
+     just opened the sheet, and a toast refusing an order carried a lime tick. */
+  cal: [
+    { r: [3.5, 5.5, 17, 15, 2] },
+    { p: 'M8 3.5v4M16 3.5v4M3.5 10.5h17' },
+  ],
+  alert: [
+    { p: 'M12 4.2 21.2 19.4a1 1 0 0 1-.9 1.4H3.7a1 1 0 0 1-.9-1.4z' },
+    { p: 'M12 9.6v4.2M12 17.3h.01' },
+  ],
 
   /* THE MAP'S OWN CONTROLS, and the three glyphs here that the design does not
      carry — it has no map screen in it to have drawn them on. Same 24×24 box
@@ -120,11 +147,32 @@ const ICONS: Record<string, Shape[]> = {
     { c: [12, 12, 2.2] },
     { p: 'M12 2.4v3M12 18.6v3M2.4 12h3M18.6 12h3' },
   ],
-};
+} satisfies Record<string, Shape[]>;
 
+/** Every glyph this app actually carries, as a union rather than as `string`. */
 export type IconName = keyof typeof ICONS;
 
+/**
+ * The same map seen through a string key, which is what the lookup below needs
+ * and what the `??` exists for.
+ */
+const GLYPHS: Record<string, Shape[]> = ICONS;
+
 export function Icon({
+  /**
+   * NOT `IconName` alone, YET, and the reason is worth stating rather than
+   * leaving as a loose type somebody tightens by accident.
+   *
+   * Seven call sites hand this a value inferred as `string` — a glyph read off
+   * an untyped array of buttons — so narrowing the prop today would stop the
+   * build in six files rather than catch a typo: `app/customer.tsx`,
+   * `app/customers.tsx` (twice), `app/expenses.tsx`, `app/pay.tsx`,
+   * `app/visit.tsx`, `shell/Chrome.tsx`, and `ActionSheet`'s own `glyph` in
+   * `overlays.tsx`. Each of those arrays needs `IconName` on its own element
+   * type first; then this becomes `name: IconName` and the fallback below stops
+   * being reachable from TypeScript. `IconName` is a real union now, which is
+   * the half that had to come first — it was an alias for `string`.
+   */
   name,
   size = 20,
   color = C.body,
@@ -135,7 +183,7 @@ export function Icon({
   color?: string;
   strokeWidth?: number;
 }) {
-  const shapes = ICONS[name] ?? ICONS.dots;
+  const shapes: Shape[] = GLYPHS[name] ?? ICONS.dots;
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       {shapes.map((s, i) => {

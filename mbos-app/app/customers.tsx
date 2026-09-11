@@ -19,6 +19,7 @@ import {
   customerStage,
   daysSince,
   listCustomersPage,
+  OUTSTANDING_ALERT_PAISE,
   type Customer,
 } from '../src/data/customers';
 import {
@@ -487,7 +488,13 @@ export default function Customers() {
           saying what question each answers is why they read as one row of six:
           "Leads" and "A–Z" are answers to different questions, and only the
           label says so. The label is what carries it; the different fills below
-          are what let somebody who is not reading tell the rows apart. */}
+          are what let somebody who is not reading tell the rows apart.
+
+          THE SELECTED CHIP IS ALSO HEAVIER, like both chip rows around it. This
+          row alone carried its selected state on colour and nothing else, which
+          is the wrong row to do it on — it decides what the list IS — and
+          colour alone is the first thing to go in sunlight on a phone held at
+          arm's length in a market lane. */}
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, alignItems: 'center' }}>
         <Text style={[type.label, { width: 42 }]}>Show</Text>
         {([
@@ -509,7 +516,7 @@ export default function Customers() {
                 borderColor: on ? C.ink : C.border,
                 backgroundColor: on ? C.ink : C.surface,
               }}>
-              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(on ? 600 : 500)]}>
                 {chip.label}
               </Text>
             </Pressable>
@@ -770,9 +777,20 @@ export default function Customers() {
             ) : null}
           </View>
 
+          {/* Compared in PAISE against the one shared threshold — see
+              `OUTSTANDING_ALERT_PAISE`. `dues` is rupees, for `inr` below. */}
           <Text
             style={[
-              { fontSize: 15, marginTop: 10, color: dues > 300000 ? C.danger : dues ? C.ink : C.success },
+              {
+                fontSize: 15,
+                marginTop: 10,
+                color:
+                  x.outstandingPaise > OUTSTANDING_ALERT_PAISE
+                    ? C.danger
+                    : dues
+                      ? C.ink
+                      : C.success,
+              },
               weight(500),
             ]}>
             {dues ? inr(dues) + ' outstanding' : 'Nothing outstanding'}

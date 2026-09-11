@@ -322,6 +322,23 @@ export default function Login() {
                     placeholder="••••••••"
                     placeholderTextColor={C.faint}
                     secureTextEntry={!pwShow}
+                    /*
+                     * PRESSING "SHOW" USED TO CAPITALISE THE FIRST LETTER.
+                     *
+                     * While `secureTextEntry` is on, Android forces a password
+                     * keyboard and none of this applies. The moment "Show"
+                     * turns it off the box becomes an ordinary text input with
+                     * React Native's default `autoCapitalize="sentences"` and
+                     * the suggestion strip — so the person who taps Show first,
+                     * which is exactly what somebody unsure of their typing
+                     * does, types `Mahek1234`. A silent wrong character,
+                     * refused as a bad password, on the one screen where being
+                     * shut out costs the whole day.
+                     */
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    spellCheck={false}
+                    textContentType="password"
                     style={{
                       width: '100%',
                       height: 52,
@@ -330,7 +347,11 @@ export default function Login() {
                       borderRadius: radius.md,
                       paddingLeft: 12,
                       paddingRight: 68,
-                      fontSize: 14,
+                      /* 16, like the mobile field above it and the shared
+                         `Input` primitive. At 14 the dots are harder to count
+                         in sunlight, on the one field that cannot be read
+                         back. */
+                      fontSize: 16,
                       color: C.ink,
                       backgroundColor: C.surface,
                     }}

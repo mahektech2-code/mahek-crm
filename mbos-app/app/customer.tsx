@@ -16,11 +16,13 @@ import {
   customerOrders,
   customerPayments,
   customerTimeline,
+  OUTSTANDING_ALERT_PAISE,
   recordCompetitor,
   type CustomerOrder,
   type CustomerPayment,
   type TimelineEvent,
 } from '../src/data/customers';
+import { getConfig } from '../src/data/config';
 import { inr, isoDate, pretty, shopName } from '../src/lib/format';
 import { callNumber, openWhatsApp } from '../src/lib/messaging';
 
@@ -62,10 +64,19 @@ const TONES: Record<string, BadgeTone> = {
   Telecaller: 'amber',
 };
 
-/** "a minute ago", "4 hours ago" — how old the cached figures are. */
-function freshness(at: number): string {
+/**
+ * "a minute ago", "4 hours ago" — how old the cached figures are.
+ *
+ * THE CLOCK IS PASSED IN rather than read here, which is the repo's rule and,
+ * on this particular line, the whole point of it. This read `Date.now()` in the
+ * render body of a screen that re-renders only when something else changes, so
+ * "From the office 4 min ago" stayed "4 min ago" for as long as he sat on the
+ * screen — the one line on which he decides whether to trust the credit limit
+ * and the outstanding above it was the line lying about its own age.
+ */
+function freshness(at: number, nowMs: number): string {
   if (!at) return 'not synced yet';
-  const mins = Math.max(0, Math.round((Date.now() - at) / 60_000));
+  const mins = Math.max(0, Math.round((nowMs - at) / 60_000));
   if (mins < 1) return 'just now';
   if (mins < 60) return mins + ' min ago';
   const hours = Math.round(mins / 60);
@@ -104,53 +115,108 @@ export default function CustomerRecord() {
   const [compForm, setCompForm] = React.useState(false);
   const [comp, setComp] = React.useState({ name: '', rate: '', note: '', credit: '', delivery: '', strengths: '', weaknesses: '' });
   const [compBusy, setCompBusy] = React.useState(false);
+  /*
+   * WHETHER THE SIX READS HAVE ANSWERED YET.
+   *
+   * Every list above starts empty and the six queries are awaited together, so
+   * each tab drew its terminal verdict over a query still in flight — Orders
+   * and Payments both instructing him to "sign out and in once", which is the
+   * one action that is genuinely risky with a full outbox, about a shop whose
+   * orders were a moment from appearing. Nothing terminal is claimed until
+   * `loaded`, and a read that fails says so rather than leaving a placeholder
+   * that never resolves.
+   */
+  const [loaded, setLoaded] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  /*
+   * THE CLOCK, READ OUTSIDE RENDER and refreshed while the screen is open —
+   * see `freshness`. A minute is the resolution the sentence is written in, so
+   * it is the interval: anything finer is work nobody can read the result of.
+   */
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
 
   const id = c?.id ?? null;
 
-  const reload = React.useCallback(() => {
-    if (!id) return;
-    void Promise.all([
+  /* ONE READ, and both callers go through it. There were two copies of this
+     `Promise.all`, and only one of them checked `live` — on two of the six
+     setters. */
+  const read = React.useCallback(() => {
+    if (!id) return null;
+    return Promise.all([
       customerTimeline(id, tlFilter),
       competitorRecords(id),
       customerOrders(id),
       customerPayments(id),
       customerSamples(id),
       complaintsFor(id),
-    ]).then(([t, k, o, r, sm, g]) => {
+    ]);
+  }, [id, tlFilter]);
+
+  const apply = React.useCallback(
+    ([t, k, o, r, sm, g]: Awaited<NonNullable<ReturnType<typeof read>>>) => {
       setOrders(o);
       setReceipts(r);
       setSamples(sm);
       setGripes(g);
       setEvents(t);
       setCompetitors(k);
-    });
-  }, [id, tlFilter]);
+      setFailed(false);
+      setLoaded(true);
+    },
+    [],
+  );
+
+  const reload = React.useCallback(() => {
+    void read()?.then(apply);
+  }, [read, apply]);
 
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
-      if (!id) return;
-      void Promise.all([
-      customerTimeline(id, tlFilter),
-      competitorRecords(id),
-      customerOrders(id),
-      customerPayments(id),
-      customerSamples(id),
-      complaintsFor(id),
-    ]).then(([t, k, o, r, sm, g]) => {
-      setOrders(o);
-      setReceipts(r);
-      setSamples(sm);
-      setGripes(g);
-        if (!live) return;
-        setEvents(t);
-        setCompetitors(k);
-      });
+      void read()
+        ?.then((r) => {
+          if (live) apply(r);
+        })
+        .catch(() => {
+          if (!live) return;
+          setFailed(true);
+          setLoaded(true);
+        });
       return () => {
         live = false;
       };
-    }, [id, tlFilter]),
+    }, [read, apply]),
   );
+
+  /* Coming back to the screen is the moment the figure above is most likely to
+     be wrong, so the clock is re-read on focus as well as on the tick. */
+  useFocusEffect(
+    React.useCallback(() => {
+      setNowMs(Date.now());
+      const t = setInterval(() => setNowMs(Date.now()), 60_000);
+      return () => clearInterval(t);
+    }, []),
+  );
+
+  /* The two health thresholds, from configuration — the same two keys the
+     book's list reads. The pill's own defaults are 70/40, so taking them here
+     gave one shop two colours one tap apart on a team that had set its own. */
+  const [healthWatch, setHealthWatch] = React.useState(40);
+  const [healthStrong, setHealthStrong] = React.useState(70);
+  React.useEffect(() => {
+    let live = true;
+    void Promise.all([
+      getConfig<number>('mbos.health.atRiskBelow', 40),
+      getConfig<number>('mbos.health.strongAtOrAbove', 70),
+    ]).then(([w, st]) => {
+      if (!live) return;
+      setHealthWatch(w);
+      setHealthStrong(st);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const saveCompetitor = async () => {
     if (!id) return;
@@ -203,6 +269,28 @@ export default function CustomerRecord() {
   const dues = c.outstandingPaise / 100;
   const owner = c.contactPerson ?? c.name;
 
+  /*
+   * THREE REASONS A TAB IS BLANK, and only the last is the one those sentences
+   * were written about. Still reading, could not read, and genuinely nothing
+   * here are different facts, and the terminal one tells him to sign out and in
+   * — which is the one action that is genuinely risky with a full outbox. So it
+   * is not said until the read has actually answered.
+   */
+  const nothingYet = (head: string, body: string) => {
+    if (!loaded) {
+      return <Empty head="Reading…" body="Getting this shop's history off this phone." />;
+    }
+    if (failed) {
+      return (
+        <Empty
+          head="Could not read it off this phone"
+          body="Nothing of yours is lost. Leave the screen and come back, and if it keeps happening tell the office."
+        />
+      );
+    }
+    return <Empty head={head} body={body} />;
+  };
+
   return (
     <AppFrame title={shopName(c.name)} activeTab="customers" onBack={() => router.back()} contentStyle={{ paddingBottom: 24 }}>
       {/* ---- the head ---- */}
@@ -215,7 +303,15 @@ export default function CustomerRecord() {
             </Text>
           </View>
           {c.healthScore != null || c.healthBand ? (
-            <HealthPill value={c.healthScore ?? null} band={c.healthBand ?? null} large />
+            <HealthPill
+              value={c.healthScore ?? null}
+              band={c.healthBand ?? null}
+              /* The configured pair, never the primitive's defaults — this is
+                 the same shop the list one screen back has just coloured. */
+              strongAtOrAbove={healthStrong}
+              watchBelow={healthWatch}
+              large
+            />
           ) : null}
         </View>
 
@@ -261,7 +357,14 @@ export default function CustomerRecord() {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline }}>
           <View>
             <Text style={type.label}>Outstanding</Text>
-            <Text style={[{ fontSize: 15, color: dues > 300000 ? C.danger : C.ink }, weight(500), tabular]}>
+            {/* Compared in PAISE against the one shared threshold, so the
+                record and the list card cannot turn red at two figures. */}
+            <Text
+              style={[
+                { fontSize: 15, color: c.outstandingPaise > OUTSTANDING_ALERT_PAISE ? C.danger : C.ink },
+                weight(500),
+                tabular,
+              ]}>
               {dues ? inr(dues) : 'Nothing due'}
             </Text>
           </View>
@@ -276,7 +379,9 @@ export default function CustomerRecord() {
 
         {/* The age of the figures above, in the caption slot the design already
             uses for exactly this kind of aside. */}
-        <Text style={[type.caption, { marginTop: 6 }]}>{'From the office ' + freshness(c.lastSyncedAt)}</Text>
+        <Text style={[type.caption, { marginTop: 6 }]}>
+          {'From the office ' + freshness(c.lastSyncedAt, nowMs)}
+        </Text>
 
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
           <Pressable
@@ -463,16 +568,14 @@ export default function CustomerRecord() {
                 apart in the words, because only one of them is the salesman's
                 to act on: a filter that excludes everything is undone by
                 pressing All, and an empty stream is the office's to fill. */}
-            {events.length === 0 ? (
-              <Empty
-                head={tlFilter === 'All' ? 'Nothing recorded yet' : 'Nothing under ' + tlFilter}
-                body={
+            {events.length === 0
+              ? nothingYet(
+                  tlFilter === 'All' ? 'Nothing recorded yet' : 'Nothing under ' + tlFilter,
                   tlFilter === 'All'
                     ? 'Visits, calls, orders and payments appear here as the office records them. A shop nobody has dealt with yet has nothing to show.'
-                    : 'This shop has history, but none of it is ' + tlFilter.toLowerCase() + '. Tap All to see the rest.'
-                }
-              />
-            ) : null}
+                    : 'This shop has history, but none of it is ' + tlFilter.toLowerCase() + '. Tap All to see the rest.',
+                )
+              : null}
 
             {events.map((e, i) => {
               const last = i === events.length - 1;
@@ -527,10 +630,10 @@ export default function CustomerRecord() {
         {pTab === 2 ? (
           <View style={{ gap: 10 }}>
             {orders.length === 0 ? (
-              <Empty
-                head="No orders on this handset"
-                body="The office's order history arrives with the day's sync. If this shop has ordered and nothing is here, sign out and in once."
-              />
+              nothingYet(
+                'No orders on this handset',
+                "The office's order history arrives with the day's sync. If this shop has ordered and nothing is here, sign out and in once.",
+              )
             ) : (
               <>
                 {orders.map((o) => (
@@ -562,10 +665,10 @@ export default function CustomerRecord() {
         {pTab === 3 ? (
           <View style={{ gap: 10 }}>
             {receipts.length === 0 ? (
-              <Empty
-                head="No payments on this handset"
-                body="Receipts the office has recorded arrive with the day's sync. If this shop has paid and nothing is here, sign out and in once."
-              />
+              nothingYet(
+                'No payments on this handset',
+                "Receipts the office has recorded arrive with the day's sync. If this shop has paid and nothing is here, sign out and in once.",
+              )
             ) : (
               <>
                 {receipts.map((r) => (
@@ -603,10 +706,10 @@ export default function CustomerRecord() {
         {pTab === 4 ? (
           <View style={{ gap: 10 }}>
             {samples.length === 0 ? (
-              <Empty
-                head="No trials on this shop"
-                body="Samples you raise here show up straight away. The office only sends down the ones still open, so a trial closed at a desk stays there."
-              />
+              nothingYet(
+                'No trials on this shop',
+                'Samples you raise here show up straight away. The office only sends down the ones still open, so a trial closed at a desk stays there.',
+              )
             ) : (
               <>
                 {samples.map((sm) => (
@@ -657,12 +760,10 @@ export default function CustomerRecord() {
         {pTab === 5 ? (
           <View>
             {gripes.length === 0 ? (
-              <Card style={{ paddingVertical: 24 }}>
-                <Text style={[type.small, { color: C.muted, textAlign: 'center' }]}>
-                  Nothing logged against this shop. A complaint is raised from the visit, under the
-                  Complaint outcome.
-                </Text>
-              </Card>
+              nothingYet(
+                'Nothing logged against this shop',
+                'A complaint is raised from the visit, under the Complaint outcome.',
+              )
             ) : (
               <View style={{ gap: 10 }}>
                 {gripes.map((g) => (
@@ -731,6 +832,18 @@ export default function CustomerRecord() {
                   value={comp.credit}
                   onChangeText={(v) => setComp((s) => ({ ...s, credit: v }))}
                   placeholder="Credit terms they offer (optional)"
+                />
+                {/* THE BOX THAT WAS NEVER DRAWN. `delivery` is initialised in
+                    this form's state, trimmed into `recordCompetitor`, carried
+                    on the wire and printed on the saved card beside the credit
+                    terms — and there was no input between credit and strengths,
+                    so it could never be anything but empty from this app. A
+                    column the record page shows is one the salesman standing in
+                    the shop has to be able to fill in. */}
+                <Input
+                  value={comp.delivery}
+                  onChangeText={(v) => setComp((s) => ({ ...s, delivery: v }))}
+                  placeholder="How quickly they deliver (optional)"
                 />
                 <Input
                   value={comp.strengths}

@@ -76,6 +76,13 @@ export function StatusStrip({
         <Pressable
           key={it.key}
           onPress={it.onPress}
+          /* 28pt of cell against a 48pt floor, on the one control that is on
+             all forty screens — so the miss was repeated everywhere. The strip
+             cannot be made taller without moving every screen down, so the
+             touch area is bought back rather than the pixels. Vertical only:
+             the three cells are adjacent, and horizontal slop would make each
+             one steal its neighbour's edge. */
+          hitSlop={{ top: 10, bottom: 10 }}
           style={[s.stripCell, i > 0 && { borderLeftWidth: 1, borderLeftColor: C.border }]}>
           <View
             style={{
@@ -118,13 +125,11 @@ const TABS: { k: TabKey; label: string; ic: string }[] = [
 export function TabBar({
   active,
   onTab,
-  onAction,
   bottomInset,
   badges,
 }: {
   active: TabKey | null;
   onTab: (k: TabKey) => void;
-  onAction: () => void;
   bottomInset: number;
   /**
    * A count to draw on a tab, by key. Absent or zero draws nothing.
@@ -142,18 +147,47 @@ export function TabBar({
       {TABS.slice(0, 2).map((t) => (
         <Tab key={t.k} tab={t} on={active === t.k} count={badges?.[t.k] ?? 0} onPress={() => onTab(t.k)} />
       ))}
-      {/* The gap the raised button sits in. */}
+      {/* The gap the raised button sits in — it is drawn BESIDE this bar
+          rather than inside it, see `TabBarAction`. */}
       <View style={{ flex: 1 }} />
       {TABS.slice(2).map((t) => (
         <Tab key={t.k} tab={t} on={active === t.k} count={badges?.[t.k] ?? 0} onPress={() => onTab(t.k)} />
       ))}
-      <Pressable
-        onPress={onAction}
-        accessibilityLabel="What are you doing?"
-        style={[s.fab, { bottom: TAB_BAR_HEIGHT + bottomInset - 52 + 20 }]}>
-        <Text style={{ color: C.lime, fontSize: 26, lineHeight: 30 }}>+</Text>
-      </Pressable>
     </View>
+  );
+}
+
+/**
+ * The raised `+`, and why it is not a child of the bar it sits on.
+ *
+ * `bottom: TAB_BAR_HEIGHT + bottomInset - 52 + 20` inside a container of height
+ * `TAB_BAR_HEIGHT + bottomInset` puts the 52pt circle's top edge at y = −20
+ * relative to that container — the gesture inset cancels out, so the top 20pt
+ * of the button hangs outside its own parent on every handset.
+ *
+ * It is still DRAWN there, and on this renderer it is still touchable: React
+ * Native leaves `clipChildren` off, and Fabric measures how far a child
+ * overflows its parent and widens the parent's hit test by exactly that much.
+ * But that is a lot of machinery holding up the entry point to every quick
+ * action in the app — one `overflow: 'hidden'` on the bar, or a build that is
+ * not on the new renderer, and the visually obvious top of the button goes
+ * inert with nothing to see. A dead button reads as a frozen app, not as a
+ * missed target.
+ *
+ * So it is a SIBLING of the bar, positioned against the frame, which is tall
+ * enough to contain it. The arithmetic is deliberately unchanged and lands on
+ * the same pixel: an absolutely positioned child is measured from its
+ * containing block's border box — padding is not subtracted — and the frame's
+ * bottom edge is the bar's bottom edge.
+ */
+export function TabBarAction({ onPress, bottomInset }: { onPress: () => void; bottomInset: number }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityLabel="What are you doing?"
+      style={[s.fab, { bottom: TAB_BAR_HEIGHT + bottomInset - 52 + 20 }]}>
+      <Text style={{ color: C.lime, fontSize: 26, lineHeight: 30 }}>+</Text>
+    </Pressable>
   );
 }
 

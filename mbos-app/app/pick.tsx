@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Pressable, TextInput } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { AppFrame } from '../src/components/shell/AppFrame';
-import { PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
+import { Choice, Input, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import {
@@ -15,7 +15,6 @@ import {
 } from '../src/data/journey';
 import { dayLabel, inr, isoDate, plural } from '../src/lib/format';
 import { daysSince } from '../src/data/customers';
-import { pickOrigin } from '../src/engines/route';
 import { haversineMetres } from '../src/engines/geo';
 import { ShopMap } from '../src/components/ui/shop-map';
 import { useStore } from '../src/state/store';
@@ -68,10 +67,22 @@ export default function PickScreen() {
   const params = useLocalSearchParams<{ day?: string }>();
   const planDayId = typeof params.day === 'string' ? params.day : '';
   const notify = useStore((s) => s.notify);
+  /* Every other sub-screen draws the chevron and a link naming where it goes
+     back to. This one had neither, so its only exit was a footer button reading
+     "Not now" — which sounds like it throws away the twelve shops just ticked,
+     and is the reason somebody hesitates over the only way off the screen. */
+  const back = useCameFrom('journey');
 
   const [day, setDay] = React.useState<PlanDay | null>(null);
   const [rows, setRows] = React.useState<Candidate[]>([]);
   const [total, setTotal] = React.useState(0);
+  /* The point the distances on the rows are measured from, as the READ used
+     it. Derived here once, it was the centroid of whatever had just come back
+     — so typing in the search box moved the origin and the figure against an
+     untouched shop changed with it. It comes back from `pickCandidates` now,
+     which is also what orders the page, so the numbers and the order they are
+     in cannot disagree. */
+  const [origin, setOrigin] = React.useState<{ lat: number; lng: number } | null>(null);
   /*
    * AN EMPTY LIST MEANS THREE DIFFERENT THINGS, and it said two.
    *
@@ -82,8 +93,24 @@ export default function PickScreen() {
    * Still looking, nothing matched, and nothing here are three answers.
    */
   const [loading, setLoading] = React.useState(true);
+  /* A read that threw. Without it the `.then` never ran, `loading` stayed true
+     and the screen said "Looking…" for ever — which reads as a broken handset
+     and leaves nothing on the screen to press. */
+  const [readFailed, setReadFailed] = React.useState(false);
   const [picked, setPicked] = React.useState<string[]>([]);
   const [q, setQ] = React.useState('');
+  /*
+   * WHAT THE READ SEARCHES FOR, a beat behind what he is typing.
+   *
+   * Every character used to fire a `COUNT(*)` and a leading-wildcard `LIKE`
+   * over the whole book, then a haversine sort of the answer. On a mid-range
+   * phone with a few thousand shops the field lags behind the thumb — which is
+   * the friction the cap on this list exists to avoid, arriving from the other
+   * end. `q` is what the box shows; this is what SQLite is asked.
+   */
+  const [search, setSearch] = React.useState('');
+  /** Bumped by the retry, so a failed read has something to press. */
+  const [attempt, setAttempt] = React.useState(0);
   const [saving, setSaving] = React.useState(false);
   /* The same two ways of looking at the same list the customers screen offers.
      The tap means something different HERE — it picks a stop rather than opening
@@ -136,52 +163,60 @@ export default function PickScreen() {
   pickedRef.current = picked;
 
   React.useEffect(() => {
+    const t = setTimeout(() => setSearch(q), 200);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  React.useEffect(() => {
     let live = true;
     setLoading(true);
-    void pickCandidates(day?.city ?? null, q, pickedRef.current, {
+    setReadFailed(false);
+    void pickCandidates(day?.city ?? null, search, pickedRef.current, {
       forToday: day?.planDate === today,
       fix: fix ? { lat: fix.lat, lng: fix.lng } : null,
-    }).then((r) => {
-      if (!live) return;
-      setRows(r.rows);
-      /* The count the cap sentence reads. Lost in a merge once — without it
-         `total` stays 0, `total > rows.length` is never true, and a capped list
-         silently stops saying it is capped. */
-      setTotal(r.total);
-      setLoading(false);
-    });
+    })
+      .then((r) => {
+        if (!live) return;
+        setRows(r.rows);
+        /* The count the cap sentence reads. Lost in a merge once — without it
+           `total` stays 0, `total > rows.length` is never true, and a capped list
+           silently stops saying it is capped. */
+        setTotal(r.total);
+        setOrigin(r.origin);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!live) return;
+        setLoading(false);
+        setReadFailed(true);
+      });
     return () => {
       live = false;
     };
-  }, [day?.city, day?.planDate, today, fix, q]);
+  }, [day?.city, day?.planDate, today, fix, search, attempt]);
 
   const toggle = (id: string) =>
     setPicked((current) =>
       current.includes(id) ? current.filter((x) => x !== id) : [...current, id],
     );
 
+  /* The write is local first, so it fails only where SQLite itself does — and
+     when it did, `saving` stayed true for good and the one control on the
+     screen read "Sending…" and was disabled. A dead end on the screen's only
+     action. `finally` is what makes the button come back. */
   const save = async () => {
     setSaving(true);
-    const out = await pickShops(planDayId, picked);
-    setSaving(false);
-    if (!out.ok) return notify(out.message ?? 'Pick at least one shop.');
-    notify(plural(picked.length, 'shop') + ' picked. Your manager can see the day now.');
-    router.back();
+    try {
+      const out = await pickShops(planDayId, picked);
+      if (!out.ok) return notify(out.message ?? 'Pick at least one shop.');
+      notify(plural(picked.length, 'shop') + ' picked. Your manager can see the day now.');
+      router.back();
+    } catch {
+      notify('The day could not be saved on this phone. Nothing is lost — try again.');
+    } finally {
+      setSaving(false);
+    }
   };
-
-  /* The same origin the sort used, so the numbers on screen and the order they
-     are in cannot disagree — measured once here rather than recomputed per row. */
-  const origin = React.useMemo(
-    () =>
-      pickOrigin({
-        fix,
-        forToday: day?.planDate === today,
-        cityShops: rows
-          .filter((r) => r.gpsLat != null && r.gpsLng != null)
-          .map((r) => ({ lat: r.gpsLat as number, lng: r.gpsLng as number })),
-      }),
-    [fix, day?.planDate, today, rows],
-  );
 
   const away = React.useCallback(
     (c: Candidate): string => {
@@ -195,7 +230,8 @@ export default function PickScreen() {
 
   if (!day) {
     return (
-      <AppFrame title="Pick your shops" contentStyle={{ padding: 16 }}>
+      <AppFrame title="Pick your shops" onBack={back.go} contentStyle={{ padding: 16 }}>
+        <BackLink label={back.label} onPress={back.go} />
         <T s="small" style={{ color: C.muted }}>
           That day is not on this handset. Pull down on the route screen to fetch it.
         </T>
@@ -209,6 +245,7 @@ export default function PickScreen() {
   return (
     <AppFrame
       title={'Pick your shops'}
+      onBack={back.go}
       contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}
       /*
        * The save bar is the FRAME's, not a floating view of this screen's own.
@@ -249,6 +286,8 @@ export default function PickScreen() {
           <SecondaryButton label="Not now" fullWidth onPress={() => router.back()} />
         </View>
       }>
+      <BackLink label={back.label} onPress={back.go} />
+
       <View
         style={{
           backgroundColor: C.surface,
@@ -269,56 +308,72 @@ export default function PickScreen() {
         </T>
       </View>
 
+      {/*
+        THE DESIGN'S OWN BOX, not a hand-rolled one a few points under it.
+        It was a raw `TextInput` at 48h/15px where `Input` is 52h/16px, with
+        nothing to clear it and Android's autocapitalise and autocorrect both
+        on — which fights a transliterated shop name character by character
+        while a customer waits. There is a × now, because backspacing a wrong
+        search one key at a time is the friction this screen is capped to
+        avoid.
+      */}
       <View style={{ position: 'relative', marginBottom: 10 }}>
         <View style={{ position: 'absolute', left: 14, top: 16, zIndex: 1 }}>
           <Icon name="search" size={20} color={C.muted} strokeWidth={1.5} />
         </View>
-        <TextInput
+        <Input
           value={q}
           onChangeText={setQ}
           placeholder="Search a shop, an area, a city"
-          placeholderTextColor={C.muted}
-          style={{
-            height: 48,
-            paddingLeft: 44,
-            paddingRight: 14,
-            borderRadius: radius.card,
-            backgroundColor: C.surface,
-            color: C.ink,
-            fontSize: 15,
-            boxShadow: shadow.card,
-          }}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          style={{ paddingLeft: 44, paddingRight: q ? 48 : 14 }}
         />
+        {q ? (
+          <Pressable
+            onPress={() => setQ('')}
+            accessibilityRole="button"
+            accessibilityLabel="Clear the search"
+            hitSlop={8}
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: HIT,
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1,
+            }}>
+            <Icon name="close" size={18} color={C.muted} strokeWidth={1.8} />
+          </Pressable>
+        ) : null}
       </View>
 
       {/* LIST OR MAP. On a day in one city the map is often the faster way to
           choose: the shops are a walk apart and their arrangement is the plan.
           A tap PICKS rather than opens — the number on a picked row is where it
           sits in the day, and the map shows the same state filled in. */}
+      {/* `Choice`, not a hand-rolled pair of pressables. These were roughly 30dp
+          tall with no hit slop, no `accessibilityRole` and their own font size —
+          a one-handed tap misses the control that changes what the whole screen
+          IS, and a screen reader hears two unlabelled buttons. The chip primitive
+          is 48dp and announces itself, and the nearby screen already uses it for
+          exactly this kind of switch. */}
       <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
         {([
           { key: false, label: 'List' },
           { key: true, label: 'Map' },
-        ] as const).map((chip) => {
-          const on = asMap === chip.key;
-          return (
-            <Pressable
-              key={String(chip.key)}
-              onPress={() => setAsMap(chip.key)}
-              style={{
-                paddingHorizontal: 14,
-                paddingVertical: 7,
-                borderRadius: radius.sm,
-                borderWidth: 1,
-                borderColor: on ? C.ink : C.border,
-                backgroundColor: on ? C.ink : C.surface,
-              }}>
-              <T style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
-                {chip.label}
-              </T>
-            </Pressable>
-          );
-        })}
+        ] as const).map((chip) => (
+          <Choice
+            key={String(chip.key)}
+            label={chip.label}
+            selected={asMap === chip.key}
+            onPress={() => setAsMap(chip.key)}
+            style={{ paddingHorizontal: 20 }}
+          />
+        ))}
       </View>
 
       {asMap ? (
@@ -339,9 +394,22 @@ export default function PickScreen() {
            to its content and handed the gesture back, which is why the list read
            as one long page rather than a pane. */
         <View>
-          {rows.length === 0 ? (
+          {rows.length === 0 && readFailed ? (
+            /* A READ THAT FAILED IS NOT AN EMPTY BOOK, and this is the fourth
+               answer the three sentences below could not give. Said plainly,
+               with the one thing to press. */
+            <View style={{ paddingVertical: 24, gap: 10, alignItems: 'center' }}>
+              <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
+                The shop list could not be read off this phone.
+              </T>
+              <SecondaryButton label="Try again" onPress={() => setAttempt((a) => a + 1)} />
+            </View>
+          ) : rows.length === 0 ? (
           <T s="small" style={{ color: C.muted, paddingVertical: 24, textAlign: 'center' }}>
-            {loading
+            {/* `search` lags `q` by the debounce, so a keystroke ahead of the
+                read must still read as "looking" — otherwise "No shop matches
+                that" flashes against a query nobody has answered yet. */}
+            {loading || q !== search
               ? 'Looking…'
               : q
                 ? 'No shop matches that.'

@@ -49,6 +49,14 @@ export type FunnelSample = {
   deliveredAt: number | null;
   deliveryPhotoId: string | null;
   receivedConfirmedAt: number | null;
+  /**
+   * STARTED and COMPLETED are two columns, and the gap between them is the
+   * point. A trial opened three weeks ago and never finished is the commonest
+   * way a sample goes quiet, and with only an outcome column it is
+   * indistinguishable from a can nobody has touched. The column has been on
+   * this table and on the pull since the funnel shipped; nothing read it.
+   */
+  trialStartedAt: number | null;
   trialCompletedAt: number | null;
   reviewedAt: number | null;
   cancelledAt: number | null;
@@ -76,6 +84,15 @@ export type SampleFeedback = {
 };
 
 export type SampleResult<T> = { ok: true; value: T } | { ok: false; message: string };
+
+/**
+ * What the shop made of the trial — the server's own four, spelled its way.
+ *
+ * `more_testing` is a third real verdict rather than a shrug, which is why it
+ * is not folded into `pending`: pending means nobody has answered, and this
+ * means they answered "again, on something else".
+ */
+export type TrialVerdict = 'pending' | 'approved' | 'rejected' | 'more_testing';
 
 /* ------------------------------------------------------------------ reads */
 
@@ -151,10 +168,20 @@ export function whatIsOwed(s: FunnelSample): string | null {
     case 'Requested': return 'Waiting on the office to approve it';
     case 'Approved': return 'Approved — waiting for it to go out';
     case 'Dispatched': return 'Sent. Check they have it';
-    case 'Awaiting feedback': return 'They have it. Ask how the trial went';
+    /* Started and not finished is a different call from not started at all:
+       one asks how it is going, the other asks whether the can was even
+       opened. Both are chased, and saying which is what makes the chase land. */
+    case 'Awaiting feedback':
+      return s.trialStartedAt
+        ? 'They have started the trial. Ask how it is going'
+        : 'They have it. Ask whether they have tried it yet';
     case 'Tried': return 'They have tried it — write down what they said';
     case 'Rejected': return null;
-    case 'Reviewed': return null;
+    /* A reviewed sample is finished EXCEPT on the third verdict: "they want to
+       try it again on a different substrate" is a live trial with a next step,
+       and filing it as done is how it goes quiet. */
+    case 'Reviewed':
+      return s.trialOutcome === 'more_testing' ? 'They want to try it again — another sample is the next step' : null;
     case 'Converted': return null;
     case 'Cancelled': return null;
     default: return null;
@@ -338,6 +365,27 @@ export async function confirmReceived(id: string, photoId?: string | null): Prom
   return { ok: true, value: null };
 }
 
+/**
+ * §K — they have opened the can.
+ *
+ * The STATE does not move: a trial under way is still `Awaiting feedback`,
+ * because what is owed is still the review. What moves is the date, and the
+ * gap between this one and `trialCompletedAt` is the whole reason there are
+ * two columns — a trial started and never finished is the commonest way a
+ * sample goes quiet, and it is invisible where the only mark is an outcome.
+ *
+ * The wire carries the date alone and no `state`, which `sampleUpdateSchema`
+ * allows: there is no state change to assert, and inventing one here would
+ * move the sample forward on the office's record for a mark that is about
+ * timing rather than about progress. Epoch milliseconds, which is what that
+ * schema declares the two trial columns as.
+ */
+export async function markTrialStarted(id: string): Promise<SampleResult<null>> {
+  const at = Date.now();
+  await moveSample(id, await customerOf(id), { trialStartedAt: at }, { trialStartedAt: at });
+  return { ok: true, value: null };
+}
+
 /** They have used it. What they thought is the next screen, not this one. */
 export async function markTried(id: string): Promise<SampleResult<null>> {
   const at = Date.now();
@@ -365,7 +413,12 @@ export async function recordFeedback(
   args: {
     customerId: string;
     fields: Partial<Record<(typeof FEEDBACK_FIELDS)[number]['id'], string>>;
-    trialOutcome: 'approved' | 'rejected' | 'pending';
+    /* FOUR verdicts, not three. `more_testing` is a real answer — "they want
+       to try it again on a different substrate" is neither approval nor
+       refusal — and recording it as `pending` loses the fact that a trial
+       happened at all. The office has accepted all four since the module
+       shipped; only the handset offered three. */
+    trialOutcome: TrialVerdict;
     photoId?: string | null;
   },
 ): Promise<SampleResult<null>> {
@@ -439,7 +492,15 @@ export async function recordFeedback(
   return { ok: true, value: null };
 }
 
-/** A trial that is not going to happen. The row stays, with the reason on it. */
+/**
+ * A trial that is not going to happen. The row stays, with the reason on it.
+ *
+ * `trialOutcome` is deliberately NOT touched. It used to be stamped
+ * `rejected`, which said on the customer's record that they had tried the
+ * product and turned it down — a sentence about the shop, written because the
+ * office withdrew a sample that never left the godown. The state already says
+ * it was cancelled, and `cancelReason` already says why.
+ */
 export async function cancelSample(id: string, reason: string): Promise<SampleResult<null>> {
   const said = reason.trim();
   if (!said) return { ok: false, message: 'Say why it is being cancelled.' };
@@ -447,7 +508,7 @@ export async function cancelSample(id: string, reason: string): Promise<SampleRe
   await moveSample(
     id,
     await customerOf(id),
-    { state: 'Cancelled', cancelledAt: at, cancelReason: said, trialOutcome: 'rejected' },
+    { state: 'Cancelled', cancelledAt: at, cancelReason: said },
     { state: 'cancelled', cancelReason: said },
   );
   return { ok: true, value: null };

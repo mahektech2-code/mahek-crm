@@ -3,9 +3,11 @@ import { View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Choice, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { VoiceField } from '../src/components/ui/dictate';
 import { color as C, radius, weight } from '../src/theme/tokens';
-import { recordValidation, validationScript, type ValidationScript } from '../src/data/validations';
+import { recordValidation, validationRefusal, validationScript, type ValidationScript } from '../src/data/validations';
 import { getLead, type Lead } from '../src/data/leads';
+import { callNumber } from '../src/lib/messaging';
 import { useStore } from '../src/state/store';
 
 /**
@@ -34,6 +36,7 @@ export default function ValidateLead() {
   const id = params.id ?? '';
   const back = useCameFrom('tasks');
   const notify = useStore((s) => s.notify);
+  const askConfirm = useStore((s) => s.askConfirm);
 
   const [lead, setLead] = React.useState<Lead | null>(null);
   const [script, setScript] = React.useState<ValidationScript>([]);
@@ -63,8 +66,34 @@ export default function ValidateLead() {
     };
   }, [id]);
 
+  /* Ten minutes of a phone call, held in component state and nowhere else. All
+     three ways off this screen are a `router.replace`, which destroys the
+     route — so a mis-tap on the 48dp chevron at the top of a tall phone lost
+     the whole call and it had to be made again. */
+  const dirty =
+    !reached ||
+    verdict !== 'pending' ||
+    Boolean(
+      (product + quality + dispatch + behaviour + requirement + litres + competitor + why).trim(),
+    );
+
+  const leave = () => {
+    if (!dirty) return back.go();
+    askConfirm({
+      title: 'Leave without recording the call?',
+      body: 'Nothing you have written down here is saved yet, and none of it is kept.',
+      confirmLabel: 'Discard it',
+      run: () => back.go(),
+    });
+  };
+
   const save = async () => {
     if (saving) return;
+    /* Refused BEFORE the write and in the same words the service uses, so the
+       sentence he had in mind while the customer's words were fresh is not
+       lost to a round trip that comes back with a refusal. */
+    const refusal = validationRefusal({ customerId: id, reached, verdict, verdictReason: why.trim() || null });
+    if (refusal) return setErr(refusal);
     setSaving(true);
     const result = await recordValidation({
       customerId: id,
@@ -93,16 +122,37 @@ export default function ValidateLead() {
     <AppFrame
       title="Validation call"
       activeTab={null}
-      onBack={back.go}
+      onBack={leave}
       contentStyle={{ padding: 16, paddingBottom: 32 }}>
-      <BackLink label={back.label} onPress={back.go} />
+      <BackLink label={back.label} onPress={leave} />
 
       <T style={[{ fontSize: 19, lineHeight: 25, color: C.ink, marginTop: 4 }, weight(600)]}>
         {lead?.company?.trim() || lead?.name || 'Lead'}
       </T>
-      <T s="caption" style={{ marginTop: 2 }}>
-        {[lead?.city, lead?.mobile].filter(Boolean).join(' · ')}
-      </T>
+      {lead?.city ? <T s="caption" style={{ marginTop: 2 }}>{lead.city}</T> : null}
+
+      {/* THE NUMBER IS THE POINT OF THIS SCREEN, so it is a row with a button
+          rather than half of a joined caption. It sat inside a plain, unselectable
+          string beside a script telling him what to say — so the one screen whose
+          entire purpose is a phone call was the one screen he had to retype a
+          ten-digit number out of. Three others in this app taught him a number
+          is tappable. */}
+      {lead?.mobile ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 }}>
+          <T style={[{ flex: 1, minWidth: 0, fontSize: 16, color: C.ink }, weight(500)]} selectable>
+            {lead.mobile}
+          </T>
+          <SecondaryButton
+            label="Call"
+            fullWidth={false}
+            onPress={() => {
+              void callNumber(lead.mobile ?? '').then((out) => {
+                if (out.status === 'failed') notify(out.reason);
+              });
+            }}
+          />
+        </View>
+      ) : null}
 
       {/* ---- the script, straight from configuration ---- */}
       {script.map((section) => (
@@ -115,6 +165,19 @@ export default function ValidateLead() {
           ))}
         </Card>
       ))}
+
+      {/* A handset that has not finished a bootstrap has no script row and no
+          default behind one, so this section simply was not drawn — the screen
+          went from the shop's name to "Did you get through?" and he made the
+          call with no idea that questions he was meant to read out existed. */}
+      {script.length === 0 ? (
+        <Card style={{ marginTop: 12 }}>
+          <T style={[{ fontSize: 14, color: C.ink }, weight(600)]}>The script has not reached this phone yet</T>
+          <T s="caption" style={{ marginTop: 4 }}>
+            It arrives with the next sync. Make the call from what you know and record the answers below.
+          </T>
+        </Card>
+      ) : null}
 
       <Card style={{ marginTop: 12 }}>
         <SectionLabel>Did you get through?</SectionLabel>
@@ -141,7 +204,9 @@ export default function ValidateLead() {
             ].map((f) => (
               <View key={f.label} style={{ marginTop: 12 }}>
                 <SectionLabel style={{ marginBottom: 6 }}>{f.label}</SectionLabel>
-                <Input value={f.v} onChangeText={f.set} placeholder="In their words" />
+                {/* "What they actually said, not a summary" asked of a single
+                    line that scrolls sideways. Prose, so it gets the mic. */}
+                <VoiceField value={f.v} onChangeText={f.set} placeholder="In their words" />
               </View>
             ))}
           </Card>

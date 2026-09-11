@@ -124,6 +124,20 @@ export default function LeaveScreen() {
 
   const afterWarn = (left != null && dayCount > left) || left == null;
 
+  /**
+   * A range cannot end before it starts, and the calendar refuses it rather
+   * than the Send button.
+   *
+   * Picking "From" already carried the end with it; picking "To" did not
+   * compare at all, and the `Calendar` was given the range but no
+   * `disabledReason` — so From 20 Aug, To 18 Aug was fully selectable, gave a
+   * day count of 0, and produced "Pick both dates" with both dates plainly on
+   * screen and "Pick the day this leave is for." on Send. Refused for
+   * something he has done, in words telling him to do it again.
+   */
+  const refuseTo = (iso: string) =>
+    pick === 'to' && !!lv.from && iso < lv.from ? 'Leave cannot end before it starts' : null;
+
   const send = async () => {
     if (!lv.from || (span === 'many' && (!lv.to || dayCount < 1))) return setErr('dates');
     if (!lv.reason.trim()) return setErr('reason');
@@ -263,7 +277,11 @@ export default function LeaveScreen() {
           <T s="label" style={{ marginBottom: 8 }}>
             Which type
           </T>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+          {/* WRAPPED, not N equal columns. With three balance kinds beside
+              "Loss of pay" each chip had about 50dp of text at 14px inside a
+              48dp box, and the longest label — the one that costs him money —
+              broke mid-word. The travel screen has always done it this way. */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
             {kinds.map((k) => {
               const b = balances.find((x) => x.kind === k);
               return (
@@ -273,7 +291,6 @@ export default function LeaveScreen() {
                   sub={b ? b.available + ' left' : 'Unpaid'}
                   selected={lv.type === k}
                   onPress={() => patch({ type: k })}
-                  style={{ flex: 1 }}
                 />
               );
             })}
@@ -379,6 +396,7 @@ export default function LeaveScreen() {
           selected={pick === 'to' ? lv.to : lv.from}
           rangeFrom={lv.from}
           rangeTo={lv.to}
+          disabledReason={refuseTo}
           onPick={(iso) => {
             if (pick === 'to') patch({ to: iso });
             /* A start after the end is not a range — carry the end with it. */
@@ -401,6 +419,10 @@ export default function LeaveScreen() {
             accessibilityRole="button"
             onPress={() => {
               const iso = isoDate(new Date());
+              /* The same refusal the grid makes — this shortcut is the other
+                 way a backwards range could be set. */
+              const refusal = refuseTo(iso);
+              if (refusal) return notify(refusal + '.');
               if (pick === 'to') patch({ to: iso });
               else patch({ from: iso, to: lv.to && iso > lv.to ? iso : lv.to });
               setPick(null);

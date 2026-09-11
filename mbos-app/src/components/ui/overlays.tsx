@@ -68,31 +68,79 @@ function Scrim({
  * `lift` is for a screen with a pinned footer of its own — the pick screen's
  * save bar — because a message about what just happened must not cover the
  * button that did it.
+ *
+ * AND IT HAS A TONE, because this is the app's only error channel and it was
+ * drawing every one of them under a green tick. "No number on this customer",
+ * "that shop is billed to somebody who is not on your book", "the ticket could
+ * not be added just now" — all refusals, all confirmed with the same lime tick
+ * a saved order gets. A refusal somebody half-read, marked with a tick, reads
+ * as a confirmation, and he walks away from the shop believing it went.
+ *
+ * A `warn` toast therefore differs in three ways and each of them earns its
+ * place: the glyph is the refusal one rather than the tick, it stays on screen
+ * longer because a sentence explaining what went wrong is longer than "Saved",
+ * and it can be TAPPED away — which also means it is the one toast that takes
+ * touches at all, so it is never left `pointerEvents="none"` over a button the
+ * person is trying to press.
  */
+export type ToastTone = 'success' | 'warn';
+
+/* How long each tone sits there. A refusal is a sentence to read; a
+   confirmation is a word to glimpse. */
+const DWELL: Record<ToastTone, number> = { success: 2400, warn: 5200 };
+
 export function Toast({
   message,
   onDone,
   lift = 0,
+  /** Defaults to the confirmation this has always drawn, so no caller has to change. */
+  tone = 'success',
 }: {
   message: string | null;
   onDone: () => void;
   lift?: number;
+  tone?: ToastTone;
 }) {
   const insets = useSafeAreaInsets();
   const reduce = useReduceMotion();
   const progress = React.useRef(new Animated.Value(0)).current;
   const [showing, setShowing] = React.useState<string | null>(null);
+  const warn = tone === 'warn';
 
   React.useEffect(() => {
     if (message) setShowing(message);
   }, [message]);
 
+  /* ONE way out, whether it is the timer or a thumb that ends it. Held apart
+     from the effect below because a tap has to be able to run it too, and two
+     copies of "animate out, then tell the store" is how one of them forgets to
+     clear `showing` — which is exactly what the reduce-motion path did, leaving
+     the pill on screen for good. */
+  const leave = React.useCallback(() => {
+    if (reduce) {
+      progress.setValue(0);
+      setShowing(null);
+      onDone();
+      return;
+    }
+    Animated.timing(progress, {
+      toValue: 0,
+      duration: 160,
+      easing: Easing.bezier(0.2, 0, 0.2, 1),
+      useNativeDriver: true,
+    }).start(() => {
+      setShowing(null);
+      onDone();
+    });
+  }, [onDone, progress, reduce]);
+
   React.useEffect(() => {
     if (!message) return;
+    const dwell = DWELL[tone];
 
     if (reduce) {
       progress.setValue(1);
-      const t = setTimeout(onDone, 2600);
+      const t = setTimeout(leave, dwell);
       return () => clearTimeout(t);
     }
 
@@ -106,28 +154,21 @@ export function Toast({
 
     /* Leave BEFORE telling the store, so the exit is seen rather than cut off
        by the message being cleared out from under it. */
-    const t = setTimeout(() => {
-      Animated.timing(progress, {
-        toValue: 0,
-        duration: 160,
-        easing: Easing.bezier(0.2, 0, 0.2, 1),
-        useNativeDriver: true,
-      }).start(() => {
-        setShowing(null);
-        onDone();
-      });
-    }, 2400);
+    const t = setTimeout(leave, dwell);
 
     return () => {
       enter.stop();
       clearTimeout(t);
     };
-  }, [message, onDone, progress, reduce]);
+  }, [message, tone, leave, progress, reduce]);
 
   if (!showing) return null;
   return (
     <Animated.View
-      pointerEvents="none"
+      /* Only a refusal takes touches, and only so it can be dismissed. A
+         confirmation that could swallow a tap would be covering the next thing
+         somebody meant to press. */
+      pointerEvents={warn ? 'box-none' : 'none'}
       style={[
         st.toast,
         {
@@ -136,10 +177,17 @@ export function Toast({
           transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
         },
       ]}>
-      <View style={st.toastTick}>
-        <Icon name="tick" size={14} color={C.lime} strokeWidth={2.6} />
-      </View>
-      <Text style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: '#FFFFFF' }, weight(500)]}>{showing}</Text>
+      <Pressable
+        onPress={warn ? leave : undefined}
+        disabled={!warn}
+        accessibilityRole={warn ? 'button' : undefined}
+        accessibilityLabel={warn ? showing + '. Tap to dismiss.' : undefined}
+        style={st.toastBody}>
+        <View style={[st.toastChip, warn && st.toastChipWarn]}>
+          <Icon name={warn ? 'alert' : 'tick'} size={14} color={warn ? C.warn : C.lime} strokeWidth={2.6} />
+        </View>
+        <Text style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: '#FFFFFF' }, weight(500)]}>{showing}</Text>
+      </Pressable>
     </Animated.View>
   );
 }
@@ -473,7 +521,17 @@ const st = StyleSheet.create({
     paddingVertical: 14,
     boxShadow: shadow.toast,
   },
-  toastTick: {
+  /* The row inside the pill. It is its own element because a warn toast is
+     PRESSABLE — a refusal somebody half-read should be dismissable rather than
+     expiring on a fixed timer — and the press target has to be the whole row,
+     not the pill's padding. */
+  toastBody: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  toastChip: {
     width: 22,
     height: 22,
     borderRadius: 11,
@@ -481,5 +539,12 @@ const st = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 1,
+  },
+  /* A REFUSAL IS NOT A CONFIRMATION. `notify()` is the app's only error
+     channel, and every message it carried — "No number on this customer",
+     "…is billed to somebody who is not on your book" — arrived under a green
+     tick. A refusal marked with a tick reads as the opposite of itself. */
+  toastChipWarn: {
+    backgroundColor: 'rgba(183,123,8,0.22)',
   },
 });

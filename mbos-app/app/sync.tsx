@@ -5,7 +5,7 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
-import { plural } from '../src/lib/format';
+import { isoDate, plural, pretty } from '../src/lib/format';
 import { conflictCount, listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
 import { mediaCounts } from '../src/sync/media';
 import { syncNow } from '../src/sync/engine';
@@ -63,9 +63,21 @@ function describe(item: QueueItem): string {
   return p.customerName ?? p.title ?? p.reason ?? item.entityId.slice(-6).toUpperCase();
 }
 
-function hhmm(ms: number): string {
+/**
+ * `09:14` for something saved today, `9 Sep 09:14` for anything older.
+ *
+ * A time on its own made every row read as this morning — and the case this
+ * screen exists for is precisely the one where that is wrong: a week offline,
+ * or a queue that has stopped draining, where every row is from a different day
+ * and all of them printed the same shape. Telling an order taken twenty minutes
+ * ago from one stuck since Tuesday is the whole signal that something is wrong
+ * rather than merely slow.
+ */
+function when(ms: number, today: string): string {
   const d = new Date(ms);
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const day = isoDate(d);
+  return day === today ? hm : pretty(day) + ' ' + hm;
 }
 
 export default function SyncScreen() {
@@ -78,6 +90,9 @@ export default function SyncScreen() {
   const [counts, setCounts] = React.useState<Record<string, number>>({});
   const [media, setMedia] = React.useState({ pending: 0, failed: 0 });
   const [conflicts, setConflicts] = React.useState(0);
+  /* Read once rather than during render — the clock is impure, and every row
+     on the list is compared against this one value. */
+  const [today] = React.useState(() => isoDate(new Date()));
 
   const load = React.useCallback(() => {
     let live = true;
@@ -123,11 +138,19 @@ export default function SyncScreen() {
 
       {media.pending + media.failed > 0 ? (
         <T s="caption" style={{ marginTop: 10 }}>
-          {plural(media.pending + media.failed, 'photo or recording') +
+          {/* The plural form is given rather than derived: appending an `s` to
+              the whole phrase reads "2 photo or recordings". */}
+          {plural(media.pending + media.failed, 'photo or recording', 'photos and recordings') +
             ' uploading separately — records always go first.'}
         </T>
       ) : null}
 
+      {/* An empty outbox drew an empty card: a bordered, rounded, shadowed slab
+          two points tall sitting directly under the sentence saying everything
+          has gone up, which reads as a row that failed to draw. `listQueue` and
+          `queueDepth` ask the same question, so no rows means no depth and the
+          caption below cannot be lost with it. */}
+      {rows.length > 0 ? (
       <ListCard style={{ marginTop: 12 }}>
         {depth > rows.length ? (
           <T s="caption" style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
@@ -148,7 +171,7 @@ export default function SyncScreen() {
             }}>
             <View style={{ flex: 1, minWidth: 0 }}>
               <T style={{ fontSize: 15, color: C.ink }}>{KIND[q.entityType] ?? q.entityType}</T>
-              <T s="caption">{describe(q) + ' · ' + hhmm(q.createdAt)}</T>
+              <T s="caption">{describe(q) + ' · ' + when(q.createdAt, today)}</T>
             </View>
             <Badge tone={stateTone(q.state)}>{stateLabel(q.state)}</Badge>
             {q.state === 'failed' || q.state === 'blocked' ? (
@@ -176,6 +199,7 @@ export default function SyncScreen() {
           </View>
         ))}
       </ListCard>
+      ) : null}
 
       {/* A refusal is not a queue item to retry blindly — it goes to the screen
           that says what the office objected to and how to correct it. */}
