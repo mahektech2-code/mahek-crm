@@ -1,0 +1,35 @@
+// The whole build file, and it is short on purpose.
+//
+// `expo-module-gradle-plugin` (it lives in expo-modules-core, and the app's
+// generated settings.gradle is what makes the id resolvable) already applies
+// com.android.library, kotlin-android and maven-publish, adds
+// expo-modules-core as a compileOnly dependency, and sets compileSdk/minSdk/
+// targetSdk from the root project's own values — so the module cannot drift
+// from the app it is compiled into. Everything below is what the plugin
+// cannot know.
+//
+// THE KOTLIN PACKAGE IS `expo.modules.phonesetup` AND NOT `in.mahek.mbos.*`.
+// `in` is a reserved word in Kotlin, so `package in.mahek.mbos.phonesetup`
+// does not parse. `expo.modules.<name>` is create-expo-module's own
+// convention for a local module and it sidesteps the problem entirely.
+
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.phonesetup'
+version = '1.0.0'
+
+android {
+  namespace 'expo.modules.phonesetup'
+}
+
+// NOT PUBLISHED, and saying so is not a formality. The plugin publishes to a
+// `local-maven-repo` beside the module by default, which is right for a
+// package shipped on npm and wrong for a directory inside this app: it would
+// create a maven publication, and an artefact, for something nothing will
+// ever resolve from a repository.
+expoModule {
+  canBePublished false
+}

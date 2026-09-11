@@ -1734,6 +1734,16 @@ export const SETTINGS = [
     max: 60,
   },
   {
+    key: "mbos.location.startOfDayGate",
+    type: "text",
+    category: "mbos-location",
+    options: ["block", "warn", "off"],
+    label: "What happens when a handset cannot record the day",
+    description:
+      "A salesman checked in at 04:16 on a vivo and posted not one position all day: every permission on the phone read correct, the tracking service started properly, and the handset's own battery manager killed it within minutes. Nothing looked broken at either end and the day was gone by the time anybody noticed — a trail cannot be reconstructed afterwards. Block means the day does not open until the phone can show it will record, with the steps to fix it on the screen and, where the phone genuinely cannot, a plain dead end rather than a button that leads nowhere. Warn opens the day anyway and still records what was wrong, which is how to turn this on for a team without a morning of nobody being able to mark attendance — the office can count who would have been stopped first. Off is no gate at all. There is no skip a salesman can reach in any of the three: a day that opened on a phone that could not record it, filed beside one that could, is exactly the pair nobody can tell apart a week later.",
+    default: "block",
+  },
+  {
     key: "mbos.location.dwellRadiusMeters",
     type: "integer",
     category: "mbos-location",

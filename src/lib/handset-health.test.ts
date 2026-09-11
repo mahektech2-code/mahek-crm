@@ -26,6 +26,13 @@ const facts = (over: Partial<HandsetFacts> = {}): HandsetFacts => ({
      so every test above that is about something else is not quietly also a
      test of a dead trail. */
   trailSeenAt: new Date(NOW - 60_000),
+  /* A clean start: the start-of-day gate found nothing wrong, so nothing was
+     claimed and there is nothing to say. Null would be just as healthy — it is
+     a handset too old to report — but it would make every test above this one
+     a test of an unreported build rather than of a working one. */
+  setupReady: true,
+  setupAcknowledgedAt: null,
+  setupUnverified: null,
   ...over,
 });
 
@@ -273,5 +280,65 @@ describe("ageWords", () => {
     /* A handset's clock is its owner's to set, and a phone an hour fast would
        otherwise produce "-60 min ago". */
     assert.equal(ageWords(NOW + 3_600_000, NOW), "0 min");
+  });
+});
+
+describe("a day that opened on a claim", () => {
+  /* The gate stops a day from opening on a phone that cannot show it will
+     record one. Where the failing steps are ones no API can check, it opens on
+     the man SAYING he has done them — and the whole value of that claim is
+     whether a trail then appeared. */
+
+  test("says nothing where the claim worked", () => {
+    /* He was stopped, he fixed his phone, the trail is producing. Nothing to
+       do about this one, and a row that congratulated him would be furniture. */
+    const fixed = facts({
+      setupReady: false,
+      setupAcknowledgedAt: new Date(NOW - 3 * 3_600_000),
+      setupUnverified: ["battery-unrestricted"],
+    });
+    assert.deepEqual(texts(fixed), []);
+  });
+
+  test("names the claim rather than repeating the advice, where no trail followed", () => {
+    /* The pattern the gate exists to surface: pressed the button, still not
+       being recorded. Sending a manager to the same battery settings the
+       salesman has already been through spends the one call that could fix it. */
+    const failed = facts({
+      trailSeenAt: null,
+      checkInAt: new Date(NOW - 4 * 3_600_000),
+      setupReady: false,
+      setupAcknowledgedAt: new Date(NOW - 4 * 3_600_000),
+      setupUnverified: ["battery-unrestricted"],
+    });
+    assert.deepEqual(texts(failed), ["No position all day — and he said the phone was set up"]);
+    assert.match(
+      handsetNotes(failed, T, NOW)[0].detail ?? "",
+      /battery-unrestricted/,
+      "what was still outstanding when he answered is the half a manager can act on",
+    );
+  });
+
+  test("keeps the ordinary dead-trail sentence where nothing was claimed", () => {
+    const dead = facts({ trailSeenAt: null, checkInAt: new Date(NOW - 4 * 3_600_000) });
+    assert.deepEqual(texts(dead), ["No position all day — checked in 4 hr ago"]);
+  });
+
+  test("says a day opened unready before the trail has had time to fail", () => {
+    /* A prediction of a lost day, made at nine in the morning rather than
+       discovered at six in the evening. The gate is at `warn` in the office's
+       own settings — nobody has claimed to have fixed anything. */
+    const warned = facts({ setupReady: false });
+    assert.deepEqual(texts(warned), [
+      "Day opened on a phone that could not show it would record",
+    ]);
+  });
+
+  test("says nothing where the build is too old to report any of it", () => {
+    /* Null is not an answer. Every handset in the field reports none of this
+       until it is updated, and drawing that as a fault would flag the whole
+       team on the day the column shipped. */
+    const old = facts({ setupReady: null, setupAcknowledgedAt: null });
+    assert.deepEqual(texts(old), []);
   });
 });

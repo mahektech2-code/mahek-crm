@@ -4758,6 +4758,25 @@ const attendanceSchema = z.object({
   regularisationRequested: z.boolean().nullish(),
   regularisationReason: z.string().max(1000).nullish(),
   /**
+   * WHAT THE PHONE SAID ABOUT ITSELF AS THE DAY OPENED, and the office's only
+   * answer to "why was he stopped, and did it help".
+   *
+   * `setupReady` is what the handset could actually check; `setupAcknowledgedAt`
+   * is the man saying he did the steps nothing can check, which is a CLAIM and
+   * is stored as one; `setupUnverified` is what was still outstanding when he
+   * said it. All three are optional and all three stay optional — a handset
+   * already in somebody's pocket sends none of them, and a schema that
+   * demanded them would refuse the one write in this product that must never
+   * be refused.
+   *
+   * The list is capped and each entry is short because it is a set of item
+   * keys the setup screen names, not prose: an unbounded list from a client is
+   * a column somebody can grow without limit.
+   */
+  setupReady: z.boolean().nullish(),
+  setupAcknowledgedAt: z.number().nullish(),
+  setupUnverified: z.array(z.string().max(60)).max(20).nullish(),
+  /**
    * Sent by the handset when a checked-out day is started again — a lunch
    * break, or a phone that swapped devices mid-afternoon. It carries no date
    * of its own to write anywhere; it is a signal to REOPEN the row, read only
@@ -4839,6 +4858,9 @@ async function handleAttendance(
       geofenceDistanceM: round(p.geofenceDistanceM),
       regularisationRequested: p.regularisationRequested ?? false,
       regularisationReason: p.regularisationReason ?? null,
+      setupReady: p.setupReady ?? null,
+      setupAcknowledgedAt: p.setupAcknowledgedAt ? new Date(p.setupAcknowledgedAt) : null,
+      setupUnverified: p.setupUnverified ?? null,
       clientCreatedAt: new Date(item.clientCreatedAt),
       createdById: principal.user.id,
       updatedById: principal.user.id,
@@ -4933,6 +4955,23 @@ async function handleAttendance(
         ...(p.regularisationReason != null
           ? { regularisationReason: p.regularisationReason }
           : {}),
+        /*
+         * THE LATEST READING WINS, and an absent one writes nothing.
+         *
+         * A day is opened more than once — he breaks for lunch and comes back
+         * — and the afternoon's check-in is its own reading of the phone: a
+         * handset whose battery manager was switched back on at midday stopped
+         * being able to record at midday, and the row should say so. What must
+         * never happen is the opposite, a re-sent payload from an older build
+         * or a retried create writing null over a claim somebody made; hence
+         * the same `!= null` guard every field above it uses rather than a
+         * plain assignment.
+         */
+        ...(p.setupReady != null ? { setupReady: p.setupReady } : {}),
+        ...(p.setupAcknowledgedAt != null
+          ? { setupAcknowledgedAt: new Date(p.setupAcknowledgedAt) }
+          : {}),
+        ...(p.setupUnverified != null ? { setupUnverified: p.setupUnverified } : {}),
         updatedAt: new Date(),
         updatedById: principal.user.id,
       },

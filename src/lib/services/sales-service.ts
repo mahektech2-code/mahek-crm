@@ -1797,6 +1797,23 @@ export type LastKnown = {
    * produced nothing at all today — see `trailIsDead` in `handset-health`.
    */
   trailSeenAt: Date | null;
+  /**
+   * WHETHER THE DAY OPENED ON A PHONE THAT COULD SHOW IT WOULD RECORD IT.
+   *
+   * The handset gates its own check-in now, and the three facts behind that
+   * decision ride the attendance row: what it could check, whether the man
+   * claimed to have done the steps nothing can check, and what was still
+   * outstanding when he claimed it. They are here because a gate that stops a
+   * man working is a support call, and the office has to be able to answer it
+   * — and because the claim is only worth anything read against the trail that
+   * did or did not follow it.
+   *
+   * Null throughout on a handset too old to say, which is every handset in the
+   * field until it is updated. Never read null as "nothing was wrong".
+   */
+  setupReady: boolean | null;
+  setupAcknowledgedAt: Date | null;
+  setupUnverified: string[] | null;
 };
 
 /**
@@ -1862,7 +1879,10 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
            dev.battery_charging as "batteryCharging",
            dev.device_state_at as "deviceStateAt",
            dev.last_seen_at as "lastHeardAt",
-           tr.at as "trailSeenAt"
+           tr.at as "trailSeenAt",
+           d.setup_ready as "setupReady",
+           d.setup_acknowledged_at as "setupAcknowledgedAt",
+           d.setup_unverified as "setupUnverified"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
