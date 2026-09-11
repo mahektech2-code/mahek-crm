@@ -67,7 +67,11 @@ const DEFAULTS: Record<string, unknown> = {
 
   /* route optimisation — the honest average speed differs by a factor of three
      between a city beat on a two-wheeler and a district tour in a car, which
-     is exactly why the engine takes it as an argument */
+     is exactly why the engine takes it as an argument. All four are published
+     under `mbos-route` in the registry and these four numbers are its
+     defaults, deliberately: they are what every handset in the field has
+     actually been running on, so a fallback that disagreed would change a
+     day's route on the phones that had not bootstrapped and nowhere else. */
   'mbos.route.averageSpeedKmph': 22,
   'mbos.route.maxTwoOptPasses': 4,
   'mbos.route.maxStopsForTwoOpt': 40,
@@ -84,18 +88,20 @@ const DEFAULTS: Record<string, unknown> = {
 
   /* expenses */
   'mbos.expenses.billPhotoThresholdPaise': 0,
+  /* How far back a claim may be dated, and the ONE key that asks it. The
+     screen used to read `mbos.expenses.maxClaimAgeDays` — same question, a
+     different spelling, published nowhere — so the date picker greyed out days
+     on a compiled 30 while the sync refused them on this one. A phantom key is
+     indistinguishable from a working one until somebody changes the real
+     setting and nothing moves.
+
+     `mbos.expenses.categoryCapsPaise` was here too and is retired. What a
+     claim is worth is the POLICY's answer, `engines/claim-preview.ts` asks it
+     the same way the office does, and this fallback was a third reading of a
+     key two others already disagreed about — with category names
+     (Fuel, Hospitality, Parking) that matched neither the server's nor the
+     ones a salesman can pick. */
   'mbos.expenses.backdatedDaysAllowed': 30,
-  'mbos.expenses.maxClaimAgeDays': 30,
-  /* The categories a claim can be filed under, and the monthly ceiling on
-     each. A handset that has never bootstrapped still has to be able to record
-     what was spent this morning; real configuration replaces this wholesale,
-     category names included. */
-  'mbos.expenses.categoryCapsPaise': {
-    Fuel: 600_000,
-    Hospitality: 300_000,
-    Parking: 80_000,
-    Other: 200_000,
-  },
 
   /* attendance and leave */
   'mbos.attendance.halfDayHours': 4,

@@ -5,7 +5,7 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Card, Input, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, shadow, tabular, weight } from '../src/theme/tokens';
-import { inr, isoDate, pretty } from '../src/lib/format';
+import { inr, inrFromPaise, isoDate, pretty } from '../src/lib/format';
 import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
 import { customerBills, type CustomerBill } from '../src/data/customers';
 import { copyToClipboard, openWhatsApp, receiptMessage } from '../src/lib/messaging';
@@ -194,7 +194,7 @@ export default function PayScreen() {
           Cash on you
         </T>
         <T style={[{ fontSize: 26, lineHeight: 32, letterSpacing: -0.65, color: C.ink, marginTop: 4 }, weight(600), tabular]}>
-          {inr((cash?.totalPaise ?? 0) / 100)}
+          {inrFromPaise(cash?.totalPaise ?? 0)}
         </T>
         <T style={{ fontSize: 15, color: C.warnInk, marginTop: 2 }}>{cash?.sentence ?? 'No cash on you.'}</T>
       </View>
@@ -266,7 +266,7 @@ export default function PayScreen() {
                     </T>
                   ) : (
                     <T style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
-                      {inr((b.balancePaise ?? 0) / 100)}
+                      {inrFromPaise(b.balancePaise ?? 0)}
                     </T>
                   )}
                 </Pressable>
@@ -281,7 +281,7 @@ export default function PayScreen() {
             {chosen.length === 0
               ? 'Name none and it goes against their oldest bills first.'
               : onAccountPaise > 0 && amt > 0
-                ? `${chosen.length} named · ${inr(onAccountPaise / 100)} more than they cover, which sits on account.`
+                ? `${chosen.length} named · ${inrFromPaise(onAccountPaise)} more than they cover, which sits on account.`
                 : `${chosen.length} named.`}
           </T>
         </View>

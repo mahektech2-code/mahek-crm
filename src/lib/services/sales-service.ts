@@ -2833,6 +2833,8 @@ export type FieldSetting = {
   min?: number;
   max?: number;
   options?: readonly string[];
+  /** Structured settings where an empty box is an answer rather than a typo. */
+  nullable?: boolean;
 };
 
 /** The section headings, in the order somebody would work through them. */
@@ -2846,7 +2848,14 @@ const SETTING_GROUPS: Array<{ category: string; label: string; blurb: string }> 
   {
     category: "mbos-attendance",
     label: "The working day",
-    blurb: "What counts as a full day, a half day, and how far a check-in may be from base.",
+    blurb:
+      "What counts as a full day, a half day, and how far a check-in may be from base — including WHERE base is, which was the one number on this screen that had no box. Leave the coordinates empty and no check-in is measured against anything, which is better than measuring every one of them against a guess.",
+  },
+  {
+    category: "mbos-route",
+    label: "The order a day is walked in",
+    blurb:
+      "How the handset sorts today's stops, and what it reckons the day will take. The two speeds price the day in minutes and never change the order; the two below them bound the tidy-up pass, which is work a phone has to do on the spot. Nothing here decides which shops are on the list.",
   },
   {
     category: "mbos-orders",
@@ -2868,7 +2877,8 @@ const SETTING_GROUPS: Array<{ category: string; label: string; blurb: string }> 
   {
     category: "mbos-expenses",
     label: "Expenses",
-    blurb: "Daily caps by category, the bill-photo threshold, and how far back a claim may be dated.",
+    blurb:
+      "The bill-photo threshold, and how far back a claim may be dated. What a claim is WORTH is not here and must not come back here — that is the published expense policy, which has versions and effective dates so an old claim keeps the rules it was made under.",
   },
   {
     category: "mbos-leave",
@@ -2945,6 +2955,7 @@ export async function fieldSettings(): Promise<
           min: "min" in s ? (s.min as number) : undefined,
           max: "max" in s ? (s.max as number) : undefined,
           options: "options" in s ? (s.options as readonly string[]) : undefined,
+          nullable: "nullable" in s ? (s.nullable as boolean) : undefined,
         };
       }),
   })).filter((g) => g.settings.length > 0);
@@ -2971,6 +2982,7 @@ export async function fieldSettings(): Promise<
         min: "min" in s ? (s.min as number) : undefined,
         max: "max" in s ? (s.max as number) : undefined,
         options: "options" in s ? (s.options as readonly string[]) : undefined,
+        nullable: "nullable" in s ? (s.nullable as boolean) : undefined,
       })),
     });
   }

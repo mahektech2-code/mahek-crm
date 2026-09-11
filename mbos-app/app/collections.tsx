@@ -13,7 +13,7 @@ import {
   type CollectedPayment,
 } from '../src/data/payments';
 import { takePhoto } from '../src/native/capture';
-import { dmy, inr, isoDate } from '../src/lib/format';
+import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, tabular, weight, type BadgeTone } from '../src/theme/tokens';
@@ -94,7 +94,7 @@ export default function CollectionsScreen() {
    */
   const deposit = (p: CollectedPayment) => {
     askConfirm({
-      title: 'Banked ' + inr(p.amountPaise / 100) + '?',
+      title: 'Banked ' + inrFromPaise(p.amountPaise) + '?',
       body:
         'This says you have paid it in. The office still checks it against the bank statement — ' +
         'you are recording your half of it, not closing it.',
@@ -138,7 +138,7 @@ export default function CollectionsScreen() {
     askConfirm({
       title: 'Did this cheque bounce?',
       body:
-        inr(p.amountPaise / 100) +
+        inrFromPaise(p.amountPaise) +
         ' goes back onto ' +
         (p.customerName ?? 'the customer') +
         ", and you get a task to ring them. They believe they have already paid, so this is a call worth preparing for.",
@@ -150,7 +150,7 @@ export default function CollectionsScreen() {
           try {
             await markBounced(p.id, reason);
             load();
-            notify('Recorded · ' + inr(p.amountPaise / 100) + ' is back on their account');
+            notify('Recorded · ' + inrFromPaise(p.amountPaise) + ' is back on their account');
           } finally {
             setBusy(null);
           }
@@ -183,7 +183,7 @@ export default function CollectionsScreen() {
         }}>
         <T s="label">Cash on you</T>
         <T style={[{ fontSize: 26, lineHeight: 32, color: C.ink, marginTop: 2 }, weight(600), tabular]}>
-          {inr((cash?.totalPaise ?? 0) / 100)}
+          {inrFromPaise(cash?.totalPaise ?? 0)}
         </T>
         <T s="small" style={{ color: cash?.totalPaise ? C.warnInk : C.muted, marginTop: 2 }}>
           {cash?.sentence ?? 'Reading…'}
@@ -223,7 +223,7 @@ export default function CollectionsScreen() {
                     {p.customerName ?? 'Unknown customer'}
                   </T>
                   <T style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
-                    {inr(p.amountPaise / 100)}
+                    {inrFromPaise(p.amountPaise)}
                   </T>
                   <Badge tone={state.tone}>{state.label}</Badge>
                 </View>

@@ -7,7 +7,7 @@ import { Card } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { compactInr, inr, isoDate, plural } from '../src/lib/format';
+import { compactInrFromPaise, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { DASH_CARDS, DAY_AHEAD } from '../src/data/fixtures';
 import {
   checkIn,
@@ -200,19 +200,19 @@ export default function Home() {
   /* The six figures, labelled by the design and valued by the store. */
   const dashValues: { v: string; s: string }[] = [
     {
-      v: day.orderValueUnknown ? 'Not known yet' : inr(day.orderValuePaise / 100),
+      v: day.orderValueUnknown ? 'Not known yet' : inrFromPaise(day.orderValuePaise),
       s: plural(day.orders, 'order'),
     },
     { v: `${day.visits} of ${day.stops}`, s: day.stops ? 'On the plan' : 'No plan today' },
-    { v: inr(day.collectPaise / 100), s: plural(day.collectCustomers, 'customer') },
-    { v: inr(day.cashPaise / 100), s: day.cashSentence || 'Nothing to deposit' },
+    { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer') },
+    { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit' },
     { v: String(day.tasks), s: day.tasksOverdue ? plural(day.tasksOverdue, 'overdue') : 'None overdue' },
     { v: String(day.followUps), s: `${day.followUpsToday} today` },
   ];
 
   const dayAheadValues = [
     String(day.stops),
-    compactInr(day.collectPaise / 100),
+    compactInrFromPaise(day.collectPaise),
     String(day.followUpsToday),
   ];
 

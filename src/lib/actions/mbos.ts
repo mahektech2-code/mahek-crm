@@ -4241,16 +4241,33 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
   const p = parsed.data;
 
   const config = await getConfig();
-  const cap = config["mbos.expenses.categoryCapsPaise"][p.category];
-  if (cap != null && p.amountPaise > cap) {
-    return {
-      kind: "rejected",
-      value: reject(
-        "validation",
-        `${rupees(p.amountPaise)} of ${p.category} is over the ${rupees(cap)} daily cap. Split it, or ask your manager to raise the cap before claiming.`,
-      ),
-    };
-  }
+
+  /*
+   * A CAP DOES NOT REFUSE A CLAIM, and this is where it used to.
+   *
+   * `mbos.expenses.categoryCapsPaise` was read here PER CLAIM, while the
+   * registry called it a daily cap and said in as many words that going over
+   * one "is not refused", and the handset read the same key as a monthly
+   * running total. The rejection was the reading that did damage: a claim
+   * refused at the sync dies in an outbox on a phone, so the money is spent,
+   * the bill is photographed, and the only record of either is on a handset
+   * nobody is looking at.
+   *
+   * `engines/expense-policy.ts` states the principle in its own header — the
+   * engine never refuses anything, because the money is already spent and a
+   * system that refuses to record it has not saved the money, it has only made
+   * sure nobody finds out. What a claim is worth is `computeDay`'s answer,
+   * taken against the policy in force on the day it happened, and the excess
+   * goes up as an exception for a person to decide about. The salesman has
+   * already read that same answer on the phone: `claim-preview.ts` runs this
+   * engine against his own day before he presses send, and says plainly what
+   * needs his manager to agree it.
+   *
+   * The two refusals below stay, and neither is a cap. A missing bill is a
+   * claim that cannot be settled by anybody and is fixed by walking back to
+   * the phone; a date months old is a claim the office has said it will not
+   * take without a person entering it. Both name the way forward.
+   */
 
   if (p.amountPaise >= config["mbos.expenses.billPhotoThresholdPaise"] && !p.billPhotoId) {
     return {

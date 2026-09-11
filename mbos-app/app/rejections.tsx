@@ -7,7 +7,7 @@ import { color as C, radius, type, weight } from '../src/theme/tokens';
 import { listRejections, retryItem, type QueueItem } from '../src/sync/queue';
 import { syncNow } from '../src/sync/engine';
 import { useStore } from '../src/state/store';
-import { inr } from '../src/lib/format';
+import { inrFromPaise } from '../src/lib/format';
 
 /**
  * Records the office refused.
@@ -81,7 +81,7 @@ export default function Rejections() {
                     {payload.customerName ? ` · ${payload.customerName}` : ''}
                   </Text>
                   {value != null ? (
-                    <Text style={[type.caption, { marginTop: 2 }]}>{inr(value / 100)}</Text>
+                    <Text style={[type.caption, { marginTop: 2 }]}>{inrFromPaise(value)}</Text>
                   ) : null}
                 </View>
                 <Badge tone="danger">Refused</Badge>

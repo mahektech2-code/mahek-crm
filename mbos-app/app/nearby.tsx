@@ -6,7 +6,7 @@ import { Badge, Card, Choice, DashedButton, PrimaryButton, SectionLabel, T } fro
 import { color as C, radius, weight } from '../src/theme/tokens';
 import { whatIsNearby, type NearbyAnswer } from '../src/data/nearby';
 import { navigateTo } from '../src/lib/messaging';
-import { inr } from '../src/lib/format';
+import { inrFromPaise } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
 /**
@@ -148,7 +148,7 @@ export default function Nearby() {
 
                 {r.shop.outstandingPaise > 0 ? (
                   <T style={[{ fontSize: 14, marginTop: 8, color: C.danger }, weight(500)]}>
-                    {inr(r.shop.outstandingPaise / 100) + ' outstanding'}
+                    {inrFromPaise(r.shop.outstandingPaise) + ' outstanding'}
                   </T>
                 ) : null}
 

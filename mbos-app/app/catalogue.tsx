@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Input, ListCard, T } from '../src/components/ui/primitives';
 import { color as C, type, weight } from '../src/theme/tokens';
-import { inr, plural } from '../src/lib/format';
+import { inrFromPaise, plural } from '../src/lib/format';
 import { searchProducts } from '../src/data/customers';
 import { useStore } from '../src/state/store';
 
@@ -81,7 +81,7 @@ export default function CatalogueScreen() {
                     x.cansPerBox ? x.cansPerBox + ' per box' : null,
                     x.formulation ?? x.brand,
                     x.sellingPricePaise != null
-                      ? inr(x.sellingPricePaise / 100) + ' per can'
+                      ? inrFromPaise(x.sellingPricePaise) + ' per can'
                       : 'No rate set — the office prices this order',
                   ]
                     .filter(Boolean)
@@ -107,7 +107,7 @@ export default function CatalogueScreen() {
                 <T style={{ fontSize: 13, color: C.muted }}>{x.formulation ?? x.brand ?? ''}</T>
               </View>
               <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-                {(x.sellingPricePaise != null ? inr(x.sellingPricePaise / 100) + ' / ' : '') + (x.packSize ?? '')}
+                {(x.sellingPricePaise != null ? inrFromPaise(x.sellingPricePaise) + ' / ' : '') + (x.packSize ?? '')}
               </T>
             </Pressable>
           ))}

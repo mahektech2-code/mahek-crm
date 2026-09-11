@@ -12,7 +12,7 @@ import { getConfig } from '../src/data/config';
 import { activePolicy, previewClaim, CLAIM_KINDS, type ClaimedLine, type LocalPolicy } from '../src/data/travel';
 import type { ExpenseKind } from '../src/engines/generated/expense-policy';
 import { takePhoto } from '../src/native/capture';
-import { dmy, inr, isoDate } from '../src/lib/format';
+import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight, tabular, type BadgeTone } from '../src/theme/tokens';
@@ -67,7 +67,14 @@ export default function ExpensesScreen() {
     void Promise.all([
       listExpenses(),
       activePolicy(),
-      getConfig<number>('mbos.expenses.maxClaimAgeDays', 30),
+      /* The key the SERVER enforces, not a second one spelled differently.
+         This screen read `mbos.expenses.maxClaimAgeDays`, which the office has
+         never been able to publish — so the refusal a salesman met here was a
+         compiled 30 standing in front of `handleExpense`'s real
+         `mbos.expenses.backdatedDaysAllowed`, and raising the published one to
+         60 would have moved the sync and left the date picker greying out the
+         same days. One question, one key. */
+      getConfig<number>('mbos.expenses.backdatedDaysAllowed', 30),
     ]).then(([e, p, age]) => {
       if (!live) return;
       setRows(e);
@@ -183,7 +190,7 @@ export default function ExpensesScreen() {
     if (!ex.whenIso.trim()) return setErr('when');
     if (!ex.note.trim()) return setErr('note');
 
-    const { overCap } = await claimExpense({
+    await claimExpense({
       userId: boot.session?.user.id ?? '',
       spentOn: ex.whenIso,
       category: kinds.find((k) => k.key === kind)?.category ?? 'other',
@@ -198,10 +205,14 @@ export default function ExpensesScreen() {
 
     close();
     load();
+    /* The SAME verdict the box under the amount has been showing him, from the
+       same policy the office will pay on. `claimExpense` used to answer this
+       itself, off a monthly sum of the retired category caps — a second number
+       from a second source, and the one he read at the end was the wrong one. */
     notify(
-      overCap
-        ? 'Claimed ' + inr(exAmtPaise / 100) + ' · over the cap, your manager has to allow it'
-        : 'Claimed ' + inr(exAmtPaise / 100) + ' · with your manager',
+      exOver
+        ? 'Claimed ' + inrFromPaise(exAmtPaise) + ' · over the cap, your manager has to allow it'
+        : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · with your manager',
     );
   };
 
@@ -223,7 +234,7 @@ export default function ExpensesScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Expenses</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        {inr(pending / 100) + ' waiting on your manager'}
+        {inrFromPaise(pending) + ' waiting on your manager'}
       </T>
 
       <PrimaryButton label="Add an expense" style={{ marginTop: 12, borderRadius: radius.xl }} onPress={add} />
@@ -240,7 +251,7 @@ export default function ExpensesScreen() {
               style={{ paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <T style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>
-                  {e.category + ' · ' + inr(e.amountPaise / 100)}
+                  {e.category + ' · ' + inrFromPaise(e.amountPaise)}
                 </T>
                 <Badge tone={tone}>{e.state}</Badge>
               </View>
