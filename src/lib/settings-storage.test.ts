@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 import { SETTINGS } from "@/lib/config/registry";
 
@@ -41,30 +42,46 @@ test("a setting that defaults to null says so", () => {
   );
 });
 
-test("nothing writes a bare default into the value column any more", () => {
-  const store = readFileSync("src/lib/config/store.ts", "utf8");
+test("every writer of app_settings.value goes through the one helper", () => {
+  /* FOUND BY MISSING ONE. The first fix covered the five writes in `store.ts`
+     and not the sixth in `db/seed.ts`, so the integration suite went green
+     while the link crawl stayed red on the identical error — one seeds through
+     the store, the other seeds through itself. A test naming one file could
+     only ever have caught the half somebody had already thought of, so this
+     one finds the writers instead of being told where they are. */
+  const writers = readdirSyncDeep("src")
+    .filter((f) => /\.tsx?$/.test(f) && !f.includes(".test."))
+    .filter((f) => readFileSync(f, "utf8").includes("insert(appSettings)"));
 
   assert.ok(
-    /function stored\(/.test(store),
-    "`stored()` has gone — it is what turns a null default into JSON null " +
-      "rather than SQL NULL, and app_settings.value is NOT NULL",
-  );
-  assert.ok(
-    store.includes("sql`'null'::jsonb`"),
-    "`stored()` no longer writes JSON null, so a null-defaulted setting will " +
-      "fail the seed insert and take every integration test with it",
+    writers.length >= 2,
+    "no writers of app_settings found — the scan is broken, not the code",
   );
 
-  /* The exact shape that caused it, in any of the five write sites. */
-  for (const bare of [
-    "value: s.default as never",
-    "value: validated.value as never",
-    "value: value as never",
-  ]) {
-    assert.ok(
-      !store.includes(bare),
-      `\`${bare}\` is back — that cast is what hid a JS null on its way to a ` +
-        "NOT NULL column from the type checker",
-    );
+  const bare: string[] = [];
+  for (const file of writers) {
+    const text = readFileSync(file, "utf8");
+    if (!text.includes("storedSettingValue")) {
+      bare.push(`${file} — writes app_settings without storedSettingValue()`);
+    }
+    for (const m of text.matchAll(/value:\s*([A-Za-z0-9_.]+)\s+as never/g)) {
+      bare.push(`${file} — \`value: ${m[1]} as never\`, the cast that hid a JS null from the type checker`);
+    }
   }
+
+  assert.deepEqual(
+    bare,
+    [],
+    "app_settings.value is jsonb NOT NULL, and a null-defaulted setting written " +
+      "this way fails the whole batch insert:\n" + bare.join("\n"),
+  );
 });
+
+function readdirSyncDeep(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) readdirSyncDeep(path, out);
+    else out.push(path);
+  }
+  return out;
+}

@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@/db";
-import { sql } from "drizzle-orm";
+import { storedSettingValue as stored } from "@/lib/config/storage";
 import { appSettings, auditLog } from "@/db/schema";
 import { randomUUID } from "node:crypto";
 import {
@@ -60,28 +60,6 @@ export async function getSetting<K extends keyof Config>(key: K): Promise<Config
  * Writes the registry defaults for any key not already stored. Safe to re-run;
  * it never overwrites a value somebody has tuned.
  */
-/**
- * What actually goes into `app_settings.value`.
- *
- * THE COLUMN IS `jsonb NOT NULL`, and a setting whose value is legitimately
- * null — `mbos.attendance.baseLocation`, which is no office picked yet — hands
- * Drizzle a JS `null`, which becomes SQL NULL and violates it. JSON null and
- * SQL NULL are different things and only one of them is a value; this writes
- * the one that is.
- *
- * It took every integration test with it when it landed, and not one unit
- * test: the seed inserts every setting in ONE statement, so a single
- * null-defaulted key fails the batch and every test that needs configuration
- * dies at the same line, describing none of it. The engine suite never opens a
- * database and could not have seen it. The `as never` at each call site is why
- * the type checker did not either — a cast that quiets a type error across a
- * boundary is the bug and not the fix, which this file now demonstrates in
- * five places.
- */
-function stored(value: unknown) {
-  return (value === null ? sql`'null'::jsonb` : value) as never;
-}
-
 export async function seedConfig(): Promise<number> {
   const existing = new Set(
     (await db.select({ key: appSettings.key }).from(appSettings)).map((r) => r.key),
