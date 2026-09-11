@@ -116,6 +116,11 @@ export default function TravelScreen() {
      so he looked for a number that was never there. */
   const [odoSuggested, setOdoSuggested] = React.useState<number | null>(null);
   const [err, setErr] = React.useState<{ field: LegField; why: string } | null>(null);
+  /* One leg per press. `PrimaryButton` has no busy state of its own and the
+     sheet stays open for the whole await, so a second tap on a bad connection
+     — while nothing has visibly happened — wrote the same 84 km leg twice,
+     and a mileage claim is money. */
+  const [adding, setAdding] = React.useState(false);
 
   const refusalFor = (field: LegField) => (err?.field === field ? err.why : undefined);
 
@@ -175,6 +180,9 @@ export default function TravelScreen() {
    * refusal about a field he cannot see is a save that appears to do nothing.
    */
   const save = async () => {
+    /* The second press answers rather than doing nothing — `whyDisabled` keeps
+       the button pressable for exactly this. */
+    if (adding) return notify('This leg is being added — give it a moment.');
     if (!mode) return notify('Pick how you travelled.');
 
     let odoS: number | null = null;
@@ -205,30 +213,35 @@ export default function TravelScreen() {
       ticketPaise = v.paise;
     }
 
-    const dayId = priced?.day?.id ?? (await openDay({ userId, day }));
+    setAdding(true);
+    try {
+      const dayId = priced?.day?.id ?? (await openDay({ userId, day }));
 
-    await addLeg({
-      userId,
-      expenseDayId: dayId,
-      day,
-      modeKey: mode.key,
-      fromLabel: from.trim() || null,
-      toLabel: to.trim() || null,
-      startedAt: Date.now(),
-      endedAt: Date.now(),
-      purpose,
-      customerId: null,
-      manualMetres: metres,
-      odometerStartKm: odoS,
-      odometerEndKm: odoE,
-      odometerPhotoId: mode.requiresOdometer ? photoId : null,
-      ticketAmountPaise: ticketPaise,
-      ticketReference: mode.requiresTicket ? ticketRef.trim() || null : null,
-    });
-    setOpen(false);
-    setErr(null);
-    notify('Added.');
-    load();
+      await addLeg({
+        userId,
+        expenseDayId: dayId,
+        day,
+        modeKey: mode.key,
+        fromLabel: from.trim() || null,
+        toLabel: to.trim() || null,
+        startedAt: Date.now(),
+        endedAt: Date.now(),
+        purpose,
+        customerId: null,
+        manualMetres: metres,
+        odometerStartKm: odoS,
+        odometerEndKm: odoE,
+        odometerPhotoId: mode.requiresOdometer ? photoId : null,
+        ticketAmountPaise: ticketPaise,
+        ticketReference: mode.requiresTicket ? ticketRef.trim() || null : null,
+      });
+      setOpen(false);
+      setErr(null);
+      notify('Added.');
+      load();
+    } finally {
+      setAdding(false);
+    }
   };
 
   const computation = priced?.computation ?? null;
@@ -482,7 +495,13 @@ export default function TravelScreen() {
           </>
         ) : null}
 
-        <PrimaryButton label="Add this leg" style={{ marginTop: 14 }} onPress={() => void save()} />
+        <PrimaryButton
+          label={adding ? 'Adding…' : 'Add this leg'}
+          style={{ marginTop: 14 }}
+          disabled={adding}
+          whyDisabled="This leg is being added — give it a moment."
+          onPress={() => void save()}
+        />
       </BottomSheet>
     </AppFrame>
   );

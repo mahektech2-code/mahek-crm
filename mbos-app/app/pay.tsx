@@ -85,6 +85,20 @@ export default function PayScreen() {
   const [cash, setCash] = React.useState<{ totalPaise: number; sentence: string; nextDeadline: number | null } | null>(null);
   const [cashFailed, setCashFailed] = React.useState(false);
   const [chequePhotoId, setChequePhotoId] = React.useState<string | null>(null);
+  /** The date written ACROSS the cheque. Screen state rather than store state,
+   *  like the photograph beside it: both belong to the instrument in his hand
+   *  and neither should follow him to the next counter. */
+  const [chequeDate, setChequeDate] = React.useState('');
+  const [pickingDate, setPickingDate] = React.useState(false);
+  /**
+   * The write is in flight.
+   *
+   * `collectPayment` awaits two config reads, a transaction and an enqueue, and
+   * every call takes a fresh `stamp()` id — so two taps are two different
+   * payloads and the queue's idempotency key cannot dedupe them. One ₹42,500
+   * transfer, credited twice, found weeks later by accounts.
+   */
+  const [busy, setBusy] = React.useState(false);
   const [bills, setBills] = React.useState<CustomerBill[]>([]);
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
   /** One way: folding a ticked bill back out of sight is how a receipt gets
@@ -147,9 +161,13 @@ export default function PayScreen() {
 
   const namedPaise = chosen.reduce((n, b) => n + (b.balancePaise ?? 0), 0);
   const onAccountPaise = Math.max(0, amt * 100 - namedPaise);
-  /* A cheque with no number and no photograph is a promise, not an
-     instrument — both are required before this one saves. */
-  const payOk = !!payMode && amt > 0 && (!needsCheque || (payChq.trim().length > 0 && !!chequePhotoId));
+  /* A cheque with no number, no date and no photograph is a promise, not an
+     instrument — all three are required before this one saves. The DATE is the
+     one nobody was asked for: see `CHEQUE_DATE_LINE`. */
+  const payOk =
+    !!payMode &&
+    amt > 0 &&
+    (!needsCheque || (payChq.trim().length > 0 && !!chequeDate && !!chequePhotoId));
 
   const photographCheque = async () => {
     const shot = await takePhoto({ parentType: 'payment', parentId: 'pending', kind: 'cheque_photo' });
@@ -160,27 +178,72 @@ export default function PayScreen() {
     setChequePhotoId(shot.mediaId);
   };
 
-  const collect = async () => {
+  /**
+   * THE FIGURE IS READ BACK AS MONEY BEFORE ANY OF IT IS WRITTEN.
+   *
+   * The amount box is a digit string, and "425000" is one keystroke from
+   * "42500" with nothing between them to see. This used to write the receipt,
+   * the timeline event and the queue item first and quote `inr(amt)` back at
+   * him afterwards, in a dialog about sending a WhatsApp — so by the time the
+   * screen said ₹4,25,000 there was no edit and no cancel anywhere on the
+   * handset. It asks the way `deposit()` on the collections screen asks, which
+   * is the shape every other money decision here already has.
+   */
+  const collect = () => {
+    /* `whyDisabled` keeps this button pressable so the handler can refuse in
+       words, which means the in-flight lock has to be checked here as well as
+       drawn on the button. */
+    if (busy) return notify('Still recording the last one…');
     if (!payMode) return notify('Pick how they are paying');
     if (!amt) return notify('Enter the amount');
     if (needsCheque && !payChq.trim()) return notify('Cheque number is needed');
+    if (needsCheque && !chequeDate) return notify(CHEQUE_DATE_LINE);
     if (needsCheque && !chequePhotoId) return notify(CHEQUE_PHOTO_LINE);
     if (!c) return notify('Open a customer first');
 
-    const { receiptRef } = await collectPayment({
-      customerId: c.id,
-      customerName: c.name,
-      userId: boot.session?.user.id ?? '',
-      amountPaise: amt * 100,
-      mode: payMode as PaymentMode,
-      chequeNumber: needsCheque ? payChq.trim() : null,
-      chequePhotoId: needsCheque ? chequePhotoId : null,
-      /* Named bills, or nothing — in which case the server spreads it oldest
-         first, exactly as it always has. */
-      billRefs: chosen.length ? chosen.map((b) => b.id) : undefined,
+    askConfirm({
+      title: 'Take ' + inr(amt) + '?',
+      body:
+        `${inr(amt)} from ${c.name}, by ${payMode.toLowerCase()}` +
+        (needsCheque ? ` — cheque ${payChq.trim()}, dated ${dmy(chequeDate)}` : '') +
+        '. The receipt is written the moment you say yes, and nothing on this phone can edit it afterwards.',
+      confirmLabel: 'Yes, take it',
+      run: () => void write(payMode as PaymentMode, c),
     });
+  };
 
-    markVisitDone('payment', payMode + ' · ' + inr(amt));
+  /**
+   * The write, once he has said yes.
+   *
+   * The mode and the customer are handed in rather than read again: what is
+   * recorded has to be what was quoted in the confirm. `busy` is the in-flight
+   * lock — see the state it is declared beside.
+   */
+  const write = async (mode: PaymentMode, cust: Customer) => {
+    setBusy(true);
+    let receiptRef: string;
+    try {
+      ({ receiptRef } = await collectPayment({
+        customerId: cust.id,
+        customerName: cust.name,
+        userId: boot.session?.user.id ?? '',
+        amountPaise: amt * 100,
+        mode,
+        chequeNumber: needsCheque ? payChq.trim() : null,
+        /* The day written ACROSS the cheque, which is the only thing that says
+           whether accounts can bank it this morning. `collectPayment` has taken
+           it since it was written and no screen ever filled it. */
+        chequeDate: needsCheque ? chequeDate : null,
+        chequePhotoId: needsCheque ? chequePhotoId : null,
+        /* Named bills, or nothing — in which case the server spreads it oldest
+           first, exactly as it always has. */
+        billRefs: chosen.length ? chosen.map((b) => b.id) : undefined,
+      }));
+    } finally {
+      setBusy(false);
+    }
+
+    markVisitDone('payment', mode + ' · ' + inr(amt));
 
     /*
      * The receipt is written HERE, on the handset, so it can be shown and sent
@@ -192,9 +255,9 @@ export default function PayScreen() {
      * how a payment ends up with two numbers against it.
      */
     const slip = receiptMessage({
-      customerName: c.name,
+      customerName: cust.name,
       amountRupees: inr(amt),
-      mode: payMode,
+      mode,
       reference: receiptRef,
       confirmed: false,
       collectedBy: boot.session?.user.name ?? 'your salesman',
@@ -202,9 +265,11 @@ export default function PayScreen() {
       chequeNumber: needsCheque ? payChq.trim() : null,
     });
 
-    const phone = c.phone;
+    const phone = cust.phone;
     set({ payAmt: '', payChq: '', payMode: null });
     setChequePhotoId(null);
+    setChequeDate('');
+    setPickingDate(false);
     setPicked(new Set());
 
     /* Offered, never sent. Nothing goes out on the company's behalf, and the
@@ -212,8 +277,8 @@ export default function PayScreen() {
     askConfirm({
       title: 'Send the receipt?',
       body: phone
-        ? `${inr(amt)} recorded for ${c.name}. Your WhatsApp opens with the receipt written — you press send.`
-        : `${inr(amt)} recorded for ${c.name}. There is no number on this customer, so the receipt can only be copied.`,
+        ? `${inr(amt)} recorded for ${cust.name}. Your WhatsApp opens with the receipt written — you press send.`
+        : `${inr(amt)} recorded for ${cust.name}. There is no number on this customer, so the receipt can only be copied.`,
       confirmLabel: phone ? 'Open WhatsApp' : 'Copy the receipt',
       run: async () => {
         const out = phone ? await openWhatsApp(phone, slip) : await copyToClipboard(slip);
@@ -420,6 +485,18 @@ export default function PayScreen() {
           keyboardType="number-pad"
           style={[{ borderRadius: radius.md, fontSize: 18 }, weight(600), tabular]}
         />
+        {/* The digits read back as money, as he types them. An ungrouped string
+            is where one extra zero hides: ₹42,500 and ₹4,25,000 are one
+            keystroke apart and look alike in the box, and they do not look
+            alike here. */}
+        <T
+          style={[
+            { fontSize: 15, lineHeight: 20, marginTop: 8, color: amt > 0 ? C.ink : C.muted },
+            weight(amt > 0 ? 600 : 400),
+            tabular,
+          ]}>
+          {amt > 0 ? inr(amt) : 'Type what they handed over.'}
+        </T>
         {needsCheque ? (
           <View style={{ marginTop: 16 }}>
             <SectionLabel style={{ marginBottom: 6 }}>Cheque number and bank</SectionLabel>
@@ -429,6 +506,41 @@ export default function PayScreen() {
               placeholder="448210 · HDFC"
               style={{ borderRadius: radius.md, fontSize: 15 }}
             />
+
+            {/* THE DATE WRITTEN ACROSS IT, which nothing on this handset ever
+                asked for — so every cheque reached the office looking bankable
+                the day it was handed over, and a customer who had written next
+                month's date got chased for money sitting in our own drawer. He
+                is holding the cheque and can read it off the paper, which is
+                why it is asked of everybody. */}
+            <View style={{ marginTop: 16 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>Date on the cheque</SectionLabel>
+              <Choice
+                label={chequeDate ? dmy(chequeDate) : 'Pick the date'}
+                selected={!!chequeDate}
+                onPress={() => setPickingDate((v) => !v)}
+                style={{ alignItems: 'flex-start', paddingHorizontal: 14, minHeight: 52 }}
+              />
+              {pickingDate ? (
+                <View style={{ marginTop: 10 }}>
+                  {/* Neither bounded: a cheque handed over today can be dated
+                      last week or next month, and both are ordinary. */}
+                  <Calendar
+                    selected={chequeDate}
+                    onPick={(iso) => {
+                      setChequeDate(iso);
+                      setPickingDate(false);
+                    }}
+                  />
+                </View>
+              ) : null}
+              {!chequeDate ? (
+                <T s="caption" style={{ marginTop: 8 }}>
+                  {CHEQUE_DATE_LINE}
+                </T>
+              ) : null}
+            </View>
+
             {/* The design's own sentence, made the control that does it — the
                 cheque leaves his hand in the next thirty seconds, so the
                 instruction and the camera cannot be two separate things. */}
@@ -446,10 +558,16 @@ export default function PayScreen() {
       </Card>
 
       <PrimaryButton
-        label="Collect and make receipt"
+        label={busy ? 'Recording it…' : 'Collect and make receipt'}
         onPress={collect}
-        disabled={!payOk}
-        whyDisabled="Pick how they are paying and enter the amount first."
+        disabled={!payOk || busy}
+        whyDisabled={
+          busy
+            ? 'The last one is still being recorded.'
+            : needsCheque
+              ? 'A cheque needs its number, the date written on it, and a photograph.'
+              : 'Pick how they are paying and enter the amount first.'
+        }
         style={{ marginTop: 16 }}
       />
       <View style={{ height: 8 }} />

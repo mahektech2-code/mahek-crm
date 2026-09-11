@@ -1,9 +1,9 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, DashedButton, ListCard, T } from '../src/components/ui/primitives';
+import { Badge, Card, ListCard, T } from '../src/components/ui/primitives';
 import {
   openSession,
   recentDays,
@@ -18,14 +18,32 @@ import { useTicker } from '../src/components/ui/use-ticker';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { dmy } from '../src/lib/format';
-import { color as C, radius, weight, tabular, type BadgeTone } from '../src/theme/tokens';
+import { color as C, weight, tabular, type BadgeTone } from '../src/theme/tokens';
 
 /**
- * Attendance — what the app recorded, and the one way to argue with it.
+ * Attendance — what THIS HANDSET recorded, and the one way to argue with it.
  *
  * The list is deliberately read-only. A day recorded wrong is a request to a
  * manager with a reason attached, never an edit made here: the whole point of
  * the record is that the person it describes cannot quietly change it.
+ *
+ * **IT IS A SLICE, AND THE SCREEN NOW SAYS SO.** `recentDays` is a purely
+ * local read and the only attendance row the server ever sends down is
+ * today's, so a reinstalled handset — which is what installing a new APK is —
+ * rendered "Present 0 · of 0 working days" over an empty box. The record his
+ * pay is read against told him he had never been present, with nothing saying
+ * it was the phone's memory rather than his attendance. `days.length` is not
+ * the working month and is no longer labelled as one; the empty case names
+ * the office as the record.
+ *
+ * **THE CORRECTION IS ASKED ON THE ROW, and that is a fix rather than a
+ * rearrangement.** One button at the foot of a thirty-day list raised the
+ * request against `today.id` whichever day was wrong — so a man fixing last
+ * Thursday typed his sentence and it was filed against today — and where he
+ * had not checked in yet `today` was null and the sentence was thrown away
+ * after the sheet had closed. A day carries its own id or it carries nothing.
+ * `regularizationId` is what says one is already asked for, so the same
+ * request cannot be filed five times.
  */
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -51,16 +69,57 @@ export default function AttendanceScreen() {
 
   const [days, setDays] = React.useState<AttendanceDay[]>([]);
   const [today, setToday] = React.useState<AttendanceDay | null>(null);
+  /* Read, or still reading. An empty list and a list nobody has finished
+     fetching look identical and mean opposite things, and the terminal
+     sentence here is one about somebody's pay. */
+  const [loaded, setLoaded] = React.useState(false);
+  const [readFailed, setReadFailed] = React.useState(false);
 
   const load = React.useCallback(() => {
     if (!userId) return;
-    void Promise.all([recentDays(userId), todayRow(userId)]).then(([rows, t]) => {
-      setDays(rows);
-      setToday(t);
-    });
+    void Promise.all([recentDays(userId), todayRow(userId)])
+      .then(([rows, t]) => {
+        setDays(rows);
+        setToday(t);
+        setReadFailed(false);
+        setLoaded(true);
+      })
+      .catch(() => {
+        /* A spinner that never resolves reads as a broken handset. */
+        setReadFailed(true);
+        setLoaded(true);
+      });
   }, [userId]);
 
   useFocusEffect(load);
+
+  /**
+   * Ask about ONE day, the one he pressed.
+   *
+   * A day already asked about answers in words rather than opening the sheet
+   * again: the approval is with his manager, and a second identical request
+   * is noise on the list they have to work through.
+   */
+  const askCorrection = (d: AttendanceDay) => {
+    if (d.regularizationId) {
+      notify('Your manager already has a correction for ' + dmy(d.day) + '. Nothing changes until they answer it.');
+      return;
+    }
+    askConfirm({
+      title: 'Ask about ' + dmy(d.day) + '?',
+      body:
+        'Your manager sees ' +
+        dmy(d.day) +
+        ', what the app recorded, and your reason. Nothing changes until they approve it.',
+      reasonLabel: 'What happened · required',
+      confirmLabel: 'Send to manager',
+      run: async (r) => {
+        await requestRegularisation(d.id, r);
+        load();
+        notify('Sent to your manager · ' + dmy(d.day) + ' · nothing changes until they approve it');
+      },
+    });
+  };
 
   /* The clock ticks while he is on the road, so "so far" counts against now
      rather than the last write — and it SUMS the sessions, because the day may
@@ -79,8 +138,12 @@ export default function AttendanceScreen() {
   const onLeave = days.filter((d) => d.status === 'On Leave').length;
   const overrides = days.filter((d) => d.fieldVisitOverride === 1).length;
 
+  /* "of N working days" was a count of the days this phone happens to hold a
+     row for, so the ratio read N of N by construction and a fresh handset read
+     0 of 0. What these three actually describe is the phone's own memory, and
+     they say so. */
   const stats: { l: string; v: string; s: string; tone?: 'amber' }[] = [
-    { l: 'Present', v: String(present), s: 'of ' + days.length + ' working days' },
+    { l: 'Present', v: String(present), s: 'of ' + days.length + ' days on this phone' },
     { l: 'Away from base', v: String(overrides), s: 'Field visit', tone: 'amber' },
     { l: 'On leave', v: String(onLeave), s: 'Approved' },
   ];
@@ -135,7 +198,37 @@ export default function AttendanceScreen() {
         ))}
       </Card>
 
-      <ListCard style={{ marginTop: 12 }}>
+      <T s="label" style={{ marginTop: 18, marginBottom: 8 }}>
+        Days recorded on this phone
+      </T>
+
+      <ListCard>
+        {!loaded ? (
+          <View style={{ paddingHorizontal: 16, paddingVertical: 20 }}>
+            <T s="small" style={{ color: C.muted }}>
+              Reading this phone&apos;s record…
+            </T>
+          </View>
+        ) : readFailed ? (
+          <View style={{ paddingHorizontal: 16, paddingVertical: 20 }}>
+            <T s="small" style={{ color: C.ink }}>
+              This phone&apos;s record could not be read. Open the screen again.
+            </T>
+          </View>
+        ) : days.length === 0 ? (
+          /* A bordered box with nothing in it was the whole of this case, on
+             the screen a salesman opens to check his own pay. */
+          <View style={{ paddingHorizontal: 16, paddingVertical: 20 }}>
+            <T style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(600)]}>
+              Nothing recorded on this phone yet
+            </T>
+            <T s="small" style={{ color: C.muted, marginTop: 4 }}>
+              This list is only what this handset marked, and a new or reinstalled phone starts empty. It is
+              not your attendance — the office holds that, and it is what your pay is read against. Ask your
+              manager if a day looks missing there.
+            </T>
+          </View>
+        ) : null}
         {days.map((d, i) => {
           const state = d.status ?? 'Absent';
           const isPresent = state === 'Present' || state === 'Half Day';
@@ -149,13 +242,23 @@ export default function AttendanceScreen() {
             : state === 'On Leave'
               ? 'info'
               : 'neutral';
+          const asked = d.regularizationId != null;
           return (
-            <View
+            /* The ASK is on the row, because the row is the only thing that
+               knows which day it is. */
+            <Pressable
               key={d.id}
+              accessibilityRole="button"
+              accessibilityLabel={'Ask about ' + dmy(d.day)}
+              accessibilityHint={
+                asked ? 'A correction for this day is already with your manager' : 'Ask your manager to correct this day'
+              }
+              onPress={() => askCorrection(d)}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 12,
+                minHeight: 48,
                 paddingHorizontal: 16,
                 paddingVertical: 12,
                 borderTopWidth: i ? 1 : 0,
@@ -174,31 +277,22 @@ export default function AttendanceScreen() {
                     ? hoursLabel(d.workedMinutes) + (sessionsOf(d).length > 1 ? ` · ${sessionsOf(d).length} sessions` : '')
                     : state}
                 </T>
+                {asked ? (
+                  <T s="caption" style={{ color: C.warnInk, marginTop: 1 }}>
+                    Correction asked — with your manager
+                  </T>
+                ) : null}
               </View>
               <Badge tone={tone}>{flagged && isPresent ? 'Field' : state}</Badge>
-            </View>
+            </Pressable>
           );
         })}
       </ListCard>
 
-      <DashedButton
-        label="A day recorded wrong? Ask your manager to correct it."
-        style={{ marginTop: 12, borderRadius: radius.xl }}
-        onPress={() =>
-          askConfirm({
-            title: 'Ask for a correction?',
-            body: 'Your manager sees the day, what the app recorded, and your reason. Nothing changes until they approve it.',
-            reasonLabel: 'What happened · required',
-            confirmLabel: 'Send to manager',
-            run: async (r) => {
-              if (!today) return notify('There is no day recorded to correct.');
-              await requestRegularisation(today.id, r);
-              load();
-              notify('Sent to your manager · nothing changes until they approve it');
-            },
-          })
-        }
-      />
+      <T s="caption" style={{ marginTop: 10 }}>
+        A day recorded wrong? Tap it and ask your manager to correct that day. Nothing here can be edited —
+        the record is only worth something because the person it describes cannot change it.
+      </T>
     </AppFrame>
   );
 }

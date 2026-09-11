@@ -89,6 +89,22 @@ export default function MapsScreen() {
     });
   }, []);
 
+  /*
+   * DROP THE LAST PROGRESS EVENT FOR A PACK THAT HAS STOPPED.
+   *
+   * The row reads `live[id] ?? saved.status`, and a paused pack sends nothing
+   * further — so the last `active` event it ever sent went on drawing a moving
+   * bar and a "Pause" button over a download that had already stopped. Dropped,
+   * the row falls back to the status the reload reads off the pack itself.
+   */
+  const forget = React.useCallback((ids: string[]) => {
+    setLive((l) => {
+      const next = { ...l };
+      ids.forEach((id) => delete next[id]);
+      return next;
+    });
+  }, []);
+
   const load = React.useCallback(() => {
     let alive = true;
     void listAreas().then(async (l) => {
@@ -149,6 +165,29 @@ export default function MapsScreen() {
     };
     /* The list is what decides who to follow; `clearFailure` is stable. */
   }, [listing, clearFailure]);
+
+  /*
+   * PAUSING HAS TO STICK, and it did not.
+   *
+   * `pauseMap` then `load()` sets a new listing, the effect above re-runs on it,
+   * every pack short of complete counts as unfinished — a paused one does — and
+   * `resumeUnfinished` started it again within about a second. `useFocusEffect`
+   * did the same on every visit to the screen. So the bar kept climbing after
+   * he pressed Pause, and because the only control that abandons a download
+   * draws while it is paused, undoing the pause took that away too. The pause
+   * is recorded in `pauseMap` now and `resumeUnfinished` skips what he stopped.
+   */
+  const pause = React.useCallback(
+    (id: string) => {
+      void pauseMap(id)
+        .then(() => {
+          forget([id]);
+          load();
+        })
+        .catch(() => notify('That download would not stop. Try again in a moment.'));
+    },
+    [forget, load, notify],
+  );
 
   const start = async (area: OfflineArea) => {
     if (!listing) return;
@@ -244,8 +283,13 @@ export default function MapsScreen() {
         if (!ids.length) return;
         setBlocked('Map downloads are set to Wi-Fi only, and this phone is on mobile data.');
         notify('Paused the map download — this phone is on mobile data.');
-        void Promise.all(ids.map((id) => pauseMap(id).catch(() => undefined))).then(() => {
-          if (alive) load();
+        /* `network`, not the salesman: this one is meant to pick up again the
+           moment there is Wi-Fi, and a pause recorded as his own would never be
+           resumed by anything. */
+        void Promise.all(ids.map((id) => pauseMap(id, 'network').catch(() => undefined))).then(() => {
+          if (!alive) return;
+          forget(ids);
+          load();
         });
       });
     });
@@ -254,7 +298,7 @@ export default function MapsScreen() {
       alive = false;
       off?.();
     };
-  }, [anyDownloading, wifiOnly, notify, load]);
+  }, [anyDownloading, wifiOnly, notify, load, forget]);
 
   return (
     <AppFrame
@@ -322,7 +366,7 @@ export default function MapsScreen() {
                 staleAfterDays={settings?.refreshAfterDays ?? 120}
                 readAt={readAt}
                 onSave={() => void start(area)}
-                onPause={() => area.saved && void pauseMap(area.saved.id).then(load)}
+                onPause={() => area.saved && pause(area.saved.id)}
                 onResume={() => area.saved && void resumeMap(area.saved.id).then(load)}
                 onRefresh={() => {
                   if (!area.saved) return;
@@ -520,13 +564,23 @@ function AreaRow({
         </T>
       ) : null}
 
-      {/* A DOWNLOAD SOMEBODY WANTS TO ABANDON. Only offered once it is
-          paused: while it is running the thing to press is Pause, and a
-          Remove beside it is the mis-tap that throws away twenty minutes of
-          somebody's Wi-Fi. */}
-      {downloading && !running ? (
+      {/* A DOWNLOAD SOMEBODY WANTS TO ABANDON, in either state.
+          It was drawn only while the download was PAUSED, on the reasoning
+          that a Remove beside a running one is the mis-tap that throws away
+          twenty minutes of somebody's Wi-Fi. The mis-tap is real and is
+          answered by the confirmation this opens; what the rule actually did
+          was hide the only way out behind a pause that immediately undid
+          itself, so there was no reachable way to stop several hundred
+          megabytes at all. It stays off the row itself — the one button there
+          is still Pause or Resume — and sits on its own line with the sentence
+          that says which state it is in. */}
+      {downloading ? (
         <Secondary
-          sentence="Paused. It picks up where it stopped."
+          sentence={
+            running
+              ? 'Saving now. Removing it stops the download and gives the space back.'
+              : 'Paused. It picks up where it stopped.'
+          }
           label="Remove"
           onPress={onRemove}
         />

@@ -121,7 +121,12 @@ export default function Customers() {
   const [newShopName, setNewShopName] = React.useState('');
   const [shopPhone, setShopPhone] = React.useState('');
   const [shopCity, setShopCity] = React.useState('');
-  const [billers, setBillers] = React.useState<Customer[]>([]);
+  /* NULL UNTIL THE READ ANSWERS, and that distinction is load-bearing — see
+     `noBook` below. An empty array is the terminal answer "no account on this
+     handset can be billed", which takes the save button off the sheet; starting
+     there meant every first open of the sheet flashed that sentence over a
+     query still in flight, on handsets that had a book. */
+  const [billers, setBillers] = React.useState<Customer[] | null>(null);
   const [billerId, setBillerId] = React.useState<string | null>(null);
   const [billerQ, setBillerQ] = React.useState('');
   const [saving, setSaving] = React.useState(false);
@@ -295,9 +300,17 @@ export default function Customers() {
   React.useEffect(() => {
     if (!adding) return;
     let live = true;
-    void billableCustomers(billerQ).then((r) => {
-      if (live) setBillers(r);
-    });
+    void billableCustomers(billerQ)
+      .then((r) => {
+        if (live) setBillers(r);
+      })
+      /* A read that never answers leaves the sheet reading "Reading your
+         accounts…" with no button under it and no way forward, which is the
+         worse of the two dead ends. Failing to the empty answer at least lands
+         on a sentence and a reason. */
+      .catch(() => {
+        if (live) setBillers([]);
+      });
     return () => {
       live = false;
     };
@@ -321,7 +334,7 @@ export default function Customers() {
        puts the same shop on the book twice, and the order he is standing there
        to take goes against one of them. */
     if (saving) return;
-    const biller = billers.find((b) => b.id === billerId);
+    const biller = billers?.find((b) => b.id === billerId);
     if (!biller) return notify('Say who is billed for this shop.');
     setSaving(true);
     try {
@@ -956,8 +969,13 @@ export default function Customers() {
   /* No account on this handset can be billed, so the form below cannot be
      completed at all. Said on the sheet rather than discovered by pressing:
      `saveShop` refused with the same toast on every press, forever, and
-     nothing anywhere explained why. */
-  const noBook = billers.length === 0 && !billerQ.trim();
+     nothing anywhere explained why.
+
+     `billers !== null` is what keeps it from claiming that before the read has
+     answered — an empty book and a book that has not been asked for look
+     identical in an array of length nought, and only one of them is a dead
+     end. */
+  const noBook = billers !== null && billers.length === 0 && !billerQ.trim();
 
   return (
     <AppFrame title="Customers" activeTab="customers" scroll={false}>
@@ -1129,7 +1147,7 @@ export default function Customers() {
           }}
         />
         <View style={{ gap: 6, marginTop: 8 }}>
-          {billers.slice(0, 6).map((b) => (
+          {(billers ?? []).slice(0, 6).map((b) => (
             <Pressable
               key={b.id}
               onPress={() => setBillerId(b.id)}
@@ -1146,7 +1164,11 @@ export default function Customers() {
               <Text style={type.caption}>{[b.contactPerson, b.city].filter(Boolean).join(' · ')}</Text>
             </Pressable>
           ))}
-          {billers.length === 0 ? (
+          {/* Reading, nothing matched, and nothing at all are three different
+              answers. Only the last one means the form cannot be finished. */}
+          {billers === null ? (
+            <Text style={type.caption}>Reading your accounts…</Text>
+          ) : billers.length === 0 ? (
             <Text style={type.caption}>
               {billerQ.trim() ? 'No account of yours matches that.' : 'You have no accounts to bill yet.'}
             </Text>

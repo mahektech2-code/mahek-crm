@@ -163,15 +163,21 @@ export function Icon({
    * NOT `IconName` alone, YET, and the reason is worth stating rather than
    * leaving as a loose type somebody tightens by accident.
    *
-   * Seven call sites hand this a value inferred as `string` — a glyph read off
-   * an untyped array of buttons — so narrowing the prop today would stop the
-   * build in six files rather than catch a typo: `app/customer.tsx`,
-   * `app/customers.tsx` (twice), `app/expenses.tsx`, `app/pay.tsx`,
-   * `app/visit.tsx`, `shell/Chrome.tsx`, and `ActionSheet`'s own `glyph` in
-   * `overlays.tsx`. Each of those arrays needs `IconName` on its own element
-   * type first; then this becomes `name: IconName` and the fallback below stops
-   * being reachable from TypeScript. `IconName` is a real union now, which is
-   * the half that had to come first — it was an alias for `string`.
+   * Call sites hand this a value inferred as `string` — a glyph read off an
+   * untyped array of buttons — so narrowing the prop today stops the build
+   * rather than catching a typo. `app/pay.tsx` has since typed its own array
+   * and is done; the seven that remain are `app/customer.tsx:419`,
+   * `app/customers.tsx:961` and `:1093`, `app/expenses.tsx:499`,
+   * `app/visit.tsx:1169`, `shell/Chrome.tsx:215`, and `ActionSheet`'s `items`
+   * in `overlays.tsx` — which is itself blocked on `shell/AppFrame.tsx:306`,
+   * the one caller that hands it a `string`.
+   *
+   * Each of those arrays needs `IconName` on its own element type first — the
+   * change is one annotation apiece and the compiler names them all at once.
+   * Then this becomes `name: IconName` and the fallback below stops being
+   * reachable from TypeScript. `IconName` is a real union now, which is the
+   * half that had to come first: it was an alias for `string`, so `IconName`
+   * on an element type bought nothing until it was one.
    */
   name,
   size = 20,

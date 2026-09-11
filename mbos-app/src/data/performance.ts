@@ -43,11 +43,26 @@ export type PerformanceMonth = {
   unmatchedRevenuePaise: number;
   categories: MixCategory[];
   computedAt: string | null;
+  /**
+   * The components nobody set a target for, which were DROPPED from the score.
+   *
+   * The office does not mark an unset component nought — that would dock
+   * somebody for a question never put to them — nor a hundred, which would pay
+   * them for it. It leaves the component out and restates the remaining weights
+   * out of a hundred, which is what keeps "out of 100, against what was
+   * actually asked of you" a true sentence. That makes this list part of the
+   * score rather than a footnote to it: an 84 across six components and an 84
+   * across three are different months.
+   *
+   * It was selected off the row and thrown away before it reached the screen,
+   * so the phone drew the number and the office's own screen drew the caveat.
+   */
+  untargeted: string[];
   /** False where the office has published no target — there is nothing to score. */
   hasTarget: boolean;
 };
 
-type Row = Omit<PerformanceMonth, 'categories' | 'hasTarget'> & {
+type Row = Omit<PerformanceMonth, 'categories' | 'untargeted' | 'hasTarget'> & {
   categories: string | null;
   untargeted: string | null;
 };
@@ -81,6 +96,7 @@ export async function listPerformance(): Promise<PerformanceMonth[]> {
     activityActual: r.activityActual ?? 0,
     unmatchedRevenuePaise: r.unmatchedRevenuePaise ?? 0,
     categories: parseCategories(r.categories),
+    untargeted: parseKeys(r.untargeted),
     /*
      * A target exists if ANY of the five was asked for.
      *
@@ -106,6 +122,51 @@ function parseCategories(raw: string | null): MixCategory[] {
   } catch {
     return [];
   }
+}
+
+/** The same guard, for the list of dropped components. */
+function parseKeys(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((k) => typeof k === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * What was left out of the score, in the same words the office's own screen
+ * uses.
+ *
+ * Deliberately the CRM's labels rather than this screen's tile captions: a
+ * salesman and his manager reading the same month must not be given two
+ * vocabularies for the six things it is built from. A key nobody recognises is
+ * printed as it arrived rather than dropped — a shorter list would understate
+ * how much of the score was left out, which is the one direction this sentence
+ * must not be wrong in.
+ */
+const COMPONENT_LABELS: Record<string, string> = {
+  revenue: 'revenue',
+  volume: 'volume',
+  mix: 'product mix',
+  newCustomers: 'new customers',
+  collection: 'collection',
+  activity: 'visits and calls',
+};
+
+export function untargetedLine(month: PerformanceMonth): string | null {
+  const names = month.untargeted.map((k) => COMPONENT_LABELS[k] ?? k);
+  if (!names.length) return null;
+  const listed =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return (
+    `Nothing was asked of you on ${listed}, so ` +
+    `${names.length === 1 ? 'it is' : 'they are'} left out and the weight is ` +
+    'shared among the rest. The score is still out of 100.'
+  );
 }
 
 /** Millilitres are what is stored; litres are what anybody says out loud. */

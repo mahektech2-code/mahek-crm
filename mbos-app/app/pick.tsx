@@ -74,6 +74,23 @@ export default function PickScreen() {
   const back = useCameFrom('journey');
 
   const [day, setDay] = React.useState<PlanDay | null>(null);
+  /*
+   * THE SAME BUG AS THE LIST BELOW, on the branch that takes the whole screen.
+   *
+   * `day` is null until an effect fills it, so the FIRST PAINT of every visit
+   * rendered "That day is not on this handset" — the one sentence that sends
+   * somebody back to the Journey tab to fetch a day that was never missing.
+   * Not a flicker either: it draws inside the frame's `Appear`, so it fades in
+   * and is read. Still looking, genuinely not here, and could not be read are
+   * three answers, exactly as they are for the rows.
+   */
+  const [dayLoading, setDayLoading] = React.useState(true);
+  const [dayFailed, setDayFailed] = React.useState(false);
+  /** Bumped by the retry on that branch. Its own, deliberately: `attempt` below
+      re-reads the list, and re-reading the DAY re-reads what was picked, which
+      would take back ticks somebody had just made. Reachable only where there
+      is no day, so there are none. */
+  const [dayAttempt, setDayAttempt] = React.useState(0);
   const [rows, setRows] = React.useState<Candidate[]>([]);
   const [total, setTotal] = React.useState(0);
   /* The point the distances on the rows are measured from, as the READ used
@@ -137,18 +154,26 @@ export default function PickScreen() {
 
   React.useEffect(() => {
     let live = true;
+    setDayLoading(true);
+    setDayFailed(false);
     void (async () => {
-      const d = await planDay(planDayId);
-      if (!live) return;
-      setDay(d);
-      /* Whatever was picked before, so reopening the screen is a correction
-         rather than starting again. */
-      setPicked(await pickedFor(planDayId));
+      try {
+        const d = await planDay(planDayId);
+        if (!live) return;
+        setDay(d);
+        /* Whatever was picked before, so reopening the screen is a correction
+           rather than starting again. */
+        setPicked(await pickedFor(planDayId));
+      } catch {
+        if (live) setDayFailed(true);
+      } finally {
+        if (live) setDayLoading(false);
+      }
     })();
     return () => {
       live = false;
     };
-  }, [planDayId]);
+  }, [planDayId, dayAttempt]);
 
   /*
    * The ticked ids go INTO the read, not just out of it.
@@ -233,8 +258,23 @@ export default function PickScreen() {
       <AppFrame title="Pick your shops" onBack={back.go} contentStyle={{ padding: 16 }}>
         <BackLink label={back.label} onPress={back.go} />
         <T s="small" style={{ color: C.muted }}>
-          That day is not on this handset. Pull down on the route screen to fetch it.
+          {dayLoading
+            ? 'Looking…'
+            : dayFailed
+              ? 'The day could not be read off this phone.'
+              : /* "The route screen" is not a thing anybody can find: the tab is
+                   labelled Journey, and a sentence that names a screen by a word
+                   nowhere on the app sends him looking for it. */
+                'That day is not on this handset. Pull down on the Journey tab to fetch it.'}
         </T>
+        {dayFailed ? (
+          <SecondaryButton
+            label="Try again"
+            fullWidth={false}
+            onPress={() => setDayAttempt((a) => a + 1)}
+            style={{ marginTop: 12 }}
+          />
+        ) : null}
       </AppFrame>
     );
   }
@@ -413,7 +453,9 @@ export default function PickScreen() {
               ? 'Looking…'
               : q
                 ? 'No shop matches that.'
-                : 'There are no shops on this handset yet — pull down on the route screen to fetch your book.'}
+                : /* The Journey tab, by the name written on it — see the day
+                     branch above, which named the same non-existent screen. */
+                  'There are no shops on this handset yet — pull down on the Journey tab to fetch your book.'}
           </T>
         ) : null}
 
@@ -431,7 +473,17 @@ export default function PickScreen() {
             <Pressable
               key={c.id}
               onPress={() => toggle(c.id)}
-              hitSlop={HIT}
+              /* NO HIT SLOP. It was `hitSlop={HIT}` — 48 on all four sides of a
+                 card about 74dp tall with 8 between it and the next one, so each
+                 row's touch area reached 48 into the card above and 48 into the
+                 one below and two rows claimed the same band. React Native
+                 settles that by draw order rather than by what he read, so a tap
+                 on the "Last seen 12 days ago" line of one shop ticked the shop
+                 underneath it — and the number on the badge IS the walking
+                 order, so the day is built around the wrong door with nothing
+                 saying so. The card is already well past the 48dp floor on its
+                 own; the value is for an isolated icon button, which is what the
+                 one other use of it in this app is. */
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -507,23 +559,28 @@ export default function PickScreen() {
             </Pressable>
           );
         })}
-          {/*
-            What the list is a slice OF.
-            A capped list that counts itself is how a screen reports sixty shops
-            on a book of five thousand and says nothing about the rest. The way
-            past it is the search box above, so the sentence names it.
-
-            Inside the LIST branch: the map draws every pin it is given and is
-            not capped by the same read, so a count of what was left out belongs
-            with the list it was left out of.
-          */}
-          {total > rows.length ? (
-            <T s="small" style={{ color: C.muted, paddingVertical: 14, textAlign: 'center' }}>
-              {rows.length + ' of ' + total + ' shops — search for one that is not here'}
-            </T>
-          ) : null}
         </View>
       )}
+
+      {/*
+        What this screen is a slice OF — in BOTH views, which is where it was
+        wrong. A capped list that counts itself is how a screen reports sixty
+        shops on a book of five thousand and says nothing about the rest, and
+        the way past it is the search box above, so the sentence names it.
+
+        It used to sit inside the list branch on the reasoning, written down
+        just here, that "the map draws every pin it is given and is not capped
+        by the same read". It is: the map is handed the same `rows`, which is
+        the same `LIMIT 60` page. So switching to Map removed the only thing on
+        the screen saying the view was a slice while leaving the slice exactly
+        as it was — and on the map the ARRANGEMENT of the pins is the plan, so
+        he lays out a morning over a town with most of the town missing.
+      */}
+      {total > rows.length ? (
+        <T s="small" style={{ color: C.muted, paddingVertical: 14, textAlign: 'center' }}>
+          {rows.length + ' of ' + total + ' shops — search for one that is not here'}
+        </T>
+      ) : null}
     </AppFrame>
   );
 }

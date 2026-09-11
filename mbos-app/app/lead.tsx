@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable, ScrollView } from 'react-native';
+import { Image, View, Pressable, ScrollView } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
@@ -30,6 +30,7 @@ import {
   setLeadParties,
   setNextAction,
   setSalesType,
+  shopPhoto,
   type LeadEvent,
   type LeadFunnelView,
 } from '../src/data/lead-funnel';
@@ -37,6 +38,8 @@ import { currentSession } from '../src/data/session';
 import { leadAlert, type LeadThresholds } from '../src/engines/leads';
 import {
   gateTo,
+  isParked,
+  isTerminal,
   ladderFor,
   SALES_TYPES,
   salesTypeLabel,
@@ -101,8 +104,13 @@ export default function LeadRecord() {
   const [nextOpen, setNextOpen] = React.useState(false);
   const [ladderOpen, setLadderOpen] = React.useState(false);
   const [parties, setParties] = React.useState(false);
+  /* The rung picker a parked lead comes back on. Closed until he asks for it,
+     because a list of twelve rungs on a record that is on hold reads as the
+     screen suggesting he move it. */
+  const [returning, setReturning] = React.useState(false);
 
   const [checks, setChecks] = React.useState<Awaited<ReturnType<typeof validationsFor>>>([]);
+  const [photo, setPhoto] = React.useState<{ uri: string | null } | null>(null);
 
   const load = React.useCallback(() => {
     let live = true;
@@ -117,13 +125,15 @@ export default function LeadRecord() {
          produces that nothing else could — the office's answer beside the
          salesman's — was written down and never shown to either of them. */
       validationsFor(id),
-    ]).then(([v, e, t, s, calls]) => {
+      shopPhoto(id),
+    ]).then(([v, e, t, s, calls, shot]) => {
       if (!live) return;
       setView(v);
       setEvents(e);
       setCfg(t);
       setMe(s ? { id: s.user.id, name: s.user.name } : null);
       setChecks(calls);
+      setPhoto(shot);
     });
     return () => {
       live = false;
@@ -148,7 +158,26 @@ export default function LeadRecord() {
 
   const { lead, salesType, stage, next, gate, mustDecide, visits, config, input } = view;
   const settled = stage === 'lost' || stage === 'won';
+  /* PARKED IS NEITHER, which is the whole reason `on_hold` exists: a stalled
+     prospect folded into Lost is a live shop the staleness sweep archives. It
+     is not on any ladder either, so there is no rung above it to offer — the
+     gate says so and the screen has to say it in words. */
+  const parked = isParked(stage);
   const title = lead.company?.trim() || lead.name;
+
+  /* §A — WHAT HE LEARNED IN THE SHOP, read back.
+     The capture sheet asks for these standing outside the shop and the record
+     printed none of them, so seven optional fields went in and none came out —
+     which is how a salesman learns not to fill them. Only what was actually
+     answered is drawn: a column of "Not recorded" rows would be an invitation
+     to fill boxes this screen has nowhere to open. */
+  const learned: { label: string; value: string }[] = [];
+  if (lead.address?.trim()) learned.push({ label: 'Where it is', value: lead.address.trim() });
+  if (lead.requirement?.trim()) learned.push({ label: 'What they want', value: lead.requirement.trim() });
+  const litres = lead.monthlyLitres ?? lead.monthlyVolumeLitres;
+  if (litres != null) learned.push({ label: 'Gets through', value: plural(litres, 'litre') + ' a month' });
+  const onNow = lead.competitor?.trim() || lead.competitorName?.trim();
+  if (onNow) learned.push({ label: 'Buys from now', value: onNow });
 
   /* --------------------------------------------------------- §4 the window
    *
@@ -316,6 +345,17 @@ export default function LeadRecord() {
           <T style={{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.danger }}>{'Lost — ' + lead.lostReason}</T>
         ) : null}
 
+        {/* Why it is not moving. It was on the list card and nowhere on the
+            record, which is the screen somebody opens to find out. One column
+            answers two questions — "what is this on hold for" and "why is this
+            still a Suspect" — so it is drawn for both; a parked lead gets it
+            from the card below instead, so the sentence is on the screen once. */}
+        {lead.holdReason && !parked ? (
+          <T style={{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.warnInk }}>
+            {'Waiting: ' + lead.holdReason}
+          </T>
+        ) : null}
+
         {/* §4 — visits one and two just say where he is up to. The count is
             the useful half; the demand only arrives at the cap. */}
         {stage === 'suspect' && !lead.suspectDecidedAt ? (
@@ -336,6 +376,51 @@ export default function LeadRecord() {
           />
         ) : null}
       </Card>
+
+      {/* ------------------------------- §A what he learned in the shop --
+
+          Written on the capture sheet outside the shop and shown nowhere
+          afterwards — the address, what they want, what they get through, who
+          they buy from now and the photograph of the shop front. Seven
+          optional fields went in and none of them came out, so the next visit
+          started from nothing and he stopped filling them in. */}
+      {learned.length > 0 || lead.shopPhotoId ? (
+        <View style={{ marginTop: 20 }}>
+          <SectionLabel style={{ marginBottom: 10 }}>What you learned in the shop</SectionLabel>
+          <Card>
+            {learned.length > 0 ? (
+              <View style={{ gap: 8 }}>
+                {learned.map((l) => (
+                  <Line key={l.label} label={l.label} value={l.value} />
+                ))}
+              </View>
+            ) : null}
+
+            {lead.shopPhotoId ? (
+              <View style={{ marginTop: learned.length > 0 ? 12 : 0 }}>
+                {photo?.uri ? (
+                  <Image
+                    source={{ uri: photo.uri }}
+                    style={{ width: '100%', height: 160, borderRadius: radius.lg }}
+                    resizeMode="cover"
+                    accessibilityLabel={'The front of ' + title}
+                  />
+                ) : (
+                  /* The file goes the moment the office has the bytes, so a
+                     photograph that has synced is no longer on this phone.
+                     Saying so is the honest answer; an `<Image>` at a path
+                     that no longer exists is a grey rectangle that explains
+                     nothing. */
+                  <T s="caption">
+                    The shop front was photographed. The picture has gone up to the office and is not on this
+                    phone any more.
+                  </T>
+                )}
+              </View>
+            ) : null}
+          </Card>
+        </View>
+      ) : null}
 
       {/* ------------------------------------------------- §3 the ladder */}
       {settled ? null : (
@@ -399,6 +484,68 @@ export default function LeadRecord() {
                   </View>
                 )}
               </>
+            ) : parked ? (
+              /* ON HOLD — NOT LOST, AND NOT FINISHED.
+                 There is no rung above a parked lead because it is standing on
+                 none: `on_hold` displaces the rung it was on, so the gate
+                 refuses to guess and this says so rather than offering the foot
+                 of the ladder, which is what the screen used to do — "Move up
+                 to Suspect", greyed, on a lead half way up. Coming back is a
+                 move to a NAMED rung, and the gate is asked about that rung
+                 exactly as it would be on any other move. */
+              <Card>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <T style={[{ flex: 1, minWidth: 0, fontSize: 16, color: C.ink }, weight(600)]}>On hold</T>
+                  <Badge tone="amber">Parked</Badge>
+                </View>
+                <T style={{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 8 }}>
+                  {lead.holdReason
+                    ? 'Waiting: ' + lead.holdReason
+                    : 'Nobody wrote down what it is waiting for.'}
+                </T>
+                <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
+                  It is not lost and nothing about it has been given up on. Nothing climbs until somebody says
+                  which rung it comes back to.
+                </T>
+
+                {returning ? (
+                  <>
+                    <T s="caption" style={{ marginTop: 12 }}>Bring it back to</T>
+                    {/* The rungs it can be WORKED at. The end of the ladder is
+                        left off: coming back off a hold is picking up where it
+                        stopped, and a one-tap jump to Converted on a record
+                        that has been stalled for a month is not that. The gate
+                        is still asked about whichever rung he picks, in the
+                        same words it would use from anywhere else. */}
+                    <View style={{ gap: 8, marginTop: 8 }}>
+                      {ladder.filter((rung) => !isTerminal(rung)).map((rung) => (
+                        <Choice
+                          key={rung}
+                          label={stageLabel(rung)}
+                          sub={stageSentence(rung)}
+                          selected={false}
+                          onPress={() => {
+                            setReturning(false);
+                            void move(rung);
+                          }}
+                          style={{ alignItems: 'flex-start', paddingHorizontal: 14, paddingVertical: 10 }}
+                        />
+                      ))}
+                    </View>
+                    <SecondaryButton
+                      label="Leave it on hold"
+                      onPress={() => setReturning(false)}
+                      style={{ marginTop: 10 }}
+                    />
+                  </>
+                ) : (
+                  <PrimaryButton
+                    label="Bring it back"
+                    onPress={() => setReturning(true)}
+                    style={{ marginTop: 14 }}
+                  />
+                )}
+              </Card>
             ) : (
               <Card>
                 <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>

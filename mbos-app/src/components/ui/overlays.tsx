@@ -263,6 +263,14 @@ export function ActionSheet({
 }: {
   open: boolean;
   title: string;
+  /* `glyph: string` AND IT WANTS TO BE `IconName`. `Icon` falls back to the
+     three-dot "more" glyph for a name it does not carry, so a typo here draws
+     the very symbol that opened this sheet and nothing anywhere reports it —
+     which is exactly how "Request a tour" shipped asking for a `cal` that did
+     not exist. Narrowing it stops the build in ONE place first,
+     `shell/AppFrame.tsx:306`, whose own `sheetItems` prop is typed `string`;
+     annotate that as `IconName` and this line can follow, and then so can
+     `Icon`'s own `name`. See the note on it. */
   items: { glyph: string; label: string; sub: string; run: () => void }[];
   onClose: () => void;
 }) {

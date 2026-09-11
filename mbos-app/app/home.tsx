@@ -29,6 +29,7 @@ import { cashInHand } from '../src/data/payments';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
 import { followUpCounts, visitsToday } from '../src/data/visits';
 import { stopCounts } from '../src/data/journey';
+import { lastPullAt } from '../src/sync/api';
 import { withinGeofence } from '../src/engines/geo';
 import { fixOf, getFix } from '../src/native/location';
 import { ensureLocationPermission } from '../src/native/permissions';
@@ -134,11 +135,46 @@ export default function Home() {
   const notify = useStore((s) => s.notify);
   const askConfirm = useStore((s) => s.askConfirm);
 
-  const [day, setDay] = React.useState<Day>(EMPTY);
+  /*
+   * `undefined` IS STILL READING, and every figure on this screen now says so.
+   *
+   * The reasoning three lines below was written for `month` and applied to that
+   * card alone. `day` started at `EMPTY` — every figure a literal zero — and
+   * was rendered immediately while ten SQLite reads were still in flight, so
+   * the first screen after sign-in read "₹0 · 0 orders", "0 of 0 · No plan
+   * today", "₹0 · Nothing to deposit". On a handset whose pull has never landed
+   * those zeros were not a frame, they were permanent, and the status strip
+   * said "All sent" over them because that pip counts the outbox and not the
+   * inbox. He opens the app at 9am and reads a screen saying he has no work,
+   * which is the one failure nobody reports: it looks like having nothing to
+   * do.
+   *
+   * `EMPTY` survives as the stand-in for the mechanical reads below — the
+   * ticker interval and the worked-time sum need a shape, not a sentence — and
+   * nothing DISPLAYED comes from it.
+   */
+  const [day, setDay] = React.useState<Day | undefined>(undefined);
   /* `undefined` is still reading, `null` is read and there is nothing. Two
      different sentences, and collapsing them shows "no target" for a frame to
      somebody who has one. */
   const [month, setMonth] = React.useState<PerformanceMonth | null | undefined>(undefined);
+  /*
+   * Nothing has ever come down from the office onto this handset.
+   *
+   * Answered by the pull's own marker rather than guessed at from the figures:
+   * a salesman with no plan and no orders at 9am has honest zeros, and a
+   * handset that has never synced has no book at all. Drawing those two the
+   * same way is what made a broken install indistinguishable from a quiet
+   * morning.
+   */
+  const [neverPulled, setNeverPulled] = React.useState(false);
+  /*
+   * A READ THAT FAILED IS NOT A READ STILL RUNNING. `load` had no `catch` at
+   * all, so one rejected promise among the eleven left this screen reading
+   * "Reading…" for the rest of the session — which is a spinner that never
+   * resolves, and reads as a dead handset with nothing saying what to do.
+   */
+  const [readErr, setReadErr] = React.useState<string | null>(null);
   const [starting, setStarting] = React.useState(false);
 
   /*
@@ -156,8 +192,11 @@ export default function Home() {
    * The duration is derived from the sessions and this clock now, so it moves
    * because the day is running rather than because something re-fetched.
    */
-  const now = useTicker(day.running ? 1000 : 60_000);
-  const workedSoFarMs = workedMs(day.sessions, now);
+  /* The shape the clock and the worked-time sum need, before the read lands.
+     Nothing on the screen is drawn from it — see the note on `day` above. */
+  const dayOrEmpty = day ?? EMPTY;
+  const now = useTicker(dayOrEmpty.running ? 1000 : 60_000);
+  const workedSoFarMs = workedMs(dayOrEmpty.sessions, now);
 
   /*
    * Location is asked for HERE, on the first open, and not at the check-in.
@@ -191,7 +230,13 @@ export default function Home() {
          than on a focus of its own so the card and the six figures above it
          describe the same moment. */
       listPerformance(),
-    ]).then(([stops, due, follow, orders, visits, cash, tasks, attendance, state, months]) => {
+      /* Whether anything has EVER arrived on this phone. Read beside the
+         figures rather than on its own, so the sentence under them and the
+         figures themselves describe the same moment. */
+      lastPullAt(),
+    ]).then(([stops, due, follow, orders, visits, cash, tasks, attendance, state, months, pulledAt]) => {
+      setReadErr(null);
+      setNeverPulled(pulledAt === 0);
       setMonth(months[0] ?? null);
       setDay({
         stops: stops.total,
@@ -214,18 +259,36 @@ export default function Home() {
         sessionCount: state.sessionCount,
         sessions: state.sessions,
       });
+    }).catch(() => {
+      /* Left `undefined` on purpose: the screen below draws the sentence rather
+         than a grid of zeros or a spinner that will never stop. `month` is
+         settled too, or its card would read "Reading…" for ever beside it. */
+      setMonth(null);
+      setReadErr('Your day could not be read on this phone. Close MBOS and open it again.');
     });
   }, [userId]);
 
   useFocusEffect(load);
 
-  const checkedIn = day.sessionCount > 0;
+  const checkedIn = !!day && day.sessionCount > 0;
 
   const today = new Date(now);
   const dateLine = `${WEEKDAYS[today.getDay()]}, ${today.getDate()} ${MONTHS[today.getMonth()]}`;
 
-  /* The six figures, labelled by the design and valued by the store. */
-  const dashValues: { v: string; s: string; small?: boolean }[] = [
+  /*
+   * The six figures — or, until there are six figures, six dashes.
+   *
+   * Three states and they are three different sentences. Still reading is a
+   * moment; a read that failed is a handset to restart; and a handset nothing
+   * has ever reached is one to find signal for. A zero is none of those, and a
+   * zero is what all three used to print.
+   */
+  const figuresPending = !day || neverPulled;
+  const dashValues: { v: string; s: string; small?: boolean }[] = !day
+    ? DASH_CARDS.map(() => ({ v: '—', s: readErr ? 'Not read' : 'Reading…' }))
+    : neverPulled
+      ? DASH_CARDS.map(() => ({ v: '—', s: 'Nothing here yet' }))
+      : [
     {
       /* "Not known yet" is a SENTENCE in a slot sized for ₹1,24,500 — one line,
          tabular, in half of a 328-point card — so at Android's larger font
@@ -253,11 +316,12 @@ export default function Home() {
     { v: String(day.followUps), s: `${day.followUpsToday} today` },
   ];
 
-  const dayAheadValues = [
-    String(day.stops),
-    compactInr(day.collectPaise / 100),
-    String(day.followUpsToday),
-  ];
+  /* Same rule, on the strip under the Start day button: a dash where there is
+     no answer yet, never a nought. */
+  const dayAheadValues =
+    !day || neverPulled
+      ? DAY_AHEAD.map(() => '—')
+      : [String(day.stops), compactInr(day.collectPaise / 100), String(day.followUpsToday)];
 
   /*
    * The selfie camera is a COMPONENT, and `startDay` needs a value from it, so
@@ -479,8 +543,22 @@ export default function Home() {
         </View>
       </View>
 
-      {/* ---- start the day, or what is left of it ---- */}
-      {!checkedIn ? (
+      {/* ---- start the day, or what is left of it ----
+
+          THE MOST CONSEQUENTIAL ZERO WAS THIS ONE. `checkedIn` is
+          `sessionCount > 0`, and before the read landed that was false — so a
+          salesman who had marked his attendance an hour earlier was shown
+          "Start day", and pressing it in that window opens a SECOND session
+          against his own record. Neither of the two answers is drawn until
+          there is one. */}
+      {!day ? (
+        <Card style={{ marginTop: 14, padding: 14 }}>
+          <Text style={type.label}>Your day</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 4 }}>
+            {readErr ?? 'Reading…'}
+          </Text>
+        </Card>
+      ) : !checkedIn ? (
         <View style={{ marginTop: 14 }}>
           <Pressable
             onPress={startDay}
@@ -597,7 +675,22 @@ export default function Home() {
                   /* The line height does not move with the size, so a tile
                      saying a sentence is exactly as tall as one saying a
                      number and the grid cannot jump. */
-                  { fontSize: dashValues[i].small ? 15 : 20, lineHeight: 26, marginVertical: 2, color: d.tone === 'danger' ? C.danger : d.tone === 'amber' ? C.warnInk : C.ink },
+                  /* A tile's tone belongs to its FIGURE. Left on, the em-dash
+                     standing in for a figure nobody has yet read drew in red
+                     under "Collection due" — an alarm about a number that does
+                     not exist. */
+                  {
+                    fontSize: dashValues[i].small ? 15 : 20,
+                    lineHeight: 26,
+                    marginVertical: 2,
+                    color: figuresPending
+                      ? C.muted
+                      : d.tone === 'danger'
+                        ? C.danger
+                        : d.tone === 'amber'
+                          ? C.warnInk
+                          : C.ink,
+                  },
                   weight(600),
                   tabular,
                 ]}>
@@ -608,6 +701,27 @@ export default function Home() {
           ))}
         </View>
       </Card>
+
+      {/*
+        NOTHING HAS COME DOWN FROM THE OFFICE YET, SAID IN WORDS.
+
+        This is the state the zeros hid, and it is permanent rather than a
+        frame: a handset whose pull has never landed has no customers, no plan
+        and no tasks, so every tile answered nought and the status strip said
+        "All sent" over the top of them — because that pip counts the outbox and
+        has nothing to say about the inbox. A salesman reads that as a day with
+        no work in it and gets on with something else.
+      */}
+      {day && neverPulled ? (
+        <Card style={{ marginTop: 12, padding: 14 }}>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Your book has not arrived</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
+            Nothing has come down from the office onto this phone yet, so these figures are empty
+            rather than nought. Find some signal and leave MBOS open for a minute — your customers,
+            today&rsquo;s plan and your tasks all arrive together.
+          </Text>
+        </Card>
+      ) : null}
 
       {/* ---- how the period is going ----
 
@@ -630,7 +744,13 @@ export default function Home() {
         style={{ marginTop: 12 }}>
         <Card style={{ padding: 14 }}>
           <Text style={type.label}>Your target</Text>
-          {month === undefined ? (
+          {readErr ? (
+            /* The read failed, and "the office has not set one" would be a
+               claim about the office rather than about this phone. */
+            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
+              Not read on this phone.
+            </Text>
+          ) : month === undefined ? (
             <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>Reading…</Text>
           ) : month === null || !month.hasTarget ? (
             <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>

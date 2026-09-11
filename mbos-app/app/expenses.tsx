@@ -86,7 +86,16 @@ export default function ExpensesScreen() {
   const [ex, setEx] = React.useState<Draft>(EMPTY);
   /* EVERY failing field, not the first one. See `send`. */
   const [err, setErr] = React.useState<FieldKey[]>([]);
+  /* The day's own refusal, which is NOT a missing field and must not be folded
+     into `err` — "Still needed: the day" with a day plainly on the button is
+     the sort of message that sends somebody to fix what is not broken. */
+  const [whenWhy, setWhenWhy] = React.useState<string | null>(null);
   const [cal, setCal] = React.useState(false);
+  /* One claim per press. `PrimaryButton` carries no busy state of its own and
+     the sheet stays open for the whole await, so a second tap while nothing
+     has visibly happened wrote a second identical claim — on a screen whose
+     entire subject is money, and he is the one who has to explain it. */
+  const [sending, setSending] = React.useState(false);
 
   const bad = (k: FieldKey) => err.includes(k);
 
@@ -114,6 +123,9 @@ export default function ExpensesScreen() {
   const patch = (p: Partial<Draft>) => {
     setEx((d) => ({ ...d, ...p }));
     setErr([]);
+    /* Only a change of DAY answers the day's refusal. Clearing it on a
+       keystroke in the note would hide a real one. */
+    if (p.whenIso !== undefined) setWhenWhy(null);
   };
 
   const pending = totals?.pendingPaise ?? 0;
@@ -173,27 +185,71 @@ export default function ExpensesScreen() {
   const exOver = preview.excessPaise > 0;
   const capLine = preview.line;
 
+  /* The two refusals the design writes out, so a greyed day always says why.
+     Declared ABOVE `fix` and `send` because both ask it: a rejected claim is
+     routinely reopened weeks after it was spent, and the original day may no
+     longer be one the office will take. */
+  const oldestIso = React.useMemo(() => {
+    const o = new Date();
+    o.setDate(o.getDate() - maxAgeDays);
+    return isoDate(o);
+  }, [maxAgeDays]);
+  const refuse = (iso: string) =>
+    iso < oldestIso
+      ? 'Older than ' + maxAgeDays + ' days — this cannot be claimed'
+      : iso > todayIso
+        ? 'That day has not happened yet'
+        : null;
+
   const add = () => {
     setFixing(false);
     setFixingId(null);
     setErr([]);
+    setWhenWhy(null);
     const today = new Date();
     setEx({ ...EMPTY, kind: kinds[0]!.key, when: dmy(isoDate(today)), whenIso: isoDate(today) });
     setOpen(true);
   };
 
+  /**
+   * Reopen a rejected claim.
+   *
+   * **THE BILL COMES WITH IT.** This set `billMediaId: null` while `send`
+   * refuses a claim without one, so a claim turned down for a wrong amount, a
+   * wrong note or a wrong day could only be resent by photographing a paper
+   * bill he may have handed over or lost — the one path that exists for
+   * putting a rejected claim right was the one most likely to fail, and it
+   * failed after he had retyped everything. The photograph is already on this
+   * handset and already belongs to him; it is offered back with the Change
+   * button beside it, exactly as a fresh claim's is.
+   *
+   * **AND THE DAY IS CHECKED AS IT OPENS.** A claim rejected forty days after
+   * it was spent carries a date the calendar itself now refuses, so it was
+   * re-sent on a day the office would decline for age with nothing on the
+   * screen saying so. Said here, before he types, rather than on the press.
+   *
+   * **AND IT REOPENS AS THE SAME KIND.** This seeded the draft from
+   * `category`, which is the legacy four-value column — `local_transport` is
+   * stored under the category `travel`, so a rejected auto fare came back with
+   * no chip selected, priced against a rule it was never claimed under, and
+   * was resent as `other`. The stored kind is what it was claimed as; the
+   * category is the fallback for rows written before that column existed.
+   */
   const fix = (x: Expense) => {
+    const was =
+      kinds.find((k) => k.key === x.kind) ?? kinds.find((k) => k.category === x.category) ?? kinds[0]!;
     setFixing(true);
     setFixingId(x.id);
     setErr([]);
+    setWhenWhy(refuse(x.spentOn));
     setEx({
-      kind: x.category,
+      kind: was.key,
       amt: String(Math.round(x.amountPaise / 100)),
       note: x.remarks ?? '',
       when: dmy(x.spentOn),
       whenIso: x.spentOn,
-      billMediaId: null,
-      billLabel: null,
+      billMediaId: x.billPhotoId,
+      billLabel: x.billPhotoId ? 'Bill attached' : null,
     });
     setOpen(true);
   };
@@ -202,6 +258,7 @@ export default function ExpensesScreen() {
     setOpen(false);
     setEx(EMPTY);
     setErr([]);
+    setWhenWhy(null);
     setFixing(false);
     setFixingId(null);
     setCal(false);
@@ -219,6 +276,10 @@ export default function ExpensesScreen() {
   };
 
   const send = async () => {
+    /* One claim per press, and the second press ANSWERS rather than doing
+       nothing — `whyDisabled` keeps the button pressable for exactly this. */
+    if (sending) return notify('This claim is on its way — give it a moment.');
+
     /* EVERY failing field at once, and a summary above the button.
        Returning on the first one meant a claim missing both a bill and a note
        took press → fix → press → fix → press — and with the keyboard up the
@@ -234,40 +295,47 @@ export default function ExpensesScreen() {
     if (!ex.note.trim()) missing.push('note');
     if (missing.length) return setErr(missing);
 
-    const { overCap } = await claimExpense({
-      userId: boot.session?.user.id ?? '',
-      spentOn: ex.whenIso,
-      category: kinds.find((k) => k.key === kind)?.category ?? 'other',
-      kind,
-      amountPaise: exAmtPaise,
-      billPhotoId: ex.billMediaId,
-      remarks: ex.note.trim(),
-      /* Requirement 43 — asking for something outside policy takes a reason,
-         and it is the note he has already written rather than a second box. */
-      exceptionReason: exOver ? ex.note.trim() : null,
-    });
+    /* The day the claim is FOR, checked here as well as in the calendar. The
+       calendar greys a refused day, but a corrected claim arrives carrying the
+       day the original was spent on and never passes through it. */
+    const dayRefusal = refuse(ex.whenIso);
+    if (dayRefusal) return setWhenWhy(dayRefusal);
 
-    close();
-    load();
-    notify(
-      overCap
-        ? 'Claimed ' + inr(exAmtPaise / 100) + ' · over the cap, your manager has to allow it'
-        : 'Claimed ' + inr(exAmtPaise / 100) + ' · with your manager',
-    );
+    setSending(true);
+    try {
+      await claimExpense({
+        userId: boot.session?.user.id ?? '',
+        spentOn: ex.whenIso,
+        category: kinds.find((k) => k.key === kind)?.category ?? 'other',
+        kind,
+        amountPaise: exAmtPaise,
+        billPhotoId: ex.billMediaId,
+        remarks: ex.note.trim(),
+        /* Requirement 43 — asking for something outside policy takes a reason,
+           and it is the note he has already written rather than a second box. */
+        exceptionReason: exOver ? ex.note.trim() : null,
+      });
+
+      close();
+      load();
+      /* ONE source for what he is told, before and after.
+         The toast used to read `overCap` off `claimExpense`, which prices
+         against `mbos.expenses.categoryCapsPaise` — the monthly per-category
+         configuration this screen deliberately stopped reading because the
+         office does not pay on it. So the box under the amount could say "the
+         other ₹200 needs your manager to agree it" and the toast two seconds
+         later said "with your manager" with no mention of it, and the config
+         cap could fire on a claim the policy called within limits. Same
+         engine, same day, same sentence. */
+      notify(
+        exOver
+          ? 'Claimed ' + inr(exAmtPaise / 100) + ' · over what the policy allows, your manager has to agree it'
+          : 'Claimed ' + inr(exAmtPaise / 100) + ' · with your manager',
+      );
+    } finally {
+      setSending(false);
+    }
   };
-
-  /* The two refusals the design writes out, so a greyed day always says why. */
-  const oldestIso = React.useMemo(() => {
-    const o = new Date();
-    o.setDate(o.getDate() - maxAgeDays);
-    return isoDate(o);
-  }, [maxAgeDays]);
-  const refuse = (iso: string) =>
-    iso < oldestIso
-      ? 'Older than ' + maxAgeDays + ' days — this cannot be claimed'
-      : iso > todayIso
-        ? 'That day has not happened yet'
-        : null;
 
   return (
     <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
@@ -469,7 +537,7 @@ export default function ExpensesScreen() {
               minHeight: 52,
               paddingHorizontal: 14,
               borderWidth: 1,
-              borderColor: bad('when') ? C.danger : cal ? C.primary : C.border,
+              borderColor: bad('when') || whenWhy ? C.danger : cal ? C.primary : C.border,
               borderRadius: radius.lg,
               backgroundColor: C.surface,
             }}>
@@ -478,6 +546,13 @@ export default function ExpensesScreen() {
           </Pressable>
           {bad('when') ? (
             <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Pick the day you spent it.</T>
+          ) : whenWhy ? (
+            /* The day is filled in and still will not do — a rejected claim
+               reopened weeks later carries the day it was spent on. Say which
+               rule refuses it, and that it has to be re-picked. */
+            <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 6 }}>
+              {whenWhy + '. Pick a day the office will still take, or ask your manager.'}
+            </T>
           ) : null}
         </View>
 
@@ -511,7 +586,13 @@ export default function ExpensesScreen() {
 
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <SecondaryButton label="Cancel" onPress={close} style={{ flex: 1 }} />
-          <PrimaryButton label={fixing ? 'Send it again' : 'Send the claim'} onPress={send} style={{ flex: 1 }} />
+          <PrimaryButton
+            label={sending ? 'Sending…' : fixing ? 'Send it again' : 'Send the claim'}
+            onPress={send}
+            disabled={sending}
+            whyDisabled="This claim is on its way — give it a moment."
+            style={{ flex: 1 }}
+          />
         </View>
       </BottomSheet>
 

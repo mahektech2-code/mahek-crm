@@ -15,7 +15,7 @@ import {
 } from '../src/data/lead-samples';
 import { VoiceField } from '../src/components/ui/dictate';
 import { getLead } from '../src/data/leads';
-import { getCustomer, searchProducts } from '../src/data/customers';
+import { getCustomer, listCustomersPage, searchProducts, type Customer } from '../src/data/customers';
 import { isoDate, plural } from '../src/lib/format';
 import { type CodedOption } from '../src/engines/funnel';
 import { useStore } from '../src/state/store';
@@ -43,6 +43,14 @@ function toneFor(state: string): BadgeTone {
     case 'Cancelled': return 'neutral';
     default: return 'teal';
   }
+}
+
+/** The shop a sample is for, asked of both books — a lead is not in `customers`. */
+async function shopName(id: string): Promise<string> {
+  const c = await getCustomer(id);
+  if (c) return c.name;
+  const l = await getLead(id);
+  return l ? l.company?.trim() || l.name : '';
 }
 
 /** A sample nobody chased is a sample that was given away. */
@@ -74,10 +82,41 @@ export default function SamplesScreen() {
      sample that was given away. */
   const [view, setView] = React.useState<'open' | 'all'>('open');
 
+  /*
+   * WHICH SHOP THE TRIAL IS FOR, said out loud and never inherited silently.
+   *
+   * The subject used to be `params.lead ?? custId`, and `custId` is a sticky
+   * global that five other screens set and nobody clears — so reached from the
+   * More menu, where there is no lead in the route, this requested a trial for
+   * whichever shop he last opened, possibly hours earlier, with nothing at any
+   * point on the sheet naming it. The seed is now only trusted where the caller
+   * opened this sheet in the SAME GESTURE: the customers list's own "Request
+   * sample" row sets `custId` and passes `ask=1` immediately before navigating,
+   * and that is a shop he has just tapped. Everywhere else he picks one, and
+   * either way the name is on the sheet before anything is written.
+   */
+  const [seedId] = React.useState<string | null>(
+    () => params.lead ?? (params.ask === '1' ? custId : null) ?? null,
+  );
+  const [picked, setPicked] = React.useState<{ id: string; name: string } | null>(
+    seedId ? { id: seedId, name: '' } : null,
+  );
+
   React.useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(t);
   }, []);
+
+  React.useEffect(() => {
+    let live = true;
+    if (!seedId) return;
+    void shopName(seedId).then((name) => {
+      if (live && name) setPicked((p) => (p && p.id === seedId ? { id: seedId, name } : p));
+    });
+    return () => {
+      live = false;
+    };
+  }, [seedId]);
 
   const load = React.useCallback(() => {
     let live = true;
@@ -93,13 +132,8 @@ export default function SamplesScreen() {
            `customers` yet, so both books are asked. */
         const map: Record<string, string> = {};
         for (const id of Array.from(new Set(r.map((x) => x.customerId)))) {
-          const c = await getCustomer(id);
-          if (c) {
-            map[id] = c.name;
-            continue;
-          }
-          const l = await getLead(id);
-          if (l) map[id] = l.company?.trim() || l.name;
+          const name = await shopName(id);
+          if (name) map[id] = name;
         }
         if (live) setNames(map);
       })
@@ -113,7 +147,6 @@ export default function SamplesScreen() {
 
   useFocusEffect(load);
 
-  const subject = params.lead ?? custId ?? '';
   const open = rows.filter((x) => whatIsOwed(x) !== null);
   const shown = view === 'open' ? open : rows;
 
@@ -138,14 +171,7 @@ export default function SamplesScreen() {
     <AppFrame title="Samples" activeTab={null} onBack={goBack} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={goBack} />
 
-      <DashedButton
-        label="+ Request a sample"
-        tone="primary"
-        onPress={() => {
-          if (!subject) return notify('Open a shop or a lead first — a sample is requested for one of them.');
-          setAskOpen(true);
-        }}
-      />
+      <DashedButton label="+ Request a sample" tone="primary" onPress={() => setAskOpen(true)} />
 
       {rows.length > 0 ? (
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
@@ -243,10 +269,16 @@ export default function SamplesScreen() {
         key={askOpen ? 'ask-open' : 'ask-shut'}
         open={askOpen}
         reasons={reasons}
+        shop={picked}
+        /* A lead's trial is asked for FROM the lead, so the shop is settled
+           before the sheet opens and there is nothing to choose. */
+        locked={Boolean(params.lead)}
+        onPickShop={setPicked}
         onClose={() => setAskOpen(false)}
         onSubmit={async (form) => {
+          if (!picked) return notify('Which shop is the trial for?');
           const r = await requestLeadSample({
-            customerId: subject,
+            customerId: picked.id,
             leadId: params.lead ?? null,
             productId: form.productId,
             productName: form.productName,
@@ -281,11 +313,19 @@ export default function SamplesScreen() {
 function RequestSheet({
   open,
   reasons,
+  shop,
+  locked,
+  onPickShop,
   onClose,
   onSubmit,
 }: {
   open: boolean;
   reasons: CodedOption[];
+  /** Whose trial this is. Null means nobody has said, and nothing may be sent. */
+  shop: { id: string; name: string } | null;
+  /** True where the route already settled it — a trial asked for from a lead. */
+  locked: boolean;
+  onPickShop: (shop: { id: string; name: string } | null) => void;
   onClose: () => void;
   onSubmit: (form: {
     productId: string | null;
@@ -295,6 +335,9 @@ function RequestSheet({
     reasonCode: string;
   }) => Promise<void> | void;
 }) {
+  const [shopQuery, setShopQuery] = React.useState('');
+  const [book, setBook] = React.useState<Customer[]>([]);
+  const [bookTotal, setBookTotal] = React.useState(0);
   const [query, setQuery] = React.useState('');
   const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null }[]>([]);
   const [product, setProduct] = React.useState<{ id: string; name: string } | null>(null);
@@ -318,11 +361,28 @@ function RequestSheet({
     };
   }, [query]);
 
+  /* The book, a page at a time and searchable — which is the only way a shop
+     past the first fifty is reachable at all. Not read where the route already
+     settled the shop. */
+  React.useEffect(() => {
+    let live = true;
+    if (locked) return;
+    void listCustomersPage({ query: shopQuery.trim() || undefined, limit: 50 }).then((page) => {
+      if (!live) return;
+      setBook(page.rows);
+      setBookTotal(page.total);
+    });
+    return () => {
+      live = false;
+    };
+  }, [locked, shopQuery]);
+
   const submit = async () => {
     /* The sheet closes only once the write returns, so a second tap on a slow
        phone raised a second sample request — and a second approval behind it —
        for one trial. Only one of the two would ever be chased. */
     if (saving) return;
+    if (!shop) return setErr('Which shop is the trial for?');
     if (!product) return setErr('Which product is the trial of?');
     if (!(Number(cans) > 0)) return setErr('How many cans?');
     if (!application.trim()) return setErr('What will they use it on? Without that nobody can judge the trial.');
@@ -346,9 +406,58 @@ function RequestSheet({
       <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
         Request a sample
       </T>
+      {/* WHOSE TRIAL IT IS, on the sheet, before anything is typed. The sheet
+          named the product, the cans, the application and the reason and never
+          once named the shop — so there was nothing on any screen that could
+          have told him the trial was going out to the wrong one. */}
+      <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 4 }, weight(500)]}>
+        {shop ? 'For ' + (shop.name || 'this shop') : 'Pick the shop below'}
+      </T>
       <T s="caption" style={{ marginTop: 2 }}>
         The office approves it, then it is dispatched. You will be asked what they thought.
       </T>
+
+      {locked ? null : (
+        <View style={{ marginTop: 14 }}>
+          <SectionLabel style={{ marginBottom: 6 }}>Which shop</SectionLabel>
+          {shop ? (
+            <Choice
+              label={shop.name || 'This shop'}
+              selected
+              onPress={() => { onPickShop(null); setShopQuery(''); setErr(null); }}
+              style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
+            />
+          ) : (
+            <>
+              <Input
+                value={shopQuery}
+                onChangeText={(v) => { setShopQuery(v); setErr(null); }}
+                placeholder="Search your book by name, area or phone"
+              />
+              <View style={{ gap: 8, marginTop: 8 }}>
+                {book.map((c) => (
+                  <Choice
+                    key={c.id}
+                    label={c.name}
+                    sub={[c.area, c.city].filter(Boolean).join(' · ') || undefined}
+                    selected={false}
+                    onPress={() => { onPickShop({ id: c.id, name: c.name }); setErr(null); }}
+                    style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
+                  />
+                ))}
+                {shopQuery.trim() && book.length === 0 ? (
+                  <T s="caption">No shop in your book matches that.</T>
+                ) : null}
+                {bookTotal > book.length ? (
+                  <T s="caption">
+                    {'Showing ' + book.length + ' of ' + bookTotal + ' — search for the rest.'}
+                  </T>
+                ) : null}
+              </View>
+            </>
+          )}
+        </View>
+      )}
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Which product</SectionLabel>

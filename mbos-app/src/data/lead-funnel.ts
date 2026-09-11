@@ -8,7 +8,6 @@ import {
   gateForNext,
   gateTo,
   mustDecideSuspect,
-  nextStage,
   type CodedOption,
   type GateVerdict,
   type LeadGateInput,
@@ -158,9 +157,19 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
     stage: stageOf(lead),
 
     customerType: lead.customerType,
-    monthlyLitres: lead.monthlyLitres,
+    /* TWO COLUMNS, ONE FACT — see `monthlyLitres` on the `Lead` type for why
+       both pairs exist. The capture form writes what he was told standing in
+       the shop into `monthlyVolumeLitres`/`competitorName`; the office writes
+       the same two facts into `monthlyLitres`/`competitor`, and the gate only
+       ever read the office's pair. So a salesman who had just answered "how
+       much a month" and "who they buy from now" on the New lead form was asked
+       for both again ten minutes later, out of the shop, with the boxes empty
+       and the outstanding list naming them as still to answer.
+       The funnel's own column wins where it has been filled in, because
+       Prospect details is where somebody corrects the first reading. */
+    monthlyLitres: lead.monthlyLitres ?? lead.monthlyVolumeLitres,
     potentialPaise: lead.estimatedPotentialPaise,
-    competitor: lead.competitor,
+    competitor: lead.competitor ?? lead.competitorName,
     requiredProductId: lead.requiredProductId,
     contactPerson: lead.contactPerson,
     decisionMaker: lead.decisionMaker,
@@ -247,17 +256,56 @@ export async function leadFunnelView(id: string): Promise<LeadFunnelView | null>
   ]);
   const salesType = salesTypeOf(lead);
   const stage = stageOf(lead);
+  const gate = gateForNext(input);
   return {
     lead,
     input,
     salesType,
     stage,
-    next: nextStage(stage, salesType),
-    gate: gateForNext(input),
+    /*
+     * THE NEXT RUNG COMES OFF THE GATE, and it used to come off `nextStage`.
+     *
+     * `gateForNext` deliberately refuses to answer for a stage that is on no
+     * ladder — terminal, or PARKED — and says so with `noNextRung`. Asking
+     * `nextStage` the same question separately got the other answer: it
+     * replies with the FOOT of the ladder for a rung it cannot find, which is
+     * right for a lead whose sales type somebody has just changed and wrong
+     * for one on hold. So an On-hold lead half way up its ladder drew "Move up
+     * to Suspect", disabled, over a list of what was still to do with nothing
+     * in it — the gate had already said there was nothing to say.
+     *
+     * One reading now, and it is the gate's. `gate.to` is the destination
+     * where there is one and the lead's own stage where there is not, which is
+     * exactly what the flag is for.
+     */
+    next: gate.noNextRung ? null : gate.to,
+    gate,
     mustDecide: mustDecideSuspect(input, config.suspectMaxVisits),
     visits,
     config,
   };
+}
+
+/**
+ * The shop front, and whether the picture is still on this phone.
+ *
+ * He stood in the street to take it and no screen here ever showed it back to
+ * him. What CAN be shown depends on where the file is: `runMediaQueue` deletes
+ * the local copy once the bytes are safely with the office, so a `synced` row
+ * names a path that no longer exists — and an `<Image>` pointed at one is a
+ * grey rectangle with nothing to say for itself, which is worse than a
+ * sentence. Null means no photograph was taken at all; `{ uri: null }` means
+ * one was and it is not here any more, and those are different facts.
+ */
+export async function shopPhoto(leadId: string): Promise<{ uri: string | null } | null> {
+  const row = await one<{ localUri: string; state: string }>(
+    `SELECT localUri, state FROM media_queue
+      WHERE parentId = ? AND kind = 'shop_photo'
+      ORDER BY createdAt DESC LIMIT 1`,
+    [leadId],
+  );
+  if (!row) return null;
+  return { uri: row.state === 'synced' ? null : row.localUri };
 }
 
 /* -------------------------------------------------------------- the trail */

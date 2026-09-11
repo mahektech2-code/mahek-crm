@@ -13,6 +13,7 @@ import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
 import { registerForPush } from '../native/push';
 import { fetchUpdateInBackground } from '../native/updates';
+import { restoreOffPlanReason } from './store';
 
 /**
  * Starting up.
@@ -55,6 +56,12 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
         startBackgroundSync();
         void registerBackgroundSync();
         void runDayBoundaryWork(existing.user.id).then(() => resumeTrailIfDayOpen(existing.user.id));
+        /* Half-finished work put back on the screen that took it. An off-plan
+           reason is typed on the route screen and spent by a visit two screens
+           later, and this app is reaped between the two routinely — restoring
+           it here is what stops the sentence being lost in silence. It expires
+           itself at the day boundary; see `restoreOffPlanReason`. */
+        void restoreOffPlanReason();
         void registerForPush();
         /* Behind the app, never in front of it: `setReady(true)` has already
            run, so the salesman is looking at his day while this downloads. It

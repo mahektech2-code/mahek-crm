@@ -64,6 +64,16 @@ export async function raiseApproval(args: {
 
 export type Expense = {
   id: string; spentOn: string; category: string; amountPaise: number;
+  /**
+   * The PRECISE kind the policy prices on, as opposed to the legacy four-value
+   * `category` beside it. The column has been written by `claimExpense` since
+   * the policy module landed and this type never named it, so the one screen
+   * that reopens a claim had to fall back to the category — and `travel` is
+   * the category `local_transport` is stored under, so correcting a rejected
+   * auto fare silently resent it as something else. Null on rows written
+   * before the column existed.
+   */
+  kind: string | null;
   billPhotoId: string | null; remarks: string | null; state: string;
   approvedAmountPaise: number | null; rejectionReason: string | null; syncState: string;
 };

@@ -178,8 +178,16 @@ export default function SampleRecord() {
           {s.dispatchedAt ? <Line label="Sent" value={pretty(isoDate(new Date(s.dispatchedAt)))} /> : null}
           {s.courierDocket ? <Line label="Docket" value={[s.courierName, s.courierDocket].filter(Boolean).join(' · ')} /> : null}
           {s.expectedDeliveryDate ? <Line label="Due there" value={pretty(s.expectedDeliveryDate)} /> : null}
-          {s.receivedConfirmedAt ? (
-            <Line label="They have it" value={pretty(isoDate(new Date(s.receivedConfirmedAt)))} />
+          {/* THE SHOP'S WORD, not the carrier's, and the two are not the same
+              record. `receivedConfirmedAt` is what a confirmation made on this
+              handset writes and `receivedAt` is the name the office writes the
+              same fact under — reading only the first meant a sample the shop
+              had confirmed to the office showed nothing here at all. */}
+          {s.receivedConfirmedAt || s.receivedAt ? (
+            <Line
+              label="They confirmed it"
+              value={pretty(isoDate(new Date((s.receivedConfirmedAt ?? s.receivedAt) as number)))}
+            />
           ) : null}
           {/* BOTH trial dates, because the gap between them is the point. A can
               opened three weeks ago and never finished reads here as exactly
@@ -192,6 +200,24 @@ export default function SampleRecord() {
           ) : null}
           {s.reviewedAt ? <Line label="Reviewed" value={pretty(isoDate(new Date(s.reviewedAt)))} /> : null}
           {s.cancelReason ? <Line label="Cancelled" value={s.cancelReason} /> : null}
+          {/* WHY IT WAS REFUSED. §K demands the reason so that the next sample
+              does not go out identical, and the salesman is the person who
+              would change it — and was the one person never shown it. Until
+              this line existed a refused sample was a red badge, no sentence
+              under it (`whatIsOwed` is null for a finished one) and the whole
+              action block hidden: a card with one word on it. */}
+          {s.rejectionReason ? (
+            <Line label="Refused because" value={s.rejectionReason} />
+          ) : s.state === 'Rejected' ? (
+            /* A missing reason is said rather than drawn as an empty card. The
+               rule demands one, so its absence is itself worth knowing. */
+            <Line
+              label="Refused because"
+              value="The office has not said why. Worth asking before the next one goes out."
+            />
+          ) : null}
+          {s.satisfaction ? <Line label="They said" value={s.satisfaction} /> : null}
+          {s.additionalRequirement ? <Line label="Also asked for" value={s.additionalRequirement} /> : null}
         </View>
       </Card>
 
@@ -232,7 +258,10 @@ export default function SampleRecord() {
                     const r = await confirmReceived(s.id, shot.ok ? shot.mediaId : null);
                     if (!r.ok) return notify(r.message);
                     load();
-                    notify(shot.ok ? 'Delivered, with a photo' : 'Delivered — no photo taken');
+                    /* "Delivered" was the carrier's word for a mark that is the
+                       SHOP's. One tap cannot assert both, and the record now
+                       only claims the one it is actually evidence of. */
+                    notify(shot.ok ? 'They confirmed it, with a photo' : 'They confirmed it — no photo taken');
                   } finally {
                     setBusy(false);
                   }
@@ -247,7 +276,7 @@ export default function SampleRecord() {
                     const r = await confirmReceived(s.id, null);
                     if (!r.ok) return notify(r.message);
                     load();
-                    notify('Delivered');
+                    notify('They confirmed it');
                   } finally {
                     setBusy(false);
                   }

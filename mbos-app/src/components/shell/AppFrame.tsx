@@ -50,6 +50,7 @@ export const FROM_LABEL: Record<string, string> = {
   'lead-qualify': 'Qualification',
   maps: 'Offline maps',
   pick: 'Pick your shops',
+  nearby: 'Near me',
 };
 
 /** Reads the recorded entry route, so the label and the destination agree. */
@@ -190,8 +191,15 @@ export function AppFrame({
        * light stops meaning anything: the one state worth noticing looked
        * exactly like the ordinary one. And "0 to send" is a count of nothing,
        * where the fact somebody wants is that the handset is clear.
+       *
+       * "Waiting" rather than "to send" because `pendingCount` now counts a
+       * refused record too, and a refusal is not going to be sent — it is
+       * waiting for him. It is also the word the Sync card's own headline uses
+       * for the same number, and the two disagreeing about one queue on one
+       * screen is what this was: three refusals read "3 things waiting" on the
+       * card under a green "All sent" thirty points above it.
        */
-      label: waiting === 0 ? 'All sent' : `${waiting} to send`,
+      label: waiting === 0 ? 'All sent' : `${waiting} waiting`,
       tone: waiting === 0 ? 'ok' : 'warn',
       onPress: () => router.push(`/sync${fromHere}`),
     },

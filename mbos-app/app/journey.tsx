@@ -78,6 +78,7 @@ export default function JourneyScreen() {
      Read here so the screen that TOOK it can show it is still pending and let
      it go — see the strip below. */
   const offPlanReason = useStore((s) => s.offPlanReason);
+  const offPlanReasonAt = useStore((s) => s.offPlanReasonAt);
   const boot = useBoot();
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [tourOpen, setTourOpen] = React.useState(false);
@@ -105,6 +106,18 @@ export default function JourneyScreen() {
    * place.
    */
   const [leg, setLeg] = React.useState<TravelLeg | null>(null);
+  /*
+   * The shop that leg is heading for, as a RECORD rather than as a label.
+   *
+   * Navigate used to pass `next.gpsLat`/`next.gpsLng` — the coordinates of the
+   * planned stop — under `leg.toLabel`, the name of the shop he actually set
+   * off for. `openMaps` prefers coordinates over a name, so the label was
+   * ignored and Maps started turn-by-turn to the shop the plan had queued. The
+   * leg's own `toLat`/`toLng` cannot answer it either: those are the ARRIVAL
+   * fix, written when he gets there, and they are null for the whole of the
+   * journey this button exists for. The shop's own pin is the answer.
+   */
+  const [legShop, setLegShop] = React.useState<Customer | null>(null);
   const [days, setDays] = React.useState<PlanDay[]>([]);
   const [tours, setTours] = React.useState<Tour[]>([]);
   const [pastCounts, setPastCounts] = React.useState<Record<string, { total: number; done: number }>>({});
@@ -121,6 +134,17 @@ export default function JourneyScreen() {
   /* A fortnight back, matching the server's own PLAN_HISTORY_DAYS — the two
      have to agree, or this screen would ask for history the pull never sent. */
   const historyFrom = isoDate(new Date(now - 15 * 86_400_000));
+  /*
+   * Local midnight, derived from the DATE STRING rather than from `now`.
+   *
+   * `now` ticks every minute, so a boundary computed off it directly would be a
+   * fresh number sixty times an hour and would re-run the read below with it.
+   * `today` is stable across those ticks, and `<date>T00:00:00` with no zone on
+   * it is local time — the same midnight `runDayBoundaryWork` and
+   * `minutesSinceMidnight` use, and deliberately not `Date.parse` of a bare
+   * date, which the spec reads as UTC.
+   */
+  const dayStart = React.useMemo(() => new Date(today + 'T00:00:00').getTime(), [today]);
 
   const load = React.useCallback(() => {
     let live = true;
@@ -129,7 +153,17 @@ export default function JourneyScreen() {
     });
     const uid = boot.session?.user.id;
     if (uid) {
-      void openLegOf(uid).then((r) => {
+      /*
+       * TODAY'S journey, and the bound is the fix.
+       *
+       * Nothing closes a leg but arriving or calling it off, so one he set off
+       * on yesterday and never arrived at stayed open for ever — and this
+       * screen read it as this morning's, greeting him with "On your way to
+       * <yesterday's shop> · 19h 47m" and replacing today's first "Start visit"
+       * with a "Continue" into the wrong shop. `closeStaleLegs` tidies those at
+       * launch; the bound is what makes the card honest in between.
+       */
+      void openLegOf(uid, dayStart).then((r) => {
         if (live) setLeg(r);
       });
     }
@@ -149,9 +183,34 @@ export default function JourneyScreen() {
     return () => {
       live = false;
     };
-  }, [historyFrom, boot.session?.user.id]);
+  }, [historyFrom, dayStart, boot.session?.user.id]);
 
   useFocusEffect(load);
+
+  /*
+   * The shop behind the open leg, read once per leg rather than on every focus.
+   *
+   * Keyed on the customer id alone: the leg row itself is re-read constantly
+   * (the clock ticks, the screen refocuses) and the shop behind it changes only
+   * when he sets off for a different one. Clearing it where there is no leg is
+   * the same shape `useCustomer` uses — an id that has gone must not leave the
+   * previous shop's pin sitting under the next leg's name, which is the exact
+   * failure this state exists to correct.
+   */
+  const legCustomerId = leg?.customerId ?? null;
+  React.useEffect(() => {
+    let live = true;
+    if (!legCustomerId) {
+      setLegShop(null);
+      return;
+    }
+    void getCustomer(legCustomerId).then((c) => {
+      if (live) setLegShop(c);
+    });
+    return () => {
+      live = false;
+    };
+  }, [legCustomerId]);
 
   /*
    * The days the office has asked about.
@@ -675,6 +734,130 @@ export default function JourneyScreen() {
       ) : null}
 
       {/*
+        ON THE ROAD — ITS OWN CARD, AND THAT IS THE FIX.
+
+        This block used to live INSIDE the Next stop card, in one arm of a
+        ternary that only draws when there is a planned stop left. A leg is
+        routinely open when there is not: going off the plan is exactly what
+        this screen's own dashed button pushes him into, and visiting the last
+        planned stop leaves `next` undefined too. In both cases the whole card
+        was skipped and the screen underneath said "No route for today" while he
+        was mid-journey with the meter already photographed — no "Call it off",
+        no "Continue", and if Android had reaped the app the store's `custId`
+        was gone with it, so `/visit` could not be reached from anywhere. The
+        only way out was to start a SECOND journey to the same shop from the
+        Customers list, which re-opens the odometer camera and throws the
+        reading away.
+
+        It is keyed on the leg alone now, and the Next stop card below is
+        suppressed while it is drawn: two cards each offering to start a visit
+        is how a second leg gets opened by accident, and opening one closes the
+        first.
+      */}
+      {leg ? (
+        <View
+          style={{
+            backgroundColor: C.surface,
+            borderWidth: 1,
+            borderColor: C.primaryEdge,
+            borderRadius: radius.card,
+            boxShadow: shadow.nextStop,
+            padding: 16,
+            marginTop: 16,
+          }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Icon name="nav" size={18} color={C.primaryDeep} strokeWidth={1.8} />
+            <T
+              style={[
+                { fontSize: 12, lineHeight: 16, letterSpacing: 0.48, textTransform: 'uppercase', color: C.primaryDeep },
+                weight(600),
+              ]}>
+              On your way
+            </T>
+          </View>
+          <T style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.3, color: C.ink, marginTop: 10 }, weight(600)]}>
+            {leg.toLabel ?? legShop?.name ?? 'The shop'}
+          </T>
+          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+            {legLine({
+              modeLabel: leg.modeKey,
+              odometerStartKm: null,
+              odometerEndKm: null,
+              ticketAmountPaise: null,
+            }) +
+              ' · ' +
+              /* `now`, not `Date.now()`. The clock is state on this screen and
+                 reading it again inside the render is what the React Compiler
+                 rules here forbid — it also meant this duration was measured
+                 against a different instant from the "waiting N days" labels
+                 above it. A leg with no start reads as nothing elapsed, which
+                 is the honest answer: there is no departure to count from. */
+              travellingFor(leg.startedAt ?? now, now) +
+              (leg.odometerStartKm != null
+                ? ' · set off on ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'
+                : '')}
+          </T>
+          {/*
+            NAVIGATION SURVIVES THE DEPARTURE, and it goes where HE is going.
+            It was in the other arm of the old ternary — the one drawn BEFORE he
+            sets off — so pressing "Start visit" took navigation away at the one
+            moment it is for. Worse, when it was first moved in here it kept
+            reading the planned stop's coordinates under the leg's shop name,
+            and `openMaps` prefers a coordinate to a name: he pressed the one
+            button that says it will take him there and rode to the shop the
+            plan had queued. The shop's own pin answers it; with no pin at all
+            the name and the town are passed instead, which is a worse answer
+            and an honest one.
+          */}
+          <NavigateButton
+            variant="button"
+            lat={legShop?.gpsLat}
+            lng={legShop?.gpsLng}
+            name={leg.toLabel ?? legShop?.name}
+            city={legShop?.area ?? legShop?.city}
+            style={{ marginTop: 14 }}
+          />
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+            <SecondaryButton
+              label="Call it off"
+              onPress={() =>
+                askConfirm({
+                  title: 'Not going after all?',
+                  body:
+                    'The trip stays on your record with the reason you give, measuring nothing — the meter has already moved, and a journey that vanished would leave the next one following on from a gap.',
+                  reasonLabel: 'Why · required',
+                  confirmLabel: 'Call off the trip',
+                  run: (reason) => {
+                    void abandonLeg(leg.id, reason).then(() => {
+                      setLeg(null);
+                      notify('Trip called off');
+                    });
+                  },
+                })
+              }
+              style={{ flex: 1, borderRadius: radius.xl }}
+            />
+            <PrimaryButton
+              label="Continue"
+              /* A leg with no shop against it cannot open a visit screen, and
+                 the button says so rather than acknowledging the tap and doing
+                 nothing. Every leg this screen can draw is one `departForVisit`
+                 wrote, which always names a shop — this is the guard, not the
+                 expected case. */
+              disabled={!legCustomerId}
+              whyDisabled="This journey has no shop recorded against it. Call it off and set off again from the shop."
+              onPress={() => {
+                if (!legCustomerId) return;
+                beginVisit(legCustomerId);
+                router.push('/visit');
+              }}
+              style={{ flex: 1, borderRadius: radius.xl }}
+            />
+          </View>
+        </View>
+      ) : null}
+
+      {/*
         PICKED, AND NOT YET ROUTED — a headline with no way back into it.
 
         `pickShops` moves the day to `planned` on this handset the moment he
@@ -703,8 +886,12 @@ export default function JourneyScreen() {
         moment this screen has something unambiguous to say — and closing the
         day was reachable only from More → Your day, which is two taps and a
         guess away from the tab he is looking at.
+
+        Not while a leg is open: "every stop is visited, close the day off" is
+        the wrong sentence to put in front of somebody who is on a bike on his
+        way to an off-plan shop.
       */}
-      {!next && stops.length ? (
+      {!leg && !next && stops.length ? (
         <Card style={{ marginTop: 16 }}>
           <T style={[type.body, weight(600), { color: C.ink }]}>Day done</T>
           <T s="small" style={{ color: C.muted, marginTop: 2 }}>
@@ -718,7 +905,13 @@ export default function JourneyScreen() {
         </Card>
       ) : null}
 
-      {next ? (
+      {/*
+        NOT WHILE HE IS TRAVELLING. The On-your-way card above is the same
+        journey at a later moment, and two cards on one screen each offering to
+        start a visit is how a second leg gets opened by accident — opening one
+        closes the first, and the meter photograph taken for it is thrown away.
+      */}
+      {next && !leg ? (
         <View
           style={{
             backgroundColor: C.surface,
@@ -760,102 +953,6 @@ export default function JourneyScreen() {
                 ? 'They owe ' + inr(next.outstandingPaise / 100) + ' — collection is the reason this stop is on the list.'
                 : 'Nothing outstanding against them.')}
           </T>
-          {/*
-            ON THE ROAD, this card stops offering to start a journey and
-            reports the one he is on.
-
-            Two buttons both reading "Start visit" — one for the shop he is
-            riding towards and one for the next stop — is how a second leg gets
-            opened by accident, and opening one closes the first. So while a
-            leg is running the card says where he is going, how long he has
-            been going there, and gives him the two things he can actually do.
-          */}
-          {leg ? (
-            <View style={{ marginTop: 14, gap: 10 }}>
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 10,
-                  backgroundColor: C.primaryTint,
-                  borderRadius: radius.md,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                }}>
-                <Icon name="nav" size={18} color={C.primaryDeep} strokeWidth={1.8} />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(600)]}>
-                    {'On your way to ' + (leg.toLabel ?? 'the shop')}
-                  </T>
-                  <T style={{ fontSize: 12, lineHeight: 16, color: C.primaryDeep }}>
-                    {legLine({
-                      modeLabel: leg.modeKey,
-                      odometerStartKm: null,
-                      odometerEndKm: null,
-                      ticketAmountPaise: null,
-                    }) +
-                      ' · ' +
-                      /* `now`, not `Date.now()`. The clock is state on this
-                         screen and reading it again inside the render is what
-                         the React Compiler rules here forbid — it also meant
-                         this duration was measured against a different instant
-                         from the "waiting N days" labels above it. A leg with
-                         no start reads as nothing elapsed, which is the honest
-                         answer: there is no departure to count from. */
-                      travellingFor(leg.startedAt ?? now, now) +
-                      (leg.odometerStartKm != null
-                        ? ' · set off on ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'
-                        : '')}
-                  </T>
-                </View>
-              </View>
-              {/*
-                NAVIGATION SURVIVES THE DEPARTURE, which it did not until now.
-                The Navigate button below is in the other arm of this ternary —
-                the one that draws BEFORE he sets off — so pressing "Start
-                visit" swapped this card in and took navigation away with it.
-                It was offered at every moment except the one where somebody is
-                actually on the road.
-              */}
-              <NavigateButton
-                variant="button"
-                lat={next.gpsLat}
-                lng={next.gpsLng}
-                name={leg.toLabel ?? next.customerName}
-                city={next.area}
-                style={{ marginTop: 12 }}
-              />
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                <SecondaryButton
-                  label="Call it off"
-                  onPress={() =>
-                    askConfirm({
-                      title: 'Not going after all?',
-                      body:
-                        'The trip stays on your record with the reason you give, measuring nothing — the meter has already moved, and a journey that vanished would leave the next one following on from a gap.',
-                      reasonLabel: 'Why · required',
-                      confirmLabel: 'Call off the trip',
-                      run: (reason) => {
-                        void abandonLeg(leg.id, reason).then(() => {
-                          setLeg(null);
-                          notify('Trip called off');
-                        });
-                      },
-                    })
-                  }
-                  style={{ flex: 1, borderRadius: radius.xl }}
-                />
-                <PrimaryButton
-                  label="Continue"
-                  onPress={() => {
-                    beginVisit(leg.customerId ?? next.customerId);
-                    router.push('/visit');
-                  }}
-                  style={{ flex: 1, borderRadius: radius.xl }}
-                />
-              </View>
-            </View>
-          ) : (
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
             <NavigateButton
               variant="button"
@@ -875,7 +972,6 @@ export default function JourneyScreen() {
               style={{ flex: 1, borderRadius: radius.xl }}
             />
           </View>
-          )}
         </View>
       ) : null}
 
@@ -1069,6 +1165,59 @@ export default function JourneyScreen() {
         onPress={deviate}
         style={{ marginTop: 16 }}
       />
+
+      {/*
+        A REASON TYPED AND NOT YET SPENT, SAID OUT LOUD.
+
+        `deviate` above takes the sentence and sends him to the Customers list
+        to choose the shop, and nothing anywhere showed that it was still
+        waiting — so backing out without visiting left it sitting in the store,
+        to attach itself to the next unplanned visit he logged, hours later and
+        about a different shop. The manager then read a deviation reason
+        belonging to somewhere else, on a record whose own words are "your
+        manager sees the reason".
+
+        Here, under the button that took it, with the time it was typed and a
+        way to let it go. It survives the app being killed now — see
+        `restoreOffPlanReason` — and expires at the day boundary, so the other
+        half of the leak, a Tuesday sentence arriving on Wednesday, is closed by
+        the store rather than by this screen remembering to check.
+      */}
+      {offPlanReason ? (
+        <View
+          style={{
+            marginTop: 12,
+            backgroundColor: C.warnBg,
+            borderRadius: radius.card,
+            padding: 14,
+          }}>
+          <T s="small" style={[{ color: C.warnInk }, weight(600)]}>
+            An off-plan reason is waiting for a shop
+          </T>
+          <T s="small" style={{ color: C.body, marginTop: 4 }}>
+            “{offPlanReason}”
+          </T>
+          <T s="caption" style={{ marginTop: 4 }}>
+            {(offPlanReasonAt ? 'Typed at ' + hhmm(offPlanReasonAt) + '. ' : '') +
+              'It goes onto the next visit you log at a shop that is not on today’s plan.'}
+          </T>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+            <SecondaryButton
+              label="Let it go"
+              onPress={() => {
+                set({ offPlanReason: null });
+                notify('Off-plan reason dropped.');
+              }}
+              style={{ flex: 1 }}
+            />
+            <PrimaryButton
+              label="Pick the shop"
+              onPress={() => router.push('/customers?from=journey')}
+              style={{ flex: 1 }}
+            />
+          </View>
+        </View>
+      ) : null}
 
       {/* The last fortnight, most recent first — what was asked, what was
           said, and for a day that was actually routed, how much of it got

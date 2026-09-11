@@ -1,10 +1,12 @@
 import React from 'react';
 import { create } from 'zustand';
 import { useFocusEffect } from 'expo-router';
+import { getKv, setKv } from '../db';
 import { getCustomer, type Customer } from '../data/customers';
 import { unreadCount } from '../data/notifications';
 import { daysAwaitingAnswer } from '../data/journey';
 import { pendingCount } from '../sync/queue';
+import { isoDate } from '../lib/format';
 import type { OutcomeKey } from '../data/fixtures';
 
 /**
@@ -113,8 +115,19 @@ type State = {
    * sent null for the first of them on every visit ever logged; the button
    * that was supposed to fill it raised a toast and wrote nothing, on a screen
    * whose own words are "your manager sees the reason".
+   *
+   * It is written down as well as held — see `rememberOffPlan` below.
    */
   offPlanReason: string | null;
+  /**
+   * When that sentence was typed.
+   *
+   * Not decoration: it is what the route screen prints beside the pending
+   * reason so he can tell this morning's from one he typed an hour ago and
+   * abandoned, and it is what the expiry is measured on. Written by the `set`
+   * action rather than by the caller, so the two cannot disagree.
+   */
+  offPlanReasonAt: number | null;
   /** What this visit has already produced, so returning to it shows the work is done. */
   visitDone: Partial<Record<OutcomeKey, string>>;
   overrodeReason: string | null;
@@ -197,6 +210,81 @@ function draftMovedShop(nextCustId: string, cartFor: string): Partial<State> {
   return { cartFor: nextCustId, cart: {}, oQ: '', payMode: null, payAmt: '', payChq: '' };
 }
 
+/**
+ * THE OFF-PLAN REASON IS A RECORD, NOT SCREEN STATE, and it lived only here.
+ *
+ * It is typed on the route screen, the shop is chosen on the Customers list,
+ * and the visit two screens later is what spends it — and this store is memory.
+ * Android reaps this app between any two of those, so the reason was routinely
+ * gone by the time the visit saved, which then wrote `deviationReason: null`
+ * with nothing anywhere saying the sentence had been lost. It is the same
+ * argument `travel_legs` makes about a journey in progress, one screen over: a
+ * sentence somebody has typed is a record, and a record goes to SQLite.
+ *
+ * THE DAY IT WAS TYPED ON IS STORED WITH IT, and that is the expiry. A window
+ * of minutes or hours is the DANGEROUS direction — dropping a reason he is
+ * about to spend loses it exactly the way the app kill did, silently — while no
+ * expiry at all is the other half of the same finding, attaching a sentence
+ * about one shop to an unrelated visit next week. Within the day it is held and
+ * SHOWN: the route screen draws it as pending, says when it was typed, and
+ * offers to let it go.
+ */
+const OFF_PLAN_KEY = 'mbos.offPlanReason';
+
+type OffPlanPending = { reason: string; at: number; day: string };
+
+/**
+ * Write the pending reason down, or rub it out. Fire and forget on purpose:
+ * the reason is already in memory either way, so a failed write costs the app
+ * kill and never the visit in front of him.
+ */
+function rememberOffPlan(reason: string | null, at: number | null): void {
+  void (async () => {
+    try {
+      if (!reason || at == null) {
+        await setKv(OFF_PLAN_KEY, '');
+        return;
+      }
+      const pending: OffPlanPending = { reason, at, day: isoDate(new Date(at)) };
+      await setKv(OFF_PLAN_KEY, JSON.stringify(pending));
+    } catch {
+      /* Nothing to tell him: the sentence is on the screen he is looking at. */
+    }
+  })();
+}
+
+/**
+ * Put a reason typed before the app was killed back on the screen that took it.
+ *
+ * Run once at launch from `BootProvider`. A reason from an earlier day is
+ * rubbed out rather than restored — a deviation is recorded against the day it
+ * was made, and a Tuesday sentence arriving on Wednesday's first walk-in is the
+ * leak this exists to close.
+ */
+export async function restoreOffPlanReason(): Promise<void> {
+  try {
+    /* Whatever is in hand is newer than whatever is on disk, always: the only
+       way the store holds one already is that somebody typed it in this
+       session. It also makes a second call do nothing, which is what a
+       restore should do. */
+    if (useStore.getState().offPlanReason) return;
+    const raw = await getKv(OFF_PLAN_KEY);
+    if (!raw) return;
+    const pending = JSON.parse(raw) as OffPlanPending | null;
+    if (!pending?.reason || pending.day !== isoDate(new Date())) {
+      await setKv(OFF_PLAN_KEY, '');
+      return;
+    }
+    useStore.setState({ offPlanReason: pending.reason, offPlanReasonAt: pending.at });
+  } catch {
+    /* A value that will not parse is one nothing can spend. It is cleared
+       rather than left to be re-read and re-thrown on every launch — and the
+       clearing is itself allowed to fail, because this runs at startup and
+       housekeeping must never be what stops the app opening. */
+    void setKv(OFF_PLAN_KEY, '').catch(() => {});
+  }
+}
+
 export const useStore = create<State & Actions>((set, get) => ({
   signedIn: false,
   method: 'password',
@@ -228,6 +316,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   travelTo: null,
   visitSpent: null,
   offPlanReason: null,
+  offPlanReasonAt: null,
   visitDone: {},
   overrodeReason: null,
   form: null,
@@ -251,8 +340,20 @@ export const useStore = create<State & Actions>((set, get) => ({
      the record, the map, a task, the rejections screen — so this is the one
      place that can notice the shop changed. See `draftMovedShop`. */
   set: (patch) => {
-    const p = patch as Partial<State>;
-    set(p.custId !== undefined ? { ...p, ...draftMovedShop(p.custId, get().cartFor) } : p);
+    const given = patch as Partial<State>;
+    /* The off-plan reason is mirrored to the kv HERE rather than at the two
+       call sites, and that placement is the whole of it: the screen that SPENDS
+       the reason clears it with this same `set`, so a clear intercepted
+       anywhere else would leave a spent sentence on disk to be restored onto
+       the next walk-in after a kill. One door in, one door out. */
+    let p = given;
+    if (given.offPlanReason !== undefined) {
+      const at = given.offPlanReason ? Date.now() : null;
+      rememberOffPlan(given.offPlanReason, at);
+      p = { ...given, offPlanReasonAt: at };
+    }
+    const custId = p.custId;
+    set(custId !== undefined ? { ...p, ...draftMovedShop(custId, get().cartFor) } : p);
   },
 
   notify: (msg) => set({ toast: msg }),

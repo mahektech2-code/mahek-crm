@@ -22,6 +22,7 @@ import {
   type CustomerPayment,
   type TimelineEvent,
 } from '../src/data/customers';
+import { TIMELINE_PAGE } from '../src/data/customer-query';
 import { getConfig } from '../src/data/config';
 import { inr, isoDate, pretty, shopName } from '../src/lib/format';
 import { callNumber, openWhatsApp } from '../src/lib/messaging';
@@ -567,13 +568,21 @@ export default function CustomerRecord() {
                 and reported as exactly that. The two causes are worth telling
                 apart in the words, because only one of them is the salesman's
                 to act on: a filter that excludes everything is undone by
-                pressing All, and an empty stream is the office's to fill. */}
+                pressing All, and an empty stream is the office's to fill.
+
+                AND THE FILTERED SENTENCE NO LONGER ASSERTS THE HALF IT CANNOT
+                SEE. It read "this shop has history, but none of it is
+                payments" — two claims, and the screen has evidence for neither
+                when the filtered read comes back empty: it has not asked what
+                else is here. What it can stand behind is what is on this phone
+                under this chip, which is now a real question asked of SQL
+                rather than a hundred-row window narrowed afterwards. */}
             {events.length === 0
               ? nothingYet(
                   tlFilter === 'All' ? 'Nothing recorded yet' : 'Nothing under ' + tlFilter,
                   tlFilter === 'All'
                     ? 'Visits, calls, orders and payments appear here as the office records them. A shop nobody has dealt with yet has nothing to show.'
-                    : 'This shop has history, but none of it is ' + tlFilter.toLowerCase() + '. Tap All to see the rest.',
+                    : 'No ' + tlFilter.toLowerCase() + ' are recorded against this shop on this phone. Tap All to see the rest.',
                 )
               : null}
 
@@ -617,6 +626,19 @@ export default function CustomerRecord() {
                 </View>
               );
             })}
+
+            {/* A CAPPED LIST ADMITS IT, the same rule Orders and Payments
+                follow one tab along. A full page means the read hit its cap,
+                not that this is the whole story — and a salesman who reads a
+                hundred entries as everything tells a customer so. */}
+            {events.length >= TIMELINE_PAGE ? (
+              <Text style={[type.caption, { marginTop: 8 }]}>
+                {'The newest ' +
+                  TIMELINE_PAGE +
+                  (tlFilter === 'All' ? ' entries' : ' under ' + tlFilter) +
+                  '. There is older history than this.'}
+              </Text>
+            ) : null}
 
             <Text style={[type.caption, { marginTop: 8 }]}>
               This is a record of what happened, so nothing can be added here — every entry comes from the screen that

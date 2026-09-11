@@ -113,6 +113,15 @@ export default function OrdersScreen() {
                     { paddingHorizontal: 16, paddingVertical: 14 },
                     pressed && { backgroundColor: C.wash },
                   ]}>
+                  {/* THE NAME SHARES THIS LINE WITH THE VALUE AND NOTHING
+                      ELSE. The badge was here too, and neither it nor the
+                      value shrinks — so on a 360dp screen the "With the
+                      office" badge, which is the longest of the five, left the
+                      shop name about six characters. Those are precisely the
+                      rows he opened the screen to look at: "did the one I
+                      punched this morning go through?" reading "New Bh…". The
+                      badge sits on the line below now, where what it eats into
+                      is the date and the order number. */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                     <T
                       numberOfLines={1}
@@ -127,11 +136,10 @@ export default function OrdersScreen() {
                         ? 'Not valued'
                         : inr(o.netTotalPaise / 100)}
                     </T>
-                    <Badge tone={state.tone}>{state.label}</Badge>
                   </View>
 
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                    <T s="caption" style={{ flex: 1, minWidth: 0 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 }}>
+                    <T s="caption" numberOfLines={1} style={{ flex: 1, minWidth: 0 }}>
                       {[
                         dmy(isoDate(new Date(o.orderedAt))),
                         o.orderNumber,
@@ -141,6 +149,9 @@ export default function OrdersScreen() {
                         .filter(Boolean)
                         .join(' · ')}
                     </T>
+                    <Badge tone={state.tone} style={{ alignSelf: 'center' }}>
+                      {state.label}
+                    </Badge>
                     {/* `forward` turned, because there is no up/down glyph and
                         `ICONS[name] ?? ICONS.dots` would have drawn an ellipsis
                         without complaining about it. */}

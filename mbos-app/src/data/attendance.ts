@@ -60,6 +60,15 @@ export type AttendanceDay = {
   status: string | null;
   /** JSON `[{ inAt, outAt, inSelfieId, outSelfieId }]`, oldest first, at most one open. */
   sessions: string | null;
+  /**
+   * The approval raised against this day by `requestRegularisation`, or null.
+   *
+   * The column has been written since that function was built and named on no
+   * type, so no screen could read it — which is why the correction button
+   * could be pressed five times for one day with nothing anywhere saying a
+   * request was already with the manager.
+   */
+  regularizationId: string | null;
   syncState: string;
 };
 

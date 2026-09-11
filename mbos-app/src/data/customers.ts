@@ -4,6 +4,7 @@ import {
   cityOriginsQuery,
   customerCountQuery,
   customerPageQuery,
+  customerTimelineQuery,
   type BookView,
   type Origin,
 } from './customer-query';
@@ -339,22 +340,17 @@ export type TimelineEvent = {
  * A telecaller's call from yesterday sits in here beside this morning's visit,
  * which is the entire reason the two apps share a table rather than each
  * keeping their own history.
+ *
+ * THE FILTER IS THE DATABASE'S, and `customerTimelineQuery` carries the whole
+ * argument for why. It used to be a window of a hundred rows narrowed in the
+ * screen, which answered "nothing" for a kind that simply was not in the
+ * window — and the screen then said so as a fact. The cap is `TIMELINE_PAGE`
+ * of the kind asked for, newest first, so a full page means there is older
+ * history rather than none of this kind.
  */
 export async function customerTimeline(customerId: string, filter = 'All'): Promise<TimelineEvent[]> {
-  const rows = await all<TimelineEvent>(
-    'SELECT * FROM timeline_events WHERE customerId = ? ORDER BY occurredAt DESC LIMIT 100',
-    [customerId],
-  );
-  if (filter === 'All') return rows;
-  const wanted: Record<string, string[]> = {
-    Visits: ['visit'],
-    Orders: ['order'],
-    Payments: ['payment'],
-    Calls: ['call', 'telecaller_call'],
-    Complaints: ['complaint'],
-  };
-  const kinds = wanted[filter];
-  return kinds ? rows.filter((r) => kinds.includes(r.eventType)) : rows;
+  const q = customerTimelineQuery(customerId, filter);
+  return all<TimelineEvent>(q.sql, q.params);
 }
 
 export async function competitorRecords(customerId: string) {

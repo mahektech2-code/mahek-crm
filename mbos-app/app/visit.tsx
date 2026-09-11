@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, Pressable, TextInput } from 'react-native';
-import { router } from 'expo-router';
+import { router, useNavigation } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Card, Choice, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
@@ -196,6 +196,20 @@ export default function Visit() {
   const [linked, setLinked] = React.useState<{ complaintId?: string; sampleId?: string }>({});
   const [products, setProducts] = React.useState<Product[]>([]);
   const [stopId, setStopId] = React.useState<string | null>(null);
+  /*
+   * ONE VISIT PER PRESS.
+   *
+   * Four call sites reach `saveAndGo` — the save bar, the unverified path, the
+   * ticket sheet's Skip and its scrim, and `claimTicket`'s own `finally` — and
+   * the guard was a `useState` flag, which is read from the closure of the
+   * render that drew the control. While the ticket was being attached, a tap on
+   * Skip saved the visit and the `finally` then saved it AGAIN from an older
+   * closure where `saving` was still false: two rows, two queue items, two
+   * timeline events, and the office seeing one shop visited twice in a minute.
+   * The ref is set synchronously, so whichever call arrives first shuts the
+   * others out; the state beside it is only what the screen is drawn from.
+   */
+  const savingRef = React.useRef(false);
   const [saving, setSaving] = React.useState(false);
   const [lastTime, setLastTime] = React.useState<PreviousNote | null>(null);
 
@@ -217,6 +231,48 @@ export default function Visit() {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  /**
+   * LEAVING A VISIT IN PROGRESS IS ASKED ABOUT, because there is no way back
+   * into one.
+   *
+   * The screen draws the full tab bar and a back chevron, and a tab tap is a
+   * `replace` — so one mis-tap while standing in the shop took the note, both
+   * photographs, the outcome and the dwell clock with it. Nothing anywhere
+   * warned, and every route back in goes through `beginVisit`, which blanks all
+   * of that and opens a SECOND journey with a second odometer photograph. The
+   * journey screen's "Continue" only shows while the leg is still open, so once
+   * he has arrived there is no path back at all.
+   *
+   * It hangs off the navigator's own `beforeRemove` rather than off the back
+   * button, because the back button is the one departure that already looks
+   * deliberate — the tab bar is the one that does not, and it is the same event.
+   * `leavingRef` is what lets the departures this screen itself makes through:
+   * the action is re-dispatched unchanged, and it carries the set of routes it
+   * has already asked, so it cannot come back round a second time.
+   *
+   * Only once he has ARRIVED. On the way there the clock has not started and
+   * nothing has been typed, and the trip is called off with its own button.
+   */
+  const navigation = useNavigation();
+  const leavingRef = React.useRef(false);
+  React.useEffect(() => {
+    if (visitStart == null) return;
+    return navigation.addListener('beforeRemove', (e) => {
+      if (leavingRef.current) return;
+      e.preventDefault();
+      askConfirm({
+        title: 'Leave this visit?',
+        body:
+          'Your note, your photographs and the time since you arrived are all lost — none of it has been saved yet, and starting the visit again means a fresh journey and another meter reading.',
+        confirmLabel: 'Leave and lose it',
+        run: () => {
+          leavingRef.current = true;
+          navigation.dispatch(e.data.action);
+        },
+      });
+    });
+  }, [navigation, visitStart, askConfirm]);
 
   /* ---- the journey that got him here ----
      Read from SQLite, not the store: the app is routinely killed on the road
@@ -267,6 +323,7 @@ export default function Visit() {
   const [fare, setFare] = React.useState('');
   const [ticketRef, setTicketRef] = React.useState('');
   const [fareErr, setFareErr] = React.useState<string | null>(null);
+  const ticketBusyRef = React.useRef(false);
   const [ticketBusy, setTicketBusy] = React.useState(false);
   /* Carried across the ticket question so an unverified save that detours
      through it still saves as unverified. Losing it here would silently
@@ -698,9 +755,40 @@ export default function Visit() {
     outcome,
     followOnCaptured: !!(outcome && visitDone[outcome]),
   });
-  const verdict = visitVerdict(checks);
+  const verdict = visitVerdict(checks, { checkInOverridden: !!overrideReason });
   const followOn = outcome ? FOLLOW_ON[outcome] : undefined;
   const doneLine = outcome ? visitDone[outcome] : undefined;
+
+  /**
+   * §B's one refusal, asked BEFORE anything else happens rather than after.
+   *
+   * It is the only thing that stops a save on this screen, and it stops it to
+   * ask rather than to refuse — but the asking was invisible: `saveAndGo` set
+   * an error that renders inside the Suspect card, six hundred points above the
+   * button he had just pressed, with no toast and no change to the button. He
+   * pressed Save, nothing appeared to happen, and the ordinary conclusion is
+   * that the handset is broken. Worse down the ticket path, where the fare was
+   * attached and toasted "Ticket added" while the visit silently did not save.
+   *
+   * So it is a function both entry points ask, the sentence goes to the bottom
+   * of the screen as well as into the card, and the ticket sheet never opens on
+   * a save that cannot go through.
+   */
+  function missingDecision(): string | null {
+    if (capState === 'decide' && !decision) {
+      return 'Say which way this one goes before you close the visit.';
+    }
+    if (decision === 'still_suspect' && !decisionWhy.trim()) {
+      return 'Say why we are still going — somebody will ask.';
+    }
+    return null;
+  }
+
+  function refuseForDecision(why: string) {
+    setDecisionErr(why);
+    /* The card is above the fold; the button is not. Said in both places. */
+    notify(why);
+  }
 
   /**
    * The ticket, asked once, on the way out.
@@ -717,6 +805,10 @@ export default function Visit() {
    * somebody claims it twice.
    */
   function askTicketThenSave(unverifiedReason: string | null = null) {
+    /* Asked here as well as in the save, so the fare is never collected against
+       a visit that is about to be turned back. */
+    const missing = missingDecision();
+    if (missing) return refuseForDecision(missing);
     const wants = leg && legMode?.requiresTicket && leg.ticketAmountPaise == null;
     if (!wants) {
       void saveAndGo(elapsedLabel(dwellSeconds), unverifiedReason);
@@ -746,12 +838,16 @@ export default function Visit() {
   };
 
   const claimTicket = async () => {
-    if (!leg || ticketBusy) return;
+    /* The ref, for the same reason as `savingRef`: `PrimaryButton` keeps a
+       button with a `whyDisabled` pressable on purpose, so a second tap runs
+       this handler from the render where `ticketBusy` was still false. */
+    if (!leg || ticketBusyRef.current) return;
     const verdict = checkFare(fare);
     if (!verdict.ok) {
       setFareErr(verdict.why);
       return;
     }
+    ticketBusyRef.current = true;
     setTicketBusy(true);
     try {
       await attachTicketToLeg({
@@ -770,13 +866,14 @@ export default function Visit() {
       notify('The ticket could not be added just now — save the visit and add it from Travel.');
       setTicketOpen(false);
     } finally {
+      ticketBusyRef.current = false;
       setTicketBusy(false);
       void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
     }
   };
 
   async function saveAndGo(spent: string, unverifiedReason: string | null) {
-    if (!c || saving) return;
+    if (!c || savingRef.current) return;
 
     /*
      * The one thing that stops a save here, and it stops it to ASK rather than
@@ -785,24 +882,40 @@ export default function Visit() {
      * same form, not a rejection — and the server checks the same rule against
      * the same two configured numbers.
      */
-    if (capState === 'decide' && !decision) {
-      setDecisionErr('Say which way this one goes before you close the visit.');
-      return;
-    }
-    if (decision === 'still_suspect' && !decisionWhy.trim()) {
-      setDecisionErr('Say why we are still going — somebody will ask.');
-      return;
-    }
+    const missing = missingDecision();
+    if (missing) return refuseForDecision(missing);
 
+    savingRef.current = true;
     setSaving(true);
+    /* The coordinates only. WHEN comes off the dwell clock below — a visit made
+       where there is no signal is still a visit that happened at a time. */
     const checkOut: Fix | null = fix ? { ...fix, at: now } : null;
+    let visitId: string;
     try {
-      const visitId = await saveVisit({
+      visitId = await saveVisit({
         customerId: c.id,
         customerName: c.name,
         userId: boot.session?.user.id ?? '',
         checkIn: fix,
         checkOut,
+        /*
+         * THE CLOCK, NOT THE FIX.
+         *
+         * Both instants used to be read off `Fix.at`, so a visit made inside a
+         * godown — no fix, which is the case this whole app is designed around
+         * — was stored with no check-in instant, no duration and left open for
+         * ever: absent from the day's count, never closed by the day-boundary
+         * sweep, and printing 1 Jan 1970 on the next visit's "Last time" card.
+         * `visitStart` is the moment he said he had arrived, and it exists
+         * whether or not the radio answered.
+         *
+         * Where there was no arrival at all — a visit opened by a path that
+         * never asked, which is the only way `visitStart` is null here — the
+         * row is stamped at the save and left OPEN rather than claiming a
+         * duration of zero that nobody measured.
+         */
+        checkInAt: visitStart ?? now,
+        checkOutAt: visitStart == null ? null : now,
         outcome: outcome ?? 'visited',
         notes: note.trim() || null,
         transcript: null,
@@ -855,21 +968,47 @@ export default function Visit() {
         monthlyVolumeLitres: Number(reqLitres.replace(/[^\d]/g, '')) || null,
         quantityCans: Number(reqCans.replace(/[^\d]/g, '')) || null,
       });
-      /* Spent, whether or not it was used — a reason typed for one shop must
-         not attach itself to the next unrelated visit hours later. */
-      set({ visitSpent: spent, offPlanReason: null });
-      /* The journey is spent on this visit, locally, so the record reads
-         correctly on this handset without waiting for a pull — and so the
-         next visit to this shop does not pick the same leg up again.
-         Deliberately AFTER the save: a leg bound to a visit that failed to
-         write would be a journey pointing at nothing. */
-      if (leg) await bindLegToVisit(leg.id, visitId);
-
-      router.replace('/saved');
     } catch {
+      savingRef.current = false;
       setSaving(false);
       notify('The visit could not be saved on this phone. Nothing has been lost — try again.');
+      return;
     }
+
+    /*
+     * PAST HERE THE VISIT IS IN THE LEDGER, and nothing below may claim
+     * otherwise.
+     *
+     * `saveVisit` commits its own transaction and returns an id; everything
+     * that follows is tidying up around a record that already exists. All of it
+     * used to sit inside the try above, so a failure binding the leg raised
+     * "Nothing has been lost — try again" — a sentence that is false in exactly
+     * that case, and an instruction that writes the visit a second time.
+     */
+
+    /* Spent, whether or not it was used — a reason typed for one shop must
+       not attach itself to the next unrelated visit hours later. */
+    set({ visitSpent: spent, offPlanReason: null });
+    /* The journey is spent on this visit, locally, so the record reads
+       correctly on this handset without waiting for a pull — and so the
+       next visit to this shop does not pick the same leg up again.
+       Deliberately AFTER the save: a leg bound to a visit that failed to
+       write would be a journey pointing at nothing. */
+    if (leg) {
+      try {
+        await bindLegToVisit(leg.id, visitId);
+      } catch {
+        /* Said rather than swallowed, and NOT as a failure of the visit: the
+           journey is still on today's travel, it is simply not attached to the
+           visit it was made for. */
+        notify('The visit is saved. The journey could not be attached to it — check today’s travel.');
+      }
+    }
+
+    /* This screen asks before it lets a visit in progress be left. The visit is
+       saved, so the question no longer applies. */
+    leavingRef.current = true;
+    router.replace('/saved');
   }
 
   /*
@@ -1049,22 +1188,32 @@ export default function Visit() {
       contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}
       footer={
         <View style={{ backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.hairline, paddingHorizontal: 16, paddingVertical: 12, boxShadow: shadow.saveBar }}>
-          {!verdict.verified ? (
-            <Text style={{ fontSize: 13, lineHeight: 18, color: C.warnInk, marginBottom: 8 }}>{verdict.firstFailure}</Text>
+          {/* `warning` rather than `firstFailure`: a visit whose check-in was
+              overridden has nothing outstanding and is still not a clean one,
+              and that line used to be blank — the bar said nothing while the
+              panel above it said "Everything checks out". */}
+          {verdict.warning ? (
+            <Text style={{ fontSize: 13, lineHeight: 18, color: C.warnInk, marginBottom: 8 }}>{verdict.warning}</Text>
           ) : null}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={type.label}>In the shop</Text>
               <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{elapsedLabel(dwellSeconds)}</Text>
             </View>
+            {/* Live on `complete`, never on `verified`. An override is not a
+                missing requirement, and greying the button on one would demand
+                a second typed reason for a question already answered at the
+                door. */}
             <Pressable
-              onPress={() => (verdict.verified ? askTicketThenSave() : notify(verdict.firstFailure))}
-              accessibilityLabel={verdict.verified ? 'Save visit' : verdict.firstFailure}
+              onPress={() => (verdict.complete ? askTicketThenSave() : notify(verdict.firstFailure))}
+              accessibilityLabel={verdict.complete ? 'Save visit' : verdict.firstFailure}
               style={[
-                { height: 52, paddingHorizontal: 24, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.verified ? C.primary : C.hairline },
-                verdict.verified && { boxShadow: shadow.primary },
+                { height: 52, paddingHorizontal: 24, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.complete ? C.primary : C.hairline },
+                verdict.complete && { boxShadow: shadow.primary },
               ]}>
-              <Text style={[{ fontSize: 16, color: verdict.verified ? '#FFFFFF' : C.faint }, weight(600)]}>Save visit</Text>
+              <Text style={[{ fontSize: 16, color: verdict.complete ? '#FFFFFF' : C.faint }, weight(600)]}>
+                {saving ? 'Saving…' : 'Save visit'}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -1702,6 +1851,10 @@ export default function Visit() {
           outside, and find nothing had happened.
         */
         onClose={() => {
+          /* Not while the fare is being written. The scrim and Skip stayed live
+             through `attachTicketToLeg`, so a tap here started the save and
+             `claimTicket`'s own `finally` started a second one. */
+          if (ticketBusy) return;
           setTicketOpen(false);
           void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
         }}>
@@ -1801,6 +1954,7 @@ export default function Visit() {
             <SecondaryButton
               label="Skip — I will add it later"
               onPress={() => {
+                if (ticketBusy) return;
                 setTicketOpen(false);
                 void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
               }}

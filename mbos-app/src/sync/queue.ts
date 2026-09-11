@@ -316,8 +316,24 @@ export async function queueCounts(): Promise<Record<string, number>> {
   return out;
 }
 
-/** What the status strip counts: everything authored here the office cannot see yet. */
-/** Everything waiting, counted in SQL — never the length of a capped list. */
+/**
+ * Everything authored here the office cannot see yet, counted in SQL — never
+ * the length of a capped list.
+ *
+ * ONE predicate, because there were three counts of this one queue within
+ * thirty points of each other on the Sync screen. The card added up the rows
+ * it had drawn, which `listQueue` caps at fifty; the caption under it printed
+ * this; and the status strip above both printed `pendingCount`, which left
+ * `rejected` out. So a hundred and twenty queued items read "50 things
+ * waiting" directly above "of 120 waiting", and three refused records read
+ * "3 things waiting" under a green "All sent". After that he believes none of
+ * the three.
+ *
+ * A refusal counts. It is work sitting on this phone that the office does not
+ * have, which is the whole of what this number means — and "All sent" in green
+ * over three records nobody accepted is the one direction this screen must not
+ * get wrong.
+ */
 export async function queueDepth(): Promise<number> {
   const row = await one<{ n: number }>(
     `SELECT COUNT(*) AS n FROM sync_queue WHERE state <> 'synced'`,
@@ -325,14 +341,17 @@ export async function queueDepth(): Promise<number> {
   return row?.n ?? 0;
 }
 
+/**
+ * What the status strip counts, and what the Sync card's headline counts: the
+ * outbox depth plus the photographs behind it. Composed from `queueDepth`
+ * rather than spelling the states out a second time — the second copy is
+ * always the half that drifts, and this one had.
+ */
 export async function pendingCount(): Promise<number> {
-  const row = await one<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM sync_queue WHERE state IN ('queued','syncing','failed','blocked')`,
-  );
   const media = await one<{ n: number }>(
     `SELECT COUNT(*) AS n FROM media_queue WHERE state IN ('queued','syncing','failed')`,
   );
-  return (row?.n ?? 0) + (media?.n ?? 0);
+  return (await queueDepth()) + (media?.n ?? 0);
 }
 
 /**

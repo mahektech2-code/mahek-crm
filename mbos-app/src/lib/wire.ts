@@ -242,22 +242,64 @@ export function localNotes(notes: string | undefined | null, at: number): string
 }
 
 /**
- * A sample's state, which the wire does not carry and the screen is built on.
+ * A sample's state, in the one word the screens are built on.
  *
- * MahekOne tracks `trial_outcome` and the two timestamps; the design tracks one
- * word. Converted beats delivered beats requested, in that order, because that
- * is the order they happen in and the latest fact is the true one. Derived here
- * rather than sent so the wire keeps MahekOne's vocabulary — which is the whole
- * point of this file.
+ * MahekOne's own `state` is the answer where there is one, and the derivation
+ * below is the fallback. It used to be the whole of it, from `convertedOrderId`
+ * / `trialOutcome` / `deliveredAt` alone — three inputs that between them can
+ * only ever produce four of the eight words, and never `Dispatched` or `Tried`.
+ * So every mark the salesman made came back off the next pull as `Requested`:
+ * a parcel on a lorry rendered "the office has to approve it before anything
+ * goes out. Nothing for you to do here yet", which is the opposite of what had
+ * happened, and the button that makes the NEXT mark is drawn per state and was
+ * therefore unreachable. `upsertSamples` rewrites this column on every pass for
+ * any row that has finished syncing, so the loss is not a one-off — it is every
+ * pull, for ever.
+ *
+ * The three office timestamps are read for the same reason, and `receivedAt` is
+ * the load-bearing one: it is the SHOP's word that the parcel arrived, which is
+ * what §J turns on, and reading only `deliveredAt` — the carrier's — left a
+ * confirmed sample looking like one nobody had heard about.
+ *
+ * KNOWN GAP: `openSamples` in `lib/services/mbos-service.ts` does not select
+ * `s.state`, so nothing on the wire carries it today and the derivation is what
+ * actually runs. `Approved` has no timestamp behind it and so cannot be derived
+ * at all — it reaches the handset once, through the approvals channel, and the
+ * next pull overwrites it. Adding `s.state` to that query is the whole fix and
+ * this reads it the moment it arrives.
  */
+const SAMPLE_STATES: Record<string, string> = {
+  requested: 'Requested',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  dispatched: 'Dispatched',
+  received: 'Awaiting feedback',
+  trial_done: 'Tried',
+  reviewed: 'Reviewed',
+  cancelled: 'Cancelled',
+};
+
 export function localSampleState(s: {
+  state?: string | null;
   convertedOrderId?: string | null;
+  dispatchedAt?: string | number | null;
   deliveredAt?: string | number | null;
+  receivedAt?: string | number | null;
+  trialCompletedAt?: string | number | null;
   trialOutcome?: string | null;
 }): string {
+  /* An order is the one fact that outranks the ladder in both directions, so
+     it is asked before anything else. */
   if (s.convertedOrderId) return 'Converted';
+  const said = SAMPLE_STATES[(s.state ?? '').trim().toLowerCase()];
+  if (said) return said;
+  /* Latest fact first, because that is the order they happen in. An
+     unrecognised state falls through to here rather than being drawn as a word
+     no screen has a branch for. */
   if (s.trialOutcome === 'rejected') return 'Rejected';
-  if (s.deliveredAt) return 'Awaiting feedback';
+  if (s.trialCompletedAt) return 'Tried';
+  if (s.receivedAt || s.deliveredAt) return 'Awaiting feedback';
+  if (s.dispatchedAt) return 'Dispatched';
   return 'Requested';
 }
 

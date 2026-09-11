@@ -67,6 +67,16 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
     {
       label: 'Work',
       items: [
+        /* THE SCREEN NOTHING ROUTED TO. `/nearby` answers the one question a
+           salesman standing in a lane actually has — of the shops around me,
+           which one now and why — and it was finished, tested and reachable
+           from nowhere in the app. The only "near me" he could get to was the
+           customers list's distance SORT, which answers the same question by
+           the opposite rule: this one orders by what is worth doing and treats
+           distance as a cost, and a shop with no reason to call is not on it at
+           all. No badge, because working the answer out needs a fix and a read
+           of every pinned shop, and a menu will not wait for either. */
+        { label: 'Near me', badge: '', route: 'nearby' },
         { label: 'Tasks', badge: n.overdueTasks ? plural(n.overdueTasks, 'overdue', 'overdue') : '', route: 'tasks' },
         { label: 'Leads', badge: n.openLeads ? plural(n.openLeads, 'open', 'open') : '', route: 'leads' },
         /* These two named a LIST and opened a capture form — the only two
