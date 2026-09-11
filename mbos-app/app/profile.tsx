@@ -3,7 +3,7 @@ import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, Input, ListCard, PrimaryButton, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
+import { Card, ListCard, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
 import { openPasswordReset, signOut as signOutReal } from '../src/data/session';
 import { pendingCount } from '../src/sync/queue';
 import { plural } from '../src/lib/format';
@@ -18,9 +18,20 @@ import { pushStatus, registerForPush, type PushReadiness } from '../src/native/p
  * Profile — the four things about him the office may have wrong, and three
  * switches about this handset.
  *
- * Cancel reverts because it clears only the draft: nothing is written until
- * Save commits it into `pfSaved`, so an edit abandoned halfway leaves the
- * record exactly as it was rather than half-changed.
+ * **CONTACT IS READ-ONLY, AND IT USED TO BE A FORM THAT SAVED NOTHING.**
+ * Edit → type → Save wrote the four fields into `pfSaved` on the Zustand
+ * store and toasted "Profile updated". The store carries no `persist`
+ * middleware, nothing anywhere reads `pfSaved`, and nothing enqueues it — so
+ * a corrected mobile number and an emergency contact were congratulated and
+ * thrown away, and were gone again the next time the app launched. There is
+ * no profile channel on the wire to enqueue them onto, and inventing one is
+ * not a screen's decision, so the section says who to ask instead. A form
+ * that lies is worse than no form: it is where somebody goes to fix the
+ * problem and it tells them they already have — the same rule the dead
+ * toggles below this list were corrected under.
+ *
+ * An empty field says "Not set" rather than sitting blank, because the office
+ * having no emergency contact for him is the fact worth knowing.
  */
 
 /**

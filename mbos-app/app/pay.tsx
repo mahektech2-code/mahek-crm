@@ -2,12 +2,13 @@ import React from 'react';
 import { View, Pressable } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, Input, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { Card, Choice, Input, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, shadow, tabular, weight } from '../src/theme/tokens';
-import { inr, isoDate, pretty } from '../src/lib/format';
+import { dmy, inr, isoDate, pretty } from '../src/lib/format';
 import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
-import { customerBills, type CustomerBill } from '../src/data/customers';
+import { customerBills, type Customer, type CustomerBill } from '../src/data/customers';
 import { copyToClipboard, openWhatsApp, receiptMessage } from '../src/lib/messaging';
 import { takePhoto } from '../src/native/capture';
 import { useCustomer, useStore } from '../src/state/store';
@@ -43,6 +44,16 @@ const MODES: { label: PaymentMode; glyph: string }[] = [
 ];
 
 const CHEQUE_PHOTO_LINE = 'Photograph the cheque before you hand it back.';
+/**
+ * A cheque has two dates and they answer different questions: the day it was
+ * handed over, and the day written across it. A cheque given on the 3rd and
+ * dated the 20th cannot be banked until the 20th however firmly it is in our
+ * hands — so a post-dated one that reaches the office without its date looks
+ * bankable this morning, and the customer gets chased for money sitting in our
+ * own drawer. It is asked of everybody, because the man asking is holding the
+ * cheque and can read it off the paper.
+ */
+const CHEQUE_DATE_LINE = 'The date written on the cheque is needed.';
 
 export default function PayScreen() {
   const back = useCameFrom('more');

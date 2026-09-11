@@ -18,10 +18,22 @@ import { useKeyboardHeight } from '../src/components/ui/keyboard';
  * step it is on rather than showing one spinner and one eventual failure.
  */
 
-type Stage = 'form' | 'verifying' | 'otp';
+type Stage = 'form' | 'verifying';
 
 /** An Indian mobile number. Ten digits, no more, no fewer. */
 const MOBILE_DIGITS = 10;
+
+/**
+ * The only dial code, drawn as a fact rather than as a control.
+ *
+ * It used to be a cycler — +91 → +971 → +977 → +880 → +94 — and `dial` was
+ * never put in the request, so nothing it did reached the server; meanwhile
+ * `MOBILE_DIGITS` is ten for every one of them, so a nine-digit +971 number was
+ * refused by this screen before it got anywhere near MahekOne. A stray thumb
+ * changed the country on a handset issued to Mahek's own field team in India
+ * and made no difference to the sign-in either way.
+ */
+const DIAL = '+91';
 
 /**
  * `9820011007` shown as `98250 41172`.
@@ -39,18 +51,14 @@ export default function Login() {
   const set = useStore((s) => s.set);
   const signIn = useStore((s) => s.signIn);
   const notify = useStore((s) => s.notify);
-  const method = useStore((s) => s.method);
   const mob = useStore((s) => s.mob);
   const pw = useStore((s) => s.pw);
-  const dial = useStore((s) => s.dial);
   const remember = useStore((s) => s.remember);
 
   const [stage, setStage] = React.useState<Stage>('form');
   const [step, setStep] = React.useState(0);
-  const [err, setErr] = React.useState<'mob' | 'pw' | 'inactive' | null>(null);
+  const [err, setErr] = React.useState<'mob' | 'pw' | 'inactive' | 'payload' | null>(null);
   const [pwShow, setPwShow] = React.useState(false);
-  const [otp, setOtp] = React.useState('');
-  const [otpErr, setOtpErr] = React.useState(false);
   /* What the server actually said, shown verbatim — a generic "sign-in failed"
      leaves the salesman with nothing to do about it. */
   const [serverMessage, setServerMessage] = React.useState<string | null>(null);
@@ -60,16 +68,26 @@ export default function Login() {
   const cancelled = React.useRef(false);
   React.useEffect(() => () => { cancelled.current = true; }, []);
 
+  /*
+   * WHICH ATTEMPT THIS IS.
+   *
+   * `cancelled` is set on unmount and nowhere else, so Cancel — which only put
+   * the form back — left the in-flight sign-in running, and it walked straight
+   * past that guard on the way back: it signed him in, set the session and
+   * replaced the route, minutes after he had pressed Cancel because he had
+   * typed the wrong number. And the form being interactive again meant a second
+   * `signIn` could be started on top of the first, two bootstraps racing into
+   * one SQLite database. Every attempt takes a number; Cancel and the next
+   * attempt both bump it, and an answer that is not the current number is
+   * dropped rather than acted on.
+   */
+  const attemptRef = React.useRef(0);
+
   /* Already signed in — go straight to the day rather than showing a form the
      salesman has to dismiss every morning. */
   React.useEffect(() => {
     if (boot.ready && boot.session) router.replace('/home');
   }, [boot.ready, boot.session]);
-
-  const digits = otp.replace(/[^0-9]/g, '').slice(0, 6);
-  const rawMob = (mob || '98250 41172').replace(/[^0-9]/g, '');
-  const masked =
-    dial + ' ' + (rawMob.length > 4 ? '•'.repeat(rawMob.length - 4) + ' ' + rawMob.slice(-4) : rawMob);
 
   /**
    * The five steps are real checks happening on the server, not a timer.
@@ -82,33 +100,53 @@ export default function Login() {
     mobile: 0, credential: 1, status: 2, territory: 3, payload: 4,
   };
 
-  async function submit(skipChecks = false) {
-    if (!skipChecks) {
-      if (mob.length !== MOBILE_DIGITS) return setErr('mob');
-      if (method === 'password' && pw.length < 8) return setErr('pw');
-    }
+  async function submit() {
+    /* One at a time. Two overlapping sign-ins are two `setTokens`, two
+       persists and two bootstraps writing into the same database. */
+    if (stage === 'verifying') return;
+    if (mob.length !== MOBILE_DIGITS) return setErr('mob');
+    if (pw.length < 8) return setErr('pw');
+
     setErr(null);
     setServerMessage(null);
     setStage('verifying');
     setStep(0);
 
+    const attempt = ++attemptRef.current;
+    const live = () => !cancelled.current && attemptRef.current === attempt;
+
     const outcome = await signInReal({
       mobile: mob.trim(),
-      password: method === 'password' ? pw : undefined,
-      otp: method === 'otp' ? digits : undefined,
-      onStep: (s) => { if (!cancelled.current) setStep(STEP_INDEX[s]); },
+      password: pw,
+      remember,
+      onStep: (s) => { if (live()) setStep(STEP_INDEX[s]); },
     });
 
-    if (cancelled.current) return;
+    if (!live()) return;
 
     if (!outcome.ok) {
       setStage('form');
       setStep(0);
-      /* An inactive account gets the design's own banner; anything else lands
-         on the field that caused it. */
-      setErr(outcome.step === 'status' || outcome.step === 'territory' ? 'inactive' : outcome.step === 'credential' ? 'pw' : 'mob');
+      /*
+       * WHICH ANSWER GOES WHERE.
+       *
+       * `payload` is the fifth check and it is about this phone's storage, not
+       * about anything he typed — it used to fall through every arm of this
+       * ternary onto `'mob'`, so a book that would not save put a red border
+       * round a mobile number that was never wrong and asked him to retype it.
+       * It gets the full-width banner, like the other two failures no field
+       * can answer.
+       */
+      setErr(
+        outcome.step === 'payload'
+          ? 'payload'
+          : outcome.step === 'status' || outcome.step === 'territory'
+            ? 'inactive'
+            : outcome.step === 'credential'
+              ? 'pw'
+              : 'mob',
+      );
       setServerMessage(outcome.message);
-      if (method === 'otp') setOtpErr(true);
       return;
     }
 
@@ -120,11 +158,18 @@ export default function Login() {
 
   const steps = [
     'Verifying mobile',
-    method === 'otp' ? 'Checking the code' : 'Verifying password',
+    'Verifying password',
     'Checking employee status',
     'Checking assigned territory',
     'Loading your day',
   ];
+
+  /* The splash stays up until the database has been opened and the stored
+     session read. Drawn before that, the whole form appears on every cold
+     start and is then yanked away by the redirect above — long enough after an
+     update, when the migrations actually run, for somebody to have started
+     typing into it. */
+  if (!boot.ready) return null;
 
   return (
     <KeyboardAvoidingView
@@ -182,7 +227,10 @@ export default function Login() {
               );
             })}
             <Pressable
-              onPress={() => { setStage('form'); setStep(0); }}
+              /* Bumping the attempt is what makes this a cancel rather than a
+                 change of scenery — the request cannot be recalled, but its
+                 answer is now somebody else's and is dropped. */
+              onPress={() => { attemptRef.current += 1; setStage('form'); setStep(0); }}
               style={{ width: '100%', height: HIT, marginTop: 12, alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ fontSize: 15, color: C.muted }}>Cancel</Text>
             </Pressable>
@@ -192,10 +240,13 @@ export default function Login() {
         {/* ---- the form ---- */}
         {stage === 'form' ? (
           <View style={{ marginTop: 24 }}>
-            {err === 'inactive' ? (
+            {err === 'inactive' || err === 'payload' ? (
               <View style={{ backgroundColor: C.dangerBg, borderLeftWidth: 3, borderLeftColor: C.danger, borderRadius: 8, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 16 }}>
                 <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
-                  {serverMessage ?? 'This account is not active. Ask your sales manager to switch it back on.'}
+                  {err === 'payload'
+                    ? (serverMessage ?? "Signed in, but the day's data could not be saved on this phone.") +
+                      ' Try again; if it keeps happening tell your manager, this one will not fix itself.'
+                    : (serverMessage ?? 'This account is not active. Ask your sales manager to switch it back on.')}
                 </Text>
               </View>
             ) : null}
@@ -212,16 +263,10 @@ export default function Login() {
                 backgroundColor: C.surface,
                 overflow: 'hidden',
               }}>
-              {/* The dial code is a short fixed list, so it cycles rather than
-                  opening a picker over a field the thumb is already on. */}
-              <Pressable
-                onPress={() => {
-                  const codes = ['+91', '+971', '+977', '+880', '+94'];
-                  set({ dial: codes[(codes.indexOf(dial) + 1) % codes.length] });
-                }}
-                style={{ height: '100%', paddingLeft: 10, paddingRight: 6, justifyContent: 'center' }}>
-                <Text style={{ fontSize: 16, color: C.ink }}>{dial}</Text>
-              </Pressable>
+              {/* Not a control — see `DIAL`. */}
+              <View style={{ height: '100%', paddingLeft: 10, paddingRight: 6, justifyContent: 'center' }}>
+                <Text style={{ fontSize: 16, color: C.muted }}>{DIAL}</Text>
+              </View>
               <View style={{ width: 1, height: 24, backgroundColor: C.border }} />
               <TextInput
                 value={groupMobile(mob)}

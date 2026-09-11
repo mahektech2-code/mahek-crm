@@ -8,6 +8,7 @@ import * as trail from '../sync/trail';
 import { currentSession, type Session } from '../data/session';
 import { autoCloseMissedCheckouts, dayState } from '../data/attendance';
 import { closeOpenVisits } from '../data/visits';
+import { closeStaleLegs } from '../data/travel';
 import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
 import { registerForPush } from '../native/push';
@@ -142,6 +143,10 @@ async function runDayBoundaryWork(userId: string): Promise<void> {
     startOfToday.setHours(0, 0, 0, 0);
 
     await closeOpenVisits(startOfToday.getTime());
+    /* A journey nobody arrived at, closed for the same reason a visit nobody
+       checked out of is. Nothing else ever ends a leg, so one left open
+       overnight was read as this morning's — see `openLegOf`. */
+    await closeStaleLegs(userId, startOfToday.getTime());
     await autoCloseMissedCheckouts(userId);
     await escalateOverdue(await getConfig<number>('mbos.tasks.escalateAfterHours', 24));
   } catch {

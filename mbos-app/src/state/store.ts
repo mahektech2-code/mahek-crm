@@ -131,6 +131,16 @@ type State = {
   payAmt: string;
   payChq: string;
 
+  /**
+   * Which shop the cart and the payment fields above were built for.
+   *
+   * See `draftMovedShop`. It is not read by any screen — it exists so the
+   * store can tell "he navigated away and came back" from "he is standing in
+   * a different shop", which are the two cases a draft has to answer
+   * differently.
+   */
+  cartFor: string;
+
   /* ---- people ---- */
   catQ: string;
 
@@ -164,6 +174,28 @@ type Actions = {
  * shop that reorders weekly and one that reorders quarterly.
  */
 const NO_DATE_YET = '';
+
+/**
+ * A DRAFT BELONGS TO A SHOP, and it used to follow him to the next one.
+ *
+ * `cart`, `oQ`, `payMode`, `payAmt` and `payChq` live up here so half-finished
+ * work survives NAVIGATION — he opens the customer record to check a balance
+ * mid-order and comes back to his three lines. Nothing cleared them when
+ * `custId` changed, so those three lines were still on the screen at the next
+ * shop, priced and credit-checked against it, and the "42500" typed at one
+ * counter pre-filled the amount box at the next with Collect already live. On
+ * the order side it was worse than it looked: `inCart` is the cart's ids
+ * resolved through the products THIS shop knows, so a line the next shop has
+ * never bought vanished off the screen with its quantity still in the cart,
+ * and reappeared at the shop after that.
+ *
+ * Changing shop clears the draft; setting the SAME id again changes nothing,
+ * because that is exactly the navigation the draft exists to survive.
+ */
+function draftMovedShop(nextCustId: string, cartFor: string): Partial<State> {
+  if (nextCustId === cartFor) return {};
+  return { cartFor: nextCustId, cart: {}, oQ: '', payMode: null, payAmt: '', payChq: '' };
+}
 
 export const useStore = create<State & Actions>((set, get) => ({
   signedIn: false,
@@ -208,13 +240,20 @@ export const useStore = create<State & Actions>((set, get) => ({
   payMode: null,
   payAmt: '',
   payChq: '',
+  cartFor: '',
 
   catQ: '',
 
   pfSaved: {},
   pfPrefs: { wifi: true, push: true },
 
-  set: (patch) => set(patch as Partial<State>),
+  /* Every screen that opens a shop does it through here — the customers list,
+     the record, the map, a task, the rejections screen — so this is the one
+     place that can notice the shop changed. See `draftMovedShop`. */
+  set: (patch) => {
+    const p = patch as Partial<State>;
+    set(p.custId !== undefined ? { ...p, ...draftMovedShop(p.custId, get().cartFor) } : p);
+  },
 
   notify: (msg) => set({ toast: msg }),
   clearToast: () => set({ toast: null }),
@@ -233,6 +272,10 @@ export const useStore = create<State & Actions>((set, get) => ({
   beginVisit: (custId) =>
     set({
       custId,
+      /* This writes `custId` through zustand's own setter rather than the
+         action above, so it has to ask the same question itself — starting a
+         visit at the next shop is the commonest way the cart moved. */
+      ...draftMovedShop(custId, get().cartFor),
       gps: 'acquiring',
       shots: {},
       voice: 'none',

@@ -72,6 +72,15 @@ export type TravelLeg = {
   modeKey: string;
   fromLabel: string | null;
   toLabel: string | null;
+  /* Where he set off from and where he arrived, both written by the app that
+     was standing there. The pair is declared because `SELECT *` returns it and
+     the journey screen navigates to the leg's own destination rather than to
+     whatever stop the plan had queued — reading the plan's coordinates under
+     the leg's shop name is how somebody rides to the wrong shop. */
+  fromLat: number | null;
+  fromLng: number | null;
+  toLat: number | null;
+  toLng: number | null;
   startedAt: number | null;
   endedAt: number | null;
   purpose: string | null;
@@ -567,14 +576,54 @@ export async function submitDay(
  * store, exactly as it finds out the attendance day is open.
  */
 
-/** The journey he is on, if he is on one. The ONE definition of travelling. */
-export async function openLegOf(userId: string): Promise<TravelLeg | null> {
+/**
+ * The journey he is on, if he is on one. The ONE definition of travelling.
+ *
+ * `startedSince` is the day boundary, and it is what stops a journey he set off
+ * on yesterday and never arrived at from being read as this morning's. A leg
+ * has no natural end — nothing closes one but arriving or calling it off — so
+ * without the bound the route screen greeted him with "On your way to
+ * <yesterday's shop> · 19h 47m" and replaced today's first Start visit with a
+ * Continue into the wrong shop.
+ *
+ * Left off by `departForVisit`, deliberately: the leg it has to close before
+ * opening a new one is ANY open leg, whatever day it began. Two open legs is a
+ * state nothing in this module can make sense of, and a stale one is exactly
+ * the leg that would produce it.
+ */
+export async function openLegOf(userId: string, startedSince?: number): Promise<TravelLeg | null> {
   return one<TravelLeg>(
     `SELECT * FROM travel_legs
-      WHERE userId = ? AND endedAt IS NULL
-      ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
-    [userId],
+      WHERE userId = ? AND endedAt IS NULL` +
+      (startedSince == null ? '' : ' AND startedAt >= ?') +
+      ` ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
+    startedSince == null ? [userId] : [userId, startedSince],
   );
+}
+
+/**
+ * Journeys still open from a day that has ended, closed at their own reading.
+ *
+ * The counterpart of the bound above, and the reason it is safe: an open leg is
+ * either today's — and drawn — or it is this, and closed. Run from
+ * `runDayBoundaryWork` beside `closeOpenVisits`, for the same reason and with
+ * the same shape: nothing on a handset runs overnight, so the tidying happens
+ * on the next launch, and closing an already-closed leg does nothing.
+ *
+ * Closed at its start reading so it measures ZERO, and NAMED — a leg worth
+ * nothing with no sentence against it is indistinguishable from one somebody
+ * forgot to fill in.
+ */
+export async function closeStaleLegs(userId: string, dayBoundaryMs: number): Promise<number> {
+  const open = await all<TravelLeg>(
+    `SELECT * FROM travel_legs
+      WHERE userId = ? AND endedAt IS NULL AND startedAt IS NOT NULL AND startedAt < ?`,
+    [userId, dayBoundaryMs],
+  );
+  for (const leg of open) {
+    await closeAbandoned(leg, 'Closed automatically at the end of the day — no arrival was recorded.');
+  }
+  return open.length;
 }
 
 /** The leg he took to this shop, closed and not yet spent on a visit. */

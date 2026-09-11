@@ -21,6 +21,7 @@ import {
   type PlanDay,
 } from '../src/data/journey';
 import { listTours, requestTour, type Tour } from '../src/data/requests';
+import { getCustomer, type Customer } from '../src/data/customers';
 import { getConfig } from '../src/data/config';
 import { optimiseRoute } from '../src/engines/route';
 import { fixOf, getFix } from '../src/native/location';
@@ -50,10 +51,16 @@ import { useStore } from '../src/state/store';
  * Null where the office did not record when it asked — every plan written
  * before the negotiation existed is in that state, and "proposed 20,214 days
  * ago" from a null read as an epoch is worse than saying nothing.
+ *
+ * `now` is passed in rather than read here: this is called during render, and
+ * the clock is state on the screen already. Reading `Date.now()` from inside
+ * a render is what the React Compiler rules in this app forbid, and it also
+ * meant this label was measured against a different instant from every other
+ * figure on the screen.
  */
-function waitingLabel(proposedAt: number | null): string | null {
+function waitingLabel(proposedAt: number | null, now: number): string | null {
   if (!proposedAt) return null;
-  const days = Math.floor((Date.now() - proposedAt) / 86_400_000);
+  const days = Math.floor((now - proposedAt) / 86_400_000);
   if (days <= 0) return 'asked today';
   if (days === 1) return 'asked yesterday';
   return 'waiting ' + days + ' days';
@@ -67,6 +74,10 @@ export default function JourneyScreen() {
   /* Still needed for the Continue button below: the leg is already open, so
      that path only prepares the visit screen — it does not ask again. */
   const beginVisit = useStore((s) => s.beginVisit);
+  /* The reason typed for an off-plan stop, waiting for a shop to be chosen.
+     Read here so the screen that TOOK it can show it is still pending and let
+     it go — see the strip below. */
+  const offPlanReason = useStore((s) => s.offPlanReason);
   const boot = useBoot();
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [tourOpen, setTourOpen] = React.useState(false);
