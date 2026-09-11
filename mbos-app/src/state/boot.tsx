@@ -143,7 +143,13 @@ async function runDayBoundaryWork(userId: string): Promise<void> {
 
     await closeOpenVisits(startOfToday.getTime());
     await autoCloseMissedCheckouts(userId);
-    await escalateOverdue(await getConfig<number>('mbos.tasks.escalateAfterHours', 24));
+    /* `mbos.tasks.escalationHours`, which is the PUBLISHED key. This read
+       `mbos.tasks.escalateAfterHours` — the same question, one word apart, and
+       a spelling no office could ever set — so the handset marked a task
+       escalated on a compiled 24 while the server's own hourly pass ran on
+       whatever the registry said. Two clocks on one rule, and the phone's was
+       the one the salesman saw. */
+    await escalateOverdue(await getConfig<number>('mbos.tasks.escalationHours', 24));
   } catch {
     /* Housekeeping must never stop the app opening. Whatever failed here will
        be retried on the next launch, and none of it is the salesman's problem. */

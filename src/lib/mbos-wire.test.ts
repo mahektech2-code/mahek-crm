@@ -976,13 +976,25 @@ test("the book-reconcile field is spelled the same on both sides", () => {
  * means the trail cadence has never once been something the office could
  * change.
  *
- * OUTSTANDING is the seven that were already like that when this test was
- * written, each with the reason it is still on the list. The alternative is
- * not "no allowlist" — it is what this module had before, which was seven
- * unpublishable settings recorded nowhere and known to nobody. Adding an
- * eighth now fails the build; taking one off the list is a registry entry,
- * which needs a label, a description and a range somebody has actually
- * decided on.
+ * OUTSTANDING held the seven that were already like that when this test was
+ * written, each with the reason it was still on the list. IT IS EMPTY, and the
+ * seven turned out to be three different faults rather than seven missing
+ * entries. Two were MISSPELLINGS of keys that already existed and were already
+ * enforced — `mbos.expenses.maxClaimAgeDays` in front of
+ * `mbos.expenses.backdatedDaysAllowed`, and `mbos.tasks.escalateAfterHours` in
+ * front of `mbos.tasks.escalationHours` — which is the worst shape this bug
+ * takes: the office CAN change the setting, the phone goes on running the
+ * compiled number, and both halves look correct read on their own. Four were
+ * the route engine's arguments, published together under `mbos-route` because
+ * one of four is half a control. The last was
+ * `mbos.attendance.baseLocation`, which needed a decision rather than an
+ * entry: it is the centre the published geofence radius is measured from, and
+ * a radius with no centre was the half-control argument again, one setting
+ * along.
+ *
+ * The list stays because it is the only thing that lets a genuinely undecided
+ * key be recorded instead of forgotten — but an empty one is what this test is
+ * for, and an addition to it should be argued for rather than typed.
  * ------------------------------------------------------------------------- */
 
 /*
@@ -996,28 +1008,7 @@ test("the book-reconcile field is spelled the same on both sides", () => {
  */
 const INJECTED = new Set(["mbos.ai.dictation"]);
 
-const OUTSTANDING: Record<string, string> = {
-  "mbos.attendance.baseLocation":
-    "The office's own coordinates, which the geofence is measured from. Not a " +
-    "number in a box — it wants a map to pick it on, and the Settings screen " +
-    "has no such control yet.",
-  "mbos.expenses.maxClaimAgeDays":
-    "How far back a claim may be dated on the handset. The server has its own " +
-    "`mbos.expenses.backdatedDaysAllowed`, which IS published and IS enforced, " +
-    "so the handset's copy is a courtesy refusal in front of a real one — the " +
-    "two should be one key, and that is a decision rather than an entry.",
-  "mbos.route.averageSpeedKmph":
-    "Route engine tuning. The four below are one set and belong to whoever " +
-    "owns how a day is ordered; publishing them one at a time would put half " +
-    "a control on the Settings screen.",
-  "mbos.route.maxStopsForTwoOpt": "See `mbos.route.averageSpeedKmph`.",
-  "mbos.route.maxTwoOptPasses": "See `mbos.route.averageSpeedKmph`.",
-  "mbos.route.minutesPerStop": "See `mbos.route.averageSpeedKmph`.",
-  "mbos.tasks.escalateAfterHours":
-    "The handset reads it to draw a task as overdue; the escalation itself is " +
-    "the server's, on `mbosHourly`. Same question as the expenses one — one " +
-    "key or two, decided rather than declared.",
-};
+const OUTSTANDING: Record<string, string> = {};
 
 test("every mbos.* key the handset reads is one the office can publish", () => {
   const sources = [

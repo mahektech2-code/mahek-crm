@@ -5,7 +5,7 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Card, Input, ListCard, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, shadow, tabular, type, weight } from '../src/theme/tokens';
-import { inr, plural } from '../src/lib/format';
+import { inr, inrFromPaise, plural } from '../src/lib/format';
 import {
   billingChoicesFor,
   frequentProducts,
@@ -510,7 +510,7 @@ export default function OrderScreen() {
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <T style={{ fontSize: 15, color: C.ink }}>{k.name}</T>
                       <T s="caption">
-                        {[k.formulation ?? k.brand, k.sellingPricePaise != null ? inr(k.sellingPricePaise / 100) + ' / can' : null]
+                        {[k.formulation ?? k.brand, k.sellingPricePaise != null ? inrFromPaise(k.sellingPricePaise) + ' / can' : null]
                           .filter(Boolean)
                           .join(' · ')}
                       </T>
@@ -569,9 +569,9 @@ export default function OrderScreen() {
                       plural(qty, 'can'),
                       priced ? plural(Math.ceil(priced.boxes), 'box', 'boxes') : null,
                       priced?.valuePaise != null
-                        ? inr(priced.valuePaise / 100)
+                        ? inrFromPaise(priced.valuePaise)
                         : listRatePaise != null
-                          ? inr((qty * listRatePaise) / 100) + ' at list rate'
+                          ? inrFromPaise(qty * listRatePaise) + ' at list rate'
                           : null,
                     ]
                       .filter(Boolean)
@@ -672,7 +672,7 @@ export default function OrderScreen() {
             {listValuePaise != null ? (
               <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginTop: 6 }}>
                 <T s="caption">List value{priceTag ? ' · ' + priceTag : ''}</T>
-                <T s="body" style={[weight(500), tabular]}>{inr(listValuePaise / 100)}</T>
+                <T s="body" style={[weight(500), tabular]}>{inrFromPaise(listValuePaise)}</T>
               </View>
             ) : null}
             {limit != null ? (

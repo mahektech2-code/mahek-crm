@@ -1,4 +1,5 @@
 import { all } from '../db';
+import { inrFromPaise } from '../lib/format';
 
 /**
  * His own month, as the office scored it.
@@ -126,12 +127,9 @@ export function litres(ml: number): string {
  */
 export function shortfalls(month: PerformanceMonth): string[] {
   const lines: string[] = [];
-  const rupees = (paise: number) =>
-    `₹${Math.round(paise / 100).toLocaleString('en-IN')}`;
-
   if (month.revenueTargetPaise && month.revenueActualPaise < month.revenueTargetPaise) {
     lines.push(
-      `${rupees(month.revenueTargetPaise - month.revenueActualPaise)} short of your revenue target.`,
+      `${inrFromPaise(month.revenueTargetPaise - month.revenueActualPaise)} short of your revenue target.`,
     );
   }
   if (month.volumeTargetMl && month.volumeActualMl < month.volumeTargetMl) {
@@ -148,7 +146,7 @@ export function shortfalls(month: PerformanceMonth): string[] {
     month.collectionActualPaise < month.collectionTargetPaise
   ) {
     lines.push(
-      `${rupees(month.collectionTargetPaise - month.collectionActualPaise)} still to collect.`,
+      `${inrFromPaise(month.collectionTargetPaise - month.collectionActualPaise)} still to collect.`,
     );
   }
   for (const c of month.categories) {

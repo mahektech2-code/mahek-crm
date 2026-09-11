@@ -45,7 +45,7 @@ import {
   type LeadSalesType,
   type LeadStage,
 } from '../src/engines/funnel';
-import { dmy, inr, isoDate, plural, pretty } from '../src/lib/format';
+import { dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
 /**
@@ -302,7 +302,7 @@ export default function LeadRecord() {
           </View>
           <Line
             label="Might buy"
-            value={lead.estimatedPotentialPaise ? inr(lead.estimatedPotentialPaise / 100) + ' a month' : 'Not estimated'}
+            value={lead.estimatedPotentialPaise ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month' : 'Not estimated'}
           />
           <Line label="Visits" value={plural(visits, 'visit')} />
           <Line label="Next follow-up" value={lead.nextFollowUpDate ? pretty(lead.nextFollowUpDate) : 'None set'} />

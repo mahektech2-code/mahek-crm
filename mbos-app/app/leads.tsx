@@ -9,7 +9,7 @@ import { createLead, leadThresholds, listLeads, visitCapThresholds, type Lead } 
 import { takePhoto } from '../src/native/capture';
 import { CUSTOMER_TYPES, LEAD_FILTERS, LEAD_SOURCES, leadAlert, visitCapLabel, visitCapState, type DuplicateMatch, type LeadFilter, type LeadThresholds, type VisitCapThresholds } from '../src/engines/leads';
 import { SALES_TYPES, salesTypeLabel, type LeadSalesType } from '../src/engines/funnel';
-import { dmy, inr, isoDate, plural, pretty } from '../src/lib/format';
+import { dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
 /**
@@ -259,7 +259,7 @@ export default function LeadsScreen() {
 
                 <T style={[{ fontSize: 15, marginTop: 10, color: x.estimatedPotentialPaise ? C.ink : C.muted }, weight(500)]}>
                   {x.estimatedPotentialPaise
-                    ? inr(x.estimatedPotentialPaise / 100) + ' a month, he reckons'
+                    ? inrFromPaise(x.estimatedPotentialPaise) + ' a month, he reckons'
                     : 'Worth not estimated yet'}
                 </T>
 

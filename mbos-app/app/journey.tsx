@@ -24,7 +24,7 @@ import { listTours, requestTour, type Tour } from '../src/data/requests';
 import { getConfig } from '../src/data/config';
 import { optimiseRoute } from '../src/engines/route';
 import { fixOf, getFix } from '../src/native/location';
-import { dayLabel, dayLabelRelative, dmy, inr, isoDate, plural } from '../src/lib/format';
+import { dayLabel, dayLabelRelative, dmy, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { openMaps, openRoute, shareText } from '../src/lib/messaging';
 import { NavigateButton } from '../src/components/ui/navigate';
 import { useBoot } from '../src/state/boot';
@@ -642,7 +642,7 @@ export default function JourneyScreen() {
           <T s="small" style={{ marginTop: 10 }}>
             {(next.plannedAt ? 'Planned ' + next.plannedAt + '. ' : '') +
               (next.outstandingPaise > 0
-                ? 'They owe ' + inr(next.outstandingPaise / 100) + ' — collection is the reason this stop is on the list.'
+                ? 'They owe ' + inrFromPaise(next.outstandingPaise) + ' — collection is the reason this stop is on the list.'
                 : 'Nothing outstanding against them.')}
           </T>
           {/*

@@ -37,6 +37,41 @@ export function compactInr(rupees: number): string {
   return inr(n);
 }
 
+/**
+ * THE UNIT BELONGS IN THE NAME, because every figure in this product is paise.
+ *
+ * `inr` takes RUPEES, and nothing anywhere stores rupees — AGENTS.md is
+ * explicit that money is paise, integers everywhere, formatted only on the way
+ * to the screen. So the `/ 100` was a thing 45 call sites each had to remember,
+ * and the one that forgot was invisible: ₹5,00,000 and ₹5,00,00,000 are both
+ * perfectly valid figures, and only the person who knows the target can tell
+ * which one the screen ought to be showing. Five of those 45 forgot, all of
+ * them on the targets screen, and the client reported it as "all the amounts
+ * in MBOS are showing in paise" — which is exactly how it reads when a salesman
+ * cannot square his month with the number he was given.
+ *
+ * The pick screen had already had the same bug once, from the other end: a shop
+ * owing ₹2,360 listed as owing ₹2,36,000. Two occurrences of one mistake is a
+ * class rather than a slip, so the division happens HERE and the call sites say
+ * what they are handing over. The server's own convention is this one —
+ * `rupees(paise)` in `lib/engines/expense-policy.ts` takes paise — and the
+ * handset was the half that disagreed.
+ *
+ * `inr` is kept for the genuine rupee callers, which are real: an amount a
+ * salesman typed into a box is rupees because that is what he said out loud,
+ * and the credit-limit arithmetic on the order screen works in rupees
+ * throughout. `format.test.ts` reads the source and fails on any `inr(` whose
+ * argument mentions paise, because that is the half a type checker cannot see.
+ */
+export function inrFromPaise(paise: number): string {
+  return inr(paise / 100);
+}
+
+/** `compactInr`'s counterpart, for the same reason. Takes paise. */
+export function compactInrFromPaise(paise: number): string {
+  return compactInr(paise / 100);
+}
+
 export function plural(n: number, noun: string, form?: string): string {
   return n + ' ' + (n === 1 ? noun : form || noun + 's');
 }

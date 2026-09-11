@@ -47,6 +47,11 @@ export type SettingCategory =
   | "auth"
   /* ---- MBOS, the field sales app. Same rule: no threshold is a constant. ---- */
   | "mbos-location"
+  /**
+   * How a day's stops are put in order. Four numbers that only mean anything
+   * together — publishing one of them is half a control.
+   */
+  | "mbos-route"
   | "mbos-orders"
   | "mbos-credit"
   | "mbos-payments"
@@ -85,6 +90,18 @@ export type SettingDefinition = {
   max?: number;
   /** Allowed values for text settings behaving as an enum. */
   options?: readonly string[];
+  /**
+   * Structured settings only: null is a real answer rather than an empty box.
+   *
+   * The ordinary structured setting is a map of weights or a list of reasons,
+   * and a null one is a value somebody cleared by accident — refusing it is
+   * right. It is wrong where the ABSENCE is the statement:
+   * `mbos.attendance.baseLocation` null means nobody has said where the office
+   * is, which is the shipped state and the state a deployment that typed the
+   * wrong coordinates has to be able to get back to. Without this flag the
+   * only way back from a bad pin would be a database write.
+   */
+  nullable?: boolean;
 };
 
 /**
@@ -1826,6 +1843,65 @@ export const SETTINGS = [
     max: 168,
   },
 
+  /* ------------------------------------------------------- route ordering
+   *
+   * The four arguments `engines/route.ts` takes, and it takes them as
+   * arguments precisely so they can be these. They ran as compiled defaults on
+   * every handset in the field until they were published here — which is the
+   * silent failure `getConfig` is built to make safe and which is invisible
+   * exactly because the numbers it fell back to were the numbers everybody
+   * assumed were in force. Each default below is what has actually been
+   * running, so publishing them changed nobody's route.
+   *
+   * They are one category because they are one control. Two of them bound the
+   * work the phone is allowed to do and two of them price a day in minutes;
+   * on their own, each reads as a knob nobody can predict the effect of.
+   */
+  {
+    key: "mbos.route.averageSpeedKmph",
+    type: "integer",
+    category: "mbos-route",
+    label: "Average speed on the road",
+    description:
+      "Kilometres an hour, used to turn the straight-line distance between two shops into minutes. The honest number differs by a factor of three between a city beat on a two-wheeler and a district tour in a car, which is the whole reason it is a setting. It changes the day's estimated finishing time, never the order the stops are visited in — that is decided by distance alone.",
+    default: 22,
+    min: 5,
+    max: 120,
+  },
+  {
+    key: "mbos.route.minutesPerStop",
+    type: "integer",
+    category: "mbos-route",
+    label: "Minutes budgeted inside a shop",
+    description:
+      "Added to every stop on the day, including the ones with no location on file. Travel time alone under-reads a day badly enough to be useless for planning — a beat of twenty shops is mostly time spent in them. Like the speed above, it moves the estimate and not the order.",
+    default: 20,
+    min: 1,
+    max: 240,
+  },
+  {
+    key: "mbos.route.maxStopsForTwoOpt",
+    type: "integer",
+    category: "mbos-route",
+    label: "Longest list the tidy-up pass will take",
+    description:
+      "Above this many located stops the improvement pass is skipped and the nearest-neighbour order stands. It is a ceiling on work a mid-range Android has to do on the spot, not a judgement about route quality: the pass is O(n²) per sweep, and a pathological list would lock the screen. A day's beat is twenty to thirty shops, so raising it affects almost nobody and lowering it quietly stops the tidy-up happening at all.",
+    default: 40,
+    min: 0,
+    max: 500,
+  },
+  {
+    key: "mbos.route.maxTwoOptPasses",
+    type: "integer",
+    category: "mbos-route",
+    label: "Sweeps of the tidy-up pass",
+    description:
+      "How many times the route may be swept for a pair of legs worth swapping — what removes the long dash back across the territory that nearest-neighbour leaves behind. It is a CEILING and rarely reached: a sweep that improves nothing ends the pass, because every later sweep would improve nothing either. Zero turns the tidy-up off.",
+    default: 4,
+    min: 0,
+    max: 50,
+  },
+
   /* ------------------------------------------------------------ ordering */
   {
     key: "mbos.orders.approvalThresholdPaise",
@@ -1930,15 +2006,40 @@ export const SETTINGS = [
     min: 0,
     max: 100000000,
   },
-  {
-    key: "mbos.expenses.categoryCapsPaise",
-    type: "structured",
-    category: "mbos-expenses",
-    label: "Daily caps by category",
-    description:
-      "Paise per day per category. A claim above a cap is not refused — it goes up as a partial approval decision, which is what the approver's `approvedAmountPaise` is for.",
-    default: { travel: 100000, food: 40000, lodging: 250000, other: 50000 },
-  },
+  /*
+   * `mbos.expenses.categoryCapsPaise` WAS HERE, and it is retired.
+   *
+   * One key, read three contradictory ways: this entry called it a DAILY cap
+   * and said in as many words that a claim above one "is not refused";
+   * `handleExpense` read it PER CLAIM and rejected the sync outright; the
+   * handset read it as a MONTHLY running total and flagged the claim. Three
+   * answers to "what am I allowed", and the salesman met whichever of them the
+   * screen he was standing on happened to hold. It also never carried
+   * `local_transport`, so the one kind a man claims several times a day was
+   * capped by nothing on any path.
+   *
+   * The policy is the single authority now. `expense_policies` carries
+   * `capPerInstancePaise` and `capPerDayPaise`, `computeDay` honours both, and
+   * `claim-preview.ts` runs that same engine on the handset so what he is told
+   * before he spends is what the office pays. 0089 already moved these four
+   * numbers across as daily `actuals` rules on a draft version, so nothing was
+   * lost by retiring them here.
+   *
+   * The rejection went with it, because the engine's own header states the
+   * principle the whole module rests on: it never refuses anything. The money
+   * is already spent, and a system that refuses to record it has not saved the
+   * money — it has only made sure nobody finds out. A sync rejection is the
+   * worst available shape of that, since the claim dies in an outbox on a
+   * phone rather than arriving as something somebody has to decide about.
+   *
+   * A stored `app_settings` row for it needs no migration: `getConfig` layers
+   * a stored value only where `definition(key)` still answers, so a row for a
+   * key the registry has forgotten is already unreadable by every path here,
+   * and `configDrift` walks SETTINGS rather than the table. 0089 deliberately
+   * READ that row and left it — it is the provenance of the draft policy's
+   * figures, and deleting it would destroy that to tidy away something nothing
+   * can see.
+   */
   {
     key: "mbos.expenses.backdatedDaysAllowed",
     type: "integer",
@@ -1958,7 +2059,7 @@ export const SETTINGS = [
     category: "expenses",
     label: "Fall back to the old caps where no policy covers a date",
     description:
-      "On, a day with no published policy is worked out on the mbos.expenses caps above rather than left unpriced. Off, the claims are recorded and the screen says plainly that nothing can be worked out yet — which is the honest answer, and the reason this defaults on is only that it is the behaviour a deployment already had.",
+      "THERE IS NOTHING LEFT TO FALL BACK TO, and this switch does nothing. It was written for `mbos.expenses.categoryCapsPaise`, which is retired — 0089 moved those four figures into a draft policy version, and the policy is the single authority on what a claim is worth. Nothing reads this setting. It is kept only because deleting a key and the thing it named in one change is how a reader a year from now ends up unable to work out what either of them meant; a day with no published policy is recorded and reported as unpriced, which is what the off position always described and is now simply the behaviour.",
     default: true,
   },
   {
@@ -2050,6 +2151,16 @@ export const SETTINGS = [
   },
 
   /* ---------------------------------------------------------- attendance */
+  {
+    key: "mbos.attendance.baseLocation",
+    type: "structured",
+    category: "mbos-attendance",
+    nullable: true,
+    label: "Where the geofence is drawn around",
+    description:
+      'The office\'s own coordinates, as {"lat": 21.1458, "lng": 79.0882}. Read them off a map — right-click the building in Google Maps and the pair is the first line of the menu — or leave the box EMPTY, which means nobody has said, and a check-in is then never measured against anything rather than being measured against a guess. It is a JSON box and not a map to click on because the radius beside it was published without it for the life of the module: a distance with no centre is half a control, and half a control that works today beats a whole one nobody has built. A map picker writes this same key and can arrive without anybody re-entering anything.',
+    default: null,
+  },
   {
     key: "mbos.attendance.geofenceRadiusM",
     type: "integer",
@@ -2891,6 +3002,12 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
     }
     case "structured": {
       let value = raw;
+      /* An empty box is how a screen spells null, and `asText` already renders
+         null back into one — so on a nullable setting the round trip has to
+         close here or the value can be read and never written again. */
+      if (def.nullable && (raw === null || (typeof raw === "string" && !raw.trim()))) {
+        return { ok: true, value: null };
+      }
       if (typeof raw === "string") {
         try {
           value = JSON.parse(raw);
@@ -2898,6 +3015,7 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
           return { ok: false, error: `${def.label} must be valid JSON.` };
         }
       }
+      if (def.nullable && value === null) return { ok: true, value: null };
       if (value === null || typeof value !== "object") {
         return { ok: false, error: `${def.label} must be an object or a list.` };
       }
@@ -3244,21 +3362,29 @@ export function checkConsistency(config: Config): string[] {
     );
   }
 
-  // Caps for categories the expense form does not offer are rules that can
-  // never fire, and read on the settings screen as though they do.
-  const caps = config["mbos.expenses.categoryCapsPaise"];
-  if (!caps || typeof caps !== "object") {
-    problems.push("Expense caps must be an object of category names to amounts in paise.");
-  } else {
-    const known = ["travel", "food", "lodging", "other"];
-    const unknown = Object.keys(caps).filter((k) => !known.includes(k));
-    if (unknown.length) {
+  /*
+   * A base location nobody can stand at.
+   *
+   * Empty is fine and is the shipped answer — with no base there is nothing to
+   * be outside of, and a check-in is never refused for want of one. What is
+   * not fine is a pair that parses and is not a place: a longitude typed into
+   * the latitude, or the two swapped, puts the office in the sea, and then
+   * EVERY check-in is flagged as off-site with nothing on any screen saying
+   * why. A geofence is the one setting here whose wrongness is invisible at
+   * the moment it is saved and obvious only to the salesman being accused.
+   */
+  const base = config["mbos.attendance.baseLocation"];
+  if (base !== null && base !== undefined) {
+    const lat = (base as { lat?: unknown }).lat;
+    const lng = (base as { lng?: unknown }).lng;
+    if (typeof lat !== "number" || typeof lng !== "number") {
       problems.push(
-        `These expense categories have caps but are not categories anybody can pick: ${unknown.join(", ")}. The categories are ${known.join(", ")}.`,
+        'The base location must be a lat and a lng, as {"lat": 21.1458, "lng": 79.0882}, or left empty for no base at all.',
       );
-    }
-    if (Object.values(caps).some((v) => typeof v !== "number" || v < 0)) {
-      problems.push("Every expense cap must be an amount in paise, none of them negative.");
+    } else if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      problems.push(
+        `The base location ${lat}, ${lng} is not a point on earth — a latitude runs to 90 and a longitude to 180, and the commonest way to get this wrong is to type them the other way round.`,
+      );
     }
   }
 
@@ -3488,6 +3614,11 @@ export type Config = {
   "mbos.location.lowBatteryPercent": number;
   "mbos.sync.quietHours": number;
 
+  "mbos.route.averageSpeedKmph": number;
+  "mbos.route.minutesPerStop": number;
+  "mbos.route.maxStopsForTwoOpt": number;
+  "mbos.route.maxTwoOptPasses": number;
+
   "mbos.orders.approvalThresholdPaise": number;
   "mbos.orders.secondTierThresholdPaise": number;
   "mbos.orders.minimumQuantityCans": number;
@@ -3502,7 +3633,6 @@ export type Config = {
   "mbos.payments.receiptSeriesPrefix": string;
 
   "mbos.expenses.billPhotoThresholdPaise": number;
-  "mbos.expenses.categoryCapsPaise": Record<MbosExpenseCategory, number>;
   "mbos.expenses.backdatedDaysAllowed": number;
   "expenses.policyFallbackToConfig": boolean;
   "expenses.gpsRoadFactorBps": number;
@@ -3514,6 +3644,7 @@ export type Config = {
   "expenses.eodReopenWindowDays": number;
   "expenses.trendMonths": number;
 
+  "mbos.attendance.baseLocation": { lat: number; lng: number } | null;
   "mbos.attendance.geofenceRadiusM": number;
   "mbos.attendance.fullDayHours": number;
   "mbos.attendance.halfDayHours": number;

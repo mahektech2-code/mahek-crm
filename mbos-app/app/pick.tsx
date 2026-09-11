@@ -13,7 +13,7 @@ import {
   type Candidate,
   type PlanDay,
 } from '../src/data/journey';
-import { dayLabel, inr, isoDate, plural } from '../src/lib/format';
+import { dayLabel, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { daysSince } from '../src/data/customers';
 import { pickOrigin } from '../src/engines/route';
 import { haversineMetres } from '../src/engines/geo';
@@ -425,7 +425,7 @@ export default function PickScreen() {
                   {/* `inr` takes RUPEES — see its own note. Handed paise it
                       reported ₹2,36,000 owing against a bill of ₹2,360, on a
                       row somebody decides a morning from. */}
-                  {c.outstandingPaise > 0 ? ' · ' + inr(c.outstandingPaise / 100) + ' owing' : ''}
+                  {c.outstandingPaise > 0 ? ' · ' + inrFromPaise(c.outstandingPaise) + ' owing' : ''}
                 </T>
               </View>
 

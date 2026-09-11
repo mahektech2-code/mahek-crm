@@ -18,7 +18,7 @@ import {
 import { BottomSheet } from '../src/components/ui/overlays';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
-import { inr, isoDate } from '../src/lib/format';
+import { inrFromPaise, isoDate } from '../src/lib/format';
 import { takePhoto } from '../src/native/capture';
 import { color as C, weight, tabular } from '../src/theme/tokens';
 import {
@@ -166,7 +166,7 @@ export default function TravelScreen() {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <T s="small" style={{ color: C.muted }}>Travel today</T>
             <T style={[{ fontSize: 22, color: C.ink }, weight(600), tabular]}>
-              {inr(computation.travelPaise / 100)}
+              {inrFromPaise(computation.travelPaise)}
             </T>
           </View>
           <T s="caption" style={{ marginTop: 2 }}>
@@ -193,7 +193,7 @@ export default function TravelScreen() {
               </View>
               <View style={{ alignItems: 'flex-end' }}>
                 <T style={[{ fontSize: 15 }, weight(600), tabular]}>
-                  {c ? inr(c.eligiblePaise / 100) : '—'}
+                  {c ? inrFromPaise(c.eligiblePaise) : '—'}
                 </T>
                 <T s="caption">{km(c?.chosenMetres ?? null)}</T>
               </View>

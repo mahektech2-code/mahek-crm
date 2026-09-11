@@ -20,7 +20,7 @@
    turns a number of metres into words a man walking a beat would use, so the
    distance on the way to a shop and the distance quoted back in a refusal are
    phrased the same. */
-import { distanceLabel } from './format';
+import { distanceLabel, inrFromPaise } from './format';
 
 export type OdometerVerdict =
   | { ok: true; km: number; distanceKm: number | null }
@@ -162,7 +162,7 @@ export function legLine(leg: {
     return `${leg.modeLabel} · ${leg.odometerEndKm - leg.odometerStartKm} km`;
   }
   if (leg.ticketAmountPaise != null) {
-    return `${leg.modeLabel} · ₹${Math.round(leg.ticketAmountPaise / 100)}`;
+    return `${leg.modeLabel} · ${inrFromPaise(leg.ticketAmountPaise)}`;
   }
   return leg.modeLabel;
 }

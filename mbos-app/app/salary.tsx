@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, T } from '../src/components/ui/primitives';
 import { color as C, weight, tabular } from '../src/theme/tokens';
-import { inr, plural } from '../src/lib/format';
+import { inrFromPaise, plural } from '../src/lib/format';
 import { listSalary, type SalaryMonth } from '../src/data/salary';
 
 /**
@@ -85,13 +85,13 @@ function SalaryCard({ m }: { m: SalaryMonth }) {
       <View style={{ marginTop: 14, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <T s="small" style={{ color: C.muted }}>Net salary</T>
         <T style={[{ fontSize: 22 }, weight(600), tabular]}>
-          {m.netSalaryPaise != null ? inr(m.netSalaryPaise / 100) : '—'}
+          {m.netSalaryPaise != null ? inrFromPaise(m.netSalaryPaise) : '—'}
         </T>
       </View>
 
       <View style={{ marginTop: 10, gap: 6 }}>
-        {m.conveyancePaise != null ? <Row label="Conveyance" value={inr(m.conveyancePaise / 100)} /> : null}
-        {m.otherSalaryPaise != null ? <Row label="Other" value={inr(m.otherSalaryPaise / 100)} /> : null}
+        {m.conveyancePaise != null ? <Row label="Conveyance" value={inrFromPaise(m.conveyancePaise)} /> : null}
+        {m.otherSalaryPaise != null ? <Row label="Other" value={inrFromPaise(m.otherSalaryPaise)} /> : null}
       </View>
 
       <View
@@ -109,7 +109,7 @@ function SalaryCard({ m }: { m: SalaryMonth }) {
         {m.daysOnLeave ? <Row label="Days on leave" value={plural(m.daysOnLeave, 'day')} /> : null}
         {/* Beside the pay, never added to it — money owed back is not earnings. */}
         {m.reimbursedPaise ? (
-          <Row label="Reimbursed separately" value={inr(m.reimbursedPaise / 100)} tone={C.success} />
+          <Row label="Reimbursed separately" value={inrFromPaise(m.reimbursedPaise)} tone={C.success} />
         ) : null}
       </View>
     </Card>

@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import {
   dataSize,
   dayLabel,
@@ -175,3 +177,98 @@ test('a nonsense window says nothing rather than something confident', () => {
   assert.equal(hoursInWords(0), '0 hours');
   assert.equal(hoursInWords(NaN), '0 hours');
 });
+
+/* ------------------------------------------------- the unit, read off source */
+
+/**
+ * NO `inr(` MAY BE HANDED PAISE, and only the source can be asked.
+ *
+ * This is the same shape of check as `mbos-wire.test.ts` and
+ * `data/reachable.test.ts`, and it exists for the same reason: the defect is
+ * invisible to everything else. `inr` takes a `number` and so does
+ * `inrFromPaise`, so a call site that hands over paise type-checks perfectly,
+ * lints clean, renders without an error and prints a figure that is a hundred
+ * times too big — and ₹5,00,000 and ₹5,00,00,000 are both perfectly plausible
+ * revenue targets, so nothing on the screen says which one is meant.
+ *
+ * It went wrong in both directions before this was written. The pick screen
+ * handed paise to `inr` and listed a shop owing ₹2,360 as owing ₹2,36,000. The
+ * targets screen did it five times over, and the client reported it as "all
+ * the amounts in MBOS are showing in paise, so people are getting confused
+ * about the targets" — which is exactly what it looks like from the other end.
+ *
+ * The rule is deliberately crude: an argument that MENTIONS paise may not go to
+ * a rupee-taking formatter. It cannot catch a paise value in a variable called
+ * `value` or `dues`, and it is not trying to — what it catches is the shape the
+ * mistake actually takes, which is a field read straight off a row whose name
+ * says what it holds. `inr` stays exported because the rupee callers are real:
+ * an amount somebody typed into a box is rupees because that is what he said
+ * out loud.
+ */
+test('no rupee-taking formatter is handed a value whose name says paise', () => {
+  const offenders = scanForRupeeFormattersGivenPaise();
+  assert.deepEqual(
+    offenders,
+    [],
+    'These hand paise to a formatter that expects rupees — use inrFromPaise / ' +
+      'compactInrFromPaise instead:\n  ' + offenders.join('\n  '),
+  );
+});
+
+test('and the scan would actually catch one, which is the half worth proving', () => {
+  /* A guard that cannot fail is a guard nobody can trust. The same reader that
+     walks the tree is pointed at one line of the exact code the bug was. */
+  assert.deepEqual(
+    findRupeeFormattersGivenPaise('x.tsx', 'value={inr(current.revenueTargetPaise)}'),
+    ['x.tsx: inr(current.revenueTargetPaise)'],
+  );
+  assert.deepEqual(
+    findRupeeFormattersGivenPaise('x.tsx', 'compactInr(day.collectPaise / 100)'),
+    ['x.tsx: compactInr(day.collectPaise / 100)'],
+  );
+  /* And that it does not cry wolf over the correct spelling, or over a name
+     that merely contains the letters. */
+  assert.deepEqual(findRupeeFormattersGivenPaise('x.tsx', 'inrFromPaise(x.amountPaise)'), []);
+  assert.deepEqual(findRupeeFormattersGivenPaise('x.tsx', 'inr(amountInRupees)'), []);
+});
+
+/** Every `inr(`/`compactInr(` call in `src` and `app` whose argument says paise. */
+function findRupeeFormattersGivenPaise(file: string, src: string): string[] {
+  const found: string[] = [];
+  const call = /(?:^|[^A-Za-z0-9_$.])(compactInr|inr)\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = call.exec(src))) {
+    const open = m.index + m[0].length - 1;
+    let depth = 0;
+    let close = open;
+    for (; close < src.length; close++) {
+      if (src[close] === '(') depth++;
+      else if (src[close] === ')') {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    const inner = src.slice(open + 1, close);
+    if (/paise/i.test(inner)) found.push(`${file}: ${m[1]}(${inner})`);
+    call.lastIndex = close;
+  }
+  return found;
+}
+
+function scanForRupeeFormattersGivenPaise(): string[] {
+  const root = join(import.meta.dirname, '..', '..');
+  const skip = new Set(['node_modules', '.expo', 'android', 'ios', 'dist', 'generated']);
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(entry.name)) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(entry.name) && !/format\.(ts|test\.ts)$/.test(entry.name)) {
+        out.push(...findRupeeFormattersGivenPaise(relative(root, full), readFileSync(full, 'utf8')));
+      }
+    }
+  };
+  for (const top of ['app', 'src']) walk(join(root, top));
+  return out;
+}

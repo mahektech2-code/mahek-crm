@@ -22,6 +22,7 @@ import {
   type Policy,
   type PolicySubject,
 } from './generated/expense-policy';
+import { inrFromPaise } from '../lib/format';
 
 /** What `data/travel.ts` holds for the policy in force — structurally. */
 export type PricingPolicy = { policy: Policy; subject: PolicySubject };
@@ -242,7 +243,7 @@ export function previewClaim(args: {
         remainingBefore === null
           ? ''
           : remainingBefore > 0
-            ? `${rupees(remainingBefore)} left for ${what} today.`
+            ? `${inrFromPaise(remainingBefore)} left for ${what} today.`
             : `Nothing left for ${what} today — anything you claim now needs your manager to agree it.`,
     };
   }
@@ -263,7 +264,7 @@ export function previewClaim(args: {
       proofRequired,
       remainingBeforePaise: remainingBefore,
       remainingAfterPaise: remainingAfter,
-      line: `The policy allows ${rupees(eligible)} of this. The other ${rupees(excess)} needs your manager to agree it — send it anyway and say why.`,
+      line: `The policy allows ${inrFromPaise(eligible)} of this. The other ${inrFromPaise(excess)} needs your manager to agree it — send it anyway and say why.`,
     };
   }
   if (proofRequired && !hasBill) {
@@ -286,15 +287,11 @@ export function previewClaim(args: {
     remainingAfterPaise: remainingAfter,
     line:
       remainingAfter === null
-        ? `Within policy — ${rupees(eligible)}.`
+        ? `Within policy — ${inrFromPaise(eligible)}.`
         : remainingAfter > 0
-          ? `Within policy — ${rupees(eligible)}. ${rupees(remainingAfter)} left for ${what} today.`
-          : `Within policy — ${rupees(eligible)}. Nothing left for ${what} today.`,
+          ? `Within policy — ${inrFromPaise(eligible)}. ${inrFromPaise(remainingAfter)} left for ${what} today.`
+          : `Within policy — ${inrFromPaise(eligible)}. Nothing left for ${what} today.`,
   };
-}
-
-function rupees(paise: number): string {
-  return '₹' + Math.round(paise / 100).toLocaleString('en-IN');
 }
 
 /**
