@@ -250,10 +250,41 @@ export function splitTrailIntoTrips<P extends TripPoint>(
  * the screen is the version that misleads, because an empty map reads as a
  * man who did not move.
  */
+export type DayTrailSegment = {
+  coordinates: [number, number][];
+  gap: boolean;
+  /** The journey this belongs to, or `NO_TRIP` for ground that is in none. */
+  trip: number;
+  /** This segment's own ends, so a piece in no journey can still answer for
+      itself rather than borrowing the whole day's. */
+  fromAt: Date;
+  toAt: Date;
+};
+
+/**
+ * The trip index for ground that belongs to no journey.
+ *
+ * Zero, and every helper here is 1-BASED — `tripColour` and `tripOffset` both
+ * compute `(index - 1) % n`, so passing this to either asks for element -1 and
+ * staggers the offset the wrong way. Callers test for it; see `NO_TRIP_COLOUR`.
+ */
+export const NO_TRIP = 0;
+
+/**
+ * What ground in no journey is drawn in.
+ *
+ * Slate rather than a trip colour, because it is not a leg and must not read
+ * as one — it is where somebody stood, and the hops between stops the phone
+ * slept through. The dash says the path is unknown; this says the colour key
+ * does not apply. Shared by the map and the snap route so the raw line and the
+ * road-matched one cannot come out different colours.
+ */
+export const NO_TRIP_COLOUR = "#64748b";
+
 export function dayTrailSegments<P extends TripPoint>(
   points: P[],
   options: TripOptions,
-): { coordinates: [number, number][]; gap: boolean; trip: number }[] {
+): DayTrailSegment[] {
   if (points.length < 2) return [];
 
   /* Which trip each point belongs to, by identity — `splitTrailIntoTrips`
@@ -265,7 +296,7 @@ export function dayTrailSegments<P extends TripPoint>(
     for (const p of trip.points) tripOf.set(p, trip.index);
   }
 
-  const out: { coordinates: [number, number][]; gap: boolean; trip: number }[] = [];
+  const out: DayTrailSegment[] = [];
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1];
     const b = points[i];
@@ -279,13 +310,20 @@ export function dayTrailSegments<P extends TripPoint>(
     /* The trip index still rides on a gap segment where one end has a trip,
        so the dashed hop out of a leg keeps that leg's colour rather than
        falling back to a default nothing on the screen explains. */
-    const trip = inTrip ? left : (left ?? right ?? 0);
+    const trip = inTrip ? left : (left ?? right ?? NO_TRIP);
 
     const last = out[out.length - 1];
     if (last && last.gap === gap && last.trip === trip) {
       last.coordinates.push([b.lng, b.lat]);
+      last.toAt = b.at;
     } else {
-      out.push({ coordinates: [[a.lng, a.lat], [b.lng, b.lat]], gap, trip });
+      out.push({
+        coordinates: [[a.lng, a.lat], [b.lng, b.lat]],
+        gap,
+        trip,
+        fromAt: a.at,
+        toAt: b.at,
+      });
     }
   }
   return out;

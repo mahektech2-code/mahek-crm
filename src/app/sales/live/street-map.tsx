@@ -7,6 +7,7 @@ import type { DwellStop } from "@/lib/engines/dwell";
 import { type TrailSegment } from "@/lib/engines/trail-gaps";
 import {
   dayTrailSegments,
+  NO_TRIP_COLOUR,
   offsetPolyline,
   splitTrailIntoTrips,
   tripColour,
@@ -151,16 +152,6 @@ type TripSegment = TrailSegment & {
  * the two facts stay independent — the colour says which journey, the dash
  * says how much of it is evidence.
  */
-/**
- * Ground that is on the map and in no journey.
- *
- * Slate rather than a trip colour, because it is not a leg and must not read
- * as one — it is where somebody stood, and the hops between stops that the
- * phone slept through. The dash is what says the path is unknown; this says
- * the colour key does not apply.
- */
-const UNJOURNEYED = "#64748b";
-
 function tripSegments(
   /* Only what a trip is decided from — so the raw trail and the snapped one,
      which carries no accuracy or place, both go through the same function. */
@@ -190,7 +181,7 @@ function tripSegments(
       coordinates: offsetPolyline(s.coordinates, offset),
       gap: s.gap,
       trip: s.trip,
-      colour: trip ? tripColour(s.trip) : UNJOURNEYED,
+      colour: trip ? tripColour(s.trip) : NO_TRIP_COLOUR,
       offset,
       /* The WHOLE trip's length on every segment of it, so a hover anywhere
          along the leg answers for the leg rather than for the piece of it
@@ -200,8 +191,8 @@ function tripSegments(
          carries its own two ends and no distance — a hop nobody recorded a
          path for has no honest length to quote. */
       metres: trip ? trip.metres : 0,
-      fromMs: (trip ? trip.startAt : points[0].at).getTime(),
-      toMs: (trip ? trip.endAt : points[points.length - 1].at).getTime(),
+      fromMs: (trip ? trip.startAt : s.fromAt).getTime(),
+      toMs: (trip ? trip.endAt : s.toAt).getTime(),
     };
   });
 }
