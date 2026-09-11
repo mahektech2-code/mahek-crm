@@ -4,8 +4,9 @@ import * as React from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { DwellStop } from "@/lib/engines/dwell";
-import { splitTrailByGaps, type TrailSegment } from "@/lib/engines/trail-gaps";
+import { type TrailSegment } from "@/lib/engines/trail-gaps";
 import {
+  dayTrailSegments,
   offsetPolyline,
   splitTrailIntoTrips,
   tripColour,
@@ -150,6 +151,16 @@ type TripSegment = TrailSegment & {
  * the two facts stay independent — the colour says which journey, the dash
  * says how much of it is evidence.
  */
+/**
+ * Ground that is on the map and in no journey.
+ *
+ * Slate rather than a trip colour, because it is not a leg and must not read
+ * as one — it is where somebody stood, and the hops between stops that the
+ * phone slept through. The dash is what says the path is unknown; this says
+ * the colour key does not apply.
+ */
+const UNJOURNEYED = "#64748b";
+
 function tripSegments(
   /* Only what a trip is decided from — so the raw trail and the snapped one,
      which carries no accuracy or place, both go through the same function. */
@@ -158,23 +169,41 @@ function tripSegments(
   dwellRadiusMetres: number,
   tripBreakMinutes: number,
 ): TripSegment[] {
-  return splitTrailIntoTrips(points, { gapMetres, dwellRadiusMetres, tripBreakMinutes }).flatMap(
-    (trip) =>
-      splitTrailByGaps(trip.points, gapMetres).map((s) => ({
-        ...s,
-        coordinates: offsetPolyline(s.coordinates, tripOffset(trip.index)),
-        trip: trip.index,
-        colour: tripColour(trip.index),
-        offset: tripOffset(trip.index),
-        /* The WHOLE trip's length on every segment of it, so a hover anywhere
-           along the leg answers for the leg rather than for the piece of it
-           under the cursor — which is what somebody pointing at a line is
-           asking. GeoJSON carries no Date, so the two ends are milliseconds. */
-        metres: trip.metres,
-        fromMs: trip.startAt.getTime(),
-        toMs: trip.endAt.getTime(),
-      })),
+  const options = { gapMetres, dwellRadiusMetres, tripBreakMinutes };
+  /* Every consecutive pair, exactly once — see `dayTrailSegments`. This used
+     to draw the TRIPS alone, which is a different question to "what happened
+     today": a day made mostly of long jumps between places somebody stood
+     still came out as 71 metres of line beside a panel reading 4.1 km. */
+  const trips = new Map(
+    splitTrailIntoTrips(points, options).map((t) => [t.index, t] as const),
   );
+  return dayTrailSegments(points, options).map((s) => {
+    const trip = trips.get(s.trip);
+    /* TRIPS ARE 1-BASED, and `dayTrailSegments` uses 0 for ground that belongs
+       to no journey. Both helpers compute `(index - 1) % n`, so a 0 asks for
+       `TRIP_COLOURS[-1]` — undefined, straight into a MapLibre paint property
+       — and an offset staggered the wrong way off the line. A day of nothing
+       but jumps between places somebody stood still is ALL trip 0, so this is
+       the ordinary case on exactly the day this was built for, not an edge. */
+    const offset = trip ? tripOffset(s.trip) : 0;
+    return {
+      coordinates: offsetPolyline(s.coordinates, offset),
+      gap: s.gap,
+      trip: s.trip,
+      colour: trip ? tripColour(s.trip) : UNJOURNEYED,
+      offset,
+      /* The WHOLE trip's length on every segment of it, so a hover anywhere
+         along the leg answers for the leg rather than for the piece of it
+         under the cursor — which is what somebody pointing at a line is
+         asking. GeoJSON carries no Date, so the two ends are milliseconds.
+         A segment belonging to no journey has no leg to answer for, so it
+         carries its own two ends and no distance — a hop nobody recorded a
+         path for has no honest length to quote. */
+      metres: trip ? trip.metres : 0,
+      fromMs: (trip ? trip.startAt : points[0].at).getTime(),
+      toMs: (trip ? trip.endAt : points[points.length - 1].at).getTime(),
+    };
+  });
 }
 
 function trailFeatureCollection(segments: TripSegment[]): GeoJSON.FeatureCollection {

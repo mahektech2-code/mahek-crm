@@ -3,8 +3,8 @@ import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { dwellStops, type DwellStop } from "@/lib/engines/dwell";
 import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
+import { trailMetres } from "@/lib/engines/trail-trips";
 import { nowMs, shortDateWithYear } from "@/lib/format";
-import { metresBetween } from "@/lib/geo";
 import { trailHasGaps, trailIsDead } from "@/lib/handset-health";
 import { today } from "@/lib/recompute";
 import { readSecret } from "@/lib/secrets";
@@ -95,11 +95,11 @@ export default async function Page({
   const distanceMetres = new Map<string, number>();
   const dwells = new Map<string, DwellStop[]>();
   for (const [id, points] of tracks) {
-    let metres = 0;
-    for (let i = 1; i < points.length; i++) {
-      metres += metresBetween(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
-    }
-    distanceMetres.set(id, metres);
+    /* ONE DEFINITION, shared with the line the map draws — see `trailMetres`.
+       This loop was written out here and the map drew the TRIPS, so on a day
+       made of long jumps between places somebody stood still the panel said
+       4.1 km beside 71 metres of drawn line. */
+    distanceMetres.set(id, trailMetres(points));
     dwells.set(
       id,
       dwellStops(points, config["mbos.location.dwellRadiusMeters"], config["mbos.location.dwellMinMinutes"]),

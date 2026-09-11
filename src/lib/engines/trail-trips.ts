@@ -220,6 +220,94 @@ export function splitTrailIntoTrips<P extends TripPoint>(
 }
 
 /**
+ * THE WHOLE DAY, WITH NOTHING LEFT OFF THE MAP.
+ *
+ * `splitTrailIntoTrips` answers "which journeys did he make", and it is right
+ * to drop what is not a journey. The map then drew ONLY its answer, and a
+ * day that is mostly not-a-journey came out almost blank.
+ *
+ * A real one: 132 fixes, 95 after the accuracy filter, 4.07 km of trail — and
+ * four hops of 200 m or more carrying 3.85 km of it. Each of those ends a
+ * trip and starts the next one clean on the far side, so the hop itself
+ * belongs to no trip; the standing-still between them fails `isJourney`, so
+ * those slices are dropped too. One trip survived, of 8 fixes and 71 metres.
+ * The panel beside the map read "4.1 km" — summed over the raw fixes, gap
+ * hops included — and the map drew seventy-one metres of line. Two
+ * definitions of a day's travel, and the one nobody could see was on screen.
+ *
+ * "The dashed line already says it" was the reasoning for leaving a gap hop
+ * out of both trips, and it was half right: `splitTrailByGaps` dashes a gap
+ * INSIDE a trip. A gap BETWEEN trips was drawn by nothing whatever.
+ *
+ * So this covers every consecutive pair of fixes exactly once. Where a pair
+ * sits inside a trip it carries that trip's index and is solid; where the hop
+ * is a gap, or the pair belongs to no journey at all, it is drawn as a gap —
+ * dashed, which is already this map's word for "we know he went from here to
+ * there and have no record of the path between".
+ *
+ * NOTHING IS INVENTED by that. Both ends of every segment are real fixes; the
+ * dash is what stops a straight line being read as a route. Leaving it off
+ * the screen is the version that misleads, because an empty map reads as a
+ * man who did not move.
+ */
+export function dayTrailSegments<P extends TripPoint>(
+  points: P[],
+  options: TripOptions,
+): { coordinates: [number, number][]; gap: boolean; trip: number }[] {
+  if (points.length < 2) return [];
+
+  /* Which trip each point belongs to, by identity — `splitTrailIntoTrips`
+     returns slices of this same array, so the objects are the very ones
+     passed in and a Map keyed on them needs no index arithmetic to stay in
+     step with a splitter that may change how it cuts. */
+  const tripOf = new Map<P, number>();
+  for (const trip of splitTrailIntoTrips(points, options)) {
+    for (const p of trip.points) tripOf.set(p, trip.index);
+  }
+
+  const out: { coordinates: [number, number][]; gap: boolean; trip: number }[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const hop = metresBetween(a.lat, a.lng, b.lat, b.lng);
+    /* A pair is part of a journey only when BOTH its ends are in the same
+       one. The pair that straddles a trip boundary is the gap itself. */
+    const left = tripOf.get(a);
+    const right = tripOf.get(b);
+    const inTrip = left !== undefined && left === right;
+    const gap = !inTrip || hop >= options.gapMetres;
+    /* The trip index still rides on a gap segment where one end has a trip,
+       so the dashed hop out of a leg keeps that leg's colour rather than
+       falling back to a default nothing on the screen explains. */
+    const trip = inTrip ? left : (left ?? right ?? 0);
+
+    const last = out[out.length - 1];
+    if (last && last.gap === gap && last.trip === trip) {
+      last.coordinates.push([b.lng, b.lat]);
+    } else {
+      out.push({ coordinates: [[a.lng, a.lat], [b.lng, b.lat]], gap, trip });
+    }
+  }
+  return out;
+}
+
+/**
+ * The length of a trail, summed hop by hop.
+ *
+ * Exported so the figure on the panel and the line on the map come from ONE
+ * definition. They did not: the page summed the raw fixes while the map drew
+ * the trips, and on a day made mostly of gaps the two disagreed by 3.99 km
+ * with nothing on the screen to say which was which.
+ */
+export function trailMetres(points: TripPoint[]): number {
+  let metres = 0;
+  for (let i = 1; i < points.length; i++) {
+    metres += metresBetween(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
+  }
+  return metres;
+}
+
+/**
  * The colours, in the order trips take them.
  *
  * Chosen to be told apart at a glance on a pale street map, and ADJACENT

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { splitTrailIntoTrips, tripColour, tripOffset, TRIP_COLOURS } from "./trail-trips";
+import {
+  dayTrailSegments,
+  splitTrailIntoTrips,
+  trailMetres,
+  tripColour,
+  tripOffset,
+  TRIP_COLOURS,
+} from "./trail-trips";
+import { metresBetween } from "../geo";
 import { centroidOf, dwellRuns, dwellStops } from "./dwell";
 
 /** Metres → rough degrees of latitude, near enough for a test fixture. */
@@ -176,5 +184,101 @@ describe("keeping two passes down one street apart", () => {
   it("keeps the stagger small enough to stay a road rather than a fan", () => {
     const spread = Math.max(tripOffset(1), tripOffset(2), tripOffset(3)) - tripOffset(1);
     assert.ok(spread <= 6, `legs spread ${spread}px, which is wider than a lane`);
+  });
+});
+
+/*
+ * THE MAP HAS TO COVER THE GROUND THE NUMBER CLAIMS.
+ *
+ * A real day: 132 fixes, 95 after the accuracy filter, 4.07 km of trail — and
+ * four hops of 200 m or more carrying 3.85 km of it, because the phone slept
+ * between the places he stood still. Each of those hops ends a trip and
+ * starts the next clean on the far side, so the hop belongs to no trip; the
+ * standing-still between them fails `isJourney`, so those slices go too. One
+ * trip survived, of 8 fixes and 71 metres. The panel read "4.1 km" and the
+ * map drew seventy-one metres of line.
+ *
+ * Neither half was wrong on its own. They were two definitions of a day's
+ * travel, and the invariant nobody had written down is that they are one.
+ */
+describe("the whole day reaches the map", () => {
+  const OPTS = { gapMetres: 200, dwellRadiusMetres: 60, tripBreakMinutes: 10 };
+
+  /** A day of standing still, teleporting, standing still — the shape above. */
+  function sleepyDay() {
+    return [
+      ...stand(0, 0, 20),
+      ...stand(1200, 130, 20),
+      ...stand(2500, 260, 20),
+    ];
+  }
+
+  it("draws every metre the distance figure counts", () => {
+    const points = sleepyDay();
+    const segments = dayTrailSegments(points, OPTS);
+
+    let drawn = 0;
+    for (const s of segments) {
+      for (let i = 1; i < s.coordinates.length; i++) {
+        const [aLng, aLat] = s.coordinates[i - 1];
+        const [bLng, bLat] = s.coordinates[i];
+        drawn += metresBetween(aLat, aLng, bLat, bLng);
+      }
+    }
+
+    const claimed = trailMetres(points);
+    assert.ok(claimed > 2000, "the fixture should be a day with real distance in it");
+    assert.ok(
+      Math.abs(drawn - claimed) < 1,
+      `the map draws ${Math.round(drawn)} m of a ${Math.round(claimed)} m day — a figure the line does not account for`,
+    );
+  });
+
+  it("draws the long hops, and never as a journey", () => {
+    const points = sleepyDay();
+    const segments = dayTrailSegments(points, OPTS);
+
+    /* The two 1.2 km jumps have to appear in the drawn geometry. Nothing on
+       this day is a journey — it is three stops and two hops the phone slept
+       through — so `splitTrailIntoTrips` finds nothing, and before this the
+       map drew nothing at all. */
+    assert.equal(splitTrailIntoTrips(points, OPTS).length, 0, "the fixture must contain no journey");
+
+    const hops: number[] = [];
+    for (const s of segments) {
+      for (let i = 1; i < s.coordinates.length; i++) {
+        const [aLng, aLat] = s.coordinates[i - 1];
+        const [bLng, bLat] = s.coordinates[i];
+        hops.push(metresBetween(aLat, aLng, bLat, bLng));
+      }
+    }
+    assert.equal(
+      hops.filter((m) => m >= OPTS.gapMetres).length,
+      2,
+      "both long hops must be on the map",
+    );
+
+    /* Dashed, and carrying no trip — a hop nobody recorded a path for is not
+       a leg, and colouring it as one would put it in the key beside real
+       journeys. */
+    for (const s of segments) {
+      assert.ok(s.gap, "nothing on a day with no journey may be drawn as one");
+      assert.equal(s.trip, 0);
+    }
+  });
+
+  it("covers every consecutive pair exactly once", () => {
+    const points = sleepyDay();
+    const segments = dayTrailSegments(points, OPTS);
+    /* Segments are runs of consecutive pairs, so the hops they hold must add
+       up to one less than the number of fixes — no pair dropped, none drawn
+       twice. A day that is drawn twice reads as double the distance. */
+    const hops = segments.reduce((n, s) => n + s.coordinates.length - 1, 0);
+    assert.equal(hops, points.length - 1);
+  });
+
+  it("says nothing about a day with one fix", () => {
+    assert.deepEqual(dayTrailSegments([{ lat: 12.9, lng: 77.6, at: at(0) }], OPTS), []);
+    assert.equal(trailMetres([{ lat: 12.9, lng: 77.6, at: at(0) }]), 0);
   });
 });
