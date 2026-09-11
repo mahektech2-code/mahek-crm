@@ -16,6 +16,7 @@ export const APP_IDS = [
   "hrms",
   "admin",
   "founder",
+  "enquiries",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -160,6 +161,24 @@ export const APPS: AppDefinition[] = [
     description:
       "Company revenue, the whole team scored, money owed and the roster — one screen.",
     href: "/founder",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "enquiries",
+    /*
+     * Its own app, not a screen inside the CRM, Accounts or HRMS — Sales,
+     * Accounts and HR each work enquiries that belong to their own team, and
+     * one shared workspace granted separately is what lets a person hold it
+     * without also holding whichever of those three apps happens to be
+     * nearby. `enquiries.workspace` on the database row points back at this
+     * same app id, so a grant here and a row there mean the same thing.
+     */
+    name: "Website Enquiries",
+    initials: "WE",
+    description:
+      "Enquiries from the website and beyond, from first contact through to delivery.",
+    href: "/enquiries",
     tone: "neutral",
     built: true,
   },

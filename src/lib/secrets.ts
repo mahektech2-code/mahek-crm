@@ -47,6 +47,8 @@ export const SECRET_NAMES = {
   "openai.apiKey": "OPENAI_API_KEY",
   "msg91.authKey": "MSG91_AUTH_KEY",
   "olamaps.apiKey": "OLAMAPS_API_KEY",
+  /** What the website's own backend proves it holds when it forwards a submitted enquiry to `/api/public/enquiries`. Server-to-server only — never reaches a browser on either side. */
+  "enquiries.ingestSecret": "ENQUIRY_INGEST_SECRET",
 } as const;
 
 export type SecretName = keyof typeof SECRET_NAMES;
