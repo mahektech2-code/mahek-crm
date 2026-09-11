@@ -1,0 +1,14 @@
+-- Website Enquiries becomes its own app, granted the same way every other
+-- one is — a row in `app_access`, not a screen borrowed from the CRM.
+--
+-- Its own app rather than a CRM/Accounts/HRMS screen: Sales, Accounts and HR
+-- each work enquiries that belong to their own team, and a shared workspace
+-- granted separately is what lets somebody hold it without also holding
+-- whichever of those three apps happens to be nearby.
+--
+-- On its own, ahead of the tables that will default to it: a value added to
+-- an enum cannot be USED in the same transaction that adds it — the same
+-- rule that keeps a new app id out of the migration that grants it. The
+-- `enquiries` table's own migration follows this one and is where the value
+-- actually gets used.
+alter type "public"."app_id" add value 'enquiries';

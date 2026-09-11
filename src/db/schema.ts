@@ -519,6 +519,8 @@ export const appIdEnum = pgEnum("app_id", [
   "admin",
   /** Performance across every app, on one screen. Granted deliberately. */
   "founder",
+  /** Website Enquiries — its own app, granted separately from CRM/Accounts/HRMS. */
+  "enquiries",
 ]);
 
 /* --------------------------------------------------------- §2 configuration */
@@ -2470,6 +2472,15 @@ export const reminders = pgTable(
       .notNull()
       .references(() => users.id),
     callId: text("call_id"),
+    /**
+     * Which enquiry this follows up, where there is one. One customer can
+     * have more than one open enquiry, so `customerId` alone cannot say
+     * which of them a reminder is for — this is the disambiguator. Null for
+     * every reminder that has nothing to do with an enquiry, which is most
+     * of them; set null (not cascaded) if the enquiry is ever removed, since
+     * the promise the reminder records is real independently of it.
+     */
+    enquiryId: text("enquiry_id").references(() => enquiries.id, { onDelete: "set null" }),
     dueDate: date("due_date").notNull(),
     /** Mandatory — what was promised, in the telecaller's own words. */
     note: text("note").notNull(),
@@ -2501,6 +2512,7 @@ export const reminders = pgTable(
     index("reminders_assigned_due_idx").on(t.assignedUserId, t.dueDate),
     index("reminders_customer_idx").on(t.customerId),
     index("reminders_status_idx").on(t.status),
+    index("reminders_enquiry_idx").on(t.enquiryId),
   ],
 );
 
@@ -7278,6 +7290,138 @@ export const customerHealthSnapshots = pgTable(
   ],
 );
 
+/* ------------------------------------------------------- §3.32 website enquiry */
+
+/**
+ * A visitor's enquiry — from the website today, from Instagram, WhatsApp or
+ * IndiaMART tomorrow. `source` says where it came from; `workspace` says
+ * which app owns it, kept as the platform's own app-identity enum rather
+ * than a second one, so this table can never drift from what `app_access`
+ * already means by an app. It is `enquiries` for everything this table holds
+ * today — Sales, Accounts and HR read the same app, filtered by assignment
+ * and stage rather than by three different workspace values.
+ *
+ * It is its own identity, not a customer or a lead: what it carries here —
+ * the raw submission, the stage somebody is working it through, who has it —
+ * has no home on `customers`, and folding it in would repeat the mistake
+ * `mbos_leads` made before it was abandoned (see `customerId` below). Once a
+ * person is identified behind it, this points at a real `customers` row
+ * (`kind = 'lead'` for somebody new) rather than copying their details a
+ * second time.
+ */
+export const enquiryStageEnum = pgEnum("enquiry_stage", [
+  "new",
+  "contacted",
+  "follow_up",
+  "qualified",
+  "converted",
+  "closed",
+]);
+
+export const enquiryPriorityEnum = pgEnum("enquiry_priority", [
+  "low",
+  "normal",
+  "high",
+  "urgent",
+]);
+
+export const enquiries = pgTable(
+  "enquiries",
+  {
+    id: text("id").primaryKey(),
+    workspace: appIdEnum("workspace").notNull().default("enquiries"),
+    /**
+     * Null until a person is identified behind it. Set once, to an existing
+     * customer or a freshly created `kind = 'lead'` row — never merged,
+     * never overwritten, and never required: an enquiry that turns out to be
+     * spam or a wrong number is allowed to stay unlinked forever.
+     */
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    /** Where it came from — website, Instagram, WhatsApp, IndiaMART. Free text: this list grows without a migration. */
+    source: text("source").notNull(),
+    /** Which form or page within that source, where it is known. */
+    sourceForm: text("source_form"),
+    /** The visitor's own submitted fields, kept exactly as sent regardless of how parsing changes later. */
+    rawSubmission: jsonb("raw_submission").$type<Record<string, unknown>>().notNull(),
+    stage: enquiryStageEnum("stage").notNull().default("new"),
+    priority: enquiryPriorityEnum("priority").notNull().default("normal"),
+    /** Null means unassigned. Never a sentinel user, and never automatic on receipt. */
+    assignedToId: text("assigned_to_id").references(() => users.id),
+    /** When the visitor submitted it — not when this row was written; see createdAt for that. */
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+    /** Whatever id the source system supplies, so a genuine retransmission is a no-op rather than a second row. Same part `orders.externalRef` already plays. */
+    externalRef: text("external_ref"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    index("enquiries_workspace_stage_idx").on(t.workspace, t.stage),
+    index("enquiries_assigned_idx").on(t.workspace, t.assignedToId),
+    index("enquiries_priority_idx").on(t.workspace, t.priority),
+    index("enquiries_received_idx").on(t.receivedAt),
+    index("enquiries_customer_idx").on(t.customerId),
+    /** The Unassigned view, and only that view — an enquiry with an assignee never touches this. */
+    index("enquiries_unassigned_idx")
+      .on(t.workspace, t.receivedAt)
+      .where(sql`assigned_to_id is null`),
+    uniqueIndex("enquiries_external_ref_key").on(t.externalRef),
+  ],
+);
+
+/**
+ * The enquiry's own visible business timeline — received, viewed, assigned,
+ * contacted, a note, a stage change. Kept apart from `audit_log`: that is
+ * the compliance record of which field changed under which authority, this
+ * is the story a person reads to understand what happened to the enquiry,
+ * the same split `complaint_status_history` already draws for complaints.
+ */
+export const enquiryActivity = pgTable(
+  "enquiry_activity",
+  {
+    id: text("id").primaryKey(),
+    enquiryId: text("enquiry_id")
+      .notNull()
+      .references(() => enquiries.id, { onDelete: "cascade" }),
+    /** e.g. `received`, `assigned`, `stage_changed` — free text, like `timeline_events.eventType`, so a new kind never needs a migration. */
+    kind: text("kind").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    /** Null for a system-produced event such as `received`. */
+    actorUserId: text("actor_user_id").references(() => users.id),
+    note: text("note"),
+    /** The small structured detail a kind needs, e.g. `{from, to}` for a stage or assignment change. */
+    meta: jsonb("meta").$type<Record<string, unknown>>(),
+  },
+  (t) => [index("enquiry_activity_enquiry_idx").on(t.enquiryId, t.at.desc())],
+);
+
+/**
+ * One enquiry may produce more than one order over its life, so a single
+ * `linkedOrderId` on `enquiries` would only ever be able to name one — this
+ * is a proper join instead. Deleting either side removes only the LINK: an
+ * enquiry and an order are each real independently of whether the other
+ * still exists.
+ */
+export const enquiryOrders = pgTable(
+  "enquiry_orders",
+  {
+    id: text("id").primaryKey(),
+    enquiryId: text("enquiry_id")
+      .notNull()
+      .references(() => enquiries.id, { onDelete: "cascade" }),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("enquiry_orders_pair_key").on(t.enquiryId, t.orderId),
+    index("enquiry_orders_order_idx").on(t.orderId),
+  ],
+);
+
 /* --------------------------------------------------------------- relations */
 
 export const usersRelations = relations(users, ({ many, one }) => ({
@@ -7322,6 +7466,7 @@ export const customersRelations = relations(customers, ({ one, many }) => ({
   reminders: many(reminders),
   complaints: many(complaints),
   messages: many(waMessages),
+  enquiries: many(enquiries),
   followUpState: one(followUpStates, {
     fields: [customers.id],
     references: [followUpStates.customerId],
@@ -7364,6 +7509,7 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
   customer: one(customers, { fields: [orders.customerId], references: [customers.id] }),
   user: one(users, { fields: [orders.userId], references: [users.id] }),
   bills: many(bills),
+  enquiryLinks: many(enquiryOrders),
 }));
 
 export const remindersRelations = relations(reminders, ({ one }) => ({
@@ -7372,6 +7518,25 @@ export const remindersRelations = relations(reminders, ({ one }) => ({
     fields: [reminders.assignedUserId],
     references: [users.id],
   }),
+  enquiry: one(enquiries, { fields: [reminders.enquiryId], references: [enquiries.id] }),
+}));
+
+export const enquiriesRelations = relations(enquiries, ({ one, many }) => ({
+  customer: one(customers, { fields: [enquiries.customerId], references: [customers.id] }),
+  assignedTo: one(users, { fields: [enquiries.assignedToId], references: [users.id] }),
+  activity: many(enquiryActivity),
+  reminders: many(reminders),
+  orderLinks: many(enquiryOrders),
+}));
+
+export const enquiryActivityRelations = relations(enquiryActivity, ({ one }) => ({
+  enquiry: one(enquiries, { fields: [enquiryActivity.enquiryId], references: [enquiries.id] }),
+  actor: one(users, { fields: [enquiryActivity.actorUserId], references: [users.id] }),
+}));
+
+export const enquiryOrdersRelations = relations(enquiryOrders, ({ one }) => ({
+  enquiry: one(enquiries, { fields: [enquiryOrders.enquiryId], references: [enquiries.id] }),
+  order: one(orders, { fields: [enquiryOrders.orderId], references: [orders.id] }),
 }));
 
 export const complaintsRelations = relations(complaints, ({ one, many }) => ({
