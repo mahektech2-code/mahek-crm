@@ -44,10 +44,24 @@ export type HandsetFacts = {
   lastHeardAt: Date | string | null;
   /** A day that is open changes what silence MEANS — see below. */
   dayOpen: boolean;
+  /** When he checked in — what a dead trail is measured from. */
+  checkInAt: Date | string | null;
+  /**
+   * THE NEWEST FIX THE TRAIL ITSELF HAS PRODUCED, and nothing else.
+   *
+   * Deliberately NOT the row's `seenAt`, which is the newest of three sources
+   * — the trail, the check-in and each visit — and is exactly the fact that
+   * hid this for as long as it was hidden. A salesman whose tracking is dead
+   * still checks in, and that one fix gives him a pin, a place and a time on
+   * the team list; read as evidence of a trail it says the opposite of the
+   * truth. Null here means the trail has produced nothing at all today.
+   */
+  trailSeenAt: Date | string | null;
 };
 
 export type HandsetThresholds = {
   quietMinutes: number;
+  noTrailMinutes: number;
   lowBatteryPercent: number;
 };
 
@@ -81,6 +95,15 @@ export function ageWords(fromMs: number, nowMs: number): string {
  * maps cleanly onto `always`. `false` does NOT map onto anything, because it
  * is exactly the ambiguity the new column was added to end — it becomes
  * `restricted`, which says the trail has gaps without inventing a reason.
+ *
+ * AND `always` IS NOT A PROMISE OF A TRAIL. It is the strongest thing this
+ * column can say and it still only says what the OS granted — an OEM battery
+ * manager is perfectly free to kill a service that started with every
+ * permission it asked for, and on some handsets it does so within minutes.
+ * Nothing in this function can see that; what sees it is `trailIsDead` below,
+ * reading the positions themselves. The two are not alternatives: a phone
+ * reading `always` here and producing nothing all day is the exact shape of
+ * the incident this module was corrected for, and it is caught downstairs.
  */
 type LocationState = "always" | "while_using" | "denied" | "undetermined" | "restricted" | "unknown";
 
@@ -114,6 +137,49 @@ export function trailHasGaps(
   if (f.locationServicesEnabled === false) return true;
   const state = locationState(f);
   return state === "while_using" || state === "denied" || state === "restricted";
+}
+
+/**
+ * CHECKED IN, AND THE TRAIL HAS PRODUCED NOTHING.
+ *
+ * The fault that had no sentence anywhere. A salesman checked in at 04:16 and
+ * by half past twelve had posted not one position — ever, since his phone was
+ * bound — while his handset was demonstrably fine: it had synced ninety
+ * minutes earlier, the check-in and its photograph had both arrived, and the
+ * check-in's own GPS fix was good. The map drew him at that fix, the team list
+ * said "Last seen 04:16", and the only note against him was that he had gone
+ * quiet — a sentence that is true of the interval and wrong about the phone,
+ * and which sends a manager hunting a signal problem that does not exist.
+ *
+ * EVERY PERMISSION HE HOLDS READS CORRECT, and that is the point rather than a
+ * complication. `background_location_granted` is written at the end of the
+ * handset's `start()` from an answer that has already refused to be true
+ * unless the OS reported the background permission granted — so it maps onto
+ * `always` above and it is not lying. The service started with everything it
+ * asked for and an OEM battery manager killed it anyway, which is a thing no
+ * column on `mbos_devices` can report and only the absence of positions can.
+ * That makes this the ONLY line that catches a handset like his, which is why
+ * it fires whatever the permissions say.
+ *
+ * It is measured from the CHECK-IN and not from the start of the day, because
+ * the trail cannot produce anything before there is a day to produce it in,
+ * and a threshold is what keeps a morning's first four minutes from reading as
+ * a fault. And it asks `trailSeenAt`, never the row's `seenAt` — see that
+ * field's own note: the check-in fix is precisely what made this invisible.
+ *
+ * One function, because the Live map's banner counts these and each row
+ * explains its own, exactly as `trailHasGaps` is shared above it.
+ */
+export function trailIsDead(
+  f: Pick<HandsetFacts, "dayOpen" | "checkInAt" | "trailSeenAt">,
+  t: Pick<HandsetThresholds, "noTrailMinutes">,
+  nowMs: number,
+): boolean {
+  if (!f.dayOpen) return false;
+  if (ms(f.trailSeenAt) !== null) return false;
+  const checkedIn = ms(f.checkInAt);
+  if (checkedIn === null) return false;
+  return nowMs - checkedIn > t.noTrailMinutes * 60_000;
 }
 
 /**
@@ -180,6 +246,40 @@ export function handsetNotes(
   }
 
   /*
+   * THE TRAIL ITSELF, and it outranks everything below it.
+   *
+   * It sits above the battery and above the silence because it is the only
+   * line on the row that names what is actually broken — the two under it are
+   * context and a duration, and on the day this was written the duration was
+   * the ONLY thing said, which is how a manager spent a morning looking for a
+   * signal fault on a phone that was syncing.
+   *
+   * It is not folded into the permission block above and does not replace any
+   * of it: those sentences are about a SETTING and this one is about TODAY.
+   * A handset can hold "Allow all the time" and still produce nothing — this
+   * one did — and a phone reporting `while_using` with a trail full of holes
+   * is a different row from one with no trail at all. Both lines can appear
+   * and each is worth its own reading.
+   *
+   * WHAT IT ASKS FOR IS THE BATTERY MANAGER, not the permission. The commonest
+   * reader of this line is a manager looking at a row whose permission is
+   * already correct, and sending him to a settings screen that is right takes
+   * the one person who could fix this and spends his call proving nothing.
+   * Autostart and battery optimisation are where these handsets kill a service
+   * that started properly; the permission is named last, and only because a
+   * build too old to report `location_permission` leaves it unconfirmed.
+   */
+  const checkedIn = ms(f.checkInAt);
+  if (checkedIn !== null && trailIsDead(f, t, nowMs)) {
+    notes.push({
+      tone: "bad",
+      text: `No position all day — checked in ${ageWords(checkedIn, nowMs)} ago`,
+      detail:
+        "The check-in reached MahekOne and not one position has since, so this is the tracking service on his phone rather than a handset we cannot hear from — the silence line, if there is one below, is measuring an interval and not naming this. The usual cause is the phone killing the service after it started perfectly well: ask him to allow MahekOne to autostart and to set its battery usage to unrestricted, in the phone's own battery settings, then check out and back in. Only if this row also says something about Location is the permission worth changing.",
+    });
+  }
+
+  /*
    * BATTERY IS SHOWN WHEN IT IS ACTIONABLE, which is low or working, and it
    * ALWAYS carries the time it was read.
    *
@@ -210,6 +310,17 @@ export function handsetNotes(
    * opened it means nothing at all — a phone in a drawer overnight is not a
    * fault, and flagging it would put a warning on every row every morning,
    * which is how a screen teaches people to ignore its warnings.
+   *
+   * IT STILL FIRES ON A PHONE WE HAVE HEARD FROM, and that was reconsidered
+   * rather than left alone. The vivo above had synced ninety minutes earlier
+   * and was told it had not been heard from for ninety minutes, which read as
+   * an accusation and was merely a measurement — so the temptation was to
+   * suppress it on a handset that has spoken recently. There is no such thing:
+   * `quietMinutes` IS the definition of recently, a manager set it, and a
+   * second definition written in here would be two answers to one question on
+   * one screen. What was actually wrong was that this was the only line on the
+   * row. It now sits under a line that names the fault, which is where a
+   * duration belongs.
    */
   const heard = ms(f.lastHeardAt);
   if (f.dayOpen) {

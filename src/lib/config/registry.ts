@@ -1695,6 +1695,28 @@ export const SETTINGS = [
     max: 300,
   },
   {
+    key: "mbos.location.trackEveryMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How far apart two points on the trail may be",
+    description:
+      "Minutes. The one above is a CEILING on how often the handset asks the OS for a position; this is the floor on how often one is actually kept, and it is the number that decides what the trail looks like and what it costs to upload. The two are not the same question and must not be collapsed: Android delivers on its own schedule whatever it is asked for, so the app keeps what it wants and discards the rest — which is the whole reason a setting that asked for five minutes once ran at three seconds for three days. Longer draws a line that cuts corners through buildings; shorter fills the upload queue faster than a market lane can drain it.",
+    default: 5,
+    min: 1,
+    max: 120,
+  },
+  {
+    key: "mbos.location.trailStalledAfterMisses",
+    type: "integer",
+    category: "mbos-location",
+    label: "Missed fixes before the handset stops believing it is tracking",
+    description:
+      "Android accepts the background tracking task and then, on a vivo, an Oppo or a Xiaomi, the battery manager quietly kills the service behind it — the handset is told it started and is never told otherwise. Silence is the only evidence there is, so this is how many of its own position intervals may pass with nothing recorded before the phone concludes it is not tracking, falls back to taking fixes while the app is open, and tells the office what it is really doing. Too low and a salesman walking through a basement godown is demoted off real background tracking for the rest of the day; too high and a handset that will never deliver a fix spends a morning believing it is.",
+    default: 4,
+    min: 2,
+    max: 60,
+  },
+  {
     key: "mbos.location.dwellRadiusMeters",
     type: "integer",
     category: "mbos-location",
@@ -1768,6 +1790,17 @@ export const SETTINGS = [
       "Minutes. A phone that cannot reach us cannot tell us it cannot reach us, so silence is the only evidence there is that a salesman is out of signal, out of battery or has closed the app — and this is where that silence starts being worth saying out loud. It changes what the Live map SAYS and nothing a handset does. It is deliberately not the same number as the Sync health screen's quiet hours: that one asks whether a phone has stopped syncing at all, over days, and this one asks whether a man who checked in this morning has gone quiet since — which on an open working day is a question measured in minutes.",
     default: 30,
     min: 5,
+    max: 720,
+  },
+  {
+    key: "mbos.location.noTrailMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long an open day may run with no trail at all before the Live map says so",
+    description:
+      "Minutes since the check-in. A day four minutes old with no fix yet is a phone still starting its tracking task; one four hours old with not a single position is a handset whose trail is dead, and until this existed nothing on any screen said so — the map simply drew him at his check-in point and the only note he got was that he had gone quiet, which sent managers looking for a signal problem on a phone that was syncing perfectly. It is deliberately not the same number as the silence above: that one asks whether we are hearing from the phone at all, and this one asks whether the phone that IS reporting has produced a trail.",
+    default: 90,
+    min: 10,
     max: 720,
   },
   {
@@ -3442,6 +3475,8 @@ export type Config = {
   "mbos.location.unplannedVisitsPerDay": number;
   "mbos.location.trackWhileWorking": boolean;
   "mbos.location.trackEverySeconds": number;
+  "mbos.location.trackEveryMinutes": number;
+  "mbos.location.trailStalledAfterMisses": number;
   "mbos.location.dwellRadiusMeters": number;
   "mbos.location.dwellMinMinutes": number;
   "mbos.location.tripBreakMinutes": number;
@@ -3449,6 +3484,7 @@ export type Config = {
   "mbos.location.logActivityLocation": boolean;
   "mbos.location.activityFixMaxAgeSeconds": number;
   "mbos.location.handsetQuietMinutes": number;
+  "mbos.location.noTrailMinutes": number;
   "mbos.location.lowBatteryPercent": number;
   "mbos.sync.quietHours": number;
 

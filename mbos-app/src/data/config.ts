@@ -36,6 +36,19 @@ const DEFAULTS: Record<string, unknown> = {
      what a handset does before it has ever heard from the office. */
   'mbos.location.trackWhileWorking': true,
   'mbos.location.trackEverySeconds': 3,
+  /* The floor on what is KEPT, as opposed to what is asked for above. It was
+     read here and published nowhere for the life of the module, so every
+     handset in the field has run the trail at this compiled five whatever the
+     office wanted — the silent fallback `getConfig` is built to make safe, and
+     invisible precisely because the number it fell back to was the number
+     everybody assumed was in force. */
+  'mbos.location.trackEveryMinutes': 5,
+  /* How long the OS may claim to be tracking while delivering nothing before
+     the handset stops believing it — in multiples of its own cadence. See
+     `engines/trail-watchdog.ts`; the number matches the registry's default,
+     because a handset on the floor for want of a bootstrap must behave as the
+     office would have told it to. */
+  'mbos.location.trailStalledAfterMisses': 4,
 
   /* maps kept for no signal — see `engines/tiles.ts` for what each one costs */
   'mbos.maps.offlineEnabled': true,

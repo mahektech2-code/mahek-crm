@@ -62,7 +62,13 @@ export function TeamList({
         const selected = selectedId === r.salesmanId;
         /* An open day is one checked into and not yet out of. It changes what
            silence MEANS — a quiet phone at nine at night is a phone in a
-           drawer, not a fault. */
+           drawer, not a fault.
+
+           `hasFix` above is deliberately NOT what answers "has his trail
+           produced anything": it is true of a salesman whose only fix all day
+           is his own check-in, which is exactly the handset whose tracking is
+           dead. `trailSeenAt` comes down the row for that question and nothing
+           else — see `handset-health`'s `trailIsDead`. */
         const notes = handsetNotes(
           { ...r, dayOpen: Boolean(r.checkInAt && !r.checkOutAt) },
           thresholds,
