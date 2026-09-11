@@ -135,6 +135,7 @@ export function AppFrame({
   const checkedIn = checkInAt != null;
   const gps = useStore((s) => s.gps);
   const toast = useStore((s) => s.toast);
+  const toastTone = useStore((s) => s.toastTone);
   const clearToast = useStore((s) => s.clearToast);
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
@@ -332,7 +333,7 @@ export function AppFrame({
           would be four gates, and three of them would be right. */}
       <TravelGate />
 
-      <Toast message={toast} onDone={clearToast} lift={footerHeight} />
+      <Toast message={toast} tone={toastTone} onDone={clearToast} lift={footerHeight} />
     </View>
   );
 }

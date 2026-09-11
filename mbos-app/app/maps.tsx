@@ -139,8 +139,11 @@ export default function MapsScreen() {
         (status) => {
           if (!alive) return;
           setLive((l) => ({ ...l, [id]: status }));
-          /* Progress after a failure means it is going again. */
-          if (status.state === 'active') clearFailure(row);
+          /* Progress after a failure means it is going again — and a pack that
+             reached `complete` plainly did, whatever failed on the way. A row
+             telling somebody a finished map is broken is the one direction this
+             mark must never fail in. */
+          if (status.state === 'active' || status.state === 'complete') clearFailure(row);
         },
         () => alive && setFailed((f) => ({ ...f, [row]: true })),
       ).then((stop) => {
@@ -363,11 +366,20 @@ export default function MapsScreen() {
                 area={area}
                 first={i === 0}
                 status={area.saved ? live[area.saved.id] ?? area.saved.status : undefined}
+                failed={!!failed[area.id]}
                 staleAfterDays={settings?.refreshAfterDays ?? 120}
                 readAt={readAt}
                 onSave={() => void start(area)}
                 onPause={() => area.saved && pause(area.saved.id)}
-                onResume={() => area.saved && void resumeMap(area.saved.id).then(load)}
+                onResume={() => {
+                  if (!area.saved) return;
+                  /* Cleared as the tap lands rather than waiting for the first
+                     progress event: between the two the row would go on saying
+                     the download had stopped, under a button he had just
+                     pressed. A second failure sets it again. */
+                  clearFailure(area.id);
+                  void resumeMap(area.saved.id).then(load);
+                }}
                 onRefresh={() => {
                   if (!area.saved) return;
                   void refreshMap(area.saved.id).then(() => {
@@ -470,6 +482,7 @@ function AreaRow({
   area,
   first,
   status,
+  failed,
   staleAfterDays,
   readAt,
   onSave,
@@ -482,6 +495,8 @@ function AreaRow({
   area: OfflineArea;
   first: boolean;
   status: OfflinePackStatus | null | undefined;
+  /** This pack stopped on an error. See `stopped` below. */
+  failed: boolean;
   staleAfterDays: number;
   /** The clock, read once where the data was. Never read during render. */
   readAt: number;
@@ -496,6 +511,19 @@ function AreaRow({
   const downloading = status ? status.state !== 'complete' && status.percentage < 100 : false;
   const running = downloading && status?.state === 'active';
   const complete = Boolean(saved) && !downloading;
+  /*
+   * STOPPED ON AN ERROR, as against stopped by somebody.
+   *
+   * MapLibre reports both identically — `inactive`, short of 100% — so a failed
+   * download drew a stalled bar, the word "Paused" and a Resume button, and the
+   * only thing that had ever said otherwise was a toast raised at the moment it
+   * happened, which nobody is looking at. "It picks up where it stopped" is
+   * then a sentence that is simply false: nothing is going to pick it up.
+   *
+   * A pack the store calls complete wins over the mark. Telling somebody a
+   * finished map is broken is the one direction this must not fail in.
+   */
+  const stopped = failed && !complete;
 
   const ageDays =
     saved?.savedAt != null ? Math.floor((readAt - saved.savedAt) / 86_400_000) : null;
@@ -517,7 +545,8 @@ function AreaRow({
             </T>
             {complete && area.coverage.state === 'full' ? <Badge tone="success">Saved</Badge> : null}
             {complete && area.coverage.state === 'partial' ? <Badge tone="amber">Part saved</Badge> : null}
-            {downloading ? <Badge tone="info">Saving</Badge> : null}
+            {stopped ? <Badge tone="danger">Stopped</Badge> : null}
+            {downloading && !stopped ? <Badge tone="info">Saving</Badge> : null}
             {complete && stale ? <Badge tone="amber">Old</Badge> : null}
           </View>
           <T s="caption">
@@ -536,6 +565,12 @@ function AreaRow({
             tone={area.tooBig ? 'muted' : 'primary'}
             onPress={onSave}
           />
+        ) : stopped ? (
+          /* "Resume" is the wrong word for something that did not pause. It is
+             the same call underneath — the pack keeps what it has and carries
+             on from there — and what changes is that the row asks for the tap
+             rather than looking as though it is already handling it. */
+          <RowButton label="Try again" tone="primary" onPress={onResume} />
         ) : downloading ? (
           <RowButton
             label={running ? 'Pause' : 'Resume'}
@@ -548,7 +583,10 @@ function AreaRow({
 
       {downloading && status ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
-          <Bar pct={status.percentage} fill={C.primary} />
+          {/* A bar in the primary colour reads as a download in progress. What
+              is left of a stopped one is how far it got, which is a different
+              statement. */}
+          <Bar pct={status.percentage} fill={stopped ? C.faint : C.primary} />
           <T s="caption" style={{ width: 42, textAlign: 'right' }}>
             {Math.round(status.percentage)}%
           </T>
@@ -577,11 +615,18 @@ function AreaRow({
       {downloading ? (
         <Secondary
           sentence={
-            running
-              ? 'Saving now. Removing it stops the download and gives the space back.'
-              : 'Paused. It picks up where it stopped.'
+            stopped
+              ? /* MapLibre's own English is not quoted at somebody standing in
+                   a market — the same judgement `start` makes. What is worth
+                   saying is that it stopped, that the part already saved is
+                   still there, and that trying again costs only what is left. */
+                'The download stopped before it finished. What it has already saved is kept — try again on a better connection.'
+              : running
+                ? 'Saving now. Removing it stops the download and gives the space back.'
+                : 'Paused. It picks up where it stopped.'
           }
           label="Remove"
+          note={stopped ? 'warn' : 'plain'}
           onPress={onRemove}
         />
       ) : null}
@@ -697,7 +742,10 @@ function RowButton({
       accessibilityRole="button"
       style={({ pressed }) => [
         {
-          height: 44,
+          /* `HIT`, not 44. Every control on this screen is one of these, and
+             four points under the floor is four points on a row somebody taps
+             on a moving bus. */
+          height: HIT,
           paddingHorizontal: 14,
           borderWidth: 1,
           borderColor: tone === 'primary' ? C.primaryEdge : C.border,

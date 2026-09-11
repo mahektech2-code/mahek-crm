@@ -166,6 +166,13 @@ export default function MoreScreen() {
 
   const [counts, setCounts] = React.useState<Counts>(EMPTY);
 
+  /* Read here rather than inside the callback below, which held an empty
+     dependency array — so a focus that landed before the session was restored
+     passed '' to `priceDay` and `cashInHand`, and nothing re-ran when it
+     arrived. The badges are the point of this screen, and the two that were
+     silently empty are the cash he is carrying and the day he has to close. */
+  const userId = boot.session?.user.id ?? '';
+
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
@@ -178,11 +185,11 @@ export default function MoreScreen() {
         listSamples(),
         pendingCount(),
         queueCounts(),
-        priceDay(boot.session?.user.id ?? '', today),
+        priceDay(userId, today),
         savedMaps().catch(() => []),
         /* Cash he is carrying, as a COUNT of collections rather than a figure:
            a rupee amount in a menu badge reads as something owed to him. */
-        cashInHand(boot.session?.user.id ?? ''),
+        cashInHand(userId),
         overdueSamples(today),
       ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue, today_, maps, cash, late]) => {
         if (!live) return;
@@ -205,7 +212,7 @@ export default function MoreScreen() {
       return () => {
         live = false;
       };
-    }, []),
+    }, [userId]),
   );
 
   const GROUPS = groupsFor(counts);

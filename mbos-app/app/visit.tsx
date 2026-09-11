@@ -1334,16 +1334,20 @@ export default function Visit() {
           salesman whose visit is blocked stops recording visits, and the
           company loses the GPS, the competitor note and the reason in order to
           stop a number reaching four. */}
-      {capState !== 'ok' && suspect && capCfg ? (
+      {/* `capLabel` in the guard costs nothing and buys the type: anything that
+          makes `capState` something other than `ok` is a Suspect stage, which
+          is the only thing `visitCapLabel` returns null for. */}
+      {capState !== 'ok' && suspect && capLabel ? (
         <Card
           style={{
             marginTop: 12,
             borderLeftWidth: 3,
             borderLeftColor: capState === 'decide' ? C.warnInk : C.hairline,
           }}>
-          <Text style={type.label}>
-            {'Visit ' + suspect.visits + ' / ' + capCfg.maxSuspectVisits + ' · still a Suspect'}
-          </Text>
+          {/* The engine's own wording, counting the visit being MADE. Retyped
+              here it read "Visit 2 / 3" on the third visit — one in hand,
+              under a card demanding the decision. */}
+          <Text style={type.label}>{capLabel + ' · still a Suspect'}</Text>
           <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
             {capState === 'decide'
               ? 'Say which way this one goes before you close the visit. The visit is recorded either way.'
@@ -1676,10 +1680,15 @@ export default function Visit() {
           <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
             Is this shop in the wrong place?
           </Text>
+          {/* The distance, from the refusal where the fresh reading has none.
+              `metresAway` comes off a SECOND acquisition taken at the save and
+              can be null while the refusal that opened this sheet was measured
+              — leaving the question reading "about ? m", which is the one
+              number that makes it answerable. */}
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
-            MahekOne has {c?.name ?? 'this shop'} about {metresAway ?? '?'} m from where you
-            checked in. If the shop is here and the map is wrong, ask your manager to move
-            it — the next visit will not be questioned, and nor will anybody else&rsquo;s.
+            MahekOne has {c?.name ?? 'this shop'} about {metresAway ?? refusedMetres ?? '?'} m from
+            where you checked in. If the shop is here and the map is wrong, ask your manager to
+            move it — the next visit will not be questioned, and nor will anybody else&rsquo;s.
           </Text>
 
           <View style={{ marginTop: 16, gap: 8 }}>
@@ -1731,28 +1740,30 @@ export default function Visit() {
           <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what the customer actually said.</Text>
         ) : null}
 
+        {/* Said HERE and not in a toast: this sheet is a Modal and the toast
+            lives underneath it, so a failure raised through `notify` while it
+            is open is a sentence nobody ever sees. */}
+        {formErr === 'save' ? (
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 10 }}>
+            That could not be saved on this phone. Nothing has been sent — try again.
+          </Text>
+        ) : null}
+
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <Pressable onPress={() => setForm(null)} style={{ flex: 1, height: 52, borderWidth: 1, borderColor: C.border, borderRadius: radius.xl, alignItems: 'center', justifyContent: 'center' }}>
             <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>Cancel</Text>
           </Pressable>
+          {/* ONE COMPLAINT PER PRESS. `submitComplaint` holds the ref guard —
+              see the note beside it. Written inline here, a second tap on a
+              slow write logged two complaints and kept only the second. */}
           <Pressable
-            onPress={async () => {
-              if (!draft.cat) return setFormErr('cat');
-              if (!(draft.what ?? '').trim()) return setFormErr('what');
-              if (!c) return;
-              const id = await logComplaint({
-                customerId: c.id,
-                category: draft.cat,
-                description: draft.what.trim(),
-              });
-              setLinked((l) => ({ ...l, complaintId: id }));
-              markVisitDone('complaint', draft.cat + ' · with the desk team');
-              setForm(null);
-              setDraft({});
-              notify('Complaint logged · the desk team sees it today');
-            }}
-            style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: shadow.primaryLift }}>
-            <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>Log it</Text>
+            onPress={() => void submitComplaint()}
+            disabled={formSaving}
+            accessibilityState={{ disabled: formSaving }}
+            style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: formSaving ? C.hairline : C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: formSaving ? undefined : shadow.primaryLift }}>
+            <Text style={[{ fontSize: 16, color: formSaving ? C.faint : '#FFFFFF' }, weight(600)]}>
+              {formSaving ? 'Logging…' : 'Log it'}
+            </Text>
           </Pressable>
         </View>
       </BottomSheet>
@@ -1790,39 +1801,35 @@ export default function Visit() {
         <Pressable
           onPress={() => setCalOpen('trial')}
           style={{ width: '100%', height: 52, borderWidth: 1, borderColor: C.border, borderRadius: radius.lg, paddingHorizontal: 14, justifyContent: 'center', backgroundColor: C.surface }}>
-          <Text style={{ fontSize: 16, color: C.ink }}>{pretty(draft.trial ?? defaultTrial())}</Text>
+          {/* `trialDefault`, the day worked out when the screen opened, and not
+              a fresh clock read — the date shown here and the one `submitSample`
+              stores have to be the same day on a screen open across midnight. */}
+          <Text style={{ fontSize: 16, color: C.ink }}>{pretty(draft.trial ?? trialDefault)}</Text>
         </Pressable>
 
         <Text style={[type.caption, { marginTop: 10 }]}>
           Samples need your manager’s approval. The trial follow-up is set for you.
         </Text>
 
+        {formErr === 'save' ? (
+          <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 10 }}>
+            That could not be saved on this phone. Nothing has been sent — try again.
+          </Text>
+        ) : null}
+
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <Pressable onPress={() => setForm(null)} style={{ flex: 1, height: 52, borderWidth: 1, borderColor: C.border, borderRadius: radius.xl, alignItems: 'center', justifyContent: 'center' }}>
             <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>Cancel</Text>
           </Pressable>
+          {/* ONE SAMPLE PER PRESS, the same guard as the complaint above. */}
           <Pressable
-            onPress={async () => {
-              if (!draft.sku) return setFormErr('sku');
-              if (!(draft.why ?? '').trim()) return setFormErr('why');
-              if (!c) return;
-              const trial = draft.trial ?? defaultTrial();
-              const id = await requestSample({
-                customerId: c.id,
-                productId: draft.sku,
-                productName: draft.skuName ?? '',
-                cans: 1,
-                reason: draft.why.trim(),
-                followUpDate: trial,
-              });
-              setLinked((l) => ({ ...l, sampleId: id }));
-              markVisitDone('sample', (draft.skuName ?? '') + ' · sent for approval');
-              setForm(null);
-              notify('Sample requested · follow-up set for ' + pretty(trial));
-              setDraft({});
-            }}
-            style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: shadow.primaryLift }}>
-            <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>Request it</Text>
+            onPress={() => void submitSample()}
+            disabled={formSaving}
+            accessibilityState={{ disabled: formSaving }}
+            style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: formSaving ? C.hairline : C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: formSaving ? undefined : shadow.primaryLift }}>
+            <Text style={[{ fontSize: 16, color: formSaving ? C.faint : '#FFFFFF' }, weight(600)]}>
+              {formSaving ? 'Requesting…' : 'Request it'}
+            </Text>
           </Pressable>
         </View>
       </BottomSheet>
@@ -1833,7 +1840,7 @@ export default function Visit() {
           {calOpen === 'trial' ? 'Trial follow-up' : 'Come back on'}
         </Text>
         <Calendar
-          selected={calOpen === 'trial' ? draft.trial ?? defaultTrial() : nextDate}
+          selected={calOpen === 'trial' ? draft.trial ?? trialDefault : nextDate}
           onPick={(iso) => {
             if (calOpen === 'trial') setDraft({ ...draft, trial: iso });
             else set({ nextDate: iso });

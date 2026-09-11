@@ -20,6 +20,7 @@
       "predictiveBackGestureEnabled": false,
       "package": "in.mahek.mbos",
       "versionCode": 5,
+      "versionCode": 5,
       "edgeToEdgeEnabled": true
     },
     "web": {

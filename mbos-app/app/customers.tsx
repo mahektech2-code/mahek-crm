@@ -553,7 +553,14 @@ export default function Customers() {
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, alignItems: 'center' }}>
         <Text style={[type.label, { width: 42 }]}>Sort</Text>
         {[
-          { key: 'me', label: 'Near me' },
+          /* "Nearest", NOT "Near me" — that phrase belongs to `/nearby`, which
+             answers a different question. This chip sorts the whole book by
+             distance; that screen lists only shops with a REASON to go, ranked
+             by what the stop is worth with distance subtracted as a cost, and
+             drops a shop that has nothing outstanding. Two controls one tab
+             apart under one name, ordering by opposite rules, is how somebody
+             works the wrong list all morning. */
+          { key: 'me', label: 'Nearest' },
           { key: 'city', label: cities.some((c) => c.city === originMode) ? shortPlace(originMode) : 'By city' },
           { key: 'name', label: 'A–Z' },
         ].map((chip) => {

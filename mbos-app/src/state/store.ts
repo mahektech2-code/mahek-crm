@@ -8,6 +8,7 @@ import { daysAwaitingAnswer } from '../data/journey';
 import { pendingCount } from '../sync/queue';
 import { isoDate } from '../lib/format';
 import type { OutcomeKey } from '../data/fixtures';
+import type { ToastTone } from '../components/ui/overlays';
 
 /**
  * One store, holding what the design's single `this.state` held.
@@ -72,6 +73,7 @@ type State = {
 
   /* ---- transient chrome ---- */
   toast: string | null;
+  toastTone: ToastTone;
   sheet: SheetKind;
   confirm: Confirm;
   confirmReason: string;
@@ -164,7 +166,18 @@ type State = {
 
 type Actions = {
   set: <K extends keyof State>(patch: Pick<State, K> | Partial<State>) => void;
-  notify: (msg: string) => void;
+  /**
+   * The app's only message channel, and therefore its only ERROR channel.
+   *
+   * `tone` is optional and defaults to the confirmation this has always drawn,
+   * so the hundred-odd existing call sites keep working unchanged — but a
+   * refusal must pass `'warn'`. Every one of them used to arrive under a green
+   * tick: "No number on this customer", "that shop is billed to somebody who is
+   * not on your book", "the ticket could not be added just now". A refusal
+   * somebody half-read, marked with a tick, reads as a confirmation, and he
+   * walks away from the shop believing it went.
+   */
+  notify: (msg: string, tone?: ToastTone) => void;
   clearToast: () => void;
   signIn: () => void;
   signOut: () => void;
@@ -297,6 +310,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   gps: 'acquiring',
 
   toast: null,
+  toastTone: 'success',
   sheet: null,
   confirm: null,
   confirmReason: '',
@@ -356,8 +370,8 @@ export const useStore = create<State & Actions>((set, get) => ({
     set(custId !== undefined ? { ...p, ...draftMovedShop(custId, get().cartFor) } : p);
   },
 
-  notify: (msg) => set({ toast: msg }),
-  clearToast: () => set({ toast: null }),
+  notify: (msg, tone = 'success') => set({ toast: msg, toastTone: tone }),
+  clearToast: () => set({ toast: null, toastTone: 'success' }),
 
   signIn: () => set({ signedIn: true }),
 

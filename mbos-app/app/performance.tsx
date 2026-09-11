@@ -5,7 +5,7 @@ import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, T } from '../src/components/ui/primitives';
 import { color as C, radius, weight, tabular } from '../src/theme/tokens';
-import { inr } from '../src/lib/format';
+import { inr, plural } from '../src/lib/format';
 import {
   listPerformance,
   litres,
@@ -207,7 +207,17 @@ export default function PerformanceScreen() {
                   ? '—'
                   : `${(current.mixAchievementBp / 100).toFixed(0)}%`
               }
-              target={null}
+              /* NOT `null`, which `Figure` prints as "nothing asked" — directly
+                 above the card listing this component's per-category targets,
+                 and in the same words the dropped-component sentence uses for a
+                 component nobody set a target for at all. The mix target is a
+                 set of category bands rather than one figure, so the honest
+                 summary is how many were asked. */
+              target={
+                current.categories.length
+                  ? `${plural(current.categories.length, 'category', 'categories')} set`
+                  : null
+              }
               bp={null}
             />
           </Card>

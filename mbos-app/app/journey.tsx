@@ -26,7 +26,9 @@ import { getConfig } from '../src/data/config';
 import { optimiseRoute } from '../src/engines/route';
 import { fixOf, getFix } from '../src/native/location';
 import { dayLabel, dayLabelRelative, dmy, inr, isoDate, plural } from '../src/lib/format';
-import { openMaps, openRoute, shareText } from '../src/lib/messaging';
+/* No `openMaps` here. Every stop row and every card on this screen navigates
+   through `NavigateButton`, which is the one call site — see `StopMapButton`. */
+import { openRoute, shareText } from '../src/lib/messaging';
 import { NavigateButton } from '../src/components/ui/navigate';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
@@ -1123,29 +1125,32 @@ export default function JourneyScreen() {
             }}>
             <Icon name="route" size={22} color={C.primaryDeep} strokeWidth={1.6} />
           </View>
+          {/* `pickToday`, never `toPick`. This card answers "what about TODAY",
+              and read against any agreed day from today onward it announced a
+              day agreed for next Tuesday — the same row already listed two
+              inches above — while suppressing the only sentence that says what
+              to do this morning. */}
           <T style={[type.body, weight(600), { color: C.ink, textAlign: 'center' }]}>
-            {toPick.length
+            {pickToday
               ? 'A day is waiting for its shops'
               : asking.length
                 ? 'A day is waiting for your answer'
                 : 'No route for today'}
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6, maxWidth: 280 }}>
-            {toPick.length
-              ? 'You have agreed ' +
-                dayLabel(toPick[0]!.planDate) +
-                '. Pick the shops and it becomes a route.'
+            {pickToday
+              ? 'You have agreed today. Pick the shops and it becomes a route.'
               : asking.length
                 ? 'Say yes or send it back — either answer lets your manager get on with it.'
                 : 'Your manager has not proposed one. You can still walk in and log a visit — anything you do today is recorded against it.'}
           </T>
-          {toPick.length ? (
+          {pickToday ? (
             <View style={{ marginTop: 14, alignSelf: 'stretch' }}>
               <PrimaryButton
                 label="Pick your shops"
                 fullWidth
                 onPress={() =>
-                  router.push({ pathname: '/pick', params: { day: toPick[0]!.id } })
+                  router.push({ pathname: '/pick', params: { day: pickToday.id } })
                 }
               />
             </View>
