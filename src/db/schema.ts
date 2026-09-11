@@ -4638,6 +4638,40 @@ export const mbosDevices = pgTable(
      * evidence, its age is part of it, and the screen prints both or neither.
      */
     deviceStateAt: timestamp("device_state_at", { withTimezone: true }),
+
+    /**
+     * WHETHER THE BACKGROUND MACHINERY IS ACTUALLY RUNNING.
+     *
+     * Two things keep a handset reporting with the app shut: the location
+     * task's own inline flush, and a WorkManager wake-up every fifteen
+     * minutes. Both register inside a `try`/`catch` that swallows the
+     * failure, and nothing recorded whether either had ever RUN — so a phone
+     * where registration threw on first launch was indistinguishable from one
+     * syncing perfectly, on the handset and in the office. "It is switched on
+     * and nothing reaches the database" could not be answered, because there
+     * was never anything to look at.
+     */
+    backgroundSyncRegistered: boolean("background_sync_registered"),
+    /**
+     * Stamped from a DURATION the handset sends, not an instant it claims.
+     *
+     * `deviceStateAt` above is the server's clock on principle — a phone's
+     * clock is its owner's to set. That cannot be followed literally here,
+     * because when the background task last ran is a fact only the handset
+     * holds. Seconds-ago is the way out: it survives a clock wrong by hours
+     * and is exposed only to drift across the interval itself.
+     */
+    backgroundSyncLastRunAt: timestamp("background_sync_last_run_at", { withTimezone: true }),
+    /**
+     * When the watchdog last caught the tracker accepted and silent.
+     *
+     * The OS says yes to `startLocationUpdatesAsync` and then delivers
+     * nothing, with `backgroundLocationGranted` still reading true. The
+     * handset has read that silence for a while and kept the verdict to
+     * itself, quietly dropping to the foreground floor — so a manager saw a
+     * trail with a hole in it and not that the phone had been killed.
+     */
+    trackerStalledAt: timestamp("tracker_stalled_at", { withTimezone: true }),
   },
   (t) => [
     uniqueIndex("mbos_devices_device_key").on(t.deviceId),

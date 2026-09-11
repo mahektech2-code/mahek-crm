@@ -26,6 +26,13 @@ const facts = (over: Partial<HandsetFacts> = {}): HandsetFacts => ({
      so every test above that is about something else is not quietly also a
      test of a dead trail. */
   trailSeenAt: new Date(NOW - 60_000),
+  /* A healthy handset's background machinery: the OS accepted the wake-up and
+     is honouring it, and the watchdog has never caught the tracker silenced.
+     Defaulted so every test above about something else is not quietly also a
+     test of a dead background sync. */
+  backgroundSyncRegistered: true,
+  backgroundSyncLastRunAt: new Date(NOW - 5 * 60_000),
+  trackerStalledAt: null,
   /* A clean start: the start-of-day gate found nothing wrong, so nothing was
      claimed and there is nothing to say. Null would be just as healthy — it is
      a handset too old to report — but it would make every test above this one
@@ -340,5 +347,76 @@ describe("a day that opened on a claim", () => {
        team on the day the column shipped. */
     const old = facts({ setupReady: null, setupAcknowledgedAt: null });
     assert.deepEqual(texts(old), []);
+  });
+});
+
+/*
+ * THE PHONE KILLED THE TRACKER, AND EVERY PERMISSION IS GRANTED.
+ *
+ * The failure this whole subsystem keeps meeting and the one the team list
+ * could never say: the OS accepts `startLocationUpdatesAsync`, answers yes,
+ * and delivers nothing, with `background_location_granted` reading true the
+ * whole time. Before these columns the screen had only the permissions to go
+ * on, all of which were correct, so it drew a healthy handset.
+ */
+describe("the background machinery", () => {
+  test("says the phone killed the tracker, over any permission note", () => {
+    const notes = handsetNotes(
+      facts({ trackerStalledAt: new Date(NOW - 40 * 60_000) }),
+      T,
+      NOW,
+    );
+    assert.equal(notes[0].tone, "bad");
+    assert.match(notes[0].text, /stopped the tracker/);
+    /* FIRST. Every note below it sends somebody to grant a setting that is
+       already on, and a salesman who can see it is on stops believing the
+       next thing the office tells him. */
+    assert.match(notes[0].text, /40 min ago/);
+  });
+
+  test("says nothing about a stall on a day that is not open", () => {
+    const notes = handsetNotes(
+      facts({ trackerStalledAt: new Date(NOW - 40 * 60_000), dayOpen: false }),
+      T,
+      NOW,
+    );
+    assert.ok(!notes.some((n) => /stopped the tracker/.test(n.text)));
+  });
+
+  /* Never started and being killed are different faults with different cures,
+     and the second one is not the salesman's to fix. */
+  test("tells a wake-up that never registered apart from one being ignored", () => {
+    const never = handsetNotes(facts({ backgroundSyncRegistered: false }), T, NOW);
+    assert.ok(never.some((n) => /never started/.test(n.text) && n.tone === "bad"));
+
+    const ignored = handsetNotes(
+      facts({ backgroundSyncRegistered: true, backgroundSyncLastRunAt: new Date(NOW - 3 * 60 * 60_000) }),
+      T,
+      NOW,
+    );
+    assert.ok(ignored.some((n) => /No background sync for/.test(n.text) && n.tone === "warn"));
+  });
+
+  /*
+   * NULL IS NOT A NO. Every handset in the field reports none of this until it
+   * is updated, and reading that silence as a fault would accuse the whole
+   * fleet on the day the column shipped.
+   */
+  test("accuses a handset that cannot report of nothing", () => {
+    const notes = handsetNotes(
+      facts({
+        backgroundSyncRegistered: null,
+        backgroundSyncLastRunAt: null,
+        trackerStalledAt: null,
+      }),
+      T,
+      NOW,
+    );
+    assert.ok(!notes.some((n) => /background sync|stopped the tracker/.test(n.text)));
+  });
+
+  test("does not warn while the wake-up is being honoured", () => {
+    const notes = handsetNotes(facts(), T, NOW);
+    assert.ok(!notes.some((n) => /No background sync/.test(n.text)));
   });
 });
