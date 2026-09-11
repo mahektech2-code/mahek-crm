@@ -57,6 +57,19 @@ export type HandsetFacts = {
    * truth. Null here means the trail has produced nothing at all today.
    */
   trailSeenAt: Date | string | null;
+  /**
+   * WHAT THE PHONE SAID ABOUT ITSELF WHEN THE DAY OPENED — see the three
+   * columns on `mbos_attendance_days`.
+   *
+   * `setupReady` false is a day that opened on a phone that could not show it
+   * would record; `setupAcknowledgedAt` is the man saying he had done the
+   * autostart and battery steps, which no API can check and which is therefore
+   * a CLAIM. Null is a handset too old to report any of it and is never read
+   * as "nothing was wrong".
+   */
+  setupReady: boolean | null;
+  setupAcknowledgedAt: Date | string | null;
+  setupUnverified: string[] | null;
 };
 
 export type HandsetThresholds = {
@@ -271,11 +284,60 @@ export function handsetNotes(
    */
   const checkedIn = ms(f.checkInAt);
   if (checkedIn !== null && trailIsDead(f, t, nowMs)) {
+    /*
+     * AND IF HE WAS ALREADY MADE TO ANSWER FOR IT, the sentence is a different
+     * one — the one pattern the start-of-day gate exists to make visible.
+     *
+     * The handset stops a day from opening on a phone that cannot show it will
+     * record, and where the failing steps are ones no API can check — the
+     * autostart and battery screens an OEM buries — it opens on the man saying
+     * he has done them. That claim is worth exactly as much as the trail that
+     * follows it, and here there is none: this is somebody who has been
+     * through the setup screen, pressed the button, and is STILL not being
+     * recorded. Telling a manager to send him to those settings a second time
+     * spends the one call that could fix this on the thing that has already
+     * failed, which is why the two sentences are not both shown and not the
+     * same sentence.
+     */
+    const claimedAt = ms(f.setupAcknowledgedAt);
+    if (claimedAt !== null) {
+      const outstanding = f.setupUnverified?.length
+        ? ` Still outstanding when he answered: ${f.setupUnverified.join(", ")}.`
+        : "";
+      notes.push({
+        tone: "bad",
+        text: `No position all day — and he said the phone was set up`,
+        detail:
+          "He was stopped at the start of the day, taken through the setup screen, and answered that he had allowed MahekOne to autostart and set its battery usage to unrestricted. No phone can verify that answer, and the trail since says it did not take. This one needs a person rather than another instruction: go through those two settings WITH him, and if they are already correct then this is a handset this product cannot track and the office should know which model it is." +
+          outstanding,
+      });
+    } else {
+      notes.push({
+        tone: "bad",
+        text: `No position all day — checked in ${ageWords(checkedIn, nowMs)} ago`,
+        detail:
+          "The check-in reached MahekOne and not one position has since, so this is the tracking service on his phone rather than a handset we cannot hear from — the silence line, if there is one below, is measuring an interval and not naming this. The usual cause is the phone killing the service after it started perfectly well: ask him to allow MahekOne to autostart and to set its battery usage to unrestricted, in the phone's own battery settings, then check out and back in. Only if this row also says something about Location is the permission worth changing.",
+      });
+    }
+  }
+
+  /*
+   * OPENED ANYWAY, WITH NOTHING CLAIMED. A day that started on a phone that
+   * could not show it would record, and nobody said anything about it — which
+   * means the gate is at `warn` (or `off`) in the office's own settings.
+   *
+   * It is worth a line at nine in the morning rather than a discovery at six
+   * in the evening: this is a prediction of a lost day, made while there is
+   * still a day to save. It is `warn` and not `bad` because the trail may yet
+   * appear — the reading is of what the phone could PROVE, and plenty of
+   * handsets that cannot prove it record perfectly well.
+   */
+  if (f.dayOpen && f.setupReady === false && ms(f.setupAcknowledgedAt) === null) {
     notes.push({
-      tone: "bad",
-      text: `No position all day — checked in ${ageWords(checkedIn, nowMs)} ago`,
+      tone: "warn",
+      text: "Day opened on a phone that could not show it would record",
       detail:
-        "The check-in reached MahekOne and not one position has since, so this is the tracking service on his phone rather than a handset we cannot hear from — the silence line, if there is one below, is measuring an interval and not naming this. The usual cause is the phone killing the service after it started perfectly well: ask him to allow MahekOne to autostart and to set its battery usage to unrestricted, in the phone's own battery settings, then check out and back in. Only if this row also says something about Location is the permission worth changing.",
+        "The start-of-day check found something wrong and the day was allowed to start regardless, which is what `warn` on the field setting means. Nobody has claimed to have fixed anything, so expect the trail to be thin or absent — the row above says whether it has appeared.",
     });
   }
 

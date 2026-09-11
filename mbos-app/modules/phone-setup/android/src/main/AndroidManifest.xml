@@ -1,0 +1,17 @@
+<!--
+  Deliberately empty.
+
+  The one permission this module needs,
+  `android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, is declared in
+  `mbos-app/app.json` under `android.permissions` instead. That key is purely
+  additive — @expo/config-plugins merges it into the manifest prebuild
+  generates without removing anything a plugin put there — and it keeps every
+  permission this app asks a salesman for in ONE file somebody can read,
+  rather than half of them in app.json and one hidden in a library manifest.
+
+  There is no `<queries>` block either, and that is the other half of a
+  decision recorded in PhoneSetupModule.kt: nothing here calls
+  `resolveActivity`, so there is nothing for package visibility to answer.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+</manifest>

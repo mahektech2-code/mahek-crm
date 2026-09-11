@@ -20,7 +20,10 @@
       "predictiveBackGestureEnabled": false,
       "package": "in.mahek.mbos",
       "versionCode": 5,
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"

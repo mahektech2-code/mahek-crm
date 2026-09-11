@@ -49,6 +49,14 @@ const DEFAULTS: Record<string, unknown> = {
      because a handset on the floor for want of a bootstrap must behave as the
      office would have told it to. */
   'mbos.location.trailStalledAfterMisses': 4,
+  /* Whether a day may open on a phone that cannot show it will record one.
+     `block` matches the registry's default, because a handset that has never
+     bootstrapped must behave as the office would have told it to — and because
+     the failure this exists to stop is silent at both ends: a salesman walks a
+     full day and the office sees him standing at his check-in point. A
+     fallback of `off` would put exactly the untested, never-configured
+     handsets through the gap the gate was built for. */
+  'mbos.location.startOfDayGate': 'block',
 
   /* maps kept for no signal — see `engines/tiles.ts` for what each one costs */
   'mbos.maps.offlineEnabled': true,
