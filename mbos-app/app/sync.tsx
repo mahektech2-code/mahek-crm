@@ -4,6 +4,8 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
+import type { UpdateVerdict } from '../src/engines/app-update';
+import { checkForUpdate, openDownload } from '../src/native/update-check';
 import { stalledAt as trackerStalledAt } from '../src/sync/trail';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import { isoDate, plural, pretty } from '../src/lib/format';
@@ -124,6 +126,10 @@ export default function SyncScreen() {
      merely never set up — see `stalledAt`. The two read very differently and
      only one of them is urgent. */
   const [stalled, setStalled] = React.useState<number | null>(null);
+  /* Whether a newer APK has been published. Sideloading has no auto-update,
+     so being told is the only way a handset ever finds out — see
+     `engines/app-update.ts`. */
+  const [update, setUpdate] = React.useState<UpdateVerdict>({ kind: 'current' });
   const [conflicts, setConflicts] = React.useState(0);
   /* A pass is in flight. The button used to stay live throughout, so he could
      fire it six times and be told six times that everything was sending. */
@@ -170,6 +176,21 @@ export default function SyncScreen() {
    * `syncNow` has always answered why it did not run. It simply had nowhere to
    * be read.
    */
+  /* Asked once a screen opens and never awaited by anything — a handset on 2G
+     must not wait on an update check to draw the queue. A failed check answers
+     `current`, which draws nothing. */
+  useFocusEffect(
+    React.useCallback(() => {
+      let live = true;
+      void checkForUpdate().then((v) => {
+        if (live) setUpdate(v);
+      });
+      return () => {
+        live = false;
+      };
+    }, []),
+  );
+
   const sendNow = React.useCallback(async () => {
     setSending(true);
     try {
@@ -352,6 +373,36 @@ export default function SyncScreen() {
           </View>
         ))}
       </ListCard>
+      ) : null}
+
+      {/* A NEWER BUILD EXISTS AND THIS PHONE CANNOT FETCH IT ITSELF.
+      
+          Android refuses an unattended install without device-owner enrolment
+          nobody here has, so the honest most this can do is say so and hand
+          the file to the browser. That is still the difference between one tap
+          and a fortnight: the field ran 1.0.0 and 1.1.0 while 1.4.0 had been
+          published for hours, and three bugs were diagnosed against builds
+          that did not contain their own fixes. */}
+      {update.kind === 'available' ? (
+        <Pressable
+          onPress={() => void openDownload(update.url)}
+          accessibilityRole="button"
+          style={{
+            marginTop: 14,
+            padding: 16,
+            borderRadius: radius.lg,
+            borderWidth: 1,
+            borderColor: C.primary,
+            backgroundColor: C.primaryTint,
+          }}>
+          <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(600)]}>
+            {'Update to ' + update.version}
+          </T>
+          <T style={{ fontSize: 13, lineHeight: 19, color: C.body, marginTop: 4 }}>
+            A newer MahekOne has been released. Tap to download it, then open the file to install —
+            nothing on this phone is lost and you stay signed in.
+          </T>
+        </Pressable>
       ) : null}
 
       {/* WHY A DAY GOES QUIET, and the two switches that decide it.
