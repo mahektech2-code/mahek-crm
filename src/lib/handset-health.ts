@@ -70,6 +70,19 @@ export type HandsetFacts = {
   setupReady: boolean | null;
   setupAcknowledgedAt: Date | string | null;
   setupUnverified: string[] | null;
+  /**
+   * WHETHER THE BACKGROUND MACHINERY IS ACTUALLY RUNNING.
+   *
+   * `registered` is what the OS answered when asked; `lastRunAt` is the only
+   * evidence it meant it. An OEM battery manager leaves the first true and
+   * never delivers the second, which is precisely the failure that made "it
+   * is switched on and nothing arrives" unanswerable. Null on both is a
+   * handset too old to report it and is never read as a no.
+   */
+  backgroundSyncRegistered: boolean | null;
+  backgroundSyncLastRunAt: Date | string | null;
+  /** When the handset's own watchdog last caught the tracker accepted and silent. */
+  trackerStalledAt: Date | string | null;
 };
 
 export type HandsetThresholds = {
@@ -210,6 +223,56 @@ export function handsetNotes(
   nowMs: number,
 ): HandsetNote[] {
   const notes: HandsetNote[] = [];
+
+  /*
+   * THE PHONE KILLED THE TRACKER, and it is first because it outranks every
+   * permission below it.
+   *
+   * Each of those sends somebody to a settings screen to grant something. This
+   * one is the opposite case: everything IS granted, the OS accepted the task,
+   * and the handset's own watchdog then caught it delivering nothing. Drawing
+   * a permission note over the top of that sends a manager to ask for a switch
+   * that is already on, and the salesman — who can see it is on — stops
+   * believing the next thing the office tells him.
+   */
+  const stalled = ms(f.trackerStalledAt);
+  if (stalled !== null && f.dayOpen) {
+    notes.push({
+      tone: "bad",
+      text: `His phone stopped the tracker — ${ageWords(stalled, nowMs)} ago`,
+      detail:
+        "Every permission is granted and the OS accepted the task; the handset's battery manager killed it anyway, which no API reports. He fixes it once on Sync → Keep tracking on, and until he does the route records only while the app is open.",
+    });
+  }
+
+  /*
+   * IT CAN NEVER SYNC WITH THE APP SHUT, which is a different fault.
+   *
+   * `false` here is the OS refusing to register the periodic wake-up at all —
+   * the handset is not being killed, it was never started. It had looked
+   * exactly like a working phone from this screen, because nothing asked.
+   */
+  if (f.backgroundSyncRegistered === false) {
+    notes.push({
+      tone: "bad",
+      text: "Background sync never started on this phone",
+      detail:
+        "The OS refused the periodic wake-up, so nothing reaches the office while the app is shut — his work goes up only when he opens it. Reinstalling the app is what re-asks; if it refuses again the handset is too restricted and he should be given another.",
+    });
+  } else if (f.backgroundSyncRegistered === true && f.dayOpen) {
+    /* REGISTERED AND SILENT is the one worth a warning of its own. The floor
+       is roughly fifteen minutes on both Android and iOS, so silence well past
+       that is the OS having quietly stopped honouring it. */
+    const ran = ms(f.backgroundSyncLastRunAt);
+    if (ran !== null && nowMs - ran > 45 * 60_000) {
+      notes.push({
+        tone: "warn",
+        text: `No background sync for ${ageWords(ran, nowMs)}`,
+        detail:
+          "The wake-up is registered and the phone has stopped honouring it — the usual cause is battery optimisation. His work is safe on the handset and goes up the moment he opens the app.",
+      });
+    }
+  }
 
   /*
    * LOCATION OFF ON THE PHONE OUTRANKS ANY PERMISSION, and is checked first

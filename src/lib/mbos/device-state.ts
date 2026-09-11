@@ -42,8 +42,36 @@ export type DeviceState = {
   connectionType?: ConnectionType;
   batteryPercent?: number;
   batteryCharging?: boolean;
+  backgroundSyncRegistered?: boolean;
+  backgroundSyncLastRunAt?: Date;
+  trackerStalledAt?: Date;
   deviceStateAt?: Date;
 };
+
+/**
+ * A duration the handset reports, turned into an instant on OUR clock.
+ *
+ * The rule everywhere else here is the server's clock and never the phone's,
+ * because a phone's clock is its owner's to set. It cannot be followed
+ * literally for "when did the background task last run" — that is a fact only
+ * the handset holds. A duration is the way out: an absolute instant from a
+ * phone two hours fast is two hours wrong, while seconds-ago is exposed only
+ * to drift across the interval itself.
+ *
+ * A NEGATIVE is refused rather than clamped. It means the handset measured a
+ * gap ending in its own future, which is a clock that moved under it, and the
+ * honest answer to that is to say nothing rather than to stamp `now` and let a
+ * screen call it fresh. The cap is a fortnight for the same reason: past that
+ * the reading answers no question anybody is asking, and a number that large
+ * is far likelier to be arithmetic on a corrected clock than a real silence.
+ */
+const FOURTEEN_DAYS_S = 14 * 24 * 60 * 60;
+
+function instantFromAgo(v: unknown): Date | undefined {
+  if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
+  if (v < 0 || v > FOURTEEN_DAYS_S) return undefined;
+  return new Date(Date.now() - Math.round(v) * 1000);
+}
 
 const oneOf = <T extends string>(all: readonly T[], v: unknown): T | undefined =>
   typeof v === "string" && (all as readonly string[]).includes(v) ? (v as T) : undefined;
@@ -88,6 +116,20 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
   if (typeof body.batteryCharging === "boolean") {
     state.batteryCharging = body.batteryCharging;
   }
+
+  /* Whether the OS accepted the periodic wake-up at all. False is a real
+     answer and the one worth having: it is a handset that will never sync
+     with the app shut, and it looked identical to a working one until this
+     column existed. */
+  if (typeof body.backgroundSyncRegistered === "boolean") {
+    state.backgroundSyncRegistered = body.backgroundSyncRegistered;
+  }
+
+  const ranAgo = instantFromAgo(body.backgroundSyncLastRunAgoSeconds);
+  if (ranAgo) state.backgroundSyncLastRunAt = ranAgo;
+
+  const stalledAgo = instantFromAgo(body.trackerStalledAgoSeconds);
+  if (stalledAgo) state.trackerStalledAt = stalledAgo;
 
   /*
    * THE SERVER'S CLOCK, NEVER THE HANDSET'S.

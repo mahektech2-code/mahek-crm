@@ -1814,6 +1814,15 @@ export type LastKnown = {
   setupReady: boolean | null;
   setupAcknowledgedAt: Date | null;
   setupUnverified: string[] | null;
+  /**
+   * Whether the background machinery is running — see the columns on
+   * `mbos_devices`. `registered` is what the OS answered; `lastRunAt` is the
+   * only evidence it meant it, and `trackerStalledAt` is the handset's own
+   * watchdog catching it accepted and silent.
+   */
+  backgroundSyncRegistered: boolean | null;
+  backgroundSyncLastRunAt: Date | null;
+  trackerStalledAt: Date | null;
 };
 
 /**
@@ -1882,7 +1891,10 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
            tr.at as "trailSeenAt",
            d.setup_ready as "setupReady",
            d.setup_acknowledged_at as "setupAcknowledgedAt",
-           d.setup_unverified as "setupUnverified"
+           d.setup_unverified as "setupUnverified",
+           dev.background_sync_registered as "backgroundSyncRegistered",
+           dev.background_sync_last_run_at as "backgroundSyncLastRunAt",
+           dev.tracker_stalled_at as "trackerStalledAt"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date

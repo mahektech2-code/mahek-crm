@@ -33,6 +33,17 @@ export type DeviceStateReport = {
   connectionType?: 'wifi' | 'cellular' | 'none' | 'unknown';
   batteryPercent?: number;
   batteryCharging?: boolean;
+  backgroundSyncRegistered?: boolean;
+  /**
+   * DURATIONS, not instants, and that is deliberate.
+   *
+   * The office stamps everything on its own clock because a phone's clock is
+   * its owner's to set. These two are facts only this handset holds, so they
+   * have to come from here — and seconds-ago survives a clock that is wrong
+   * by hours, where an absolute instant would not.
+   */
+  backgroundSyncLastRunAgoSeconds?: number;
+  trackerStalledAgoSeconds?: number;
 };
 
 /**
@@ -108,6 +119,37 @@ async function batteryState(): Promise<Partial<DeviceStateReport>> {
 }
 
 /**
+ * Whether the background machinery is alive, as this phone understands it.
+ *
+ * Cheap — two reads of the local key-value store, no native call and no
+ * radio — which is why it rides here rather than being asked for separately.
+ */
+async function backgroundState(): Promise<Partial<DeviceStateReport>> {
+  try {
+    const [{ backgroundSyncState }, { stalledAt }] = await Promise.all([
+      import('./background-sync-task'),
+      import('./trail'),
+    ]);
+    const [bg, stalled] = await Promise.all([backgroundSyncState(), stalledAt()]);
+    const out: Partial<DeviceStateReport> = {};
+    if (bg.registered !== null) out.backgroundSyncRegistered = bg.registered;
+    const now = Date.now();
+    /* A mark in the future is a clock that moved under us, and the honest
+       answer to that is to say nothing rather than send a negative the office
+       would have to decide what to do with. */
+    if (bg.lastRunAt !== null && bg.lastRunAt <= now) {
+      out.backgroundSyncLastRunAgoSeconds = Math.round((now - bg.lastRunAt) / 1000);
+    }
+    if (stalled !== null && stalled <= now) {
+      out.trackerStalledAgoSeconds = Math.round((now - stalled) / 1000);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Everything the handset can currently say, gathered in parallel.
  *
  * Parallel because this sits in front of a request somebody is waiting on:
@@ -115,6 +157,11 @@ async function batteryState(): Promise<Partial<DeviceStateReport>> {
  * a salesman would feel on every position flush.
  */
 export async function readDeviceState(): Promise<DeviceStateReport> {
-  const parts = await Promise.all([locationState(), connectionState(), batteryState()]);
+  const parts = await Promise.all([
+    locationState(),
+    connectionState(),
+    batteryState(),
+    backgroundState(),
+  ]);
   return Object.assign({}, ...parts) as DeviceStateReport;
 }
