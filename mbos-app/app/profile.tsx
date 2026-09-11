@@ -3,7 +3,7 @@ import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, ListCard, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
+import { Card, Input, ListCard, PrimaryButton, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
 import { openPasswordReset, signOut as signOutReal } from '../src/data/session';
 import { pendingCount } from '../src/sync/queue';
 import { plural } from '../src/lib/format';

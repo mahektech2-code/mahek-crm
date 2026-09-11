@@ -384,7 +384,12 @@ export default function JourneyScreen() {
           <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
             {asking.length === 1 ? 'A day to agree' : plural(asking.length, 'day') + ' to agree'}
           </T>
-          {asking.map((d) => (
+          {asking.map((d) => {
+            /* Worked out once. It used to be called twice in one expression —
+               and both calls read the clock, so the two halves of one sentence
+               could be measured against different instants. */
+            const waiting = waitingLabel(d.proposedAt, now);
+            return (
             <View
               key={d.id}
               style={{
@@ -407,7 +412,7 @@ export default function JourneyScreen() {
                     something that arrived a moment ago — so a request four days
                     old looks identical to one from this morning, and gets the
                     same non-answer. */}
-                {waitingLabel(d.proposedAt) ? ' · ' + waitingLabel(d.proposedAt) : ''}
+                {waiting ? ' · ' + waiting : ''}
               </T>
               <T s="small" style={{ color: C.muted, marginTop: 6 }}>
                 You pick the shops once you agree — you know the city.
@@ -421,7 +426,8 @@ export default function JourneyScreen() {
                 </View>
               </View>
             </View>
-          ))}
+            );
+          })}
         </View>
       ) : null}
 

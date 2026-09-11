@@ -302,26 +302,17 @@ export default function Login() {
               </Text>
             ) : null}
 
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 20, backgroundColor: C.wash, borderRadius: radius.xl, padding: 4 }}>
-              {(['password', 'otp'] as const).map((m) => {
-                const on = method === m;
-                return (
-                  <Pressable
-                    key={m}
-                    onPress={() => { set({ method: m }); setErr(null); setServerMessage(null); }}
-                    style={[
-                      { flex: 1, minHeight: HIT, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? C.surface : 'transparent' },
-                      on && { boxShadow: '0 1px 3px rgba(22,22,22,0.08)' },
-                    ]}>
-                    <Text style={[{ fontSize: 15, color: on ? C.ink : C.muted }, weight(on ? 600 : 400)]}>
-                      {m === 'password' ? 'Password' : 'SMS code'}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            {method === 'password' ? (
+            {/* NO METHOD TOGGLE, AND NO SMS STAGE.
+                It offered "SMS code" beside "Password" as a peer, and pressing
+                "Send the code" made no request at all — it moved the screen to
+                the code stage and toasted "Code sent by SMS". There is no OTP
+                service: `/api/mbos/auth/otp`, the route this app's own
+                `requestOtp` posts to, is not on the server. So the one method
+                that needs no password sent a salesman to watch an inbox that
+                would never receive anything. It follows the rule the microphone
+                already follows — a control that fails when pressed is worse
+                than one never offered — and is drawn only once there is a
+                service behind it. */}
               <View>
                 <Text style={[type.label, { marginTop: 16, marginBottom: 6 }]}>Password</Text>
                 <View style={{ position: 'relative' }}>
@@ -376,99 +367,9 @@ export default function Login() {
                   <Text style={[{ fontSize: 15, color: C.primary }, weight(500)]}>Forgot password</Text>
                 </Pressable>
               </View>
-            ) : (
-              <View>
-                <Text style={[type.body, { color: C.muted, marginTop: 16 }]}>
-                  We send a six-digit code by SMS. No password to remember.
-                </Text>
-                <PrimaryButton
-                  label="Send the code"
-                  onPress={() => {
-                    if (mob.length !== MOBILE_DIGITS) return setErr('mob');
-                    setStage('otp');
-                    setOtp('');
-                    setOtpErr(false);
-                    notify('Code sent by SMS');
-                  }}
-                  style={{ marginTop: 24 }}
-                />
-              </View>
-            )}
           </View>
         ) : null}
 
-        {/* ---- the code ---- */}
-        {stage === 'otp' ? (
-          <View style={{ marginTop: 24 }}>
-            <Pressable
-              onPress={() => { setStage('form'); setOtp(''); setOtpErr(false); }}
-              style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: HIT, marginTop: -8, marginLeft: -8, paddingHorizontal: 8 }}>
-              <Text style={{ fontSize: 18, lineHeight: 18, color: C.muted }}>‹</Text>
-              <Text style={{ fontSize: 15, color: C.muted }}>Change number</Text>
-            </Pressable>
-
-            <Text style={[type.body, { color: C.body, marginTop: 8 }]}>
-              Code sent to <Text style={[{ color: C.ink }, weight(600)]}>{masked}</Text>
-            </Text>
-
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 20 }}>
-              {[0, 1, 2, 3, 4, 5].map((i) => (
-                <View
-                  key={i}
-                  style={{
-                    flex: 1,
-                    height: 56,
-                    borderRadius: radius.md,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderWidth: 1,
-                    borderColor: otpErr ? C.danger : digits[i] ? C.primary : C.border,
-                    backgroundColor: digits[i] ? C.primaryTint : C.surface,
-                  }}>
-                  <Text style={[{ fontSize: 22, color: C.ink }, weight(600)]}>{digits[i] ?? ''}</Text>
-                </View>
-              ))}
-            </View>
-
-            <TextInput
-              value={otp}
-              onChangeText={(v) => { setOtp(v.replace(/[^0-9]/g, '').slice(0, 6)); setOtpErr(false); }}
-              placeholder="Type the six digits"
-              placeholderTextColor={C.faint}
-              keyboardType="number-pad"
-              maxLength={6}
-              style={{ width: '100%', height: 52, marginTop: 12, paddingHorizontal: 14, borderWidth: 1, borderColor: C.border, borderRadius: radius.lg, fontSize: 16, color: C.ink, backgroundColor: C.surface }}
-            />
-            {otpErr ? (
-              <Text style={{ fontSize: 14, color: C.danger, marginTop: 8 }}>That code is not right. Check the SMS again.</Text>
-            ) : null}
-
-            {/* The one button on this screen that was hand-rolled. Through the
-                primitive it gets the same press feedback, the same disabled
-                treatment and the same explanation as every other. */}
-            <PrimaryButton
-              label="Sign in"
-              onPress={() => (digits.length === 6 ? void submit(true) : notify('Type all six digits'))}
-              disabled={digits.length !== 6}
-              whyDisabled="Type all six digits from the SMS."
-              style={{ marginTop: 16 }}
-            />
-
-            {/* There is no OTP service. `/api/mbos/auth/otp` — the route this
-                app's own `requestOtp` posts to — is not on the server, so a
-                code was never sent and cannot be sent again. Saying "Code sent
-                again" was the app inventing the one fact somebody in a market
-                with no signal would most want to believe. */}
-            <Pressable
-              onPress={() => notify('Codes are not switched on. Go back and use your password.')}
-              style={{ width: '100%', height: HIT, marginTop: 8, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={[{ fontSize: 15, color: C.muted }, weight(500)]}>Send it again</Text>
-            </Pressable>
-            <Text style={[type.caption, { marginTop: 8 }]}>
-              No SMS on site? Go back and sign in with your password instead.
-            </Text>
-          </View>
-        ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );
