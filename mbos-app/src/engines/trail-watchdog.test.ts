@@ -16,6 +16,11 @@ import { trailVerdict } from './trail-watchdog';
 const FIVE_MIN = 5 * 60_000;
 const MISSES = 4;
 const T = 1_700_000_000_000;
+/* The shipped floor. Left at the default in the shared helper so the existing
+   assertions below keep measuring what they were written to measure: at a
+   five-minute cadence the multiplier wins (20 min > 5 min) and the floor is
+   not in play at all. */
+const MIN_SILENCE = 5 * 60_000;
 
 const verdict = (over: Partial<Parameters<typeof trailVerdict>[0]>) =>
   trailVerdict({
@@ -24,8 +29,52 @@ const verdict = (over: Partial<Parameters<typeof trailVerdict>[0]>) =>
     lastKeptAt: 0,
     gapMs: FIVE_MIN,
     silentCadences: MISSES,
+    minSilenceMs: MIN_SILENCE,
     ...over,
   });
+
+/* ---------------------------------------------------------------------------
+ * THE REGRESSION THIS FLOOR EXISTS FOR.
+ *
+ * The window was `gapMs * silentCadences` and nothing else, which was right by
+ * coincidence: five minutes times four is twenty, and twenty minutes of
+ * silence is a killed service. Correcting the cadence to three seconds — the
+ * change that made the trail road-by-road — turned the same multiplication
+ * into TWELVE SECONDS, and the penalty for crossing it is that
+ * `fallBackToFloor()` abandons real background tracking for the rest of the
+ * process. So the watchdog switched tracking off on healthy handsets about a
+ * minute after check-in, and the office read "his phone stopped the tracker",
+ * which was true and was this rule's own doing.
+ * ------------------------------------------------------------------------- */
+
+test('a dense cadence does not shrink the window to nothing', () => {
+  const THREE_S = 3_000;
+  /* Twelve seconds — four misses of the shipped cadence. Before the floor this
+     was 'stalled', which is the whole bug: a walk indoors clears twelve
+     seconds, and a 24-second gap was measured on a handset whose trail was
+     otherwise perfect. */
+  assert.equal(
+    verdict({ gapMs: THREE_S, now: T + 12_000 }),
+    'believable',
+    'twelve seconds of silence at a three-second cadence must not demote a handset',
+  );
+  assert.equal(verdict({ gapMs: THREE_S, now: T + 60_000 }), 'believable');
+  assert.equal(verdict({ gapMs: THREE_S, now: T + MIN_SILENCE - 1 }), 'believable');
+  /* And the floor is a floor, not an amnesty: a phone that really has gone
+     silent is still caught, just on the honest timescale. */
+  assert.equal(
+    verdict({ gapMs: THREE_S, now: T + MIN_SILENCE }),
+    'stalled',
+    'a tracker silent for the whole floor is still disbelieved',
+  );
+});
+
+test('the multiplier still governs a deliberately coarse cadence', () => {
+  /* A team that samples every five minutes gets the twenty-minute window it
+     always had — the floor is under it, not over it, so this did not change. */
+  assert.equal(verdict({ now: T + 19 * 60_000 }), 'believable');
+  assert.equal(verdict({ now: T + 20 * 60_000 }), 'stalled');
+});
 
 test('a task that was never started is not a task to disbelieve', () => {
   /* `start()` answers this one. The watchdog only ever judges a task the OS

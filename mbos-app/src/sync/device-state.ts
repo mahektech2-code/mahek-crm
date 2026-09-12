@@ -42,8 +42,15 @@ export type DeviceStateReport = {
    * have to come from here — and seconds-ago survives a clock that is wrong
    * by hours, where an absolute instant would not.
    */
-  backgroundSyncLastRunAgoSeconds?: number;
-  trackerStalledAgoSeconds?: number;
+  /**
+   * `null` means THIS HANDSET HAS NO SUCH MARK — the condition is over, or
+   * never happened — and the server clears the column on it. Omitted still
+   * means "I cannot say", which leaves the stored value alone. Those are
+   * different facts and they used to arrive identically; see the note at the
+   * `else if` that sets them.
+   */
+  backgroundSyncLastRunAgoSeconds?: number | null;
+  trackerStalledAgoSeconds?: number | null;
 };
 
 /**
@@ -139,9 +146,36 @@ async function backgroundState(): Promise<Partial<DeviceStateReport>> {
        would have to decide what to do with. */
     if (bg.lastRunAt !== null && bg.lastRunAt <= now) {
       out.backgroundSyncLastRunAgoSeconds = Math.round((now - bg.lastRunAt) / 1000);
+    } else if (bg.lastRunAt === null) {
+      /* EXPLICIT NULL, and the distinction is the whole of the fix below. */
+      out.backgroundSyncLastRunAgoSeconds = null;
     }
     if (stalled !== null && stalled <= now) {
       out.trackerStalledAgoSeconds = Math.round((now - stalled) / 1000);
+    } else if (stalled === null) {
+      /*
+       * "THERE IS NO STALL" IS AN ANSWER, AND IT COULD NOT BE GIVEN.
+       *
+       * The key used to be omitted here, and the server treats an omitted key
+       * as "leave the column alone" — deliberately, so an old build posting
+       * its one boolean cannot wipe the richer answers a newer one gave. That
+       * rule collapses two different absences into one: "my build cannot
+       * report this" and "this condition is over" both arrived as silence, and
+       * only the first of them wants the old value kept.
+       *
+       * So a stall mark, once written, could never be cleared. It survived the
+       * tracker recovering, it survived an uninstall — a handset that had just
+       * been reinstalled and was fixing to three metres every three seconds
+       * sent nothing for this field, and the office went on reading "his phone
+       * stopped the tracker" from a timestamp belonging to a previous
+       * installation. Two standing false alarms on a healthy phone, on the one
+       * panel whose whole discipline is that a healthy phone says nothing.
+       *
+       * `null` is distinguishable from absent in JSON, so this is the one shape
+       * that says it without taking the protection away: the server clears on
+       * an explicit null and still keeps the column where the key never came.
+       */
+      out.trackerStalledAgoSeconds = null;
     }
     return out;
   } catch {

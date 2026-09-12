@@ -73,6 +73,11 @@ const DEFAULTS: Record<string, unknown> = {
      because a handset on the floor for want of a bootstrap must behave as the
      office would have told it to. */
   'mbos.location.trailStalledAfterMisses': 4,
+  /* The FLOOR under the misses above. Four misses of a three-second cadence is
+     twelve seconds, and concluding "stopped" switches background tracking off
+     for the rest of the run — so the dense cadence had the watchdog demoting
+     healthy handsets a minute after check-in. See `engines/trail-watchdog.ts`. */
+  'mbos.location.trailStalledMinSilenceSeconds': 300,
   /* Whether a day may open on a phone that cannot show it will record one.
      `block` matches the registry's default, because a handset that has never
      bootstrapped must behave as the office would have told it to — and because
