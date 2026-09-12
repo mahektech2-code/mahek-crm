@@ -1734,6 +1734,17 @@ export const SETTINGS = [
     max: 60,
   },
   {
+    key: "mbos.location.trailStalledMinSilenceSeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "Shortest silence that may count as a stopped tracker",
+    description:
+      "Seconds, and it is a FLOOR under the setting above rather than a second opinion about it. That one counts missed intervals, which was the right shape while a fix was kept every five minutes — four of those is twenty minutes, and twenty minutes of silence really does mean a battery manager has killed the service. At the three-second cadence the trail now runs at, the same four misses come to twelve seconds, which a walk indoors or one deferred batch clears without anything being wrong. What it cost is not a note on a screen: concluding the tracker has stopped switches background tracking off for the rest of the app's run, so a dense cadence had the watchdog disabling real tracking on healthy handsets within a minute of check-in. How long silence must last before the OS is disbelieved is a fact about battery managers, not about how often we sample, and the two were only ever the same number by coincidence. Lower it and a basement godown demotes somebody for the day; raise it and a phone that will never deliver a fix spends longer believing it is.",
+    default: 300,
+    min: 30,
+    max: 7200,
+  },
+  {
     key: "mbos.location.startOfDayGate",
     type: "text",
     category: "mbos-location",
@@ -3636,6 +3647,7 @@ export type Config = {
   "mbos.location.trackEverySeconds": number;
   "mbos.location.trailKeepEverySeconds": number;
   "mbos.location.trailStalledAfterMisses": number;
+  "mbos.location.trailStalledMinSilenceSeconds": number;
   "mbos.location.dwellRadiusMeters": number;
   "mbos.location.dwellMinMinutes": number;
   "mbos.location.tripBreakMinutes": number;

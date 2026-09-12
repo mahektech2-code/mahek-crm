@@ -405,6 +405,11 @@ async function watch(): Promise<void> {
   try {
     const gap = await minGapMs();
     const misses = await getConfig<number>('mbos.location.trailStalledAfterMisses', 4);
+    /* The floor on the window, and the reason it exists is in the engine: four
+       misses of a three-second cadence is twelve seconds, which any walk
+       indoors clears — and the penalty for clearing it is that background
+       tracking is switched off for the rest of the process. */
+    const minSilence = await getConfig<number>('mbos.location.trailStalledMinSilenceSeconds', 300);
     const raw = await getKv(LAST_KEPT);
 
     const verdict = trailVerdict({
@@ -413,6 +418,7 @@ async function watch(): Promise<void> {
       lastKeptAt: raw ? Number(raw) : 0,
       gapMs: gap,
       silentCadences: misses,
+      minSilenceMs: Math.max(1, minSilence) * 1_000,
     });
 
     /* The clock went backwards under us. The window starts again from here

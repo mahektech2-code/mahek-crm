@@ -70,8 +70,9 @@ export function trailVerdict(args: {
   lastKeptAt: number;
   gapMs: number;
   silentCadences: number;
+  minSilenceMs: number;
 }): TrailVerdict {
-  const { now, startedAt, lastKeptAt, gapMs, silentCadences } = args;
+  const { now, startedAt, lastKeptAt, gapMs, silentCadences, minSilenceMs } = args;
 
   /* Never started, or started by a process that is gone. There is no task to
      disbelieve, and `start()` is what answers that question. */
@@ -81,8 +82,38 @@ export function trailVerdict(args: {
   const kept =
     Number.isFinite(lastKeptAt) && lastKeptAt > 0 && lastKeptAt <= now ? lastKeptAt : 0;
 
-  /* Both floored at one, so a nonsensical setting cannot turn the window into
-     zero and demote every handset in the field on its first tick. */
-  const window = Math.max(1, gapMs) * Math.max(1, silentCadences);
+  /*
+   * THE WINDOW HAS A FLOOR, AND WITHOUT ONE THIS RULE ATE THE FIX THAT MADE IT
+   * NECESSARY.
+   *
+   * It used to be `gapMs * silentCadences` and nothing else. That was correct
+   * for accidental reasons: the keep cadence was five minutes, so four misses
+   * came to twenty, and twenty minutes of silence really does mean a battery
+   * manager has killed the service. When the cadence was corrected to three
+   * seconds — the whole point of which was to make the trail road-by-road —
+   * the same multiplication produced a window of TWELVE SECONDS. Any ordinary
+   * hiccup clears that: a walk indoors, a bus shelter, one batch the OS chose
+   * to defer. A 24-second gap was measured on a handset whose trail was
+   * otherwise perfect.
+   *
+   * The cost was not a spurious note on a screen. `fallBackToFloor()` abandons
+   * the real background task for the rest of the process, so the watchdog was
+   * switching off background tracking on healthy phones within a minute of
+   * check-in, and the office then read "his phone stopped the tracker" — which
+   * was true, and it was this function that stopped it. This file's own header
+   * warned that "a wrong one would take a working handset OFF the real
+   * background task", and that is exactly what it did.
+   *
+   * So the multiplier is kept and no longer alone. What this window measures is
+   * HOW LONG SILENCE MUST LAST before the OS is disbelieved, and that is a fact
+   * about battery managers rather than about our sampling rate — the two were
+   * only ever the same number by coincidence. The floor is what carries the
+   * meaning at a dense cadence; the multiplier still carries it for a team that
+   * deliberately samples every few minutes.
+   */
+  const window = Math.max(
+    Math.max(1, gapMs) * Math.max(1, silentCadences),
+    Math.max(1, minSilenceMs),
+  );
   return now - Math.max(startedAt, kept) >= window ? 'stalled' : 'believable';
 }
