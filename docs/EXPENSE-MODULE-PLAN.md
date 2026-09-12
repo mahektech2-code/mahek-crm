@@ -21,7 +21,7 @@ the **Admin Console** (`src/app/admin`, where a policy is authored), and the
 | Approval | `mbos_approvals` | One table for all six MBOS approval kinds. Subject state is DERIVED from it. Already has `approvedAmountPaise` and `partially_approved`. |
 | Handset entry | `mbos-app/app/expenses.tsx` | Category, amount, date, note, bill photo. Shows headroom against the cap. |
 | Manager screen | `src/app/sales/expenses/page.tsx` | Waiting / decided list, month-to-date against cap, "no bill" banner, approve/part-approve/refuse. |
-| GPS trail | `mbos_positions` | A fix every `mbos.location.trackEveryMinutes` (default 5) while checked in. |
+| GPS trail | `mbos_positions` | A fix every `mbos.location.trailKeepEverySeconds` (default 3) while checked in. |
 | Per-activity fix | `mbos_activity_locations` | One row per MBOS write — where each order, payment, visit was done. |
 | Visits | `mbos_visits` | Check-in/check-out coordinates and times, `distanceFromShopM`, customer link. |
 | Salary | HRMS mirror of the employee workbook, read via `payForPeriod()` | Read-only. Payroll publishes it; nothing here writes pay. |

@@ -1712,15 +1712,15 @@ export const SETTINGS = [
     max: 300,
   },
   {
-    key: "mbos.location.trackEveryMinutes",
+    key: "mbos.location.trailKeepEverySeconds",
     type: "integer",
     category: "mbos-location",
     label: "How far apart two points on the trail may be",
     description:
-      "Minutes. The one above is a CEILING on how often the handset asks the OS for a position; this is the floor on how often one is actually kept, and it is the number that decides what the trail looks like and what it costs to upload. The two are not the same question and must not be collapsed: Android delivers on its own schedule whatever it is asked for, so the app keeps what it wants and discards the rest — which is the whole reason a setting that asked for five minutes once ran at three seconds for three days. Longer draws a line that cuts corners through buildings; shorter fills the upload queue faster than a market lane can drain it.",
-    default: 5,
-    min: 1,
-    max: 120,
+      "Seconds. The one above is a CEILING on how often the handset asks the OS for a position; this is the floor on how often one is actually kept, and it is the number that decides what the trail looks like and what it costs to upload. The two are not the same question and must not be collapsed: Android delivers on its own schedule whatever it is asked for, so the app keeps what it wants and discards the rest. It is stated in SECONDS because the thing it is measured against is: in MINUTES the finest it could express was sixty seconds while the ask beside it ran at three, so every value in the gap between them — which is the whole of the useful range — was unreachable, and the densest trail the office could ask for still cut corners through buildings. It defaults to the SAME three seconds as the ask above, which is what makes the trail road-by-road: every fix the handset pays the battery to take is a fix that is kept, and the shape that comes back is the road actually ridden rather than the corners between the places somebody stopped. Raising it discards fixes already taken — it saves upload and storage and NOT battery, because the cost is paid at the ask — so raise it only if a market lane genuinely cannot drain the queue.",
+    default: 3,
+    min: 3,
+    max: 3600,
   },
   {
     key: "mbos.location.trailStalledAfterMisses",
@@ -3060,6 +3060,29 @@ export function checkConsistency(config: Config): string[] {
   }
 
   /*
+   * A TRAIL CANNOT BE KEPT MORE OFTEN THAN IT IS TAKEN.
+   *
+   * The ask is a ceiling on how often the handset requests a position; the
+   * keep is a floor on how often one is written. Set the floor shorter than
+   * the ask and it simply cannot be honoured — there is no fix in between to
+   * keep — so the trail quietly runs at the ask and the number on the screen
+   * describes nothing. Refused rather than clamped, because the pair being
+   * wrong is exactly how this went unnoticed for three days the first time:
+   * a cadence that silently means something other than what it says is worse
+   * than one that will not save.
+   *
+   * Equal is the ordinary setting and the default: every fix taken is kept,
+   * which is what draws the road rather than the corners between stops.
+   */
+  if (
+    config["mbos.location.trailKeepEverySeconds"] < config["mbos.location.trackEverySeconds"]
+  ) {
+    problems.push(
+      `Trail: keeping a fix every ${config["mbos.location.trailKeepEverySeconds"]}s cannot be honoured when one is only taken every ${config["mbos.location.trackEverySeconds"]}s — there is no fix in between to keep. Set the keep interval at or above the take interval.`,
+    );
+  }
+
+  /*
    * Sarvam's synchronous endpoint refuses audio over 30 seconds. With the
    * fallback on, a longer recording simply goes to OpenAI instead and the
    * limit can be whatever suits a telecaller. With it off, a limit above 30
@@ -3611,7 +3634,7 @@ export type Config = {
   "mbos.location.unplannedVisitsPerDay": number;
   "mbos.location.trackWhileWorking": boolean;
   "mbos.location.trackEverySeconds": number;
-  "mbos.location.trackEveryMinutes": number;
+  "mbos.location.trailKeepEverySeconds": number;
   "mbos.location.trailStalledAfterMisses": number;
   "mbos.location.dwellRadiusMeters": number;
   "mbos.location.dwellMinMinutes": number;

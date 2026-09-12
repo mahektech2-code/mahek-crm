@@ -120,10 +120,26 @@ const LAST_KEPT = 'trailLastKeptAt';
  */
 const STALLED_AT = 'keepalive.stalledAt';
 
-/** Milliseconds between kept fixes, from configuration. */
+/**
+ * Milliseconds between kept fixes, from configuration.
+ *
+ * SECONDS, because the thing this is measured against is. It was minutes, and
+ * the two units could not meet: the ask beside it runs at three seconds and
+ * the finest this could express was sixty, so every spacing in between — which
+ * is the whole of the useful range — was unreachable, and the densest trail
+ * the office could ask for still cut corners through buildings. Five minutes
+ * was the default nobody had ever changed, and it drew a working day as a
+ * handful of points joined by straight lines across the map.
+ *
+ * The floor is `3` rather than `1` to match `trackEverySeconds`'s own floor:
+ * a keep interval under the ask interval cannot be honoured by anything, since
+ * there is no fix to keep, and a number that silently means something else is
+ * worse than one that is refused. `checkConsistency` refuses the pair the
+ * other way round — a keep floor shorter than the ask — on the server.
+ */
 async function minGapMs(): Promise<number> {
-  const minutes = await getConfig<number>('mbos.location.trackEveryMinutes', 5);
-  return Math.max(1, minutes) * 60_000;
+  const seconds = await getConfig<number>('mbos.location.trailKeepEverySeconds', 3);
+  return Math.max(3, seconds) * 1_000;
 }
 
 /**

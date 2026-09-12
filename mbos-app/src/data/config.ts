@@ -51,11 +51,22 @@ const DEFAULTS: Record<string, unknown> = {
   'mbos.location.trackEverySeconds': 3,
   /* The floor on what is KEPT, as opposed to what is asked for above. It was
      read here and published nowhere for the life of the module, so every
-     handset in the field has run the trail at this compiled five whatever the
-     office wanted — the silent fallback `getConfig` is built to make safe, and
-     invisible precisely because the number it fell back to was the number
-     everybody assumed was in force. */
-  'mbos.location.trackEveryMinutes': 5,
+     handset in the field has run the trail at this compiled number whatever
+     the office wanted — the silent fallback `getConfig` is built to make safe,
+     and invisible precisely because the number it fell back to was the number
+     everybody assumed was in force.
+
+     It was five MINUTES, which is the other half of the same story: once the
+     key was finally published the unit was the thing that made it useless.
+     The ask above runs at three seconds, so a floor stated in minutes could
+     never be set nearer than sixty — and five minutes of a working day drew
+     as a handful of points joined by straight lines. Seconds now, and it
+     matches the ask above exactly: every fix the handset pays the battery to
+     take is one it keeps, which is what makes the trail road-by-road rather
+     than a line between the places somebody stopped. Discarding four fixes in
+     five saved upload and storage and saved no battery at all, because the
+     cost is paid at the ask. */
+  'mbos.location.trailKeepEverySeconds': 3,
   /* How long the OS may claim to be tracking while delivering nothing before
      the handset stops believing it — in multiples of its own cadence. See
      `engines/trail-watchdog.ts`; the number matches the registry's default,
