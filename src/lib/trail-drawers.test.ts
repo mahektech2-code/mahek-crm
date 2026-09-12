@@ -141,3 +141,38 @@ test("neither drawer hands a no-journey segment to a 1-based helper", () => {
     );
   }
 });
+
+/* ---------------------------------------------------------------------------
+ * AND THE TRAIL HAS TO BE DELIVERED, NOT MERELY TAKEN.
+ *
+ * `deferredUpdatesInterval` is the one of expo-location's intervals Android
+ * actually honours, and it decides when the app is TOLD about a fix rather
+ * than how often one is taken. Set to the sampling interval it batches in the
+ * background and is bypassed in the foreground — and that asymmetry meant a
+ * pocketed handset handed MBOS nothing at all. 123 fixes at three-second
+ * spacing across eight and a half minutes arrived in ONE delivery, the moment
+ * the app came forward: `store()` never ran, `flush()` never ran, and the
+ * office saw not a stale position but no position, for as long as the phone
+ * stayed in a pocket.
+ *
+ * Zero is the only value that makes background tracking mean anything. A text
+ * check because the alternative is a device: `trail.ts` imports expo-location
+ * and TaskManager at module scope, which is the same reason the cadence and
+ * the watchdog both had to be moved into `engines/` to be testable at all.
+ * ------------------------------------------------------------------------- */
+
+test("the trail is delivered as it happens, not batched until the app opens", () => {
+  const source = readFileSync(TRAIL, "utf8");
+
+  assert.ok(
+    /deferredUpdatesInterval:\s*0\b/.test(source),
+    `${TRAIL} defers location delivery — Android will hold the batch until the app is foregrounded, and the Live map shows nothing while the phone is in a pocket`,
+  );
+  /* The distance twin, which was always 0 and must stay so: a salesman
+     standing still in a shop is a fact the trail wants, and distance-gating
+     drops the dwell that proves he was there. */
+  assert.ok(
+    /deferredUpdatesDistance:\s*0\b/.test(source),
+    `${TRAIL} gates delivery on distance — a stationary salesman will vanish from his own trail`,
+  );
+});

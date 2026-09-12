@@ -274,11 +274,13 @@ async function takeForeground(): Promise<void> {
  * the uploads succeeded, the connection was fine, and the Live map simply
  * showed where somebody had been the night before.
  *
- * So the cadence is enforced in TWO places and neither is this argument.
- * `deferredUpdatesInterval` below is read with a coercing `getLong` and does
- * arrive, but it is the battery half only — expo bypasses it outright while
- * the app is in the foreground. `keep()` is the authority on what is actually
- * written, because it is JavaScript and no cast can lose it.
+ * So the cadence is enforced in ONE place and it is not either of these
+ * arguments: `keep()`, in JavaScript, where no cast can lose it.
+ * `deferredUpdatesInterval` is the one Android honours and it is now 0 — see
+ * the note on it below for the eight and a half minutes of a pocketed handset
+ * that bought. It never belonged to the cadence at all: it decides when we are
+ * TOLD about a fix, not how often one is taken, and the two were conflated
+ * because both are measured in milliseconds.
  */
 async function startBackground(everyMs: number): Promise<boolean> {
   try {
@@ -340,15 +342,44 @@ async function startBackground(everyMs: number): Promise<boolean> {
          cast that loses it on Android. Nothing depends on it arriving. */
       timeInterval: everyMs,
       distanceInterval: 0,
-      /* THE ONE ANDROID HONOURS. `deferredUpdatesInterval` is read with a
-         coercing `getLong`, so the number survives the JSON round trip that
-         `timeInterval` does not — see the note above this function. It batches
-         fixes while the app is in the BACKGROUND instead of waking us every
-         three seconds, which is the battery half of the cadence. Expo bypasses
-         it in the foreground through its own `shouldReportDeferredLocations`,
-         which is exactly why `keep()` and not this is the authority on what
-         gets written. */
-      deferredUpdatesInterval: everyMs,
+      /*
+       * ZERO — NO DEFERRAL — AND IT USED TO BE THE CADENCE.
+       *
+       * `deferredUpdatesInterval` is the one of these Android actually honours
+       * (it is read with a coercing `getLong`, so it survives the JSON round
+       * trip `timeInterval` does not), and it was set to the sampling interval
+       * on the reasoning that batching in the background is "the battery half
+       * of the cadence". Expo bypasses it in the FOREGROUND through its own
+       * `shouldReportDeferredLocations`, and that asymmetry is the whole bug:
+       * batched in the background, immediate in the foreground.
+       *
+       * WHAT THAT MEANT IN THE FIELD. A salesman pocketed a working handset at
+       * 16:37 and opened the app again at 16:46. Android had collected 123
+       * fixes at three-second spacing across those eight and a half minutes —
+       * and handed MBOS not one of them until the app came forward, when the
+       * entire batch arrived in a single delivery. So `store()` never ran,
+       * `flush()` never ran, and the office saw nothing at all: not a stale
+       * position, NOTHING, for as long as the phone stayed in a pocket. The
+       * data was not lost — Android was holding it — but "the console is blind
+       * until he opens the app" is not background tracking, and it is exactly
+       * what a manager watching the Live map is relying on it not to be.
+       *
+       * It also made the watchdog next door right about the wrong thing: the
+       * task genuinely was delivering nothing, so the only argument was over
+       * how long to wait before saying so.
+       *
+       * The battery this bought is real and is not worth it. A trail that only
+       * exists once somebody opens the app is a trail whose whole purpose has
+       * been traded away — and the dial for cost is `trackEverySeconds`, which
+       * decides how often the radio is asked in the first place. Deferral only
+       * decides whether we are TOLD, and being told late is being told nothing
+       * on the one screen that reads this live.
+       *
+       * `deferredUpdatesDistance` stays 0 for the reason it always was: a
+       * salesman standing still in a shop is a fact the trail wants, and
+       * distance-gating would drop the dwell that proves he was there.
+       */
+      deferredUpdatesInterval: 0,
       deferredUpdatesDistance: 0,
       showsBackgroundLocationIndicator: true,
       pausesUpdatesAutomatically: false,
