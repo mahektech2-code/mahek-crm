@@ -6,12 +6,72 @@ import { color as C, type, weight } from '../../theme/tokens';
 import { Header, StatusStrip, TabBar, TabBarAction, type StripTone, type TabKey } from './Chrome';
 import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
 import { useKeyboardHeight } from '../ui/keyboard';
+import { useTicker } from '../ui/use-ticker';
 import { Appear } from '../ui/motion';
 import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCount } from '../../state/store';
 import { TravelGate } from './TravelGate';
 import { useBoot } from '../../state/boot';
 import { todayRow } from '../../data/attendance';
 import { plural } from '../../lib/format';
+import { gpsVerdict, type GpsHealth } from '../../engines/gps-health';
+import { gpsSignal } from '../../native/where';
+import { hasPermission } from '../../native/location';
+import { getConfig } from '../../data/config';
+
+/**
+ * The GPS light, from the radio rather than from a flag.
+ *
+ * It read `store.gps`, which is written only by the two check-in flows and the
+ * visit screen's own acquire — so on a handset that reinstalled while already
+ * checked in, none of them ever ran and the strip said "Finding GPS" for the
+ * life of the install while the phone fixed to three metres every three
+ * seconds. The rule is in `engines/gps-health.ts`; this is the polling.
+ *
+ * FIVE SECONDS, and only while the app is in front. `useTicker` already
+ * handles the second half — it creates no timer when the app is backgrounded
+ * and re-reads immediately on return — and a strip nobody is looking at does
+ * not need refreshing. Nothing here touches the radio: every fix the app takes
+ * already leaves its mark, so this is two local reads.
+ */
+function useGpsHealth(): GpsHealth {
+  const tick = useTicker(5_000);
+  const [health, setHealth] = React.useState<GpsHealth>('acquiring');
+
+  React.useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const [permitted, signal, threshold] = await Promise.all([
+          hasPermission(),
+          gpsSignal(),
+          getConfig<number>('mbos.location.gpsAccuracyThresholdM', 50),
+        ]);
+        if (!alive) return;
+        setHealth(
+          gpsVerdict({
+            permitted,
+            ageSeconds: signal?.ageSeconds ?? null,
+            accuracyM: signal?.accuracyM ?? null,
+            /* The same sixty seconds `whereNow()` already calls `fresh`, so
+               two parts of the app cannot disagree about what "now" means for
+               one reading. */
+            freshSeconds: 60,
+            thresholdM: threshold,
+          }),
+        );
+      } catch {
+        /* A status light may not break a screen. Whatever could not be read is
+           read again on the next tick, and until then the strip says it is
+           still looking — which is the honest answer to not knowing. */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [tick]);
+
+  return health;
+}
 
 /**
  * The frame. Every in-app screen renders its content inside one of these, and
@@ -133,7 +193,9 @@ export function AppFrame({
   const daysToAgree = useDaysToAgreeCount();
   const checkInAt = useCheckInTime();
   const checkedIn = checkInAt != null;
-  const gps = useStore((s) => s.gps);
+  /* From the radio, not from `store.gps` — see `useGpsHealth` above, and
+     `engines/gps-health.ts` for why that field cannot answer this question. */
+  const gps = useGpsHealth();
   const toast = useStore((s) => s.toast);
   const toastTone = useStore((s) => s.toastTone);
   const clearToast = useStore((s) => s.clearToast);

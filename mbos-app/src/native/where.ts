@@ -58,6 +58,32 @@ async function lastFix(): Promise<Fix | null> {
 }
 
 /**
+ * The freshest reading's age and precision, for the status strip's GPS light.
+ *
+ * NOT `whereNow()`, though it reads the same mark, and the difference is the
+ * config gate. That function answers "where did this activity happen" and
+ * returns `undefined` where the office has switched activity locations off —
+ * correct there, because nothing should then be stored. This answers "is the
+ * radio working", which is true or false regardless of whether we are filing
+ * positions against orders, and gating a GPS indicator on an activity-logging
+ * switch would blank the light on a deployment that had merely turned that
+ * feature off.
+ *
+ * It asks the radio for NOTHING. Every fix the app takes already passes
+ * through `rememberFix`, so the evidence is sitting in the kv store; a light
+ * that polled the GPS to draw itself would be a light that cost battery to say
+ * the battery is being spent.
+ */
+export async function gpsSignal(): Promise<{ ageSeconds: number; accuracyM: number | null } | null> {
+  const fix = await lastFix();
+  if (!fix) return null;
+  return {
+    ageSeconds: Math.round((Date.now() - fix.at) / 1000),
+    accuracyM: typeof fix.accuracyM === 'number' ? fix.accuracyM : null,
+  };
+}
+
+/**
  * The answer, immediately.
  *
  * `undefined` rather than a reason where the office has switched this off — no

@@ -43,8 +43,13 @@ export type DeviceState = {
   batteryPercent?: number;
   batteryCharging?: boolean;
   backgroundSyncRegistered?: boolean;
-  backgroundSyncLastRunAt?: Date;
-  trackerStalledAt?: Date;
+  /**
+   * `null` is a CLEAR and absent is still "leave it alone" — the two used to
+   * be the same thing and could only ever set the column, never unset it. See
+   * the note where they are read.
+   */
+  backgroundSyncLastRunAt?: Date | null;
+  trackerStalledAt?: Date | null;
   deviceStateAt?: Date;
 };
 
@@ -71,6 +76,18 @@ function instantFromAgo(v: unknown): Date | undefined {
   if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
   if (v < 0 || v > FOURTEEN_DAYS_S) return undefined;
   return new Date(Date.now() - Math.round(v) * 1000);
+}
+
+/**
+ * Was the key THERE, carrying null — as opposed to never sent at all?
+ *
+ * The one question `instantFromAgo` cannot answer, because both arrive as
+ * `undefined` by the time it sees a value. A handset saying "there is no stall"
+ * and a handset that cannot say are different facts about a phone, and only
+ * the first of them should clear a column.
+ */
+function isPresentNull(body: Record<string, unknown>, key: string): boolean {
+  return key in body && body[key] === null;
 }
 
 const oneOf = <T extends string>(all: readonly T[], v: unknown): T | undefined =>
@@ -125,11 +142,35 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
     state.backgroundSyncRegistered = body.backgroundSyncRegistered;
   }
 
+  /*
+   * AN EXPLICIT NULL IS A CLEAR, AND AN ABSENT KEY IS STILL NOT.
+   *
+   * "Absent is not null" above is the rule that lets an old build post its one
+   * boolean without wiping a newer build's richer answers, and it stays. What
+   * it could not express is a condition ENDING: a handset whose tracker
+   * recovered, or which was reinstalled, simply stopped sending the field, and
+   * a mark once written could never be taken off. A phone fixing to three
+   * metres every three seconds went on reading "his phone stopped the tracker"
+   * from a timestamp belonging to a previous installation — and the panel
+   * these feed is built on the discipline that a healthy handset says nothing,
+   * which two permanent false alarms destroy.
+   *
+   * JSON tells null from missing, so the handset now sends `null` for "I can
+   * report this and there is nothing to report" and omits the key only when it
+   * genuinely cannot say. `in` rather than a truthiness test, because that is
+   * the only check that separates the two.
+   */
   const ranAgo = instantFromAgo(body.backgroundSyncLastRunAgoSeconds);
   if (ranAgo) state.backgroundSyncLastRunAt = ranAgo;
+  else if (isPresentNull(body, "backgroundSyncLastRunAgoSeconds")) {
+    state.backgroundSyncLastRunAt = null;
+  }
 
   const stalledAgo = instantFromAgo(body.trackerStalledAgoSeconds);
   if (stalledAgo) state.trackerStalledAt = stalledAgo;
+  else if (isPresentNull(body, "trackerStalledAgoSeconds")) {
+    state.trackerStalledAt = null;
+  }
 
   /*
    * THE SERVER'S CLOCK, NEVER THE HANDSET'S.
