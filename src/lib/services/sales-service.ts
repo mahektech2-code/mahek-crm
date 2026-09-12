@@ -104,13 +104,48 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
 
   /* A salesman is in scope when any shop in his book is. The book is the
    * territory — `customers.territory_region` — rather than a second field on
-   * the person, which would be a third place for the same fact to disagree. */
+   * the person, which would be a third place for the same fact to disagree.
+   *
+   * **AND A SALESMAN WITH NO BOOK AT ALL IS IN EVERY REGIONAL MANAGER'S
+   * SCOPE**, which is the second arm. A join through `customers` cannot tell
+   * "works somebody else's patch" from "has been allocated nothing yet" —
+   * both produce no rows — so an unallocated handset was invisible to every
+   * manager in the company rather than to the wrong one. Not merely pinless:
+   * `onlyMine` drops the whole ROW, so he was missing from the Live map's team
+   * list, its no-signal count and its dead-trail banner alike, and a manager
+   * had no way to tell him from somebody who simply had not checked in.
+   *
+   * That is the failure this codebase already names on the handset side — an
+   * empty screen is the one outcome nobody debugs, because it looks like
+   * having no work. It arrives here pointed the other way, on the one screen
+   * somebody opens to find out whether a new phone is working at all, which is
+   * exactly the day a salesman has no book yet.
+   *
+   * It is deliberately NOT "every handset holder regardless of region", though
+   * that is the wider rule the same argument could be read to support.
+   * `managerScope` is what `canReadAttendanceSelfie` and
+   * `canReadTravelLegPhoto` narrow by, and this file already carries the scar
+   * of that path failing OPEN; widening it to the whole company would hand
+   * every `sales` holder every salesman's check-in photograph by id. An
+   * unallocated person is a much narrower carve-out, and it closes itself the
+   * moment somebody gives him a book.
+   *
+   * It can only ADD rows and never remove one, so no manager loses sight of
+   * anybody they can see today. Somebody nobody has given a book to is
+   * nobody's to hide. */
   const men = await db.execute<{ id: string }>(sql`
     select distinct u.id
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       join customers c on coalesce(c.sales_am_id, c.owner_id) = u.id
      where ${sql.raw(stateKeySql(qualify(TERRITORY_REGION_SQL, "c")))} in ${list}
+    union
+    select u.id
+      from users u
+      join app_access a on a.user_id = u.id and a.app = 'field'
+     where not exists (
+       select 1 from customers c where coalesce(c.sales_am_id, c.owner_id) = u.id
+     )
   `);
 
   return { national: false, regions, salesmanIds: men.map((m) => m.id) };
