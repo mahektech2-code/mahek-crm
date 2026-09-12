@@ -52,9 +52,21 @@ export async function hasPermission(): Promise<boolean> {
  * it produced would land on somebody standing in the right place.
  *
  * It is a parameter rather than the new default because `High` keeps the GPS
- * radio on longer, and paying that on every fix the app takes — the trail, the
- * departure, every order — to serve one of them would be a battery cost with
- * nothing to show for it.
+ * radio on longer, and paying that on every fix the app takes — the departure,
+ * every order — to serve one of them would be a battery cost with nothing to
+ * show for it.
+ *
+ * **THE TRAIL IS THE SECOND CALLER THAT PASSES IT, and it is not a third
+ * exception so much as the same one.** The list above used to name the trail
+ * as a place Balanced was "exactly right". It is not, and for a reason that is
+ * about the READER rather than the radio: the Live map runs
+ * `dropInaccurateFixes` over a trail before drawing it and discards anything
+ * worse than `mbos.location.gpsAccuracyThresholdM`, 50 m. Balanced returns
+ * 100 m indoors — a city block, as this comment says two paragraphs up — so
+ * every coarse trail fix was woken for, kept, uploaded, stored and then thrown
+ * away unseen. Coarse is genuinely fine for "which part of town was this order
+ * taken in", because nothing filters that. It is useless for a line that
+ * claims to be the road somebody rode.
  */
 export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: number; precise?: boolean } = { accuracyThresholdM: 100 }): Promise<FixResult> {
   const granted = await hasPermission();

@@ -221,9 +221,28 @@ let backgroundStartedAt = 0;
 let backgroundProvedSilent = false;
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
+/**
+ * `precise` FOR THE SAME REASON THE BACKGROUND TASK ASKS FOR `High`.
+ *
+ * This is the floor, and a floor that records nothing usable is not a floor.
+ * It already passed `accuracyThresholdM: 50` — the same number the map filters
+ * on — and then stored the answer regardless, because `fixOf` deliberately
+ * accepts a `coarse` result as well as an `ok` one. That is right for a visit,
+ * where a poor reading is still evidence of which part of town somebody was
+ * in and the record stands without it. It is wrong here: the trail is the one
+ * consumer whose fixes are silently DISCARDED when they are coarse, so asking
+ * for Balanced and keeping whatever came back meant the floor's fixes reached
+ * the database and never reached the screen.
+ *
+ * The threshold stays 50 and is deliberately NOT raised to let coarse fixes
+ * through. A 100 m reading cannot say which road, and a trail drawn from
+ * readings that cannot name a road is a prediction wearing the same colour as
+ * a measurement — which is the objection `road-snap-service.ts` already
+ * carries about `enhancePath`, arriving from underneath.
+ */
 async function takeForeground(): Promise<void> {
   try {
-    const result = await getFix({ accuracyThresholdM: 50, timeoutMs: 15_000 });
+    const result = await getFix({ accuracyThresholdM: 50, timeoutMs: 15_000, precise: true });
     const fix = fixOf(result);
     if (!fix) return;
     await store(fix.lat, fix.lng, fix.accuracyM, fix.at);
@@ -275,12 +294,48 @@ async function startBackground(everyMs: number): Promise<boolean> {
 
     await Location.startLocationUpdatesAsync(TASK_NAME, {
       /*
-       * BALANCED, not High. High asks for GPS continuously; Balanced is happy
-       * with the network fixes a trail is made of — this records which part of
-       * a city somebody was in, not which doorway, and the difference is
-       * roughly the whole of the battery cost.
+       * HIGH, AND IT USED TO BE BALANCED — REVERSED BECAUSE THE MAP THROWS A
+       * BALANCED FIX AWAY.
+       *
+       * The old argument is quoted here because every word of it was true of
+       * the trail it was written for: "Balanced is happy with the network
+       * fixes a trail is made of — this records which part of a city somebody
+       * was in, not which doorway, and the difference is roughly the whole of
+       * the battery cost."
+       *
+       * What it did not account for is `dropInaccurateFixes`, which the Live
+       * map runs over every trail before drawing it and which discards any fix
+       * worse than `mbos.location.gpsAccuracyThresholdM` — 50 m. Balanced on
+       * Android is roughly a city block: it returns 100 m indoors, and
+       * `native/location.ts` says so in as many words. So the two settings
+       * contradicted each other, and the trail was asking the radio for a
+       * precision the screen had already decided it would refuse.
+       *
+       * The cost was not a coarse line. It was NO line: a fix was woken for,
+       * taken, kept, queued, uploaded, stored and indexed, and then dropped
+       * on the way to the map. On this handset 14 of 96 fixes in half an hour
+       * went that way, and in the last two minutes of it, 3 of 3 — the trail
+       * simply stopped growing while the phone reported perfect health. That
+       * is the same shape as the five-minute cadence bug one rule along:
+       * paying for data and discarding it, with nothing anywhere looking
+       * wrong.
+       *
+       * IT DOES COST MORE BATTERY, and saying otherwise would be the same
+       * kind of wrong the old comment was. The WAKE rate is unchanged — that
+       * is `trackEverySeconds`, and it was already 3 — but High engages the
+       * GPS chip where Balanced was content with wifi and cell triangulation,
+       * and that is a real draw, over a full field day a large one. What is
+       * not true is the old framing of it as a trade of battery for detail:
+       * at Balanced the battery bought fixes that were discarded, so the
+       * previous setting was not the cheap option, it was the one that paid
+       * and got nothing. The dial for the cost is `trackEverySeconds`, which
+       * decides how often the radio is asked at all; this decides whether
+       * what comes back can be used.
+       *
+       * A trail whose whole stated purpose is the road ridden cannot be built
+       * out of readings that cannot name a road.
        */
-      accuracy: Location.Accuracy.Balanced,
+      accuracy: Location.Accuracy.High,
       /* Kept for iOS, which reads it, and for the day expo-location fixes the
          cast that loses it on Android. Nothing depends on it arriving. */
       timeInterval: everyMs,
