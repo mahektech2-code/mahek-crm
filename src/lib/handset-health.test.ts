@@ -9,7 +9,12 @@ import {
 } from "@/lib/handset-health";
 
 const NOW = new Date("2026-09-11T09:00:00+05:30").getTime();
-const T = { quietMinutes: 30, noTrailMinutes: 90, lowBatteryPercent: 20 };
+const T = {
+  quietMinutes: 30,
+  noTrailMinutes: 90,
+  lowBatteryPercent: 20,
+  queuedPositionsWorthSaying: 200,
+};
 
 const facts = (over: Partial<HandsetFacts> = {}): HandsetFacts => ({
   locationPermission: "always",
@@ -40,6 +45,10 @@ const facts = (over: Partial<HandsetFacts> = {}): HandsetFacts => ({
   setupReady: true,
   setupAcknowledgedAt: null,
   setupUnverified: null,
+  /* Null is "this build does not say", which is what an unrelated test wants
+     from a handset it is not asking about — a backlog has to be stated. */
+  queuedPositions: null,
+  queuedPositionsAt: null,
   ...over,
 });
 
@@ -418,5 +427,58 @@ describe("the background machinery", () => {
   test("does not warn while the wake-up is being honoured", () => {
     const notes = handsetNotes(facts(), T, NOW);
     assert.ok(!notes.some((n) => /No background sync/.test(n.text)));
+  });
+});
+
+describe("how far behind a handset is", () => {
+  /* The question managers actually ask, and the one nothing could answer: not
+     "is he tracking" but "is his day going to reach me". */
+
+  test("says nothing at all when the phone is keeping up", () => {
+    assert.deepEqual(texts(facts({ queuedPositions: 0, queuedPositionsAt: new Date(NOW) })), []);
+    assert.deepEqual(texts(facts({ queuedPositions: 199, queuedPositionsAt: new Date(NOW) })), []);
+  });
+
+  test("null is not zero — a build that cannot say draws nothing either", () => {
+    /* And must never be rendered as "clear", which is the reassuring answer on
+       the row that has earned it least. */
+    assert.deepEqual(texts(facts({ queuedPositions: null })), []);
+  });
+
+  test("a real backlog is named, with its age", () => {
+    const notes = handsetNotes(
+      facts({ queuedPositions: 12_412, queuedPositionsAt: new Date(NOW - 4 * 60_000) }),
+      T,
+      NOW,
+    );
+    const note = notes.find((n) => /still on his phone/.test(n.text));
+    assert.ok(note, "a handset holding 12,412 fixes says nothing about it");
+    assert.match(note.text, /12,412/, "the count is not said in words a manager can read");
+    assert.match(note.text, /4 min ago/, "the count carries no age, so it reads as now");
+  });
+
+  test("a backlog is INFO and never a fault", () => {
+    /* A queue is the design working — the connection went, nothing was lost,
+       and it arrives on its own. Drawn as a warning it would train managers to
+       ignore the lines that are faults. */
+    const notes = handsetNotes(
+      facts({ queuedPositions: 5_000, queuedPositionsAt: new Date(NOW) }),
+      T,
+      NOW,
+    );
+    const note = notes.find((n) => /still on his phone/.test(n.text));
+    assert.equal(note?.tone, "info");
+    assert.match(note!.detail!, /none of this is lost/i);
+  });
+
+  test("the threshold is honoured rather than hardcoded", () => {
+    const loud = { ...T, queuedPositionsWorthSaying: 10 };
+    const at = new Date(NOW);
+    assert.equal(texts(facts({ queuedPositions: 50, queuedPositionsAt: at })).length, 0);
+    assert.ok(
+      handsetNotes(facts({ queuedPositions: 50, queuedPositionsAt: at }), loud, NOW).some((n) =>
+        /still on his phone/.test(n.text),
+      ),
+    );
   });
 });

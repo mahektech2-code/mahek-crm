@@ -1734,6 +1734,28 @@ export const SETTINGS = [
     max: 60,
   },
   {
+    key: "mbos.location.queueRetentionDays",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long a handset keeps a fix it could not send",
+    description:
+      "Days. Every position waits in a queue on the phone until this server confirms it, which is why a lost connection costs nothing — and this is the one boundary past which an unsent fix is finally dropped. It only ever bites a handset the server cannot file fixes against at all, which in practice means a check-in still stuck in the outbox; a phone that simply has no signal keeps everything and sends it when it can. It was a constant in the handset for the life of the module, which made the durability of somebody's working day a number nobody could see or change. Longer is safer and costs storage on the phone; shorter risks throwing away a day that would have arrived.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "mbos.location.queuedPositionsWorthSaying",
+    type: "integer",
+    category: "mbos-location",
+    label: "Unsent fixes before the team list mentions a backlog",
+    description:
+      "A queue is the design working rather than a fault — the connection went, nothing was lost, and it arrives on its own. So the team list says nothing at all until a handset is this far behind, for the same reason a healthy phone says nothing anywhere else on that panel: a row that always has something on it is a row nobody reads. At the three-second cadence a fix is three seconds of somebody's route, so 200 is about ten minutes of work and 1,000 is about an hour.",
+    default: 200,
+    min: 10,
+    max: 100_000,
+  },
+  {
     key: "mbos.location.trailStalledMinSilenceSeconds",
     type: "integer",
     category: "mbos-location",
@@ -3647,6 +3669,8 @@ export type Config = {
   "mbos.location.trackEverySeconds": number;
   "mbos.location.trailKeepEverySeconds": number;
   "mbos.location.trailStalledAfterMisses": number;
+  "mbos.location.queueRetentionDays": number;
+  "mbos.location.queuedPositionsWorthSaying": number;
   "mbos.location.trailStalledMinSilenceSeconds": number;
   "mbos.location.dwellRadiusMeters": number;
   "mbos.location.dwellMinMinutes": number;

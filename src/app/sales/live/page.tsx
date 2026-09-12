@@ -253,6 +253,7 @@ export default async function Page({
           quietMinutes: config["mbos.location.handsetQuietMinutes"],
           noTrailMinutes: config["mbos.location.noTrailMinutes"],
           lowBatteryPercent: config["mbos.location.lowBatteryPercent"],
+          queuedPositionsWorthSaying: config["mbos.location.queuedPositionsWorthSaying"],
         }}
         nowMs={clockMs}
       />

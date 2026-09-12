@@ -4672,10 +4672,35 @@ export const mbosDevices = pgTable(
      * trail with a hole in it and not that the phone had been killed.
      */
     trackerStalledAt: timestamp("tracker_stalled_at", { withTimezone: true }),
+    /**
+     * HOW MANY FIXES THE PHONE IS STILL HOLDING.
+     *
+     * Every position waits in a local queue until the server confirms it, which
+     * is why nothing is ever lost to a bad connection — and it means a handset
+     * can be perfectly healthy, answering every heartbeat, and sitting on
+     * fourteen thousand unsent rows with no screen able to say so. This is the
+     * number managers actually want: not "is he tracking" but "is his day going
+     * to reach me". A backlog draining is fine; one growing for six hours is a
+     * support call.
+     *
+     * Null means this build does not say, NEVER zero. A phone holding nothing
+     * and a phone that cannot tell us are different facts, and drawing the
+     * second as "clear" is the reassuring answer on the row that has earned it
+     * least. `queuedPositionsAt` is when the count was true, on our clock —
+     * a depth with no age reads as "now", which on a handset that last spoke at
+     * breakfast would have somebody chasing a queue that has long since
+     * drained. A check constraint refuses the count without it.
+     */
+    queuedPositions: integer("queued_positions"),
+    queuedPositionsAt: timestamp("queued_positions_at", { withTimezone: true }),
   },
   (t) => [
     uniqueIndex("mbos_devices_device_key").on(t.deviceId),
     index("mbos_devices_user_idx").on(t.userId, t.active),
+    check(
+      "mbos_devices_queue_depth_dated",
+      sql`${t.queuedPositions} is null or ${t.queuedPositionsAt} is not null`,
+    ),
   ],
 );
 

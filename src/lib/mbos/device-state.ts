@@ -50,6 +50,9 @@ export type DeviceState = {
    */
   backgroundSyncLastRunAt?: Date | null;
   trackerStalledAt?: Date | null;
+  /** Unsent fixes still on the phone. Zero is a real answer; absent is not. */
+  queuedPositions?: number;
+  queuedPositionsAt?: Date;
   deviceStateAt?: Date;
 };
 
@@ -134,6 +137,23 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
     state.batteryCharging = body.batteryCharging;
   }
 
+  /*
+   * HOW FAR BEHIND THE PHONE IS, which is the number managers actually ask for.
+   *
+   * Not "is he tracking" but "is his day going to reach me". Zero IS a real
+   * answer here and the common one — the handset is clear — so unlike the marks
+   * below this is stored whenever it arrives, and it is absence rather than
+   * zero that means "this build cannot say".
+   *
+   * A negative or a fraction is dropped rather than rounded into something
+   * plausible, for the reason every other reading here is: a figure a screen
+   * will draw has to have come from somewhere.
+   */
+  if (typeof body.queuedPositions === "number" && Number.isFinite(body.queuedPositions)) {
+    const queued = Math.round(body.queuedPositions);
+    if (queued >= 0) state.queuedPositions = queued;
+  }
+
   /* Whether the OS accepted the periodic wake-up at all. False is a real
      answer and the one worth having: it is a handset that will never sync
      with the app shut, and it looked identical to a working one until this
@@ -186,6 +206,13 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
    * to look like "we heard, and it was nothing".
    */
   if (Object.keys(state).length > 0) state.deviceStateAt = new Date();
+
+  /* The queue depth carries its OWN age, and a check constraint refuses the
+     count without it. It is stamped separately from `deviceStateAt` because a
+     report can carry a battery reading and no queue depth — an older build —
+     and dating the count off the report would say we had been told something
+     we had not. */
+  if (state.queuedPositions !== undefined) state.queuedPositionsAt = new Date();
 
   return state;
 }

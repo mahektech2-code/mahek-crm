@@ -51,6 +51,12 @@ export type DeviceStateReport = {
    */
   backgroundSyncLastRunAgoSeconds?: number | null;
   trackerStalledAgoSeconds?: number | null;
+  /**
+   * Unsent fixes still on this phone. ZERO IS A REAL ANSWER and the common one
+   * — the handset is clear — so unlike the two marks above, absence here means
+   * only that this build cannot say, and is never read as nothing waiting.
+   */
+  queuedPositions?: number;
 };
 
 /**
@@ -149,6 +155,18 @@ async function backgroundState(): Promise<Partial<DeviceStateReport>> {
     } else if (bg.lastRunAt === null) {
       /* EXPLICIT NULL, and the distinction is the whole of the fix below. */
       out.backgroundSyncLastRunAgoSeconds = null;
+    }
+    /* HOW FAR BEHIND WE ARE, which is the question a manager is really asking
+       — not "is he tracking" but "is his day going to reach me". Counted here
+       rather than on the server because only the phone knows: the queue is
+       local by design, which is what makes a lost connection cost nothing. */
+    try {
+      const { queueDepth } = await import('./trail');
+      out.queuedPositions = await queueDepth();
+    } catch {
+      /* A count is worth nothing against a report failing to go at all. The
+         field is left absent, which the server reads as "cannot say" rather
+         than as a clear queue. */
     }
     if (stalled !== null && stalled <= now) {
       out.trackerStalledAgoSeconds = Math.round((now - stalled) / 1000);

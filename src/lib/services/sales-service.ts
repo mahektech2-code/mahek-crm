@@ -1858,6 +1858,12 @@ export type LastKnown = {
   backgroundSyncRegistered: boolean | null;
   backgroundSyncLastRunAt: Date | null;
   trackerStalledAt: Date | null;
+  /**
+   * Unsent fixes still on the phone, and when that was true. Null means this
+   * build does not say — never zero, which is a handset reporting itself clear.
+   */
+  queuedPositions: number | null;
+  queuedPositionsAt: Date | null;
 };
 
 /**
@@ -1923,6 +1929,8 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
            dev.battery_charging as "batteryCharging",
            dev.device_state_at as "deviceStateAt",
            dev.last_seen_at as "lastHeardAt",
+           dev.queued_positions as "queuedPositions",
+           dev.queued_positions_at as "queuedPositionsAt",
            tr.at as "trailSeenAt",
            d.setup_ready as "setupReady",
            d.setup_acknowledged_at as "setupAcknowledgedAt",

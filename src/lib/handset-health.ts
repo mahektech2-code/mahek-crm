@@ -42,6 +42,15 @@ export type HandsetFacts = {
   batteryCharging: boolean | null;
   deviceStateAt: Date | string | null;
   lastHeardAt: Date | string | null;
+  /**
+   * UNSENT FIXES STILL ON THE PHONE, or null where the build cannot say.
+   *
+   * Never read as zero when absent: a phone holding nothing and a phone that
+   * cannot tell us are different facts, and drawing the second as "clear" is
+   * the reassuring answer on the row that has earned it least.
+   */
+  queuedPositions: number | null;
+  queuedPositionsAt: Date | string | null;
   /** A day that is open changes what silence MEANS — see below. */
   dayOpen: boolean;
   /** When he checked in — what a dead trail is measured from. */
@@ -89,6 +98,8 @@ export type HandsetThresholds = {
   quietMinutes: number;
   noTrailMinutes: number;
   lowBatteryPercent: number;
+  /** Unsent fixes worth saying out loud. See the note where it is read. */
+  queuedPositionsWorthSaying: number;
 };
 
 const ms = (at: Date | string | null): number | null => {
@@ -466,6 +477,44 @@ export function handsetNotes(
           "Nothing has reached MahekOne from this handset since then. A phone with no signal cannot tell us it has no signal, so this is the only evidence there is — no signal, no battery and a closed app all look exactly like this.",
       });
     }
+  }
+
+  /*
+   * HOW MUCH OF HIS DAY HAS NOT REACHED US, in plain words.
+   *
+   * This is the question a manager is really asking and the one nothing could
+   * answer: not "is he tracking" but "is his day going to reach me". Every fix
+   * waits on the phone until the server confirms it, so a handset can be
+   * perfectly healthy, answering every heartbeat, and holding hours of work —
+   * and until this column existed the only way to find out was to read the
+   * positions table and notice the newest row was old.
+   *
+   * IT IS NOT A FAULT AND IS NOT DRAWN AS ONE. A queue is the design working:
+   * the connection went, nothing was lost, and it will arrive. So it is
+   * `info` rather than `warn`, and it is said in minutes of WORK rather than
+   * in rows — "about 25 min of his route has not reached us yet" is something
+   * anybody can act on, and "12,412 positions queued" is a number only the
+   * person who built this can read. That is the whole rule for this panel:
+   * the people reading it are managers, not engineers.
+   *
+   * SILENT BELOW THE THRESHOLD, like every other line here. A phone that is a
+   * few fixes behind is a phone syncing normally, and a row that always says
+   * something is a row nobody reads.
+   *
+   * The age travels with it for the same reason the battery's does: a count
+   * from breakfast would have somebody chasing a queue that has long since
+   * drained.
+   */
+  const queued = f.queuedPositions;
+  if (queued !== null && queued >= Math.max(1, t.queuedPositionsWorthSaying)) {
+    const readAt = ms(f.queuedPositionsAt);
+    const when = readAt === null ? "" : ` — read ${ageWords(readAt, nowMs)} ago`;
+    notes.push({
+      tone: "info",
+      text: `${queued.toLocaleString("en-IN")} fixes still on his phone${when}`,
+      detail:
+        "His phone records every position and keeps it until we confirm we have it, so none of this is lost — it is waiting for a connection. It arrives on its own, usually within minutes of him getting signal or opening the app. Worth a look only if the number keeps growing all day.",
+    });
   }
 
   return notes;
