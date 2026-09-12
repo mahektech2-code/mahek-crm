@@ -89,6 +89,44 @@ test("neither drawer builds its segments by walking trips", () => {
   }
 });
 
+/* ---------------------------------------------------------------------------
+ * THE TRAIL MAY NOT ASK FOR A PRECISION THE MAP WILL REFUSE.
+ *
+ * `dropInaccurateFixes` discards any trail fix worse than
+ * `mbos.location.gpsAccuracyThresholdM` (50 m). `Location.Accuracy.Balanced`
+ * on Android is roughly a city block and returns 100 m indoors — so a trail
+ * taken at Balanced is one the screen has already decided to throw away. It
+ * was, for the life of the module: 14 of 96 fixes in half an hour on a real
+ * handset were woken for, kept, uploaded, stored and then dropped unseen, and
+ * in the last two minutes of that window 3 of 3 were, so the trail stopped
+ * growing while every health signal read green.
+ *
+ * A text check because there is nothing else it could be — one side is an
+ * Expo module the server's tests cannot import, and what joins them is that a
+ * number in the registry and an enum on a handset have to agree.
+ * ------------------------------------------------------------------------- */
+
+const TRAIL = "mbos-app/src/sync/trail.ts";
+
+test("the trail records at a precision the map will actually draw", () => {
+  const source = readFileSync(TRAIL, "utf8");
+
+  assert.ok(
+    /accuracy:\s*Location\.Accuracy\.High/.test(source),
+    `${TRAIL} no longer asks for High accuracy — at Balanced (~100 m) every fix it takes is dropped by dropInaccurateFixes and the trail silently stops growing`,
+  );
+  assert.ok(
+    !/accuracy:\s*Location\.Accuracy\.Balanced/.test(source),
+    `${TRAIL} asks for Balanced somewhere — that is a city-block reading feeding a line that claims to be the road ridden`,
+  );
+  /* The floor has to match the task, or the trail's precision depends on
+     whether the OS background task happened to start. */
+  assert.ok(
+    /getFix\(\{[^}]*precise:\s*true/.test(source),
+    `${TRAIL}'s foreground floor no longer asks for a precise fix — it will store coarse fixes the map then discards`,
+  );
+});
+
 test("neither drawer hands a no-journey segment to a 1-based helper", () => {
   /* `tripColour` and `tripOffset` both compute `(index - 1) % n`, so NO_TRIP
      asks for element -1 — undefined straight into a MapLibre paint property —
