@@ -1031,6 +1031,15 @@ test("the book-reconcile field is spelled the same on both sides", () => {
  * means the trail cadence has never once been something the office could
  * change.
  *
+ * Publishing it was necessary and was NOT sufficient, which is the part worth
+ * carrying forward: the key then existed, the office could set it, and the
+ * trail was still wrong — because the unit was MINUTES and the fixes it was
+ * throttling arrive every three SECONDS, so the nearest the office could set
+ * was twenty times too coarse. This test can prove a key is reachable. It
+ * cannot prove the number it carries can express the answer. It is
+ * `mbos.location.trailKeepEverySeconds` now, and `checkConsistency` is what
+ * holds the pair together.
+ *
  * OUTSTANDING held the seven that were already like that when this test was
  * written, each with the reason it was still on the list. IT IS EMPTY, and the
  * seven turned out to be three different faults rather than seven missing

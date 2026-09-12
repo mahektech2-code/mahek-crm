@@ -1963,10 +1963,15 @@ export type TrackPoint = {
  * rather than a guessed one.
  *
  * The limit is generous rather than a real cap: this is one person's one day,
- * not the whole team's (see `tracksForDay` for that), so even the fifteen-
- * second sampling `mbos.location.trackEverySeconds` defaults to leaves a
- * twelve-hour day at under 3,000 fixes — a limit of 2,000 here would have
- * started truncating ordinary working days the moment that density shipped.
+ * not the whole team's (see `tracksForDay` for that). At the three-second
+ * sampling both `mbos.location.trackEverySeconds` and
+ * `mbos.location.trailKeepEverySeconds` default to, a twelve-hour day of
+ * unbroken tracking is around 14,000 fixes — so 20,000 was already inside
+ * reach of a long day and a forgotten check-out together, and the failure
+ * would be a trail that stops dead in the afternoon with nothing saying why.
+ * It is NOT thinned to make the number smaller: this is the road-by-road view
+ * a manager opened deliberately, and the whole point of it is the fixes
+ * between the stops.
  */
 export async function trackForDay(salesmanId: string, day: string): Promise<TrackPoint[]> {
   const scope = await managerScope();
@@ -1987,7 +1992,7 @@ export async function trackForDay(salesmanId: string, day: string): Promise<Trac
        and (v.check_in_at ${IST_DAY})::date = ${day}::date
        and v.check_in_lat is not null
     order by at asc
-    limit 20000
+    limit 60000
   `)) as unknown as TrackPoint[];
   /* drizzle disables postgres.js's own timestamp parsing on the shared client
      so it can apply schema-aware conversion itself — a conversion that only
@@ -2015,10 +2020,25 @@ export async function trackForDay(salesmanId: string, day: string): Promise<Trac
  * hours in and lose the rest of the day. Visits are NEVER thinned or capped —
  * they are the points that mean something, and are unioned in after the
  * positions are already down to size.
+ *
+ * **THE CAP IS A SAFETY VALVE AND NOT A SAMPLING RATE, which is why it is
+ * 2,000 rather than 400.** Four hundred points spread over a ten-hour day is
+ * one every ninety seconds, and ninety seconds at riding speed is six hundred
+ * metres — so the thinning drew exactly the straight lines across the map that
+ * the five-minute storage cadence drew, and would have gone on drawing them
+ * after the cadence was fixed. Two thousand leaves an ordinary day at the
+ * fifteen-second spacing it was recorded at, and still bounds the worst case:
+ * a day taken at the three-second floor thins to roughly fifteen seconds,
+ * which is the density this map is designed around anyway.
+ *
+ * The SELECTED salesman is not drawn from this at all — `/api/sales/live/
+ * snap-trail` reads `trackForDay`, uncapped and road-snapped, for the one name
+ * a manager has picked. This is the overview behind it, and an overview whose
+ * shape is wrong is not cheaper, it is misleading.
  */
 export async function tracksForDay(
   day: string,
-  perPerson = 400,
+  perPerson = 2000,
 ): Promise<Map<string, TrackPoint[]>> {
   const scope = await managerScope();
 

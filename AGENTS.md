@@ -4147,7 +4147,9 @@ before. `flush()` loops until the queue is short now. The general lesson is the
 one worth keeping: a drain whose rate is fixed and whose fill rate is not is a
 queue that reports success all the way down.
 
-**AND THE THREE SECONDS IN THAT PARAGRAPH WERE NOT A SETTING ANYBODY CHOSE.**
+**AND THE THREE SECONDS IN THAT PARAGRAPH WERE NOT A SETTING ANYBODY CHOSE —
+THOUGH THEY TURNED OUT TO BE THE RIGHT NUMBER.** See the paragraph after next
+for how enforcing the wrong one destroyed the trail this map exists to draw.
 `mbos.location.trackEveryMinutes` said five and the handset asked for five, and
 Android delivered at 3.0 seconds for three days. `timeInterval` NEVER REACHES
 IT: expo-location declares it `Long?` and reads it out of the task's persisted
@@ -4175,6 +4177,38 @@ flush succeeded, and the cadence would collapse back to whatever the OS felt
 like delivering. A clock corrected BACKWARDS resets it rather than stalling,
 or a phone an hour fast would record nothing until it caught up with a mark
 from a future it no longer believes in.
+
+**AND ENFORCING IT AT FIVE MINUTES DESTROYED THE TRAIL, which is the other
+half of that fix and took two days to notice.** The bug was real and the
+correction was right; the NUMBER it enforced was a default nobody had ever
+chosen, in a unit that could not express the answer. A working day came back
+as thirty-nine points joined by straight lines across the map — `splitTrailByGaps`
+correctly drawing them dashed, because at five-minute spacing nobody did record
+what happened in between — on the one screen whose entire purpose is the shape
+of a day. The same book on the same phone two days earlier held 5,168 fixes at
+a three-second median and drew the road.
+
+**A KEEP FLOOR IN MINUTES COULD NOT MEET AN ASK IN SECONDS.** That is the
+mechanism, and it is worth stating on its own: `trackEverySeconds` runs at 3
+and the floor beside it was an integer count of MINUTES, so the finest it could
+ever express was 60 — twenty times coarser than the fixes being taken, with the
+whole useful range between them unreachable. `mbos.location.trailKeepEverySeconds`
+replaces it, defaulting to the same 3, and `checkConsistency` refuses a keep
+floor shorter than the ask because that pair cannot be honoured by anything.
+
+**Raising it saves upload and storage and NOT battery.** The cost is paid at
+the ASK — the handset wakes, fixes and spends the power whatever the floor says
+— so discarding four fixes in five bought rows and nothing else. That is why
+equal is the default: every fix already paid for is one that is kept.
+
+**And the THINNING has to move with it, or the fix is invisible.**
+`tracksForDay` capped the team overview at 400 points a person, which over a
+ten-hour day is one every ninety seconds — six hundred metres at riding speed,
+which is the same straight line arriving one layer further out. It is 2,000
+now. The SELECTED salesman is not drawn from it at all: `/api/sales/live/snap-trail`
+reads `trackForDay`, uncapped and road-snapped, and `downsampleForPath` hands
+Ola an anchor every 20 METRES rather than every Nth fix — so the snap cost is
+set by how far somebody rode and not by how often the phone looked.
 
 **A fix that is not kept is still REMEMBERED.** The trail wants one point every
 few minutes; `whereNow()` wants the freshest reading there is, and throttling

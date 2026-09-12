@@ -22,9 +22,47 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { checkConsistency, defaultConfig } from "@/lib/config/registry";
 
 const MAP = "src/app/sales/live/street-map.tsx";
 const ROUTE = "src/app/api/sales/live/snap-trail/route.ts";
+
+/* ---------------------------------------------------------------------------
+ * THE CADENCE THAT FEEDS BOTH OF THEM.
+ *
+ * Neither drawer can draw a road that was never recorded. The trail spent two
+ * days as thirty-nine points joined by straight lines because the floor on
+ * what is KEPT was five minutes while the ceiling on what is ASKED for was
+ * three seconds — a pair that is not wrong in either half and is useless
+ * together.
+ * ------------------------------------------------------------------------- */
+
+test("a fix is kept as often as one is taken", () => {
+  const config = defaultConfig();
+  /* Equal is the point, not merely "not less". Every fix the handset pays the
+     battery to take is one that reaches the map; anything higher discards
+     fixes already bought and costs road shape for nothing but rows. */
+  assert.equal(
+    config["mbos.location.trailKeepEverySeconds"],
+    config["mbos.location.trackEverySeconds"],
+    "the trail keeps fixes less often than it takes them — the Live map will draw straight lines between stops",
+  );
+});
+
+test("a keep floor shorter than the take interval is refused", () => {
+  const bad = defaultConfig();
+  bad["mbos.location.trackEverySeconds"] = 30;
+  bad["mbos.location.trailKeepEverySeconds"] = 3;
+  assert.ok(
+    checkConsistency(bad).some((p) => /keep interval at or above/i.test(p)),
+    "asking to keep a fix every 3s while taking one every 30s cannot be honoured, and must not save quietly",
+  );
+  assert.equal(
+    checkConsistency(defaultConfig()).filter((p) => /keep interval at or above/i.test(p)).length,
+    0,
+    "the shipped defaults must not trip the rule",
+  );
+});
 
 test("both trail drawers build from dayTrailSegments", () => {
   for (const file of [MAP, ROUTE]) {
