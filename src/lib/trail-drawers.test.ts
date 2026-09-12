@@ -176,3 +176,49 @@ test("the trail is delivered as it happens, not batched until the app opens", ()
     `${TRAIL} gates delivery on distance — a stationary salesman will vanish from his own trail`,
   );
 });
+
+/* ---------------------------------------------------------------------------
+ * A FIX IS NEVER DROPPED EXCEPT ON A CLEAN ANSWER FROM THIS SERVER.
+ *
+ * The whole durability promise rests on it: a handset that syncs once in a
+ * while must still deliver every fix it took, because the queue holds them
+ * until we confirm. That guarantee lives in three `DELETE` statements and
+ * nothing checked it — it was verified by reading them, which is exactly the
+ * kind of thing that stays true until somebody adds a fourth.
+ *
+ * The three legitimate deletions are: rows the server just acknowledged; the
+ * whole queue when the office has switched tracking OFF (keeping them would be
+ * storing what nobody asked for); and rows past the retention window on
+ * `no-session-yet`, so a queue waiting for a check-in that is never coming
+ * cannot grow for ever.
+ * ------------------------------------------------------------------------- */
+
+test("queued fixes are deleted only on a clean answer", () => {
+  const source = readFileSync(TRAIL, "utf8");
+  const deletes = source.match(/DELETE FROM positions[^']*/g) ?? [];
+
+  assert.equal(
+    deletes.length,
+    3,
+    `trail.ts has ${deletes.length} deletions of the position queue, not the 3 that are accounted for — a new one is a new way to lose somebody's day: ${JSON.stringify(deletes)}`,
+  );
+
+  /* The acknowledged rows, named by id. Anything broader here would drop fixes
+     the server never saw. */
+  assert.ok(
+    deletes.some((d) => /WHERE id IN \(/.test(d)),
+    "the post-acknowledgement delete no longer names the rows it is deleting",
+  );
+  /* The retention sweep, and it must stay bounded by a time. An unqualified
+     delete on this path would throw away a morning to win a race with the
+     outbox. */
+  assert.ok(
+    deletes.some((d) => /WHERE at < \?/.test(d)),
+    "the retention sweep no longer bounds itself by age",
+  );
+  /* And it reads the window from configuration rather than a constant. */
+  assert.ok(
+    /await retentionMs\(\)/.test(source),
+    "the retention window is hardcoded again — how durable somebody's day is belongs in the registry",
+  );
+});

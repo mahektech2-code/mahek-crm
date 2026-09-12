@@ -672,7 +672,45 @@ const MAX_PASSES = 50;
  * never made it. Days of that is worth surviving; a fortnight of it is a queue
  * nobody will ever drain.
  */
-const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const RETENTION_DAYS_FALLBACK = 7;
+
+/**
+ * CONFIGURATION, because it decides how durable somebody's working day is.
+ *
+ * It was a constant for the life of the module, which put the one number
+ * governing whether a day survives a bad week beyond the reach of anybody who
+ * would ever need to change it — the same mistake `trailKeepEverySeconds` was
+ * made of, one rule along, and the standing rule in AGENTS.md that a threshold
+ * a manager might one day want to move belongs in the registry.
+ *
+ * The fallback is the number it always was, so a handset with no configuration
+ * yet behaves exactly as it did.
+ */
+async function retentionMs(): Promise<number> {
+  const days = await getConfig<number>(
+    'mbos.location.queueRetentionDays',
+    RETENTION_DAYS_FALLBACK,
+  );
+  return Math.max(1, days) * 24 * 60 * 60 * 1000;
+}
+
+/**
+ * How many fixes are still waiting to be sent.
+ *
+ * The number the office could never see. A handset can answer every heartbeat,
+ * report its battery, look perfectly healthy — and be holding hours of somebody's
+ * route, because every fix waits here until the server confirms it. That is the
+ * design working rather than a fault, and it is exactly why nothing is lost to a
+ * bad connection; what was missing is any way to say how far behind a phone is.
+ *
+ * Counted rather than remembered: the queue is written by a background task and
+ * emptied by `flush()`, so a cached figure would be wrong the moment either ran.
+ */
+export async function queueDepth(): Promise<number> {
+  const rows = await all<{ n: number }>('SELECT COUNT(*) as n FROM positions');
+  const n = rows[0]?.n;
+  return typeof n === 'number' && Number.isFinite(n) ? n : 0;
+}
 
 let flushing = false;
 
@@ -724,7 +762,7 @@ export async function flush(): Promise<number> {
          check-in is ever coming goes, so this cannot become a queue that only
          grows. */
       if (answer.tracking === 'no-session-yet') {
-        await run('DELETE FROM positions WHERE at < ?', [Date.now() - RETENTION_MS]);
+        await run('DELETE FROM positions WHERE at < ?', [Date.now() - (await retentionMs())]);
         return sent;
       }
 

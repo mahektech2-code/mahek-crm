@@ -120,3 +120,33 @@ describe("a condition ending is a thing a handset can say", () => {
     }
   });
 });
+
+describe("how far behind the phone is", () => {
+  test("zero is a real answer and is stored", () => {
+    /* Unlike the two marks above, a handset reporting an empty queue is
+       telling us something — it is caught up. Absence is what means "cannot
+       say", and the two must not collapse. */
+    const state = readDeviceState({ queuedPositions: 0 });
+    assert.equal(state.queuedPositions, 0);
+    assert.ok(state.queuedPositionsAt instanceof Date);
+  });
+
+  test("a backlog is stored with its own timestamp", () => {
+    const state = readDeviceState({ queuedPositions: 12_412 });
+    assert.equal(state.queuedPositions, 12_412);
+    assert.ok(state.queuedPositionsAt instanceof Date, "a count with no age reads as now");
+  });
+
+  test("an absent count is not a clear queue", () => {
+    const state = readDeviceState({ batteryPercent: 50 });
+    assert.ok(!("queuedPositions" in state));
+    assert.ok(!("queuedPositionsAt" in state));
+  });
+
+  test("nonsense is dropped rather than rounded into something plausible", () => {
+    for (const v of ["lots", -1, Number.NaN, null]) {
+      const state = readDeviceState({ queuedPositions: v });
+      assert.ok(!("queuedPositions" in state), `${String(v)} must not reach the column`);
+    }
+  });
+});

@@ -77,6 +77,13 @@ const DEFAULTS: Record<string, unknown> = {
      twelve seconds, and concluding "stopped" switches background tracking off
      for the rest of the run — so the dense cadence had the watchdog demoting
      healthy handsets a minute after check-in. See `engines/trail-watchdog.ts`. */
+  /* How long an unsent fix survives on the phone. Configuration now, because
+     it decides how durable somebody's working day is — see `retentionMs`. */
+  'mbos.location.queueRetentionDays': 7,
+  /* How far behind a handset has to be before the team list mentions it. A
+     queue is the design working, not a fault, so the panel stays quiet until
+     there is something worth a manager's attention. */
+  'mbos.location.queuedPositionsWorthSaying': 200,
   'mbos.location.trailStalledMinSilenceSeconds': 300,
   /* Whether a day may open on a phone that cannot show it will record one.
      `block` matches the registry's default, because a handset that has never
