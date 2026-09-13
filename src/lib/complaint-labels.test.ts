@@ -132,6 +132,11 @@ describe("complaint priority", () => {
     // not a choice — but complaints carry it and a screen must not print
     // `low` at somebody.
     assert.equal(priorityLabel("low"), "Low");
-    assert.ok(!COMPLAINT_PRIORITIES.some((p) => p.value === "low"));
+    // Widened on purpose: the tuple's type already says `low` is absent, and a
+    // comparison TypeScript can fold away is not a test. This asserts the
+    // VALUES, so removing `low` from the type without removing it from the
+    // list would still be caught.
+    const offered: string[] = COMPLAINT_PRIORITIES.map((p) => p.value);
+    assert.ok(!offered.includes("low"));
   });
 });

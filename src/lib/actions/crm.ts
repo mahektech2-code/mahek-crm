@@ -57,6 +57,7 @@ import {
   recordWatchOutcome,
   rescheduleReminder as rescheduleReminderService,
   resolveComplaint as resolveComplaintService,
+  setComplaintPriority,
   setTarget as setTargetService,
   setTargetsBulk as setTargetsBulkService,
   resolveTargetCustomerIds,
@@ -1274,6 +1275,27 @@ export async function reassignComplaint(
     }
     refreshAll();
     return r.ok ? okVoid(`Reassigned to ${assignedTo}`) : r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Raising or lowering a complaint's priority once it is open.
+ *
+ * The judgement most likely to be made late, by somebody who knows more than
+ * the person who took the call — see `setComplaintPriority` for why the
+ * deadline is recomputed from when the complaint was RAISED rather than from
+ * now.
+ */
+export async function setComplaintPriorityAction(
+  complaintId: string,
+  priority: string,
+): Promise<Result> {
+  try {
+    const r = await setComplaintPriority(complaintId, priority);
+    refreshAll();
+    return r;
   } catch (e) {
     return fromThrown(e);
   }

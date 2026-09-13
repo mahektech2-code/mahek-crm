@@ -22,11 +22,17 @@ import {
 import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
-import { logComplaint, reassignComplaint, resolveComplaint } from "@/lib/actions/crm";
+import {
+  logComplaint,
+  reassignComplaint,
+  resolveComplaint,
+  setComplaintPriorityAction,
+} from "@/lib/actions/crm";
 import { ageLabel, money, shortDate, stamp } from "@/lib/format";
 import { LogComplaintDialog } from "@/components/crm/log-complaint-dialog";
 import {
   CN_STATUS_LABEL,
+  COMPLAINT_PRIORITIES,
   categoryLabel,
   isEscalatedPriority,
   priorityLabel,
@@ -379,10 +385,53 @@ export function ComplaintsScreen({
                 </Badge>
                 {/* The stored severity is not a label either — this printed
                   * `medium` at a manager, which is the database's word and not
-                  * the business's. Normal, Urgent, Critical. */}
-                <Badge tone={isEscalatedPriority(current.severity) ? "danger" : "neutral"}>
-                  {priorityLabel(current.severity)}
-                </Badge>
+                  * the business's. Normal, Urgent, Critical.
+                  *
+                  * A SELECT rather than a badge, because the priority is the
+                  * judgement most likely to be made LATE: the person who took
+                  * the call had a sentence, and whoever opens this has the
+                  * story. Changing it moves the resolution deadline with it —
+                  * see `setComplaintPriority`. Closed complaints keep the
+                  * badge: there is no deadline left to move. */}
+                {CLOSED.includes(current.status) ? (
+                  <Badge tone={isEscalatedPriority(current.severity) ? "danger" : "neutral"}>
+                    {priorityLabel(current.severity)}
+                  </Badge>
+                ) : (
+                  <Select
+                    aria-label="Priority"
+                    value={current.severity}
+                    disabled={busy}
+                    className={cx(
+                      "h-6 w-auto py-0 pr-6 pl-2 text-[11px] font-medium",
+                      isEscalatedPriority(current.severity)
+                        ? "border-danger text-danger"
+                        : undefined,
+                    )}
+                    onChange={async (e) => {
+                      const next = e.target.value;
+                      setBusy(true);
+                      const result = await run(
+                        setComplaintPriorityAction(current.id, next),
+                      );
+                      setBusy(false);
+                      if (result.ok) {
+                        // The drawer holds its own copy of the row, so the
+                        // badge under the cursor has to move before the
+                        // refresh lands or it reads as a click that did
+                        // nothing.
+                        setCurrent({ ...current, severity: next as Row["severity"] });
+                        router.refresh();
+                      }
+                    }}
+                  >
+                    {COMPLAINT_PRIORITIES.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </Select>
+                )}
                 <span className="text-[13px] text-muted">
                   {categoryLabel(current.category)} · open {ageLabel(current.ageDays)}
                 </span>

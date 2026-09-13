@@ -26,6 +26,10 @@ import {
   type RequestScope,
 } from "../access-control";
 import { getConfig } from "../config/store";
+import {
+  COMPLAINT_PRIORITIES,
+  priorityLabel,
+} from "../complaint-labels";
 import { classifyShortfall, resolveTarget } from "../engines/targets";
 import { watchAge } from "../engines/inactivity";
 import { recomputeInactivity, today } from "../recompute";
@@ -533,6 +537,103 @@ export async function changeComplaintStatus(
   });
 
   return okVoid("Status updated");
+}
+
+/* ------------------------------------------------------- complaint priority */
+
+/**
+ * RAISING OR LOWERING A COMPLAINT'S PRIORITY after it was raised.
+ *
+ * The priority is set on the form, and until now that was the only moment it
+ * could be set: a complaint that turned out to be a stopped production line
+ * stayed at whatever the person who took the call guessed. That is the one
+ * judgement about a complaint most likely to be made LATER, by somebody with
+ * more of the story than the telecaller had.
+ *
+ * THE DEADLINE MOVES WITH IT, and it is measured from when the complaint was
+ * RAISED rather than from now. `complaints.slaHours` is a promise about how
+ * long the customer waits, not about how long we have left once we notice —
+ * so a three-day-old complaint reclassified Critical reads as breached
+ * immediately, which is the true thing to say about it. Measuring from now
+ * would hand back a fresh eight hours to the complaint that has already had
+ * seventy-two, and the SLA figures would flatter exactly the cases that went
+ * worst.
+ *
+ * A LINE IN THE HISTORY, with the status unchanged. `complaint_status_history`
+ * is the only per-complaint timeline there is and its `to_status` is NOT NULL,
+ * so a priority change is recorded as a row carrying the status it already
+ * had. The drawer renders `at` and `note` and nothing else, so it reads as
+ * what it is — and a resolver opening the complaint sees why the deadline
+ * under their nose moved, which they could not learn from an audit row.
+ *
+ * NOBODY IS NOTIFIED, and that is not an oversight. `complaints.assigned_to`
+ * holds a desk's name — "Operations", "Quality" — and not a user id, so there
+ * is nobody to send it to. When a complaint gains a real assignee this is the
+ * first thing that should tell them.
+ */
+export async function setComplaintPriority(
+  complaintId: string,
+  priority: string,
+): Promise<Result> {
+  const ctx = await resolveScope();
+
+  // Checked against the offered list rather than trusted: a server action is a
+  // URL, and this value decides a deadline.
+  const picked = COMPLAINT_PRIORITIES.find((p) => p.value === priority);
+  if (!picked) return err("That is not a priority.", "validation");
+
+  const [existing] = await db
+    .select()
+    .from(complaints)
+    .where(eq(complaints.id, complaintId));
+  if (!existing) return err("That complaint no longer exists.", "not_found");
+  if (existing.severity === picked.value) {
+    return okVoid(`Already ${picked.label}`);
+  }
+
+  const config = await getConfig();
+  const hours = config["complaints.slaHours"][picked.value];
+  const slaDueAt = new Date(existing.createdAt.getTime() + hours * 3_600_000);
+  const was = priorityLabel(existing.severity);
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(complaints)
+      .set({
+        severity: picked.value,
+        slaDueAt,
+        updatedAt: new Date(),
+        updatedById: ctx.user.id,
+      })
+      .where(eq(complaints.id, complaintId));
+
+    await tx.insert(complaintStatusHistory).values({
+      id: id("csh"),
+      complaintId,
+      fromStatus: existing.status,
+      toStatus: existing.status,
+      changedById: ctx.user.id,
+      note: `Priority changed from ${was} to ${picked.label} by ${ctx.user.name} - resolution due ${slaDueAt.toISOString()}`,
+    });
+
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      action: "complaint.priority",
+      entityType: "complaint",
+      entityId: complaintId,
+      beforeState: {
+        severity: existing.severity,
+        slaDueAt: existing.slaDueAt.toISOString(),
+      } as never,
+      afterState: {
+        severity: picked.value,
+        slaDueAt: slaDueAt.toISOString(),
+      } as never,
+    });
+  });
+
+  return okVoid(`Priority set to ${picked.label}`);
 }
 
 /** Resolution is a manager action, and the notes are mandatory. */
