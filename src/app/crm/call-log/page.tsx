@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { categoryValue } from "@/lib/complaint-labels";
+import { cached } from "@/lib/reference-cache";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { dayActivity, today } from "@/lib/queries";
 import { getConfig } from "@/lib/config/store";
@@ -37,18 +38,37 @@ export default async function QueuePage({
   // comes up front is the handful worth offering unprompted; everything else
   // is the search box, which reaches the formulation and the brand as well as
   // the name.
+  /*
+   * THE SAME THREE LISTS FOR EVERYBODY, EVERY TIME.
+   *
+   * 63 quick notes, 198 products and a handful of call scripts — none of it
+   * scoped, none of it changing except when an admin edits it, and all of it
+   * re-read from Postgres on every open of the screen a telecaller lives in
+   * all day. Three round trips and three lots of row parsing, on one shared
+   * core, to produce bytes identical to the ones produced a second earlier.
+   *
+   * `cached` holds them for thirty seconds — the same window and the same
+   * reasoning `getConfig` has used since it was written. See
+   * `lib/reference-cache.ts` for what may and may not go in there; the queue
+   * below is deliberately NOT cached, because a telecaller who logs a call has
+   * to see the list change.
+   */
   const [quickNoteRows, productRows, scriptRows] = await Promise.all([
-    db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
-    popularProducts(),
+    cached("crm.quickNotes", () =>
+      db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
+    ),
+    cached("crm.popularProducts", () => popularProducts()),
     // Call scripts live in the help centre, so there is one place they are
     // written and the panel simply shows the relevant one.
-    db
-      .select()
-      .from(helpArticles)
-      .where(eq(helpArticles.type, "call_script"))
-      // Ordered, or which script greets the telecaller is whatever the
-      // planner happened to return first.
-      .orderBy(helpArticles.title),
+    cached("crm.callScripts", () =>
+      db
+        .select()
+        .from(helpArticles)
+        .where(eq(helpArticles.type, "call_script"))
+        // Ordered, or which script greets the telecaller is whatever the
+        // planner happened to return first.
+        .orderBy(helpArticles.title),
+    ),
   ]);
   const quickNoteOptions = quickNoteRows.map((n) => ({
     id: n.id,

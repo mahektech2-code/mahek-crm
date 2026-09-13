@@ -112,9 +112,63 @@ async function queueInputs(
   const ownerFilter = scopedToUsers(ids);
 
   // Deactivated customers are never candidates.
-  const rows = await db
+  /*
+   * THREE INDEPENDENT READS, STARTED TOGETHER.
+   *
+   * The candidates, the reminders and today's skips do not depend on one
+   * another — none of the three reads a row the others produce — and they were
+   * awaited one after the next, so a page paid three round trips end to end
+   * where it needed the slowest of the three. It is the same "one wave, not
+   * three" the dashboard already does one layer up, and it matters more here:
+   * on a single core the app is not doing anything useful while it waits.
+   */
+  const rowsPromise = db
     .select({
-      customer: customers,
+      /*
+       * THE COLUMNS THIS FUNCTION ACTUALLY USES, and not the whole row.
+       *
+       * `customers` has 121 columns. This read used every one of them and
+       * touches 24 — so on a manager's book of 5,143 rows it was building
+       * 622,303 JavaScript values per page load to use 123,432 of them, and
+       * dragging 1,619 kB out of Postgres to spend 780 kB.
+       *
+       * On a box with one core that is the whole cost: the SQL was never slow
+       * (116 ms measured on the real book), and the time went on parsing rows
+       * nobody read. Naming the columns is the single cheapest thing that can
+       * be done to the CRM's hot path.
+       *
+       * ADDING A FIELD TO THE SCREEN MEANS ADDING IT HERE. That is the trade
+       * for the speed, and it fails loudly — the mapping below is typed off
+       * this object, so a column that is read and not selected does not
+       * compile. It cannot silently come back undefined the way a hand-rolled
+       * handler's column list can.
+       */
+      customer: {
+        id: customers.id,
+        name: customers.name,
+        ownerId: customers.ownerId,
+        contactPerson: customers.contactPerson,
+        phone: customers.phone,
+        city: customers.city,
+        kind: customers.kind,
+        status: customers.status,
+        createdAt: customers.createdAt,
+        cycleDays: customers.cycleDays,
+        cycleConfidence: customers.cycleConfidence,
+        cycleIsDefault: customers.cycleIsDefault,
+        lastOrderDate: customers.lastOrderDate,
+        lastOrderValue: customers.lastOrderValue,
+        lastContactDate: customers.lastContactDate,
+        lastConfirmedWhatsappDate: customers.lastConfirmedWhatsappDate,
+        creditTermDays: customers.creditTermDays,
+        outstanding: customers.outstanding,
+        slowPayer: customers.slowPayer,
+        doNotContact: customers.doNotContact,
+        thirdParty: customers.thirdParty,
+        leadSalesType: customers.leadSalesType,
+        activeInOrderSystem: customers.activeInOrderSystem,
+        deactivationRequested: customers.deactivationRequested,
+      },
       calledToday: sql<boolean>`exists (
         select 1 from ${calls} c
          where c.customer_id = customers.id
@@ -250,7 +304,7 @@ async function queueInputs(
     );
 
   // Pending reminders assigned to whoever is asking, in one query.
-  const reminderRows = await db
+  const reminderRowsPromise = db
     .select({
       id: reminders.id,
       customerId: reminders.customerId,
@@ -266,6 +320,24 @@ async function queueInputs(
       ),
     );
 
+  // Skips are recorded in the audit log rather than as queue rows — there is
+  // no stored queue to mark. They last for the business day only.
+  const skipsPromise = db.execute<{ entity_id: string; reason: string }>(sql`
+    select distinct on (entity_id) entity_id, after_state->>'reason' as reason
+      from audit_log
+     where action = 'queue.skip'
+       and after_state->>'day' = ${day}
+     order by entity_id, at desc
+  `);
+
+  /* All three in flight before any of them is read — see the note above the
+     candidates query. Awaited here, together, and not one at a time. */
+  const [rows, reminderRows, skips] = await Promise.all([
+    rowsPromise,
+    reminderRowsPromise,
+    skipsPromise,
+  ]);
+
   const remindersByCustomer = new Map<string, QueueCandidate["reminders"]>();
   for (const r of reminderRows) {
     const list = remindersByCustomer.get(r.customerId) ?? [];
@@ -278,15 +350,6 @@ async function queueInputs(
     remindersByCustomer.set(r.customerId, list);
   }
 
-  // Skips are recorded in the audit log rather than as queue rows — there is
-  // no stored queue to mark. They last for the business day only.
-  const skips = await db.execute<{ entity_id: string; reason: string }>(sql`
-    select distinct on (entity_id) entity_id, after_state->>'reason' as reason
-      from audit_log
-     where action = 'queue.skip'
-       and after_state->>'day' = ${day}
-     order by entity_id, at desc
-  `);
   const skipReason = new Map(skips.map((s) => [s.entity_id, s.reason]));
 
   const detail = new Map(rows.map((r) => [r.customer.id, r]));
