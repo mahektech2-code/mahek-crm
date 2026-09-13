@@ -24,7 +24,7 @@ const POLL_MS = 30_000;
  * **Today polls; a past day never does.** `router.refresh()` re-runs the
  * Server Component on the same URL, which is the whole point — a manager
  * watching this screen used to see nobody move until they reloaded the page
- * themselves, which for a check-in that had already landed server-side read
+ * themselves, which for a punch-in that had already landed server-side read
  * as "the map is broken" rather than "the map hasn't been asked again yet".
  * A day that already happened has nothing left to arrive, so polling it would
  * be a request every thirty seconds for an answer that cannot change.

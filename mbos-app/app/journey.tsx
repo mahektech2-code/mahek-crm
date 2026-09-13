@@ -25,7 +25,7 @@ import { getCustomer, type Customer } from '../src/data/customers';
 import { getConfig } from '../src/data/config';
 import { optimiseRoute } from '../src/engines/route';
 import { fixOf, getFix } from '../src/native/location';
-import { dayLabel, dayLabelRelative, dmy, inrFromPaise, isoDate, plural } from '../src/lib/format';
+import { dayLabel, dayLabelRelative, dmy, hhmm, inrFromPaise, isoDate, plural } from '../src/lib/format';
 /* No `openMaps` here. Every stop row and every card on this screen navigates
    through `NavigateButton`, which is the one call site — see `StopMapButton`. */
 import { openRoute, shareText } from '../src/lib/messaging';
@@ -1552,11 +1552,6 @@ export default function JourneyScreen() {
   );
 }
 
-/** 09:41 — the plan's own vocabulary for a time of day. */
-function hhmm(ms: number): string {
-  const d = new Date(ms);
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-}
 
 
 /**

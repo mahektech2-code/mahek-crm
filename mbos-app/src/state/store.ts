@@ -2,6 +2,7 @@ import React from 'react';
 import { create } from 'zustand';
 import { useFocusEffect } from 'expo-router';
 import { getKv, setKv } from '../db';
+import { readArrival, type Arrival } from '../data/arrival';
 import { getCustomer, type Customer } from '../data/customers';
 import { unreadCount } from '../data/notifications';
 import { daysAwaitingAnswer } from '../data/journey';
@@ -105,6 +106,16 @@ type State = {
    * lets all four Start-visit buttons ask by setting one field.
    */
   travelTo: { customerId: string; customerName: string } | null;
+  /**
+   * The shop he has arrived at and not yet walked into.
+   *
+   * Arriving ends the journey; checking in starts the dwell clock. Between the
+   * two he is standing outside a shop, and this is the only thing that says
+   * so — see `data/arrival.ts` for why it is a record on disk rather than a
+   * flag in memory. Null is the ordinary state: he is either travelling, in a
+   * shop, or between them with nothing outstanding.
+   */
+  arrival: Arrival | null;
   visitSpent: string | null;
   /**
    * Why the next visit is off the plan.
@@ -184,7 +195,9 @@ type Actions = {
   startDay: () => void;
   beginVisit: (custId: string) => void;
   askTravel: (to: { customerId: string; customerName: string }) => void;
-  arrivedAt: (at: number) => void;
+  /** He has walked in. The dwell clock starts on this instant and no other. */
+  checkedIntoShop: (at: number) => void;
+  setArrival: (a: Arrival | null) => void;
   markVisitDone: (k: OutcomeKey, line: string) => void;
   setQty: (skuId: string, qty: string) => void;
   dropLine: (skuId: string) => void;
@@ -267,6 +280,28 @@ function rememberOffPlan(reason: string | null, at: number | null): void {
 }
 
 /**
+ * Put the shop he is standing at back on the screen, after a kill.
+ *
+ * Run once at launch beside `restoreOffPlanReason`, and for the same reason:
+ * the arrival is on disk, the bar that offers the check-in reads it from the
+ * store, and without this the bar is missing for exactly as long as the app
+ * has been reaped — which on the road is most of the day. `readArrival` is
+ * what rubs out an arrival belonging to an earlier day, so nothing here has to
+ * know about the boundary.
+ */
+export async function restoreArrival(): Promise<void> {
+  try {
+    if (useStore.getState().arrival) return;
+    const value = await readArrival();
+    if (value) useStore.setState({ arrival: value });
+  } catch {
+    /* Housekeeping must never stop the app opening. The worst this costs is a
+       bar that appears on the next launch instead of this one, and the visit
+       screen reads the same record directly. */
+  }
+}
+
+/**
  * Put a reason typed before the app was killed back on the screen that took it.
  *
  * Run once at launch from `BootProvider`. A reason from an earlier day is
@@ -328,6 +363,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   nextDate: NO_DATE_YET,
   visitStart: null,
   travelTo: null,
+  arrival: null,
   visitSpent: null,
   offPlanReason: null,
   offPlanReasonAt: null,
@@ -421,14 +457,22 @@ export const useStore = create<State & Actions>((set, get) => ({
   askTravel: (to) => set({ travelTo: to }),
 
   /**
-   * He is at the shop. The dwell clock starts HERE and nowhere else.
+   * He has gone INTO the shop. The dwell clock starts HERE and nowhere else.
    *
-   * It takes the arrival instant rather than reading the clock itself, because
-   * the caller has already written that instant onto the leg — two readings of
-   * `Date.now()` a few lines apart would put the record and the screen a
-   * second or two out of step for no reason anybody could later explain.
+   * This used to be the arrival, and moving it is the whole of the change: an
+   * arrival is a bike parked outside, and the walk to the counter, the wait
+   * and the call taken on the way in were all being counted as time with the
+   * customer — the same error the ride itself used to make, one step further
+   * down. The arrival still ends the journey; this starts the visit.
+   *
+   * It takes the instant rather than reading the clock itself, because the
+   * caller has already written that instant down — two readings of `Date.now()`
+   * a few lines apart would put the record and the screen a second or two out
+   * of step for no reason anybody could later explain.
    */
-  arrivedAt: (at) => set({ visitStart: at, travelTo: null }),
+  checkedIntoShop: (at) => set({ visitStart: at, travelTo: null }),
+
+  setArrival: (a) => set({ arrival: a }),
 
   markVisitDone: (k, line) => set({ visitDone: { ...get().visitDone, [k]: line } }),
 

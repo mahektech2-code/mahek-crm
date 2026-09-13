@@ -935,17 +935,19 @@ async function upsertTravelModes(rows: unknown[] | undefined, now: number): Prom
       reimbursementKind: string;
       requiresOdometer: boolean;
       requiresTicket: boolean;
+      scope?: string;
     };
     await run(
       `INSERT INTO travel_modes (key, label, sortOrder, reimbursementKind,
-                                 requiresOdometer, requiresTicket, lastSyncedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+                                 requiresOdometer, requiresTicket, scope, lastSyncedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET
          label = excluded.label,
          sortOrder = excluded.sortOrder,
          reimbursementKind = excluded.reimbursementKind,
          requiresOdometer = excluded.requiresOdometer,
          requiresTicket = excluded.requiresTicket,
+         scope = excluded.scope,
          lastSyncedAt = excluded.lastSyncedAt`,
       [
         m.key,
@@ -954,6 +956,13 @@ async function upsertTravelModes(rows: unknown[] | undefined, now: number): Prom
         m.reimbursementKind,
         m.requiresOdometer ? 1 : 0,
         m.requiresTicket ? 1 : 0,
+        /* A SERVER THAT HAS NOT BEEN DEPLOYED YET SENDS NOTHING, and `leg` is
+           the answer that keeps a phone working: every mode goes on being
+           offered at the stop exactly as it was, which is where they were all
+           offered before this existed. Reading a missing scope as `day` would
+           empty the journey's own picker on a handset whose office is one
+           release behind. */
+        m.scope ?? 'leg',
         now,
       ],
     );

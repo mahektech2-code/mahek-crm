@@ -2375,7 +2375,7 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
          and v.check_in_lat is not null
       union all
       select d.user_id, d.check_in_lat, d.check_in_lng, d.check_in_at,
-             'Checked in' as place, d.check_in_accuracy_m
+             'Punched in' as place, d.check_in_accuracy_m
         from mbos_attendance_days d
        where d.day = ${day}::date and d.check_in_lat is not null
       union all
