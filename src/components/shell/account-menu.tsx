@@ -37,11 +37,13 @@ export function AccountMenu({
   user: {
     name: string;
     /*
-     * BOTH, because an account can be reached by either and need not have
-     * both: `users.email` is nullable, and a telecaller signs in with the
-     * work number. Whichever they typed to get in is the one that answers
-     * "is this my account" — so the email is shown where there is one and
-     * the number where there is not.
+     * BOTH, and both are DRAWN where both exist. Either one is a way in —
+     * `/login` takes a work number or an email, because telecallers know
+     * their phone and office staff know their email — so showing one of them
+     * answers "is this my account" for half the company and leaves the other
+     * half looking at a detail they never type. Neither is nullable in
+     * practice for a working account and both are in the schema, so the menu
+     * prints what is there and says nothing where there is nothing.
      */
     email: string | null;
     phone: string | null;
@@ -151,16 +153,18 @@ export function AccountMenu({
             WHICH ACCOUNT THIS IS, said in the one place it is unambiguous.
             A shared machine on the sales floor is signed in as whoever used it
             last, and initials in a corner are not an answer to "is this me" —
-            what they typed to get in is.
+            what they typed to get in is. Both ways in are listed, because
+            which one a person recognises depends on which one they use.
           */}
           <div className="border-b border-divider px-3.5 py-2.5">
             <div className="truncate text-[13px] font-medium text-ink">
               {user.name}
             </div>
-            {user.email || user.phone ? (
-              <div className="truncate text-[12px] text-muted">
-                {user.email ?? user.phone}
-              </div>
+            {user.email ? (
+              <div className="truncate text-[12px] text-muted">{user.email}</div>
+            ) : null}
+            {user.phone ? (
+              <div className="truncate text-[12px] text-muted">{user.phone}</div>
             ) : null}
           </div>
 
