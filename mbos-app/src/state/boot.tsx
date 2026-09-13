@@ -13,7 +13,7 @@ import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
 import { registerForPush } from '../native/push';
 import { fetchUpdateInBackground } from '../native/updates';
-import { restoreOffPlanReason } from './store';
+import { restoreArrival, restoreOffPlanReason } from './store';
 
 /**
  * Starting up.
@@ -62,6 +62,8 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
            it here is what stops the sentence being lost in silence. It expires
            itself at the day boundary; see `restoreOffPlanReason`. */
         void restoreOffPlanReason();
+        /* The shop he arrived at and did not go into. Same shape, same reason. */
+        void restoreArrival();
         void registerForPush();
         /* Behind the app, never in front of it: `setReady(true)` has already
            run, so the salesman is looking at his day while this downloads. It

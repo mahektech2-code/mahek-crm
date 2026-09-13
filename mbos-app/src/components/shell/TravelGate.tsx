@@ -48,6 +48,7 @@ export function TravelGate() {
   const set = useStore((s) => s.set);
   const notify = useStore((s) => s.notify);
   const beginVisit = useStore((s) => s.beginVisit);
+  const arrival = useStore((s) => s.arrival);
   const boot = useBoot();
   const userId = boot.session?.user.id ?? '';
 
@@ -83,6 +84,27 @@ export function TravelGate() {
       answerOdometer.current = resolve;
       setMetering(true);
     });
+
+  /*
+   * A JOURNEY CANNOT BEGIN WHILE HE IS STANDING AT A SHOP.
+   *
+   * Arriving closes the leg, so nothing further down would refuse this — and
+   * the journey screen happily draws "Start visit" again for the very shop he
+   * has just reached, because the only thing that knows otherwise is the
+   * arrival on disk. Setting off from here would leave that arrival with
+   * nothing left that could ever close it.
+   *
+   * The same shop and a different one are two different sentences: one is "you
+   * are already there", the other names where he actually is. Both lead to the
+   * same place, which is the check-in he has not made.
+   */
+  const outstanding = arrival && arrival.checkedInAt == null ? arrival : null;
+
+  const goCheckIn = () => {
+    if (!outstanding) return;
+    set({ travelTo: null, custId: outstanding.customerId });
+    router.push('/visit');
+  };
 
   const choose = async (mode: TravelMode) => {
     if (!to || busy || !userId) return;
@@ -158,6 +180,30 @@ export function TravelGate() {
       : m.requiresTicket
         ? 'Add the ticket when you save the visit, if you keep it'
         : 'Nothing to record';
+
+  if (to && outstanding) {
+    const same = outstanding.customerId === to.customerId;
+    return (
+      <BottomSheet open onClose={close}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
+          <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
+            {same ? 'You are already there' : `You have not checked in at ${outstanding.customerName}`}
+          </T>
+          <T s="small" style={{ marginTop: 6 }}>
+            {same
+              ? 'The journey is finished and the meter is read. All that is left is to check in when you go inside.'
+              : 'One shop at a time — check in there, or save the visit, before setting off again.'}
+          </T>
+          <View style={{ marginTop: 14 }}>
+            <SecondaryButton label={`Check in at ${outstanding.customerName}`} onPress={goCheckIn} />
+          </View>
+          <View style={{ marginTop: 10 }}>
+            <SecondaryButton label="Not now" onPress={close} />
+          </View>
+        </View>
+      </BottomSheet>
+    );
+  }
 
   return (
     <>

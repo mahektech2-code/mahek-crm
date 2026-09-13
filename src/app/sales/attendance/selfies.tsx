@@ -38,7 +38,7 @@ export function Selfies({ row }: { row: AttendanceRow }) {
   ]);
 
   /* A mark that has not happened yet is not a missing photograph. An open
-     session has no check-out, and drawing a gap for it would accuse somebody
+     session has no punch-out, and drawing a gap for it would accuse somebody
      of skipping a camera they have not reached. */
   const happened = marks.filter((m) => m.at || m.id);
 

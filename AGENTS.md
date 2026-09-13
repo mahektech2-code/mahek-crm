@@ -557,6 +557,68 @@ difference is what is lost: refusing a visit loses a record of work that really
 happened, while refusing an order loses nothing, because the order was never
 agreed with anybody who could agree it. The message names the way forward.
 
+**PUNCHING IN IS THE DAY; CHECKING IN IS THE SHOP.** One word was doing both
+jobs, and it is the one thing about this app everybody asks to have explained
+twice — "did he check in" meant either "is he at work" or "is he in front of a
+customer", and the two are asked by different people about different records.
+The day is `mbos_attendance_days` and it is PUNCH in / punch out, on the
+handset and on the Sales Dashboard both, because a salesman and the manager
+reading his row must not use different words for one mark. The shop is
+`mbos_visits` and it keeps CHECK in / check out. The COLUMNS are untouched:
+`check_in_at` on an attendance day still says what it always said, and
+renaming storage to chase a label is how a migration gets written for a
+vocabulary decision that may change again. Only what a person reads moved.
+
+**ARRIVING IS NOT CHECKING IN, AND THAT IS THE SECOND REVERSAL ON THIS TAP.**
+"Start visit" already stopped meaning "I am in the shop" and came to mean "I am
+setting off"; this moves the other end. Pressing "I am here" used to close the
+travel leg, photograph the meter, start the dwell clock and open the form in
+one act — so the walk from the bike, the wait at the counter and the call taken
+on the way in were all counted as time with the customer. That is the same
+error the ride itself used to make, one step further down, and the dwell figure
+is the one number this whole flow exists to be honest about.
+
+So the arrival ends the JOURNEY and a second tap starts the VISIT. Everything
+that can be refused still happens at the arrival: the radius gate, the closing
+meter photograph, the leg. Checking in asks for nothing — no fix, no camera, no
+wait — because the reading that proves he is at this shop was taken at the
+arrival and answered the gate there, and a second acquisition would let the two
+disagree about where the shop is. It is also what lets a check-in work inside a
+godown with the radio off, which is where half this book is.
+
+**"NOT YET" IS A REAL ANSWER, AND NOTHING CHECKS HIM IN ON HIS BEHALF.** A
+timer that made the assertion for him would be the app putting words in
+somebody's mouth on the record his day is read from — the same objection that
+keeps a delivery discrepancy from raising a complaint. What pays for the
+deferral is that it costs nothing to change his mind: `data/arrival.ts` writes
+the arrival to `kv` before the screen changes, a bar at the foot of EVERY
+screen offers the way back with the time on it, and while one is outstanding
+that bar is the only thing this app offers — `TravelGate` refuses a second
+journey and names the shop he is actually standing at. A salesman outside one
+shop is not about to set off for another, and letting him would leave an
+arrival nothing could ever close.
+
+**It is a record and not a flag, for the reason the leg itself is.** Android
+reaps this app on the road constantly, and an "arrived" flag in memory would be
+gone by the time he walked in — with the leg already closed and the meter
+already photographed, so there is no way back to the arrival he just made.
+`kv` rather than a table because there is exactly one at a time: he is at one
+shop. An arrival from an earlier day is rubbed out rather than restored, the
+same rule `restoreOffPlanReason` follows one file along.
+
+**NOTHING NEW GOES UP THE WIRE, and nothing needs to.** The arrival instant is
+already `travel_legs.ended_at`, which the visit is bound to on save, so the
+office reads "arrived 10:41, checked in 10:58" off two records it already
+holds. A second copy of an instant already stored is a copy that can disagree
+with it — and an APK cannot be recalled, so a change that needed no new column
+is a change every handset in the field keeps working through.
+
+**And the clock now survives a reap, which it never did.** `visitStart` lives
+in memory; before the arrival was written down there was nothing to restore it
+from, so a visit interrupted by a phone call was stamped at the save and left
+open. The disk holds the instant he walked in, and the visit screen puts it
+back.
+
 **THE CHECK-IN IS REFUSED PAST THE RADIUS, AND THAT IS A REVERSAL.**
 `engines/geo.ts` states the principle the field product was built on — a
 reading is evidence, never a gate — and Mahek asked for the opposite on this

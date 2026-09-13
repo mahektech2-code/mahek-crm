@@ -334,9 +334,9 @@ export default function Home() {
    */
   const [selfieOpen, setSelfieOpen] = React.useState(false);
   const [selfieWords, setSelfieWords] = React.useState({
-    title: 'Start your day',
-    subtitle: 'A photo of you goes with the check-in.',
-    cancelLabel: 'Cancel the check-in',
+    title: 'Punch in',
+    subtitle: 'A photo of you goes with the punch-in.',
+    cancelLabel: 'Cancel the punch-in',
   });
   const answerSelfie = React.useRef<((r: SelfieResult) => void) | null>(null);
 
@@ -422,9 +422,9 @@ export default function Home() {
          half-started day behind — which is why the order is photograph, then
          write, and not the other way round. */
       const selfie = await captureSelfie({
-        title: 'Start your day',
-        subtitle: 'A photo of you goes with the check-in.',
-        cancelLabel: 'Cancel the check-in',
+        title: 'Punch in',
+        subtitle: 'A photo of you goes with the punch-in.',
+        cancelLabel: 'Cancel the punch-in',
       });
       if (!selfie.ok) {
         /* Nothing has been written, so there is nothing to undo. The fix is
@@ -486,8 +486,8 @@ export default function Home() {
          proved that somebody arrived and proved nothing whatever about when
          they stopped, which is the half that decides the hours. */
       const selfie = await captureSelfie({
-        title: 'Close your day',
-        subtitle: 'A photo of you goes with the check-out.',
+        title: 'Punch out',
+        subtitle: 'A photo of you goes with the punch-out.',
         cancelLabel: 'Stay on the clock',
       });
       if (!selfie.ok) {
@@ -500,7 +500,7 @@ export default function Home() {
       load();
       notify(
         out.ok
-          ? `Day closed · ${durationLabel(out.workedMinutes)} worked`
+          ? `Punched out · ${durationLabel(out.workedMinutes)} worked`
           : (out.reason ?? 'The day was already closed.'),
       );
     } finally {
@@ -538,8 +538,8 @@ export default function Home() {
          is the same mandatory photograph as the morning's, because they are
          the same act. */
       const selfie = await captureSelfie({
-        title: 'Back on the clock',
-        subtitle: 'A photo of you goes with every check-in.',
+        title: 'Punch in again',
+        subtitle: 'A photo of you goes with every punch-in.',
         cancelLabel: 'Stay off the clock',
       });
       if (!selfie.ok) {
@@ -551,7 +551,7 @@ export default function Home() {
       await checkIn({ userId, fix, selfieMediaId: selfie.id, mayOpen: gate.gate, homeLocation: null });
       set({ gps: fix ? 'locked' : 'off' });
       load();
-      notify('Back on the clock');
+      notify('Punched back in');
     } finally {
       setStarting(false);
     }
@@ -600,7 +600,7 @@ export default function Home() {
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={[{ fontSize: 18, color: '#FFFFFF' }, weight(600)]}>
-                {starting ? 'Starting…' : 'Start day'}
+                {starting ? 'Punching in…' : 'Punch in'}
               </Text>
               <Text style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.82)', marginTop: 2 }}>
                 Takes your photo, marks attendance, starts the timer
@@ -676,7 +676,7 @@ export default function Home() {
                 here than the one restating the label. */}
             <Icon name="camera" size={18} color={day.running ? C.body : C.primaryDeep} />
             <Text style={[{ fontSize: 15, color: day.running ? C.body : C.primaryDeep }, weight(500)]}>
-              {day.running ? 'End day · photo' : 'Start again · photo'}
+              {day.running ? 'Punch out · photo' : 'Punch in again · photo'}
             </Text>
           </Pressable>
         </Card>
