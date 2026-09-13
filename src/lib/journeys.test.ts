@@ -12,6 +12,7 @@
  * truncates everything between tests.
  */
 import { after, before, beforeEach, describe, test } from "node:test";
+import { COMPLAINT_CATEGORIES } from "@/lib/constants";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -1608,9 +1609,16 @@ describe("Journey 7 - a complaint carries its SLA and its credit-note request", 
 
   test("the category list is configuration, so a manager can change it", async () => {
     const before = (await getConfig())["complaints.categories"];
-    assert.ok(
-      before.includes("Packaging"),
-      "ships with Mahek's own vocabulary",
+    // Against the shipped constant rather than a literal typed here. This
+    // asserted `includes("Packaging")` and broke the day the vocabulary moved
+    // to Mahek's own ten — which is a true thing to have to notice once, and
+    // not a thing to have to notice again every time a heading is reworded.
+    // What the test is actually about is the two lines below it: the list is
+    // configuration, and a manager can change it.
+    assert.deepEqual(
+      before,
+      [...COMPLAINT_CATEGORIES],
+      "the setting is seeded from the shipped list",
     );
 
     const changed = await updateSetting(
