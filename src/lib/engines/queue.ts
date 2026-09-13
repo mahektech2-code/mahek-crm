@@ -283,22 +283,36 @@ export function buildQueue(
     // the office to cold-call. Only the prospect reason goes; see `funnelHold`.
     const funnel = funnelHold(c);
 
+    // What the customer said last time somebody asked. It silences the ASK
+    // and nothing else — see `outcomeWindow`, which used to suppress the whole
+    // customer and so answered a question about an order by cancelling a
+    // promise, a debt and a check-in along with it.
+    const outcome = outcomeWindow(c, today, config, hasReminderReason);
+
     let reasons = quiet ? all.filter((r) => !isOrderChasing(r.kind)) : all;
     if (hold) reasons = reasons.filter((r) => !isHoldableReason(r.kind));
     if (funnel) reasons = reasons.filter((r) => r.kind !== "prospect");
+    if (outcome) reasons = reasons.filter((r) => !isOrderAsk(r.kind));
 
     if (!reasons.length) {
-      // Nothing left but a reason the window, the hold or the funnel says not
-      // yet. Shown rather than dropped: a customer late by their own cycle
-      // would otherwise vanish with no explanation.
+      // Nothing left but a reason one of the four windows says not yet. Shown
+      // rather than dropped: a customer late by their own cycle would
+      // otherwise vanish with no explanation.
       //
       // The order names the one that actually did the stripping. `quiet` and
       // `hold` both need an order or a promise, neither of which a suspect on
-      // a ladder has, so a lead emptied by the funnel falls to the third.
+      // a ladder has, so a lead emptied by the funnel falls through to it.
+      // `outcome` sits above the funnel because it is the more specific
+      // answer where both apply — "they told us no on Tuesday" is what a
+      // telecaller needs, and the funnel sentence is true of that lead every
+      // day either way.
+      //
+      // The assertion holds because reasons only empties if a filter ran, and
+      // a filter only runs if its own window is non-null.
       suppressed.push({
         customerId: c.customerId,
         name: c.name,
-        reason: quiet ?? hold ?? funnel!,
+        reason: quiet ?? hold ?? outcome ?? funnel!,
       });
       continue;
     }
@@ -801,9 +815,34 @@ function isOrderChasing(kind: QueueReasonKind): boolean {
 }
 
 /**
+ * THE ASK THAT WAS REFUSED — every reason that amounts to asking this
+ * customer to order, which is what an outcome cooldown is an answer to.
+ *
+ * Wider than `isOrderChasing` by two, and both matter. `prospect` is asking
+ * for a FIRST order, so "not interested" is most often said by exactly these
+ * people and silencing everything except them would be the wrong half.
+ * `orderLongOverdue` is asking a lapsed customer to come back, which is the
+ * same ask with more history behind it — `isHoldableReason` leaves it out
+ * deliberately, because a scheduling decision made about one promise should
+ * not hide a churn signal, but a customer who has just SAID no is a different
+ * matter: they have answered the question it would be asking.
+ *
+ * Narrower than suppressing the customer by everything else. Money owed, a
+ * promise made, a check-in and the no-answer ladder all still reach the list:
+ * none of them is the ask that was refused, and an outcome given about one
+ * conversation must not silence another.
+ */
+function isOrderAsk(kind: QueueReasonKind): boolean {
+  return (
+    isOrderChasing(kind) || kind === "prospect" || kind === "orderLongOverdue"
+  );
+}
+
+/**
  * The reasons a telecaller's hold can silence — order chasing plus the
  * check-in and prospect cadences, which `isOrderChasing` deliberately
- * leaves out (that predicate is scoped to the no-order cooldown alone).
+ * leaves out (that predicate is the narrow one, shared with the quiet
+ * window; `isOrderAsk` above is the wider set the outcome cooldown uses).
  * Never `orderLongOverdue`: a customer that far gone is a churn signal
  * stronger than an ordinary reorder ask, and a scheduling decision made
  * about one promise should not be able to silence it. Never
@@ -862,6 +901,54 @@ function quietWindow(
   // takes a measured cycle — so `cycleDays` is never the guessed default by the
   // time a telecaller reads it.
   return `Orders every ${c.cycleDays} days · ordered ${sinceOrder === 0 ? "today" : `${sinceOrder} day${sinceOrder === 1 ? "" : "s"} ago`} - no order chased for ${left} more day${left === 1 ? "" : "s"}`;
+}
+
+/**
+ * WHAT THE CUSTOMER SAID, and how long it buys — in ORDER CHASING, not in
+ * silence.
+ *
+ * Asked for an order and told no: without a cooldown a customer past their
+ * call day returns to the top of the list every single day until they order,
+ * which punishes the telecaller for working it. "Not interested" should buy
+ * far more than a week, and the map is what lets a manager say so without a
+ * deploy. None of that reasoning has changed.
+ *
+ * WHAT CHANGED IS THE SHAPE, and it is the quiet window's shape. This used to
+ * suppress the CUSTOMER — one return out of `suppressionReason`, and every
+ * reason went with it. So an outcome given about one conversation silenced a
+ * different one: a telecaller settles a promised callback, picks "no order"
+ * because that is what the call came to, and the order due by this customer's
+ * own cycle is gone for five days. Thirty, on "not interested". Nobody asked
+ * about the order, and nothing anywhere says it was skipped.
+ *
+ * That is the same mistake the quiet window was already written not to make —
+ * "the quiet window silences order chasing, not the customer" — arriving one
+ * function along. So it strips `isOrderChasing` and leaves the rest: a
+ * promise, money owed, a check-in, the no-answer ladder all still reach the
+ * list, because none of them is the ask that was refused.
+ *
+ * The reminder exemption is kept as it was. A promise outranks this, and now
+ * it is the caller's `hasReminderReason` that says so rather than a second
+ * reading of it here.
+ *
+ * An outcome with no entry buys nothing — silence in the configuration means
+ * no quiet, never an accidental month.
+ */
+function outcomeWindow(
+  c: QueueCandidate,
+  today: BusinessDate,
+  config: QueueConfig,
+  hasReminderReason: boolean,
+): string | null {
+  if (!c.lastAnsweredOutcome || !c.lastAnsweredDate || hasReminderReason) {
+    return null;
+  }
+  const cooldown = config["queue.outcomeCooldownDays"][c.lastAnsweredOutcome];
+  if (!cooldown || cooldown <= 0) return null;
+  const elapsed = daysBetween(c.lastAnsweredDate, today);
+  if (elapsed >= cooldown) return null;
+  const left = cooldown - elapsed;
+  return `${outcomeLabel(c.lastAnsweredOutcome)} ${elapsed === 0 ? "today" : `${elapsed} day${elapsed === 1 ? "" : "s"} ago`} - no order chased for ${left} more day${left === 1 ? "" : "s"}`;
 }
 
 /**
@@ -938,29 +1025,6 @@ function suppressionReason(
 
   if (config["queue.excludeActiveInOrderSystem"] && c.activeInOrderSystem) {
     return "Active in the order system";
-  }
-
-  /*
-   * WHAT THE CUSTOMER SAID, and how long it buys.
-   *
-   * Asked for an order and told no: without a cooldown a customer past their
-   * call day returns to the top of the list every single day until they
-   * order, which punishes the telecaller for working it. "Not interested"
-   * should buy far more than a week, and the map is what lets a manager say
-   * so without a deploy.
-   *
-   * An outcome with no entry buys nothing — silence in the configuration
-   * means no quiet, never an accidental month.
-   */
-  if (c.lastAnsweredOutcome && c.lastAnsweredDate && !hasReminderReason) {
-    const cooldown = config["queue.outcomeCooldownDays"][c.lastAnsweredOutcome];
-    if (cooldown && cooldown > 0) {
-      const elapsed = daysBetween(c.lastAnsweredDate, today);
-      if (elapsed < cooldown) {
-        const left = cooldown - elapsed;
-        return `${outcomeLabel(c.lastAnsweredOutcome)} ${elapsed === 0 ? "today" : `${elapsed} day${elapsed === 1 ? "" : "s"} ago`} - asking again in ${left} day${left === 1 ? "" : "s"}`;
-      }
-    }
   }
 
   /*

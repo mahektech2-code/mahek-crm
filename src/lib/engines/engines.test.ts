@@ -1111,7 +1111,49 @@ describe("E2 queue builder", () => {
     const r = buildQueue([c], TODAY, C);
     assert.equal(r.entries.length, 0);
     // Five days, less the one already elapsed.
-    assert.match(r.suppressed[0].reason, /asking again in 4 days/);
+    assert.match(r.suppressed[0].reason, /no order chased for 4 more days/);
+  });
+
+  test("the cooldown silences the ORDER ASK, not the customer", () => {
+    // The bug this replaced: the cooldown suppressed the whole customer, so an
+    // outcome given about one conversation cancelled a different one. A
+    // telecaller settles a promised callback, picks "no order" because that is
+    // what the call came to, and the money this account owes — which nobody
+    // mentioned — went quiet for five days with it.
+    //
+    // A reminder already outranked the cooldown outright, so the case that
+    // proves the change is one where it does not: a debt.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      lastAnsweredOutcome: "no_order",
+      lastAnsweredDate: addDays(TODAY, -1),
+      paymentCallDue: { totalOverdue: 250_000, daysOverdue: 30 },
+    });
+    // CP, because the paymentOverdue reason is opt-in — see its note above.
+    const r = buildQueue([c], TODAY, CP);
+    assert.equal(r.entries.length, 1, "the debt still reaches the list");
+    const kinds = r.entries[0].reasons.map((x) => x.kind);
+    assert.ok(kinds.includes("paymentOverdue"));
+    // And the ask they actually refused is gone from it.
+    assert.ok(!kinds.some((k) => k.startsWith("order") || k === "routineCall"));
+  });
+
+  test("a prospect who said no is not cold-called again inside the cooldown", () => {
+    // `isOrderChasing` leaves `prospect` out, which is right for the quiet
+    // window — somebody who has never ordered has no order to be quiet after.
+    // It would be exactly wrong here: asking for a FIRST order is the ask
+    // "not interested" is most often the answer to.
+    const c = candidate({
+      lastOrderDate: null,
+      createdDate: addDays(TODAY, -60),
+      lastContactDate: addDays(TODAY, -30),
+      lastAnsweredOutcome: "not_interested",
+      lastAnsweredDate: addDays(TODAY, -2),
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 0);
+    assert.match(r.suppressed[0].reason, /no order chased/);
   });
 
   test("a customer long past their cycle is called, not held back", () => {
