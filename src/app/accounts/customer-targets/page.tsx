@@ -65,7 +65,17 @@ export default async function Page({
     listAmFilterOptions(),
   ]);
   const shortfall = await canFor(user, "target.shortfall")
-    ? await shortfallAnalysis(activePeriod)
+    ? await shortfallAnalysis(activePeriod, {
+        // The SAME four answers the table above is narrowed by, and the same
+        // search box. Read from the URL once and handed to both, so the tab a
+        // manager switches to cannot be describing a different set of people
+        // from the one they were just looking at.
+        query: one("q"),
+        status: one("status"),
+        salesAm: one("sales"),
+        salesManager: one("salesmanager"),
+        backOfficeAm: one("backoffice"),
+      })
     : null;
 
   return (

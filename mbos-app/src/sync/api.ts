@@ -268,13 +268,25 @@ export type PullPayload = {
   journeyStops?: unknown[];
   tasks?: unknown[];
   samples?: unknown[];
-  /** The office's order and receipt history, ten of each per customer. */
+  /** The office's order history, ten per customer. */
   customerOrders?: unknown[];
+  /** Every receipt inside the statement window — see `statementFrom`. */
   customerPayments?: unknown[];
-  /** The open bills behind the shop's outstanding, so a collection can name
-      one instead of being spread oldest-first. Optional like every other
-      channel: an older server simply does not send it. */
+  /** Every bill inside the statement window, settled ones included, each
+      carrying what was on it. Optional like every other channel: an older
+      server simply does not send it. */
   customerBills?: unknown[];
+  /**
+   * The oldest day the two channels above reach back to, `YYYY-MM-DD`.
+   *
+   * The handset prunes on it, so it has to be the SERVER's boundary and not a
+   * second calculation of one: the office decides the window
+   * (`mbos.sync.statementMonths`), and a phone working it out for itself would
+   * delete rows the office had just sent or keep rows it had stopped sending,
+   * with nothing on either side looking wrong. Absent from an older server,
+   * which prunes nothing.
+   */
+  statementFrom?: string;
   /**
    * THE WHOLE BOOK AS IDS — what this handset is allowed to hold.
    *

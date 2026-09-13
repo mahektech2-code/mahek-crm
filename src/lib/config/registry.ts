@@ -2411,6 +2411,17 @@ export const SETTINGS = [
     default: [2, 8, 30, 120, 600, 1800],
   },
   {
+    key: "mbos.sync.statementMonths",
+    type: "integer",
+    category: "mbos-sync",
+    label: "How many months of the ledger a handset carries",
+    description:
+      "A salesman standing in a shop is asked what was billed and what was paid, and the answer has to be on the phone — there is no signal in a paint market. This is how far back the bills and receipts behind that answer are synced. Thirteen covers the widest filter the record screen offers (this financial year) at any point in the year, plus the three months before it. Raising it puts more of the ledger on every handset and more on the wire; lowering it makes the older end of a statement unanswerable in the field rather than merely slow.",
+    default: 13,
+    min: 1,
+    max: 60,
+  },
+  {
     key: "mbos.sync.maxItemsPerRequest",
     type: "integer",
     category: "mbos-sync",
@@ -3734,6 +3745,7 @@ export type Config = {
   "mbos.sync.imageQualityPercent": number;
   "mbos.sync.offlineLoginValidityDays": number;
   "mbos.sync.retryBackoffSeconds": number[];
+  "mbos.sync.statementMonths": number;
   "mbos.sync.maxItemsPerRequest": number;
   "mbos.sync.accessTokenMinutes": number;
 

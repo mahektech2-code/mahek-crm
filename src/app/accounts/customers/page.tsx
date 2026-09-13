@@ -5,6 +5,7 @@ import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import {
   listAmFilterOptions,
+  listCityFilterOptions,
   listAssignableUsers,
   listBackOfficeCandidates,
   listCustomersPage,
@@ -54,7 +55,7 @@ export default async function Page({
   const day = await today();
   const perPage = Number(one("per") ?? 25);
 
-  const [page, team, config, backOfficePeople, amOptions, salesManagerSuggested] =
+  const [page, team, config, backOfficePeople, amOptions, cityOptions, salesManagerSuggested] =
     await Promise.all([
       listCustomersPage({
         query: one("q"),
@@ -62,6 +63,7 @@ export default async function Page({
         salesAm: one("sales"),
         salesManager: one("salesmanager"),
         backOfficeAm: one("backoffice"),
+        city: one("city"),
         // "yes" / "no" / "delivered" — the third is the evidence filter, and
         // the one the conversion work is actually done from. Validated rather
         // than cast: `?party=nonsense` is a typed value the query would carry
@@ -76,6 +78,10 @@ export default async function Page({
       getConfig(),
       listBackOfficeCandidates(),
       listAmFilterOptions(),
+      // Read here rather than cached anywhere: shops arrive from the sheet
+      // with new spellings constantly, so the list has to be as fresh as the
+      // page it is drawn on.
+      listCityFilterOptions(),
       salesManagerSuggestions(),
     ]);
 
@@ -96,6 +102,7 @@ export default async function Page({
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}
       amOptions={amOptions}
+      cityOptions={cityOptions}
       team={team.map((t) => ({ id: t.id, name: t.name, role: t.role }))}
       backOfficePeople={backOfficePeople}
       // The same list — this seat needs no login either, and several of the
@@ -108,6 +115,7 @@ export default async function Page({
         salesAm: one("sales") ?? "",
         salesManager: one("salesmanager") ?? "",
         backOfficeAm: one("backoffice") ?? "",
+        city: one("city") ?? "",
         // The validated codes straight through — `,`-separated for more than
         // one. The screen turns codes back into the control's own words.
         accountType: accountTypeParam(one("party")) ?? "",

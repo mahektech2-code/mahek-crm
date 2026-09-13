@@ -142,9 +142,19 @@ export default async function Page({
       />
 
       {result.rows.length === 0 ? (
+        /* THREE REASONS TO BE EMPTY, and they need three different things
+           doing about them. This said "widen the date range" whatever the
+           cause — advice that was plainly wrong on the day it was reported,
+           with 907 rows sitting inside the default window and the scope clause
+           hiding all of them. An empty screen that misdirects is worse than one
+           that says it does not know. */
         <Empty
-          title="Nothing in this range"
-          body="Widen the date range or clear the salesman filter — this backfill spans 2022 to 2026, so a narrow default window can easily miss a quiet period."
+          title={result.everInTable === 0 ? "Nothing has been imported yet" : "Nothing in this range"}
+          body={
+            result.everInTable === 0
+              ? "The Activity tab of the prior system has not been synced into MahekOne. Run the field-activity sync from the Admin Console, then come back."
+              : `Widen the date range or clear the salesman filter — this backfill spans 2022 to 2026, so a narrow default window can easily miss a quiet period. ${result.everInTable.toLocaleString("en-IN")} rows are stored in total.`
+          }
         />
       ) : (
         <>

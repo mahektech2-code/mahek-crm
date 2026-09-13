@@ -6,6 +6,7 @@ import { APPS, getApp, wordmark, type AppId } from "@/lib/apps";
 import { Wordmark } from "./wordmark";
 import { AppSwitcher } from "./app-switcher";
 import { SignOutButton } from "./sign-out-button";
+import { AccountMenu } from "./account-menu";
 
 /**
  * The shell every MahekOne app sits in, standing in for the ones not built yet.
@@ -33,10 +34,7 @@ export async function AppPlaceholder({ app: appId }: { app: AppId }) {
         ) : null}
         <Wordmark label={wordmark(app)} />
         <span className="flex-1" />
-        <span className="text-[13px] text-muted">
-          {user.name} · {user.role}
-        </span>
-        <SignOutButton />
+        <AccountMenu user={user} variant="header" />
       </header>
 
       <div className="flex flex-1 items-center justify-center p-6">

@@ -30,7 +30,14 @@ import { listUserApps } from "@/lib/access";
 import { updateSettings } from "@/lib/config/store";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
 import { calendarDate } from "@/lib/business-date";
-import { fieldBook, managerScope, onlyMine } from "@/lib/services/sales-service";
+import {
+  fieldBook,
+  leadsPage,
+  managerScope,
+  onlyMine,
+} from "@/lib/services/sales-service";
+import type { LeadFilters } from "@/lib/lead-filters";
+import { today } from "@/lib/recompute";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import {
@@ -1687,6 +1694,81 @@ export async function reassignLead(input: {
  * is nothing to make a partial-vs-whole distinction over and no audit
  * before/after worth recording beyond the fact that it was sent.
  */
+/**
+ * EVERY ROW THE FILTERS MATCH, for the spreadsheet — asked for when the button
+ * is pressed rather than carried down with the page.
+ *
+ * The table is ten rows now, and `ExportButton`'s own note says the rows are
+ * built on the server so what leaves in the file is what was on the screen.
+ * Both halves of that are still true and they no longer mean the same thing:
+ * a page is not the list. Exporting what the page holds would hand somebody a
+ * ten-row file from a list of 3,776 — the version of this bug that looks like
+ * a successful export — and shipping all 3,776 down with every page load to
+ * keep the button honest is the waste pagination was added to stop.
+ *
+ * So the whole filtered set is fetched on the click, which is also the only
+ * moment anybody wants it. It reads `leadsPage` with a page size of the total,
+ * so the file and the table are the same query with the same scope, the same
+ * filters and the same order.
+ */
+export async function exportLeadRows(input: {
+  archived?: boolean;
+  filters?: LeadFilters;
+}): Promise<Result<{ rows: Array<Array<string | number>> }>> {
+  try {
+    await requireSales();
+    const day = await today();
+    const first = await leadsPage(day, {
+      archived: input.archived,
+      filters: input.filters,
+      page: 1,
+      perPage: 1,
+    });
+    const all = await leadsPage(day, {
+      archived: input.archived,
+      filters: input.filters,
+      page: 1,
+      // The cap is `leadsPage`'s own, so a book that outgrows it is cut in one
+      // place rather than two — and the count beside the button is the total,
+      // so a truncated file is visible rather than silent.
+      perPage: Math.max(first.total, 1),
+    });
+
+    return ok({
+      rows: [
+        [
+          "Lead",
+          "Company",
+          "City",
+          "Owner",
+          "Source",
+          "Potential (₹)",
+          "Stage",
+          "Next follow-up",
+          "Age (days)",
+          "Notes",
+        ],
+        ...all.rows.map((l) => [
+          l.name,
+          l.companyName ?? "",
+          l.city ?? "",
+          l.salesmanName ?? "Nobody",
+          l.source.replace(/_/g, " "),
+          Number(l.estimatedPotentialPaise)
+            ? Math.round(Number(l.estimatedPotentialPaise) / 100)
+            : "",
+          l.stage,
+          l.nextFollowUpDate ?? "",
+          l.ageDays,
+          l.notes ?? "",
+        ]),
+      ],
+    });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 export async function chaseLeadOwner(input: {
   leadId: string;
   note?: string;

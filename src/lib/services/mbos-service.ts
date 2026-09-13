@@ -773,8 +773,12 @@ export type BootstrapPayload = {
   timeline: unknown[];
   customerOrders: unknown[];
   customerPayments: unknown[];
-  /** The open bills behind `outstandingPaise`. See `customerBills`. */
+  /** Every bill inside the statement window, with what was on each. See
+      `customerBills`. */
   customerBills: unknown[];
+  /** The oldest day the bills and receipts above reach back to. The handset
+      prunes on it — see `statementFrom`. */
+  statementFrom: string;
   /** The whole book as ids, so the handset can let go of what left it. See
       `bookIds` in `lib/mbos/types.ts` for why this travels on every pass. */
   bookIds: string[];
@@ -890,6 +894,10 @@ export async function buildBootstrap(
      trickle in through the delta over the following days. */
   const planFrom = addDays(day, -PLAN_HISTORY_DAYS);
   const planTo = addDays(day, 31);
+  /* How far back the statement on a customer record reaches. Read here rather
+     than inside each channel so the bills and the receipts behind one running
+     balance cannot start on different days. */
+  const statementStart = statementFrom(day, (await getConfig())["mbos.sync.statementMonths"]);
 
   const [
     customerRows,
@@ -928,8 +936,8 @@ export async function buildBootstrap(
     openLeads(principal.user.id),
     recentTimeline(ids, TIMELINE_PER_CUSTOMER),
     recentOrders(ids, HISTORY_PER_CUSTOMER),
-    recentPayments(ids, HISTORY_PER_CUSTOMER),
-    customerBills(principal, ids, HISTORY_PER_CUSTOMER),
+    recentPayments(ids, { from: statementStart }),
+    customerBills(principal, ids, { from: statementStart }),
     leaveBalances(principal.user.id, Number(day.slice(0, 4))),
     attendanceToday(principal.user.id, day),
     holidaysFor(),
@@ -968,6 +976,7 @@ export async function buildBootstrap(
     customerOrders: orderHistoryRows,
     customerPayments: paymentHistoryRows,
     customerBills: billRows,
+    statementFrom: statementStart,
     /* The same list every channel above was built from. */
     bookIds: ids,
     leaveBalances: leaveRows,
@@ -1522,25 +1531,63 @@ async function recentOrders(ids: string[], perCustomer: number) {
  * and a statement that silently drops it leaves him with no answer. The status
  * rides along so the screen can say which it is; only `confirmed` money has
  * moved anything.
+ *
+ * A WINDOW rather than the last ten, for the reason the bills channel beside
+ * it gives: ten receipts is two months on an account that pays weekly, and the
+ * statement it feeds offers "this financial year". Windowed, it can also be
+ * `since`-gated, which is what keeps the extra rows off every pull — a receipt
+ * inside the window is either already on the phone or has a moved
+ * `updated_at`, and there is no third case, because nothing removes a receipt.
  */
-async function recentPayments(ids: string[], perCustomer: number) {
+async function recentPayments(
+  ids: string[],
+  window: { from: string; updatedSince?: Date },
+) {
   if (!ids.length) return [];
   return db.execute<Record<string, unknown>>(sql`
-    select id, "customerId", "receivedAt", "amountPaise", mode, reference, status
-      from (
-        select r.id, r.customer_id as "customerId",
-               r.received_at::text as "receivedAt",
-               r.amount as "amountPaise",
-               r.mode, r.reference, r.status::text as status,
-               row_number() over (
-                 partition by r.customer_id order by r.received_at desc, r.id desc
-               ) as rn
-          from payment_receipts r
-         where r.customer_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
-      ) ranked
-     where rn <= ${perCustomer}
-     order by "customerId" asc, "receivedAt" desc
+    select r.id, r.customer_id as "customerId",
+           r.received_at::text as "receivedAt",
+           r.amount as "amountPaise",
+           r.mode, r.reference, r.status::text as status
+      from payment_receipts r
+     where r.customer_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+       and r.received_at >= ${window.from}
+       ${window.updatedSince ? sql`and r.updated_at > ${window.updatedSince.toISOString()}` : sql``}
+     order by r.customer_id asc, r.received_at desc
   `);
+}
+
+/**
+ * The oldest day the handset carries a bill or a receipt for.
+ *
+ * `mbos.sync.statementMonths` in months, resolved to a date here so the two
+ * channels that read it cannot disagree by a day — and so the handset's own
+ * pruning, which is handed the same date, cannot either.
+ */
+function statementFrom(day: BusinessDate, months: number): string {
+  /*
+   * NO `Date` ANYWHERE IN HERE, and the repo's own grep guard is what insisted.
+   *
+   * The obvious spelling is `new Date(Date.UTC(y, m - 1 - months, 1))` read
+   * back with `toISOString().slice(0, 10)`, and on a date-only value built in
+   * UTC that is actually correct. The guard in §11 refuses it anyway and is
+   * right to: the pattern it matches is the bug, and a reader cannot tell this
+   * instance from the ten that were wrong without reconstructing the argument
+   * above. `BusinessDate` is a `YYYY-MM-DD` string and months are integers, so
+   * this needs no clock at all.
+   *
+   * THE FIRST OF THE MONTH, not the same day-of-month thirteen months back.
+   * Two reasons and the second is the one that matters: subtracting a month
+   * from the 31st lands on a day that month does not have, and a boundary that
+   * moves every single day churns rows through the delta for nothing — a bill
+   * that fell out of the window overnight would be re-pruned on every handset
+   * every morning. This moves once a month.
+   */
+  const [y, m] = day.split("-").map(Number);
+  const total = y * 12 + (m - 1) - months;
+  const year = Math.floor(total / 12);
+  const month = total - year * 12 + 1;
+  return `${year}-${String(month).padStart(2, "0")}-01`;
 }
 
 /**
@@ -1563,35 +1610,51 @@ async function recentPayments(ids: string[], perCustomer: number) {
  * own query is how a salesman and an accounts clerk come to disagree about a
  * bill in front of the customer.
  *
- * `openOnly` is deliberate and it is the collections question rather than the
- * ledger one: a settled bill is most of a year and none of it is collectable.
- * It is also NOT cut by financial year — the oldest debt on an account is
- * usually last year's, and it is the first thing anybody chases.
+ * IT WAS `openOnly` AND CAPPED AT TEN, and that was the collections question
+ * rather than the ledger one. It is both now, because the customer record grew
+ * a statement: a salesman is asked what was billed in July as often as he is
+ * asked what is still owed, and a settled bill — which is 10,405 of the 10,815
+ * on this book — was on no screen he could reach. So the channel carries every
+ * bill inside a WINDOW (`mbos.sync.statementMonths`) and the open ones are a
+ * filter the screen applies, not a filter the wire applies.
+ *
+ * Dropping `openOnly` is what lets this be a DELTA at all, which is the trade
+ * that pays for the extra rows. The old channel could not be `since`-gated,
+ * and its own comment says why: a bill leaving the open set because somebody
+ * settled it has no row left to carry a cursor, so the whole set had to be
+ * re-sent on every pull. Sending every bill in the window removes that case —
+ * a bill only leaves by ageing out, which is a date the handset can see for
+ * itself — and `bills.updated_at` moves when a receipt against it is
+ * confirmed, which is the one thing that changes a balance.
+ *
+ * It is still NOT cut by financial year. The oldest debt on an account is
+ * usually last year's and it is the first thing anybody chases, so the window
+ * is rolling and generous rather than aligned to April.
  *
  * The payload is TRIMMED rather than forwarded. `listBills` returns the
- * customer's name, the status and the bucket, none of which the handset has a
+ * customer's name and the aging bucket, neither of which the handset has a
  * column for, and one extra key on the wire empties the phone.
  */
 async function customerBills(
   principal: MbosPrincipal,
   ids: string[],
-  perCustomer: number,
+  window: { from: string; updatedSince?: Date },
 ) {
   if (!ids.length) return [];
 
-  const rows = await listBills({ openOnly: true, customerIds: ids }, principal);
+  const rows = await listBills(
+    { customerIds: ids, from: window.from, updatedSince: window.updatedSince },
+    principal,
+  );
+  if (!rows.length) return [];
+
+  const lines = await billLines(rows.map((b) => b.id));
 
   /* Oldest first within each customer: that is the order they get chased in,
      and it is the order the automatic spread would settle them in. */
-  const byCustomer = new Map<string, typeof rows>();
-  for (const b of [...rows].sort((a, z) => a.billDate.localeCompare(z.billDate))) {
-    const held = byCustomer.get(b.customerId) ?? [];
-    if (held.length >= perCustomer) continue;
-    held.push(b);
-    byCustomer.set(b.customerId, held);
-  }
+  const ordered = [...rows].sort((a, z) => a.billDate.localeCompare(z.billDate));
 
-  return [...byCustomer.values()].flat().map((b) => ({
+  return ordered.map((b) => ({
     id: b.id,
     customerId: b.customerId,
     billNo: b.billNo,
@@ -1602,6 +1665,16 @@ async function customerBills(
     balancePaise: b.balance,
     overdueDays: b.overdueDays,
     disputed: b.disputed ? 1 : 0,
+    /* Settled, part paid or open, as Accounts holds it. The handset used to
+       be sent open bills only, so "which" was never a question it could ask. */
+    status: b.status,
+    /* WHAT WAS ON IT, as JSON text.
+       A column rather than a channel of its own: a bill's lines never change
+       after it is raised, so they travel with the row that carries them and
+       there is no second table to keep in step, no second cursor, and no
+       moment where a bill has arrived and its contents have not. */
+    lines: JSON.stringify(lines.get(b.id) ?? []),
+    lineCount: (lines.get(b.id) ?? []).length,
     /*
      * Whether anybody has spoken for this bill, carried so the screen can say
      * which kind of number the balance is. On an `unstated` bill it is the
@@ -1612,6 +1685,81 @@ async function customerBills(
      */
     paymentPosition: b.paymentPosition,
   }));
+}
+
+/** One line of a bill, as the shop would read it off the invoice. */
+type BillLine = { product: string; qty: number; amountPaise: number | null };
+
+/**
+ * WHAT WAS ACTUALLY ON EACH BILL, from the two places a line can live.
+ *
+ * A sales bill IS the order — AGENTS.md says so, and every one of the 10,815
+ * bills on this book carries an `order_id` — so the lines are the order's. But
+ * an order records them in one of two ways depending on who took it, and a
+ * query that knew about only one would answer honestly for most bills and
+ * silently show nothing for the rest:
+ *
+ *   - the sheet and the handset write `orders.line_items`, a jsonb array
+ *     carrying the product as a NAME, because the external system has no
+ *     product ids;
+ *   - the CRM writes `interaction_product_lines`, keyed on the CALL the order
+ *     came out of, with a real product id.
+ *
+ * 10,867 of 10,957 orders are the first kind and 90 are the second, which is
+ * exactly the ratio that makes the second easy to forget and impossible to
+ * notice: ninety bills would show "no lines recorded" and nobody would work
+ * out why.
+ *
+ * The amount is whatever was billed, and is NULL where nothing was — the
+ * product master holds no prices (`canValueOrders()` still answers no), and a
+ * quantity times nothing is not a figure to put in front of a customer.
+ */
+async function billLines(billIds: string[]): Promise<Map<string, BillLine[]>> {
+  const out = new Map<string, BillLine[]>();
+  if (!billIds.length) return out;
+  const ids = sql`(${sql.join(billIds.map((i) => sql`${i}`), sql`, `)})`;
+
+  const rows = await db.execute<{
+    billId: string;
+    product: string;
+    qty: number;
+    amountPaise: string | number | null;
+  }>(sql`
+    select b.id as "billId",
+           li->>'product' as product,
+           coalesce((li->>'quantity')::numeric, 0) as qty,
+           nullif(li->>'amount', '')::numeric as "amountPaise"
+      from bills b
+      join orders o on o.id = b.order_id
+      cross join lateral jsonb_array_elements(o.line_items) as li
+     where b.id in ${ids}
+       and o.line_items is not null
+
+    union all
+
+    select b.id as "billId",
+           p.name as product,
+           l.quantity as qty,
+           null as "amountPaise"
+      from bills b
+      join orders o on o.id = b.order_id
+      join interaction_product_lines l on l.interaction_id = o.call_id
+      join products p on p.id = l.product_id
+     where b.id in ${ids}
+       and o.line_items is null
+       and o.call_id is not null
+  `);
+
+  for (const r of rows) {
+    const at = out.get(r.billId) ?? [];
+    at.push({
+      product: r.product,
+      qty: Number(r.qty),
+      amountPaise: r.amountPaise == null ? null : Math.round(Number(r.amountPaise)),
+    });
+    out.set(r.billId, at);
+  }
+  return out;
 }
 
 async function recentTimeline(ids: string[], perCustomer: number) {
@@ -2152,6 +2300,14 @@ export async function buildPull(
       customerOrders: [],
       customerPayments: [],
       customerBills: [],
+      /* The window still, even on the no-cursor pull that sends no rows: the
+         handset prunes on it, and withholding it would leave a phone whose
+         window had just been narrowed holding rows the office had stopped
+         sending until its next real delta. */
+      statementFrom: statementFrom(
+        await today(),
+        (await getConfig())["mbos.sync.statementMonths"],
+      ),
       deletions: [],
     };
   }
@@ -2173,6 +2329,14 @@ export async function buildPull(
   const idList = ids.length
     ? sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`
     : null;
+  /* The same window the bootstrap used. It MOVES with the day, which is the
+     half worth stating: a bill inside it yesterday and outside it today simply
+     stops being sent, and the handset prunes by the same date rather than
+     waiting for a tombstone that is never coming. */
+  const statementStart = statementFrom(
+    await today(),
+    (await getConfig())["mbos.sync.statementMonths"],
+  );
 
   /* The business day's year, not the server's. `today()` applies the working
      day boundary in Asia/Kolkata; reading the year off a bare `Date` answers
@@ -2370,20 +2534,27 @@ export async function buildPull(
       openLeads(principal.user.id, sinceIso),
       openSamples(principal.user.id, ids, sinceIso),
 
-      /* Not `since`-gated. These are capped at ten a customer and the cap is
+      /* Not `since`-gated. Orders are capped at ten a customer and the cap is
          what a delta would have to re-derive anyway: an eleventh order does
          not CHANGE a row, it displaces one, and no `updated_at` on any row
          says so. Sending the current ten is both correct and smaller than the
          query that would work out which ten changed. */
       recentOrders(ids, HISTORY_PER_CUSTOMER),
-      recentPayments(ids, HISTORY_PER_CUSTOMER),
 
-      /* Not `since`-gated either, and for a second reason on top of the one
-         above: a bill's balance changes when a RECEIPT is confirmed, and that
-         touches `bills.updated_at` — but a bill leaving the open set because
-         it was settled has no row left to carry a cursor. Sending the current
-         open set is the only reading that lets a settled bill disappear. */
-      customerBills(principal, ids, HISTORY_PER_CUSTOMER),
+      /* THE OTHER TWO ARE `since`-GATED NOW, and dropping the cap is what
+         made that honest.
+         Both used to be sent whole on every pull for the reason above, and the
+         bills had a second one: a bill leaving the OPEN set because somebody
+         settled it has no row left to carry a cursor. Neither survives a
+         window. Inside one, a row is either already on the phone or has a
+         moved `updated_at`; nothing is displaced, because nothing is capped,
+         and nothing vanishes, because a bill leaves only by ageing past a date
+         the handset can read for itself. Which matters at this size: the last
+         thirteen months is 4,532 bills and 7,939 receipts on this book, and
+         re-sending a salesman's share of that every few minutes all day is not
+         a thing to do to a phone on 2G. */
+      recentPayments(ids, { from: statementStart, updatedSince: since ?? undefined }),
+      customerBills(principal, ids, { from: statementStart, updatedSince: since ?? undefined }),
     ]);
 
   return {
@@ -2423,6 +2594,7 @@ export async function buildPull(
     customerOrders: orderHistoryChanges as unknown[],
     customerPayments: paymentHistoryChanges as unknown[],
     customerBills: billChanges as unknown[],
+    statementFrom: statementStart,
     /* The same list every channel above was built from — including the empty
        one an unallocated salesman gets, which is exactly the answer his
        handset has never been told. */

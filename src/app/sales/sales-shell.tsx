@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { usePathname } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { signOut } from "@/lib/actions/auth";
@@ -302,7 +303,7 @@ export function SalesShell({
                     : pathname === item.href || pathname.startsWith(item.href + "/");
                   const count = counts[item.href] ?? 0;
                   return (
-                    <Link
+                    <NavLink
                       key={item.href}
                       href={item.href}
                       aria-current={active ? "page" : undefined}
@@ -336,7 +337,7 @@ export function SalesShell({
                           {count}
                         </span>
                       ) : null}
-                    </Link>
+                    </NavLink>
                   );
                 })}
               </div>
