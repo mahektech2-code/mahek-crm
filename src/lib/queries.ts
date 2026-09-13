@@ -423,6 +423,21 @@ export type CustomerListFilters = {
   salesManager?: string;
   backOfficeAm?: string;
   /**
+   * WHERE THE SHOP IS, as `customers.city` literally holds it — never a
+   * cleaned or canonical place name.
+   *
+   * The column is whatever the sheet typed, which on the real book is several
+   * hundred values, a good many of them whole postal addresses offered as a
+   * city. Matching on the stored string is the only thing that can be exactly
+   * right: normalising here would filter on a value no row contains, and a
+   * filter that quietly returns nothing is worse than one that offers an ugly
+   * option. `listCityFilterOptions` returns the same strings, so what is
+   * picked is always something the column actually says.
+   *
+   * `,`-separated for more than one, like every multi-value field here.
+   */
+  city?: string;
+  /**
    * "yes" for accounts marked as shops we deliver to, "no" for the rest, and
    * "delivered" for the ones the sheet shows receiving goods — whether or not
    * anybody has marked them yet. The third is the one that makes the marking
@@ -565,6 +580,65 @@ export const RELATIONSHIP_OWNER_NAME_SQL = sql<string | null>`(
  * Scoped like the list itself, so a telecaller is not shown the names of
  * people whose accounts they cannot see.
  */
+/**
+ * The city exactly as the filter compares it: trimmed, and an empty string
+ * where the column is blank.
+ *
+ * One expression, read by both the clause and the options list, so a value
+ * offered in the dropdown is by construction a value the WHERE can match. Two
+ * spellings of this — a `btrim` on one side and a bare column on the other —
+ * is a filter that silently returns nothing for every city stored with a
+ * trailing space.
+ */
+const CITY_FILTER_SQL = sql<string>`coalesce(btrim(customers.city), '')`;
+
+/**
+ * EVERY CITY IN THE SCOPED BOOK, read on each page load.
+ *
+ * Not a stored list and not a fixed one: shops arrive from the sheet with new
+ * spellings constantly, so a hardcoded set of cities would be stale the first
+ * time somebody imported a district. This is a `group by` over the book the
+ * reader can already see — so it costs one indexed aggregate and is right at
+ * the moment the page renders, which is the freshness a filter needs.
+ *
+ * ORDERED BY HOW MANY SHOPS, biggest first, then alphabetically. This column
+ * is whatever the sheet typed — several hundred values on the real book, many
+ * of them whole postal addresses offered as a city, one of them 80 characters
+ * of "06, MAHADEV TOWERS CO-OP HSG SOC, LTD, LBS MARG, …" — and alphabetical
+ * order buries Thane and Nagpur somewhere in the middle of that. Frequency
+ * puts the places somebody actually means at the top and the long tail below,
+ * which is the same reasoning `knownPlaces` follows on the handset, for the
+ * same column.
+ *
+ * The count rides in the label because otherwise the ordering looks arbitrary:
+ * a list that is neither alphabetical nor explained reads as unsorted.
+ *
+ * A BLANK CITY IS AN OPTION, not a gap. Shops with nothing in the column are
+ * real and are exactly who somebody is looking for when they ask which of the
+ * book has no address — dropping them would make a filter that cannot reach
+ * them, and the count at the top of the screen would never add up.
+ */
+export async function listCityFilterOptions(): Promise<
+  { value: string; label: string }[]
+> {
+  const ctx = await resolveScope();
+  const scoped = scopedToUsers(scopedUserIds(ctx.scope));
+
+  const rows = await db
+    .select({ city: CITY_FILTER_SQL, shops: sql<number>`count(*)::int` })
+    .from(customers)
+    .where(scoped)
+    .groupBy(CITY_FILTER_SQL)
+    .orderBy(sql`count(*) desc`, CITY_FILTER_SQL);
+
+  return rows.map((r) => ({
+    value: r.city,
+    label: r.city
+      ? `${r.city} (${r.shops})`
+      : `No city recorded (${r.shops})`,
+  }));
+}
+
 export async function listAmFilterOptions(): Promise<{
   sales: string[];
   salesManager: string[];
@@ -653,6 +727,12 @@ export async function customerFilterClause(
   }
   if (filters.backOfficeAm) {
     where.push(inListOrUnassigned(BACK_OFFICE_AM_NAME_SQL, filters.backOfficeAm));
+  }
+  if (filters.city) {
+    // `inList` and not `inListOrUnassigned`: an empty city is real on this
+    // book and is offered as its own option, so it is matched by the value
+    // rather than by a null branch — see `listCityFilterOptions`.
+    where.push(inList(CITY_FILTER_SQL, filters.city));
   }
   if (filters.thirdParty) {
     // Several of these are structurally different queries, not different
