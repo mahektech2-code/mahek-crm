@@ -6,8 +6,10 @@
 #
 # Three stages so the runtime layer carries no toolchain and no source. What
 # ships is the standalone server Next emits, its static assets, and nothing
-# else — around 200 MB, which matters because the free container registry
-# holds 500 MB and we keep a few tags for rolling back.
+# else, which matters because the free container registry holds 500 MB and we
+# keep a few tags for rolling back. The runtime stage also deletes the image
+# optimiser's binaries, which Next ships whether or not anything uses them —
+# see the note beside that line.
 
 # --------------------------------------------------------------- dependencies
 FROM node:24-alpine AS deps
@@ -79,6 +81,30 @@ RUN addgroup -g 1001 -S nodejs && adduser -S -u 1001 -G nodejs nextjs
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# THE IMAGE OPTIMISER'S BINARIES, WHICH NOTHING HERE ASKS FOR.
+#
+# `next/image` is imported nowhere in this app and `images.unoptimized` is set,
+# so the resizing endpoint does not exist — see the note in next.config.ts for
+# why the one `<img>` this product renders is a plain tag pointing at
+# `/api/attachments/[id]`.
+#
+# Next copies `sharp` and its platform libvips build into `standalone` anyway,
+# OUTSIDE the file trace: `images.unoptimized` does not stop it and neither
+# does `outputFileTracingExcludes` — both were tried and the directory survived
+# both. So it is removed here, where it is visible to whoever reads the
+# Dockerfile, rather than hidden behind a config flag that does not do it.
+#
+# 18.3 MB of a 62 MB application layer, for an optimiser with nothing to
+# optimise. The registry this pushes to holds 500 MB in total and keeps several
+# tags for rolling back — deploys have already failed on that quota, so this is
+# a constraint rather than tidiness.
+#
+# VERIFIED, not assumed: the standalone server was started with these removed
+# and serves `/login` at 200 with nothing in its log. If it were needed it
+# would fail at the first request to the optimiser, and no request reaches an
+# optimiser that is switched off.
+RUN rm -rf ./node_modules/@img ./node_modules/sharp
 
 USER nextjs
 EXPOSE 3000
