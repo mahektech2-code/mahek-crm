@@ -351,3 +351,77 @@ function upsertColumns() {
 }
 
 const toSnake = (s: string) => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+
+/**
+ * RE-READ WHO THESE ROWS BELONG TO, without touching Google.
+ *
+ * The counterpart of `taken-order-reparse`, and it exists for the reason
+ * AGENTS.md already states about that one: a hash-driven sync never rewrites a
+ * row that has not changed, so when the READING of a row changes rather than
+ * the row itself, nothing lands. Here the reading changes when somebody gets a
+ * MahekOne account.
+ *
+ * It happened exactly that way. The 33,058 activity rows were written on
+ * 1 September; Rahul Richhariya's account was created on the 10th. At sync
+ * time `matchSalesmanName` correctly answered "unmatched" — there was nobody
+ * of that name to match — and because not one cell of the sheet has changed
+ * since, the question has never been asked again. Every row on the screen is
+ * still marked unmatched, including 3,552 that are plainly his.
+ *
+ * It re-matches the SALESMAN only. The customer match is fuzzy, expensive and
+ * already working (12,524 of 33,058 resolved); redoing it here would spend a
+ * long pass re-deriving answers nobody has disputed. Matching is exact on
+ * `partyNameKey`, so this is cheap and safe to run as often as anybody likes.
+ *
+ * **It will never match most of them, and that is correct.** These names are
+ * field salesmen from a prior system — "Prakash Vasudev Prasad" has 8,911 rows
+ * and no MahekOne account, and may never have one. That is the same fact
+ * `customers.sales_person_name` exists for: a salesperson is a name, not an
+ * account. Rows that stay unmatched belong to nobody and are shown to
+ * everybody, which is what the review screen is for.
+ */
+export async function rematchFieldActivitySalesmen(): Promise<{
+  scanned: number;
+  matched: number;
+  ambiguous: number;
+  stillUnmatched: number;
+}> {
+  const salesmen = await db.select({ id: users.id, name: users.name }).from(users);
+
+  const rows = await db
+    .select({
+      id: sheetFieldActivityRows.id,
+      employeeName: sheetFieldActivityRows.employeeName,
+      matchedSalesmanId: sheetFieldActivityRows.matchedSalesmanId,
+      salesmanMatchStatus: sheetFieldActivityRows.salesmanMatchStatus,
+    })
+    .from(sheetFieldActivityRows);
+
+  let matched = 0;
+  let ambiguous = 0;
+  let stillUnmatched = 0;
+
+  for (const row of rows) {
+    const result = matchSalesmanName(row.employeeName, salesmen);
+    if (result.status === "matched") matched += 1;
+    else if (result.status === "ambiguous") ambiguous += 1;
+    else stillUnmatched += 1;
+
+    /* Only where the answer actually MOVED. On a book this size most rows
+       resolve to the same nobody they resolved to before, and rewriting all
+       33,058 to change none of them would be a long write nobody can tell
+       apart from a real one in the audit. */
+    if (
+      result.matchedId === row.matchedSalesmanId &&
+      result.status === row.salesmanMatchStatus
+    ) {
+      continue;
+    }
+    await db
+      .update(sheetFieldActivityRows)
+      .set({ matchedSalesmanId: result.matchedId, salesmanMatchStatus: result.status })
+      .where(eq(sheetFieldActivityRows.id, row.id));
+  }
+
+  return { scanned: rows.length, matched, ambiguous, stillUnmatched };
+}
