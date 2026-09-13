@@ -41,6 +41,7 @@ import {
   daysBetween,
   daysInMonth,
   onOrAfterWorkingDay,
+  type BusinessDate,
 } from "../business-date";
 import { financialYearRange } from "../financial-year";
 import { err, ok, type Result } from "../result";
@@ -685,6 +686,38 @@ export async function earliestBillDate(): Promise<string | null> {
  * narrows it, without a second opinion about who may see which book. A caller
  * that omits it gets `resolveScope()`, which is every screen.
  */
+/**
+ * WHICH BILLS THE CALLER IS ASKING ABOUT — one clause, four readers.
+ *
+ * `listBills` builds the rows, `billLedgerTotals` sums them, `billLedgerAging`
+ * buckets the open ones and `billLedgerPage` cuts a page out. Four questions
+ * about the same set, and a set that four functions each defined for
+ * themselves would be four screens quietly disagreeing about what is in the
+ * financial year.
+ */
+function billsWhere(ids: string[] | null, filters?: BillFilters) {
+  return and(
+    scopedToUsers(ids),
+    filters?.customerId ? eq(bills.customerId, filters.customerId) : undefined,
+    /* An empty set is "no customers", never "all of them" — see the note
+       on the filter. `inArray` with nothing is false, which is what we
+       want, but it is spelled out rather than left to the driver. */
+    filters?.customerIds
+      ? filters.customerIds.length
+        ? inArray(bills.customerId, filters.customerIds)
+        : sql`false`
+      : undefined,
+    financialYearWhere(filters?.financialYear),
+    filters?.openOnly ? sql`${bills.amount} > ${bills.paidAmount}` : undefined,
+    /* Both arrived on main while this helper was being extracted. They belong
+       here rather than at one call site, or the paged read and the whole-set
+       read would disagree about which bills are in the list — which is the
+       exact drift the helper exists to prevent. */
+    filters?.from ? gte(bills.billDate, filters.from) : undefined,
+    filters?.updatedSince ? gt(bills.updatedAt, filters.updatedSince) : undefined,
+  );
+}
+
 export async function listBills(filters?: BillFilters, context?: RequestScope) {
   const ctx = context ?? (await resolveScope());
   const ids = scopedUserIds(ctx.scope);
@@ -700,69 +733,230 @@ export async function listBills(filters?: BillFilters, context?: RequestScope) {
     })
     .from(bills)
     .innerJoin(customers, eq(customers.id, bills.customerId))
-    .where(
-      and(
-        scopedToUsers(ids),
-        filters?.customerId ? eq(bills.customerId, filters.customerId) : undefined,
-        /* An empty set is "no customers", never "all of them" — see the note
-           on the filter. `inArray` with nothing is false, which is what we
-           want, but it is spelled out rather than left to the driver. */
-        filters?.customerIds
-          ? filters.customerIds.length
-            ? inArray(bills.customerId, filters.customerIds)
-            : sql`false`
-          : undefined,
-        financialYearWhere(filters?.financialYear),
-        filters?.openOnly
-          ? sql`${bills.amount} > ${bills.paidAmount}`
-          : undefined,
-        filters?.from ? gte(bills.billDate, filters.from) : undefined,
-        filters?.updatedSince ? gt(bills.updatedAt, filters.updatedSince) : undefined,
-      ),
-    )
+    .where(billsWhere(ids, filters))
     .orderBy(desc(bills.billDate));
 
-  return rows.map(({ bill: b, customerName, customerId, creditDays }) => {
-    const due = effectiveDueDate(
-      { id: b.id, billNo: b.billNo, billDate: b.billDate, dueDate: b.dueDate,
-        creditDays: creditDays === null ? null : Number(creditDays),
-        amount: b.amount, paid: b.paidAmount, disputed: b.disputed },
-      config,
-    );
-    const balance = b.amount - b.paidAmount;
-    const overdueDays = balance > 0 ? Math.max(0, daysBetween(due, day)) : 0;
-    return {
+  return rows.map((r) => toBillRow(r, config, day));
+}
+
+/**
+ * One bill row, derived once.
+ *
+ * Lifted out of `listBills` so the paged read and the whole-set read produce
+ * the same shape from the same rules — two copies of this would be two
+ * definitions of when a bill is due, which is the drift this file is otherwise
+ * careful to avoid.
+ */
+function toBillRow(
+  r: {
+    bill: typeof bills.$inferSelect;
+    customerName: string;
+    customerId: string;
+    creditDays: unknown;
+  },
+  config: Awaited<ReturnType<typeof getConfig>>,
+  day: BusinessDate,
+) {
+  const b = r.bill;
+  const due = effectiveDueDate(
+    {
       id: b.id,
       billNo: b.billNo,
-      customerId,
-      customerName,
       billDate: b.billDate,
-      dueDate: due,
+      dueDate: b.dueDate,
+      creditDays: r.creditDays === null ? null : Number(r.creditDays),
       amount: b.amount,
       paid: b.paidAmount,
-      balance,
-      overdueDays,
-      bucket: agingBucket(overdueDays, config),
-      status: b.status,
       disputed: b.disputed,
-      /* The order this bill was raised against. A bill IS the order here — see
-         AGENTS.md — so this is the only way to what was actually on it. */
-      orderId: b.orderId,
-      updatedAt: b.updatedAt,
-      /*
-       * Whether anybody has said this bill was paid or is owed.
-       *
-       * Carried on the row rather than left to each caller to fetch, because a
-       * screen showing a balance has to be able to say which kind of number it
-       * is: on an `unstated` bill the balance is the full amount purely because
-       * nothing has been recorded against it either way.
-       */
-      paymentPosition: b.paymentPosition,
-    };
-  });
+    },
+    config,
+  );
+  const balance = b.amount - b.paidAmount;
+  const overdueDays = balance > 0 ? Math.max(0, daysBetween(due, day)) : 0;
+  return {
+    id: b.id,
+    billNo: b.billNo,
+    customerId: r.customerId,
+    customerName: r.customerName,
+    billDate: b.billDate,
+    dueDate: due,
+    amount: b.amount,
+    paid: b.paidAmount,
+    balance,
+    overdueDays,
+    bucket: agingBucket(overdueDays, config),
+    status: b.status,
+    disputed: b.disputed,
+    /* The order this bill was raised against. A bill IS the order here — see
+       AGENTS.md — so this is the only way to what was actually on it. */
+    orderId: b.orderId,
+    updatedAt: b.updatedAt,
+    /*
+     * Whether anybody has said this bill was paid or is owed.
+     *
+     * Carried on the row rather than left to each caller to fetch, because a
+     * screen showing a balance has to be able to say which kind of number it
+     * is: on an `unstated` bill the balance is the full amount purely because
+     * nothing has been recorded against it either way.
+     */
+    paymentPosition: b.paymentPosition,
+  };
 }
 
 export type BillRow = Awaited<ReturnType<typeof listBills>>[number];
+
+/**
+ * THE LEDGER, WITHOUT SENDING THE WHOLE LEDGER.
+ *
+ * `listBills` returns every row that matches, and the Bills screen then sliced
+ * 25 out of it in the browser. The pager worked; it was paging a set the
+ * server had already fetched, parsed into ten thousand JavaScript objects and
+ * serialised into the page. Clicking page 2 was free because page 1 had
+ * already paid for all of it.
+ *
+ * It was built that way to keep a real rule: the totals and the aging strip
+ * describe the WHOLE filtered set, not the page, because a total that changed
+ * as you paged would be a different figure on every click. That rule stands.
+ * What changes is how it is honoured — three reads shaped to their questions
+ * instead of one read shaped to none:
+ *
+ *   1. the page itself, LIMIT/OFFSET, wide — 25 rows
+ *   2. the totals, one aggregate row out of Postgres
+ *   3. the aging, narrow and OPEN BILLS ONLY
+ *
+ * **AND NOT ONE BUSINESS RULE MOVED INTO SQL.** The temptation was to compute
+ * the due date and the aging bucket in the query, which would have made
+ * `effectiveDueDate` and `agingBucket` each have two definitions — the thing
+ * this codebase is most careful about. It is unnecessary: the totals are sums
+ * of columns and need no due date at all, and a bucket only ever applies to a
+ * bill with a balance, so the aging read is a few hundred rows of six small
+ * values that the SAME pure functions bucket in JavaScript.
+ */
+export async function billLedgerPage(
+  filters: BillFilters | undefined,
+  paging: { page: number; perPage: number },
+): Promise<{ rows: BillRow[]; total: number }> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const config = await getConfig();
+  const day = await today();
+
+  const perPage = Math.min(Math.max(paging.perPage, 1), 200);
+  const page = Math.max(paging.page, 1);
+
+  const [rows, [counted]] = await Promise.all([
+    db
+      .select({
+        bill: bills,
+        customerName: customers.name,
+        customerId: customers.id,
+        creditDays: billCreditDaysSql,
+      })
+      .from(bills)
+      .innerJoin(customers, eq(customers.id, bills.customerId))
+      .where(billsWhere(ids, filters))
+      /* `bill_date desc, id desc` — a thousand bills share a handful of dates,
+         so the date alone leaves their order to the planner, which is a row
+         appearing on two pages while another appears on none. The same
+         tiebreaker rule the customer timeline already follows. */
+      .orderBy(desc(bills.billDate), desc(bills.id))
+      .limit(perPage)
+      .offset((page - 1) * perPage),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(bills)
+      .innerJoin(customers, eq(customers.id, bills.customerId))
+      .where(billsWhere(ids, filters)),
+  ]);
+
+  return {
+    rows: rows.map((r) => toBillRow(r, config, day)),
+    total: counted?.n ?? 0,
+  };
+}
+
+/** Billed, received and open over the WHOLE filtered set — one aggregate row,
+ *  and no due date needed, because these are sums of columns. */
+export async function billLedgerTotals(
+  filters?: BillFilters,
+): Promise<{ billed: number; received: number; open: number; count: number }> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const [row] = await db
+    .select({
+      billed: sql<string>`coalesce(sum(${bills.amount}), 0)`,
+      received: sql<string>`coalesce(sum(${bills.paidAmount}), 0)`,
+      open: sql<string>`coalesce(sum(greatest(${bills.amount} - ${bills.paidAmount}, 0)), 0)`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(bills)
+    .innerJoin(customers, eq(customers.id, bills.customerId))
+    .where(billsWhere(ids, filters));
+
+  return {
+    billed: Number(row?.billed ?? 0),
+    received: Number(row?.received ?? 0),
+    open: Number(row?.open ?? 0),
+    count: row?.count ?? 0,
+  };
+}
+
+/**
+ * The ages of the OPEN bills, for the aging strip.
+ *
+ * A settled bill has no overdue days by definition — `toBillRow` has always
+ * said so, with `balance > 0 ? daysBetween(...) : 0` — so the whole of the
+ * aging question lives in the few hundred rows that still owe something.
+ * Six small columns instead of the whole ledger.
+ *
+ * It returns exactly what `bucketise` takes and does no bucketing of its own:
+ * the bands, their order and their labels are that function's, and a second
+ * implementation here would be a second answer to "how old is this money" on
+ * the one screen whose subject is that question.
+ */
+export async function openBillAges(
+  filters?: BillFilters,
+): Promise<Array<{ overdueDays: number; balance: number }>> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const config = await getConfig();
+  const day = await today();
+
+  const rows = await db
+    .select({
+      id: bills.id,
+      billNo: bills.billNo,
+      billDate: bills.billDate,
+      dueDate: bills.dueDate,
+      amount: bills.amount,
+      paid: bills.paidAmount,
+      disputed: bills.disputed,
+      creditDays: billCreditDaysSql,
+    })
+    .from(bills)
+    .innerJoin(customers, eq(customers.id, bills.customerId))
+    .where(and(billsWhere(ids, filters), sql`${bills.amount} > ${bills.paidAmount}`));
+
+  return rows.map((b) => {
+    const due = effectiveDueDate(
+      {
+        id: b.id,
+        billNo: b.billNo,
+        billDate: b.billDate,
+        dueDate: b.dueDate,
+        creditDays: b.creditDays === null ? null : Number(b.creditDays),
+        amount: b.amount,
+        paid: b.paid,
+        disputed: b.disputed,
+      },
+      config,
+    );
+    return {
+      overdueDays: Math.max(0, daysBetween(due, day)),
+      balance: b.amount - b.paid,
+    };
+  });
+}
 
 /**
  * Who owes us money, one row per customer, with the bills behind each.
