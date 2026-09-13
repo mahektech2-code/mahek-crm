@@ -452,15 +452,34 @@ export async function recomputeFollowUpState(customerId: string): Promise<void> 
 }
 
 export async function recomputeAllFollowUpStates(): Promise<number> {
-  // EVERY customer, whatever their status. This pass is the only thing that
-  // REMOVES a follow-up row once the debt behind it is gone, so a filter here
-  // does not skip work — it freezes it. Filtering to `active` left eight
-  // customers on the collections list at stage 3, claiming crores overdue
-  // while owing nothing, with no recompute able to reach them again.
-  //
-  // Nothing is created for a customer who owes nothing, so visiting them all
-  // costs a read and writes only deletions.
-  const rows = await db.select({ id: customers.id }).from(customers);
+  /*
+   * EVERY customer who could POSSIBLY have an answer — which is not the same
+   * filter as the one that broke this before, and the difference is the whole
+   * point.
+   *
+   * This pass is the only thing that REMOVES a follow-up row once the debt
+   * behind it is gone, so filtering by `status = 'active'` did not skip work,
+   * it FROZE it: eight customers sat on the collections list at stage 3
+   * claiming crores overdue while owing nothing, and no later run could reach
+   * them. That filter asked about the customer. This one asks about the two
+   * things the function can actually act on:
+   *
+   *   · a STATED bill, because `escalationStage` returns null the moment there
+   *     are no overdue balances, so a customer with no stated bill cannot
+   *     produce a state; and
+   *   · an existing `follow_up_states` row, because that is the row this pass
+   *     exists to delete.
+   *
+   * A customer in neither set has nothing to compute and nothing to remove, so
+   * visiting them was three round trips to decide to do nothing. On the real
+   * book that is 5,915 customers visited to reach the 553 that can matter,
+   * twice an hour, on the one vCPU Postgres shares with the renderer.
+   */
+  const rows = await db.execute<{ id: string }>(sql`
+    select customer_id as id from bills where payment_position = 'stated'
+    union
+    select customer_id as id from follow_up_states
+  `);
   for (const r of rows) await recomputeFollowUpState(r.id);
   return rows.length;
 }
