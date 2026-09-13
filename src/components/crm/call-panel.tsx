@@ -36,6 +36,19 @@ import {
 import { describeQuantity } from "@/lib/catalogue";
 import { addLabel, dropLabel } from "@/lib/notes";
 import { ImagePicker } from "@/components/crm/image-picker";
+import { outcomeFieldRequired, outcomeFieldsVisible } from "@/lib/call-outcomes";
+import type { ReasonField } from "@/lib/call-reasons";
+import {
+  CALLER_ROLES,
+  CALL_REASONS,
+  CALL_REASON_LABEL,
+  EXCLUSIVE_ACTION,
+  nextActionsFor,
+  reasonFieldsFor,
+  showsLedger,
+  unbackedBy,
+  wantsDate,
+} from "@/lib/call-reasons";
 
 /**
  * The dates customers actually ask for, as one tap each. Anything else still
@@ -97,6 +110,19 @@ export type CallTarget = {
   creditTermDays: number;
   targetGap: number;
   openComplaint?: string | null;
+  /**
+   * How many times in a row we have rung and nobody answered.
+   *
+   * Read off the queue's own ladder — the same count `noAnswerState` uses to
+   * decide when to try again and when to give up — rather than counted here. A
+   * second count in a screen is how the panel and the record come to disagree
+   * about whether somebody has been tried three times.
+   *
+   * Optional because the record page and the payment worklist open this panel
+   * with no queue behind them, and an attempt number nobody has established is
+   * better left unsaid than guessed at.
+   */
+  noAnswerCount?: number;
   history?: HistoryEntry[];
 };
 
@@ -492,6 +518,40 @@ function CallPanelForm({
   const [productQuery, setProductQuery] = React.useState("");
   // The design caps the visible list and offers the rest behind "show more" —
   // a full catalogue scrolling under the cursor mid-call is unusable.
+  /* ------------------------------------------------ who rang, and why
+   *
+   * INBOUND'S OWN QUESTIONS. This panel asked one — "what was the outcome?" —
+   * and made it do two jobs: an outcome is how the call ENDED, and these are
+   * what the customer wanted when they picked up the phone. On an inbound call
+   * the two are routinely different, and the first half was simply not being
+   * recorded.
+   *
+   * Not asked on an outbound call: the reason it was made is already recorded,
+   * as the queue reason drawn at the top of this very panel, and asking the
+   * telecaller to restate it would be a second answer free to disagree with
+   * the first. Not asked on an order received either — nobody spoke to anybody.
+   */
+  const [callerRole, setCallerRole] = React.useState("");
+  const [callerName, setCallerName] = React.useState("");
+  const [callReason, setCallReason] = React.useState("");
+  /** Keyed by field, per `reasonFieldsFor`. */
+  const [reasonDetail, setReasonDetail] = React.useState<Record<string, string>>({});
+  /* What the OUTCOME asked for — why no order, why no answer, what we are
+     waiting for, why not interested, a complaint's priority. Both directions:
+     a No Order is worth the same answer whoever dialled. */
+  const [outcomeDetail, setOutcomeDetail] = React.useState<Record<string, string>>({});
+  const [nextActions, setNextActions] = React.useState<string[]>([]);
+  const [nextActionDate, setNextActionDate] = React.useState("");
+
+  /* §Sales opportunity. `null` is nobody asked, which is the truth on an
+     outbound call; `false` is somebody asked and the answer was no, and those
+     are different facts worth keeping apart. */
+  const [hasOpportunity, setHasOpportunity] = React.useState<boolean | null>(null);
+  const [oppProduct, setOppProduct] = React.useState("");
+  const [oppQuantity, setOppQuantity] = React.useState("");
+  const [oppValue, setOppValue] = React.useState("");
+  const [oppDate, setOppDate] = React.useState("");
+
   const [showAllProducts, setShowAllProducts] = React.useState(false);
   const [showAllFrequent, setShowAllFrequent] = React.useState(false);
   /** The line a typed zero is asking to remove, if any. */
@@ -590,11 +650,18 @@ function CallPanelForm({
    * for the life of the panel, which is a single call. */
   const [todayIso] = React.useState(today);
 
-  const [scriptBill, setScriptBill] = React.useState<{
-    billNo: string;
-    dueDate: string | null;
-    balance: number;
-  } | null>(null);
+  type OpenBill = { billNo: string; dueDate: string | null; balance: number };
+  const [scriptBill, setScriptBill] = React.useState<OpenBill | null>(null);
+  /*
+   * THE SAME FETCH, KEPT RATHER THAN THROWN AWAY.
+   *
+   * This request already ran on every panel open and only its first row
+   * survived, into the script's `{bill number}` placeholder. A Payment /
+   * Outstanding call held without the bills on screen is one where the
+   * telecaller asks the customer what they owe — so the list the request
+   * already returned is kept and read back to them.
+   */
+  const [openBills, setOpenBills] = React.useState<OpenBill[]>([]);
 
   React.useEffect(() => {
     if (!target) return;
@@ -612,6 +679,7 @@ function CallPanelForm({
          * nothing is overdue the oldest open bill still beats a placeholder.
          */
         const overdue = open.filter((b) => b.dueDate && b.dueDate < todayIso);
+        setOpenBills(open);
         setScriptBill((overdue.length ? overdue : open)[0] ?? null);
       })
       /* A script that keeps its braces is the failure this already handles. */
@@ -655,7 +723,54 @@ function CallPanelForm({
   }
 
   const isOrderReceived = type === "order_received";
-  const chosen = isOrderReceived || Boolean(outcome);
+  const isInbound = type === "inbound_call";
+
+  /*
+   * WHO RANG AND WHY COME BEFORE THE OUTCOME, on inbound.
+   *
+   * They are the classification — what the customer wanted — and the outcome
+   * is what the call ended as. Asking them in that order is not decoration: it
+   * is what makes "somebody rang about price and it ended as a follow-up" a
+   * recordable sentence instead of a note.
+   */
+  const classified = !isInbound || (Boolean(callerRole) && Boolean(callReason));
+  const chosen = isOrderReceived || (Boolean(outcome) && classified);
+
+  /** What this reason asks for, and what it may end in. Both from one file. */
+  const reasonFields = isInbound ? reasonFieldsFor(callReason) : [];
+  /* Computed from the answers, because two of them are conditional: the
+     competitor name belongs to one answer of the question above it and the
+     recall date to one answer of the question below. */
+  const outcomeFields = outcomeFieldsVisible(outcome, outcomeDetail);
+  /*
+   * AN ORDER TAKEN IS ASKED ON BOTH DIRECTIONS.
+   *
+   * Everything else on this block is inbound's — an outbound call's reason is
+   * already recorded as the queue reason at the top of this panel. But once a
+   * call has ended in an order, what happens next is about the ORDER, and the
+   * goods and the money do not care who dialled: the same four answers apply
+   * whichever way the call went. `nextActionsFor` reads the outcome first for
+   * exactly that reason.
+   */
+  const actionOptions = nextActionsFor(isInbound ? callReason : null, outcome);
+  const needsActionDate = wantsDate(nextActions);
+
+  /*
+   * "This is the third attempt" — said, never counted here.
+   *
+   * The queue already knows: the count is consecutive no-answers since the
+   * last call that ended in anything else, which is what makes an answered
+   * call clear the ladder. Where it is absent — the record page, the payment
+   * worklist — nothing is drawn, because an attempt number nobody has
+   * established is worse than none.
+   */
+  const attemptLabel =
+    target?.noAnswerCount === undefined
+      ? null
+      : target.noAnswerCount === 0
+        ? "First attempt — nobody has been rung about this yet."
+        : `Attempt ${target.noAnswerCount + 1} — we have rung ${target.noAnswerCount} time${target.noAnswerCount === 1 ? "" : "s"} since anybody last answered.`;
+  const unbacked = isInbound ? unbackedBy(callReason) : null;
 
   const needsProducts = isOrderReceived || outcome === "order_taken";
   const needsFollowUp = outcome === "follow_up";
@@ -944,6 +1059,48 @@ function CallPanelForm({
       return;
     }
 
+    /*
+     * The reason's own mandatory boxes, checked here so the telecaller is told
+     * at the field rather than by a round trip — the server checks the same
+     * thing against the same `reasonFieldsFor`, because a rule that lives in a
+     * browser is not a rule.
+     */
+    const missing = reasonFields.find(
+      (f) => f.required && !(reasonDetail[f.key] ?? "").trim(),
+    );
+    if (missing) {
+      setErrors((e) => ({
+        ...e,
+        [`reasonDetail.${missing.key}`]: `${missing.label} is needed for a ${CALL_REASON_LABEL[callReason]} call.`,
+      }));
+      return;
+    }
+    const missingOutcome = outcomeFields.find(
+      (f) =>
+        outcomeFieldRequired(f, outcomeDetail) &&
+        !(outcomeDetail[f.key] ?? "").trim(),
+    );
+    if (missingOutcome) {
+      setErrors((e) => ({
+        ...e,
+        [`outcomeDetail.${missingOutcome.key}`]: `${missingOutcome.label} is needed.`,
+      }));
+      return;
+    }
+    if (needsActionDate && !nextActionDate) {
+      setErrors((e) => ({ ...e, nextActionDate: "Say which day this is for." }));
+      return;
+    }
+    /* A yes with nothing named is the box left half-filled. Refused here and
+       not silently dropped, or the telecaller believes they recorded one. */
+    if (isInbound && hasOpportunity && !oppProduct.trim()) {
+      setErrors((e) => ({
+        ...e,
+        "opportunity.product": "Name what they might buy, or answer No.",
+      }));
+      return;
+    }
+
     setBusy(true);
     try {
       const productQuantities: Record<string, number> = {};
@@ -967,6 +1124,54 @@ function CallPanelForm({
               : undefined,
           noOrderNoCommitment: needsNextCall ? noOrderNoCommitment : false,
           paymentPromiseDate: showPayDate ? payDate || undefined : undefined,
+
+          /* Inbound's own answers. Everything here is sent only where the call
+             actually asked it — an outbound call has no caller role, and a
+             reason the telecaller changed off must not leave its old detail
+             behind on the row. */
+          callerRole: isInbound ? callerRole : undefined,
+          callerName: isInbound ? callerName.trim() || undefined : undefined,
+          callReason: isInbound ? callReason : undefined,
+          reasonDetail: isInbound
+            ? Object.fromEntries(
+                reasonFields
+                  .map((f) => [f.key, (reasonDetail[f.key] ?? "").trim()])
+                  .filter(([, v]) => v),
+              )
+            : undefined,
+          /* Sent whenever the form actually offered them — which on an Order
+             Taken is both directions, and otherwise inbound only. Keying this
+             on `isInbound` would have drawn the four on an outbound order and
+             then dropped every answer on the way to the server. */
+          /* What the outcome asked for — both directions. Only the fields that
+             were actually VISIBLE: an answer to a branch they answered their
+             way out of would store a competitor against a customer who said
+             they have no requirement. */
+          outcomeDetail: outcomeFields.length
+            ? Object.fromEntries(
+                outcomeFields
+                  .map((f) => [f.key, (outcomeDetail[f.key] ?? "").trim()])
+                  .filter(([, v]) => v),
+              )
+            : undefined,
+          nextActions: actionOptions.length ? nextActions : undefined,
+          nextActionDate:
+            actionOptions.length && needsActionDate
+              ? nextActionDate || undefined
+              : undefined,
+          /* Only where somebody said yes. "No" is the absence of a record
+             rather than an empty one — there is nothing to chase. */
+          opportunity:
+            isInbound && hasOpportunity && oppProduct.trim()
+              ? {
+                  product: oppProduct.trim(),
+                  estimatedQuantity: oppQuantity.trim() || undefined,
+                  estimatedValueRupees: oppValue.trim()
+                    ? Math.round(Number(oppValue))
+                    : undefined,
+                  expectedOrderDate: oppDate || undefined,
+                }
+              : undefined,
           complaintCategory: needsCategory ? category : undefined,
           complaintDescription: needsCategory
             ? complaintDescription
@@ -1717,17 +1922,123 @@ function CallPanelForm({
                         </div>
                       ) : null}
 
-                      <div className="text-[15px] font-semibold text-ink">
+                      {/* ------------------------------------ who rang
+                          Asked FIRST, and only inbound. A price question from
+                          the owner and the same question from a store boy are
+                          different calls, and only one is worth a salesman's
+                          morning. There is no contact master to read this from
+                          — `contact_person` is one field holding whoever last
+                          answered — so it is asked, and the name box beside it
+                          is what a contact master gets built out of. */}
+                      {isInbound ? (
+                        <>
+                          <div className="text-[15px] font-semibold text-ink">
+                            Who called?
+                          </div>
+                          <div className="mt-2.5 flex flex-wrap gap-1.5">
+                            {CALLER_ROLES.map((r) => (
+                              <button
+                                key={r.code}
+                                onClick={() => setCallerRole(r.code)}
+                                aria-pressed={callerRole === r.code}
+                                className={cx(
+                                  "h-8 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                                  callerRole === r.code
+                                    ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                    : "border-line bg-surface text-body hover:border-brand",
+                                )}
+                              >
+                                {r.label}
+                              </button>
+                            ))}
+                          </div>
+                          {/* Optional, deliberately. A telecaller who did not
+                              catch the name must still be able to save the
+                              call — the role is the part that changes what the
+                              call is worth. */}
+                          <div className="mt-2">
+                            <Input
+                              value={callerName}
+                              onChange={(e) => setCallerName(e.target.value)}
+                              placeholder="Their name, if you caught it (optional)"
+                            />
+                          </div>
+                          {target.contactPerson ? (
+                            <p className="mt-1 text-[11px] text-muted">
+                              On record for this account: {target.contactPerson}
+                            </p>
+                          ) : null}
+
+                          {/* ------------------------------ why they rang
+                              THE MAIN CLASSIFICATION. What the customer wanted
+                              when they picked up the phone — which is not what
+                              the call ended as, and was not being recorded at
+                              all. */}
+                          <div className="mt-5 text-[15px] font-semibold text-ink">
+                            Why did they call?
+                          </div>
+                          <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+                            {CALL_REASONS.map((r) => (
+                              <button
+                                key={r.code}
+                                onClick={() => {
+                                  setCallReason(r.code);
+                                  /* Changing the reason changes the questions,
+                                     so the old answers go with it — carrying a
+                                     price enquiry's packaging onto a delivery
+                                     chase would store an answer to a question
+                                     this call never asked. */
+                                  setReasonDetail({});
+                                  setNextActions([]);
+                                  setNextActionDate("");
+                                }}
+                                aria-pressed={callReason === r.code}
+                                className={cx(
+                                  "cursor-pointer rounded-[4px] border px-2.5 py-2 text-left text-[13px]",
+                                  callReason === r.code
+                                    ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                    : "border-line bg-surface text-body hover:border-brand",
+                                )}
+                              >
+                                {r.label}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      ) : null}
+
+                      <div
+                        className={cx(
+                          "text-[15px] font-semibold text-ink",
+                          isInbound && "mt-5",
+                        )}
+                      >
                         What was the outcome?
                       </div>
+                      {/* The outcome is how the call ENDED, and it is held back
+                          until the classification is answered — not disabled
+                          and clickable-looking, which teaches people the screen
+                          is broken, but said in words. */}
+                      {isInbound && !classified ? (
+                        <p className="mt-1.5 text-[13px] text-muted">
+                          Answer who called and why first — they are what the
+                          call was about; this is how it ended.
+                        </p>
+                      ) : null}
                       <div className="mt-3 flex flex-col gap-2">
                         {OUTCOMES[
                           type as Exclude<InteractionType, "order_received">
                         ].map((o) => (
                           <button
                             key={o}
+                            disabled={!classified}
+                            title={
+                              classified
+                                ? undefined
+                                : "Answer who called and why first"
+                            }
                             onClick={() => setOutcome(o)}
-                            className="cursor-pointer rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left text-sm font-medium text-ink hover:border-brand"
+                            className="cursor-pointer rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left text-sm font-medium text-ink hover:border-brand disabled:cursor-not-allowed disabled:border-line disabled:bg-canvas disabled:text-muted disabled:hover:border-line"
                           >
                             {OUTCOME_LABEL[o]}
                           </button>
@@ -1743,8 +2054,150 @@ function CallPanelForm({
                         className="mb-3 cursor-pointer text-[13px] text-brand"
                       >
                         ← {TYPES.find((t) => t.key === type)?.label}
+                        {/* The reason belongs in this line: it is what the call
+                            was about, and the outcome alone reads as the whole
+                            classification when it is half of it. */}
+                        {callReason ? ` · ${CALL_REASON_LABEL[callReason]}` : ""}
                         {outcome ? ` · ${OUTCOME_LABEL[outcome]}` : ""}
                       </button>
+
+                      {/* --------------------------------- the ledger, read back
+                          Not a figure the telecaller has to go and find: the
+                          outstanding total and the open bills are already on
+                          this panel, fetched for the script's placeholders, and
+                          a money conversation held without them on screen is one
+                          where we ask the customer what they owe. */}
+                      {isInbound && showsLedger(callReason) ? (
+                        <div className="mb-3.5 rounded-[4px] border border-line bg-canvas p-3">
+                          <div className="flex items-baseline justify-between gap-3">
+                            <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                              What they owe
+                            </span>
+                            <span
+                              className={cx(
+                                "text-[15px] font-semibold",
+                                target.outstanding > 0 ? "text-danger" : "text-ink",
+                              )}
+                            >
+                              {money(target.outstanding)}
+                            </span>
+                          </div>
+                          {openBills.length ? (
+                            <div className="mt-2 flex flex-col gap-1">
+                              {openBills.slice(0, 5).map((b) => {
+                                const late = Boolean(b.dueDate && b.dueDate < todayIso);
+                                return (
+                                  <div
+                                    key={b.billNo}
+                                    className="flex items-baseline justify-between gap-3 text-[13px]"
+                                  >
+                                    <span className="min-w-0 truncate text-body">
+                                      {b.billNo}
+                                      <span
+                                        className={cx(
+                                          "ml-1.5",
+                                          late ? "text-danger" : "text-muted",
+                                        )}
+                                      >
+                                        {b.dueDate
+                                          ? late
+                                            ? `overdue since ${shortDate(b.dueDate)}`
+                                            : `due ${shortDate(b.dueDate)}`
+                                          : "no due date"}
+                                      </span>
+                                    </span>
+                                    <span className="flex-none font-medium text-ink">
+                                      {money(b.balance)}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                              {openBills.length > 5 ? (
+                                <span className="text-[11px] text-muted">
+                                  and {openBills.length - 5} more — the full list is
+                                  on their account.
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <p className="mt-1.5 text-[13px] text-muted">
+                              No open bills on this account.
+                            </p>
+                          )}
+                        </div>
+                      ) : null}
+
+                      {/* ------------------------- what the reason asks for
+                          Rendered from `reasonFieldsFor`, which is also what
+                          the server validates against — one list, so a box that
+                          is mandatory on the screen is mandatory in the rule. */}
+                      {reasonFields.length ? (
+                        <AnswerBlock
+                          heading={CALL_REASON_LABEL[callReason]}
+                          fields={reasonFields}
+                          answers={reasonDetail}
+                          onChange={(k, v) =>
+                            setReasonDetail((d) => ({ ...d, [k]: v }))
+                          }
+                          errors={errors}
+                          errorPrefix="reasonDetail"
+                          name="reason"
+                        />
+                      ) : null}
+
+                      {/* ------------------------- what the OUTCOME asks for
+                          The same renderer, because they are the same kind of
+                          question — a coded answer with one value — and two
+                          copies of a form renderer is two sets of bugs and one
+                          of them always renders `required` differently. */}
+                      {outcomeFields.length ? (
+                        <AnswerBlock
+                          heading={OUTCOME_LABEL[outcome!] ?? ""}
+                          fields={outcomeFields}
+                          answers={outcomeDetail}
+                          onChange={(k, v) =>
+                            setOutcomeDetail((d) => ({ ...d, [k]: v }))
+                          }
+                          required={(f) => outcomeFieldRequired(f, outcomeDetail)}
+                          errors={errors}
+                          errorPrefix="outcomeDetail"
+                          name="outcome"
+                          /* THE ONE ANSWER ON THIS FORM THAT SILENCES THE
+                             CUSTOMER FOR GOOD. `do_not_contact` outranks every
+                             reason the queue can produce, including a reminder,
+                             so it is said in words before it is saved rather
+                             than discovered later by somebody wondering why an
+                             account went quiet. */
+                          warnOn={{
+                            key: "futureOpportunity",
+                            value: "never",
+                            text: "This marks the customer do-not-contact. No call and no reminder message will go to them again until somebody lifts it on their record.",
+                          }}
+                        />
+                      ) : null}
+
+                      {/* WHICH ATTEMPT THIS IS, read off the queue's own ladder
+                          rather than counted here. Nobody spoke to anybody, so
+                          this and the reason above it are the whole form — a
+                          telecaller working down a list of forty fills a long
+                          one in at speed and stops reading it. */}
+                      {outcome === "no_answer" && attemptLabel ? (
+                        <p className="mb-3.5 rounded-[4px] border border-line bg-canvas px-3 py-2 text-[13px] text-body">
+                          {attemptLabel}
+                        </p>
+                      ) : null}
+
+                      {/* WHERE NOTHING BACKS IT, SAY SO.
+                          There is no quotation record and no stock system, and
+                          a screen that implied otherwise would have somebody
+                          telling a customer stock is confirmed on the strength
+                          of a dropdown. Naming the gap is what turns it into
+                          something somebody can fix. */}
+                      {unbacked ? (
+                        <p className="mb-3.5 rounded-[4px] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-warn-ink">
+                          {unbacked}
+                        </p>
+                      ) : null}
 
                       {isOrderReceived ? (
                         <Field
@@ -1873,9 +2326,17 @@ function CallPanelForm({
                           hint="Enter the date they committed to."
                           error={errors.paymentPromiseDate ?? null}
                         >
+                          {/* THE FLOOR WAS THE HALF THAT WAS MISSING. Both other
+                              date fields on this form reject the past and this
+                              one did not, so a mistyped year produced a payment
+                              reminder already overdue — which puts the customer
+                              at `reminderOverdue`, the strongest tier in the
+                              queue, the next morning, for a promise they had
+                              just made. */}
                           <Input
                             type="date"
                             value={payDate}
+                            min={today()}
                             onChange={(e) => setPayDate(e.target.value)}
                           />
                         </Field>
@@ -2243,6 +2704,195 @@ function CallPanelForm({
                         </div>
                       ) : null}
 
+                      {/* --------------------------------- what happens next
+                          Codes from THIS reason's own list — "Arrange stock"
+                          against a price enquiry is an answer to a question
+                          nobody asked, and a dropdown offering it teaches people
+                          to stop reading the dropdown.
+
+                          Several, not one: "send the price and have the salesman
+                          call in" is one sentence a customer says and two things
+                          that have to happen. */}
+                      {actionOptions.length ? (
+                        <div className="mb-3.5">
+                          <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                            Next action
+                          </span>
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            {actionOptions.map((a) => {
+                              const on = nextActions.includes(a.code);
+                              return (
+                                <button
+                                  key={a.code}
+                                  type="button"
+                                  aria-pressed={on}
+                                  title={on ? `Tap again to remove "${a.label}"` : undefined}
+                                  onClick={() =>
+                                    setNextActions((list) => {
+                                      if (on) return list.filter((x) => x !== a.code);
+                                      /* "Nothing further is needed, and also
+                                         chase the payment" is not a sentence.
+                                         Picking one clears the other rather
+                                         than saving a contradiction nobody can
+                                         read back — and the date box that goes
+                                         with it goes too. */
+                                      if (a.code === EXCLUSIVE_ACTION) {
+                                        setNextActionDate("");
+                                        return [a.code];
+                                      }
+                                      return [
+                                        ...list.filter((x) => x !== EXCLUSIVE_ACTION),
+                                        a.code,
+                                      ];
+                                    })
+                                  }
+                                  className={cx(
+                                    "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
+                                    on
+                                      ? "border-brand bg-brand-soft font-medium text-[#5223E0] hover:border-danger hover:text-danger"
+                                      : "border-line bg-surface text-body hover:border-brand",
+                                  )}
+                                >
+                                  {a.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* A DATE IS DEMANDED WHERE THE ACTION MEANS ONE, and
+                              absent where it does not. "Send the quotation" with
+                              no day against it is the definition of how a call
+                              gets forgotten; "Payment already made" is a
+                              statement about the past, and a date box beside it
+                              is a question nobody can answer. A date given makes
+                              a reminder, which already outranks every cooldown
+                              in the queue. */}
+                          {needsActionDate ? (
+                            <div className="mt-2.5">
+                              <Field
+                                label="By when"
+                                hint="This becomes a reminder you will see on the day."
+                                error={errors.nextActionDate ?? null}
+                              >
+                                <div className="mb-1.5 flex flex-wrap gap-1.5">
+                                  {FOLLOW_UP_PRESETS.map((preset) => {
+                                    const date = addDays(today(), preset.days);
+                                    return (
+                                      <button
+                                        key={preset.label}
+                                        type="button"
+                                        onClick={() => setNextActionDate(date)}
+                                        className={cx(
+                                          "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                                          nextActionDate === date
+                                            ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                            : "border-line bg-surface text-body hover:bg-canvas",
+                                        )}
+                                      >
+                                        {preset.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                <Input
+                                  type="date"
+                                  value={nextActionDate}
+                                  min={today()}
+                                  onChange={(e) => setNextActionDate(e.target.value)}
+                                />
+                              </Field>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {/* ----------------------------------- the opportunity
+                          Asked on every inbound call, because the whole reason
+                          somebody rings is that they want something — and a
+                          call that turned up a real chance and ended as a note
+                          is the most expensive thing this screen can produce.
+
+                          A record, not a lead: a lead here is an account that
+                          has never ordered, and about thirty readers of
+                          `customers.kind` are built on exactly that. */}
+                      {isInbound ? (
+                        <div className="mb-3.5 rounded-[4px] border border-line p-3">
+                          <Field label="Did this call turn up a sales opportunity?">
+                            <div className="flex items-center gap-4">
+                              <Radio
+                                name="callOpportunity"
+                                label="No"
+                                checked={hasOpportunity === false}
+                                onChange={() => setHasOpportunity(false)}
+                              />
+                              <Radio
+                                name="callOpportunity"
+                                label="Yes"
+                                checked={hasOpportunity === true}
+                                onChange={() => setHasOpportunity(true)}
+                              />
+                            </div>
+                          </Field>
+
+                          {hasOpportunity ? (
+                            <div className="mt-3 flex flex-col gap-3">
+                              <Field
+                                label="Product"
+                                hint="In their words. Nothing here has to match the catalogue."
+                                error={errors["opportunity.product"] ?? null}
+                              >
+                                <Input
+                                  value={oppProduct}
+                                  onChange={(e) => setOppProduct(e.target.value)}
+                                  placeholder="What they might buy"
+                                />
+                              </Field>
+                              <Field label="Estimated quantity (optional)">
+                                <Input
+                                  value={oppQuantity}
+                                  onChange={(e) => setOppQuantity(e.target.value)}
+                                  placeholder="About 20 cans a month"
+                                />
+                              </Field>
+                              {/* Typed, never derived. The product master holds
+                                  no prices — `canValueOrders()` still answers
+                                  no — so a figure computed here would be an
+                                  invention. Blank is a real answer and is not
+                                  zero: nobody put a number on it. */}
+                              <Field
+                                label="Estimated value (optional)"
+                                hint="Whole rupees, as they described it. Leave blank if nobody put a figure on it."
+                                error={errors["opportunity.estimatedValueRupees"] ?? null}
+                              >
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={oppValue}
+                                  onChange={(e) => setOppValue(e.target.value)}
+                                  placeholder="₹"
+                                />
+                              </Field>
+                              <Field
+                                label="Expected order date (optional)"
+                                error={errors["opportunity.expectedOrderDate"] ?? null}
+                              >
+                                <Input
+                                  type="date"
+                                  value={oppDate}
+                                  min={today()}
+                                  onChange={(e) => setOppDate(e.target.value)}
+                                />
+                              </Field>
+                              <p className="text-[11px] text-muted">
+                                This is recorded against the customer and appears
+                                on their record. It does not create a lead — they
+                                are already a customer.
+                              </p>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+
                       <Field
                         label="Notes"
                         hint="Quick notes add to this - you can still edit or type your own."
@@ -2564,5 +3214,133 @@ function Stat({
         {children}
       </span>
     </span>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * A BLOCK OF CODED ANSWERS.
+ *
+ * Both "why did they ring" and "what does this outcome need" ask the same kind
+ * of question — a short list with one answer, or a line of text — and both are
+ * declared as data in `lib/call-reasons.ts` and `lib/call-outcomes.ts` rather
+ * than written out as JSX. This renders either.
+ *
+ * One renderer rather than two, because two would be two sets of bugs and one
+ * of them would draw `required` differently from the other — which is the
+ * failure this whole pair of modules exists to avoid: a box that is mandatory
+ * on the screen and optional in the rule, or the reverse.
+ * ------------------------------------------------------------------------- */
+function AnswerBlock({
+  heading,
+  fields,
+  answers,
+  onChange,
+  required,
+  errors,
+  errorPrefix,
+  name,
+  warnOn,
+}: {
+  heading: string;
+  fields: ReasonField[];
+  answers: Record<string, string>;
+  onChange: (key: string, value: string) => void;
+  /** Where required-ness depends on the other answers. Defaults to the flag. */
+  required?: (f: ReasonField) => boolean;
+  errors: Record<string, string>;
+  errorPrefix: string;
+  /** Radio groups need a name unique to the block, or two blocks share one. */
+  name: string;
+  /** One answer worth saying something about BEFORE it is saved. */
+  warnOn?: { key: string; value: string; text: string };
+}) {
+  return (
+    <div className="mb-3.5">
+      {heading ? (
+        <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+          {heading}
+        </span>
+      ) : null}
+      <div className="mt-1.5 flex flex-col gap-3">
+        {fields.map((f) => {
+          const value = answers[f.key] ?? "";
+          const must = required ? required(f) : Boolean(f.required);
+          const set = (v: string) => onChange(f.key, v);
+          return (
+            <div key={f.key}>
+              <Field
+                label={must ? f.label : `${f.label} (optional)`}
+                hint={f.hint}
+                error={errors[`${errorPrefix}.${f.key}`] ?? null}
+              >
+                {f.kind === "yesno" ? (
+                  <div className="flex items-center gap-4">
+                    <Radio
+                      name={`${name}-${f.key}`}
+                      label="No"
+                      checked={value !== "yes"}
+                      onChange={() => set("no")}
+                    />
+                    <Radio
+                      name={`${name}-${f.key}`}
+                      label="Yes"
+                      checked={value === "yes"}
+                      onChange={() => set("yes")}
+                    />
+                  </div>
+                ) : f.kind === "choice" ? (
+                  /* A short list is buttons and a long one is a dropdown.
+                     Ten reasons as ten buttons is a wall a telecaller reads
+                     mid-call; four is a row they tap without reading. */
+                  (f.options ?? []).length <= 5 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {(f.options ?? []).map((o) => (
+                        <button
+                          key={o.code}
+                          type="button"
+                          aria-pressed={value === o.code}
+                          onClick={() => set(o.code)}
+                          className={cx(
+                            "h-8 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                            value === o.code
+                              ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                              : "border-line bg-surface text-body hover:border-brand",
+                          )}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <Select value={value} onChange={(e) => set(e.target.value)}>
+                      <option value="">Choose one</option>
+                      {(f.options ?? []).map((o) => (
+                        <option key={o.code} value={o.code}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </Select>
+                  )
+                ) : f.kind === "date" ? (
+                  <Input
+                    type="date"
+                    value={value}
+                    min={today()}
+                    onChange={(e) => set(e.target.value)}
+                  />
+                ) : (
+                  <Input value={value} onChange={(e) => set(e.target.value)} />
+                )}
+              </Field>
+              {warnOn && warnOn.key === f.key && value === warnOn.value ? (
+                <p className="mt-1.5 rounded-[4px] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-warn-ink">
+                  {warnOn.text}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

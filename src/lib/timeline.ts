@@ -115,6 +115,16 @@ export const CRM_EVENT = {
    * the app that wrote it is the CRM whoever pressed the button was in.
    */
   ownerChange: "owner_change",
+  /**
+   * A sales opportunity somebody spotted on a call.
+   *
+   * `call_opportunities` has no screen of its own to be worked on yet, and
+   * this is what stops that being a record nobody can see: the opportunity
+   * lands on the customer record, where the next person to read the account
+   * finds it. The row is still the truth — this points back at it, like every
+   * other entry in this table.
+   */
+  opportunity: "sales_opportunity",
 } as const;
 
 /**

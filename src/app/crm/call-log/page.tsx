@@ -82,6 +82,9 @@ export default async function QueuePage() {
         creditTermDays: r.creditTermDays,
         targetGap: r.targetGap,
         openComplaint: r.openComplaint,
+        /* The queue's own ladder count, so the panel can say which attempt a
+           No Answer is without counting it a second time. */
+        noAnswerCount: r.noAnswerCount,
       } satisfies CallTarget,
     ]),
   );
