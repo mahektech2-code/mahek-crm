@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { cache } from "react";
-import { and, asc, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -619,6 +619,25 @@ export type BillFilters = {
    */
   openOnly?: boolean;
   /**
+   * The oldest bill date worth having, as `YYYY-MM-DD`.
+   *
+   * A WINDOW rather than the financial year above, because MBOS asks for a
+   * rolling one: "this financial year" on a handset has to keep working on the
+   * 2nd of April, and a year filter answers that with two bills. Deliberately
+   * not the same knob — a year is a thing somebody picks off a list, a window
+   * is a thing a payload is sized by.
+   */
+  from?: string;
+  /**
+   * Only bills touched since this instant, for a caller sending changes.
+   *
+   * A bill's row moves when a receipt against it is confirmed, which is what
+   * makes this usable as a delta at all. It is only honest where the caller
+   * asks for EVERY bill in a window: with `openOnly` a bill can leave the set
+   * by being settled, and a row that has left carries no cursor to say so.
+   */
+  updatedSince?: Date;
+  /**
    * A SET of customers, for a caller that has already worked out which.
    *
    * `customerId` answers "this one shop", which is what every screen asks.
@@ -697,6 +716,8 @@ export async function listBills(filters?: BillFilters, context?: RequestScope) {
         filters?.openOnly
           ? sql`${bills.amount} > ${bills.paidAmount}`
           : undefined,
+        filters?.from ? gte(bills.billDate, filters.from) : undefined,
+        filters?.updatedSince ? gt(bills.updatedAt, filters.updatedSince) : undefined,
       ),
     )
     .orderBy(desc(bills.billDate));
@@ -724,6 +745,10 @@ export async function listBills(filters?: BillFilters, context?: RequestScope) {
       bucket: agingBucket(overdueDays, config),
       status: b.status,
       disputed: b.disputed,
+      /* The order this bill was raised against. A bill IS the order here — see
+         AGENTS.md — so this is the only way to what was actually on it. */
+      orderId: b.orderId,
+      updatedAt: b.updatedAt,
       /*
        * Whether anybody has said this bill was paid or is owed.
        *

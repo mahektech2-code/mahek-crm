@@ -12,7 +12,7 @@ import {
 } from "../lead-labels";
 import { asDate } from "../business-date";
 import { orderCountsSql } from "../order-status";
-import { managerScope, onlyMine } from "./sales-service";
+import { leadsVisible, managerScope, onlyMine } from "./sales-service";
 
 /* ---------------------------------------------------------------------------
  * Every read the funnel's OFFICE end makes.
@@ -158,7 +158,7 @@ export async function verificationQueue(
      where ${STILL_WORKING}
        and c.lead_stage = 'prospect'
        and c.lead_verified_at is null
-       ${onlyMine(scope, "c.owner_id")}
+       ${leadsVisible(scope)}
   `;
 
   const [rows, counts] = await Promise.all([
@@ -256,7 +256,7 @@ export async function leadFunnel(): Promise<FunnelByType[]> {
       from customers c
      where c.lead_stage is not null
        and c.lead_archived = false
-       ${onlyMine(scope, "c.owner_id")}
+       ${leadsVisible(scope)}
      group by 1, 2
   `);
 
@@ -359,7 +359,7 @@ export async function leadsWithoutNextAction(
          or c.lead_next_action_owner_id is null
          or (c.lead_next_action_date < ${day}::date and c.lead_next_action_outcome is null)
        )
-       ${onlyMine(scope, "c.owner_id")}
+       ${leadsVisible(scope)}
   `;
 
   const [rows, counts] = await Promise.all([
@@ -494,7 +494,7 @@ export async function appointmentQueue(): Promise<AppointmentRow[]> {
      where a.type = 'distributor_appointment'
        and a.state = 'pending'
        and a.subject_type = 'customers'
-       ${onlyMine(scope, "c.owner_id")}
+       ${leadsVisible(scope)}
      order by a.step_index asc, a.requested_at asc, a.id asc
      limit 200
   `) as unknown as AppointmentRow[];
@@ -1074,7 +1074,7 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
       left join distributor_profiles dp on dp.customer_id = c.id
      where c.id = ${customerId}
        and c.lead_stage is not null
-       ${onlyMine(scope, "c.owner_id")}
+       ${leadsVisible(scope)}
      limit 1
   `)) as unknown as LeadRecord[];
 

@@ -80,12 +80,11 @@ export async function GET(request: Request) {
      decision. */
   const config = await getConfig();
   const pins = await shopPins({
+    /* EVERY status and every kind, which is not this route's decision to
+       make: `shopPins` stopped filtering in SQL at all — a map that quietly
+       omits three quarters of the pins is one somebody plans a day from and
+       is wrong. What this route narrows is WHERE, and nothing else. */
     near: { centres, radiusKm: config["mbos.location.nearbyBookRadiusKm"] },
-    /* EVERY status. This screen is not a census of the live book — it is
-       what a salesman is passing, and a dormant shop two streets away is
-       the most useful pin on it. A closed account is drawn grey rather
-       than hidden; see `book-pins.tsx`. */
-    includeClosed: true,
   });
 
   return NextResponse.json(

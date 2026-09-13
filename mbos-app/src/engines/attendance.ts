@@ -140,7 +140,7 @@ export function deriveStatus(inputs: AttendanceInputs): AttendanceResult {
       ? 'A session was never closed, so nothing counts yet — regularize it and the day will recalculate.'
       : workedMinutes > 0
         ? `Only ${describe(workedMinutes)} logged.`
-        : 'No check-in on record.',
+        : 'No punch-in on record.',
   };
 }
 

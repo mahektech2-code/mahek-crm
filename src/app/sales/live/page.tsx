@@ -49,8 +49,8 @@ export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };
  * down from here: this page re-runs every thirty seconds while somebody
  * watches it, and the shops do not move.
  *
- * The trail is a fix every few minutes between the check-in and the check-out;
- * the check-in and each visit leave one apiece regardless, so somebody whose
+ * The trail is a fix every few minutes between the punch-in and the punch-out;
+ * the punch-in and each visit leave one apiece regardless, so somebody whose
  * tracking is off or whose permission was refused still appears. The time shown
  * is the time of the fix and never "now" — somebody who checked in at nine and
  * has had no signal since reads as nine o'clock, which is the honest thing.
@@ -132,7 +132,7 @@ export default async function Page({
      phones whose trail has holes, and these are phones that have not produced
      one. It is asked only of TODAY — "checked in 4 hr ago" measured against
      this afternoon's clock says nothing whatever about a Tuesday in March, and
-     a day left open by a forgotten check-out would read as a fault for ever. */
+     a day left open by a forgotten punch-out would read as a fault for ever. */
   const deadTrail = isToday
     ? rows.filter(
         (r) =>
@@ -211,7 +211,7 @@ export default async function Page({
         <Banner
           tone="warn"
           title="Following the route is switched off"
-          body="No handset is reporting its position, so the only fixes here are the ones a check-in and each visit leave behind — a handful a day. Turn it on in the field settings if you want the shape of the day. Either way it runs only between a check-in and a check-out."
+          body="No handset is reporting its position, so the only fixes here are the ones a punch-in and each visit leave behind — a handful a day. Turn it on in the field settings if you want the shape of the day. Either way it runs only between a punch-in and a punch-out."
         />
       ) : noSignal.length ? (
         <Banner
@@ -237,7 +237,7 @@ export default async function Page({
         <Banner
           tone="danger"
           title={`${plural(deadTrail.length, "salesman", "salesmen")} out today with no trail at all`}
-          body="Checked in, the handset reporting, and not one position recorded since — which is the tracking service on the phone rather than a signal problem, however long the row underneath says it has been quiet. Their Location permission is usually correct and worth nothing here: these handsets start the service properly and then kill it, so the fix is to allow MahekOne to autostart and set its battery usage to unrestricted, in the phone's own battery settings, then check out and back in. Each row says how long the man has been out, and names the permission itself only where that is also wrong."
+          body="Punched in, the handset reporting, and not one position recorded since — which is the tracking service on the phone rather than a signal problem, however long the row underneath says it has been quiet. Their Location permission is usually correct and worth nothing here: these handsets start the service properly and then kill it, so the fix is to allow MahekOne to autostart and set its battery usage to unrestricted, in the phone's own battery settings, then punch out and back in. Each row says how long the man has been out, and names the permission itself only where that is also wrong."
         />
       ) : null}
 
@@ -270,7 +270,7 @@ export default async function Page({
 
       <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">
         {tracking
-          ? `A handset reports its position about every ${everyWords} while the day is open, and stops at the check-out. `
+          ? `A handset reports its position about every ${everyWords} while the day is open, and stops at the punch-out. `
           : ""}
         {isToday
           ? out.length

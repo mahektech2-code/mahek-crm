@@ -6,16 +6,6 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { ProspectPin, ShopPin } from "@/lib/services/sales-service";
 import { pinIndustryInfo } from "@/lib/field-customer-pin-labels";
 import {
-  BOOK_PIN_COLOUR,
-  BOOK_PIN_COLOUR_EXPRESSION,
-  BOOK_PIN_LABEL,
-  bookPinLabel,
-  bookPinTone,
-  countByTone,
-  shortPinName,
-  type BookPinTone,
-} from "../book-pins";
-import {
   OlaMapsStyleSwitcher,
   olaMapsStyleUrl,
   olaMapsTransformRequest,
@@ -34,18 +24,11 @@ import { CustomerQuickView } from "../customer-quick-view";
  * instances quietly disagreeing about how to authenticate is worse than one
  * shared answer.
  *
- * Two layers. The book is every account with a coordinate — clustered, since
- * it can be a few thousand points — coloured by what each account IS: a
- * direct customer, a lead, or a shop somebody else bills. Those three
- * colours are `../book-pins.tsx`'s, shared with the Live map, because which
- * colour a lead is drawn in is not a fact either map owns. Prospects are
- * field-collected pins that never matched an existing customer: a shop the
- * team has found, not one MahekOne has a record of, drawn hollow so the two
- * are never mistaken for each other at a glance.
- *
- * LEADS ARRIVED LATE HERE. `shopPins` filtered to `kind = 'customer'`, so a
- * lead somebody had stood in front of and pinned was on no map at all — see
- * that function's own note.
+ * Two layers. Shops are real customers with a coordinate — clustered, since
+ * the whole book can be a few thousand points. Prospects are field-collected
+ * pins that never matched an existing customer: a shop the team has found,
+ * not one MahekOne has a record of, drawn hollow so the two are never
+ * mistaken for each other at a glance.
  *
  * A shop pin opens `customer-quick-view.tsx` — a real record, so it gets the
  * record, read through `/api/sales/customer-quick-view` from the same two
@@ -57,6 +40,35 @@ import { CustomerQuickView } from "../customer-quick-view";
  */
 
 const MAX_FIT_ZOOM = 15;
+
+/**
+ * A PIN'S COLOUR SAYS WHAT THE SHOP IS, and it is one expression rather than
+ * three.
+ *
+ * The map used to draw one thing — an active customer — because everything
+ * else was filtered out in SQL, where nobody could see it had been. Now that
+ * leads and closed shops are here, drawing them all alike would be the same
+ * error wearing different clothes: a manager reading coverage off this map
+ * would count a deactivated shop and a lead that has never ordered as trade.
+ *
+ * Closed wins over kind, because "this shop is shut" is the thing that changes
+ * what somebody does with it. `approximate` is unchanged and still hollows the
+ * fill — a geocode is a locality centre, not a doorway — so a hollow teal pin
+ * reads as "a lead, somewhere near here", which is exactly what it is.
+ */
+const PIN_CUSTOMER = "#5223E0";
+const PIN_LEAD = "#0E7C6B";
+const PIN_CLOSED = "#8A8F98";
+
+const PIN_TONE: maplibregl.ExpressionSpecification = [
+  "case",
+  ["get", "closed"], PIN_CLOSED,
+  ["==", ["get", "kind"], "lead"], PIN_LEAD,
+  PIN_CUSTOMER,
+];
+
+/** `active` is open for business; everything else is shut in some way. */
+const isClosed = (status: string) => status !== "active";
 
 const TONE_COLOUR: Record<string, string> = {
   positive: "#2E7D32",
@@ -81,10 +93,42 @@ export function ShopMap({
   const [failed, setFailed] = React.useState(false);
   const [showShops, setShowShops] = React.useState(true);
   const [showProspects, setShowProspects] = React.useState(true);
+  /*
+   * WHAT IS DRAWN, and every one of them starts ON.
+   *
+   * The filtering used to happen in SQL, so a manager could not find out that
+   * three quarters of the pinned shops were missing — there was no control to
+   * notice, no count to compare against, and the map simply looked like the
+   * whole book. Here it is a control with the numbers on it: turning a kind
+   * off is a decision somebody made and can undo, and the default shows
+   * everything the office holds a pin for.
+   */
+  const [filterOpen, setFilterOpen] = React.useState(false);
+  const [kindOn, setKindOn] = React.useState<Record<string, boolean>>({
+    customer: true,
+    lead: true,
+  });
+  const [statusOn, setStatusOn] = React.useState<Record<string, boolean>>({
+    active: true,
+    inactive: true,
+    deactivated: true,
+  });
   const [styleMode, setStyleMode] = React.useState<OlaMapsStyleMode>("map");
   const [selectedShopId, setSelectedShopId] = React.useState<string | null>(null);
 
-  const bookCounts = countByTone(shops);
+  /* An unknown kind or status is SHOWN rather than hidden. The two columns are
+     open vocabularies — a status nobody has taught this screen about would
+     otherwise vanish from the map the day it is added, which is the failure
+     this whole change exists to undo. */
+  const visibleShops = React.useMemo(
+    () => shops.filter((s) => kindOn[s.kind] !== false && statusOn[s.status] !== false),
+    [shops, kindOn, statusOn],
+  );
+
+  /* What the filter is keeping off the screen. Drawn on the button itself,
+     because a filter whose effect is only visible as an absence is the thing
+     that made this map unreadable before. */
+  const hidden = shops.length - visibleShops.length;
 
   const points: [number, number][] = [
     ...shops.map((s) => [s.lng, s.lat] as [number, number]),
@@ -204,20 +248,7 @@ export function ShopMap({
             cluster: true,
             clusterRadius: 40,
             clusterMaxZoom: 13,
-            data: {
-              type: "FeatureCollection",
-              features: shops.map((s) => ({
-                type: "Feature" as const,
-                properties: {
-                  shopId: s.id,
-                  approximate: s.approximate,
-                  tone: bookPinTone(s),
-                  shortName: shortPinName(s.name),
-                  label: bookPinLabel(s),
-                },
-                geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
-              })),
-            },
+            data: shopFeatures(visibleShops),
           });
           built.addLayer({
             id: "shops-clusters",
@@ -251,43 +282,13 @@ export function ShopMap({
                  the shop is certainly somewhere near here and this is not a
                  measurement of where it is. Filled and hollow says that
                  without a legend; drawing both alike would make a guess look
-                 like a fix taken in the doorway. WHICH colour it is filled or
-                 outlined in says what kind of account it is. */
-              "circle-color": [
-                "case",
-                ["get", "approximate"],
-                "#FFFFFF",
-                BOOK_PIN_COLOUR_EXPRESSION,
-              ] as unknown as maplibregl.ExpressionSpecification,
+                 like a fix taken in the doorway. */
+              "circle-color": ["case", ["get", "approximate"], "#FFFFFF", PIN_TONE],
               "circle-stroke-width": 2,
-              "circle-stroke-color": BOOK_PIN_COLOUR_EXPRESSION,
+              "circle-stroke-color": PIN_TONE,
             },
           });
-          /* The name, once the map is close enough for one to mean anything.
-             `text-optional` keeps the DOT when its label collides with a
-             neighbour's and MapLibre drops it — otherwise a dense lane would
-             take shops off the map to make room for words. */
-          built.addLayer({
-            id: "shops-labels",
-            type: "symbol",
-            source: "shops",
-            filter: ["!", ["has", "point_count"]],
-            minzoom: 13.5,
-            layout: {
-              "text-field": ["get", "shortName"],
-              "text-size": 10,
-              "text-anchor": "top",
-              "text-offset": [0, 0.7],
-              "text-optional": true,
-              "text-max-width": 9,
-            },
-            paint: {
-              "text-color": "#3A3F47",
-              "text-halo-color": "#FFFFFF",
-              "text-halo-width": 1.4,
-            },
-          });
-          for (const id of ["shops-clusters", "shops-cluster-count", "shops-points", "shops-labels"]) {
+          for (const id of ["shops-clusters", "shops-cluster-count", "shops-points"]) {
             built.setLayoutProperty(id, "visibility", showShops ? "visible" : "none");
           }
         }
@@ -387,9 +388,20 @@ export function ShopMap({
     setVisible("shops-clusters", showShops);
     setVisible("shops-cluster-count", showShops);
     setVisible("shops-points", showShops);
-    setVisible("shops-labels", showShops);
     setVisible("prospects-points", showProspects);
   }, [showShops, showProspects]);
+
+  /* The FILTER redraws the source rather than toggling layers, because a
+     cluster has to recount: hiding half the pins with a layer filter would
+     leave the cluster bubbles still claiming the old numbers, and the number
+     on a cluster is the whole reason it is there. */
+  React.useEffect(() => {
+    const built = map.current;
+    const source = built?.getSource("shops");
+    if (source && "setData" in source) {
+      (source as maplibregl.GeoJSONSource).setData(shopFeatures(visibleShops));
+    }
+  }, [visibleShops]);
 
   if (!apiKey) {
     return (
@@ -438,29 +450,24 @@ export function ShopMap({
       {/* Stacked below the style switcher rather than beside it — both anchored
           top-left reads as one cluster of map controls, and leaves MapLibre's
           own zoom control at top-right the width it needs. */}
-      <div className="absolute top-11 left-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap gap-x-3 gap-y-1.5 rounded-[6px] border border-line bg-surface/95 px-3 py-2 text-[12px] text-ink shadow-[0_1px_4px_rgba(22,22,22,0.15)]">
+      <div className="absolute top-11 left-2 z-10 flex gap-3 rounded-[6px] border border-line bg-surface/95 px-3 py-2 text-[12px] text-ink shadow-[0_1px_4px_rgba(22,22,22,0.15)]">
         <label className="flex cursor-pointer items-center gap-1.5">
           <input
             type="checkbox"
             checked={showShops}
             onChange={(e) => setShowShops(e.target.checked)}
           />
-          The book ({shops.length})
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: PIN_CUSTOMER }} />
+          {/* The number is what the filter is DOING, so it counts what is drawn
+              — and says what it is a slice of whenever those differ. A bare
+              "Shops (1,367)" beside a filter that had quietly removed 3,563 is
+              how this screen misled somebody in the first place. */}
+          Shops ({visibleShops.length.toLocaleString("en-IN")}
+          {visibleShops.length === shops.length
+            ? ""
+            : ` of ${shops.length.toLocaleString("en-IN")}`}
+          )
         </label>
-        {/* The three types, each with its own count. One swatch reading
-            "Shops" said nothing about the two thirds of this map that are not
-            direct customers. */}
-        {(["customer", "lead", "third", "closed"] as BookPinTone[])
-          .filter((tone) => bookCounts[tone] > 0)
-          .map((tone) => (
-            <span key={tone} className="flex items-center gap-1.5 text-muted">
-              <span
-                className="inline-block h-2.5 w-2.5 rounded-full"
-                style={{ background: BOOK_PIN_COLOUR[tone] }}
-              />
-              {BOOK_PIN_LABEL[tone]} ({bookCounts[tone]})
-            </span>
-          ))}
         <label className="flex cursor-pointer items-center gap-1.5">
           <input
             type="checkbox"
@@ -473,10 +480,154 @@ export function ShopMap({
           />
           Prospects ({prospects.length})
         </label>
+
+        {/*
+          THE FILTER, and it is a dropdown because there are five boxes and the
+          strip it sits in is a legend rather than a control panel. Kept in the
+          same cluster as the two toggles beside it: they answer the same
+          question — what is on this map — and splitting them across two
+          corners would make one of them the one nobody finds.
+        */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setFilterOpen((v) => !v)}
+            aria-expanded={filterOpen}
+            className="flex cursor-pointer items-center gap-1 rounded-[4px] border border-line px-1.5 py-0.5 text-[12px] text-ink hover:bg-wash"
+          >
+            Filter
+            {hidden > 0 ? (
+              <span className="rounded-full bg-ink px-1.5 text-[10px] leading-[15px] text-surface">
+                {hidden.toLocaleString("en-IN")} hidden
+              </span>
+            ) : null}
+            <span aria-hidden>{filterOpen ? "▴" : "▾"}</span>
+          </button>
+
+          {filterOpen ? (
+            <div className="absolute top-6 left-0 z-20 w-[220px] rounded-[6px] border border-line bg-surface p-2 shadow-[0_2px_8px_rgba(22,22,22,0.18)]">
+              <p className="px-1 pb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
+                Kind
+              </p>
+              {KINDS.map((k) => (
+                <FilterBox
+                  key={k.key}
+                  label={k.label}
+                  swatch={k.swatch}
+                  count={shops.filter((s) => s.kind === k.key).length}
+                  checked={kindOn[k.key] !== false}
+                  onChange={(on) => setKindOn((prev) => ({ ...prev, [k.key]: on }))}
+                />
+              ))}
+              <p className="mt-2 px-1 pb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
+                Status
+              </p>
+              {STATUSES.map((st) => (
+                <FilterBox
+                  key={st.key}
+                  label={st.label}
+                  swatch={st.key === "active" ? null : PIN_CLOSED}
+                  count={shops.filter((s) => s.status === st.key).length}
+                  checked={statusOn[st.key] !== false}
+                  onChange={(on) => setStatusOn((prev) => ({ ...prev, [st.key]: on }))}
+                />
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  setKindOn({ customer: true, lead: true });
+                  setStatusOn({ active: true, inactive: true, deactivated: true });
+                }}
+                className="mt-2 w-full cursor-pointer rounded-[4px] border border-line px-2 py-1 text-[12px] text-ink hover:bg-wash"
+              >
+                Show everything
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
       <CustomerQuickView customerId={selectedShopId} onClose={() => setSelectedShopId(null)} />
     </Frame>
   );
+}
+
+/**
+ * WHAT CAN BE FILTERED, named once.
+ *
+ * Written out rather than derived from the rows on screen, so a box does not
+ * appear and disappear as the data changes underneath it — a filter that loses
+ * an option the moment nothing matches it is one somebody cannot use to find
+ * out that nothing matches it.
+ */
+const KINDS = [
+  { key: "customer", label: "Customers", swatch: PIN_CUSTOMER },
+  { key: "lead", label: "Leads", swatch: PIN_LEAD },
+] as const;
+
+const STATUSES = [
+  { key: "active", label: "Active" },
+  { key: "inactive", label: "Inactive" },
+  { key: "deactivated", label: "Deactivated" },
+] as const;
+
+/** One row of the filter: a box, a swatch where the colour means something,
+ *  the label, and how many there are. The count is of the WHOLE book rather
+ *  than of what is drawn — it is what somebody is deciding whether to turn on. */
+function FilterBox({
+  label,
+  swatch,
+  count,
+  checked,
+  onChange,
+}: {
+  label: string;
+  swatch: string | null;
+  count: number;
+  checked: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-1.5 rounded-[4px] px-1 py-1 text-[12px] text-ink hover:bg-wash">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      {swatch ? (
+        <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: swatch }} />
+      ) : (
+        <span className="inline-block h-2.5 w-2.5" />
+      )}
+      <span className="flex-1">{label}</span>
+      <span className="text-muted">{count.toLocaleString("en-IN")}</span>
+    </label>
+  );
+}
+
+/**
+ * The pins as GeoJSON. ONE builder, used by the first paint and by every
+ * change of the filter — two copies would drift, and the half that drifts is
+ * the one somebody is looking at.
+ *
+ * `closed` is computed here rather than sent as a boolean from the server so
+ * that the raw status survives onto the row for the label: "shut" is what the
+ * map needs to draw and "deactivated" is what a person needs to read.
+ */
+function shopFeatures(list: ShopPin[]): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: list.map((s) => ({
+      type: "Feature" as const,
+      properties: {
+        shopId: s.id,
+        approximate: s.approximate,
+        kind: s.kind,
+        closed: isClosed(s.status),
+        label:
+          `${s.name} · ${s.city}${s.salesmanName ? ` · ${s.salesmanName}` : ""}` +
+          (s.kind === "lead" ? " · lead" : "") +
+          (isClosed(s.status) ? ` · ${s.status}` : "") +
+          (s.approximate ? " · approximate, from the address" : ""),
+      },
+      geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
+    })),
+  };
 }
 
 /** Same frame shape as the Live map's, so the two read as one family of screen. */

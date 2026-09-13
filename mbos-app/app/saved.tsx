@@ -9,6 +9,7 @@ import { useCustomer, useStore } from '../src/state/store';
 import { plural, pretty } from '../src/lib/format';
 import { OUTCOMES } from '../src/data/fixtures';
 import { pendingCount } from '../src/sync/queue';
+import { nextStop } from '../src/data/journey';
 
 /**
  * The receipt for a visit.
@@ -51,6 +52,30 @@ export default function Saved() {
    * finished yet" is never a lie about a visit written a second ago, and green
    * would be.
    */
+  /*
+   * Whether there is a route to go back to. Null while it is being read, and
+   * read as "no route" until it answers — the Customers list is the answer
+   * that is never wrong, only sometimes longer than it needs to be, and a
+   * button that changed its own label a beat after the screen opened would be
+   * worse than either.
+   */
+  const [hasRoute, setHasRoute] = React.useState(false);
+  React.useEffect(() => {
+    let live = true;
+    /* `nextStop` and not a count: what makes this button worth pressing is a
+       stop still to walk to, and a route whose every stop is done sends him
+       back to a screen with nothing on it. It is the same definition the route
+       screen's own Next-stop card uses, so the two cannot disagree. */
+    void nextStop()
+      .then((stop) => {
+        if (live) setHasRoute(!!stop);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
+
   const [queued, setQueued] = React.useState(true);
   React.useEffect(() => {
     let live = true;
@@ -111,9 +136,19 @@ export default function Saved() {
           ))}
         </View>
 
+        {/*
+          THE NEXT VISIT IS PLANNED FROM THE ROUTE, where there is one.
+          This always went to the Customers list — the whole book, A to Z —
+          which is the right answer for a walk-in and the wrong one for a man
+          working a route he agreed on Sunday: his next stop is already chosen,
+          and he was being asked to find it again among two thousand shops. The
+          label says which screen it opens, because "Next stop" meaning two
+          different destinations on two different days is how somebody learns
+          not to trust a button.
+        */}
         <PrimaryButton
-          label="Next stop"
-          onPress={() => router.replace('/customers')}
+          label={hasRoute ? 'Next stop on your route' : 'Pick the next shop'}
+          onPress={() => router.replace(hasRoute ? '/journey' : '/customers')}
           style={{ marginTop: 16, borderRadius: radius.sm }}
         />
         <Pressable

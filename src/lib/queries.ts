@@ -423,6 +423,21 @@ export type CustomerListFilters = {
   salesManager?: string;
   backOfficeAm?: string;
   /**
+   * WHERE THE SHOP IS, as `customers.city` literally holds it — never a
+   * cleaned or canonical place name.
+   *
+   * The column is whatever the sheet typed, which on the real book is several
+   * hundred values, a good many of them whole postal addresses offered as a
+   * city. Matching on the stored string is the only thing that can be exactly
+   * right: normalising here would filter on a value no row contains, and a
+   * filter that quietly returns nothing is worse than one that offers an ugly
+   * option. `listCityFilterOptions` returns the same strings, so what is
+   * picked is always something the column actually says.
+   *
+   * `,`-separated for more than one, like every multi-value field here.
+   */
+  city?: string;
+  /**
    * "yes" for accounts marked as shops we deliver to, "no" for the rest, and
    * "delivered" for the ones the sheet shows receiving goods — whether or not
    * anybody has marked them yet. The third is the one that makes the marking
@@ -565,6 +580,65 @@ export const RELATIONSHIP_OWNER_NAME_SQL = sql<string | null>`(
  * Scoped like the list itself, so a telecaller is not shown the names of
  * people whose accounts they cannot see.
  */
+/**
+ * The city exactly as the filter compares it: trimmed, and an empty string
+ * where the column is blank.
+ *
+ * One expression, read by both the clause and the options list, so a value
+ * offered in the dropdown is by construction a value the WHERE can match. Two
+ * spellings of this — a `btrim` on one side and a bare column on the other —
+ * is a filter that silently returns nothing for every city stored with a
+ * trailing space.
+ */
+const CITY_FILTER_SQL = sql<string>`coalesce(btrim(customers.city), '')`;
+
+/**
+ * EVERY CITY IN THE SCOPED BOOK, read on each page load.
+ *
+ * Not a stored list and not a fixed one: shops arrive from the sheet with new
+ * spellings constantly, so a hardcoded set of cities would be stale the first
+ * time somebody imported a district. This is a `group by` over the book the
+ * reader can already see — so it costs one indexed aggregate and is right at
+ * the moment the page renders, which is the freshness a filter needs.
+ *
+ * ORDERED BY HOW MANY SHOPS, biggest first, then alphabetically. This column
+ * is whatever the sheet typed — several hundred values on the real book, many
+ * of them whole postal addresses offered as a city, one of them 80 characters
+ * of "06, MAHADEV TOWERS CO-OP HSG SOC, LTD, LBS MARG, …" — and alphabetical
+ * order buries Thane and Nagpur somewhere in the middle of that. Frequency
+ * puts the places somebody actually means at the top and the long tail below,
+ * which is the same reasoning `knownPlaces` follows on the handset, for the
+ * same column.
+ *
+ * The count rides in the label because otherwise the ordering looks arbitrary:
+ * a list that is neither alphabetical nor explained reads as unsorted.
+ *
+ * A BLANK CITY IS AN OPTION, not a gap. Shops with nothing in the column are
+ * real and are exactly who somebody is looking for when they ask which of the
+ * book has no address — dropping them would make a filter that cannot reach
+ * them, and the count at the top of the screen would never add up.
+ */
+export async function listCityFilterOptions(): Promise<
+  { value: string; label: string }[]
+> {
+  const ctx = await resolveScope();
+  const scoped = scopedToUsers(scopedUserIds(ctx.scope));
+
+  const rows = await db
+    .select({ city: CITY_FILTER_SQL, shops: sql<number>`count(*)::int` })
+    .from(customers)
+    .where(scoped)
+    .groupBy(CITY_FILTER_SQL)
+    .orderBy(sql`count(*) desc`, CITY_FILTER_SQL);
+
+  return rows.map((r) => ({
+    value: r.city,
+    label: r.city
+      ? `${r.city} (${r.shops})`
+      : `No city recorded (${r.shops})`,
+  }));
+}
+
 export async function listAmFilterOptions(): Promise<{
   sales: string[];
   salesManager: string[];
@@ -626,9 +700,29 @@ export async function customerFilterClause(
 ): Promise<SQL | undefined> {
   const ctx = await resolveScope();
   const scoped = scopedToUsers(scopedUserIds(ctx.scope));
+  const picked = customerFiltersOnly(filters);
+  if (!scoped) return picked;
+  return picked ? and(scoped, picked) : scoped;
+}
 
+/**
+ * The same five filters, and NOT the scope.
+ *
+ * Every caller above wants both, which is why they are welded together there.
+ * The Monthly Targets shortfall wants one: `targetVisibilityClause` is that
+ * screen's own answer to who may see a target, and it is deliberately WIDER
+ * than `scopedToUsers` by one seat — a sales manager has no other way to find
+ * the accounts they are named on. ANDing the two narrows back to the
+ * intersection, which silently takes that seat away again, on the screen the
+ * seat was added for.
+ *
+ * So what is shared is the reading of the five filters, which is the part that
+ * would drift if it were typed twice, and each caller states its own scope.
+ */
+export function customerFiltersOnly(
+  filters: CustomerListFilters = {},
+): SQL | undefined {
   const where: SQL[] = [];
-  if (scoped) where.push(scoped);
 
   const q = filters.query?.trim();
   if (q) {
@@ -653,6 +747,12 @@ export async function customerFilterClause(
   }
   if (filters.backOfficeAm) {
     where.push(inListOrUnassigned(BACK_OFFICE_AM_NAME_SQL, filters.backOfficeAm));
+  }
+  if (filters.city) {
+    // `inList` and not `inListOrUnassigned`: an empty city is real on this
+    // book and is offered as its own option, so it is matched by the value
+    // rather than by a null branch — see `listCityFilterOptions`.
+    where.push(inList(CITY_FILTER_SQL, filters.city));
   }
   if (filters.thirdParty) {
     // Several of these are structurally different queries, not different
@@ -1111,6 +1211,25 @@ function timelineBranch(kind: TimelineKind, customerId: string): SQL {
                nullif(concat_ws(' · ', c.connection_status, c.outcome), '') as meta
           from calls c join users u on u.id = c.user_id
          where c.customer_id = ${customerId}`;
+    case "Opportunity":
+      return sql`
+        select o.id, 'Opportunity' as kind, o.created_at as at, u.name as actor,
+               concat('Opportunity: ', o.product) as content,
+               -- Every part is optional and the row says only what was
+               -- answered. A blank estimate is nobody having put a figure on
+               -- it, which is not zero, so it is left out rather than printed
+               -- as ₹0 — which reads as an opportunity judged worthless.
+               nullif(concat_ws(' · ',
+                 o.estimated_quantity,
+                 case when o.estimated_value_paise is not null
+                   then concat('₹', to_char(round(o.estimated_value_paise / 100.0), 'FM9G99G99G999'))
+                 end,
+                 case when o.expected_order_date is not null
+                   then concat('expected ', to_char(o.expected_order_date, 'DD Mon'))
+                 end
+               ), '') as meta
+          from call_opportunities o join users u on u.id = o.user_id
+         where o.customer_id = ${customerId}`;
     case "WhatsApp":
       return sql`
         select m.id, 'WhatsApp', coalesce(m.confirmed_sent_at, m.sent_at, m.prepared_at),
@@ -1289,6 +1408,7 @@ export async function customerTimelineCounts(
   const [row] = await db.execute<Record<string, number>>(sql`
     select
       (select count(*)::int from calls where customer_id = ${customerId}) as "Call",
+      (select count(*)::int from call_opportunities where customer_id = ${customerId}) as "Opportunity",
       (select count(*)::int from wa_messages where customer_id = ${customerId}) as "WhatsApp",
       (select count(*)::int from orders where customer_id = ${customerId}) as "Order",
       (select count(*)::int from reminders where customer_id = ${customerId}) as "Reminder",

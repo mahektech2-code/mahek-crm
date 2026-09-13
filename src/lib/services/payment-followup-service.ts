@@ -27,6 +27,7 @@ import { recomputeFollowUpState, today } from "../recompute";
 import { err, ok, type Result } from "../result";
 import { getFollowUpDetail, getPaymentFollowUpPlan } from "./payment-service";
 import { nextStepForCustomer } from "./queue-service";
+import { closeRemindersOnEvidence } from "./worklist-services";
 import type { NextStep } from "../engines/next-step";
 import { openBillsFor } from "./receipt-service";
 import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "../timeline";
@@ -401,6 +402,15 @@ export async function logPaymentFollowUp(
   const receiptId = id("rcp");
   const callId = id("ixn");
   const produced: string[] = [];
+  /*
+   * Promises this call CREATES, so the closure pass at the end of the
+   * transaction can leave them alone. An event must never close the reminder
+   * it just wrote: the customer would drop off the list on the spot, with a
+   * next step everybody believes in and nothing chasing it.
+   */
+  const createdReminderIds: string[] = [];
+  /** And promises this call SETTLED, for the sentence the telecaller reads. */
+  let remindersClosed = 0;
   const now = new Date();
   const notes =
     input.notes?.trim() ||
@@ -470,8 +480,10 @@ export async function logPaymentFollowUp(
         dayBoundaryHour: config["workingDay.dayBoundaryHour"],
         workingDays: config["workingDay.workingDays"],
       });
+      const promiseReminderId = id("rem");
+      createdReminderIds.push(promiseReminderId);
       await tx.insert(reminders).values({
-        id: id("rem"),
+        id: promiseReminderId,
         customerId: input.customerId,
         createdByUserId: ctx.user.id,
         assignedUserId: ctx.user.id,
@@ -488,8 +500,10 @@ export async function logPaymentFollowUp(
 
     /* ---- a callback the customer asked for ---- */
     if (input.outcome === "callback" && input.date) {
+      const callbackReminderId = id("rem");
+      createdReminderIds.push(callbackReminderId);
       await tx.insert(reminders).values({
-        id: id("rem"),
+        id: callbackReminderId,
         customerId: input.customerId,
         createdByUserId: ctx.user.id,
         assignedUserId: ctx.user.id,
@@ -619,6 +633,27 @@ export async function logPaymentFollowUp(
       .set({ lastContactDate: day, lastCallDate: day, updatedAt: now })
       .where(eq(customers.id, input.customerId));
 
+    /* ---- the promises this call settles ---- */
+    /*
+     * The collections panel logs a `calls` row exactly as the call drawer
+     * does, so a promise due today is closed by it on the same rule and
+     * through the same engine — see `lib/engines/reminder-closure.ts`.
+     * A collections call that reached nobody closes nothing: `noanswer` is the
+     * one outcome here that is not a conversation.
+     *
+     * The money reported on a `paid` outcome is deliberately NOT treated as
+     * the payment event. It is a claim until accounts find it in the bank, and
+     * a promise closed on the customer's own word about money is the manual
+     * button with extra steps. `confirmReceipt` closes it when they do.
+     */
+    remindersClosed = await closeRemindersOnEvidence(tx, {
+      customerId: input.customerId,
+      event: { kind: "call", on: day, answered: input.outcome !== "noanswer" },
+      sourceId: callId,
+      actorId: ctx.user.id,
+      exclude: createdReminderIds,
+    });
+
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
@@ -630,6 +665,7 @@ export async function logPaymentFollowUp(
         amount: amountPaise || null,
         date: input.date ?? null,
         produced,
+        remindersClosed,
       } as never,
     });
   });
@@ -689,10 +725,12 @@ export async function logPaymentFollowUp(
   }
 
   return ok(
-    { attemptId, produced, cleared: !after, nextStep: step },
+    { attemptId, produced, cleared: !after, remindersClosed, nextStep: step },
     input.outcome === "paid"
       ? `Recorded — ${customer.name} will not be chased for it while accounts confirm it`
-      : "Follow-up logged",
+      : remindersClosed
+        ? `Follow-up logged - ${remindersClosed} reminder${remindersClosed === 1 ? "" : "s"} closed`
+        : "Follow-up logged",
   );
 }
 

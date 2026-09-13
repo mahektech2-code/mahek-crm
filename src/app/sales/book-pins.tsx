@@ -55,10 +55,21 @@ export function bookPinTone(row: {
  * teal are far enough apart in hue to survive being read at four pixels on a
  * pale street map, which is the size these are actually drawn at.
  */
+/*
+ * THE SAME THREE VALUES `territory/shop-map.tsx` USES, and they have to be.
+ *
+ * That map defines `PIN_CUSTOMER`, `PIN_LEAD` and `PIN_CLOSED` for its own
+ * filter expression, and two screens disagreeing about what colour a lead is
+ * drawn in is worse than either choice — a manager reading the Live map and
+ * the Territory map in one afternoon would be shown one shop two ways. The
+ * lead teal is taken from there rather than chosen here. Third-party is this
+ * map's alone: Territory colours by kind and closedness, and has no case for
+ * it, so the amber is unclaimed.
+ */
 export const BOOK_PIN_COLOUR: Record<BookPinTone, string> = {
   customer: "#5223E0",
-  lead: "#E07B00",
-  third: "#00868C",
+  lead: "#0E7C6B",
+  third: "#E07B00",
   /* The same grey a checked-out salesman's marker carries on the Live map:
      present, recorded, not live. */
   closed: "#8A8F98",
