@@ -925,6 +925,13 @@
       "when": 1789066156865,
       "tag": "0132_the_complaint_vocabulary",
       "breakpoints": true
+    },
+    {
+      "idx": 133,
+      "version": "7",
+      "when": 1789066157865,
+      "tag": "0133_stop_scanning_the_audit_log",
+      "breakpoints": true
     }
   ]
 }
