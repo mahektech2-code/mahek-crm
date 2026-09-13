@@ -1,5 +1,12 @@
 import "server-only";
 import { bandFor, type HealthBand } from "../engines/inactivity";
+import {
+  splitFilter,
+  UNASSIGNED,
+  type FilterOption,
+  type LeadFilters,
+} from "../lead-filters";
+import { stageLabel, type LeadStage } from "../lead-labels";
 import type { BusinessDate } from "../business-date";
 import { cache } from "react";
 import { sql } from "drizzle-orm";
@@ -150,6 +157,37 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
 
   return { national: false, regions, salesmanIds: men.map((m) => m.id) };
 });
+
+/**
+ * WHICH LEADS A MANAGER MAY SEE — `onlyMine` plus the ones nobody holds.
+ *
+ * `onlyMine` renders `owner_id in (…)`, and `in` NEVER MATCHES NULL. On a book
+ * where every lead has an owner that is the same list either way; on this one
+ * it hid 3,265 of 3,776 leads from every regional manager in the company —
+ * 86% of the lead book, invisible on the one screen that exists to get leads
+ * assigned, with the count on the desk card above the table saying "nobody is
+ * working these" and the table beneath it showing none of them.
+ *
+ * They cannot be narrowed by territory either, which is the fix that looks
+ * right and delivers nothing: an unowned lead has no salesman to place it, and
+ * on prod not one of those 3,265 rows carries a state, so a region clause
+ * would show a manager exactly zero of them.
+ *
+ * So a lead nobody owns is visible to every manager who can open this screen.
+ * It is the argument `managerScope` already makes one function above, about a
+ * salesman nobody has given a book to: somebody nobody has been given is
+ * nobody's to hide, and an empty screen is the one outcome nobody debugs.
+ * Ownership is what this widens on and nothing else — a lead somebody else's
+ * salesman owns stays theirs.
+ *
+ * It can only ADD rows, so no manager loses sight of anything they see today.
+ */
+export function leadsVisible(scope: ManagerScope, column = "c.owner_id") {
+  if (scope.salesmanIds === null) return sql``;
+  const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
+  return sql`and (${sql.raw(column)} in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+              or ${sql.raw(column)} is null)`;
+}
 
 /**
  * `and <alias>.id in (…)`, or nothing at all for a national manager.
@@ -1139,6 +1177,333 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
   `) as unknown as LeadRow[]);
 }
 
+/* ═════════════════════════════════════════════ narrowing the leads list */
+
+/**
+ * WHAT THE FILTER BAR MEANS, IN SQL — one clause, built from the same option
+ * values `lib/lead-filters.ts` hands the dropdowns.
+ *
+ * Every predicate here is over a STORED column, which is what lets the list be
+ * filtered and paged in the database rather than in a browser holding all 400
+ * rows. The one derived value on the screen that is NOT here is the retention
+ * band: it is `bandFor`'s, computed in JS on purpose, and `lead-filters.ts`
+ * carries the paragraph on why the filter does not offer it.
+ *
+ * Empty means "all", matching `MultiSelect`'s own contract — an unticked
+ * dropdown adds no clause rather than matching nothing.
+ */
+function leadFilterClause(
+  filters: LeadFilters,
+  day: string,
+  health: { atRiskBelow: number; strongAtOrAbove: number },
+) {
+  const parts: ReturnType<typeof sql>[] = [];
+
+  /** One bucket list becomes `(a or b or c)`, or nothing at all. */
+  const anyOf = (values: string[], predicate: (v: string) => ReturnType<typeof sql> | null) => {
+    const clauses = values.map(predicate).filter((c): c is ReturnType<typeof sql> => c !== null);
+    if (!clauses.length) return;
+    parts.push(sql`and (${sql.join(clauses, sql` or `)})`);
+  };
+
+  const owners = splitFilter(filters.owner);
+  if (owners.length) {
+    const ids = owners.filter((o) => o !== UNASSIGNED);
+    const clauses: ReturnType<typeof sql>[] = [];
+    if (ids.length) {
+      clauses.push(sql`c.owner_id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
+    }
+    // "Nobody" is its own clause: `in (…)` never matches NULL, so an owner
+    // filter that only listed ids could never find the leads nobody holds —
+    // which are the ones a manager opens this screen for.
+    if (ids.length !== owners.length) clauses.push(sql`c.owner_id is null`);
+    parts.push(sql`and (${sql.join(clauses, sql` or `)})`);
+  }
+
+  const sources = splitFilter(filters.source);
+  if (sources.length) {
+    // The same COALESCE the SELECT applies, or a lead with no source could be
+    // offered as "manual" in the dropdown and then not match it.
+    parts.push(
+      sql`and coalesce(c.lead_source, 'manual') in (${sql.join(
+        sources.map((v) => sql`${v}`),
+        sql`, `,
+      )})`,
+    );
+  }
+
+  const stages = splitFilter(filters.stage);
+  if (stages.length) {
+    parts.push(
+      sql`and c.lead_stage::text in (${sql.join(stages.map((v) => sql`${v}`), sql`, `)})`,
+    );
+  }
+
+  anyOf(splitFilter(filters.potential), (v) => {
+    const p = sql`coalesce(c.lead_estimated_potential_paise, 0)`;
+    switch (v) {
+      // Nothing typed and a typed zero are the same answer to "what could this
+      // shop spend": nobody has judged it. See the note on `potential` — a
+      // stored estimate of zero is not an opportunity worth nothing.
+      case "none": return sql`${p} = 0`;
+      case "under50k": return sql`${p} > 0 and ${p} < 5000000`;
+      case "50kto2l": return sql`${p} >= 5000000 and ${p} <= 20000000`;
+      case "over2l": return sql`${p} > 20000000`;
+      default: return null;
+    }
+  });
+
+  anyOf(splitFilter(filters.next), (v) => {
+    const d = sql`c.lead_next_follow_up_date`;
+    switch (v) {
+      case "overdue": return sql`${d} is not null and ${d} < ${day}::date`;
+      case "today": return sql`${d} = ${day}::date`;
+      case "week": return sql`${d} > ${day}::date and ${d} <= ${day}::date + 7`;
+      case "later": return sql`${d} > ${day}::date + 7`;
+      case "none": return sql`${d} is null`;
+      default: return null;
+    }
+  });
+
+  anyOf(splitFilter(filters.age), (v) => {
+    // The same expression the row's own "N days old" is selected from, so a
+    // row can never sit in a bucket its own age contradicts.
+    const age = sql`(${day}::date - (c.created_at ${IST_DAY})::date)`;
+    switch (v) {
+      case "week": return sql`${age} < 7`;
+      case "month": return sql`${age} >= 7 and ${age} < 30`;
+      case "quarter": return sql`${age} >= 30 and ${age} < 90`;
+      case "older": return sql`${age} >= 90`;
+      default: return null;
+    }
+  });
+
+  anyOf(splitFilter(filters.health), (v) => {
+    /* `health_score`, NOT `customer_health_score`: the row's alias is
+       `customerHealthScore` because the lead and the customer are one row and
+       the screen reads the second half of it, and the column it comes from is
+       plain `health_score`. Guessing from the alias is a query that throws at
+       the database and nowhere else. */
+    const scored = sql`c.lead_converted_at is not null and c.health_score is not null`;
+    switch (v) {
+      case "lead": return sql`c.lead_converted_at is null`;
+      case "unscored": return sql`c.lead_converted_at is not null and c.health_score is null`;
+      case "watch": return sql`${scored} and c.health_score < ${health.atRiskBelow}`;
+      case "middle":
+        return sql`${scored} and c.health_score >= ${health.atRiskBelow}
+                   and c.health_score < ${health.strongAtOrAbove}`;
+      case "strong": return sql`${scored} and c.health_score >= ${health.strongAtOrAbove}`;
+      default: return null;
+    }
+  });
+
+  return parts.length ? sql.join(parts, sql` `) : sql``;
+}
+
+export type LeadsPage = {
+  rows: LeadRow[];
+  /** Matching the filters. */
+  total: number;
+  /** In the whole scoped list, before any filter — "of 511". */
+  listTotal: number;
+  page: number;
+  pageCount: number;
+  perPage: number;
+  /** Over the FILTERED set, not the page: the strip describes the search. */
+  stale: { count: number; names: string[] };
+};
+
+/** Ten, because the screen this replaced drew four hundred rows in one go. */
+export const LEADS_PER_PAGE = 10;
+const LEADS_PER_PAGE_MAX = 200;
+
+/**
+ * ONE PAGE of the leads list, filtered and counted in the database.
+ *
+ * The screen used to receive up to 400 rows and render every one of them —
+ * eight columns, an expandable panel and a row menu apiece — which is the same
+ * waste `listCustomersPage` was written to stop, arriving on a different
+ * screen. What made it worse here is that nothing was narrowed first: the only
+ * control was a funnel chip that filtered the BARS and not the table, so the
+ * only way to find one lead among five hundred was the browser's own find.
+ *
+ * The counts around the table are taken over the filtered set rather than the
+ * page, for the reason the customers list already carries: a total that
+ * changed as you paged would be a different number on every click.
+ */
+export async function leadsPage(
+  day: string,
+  options: {
+    archived?: boolean;
+    filters?: LeadFilters;
+    page?: number;
+    perPage?: number;
+  } = {},
+): Promise<LeadsPage> {
+  const scope = await managerScope();
+  const { getConfig } = await import("../config/store");
+  const config = await getConfig();
+  const archived = options.archived ?? false;
+  const filters = options.filters ?? {};
+  const perPage = Math.min(Math.max(options.perPage ?? LEADS_PER_PAGE, 1), LEADS_PER_PAGE_MAX);
+
+  const where = sql`
+     where c.lead_stage is not null
+       and c.lead_archived = ${archived}
+       ${leadsVisible(scope)}`;
+  const narrowed = leadFilterClause(filters, day, {
+    atRiskBelow: config["mbos.health.atRiskBelow"],
+    strongAtOrAbove: config["mbos.health.strongAtOrAbove"],
+  });
+  const staleDays = config["mbos.leads.staleDays"];
+
+  /*
+   * The counts and the stale summary in ONE pass over the filtered set.
+   *
+   * `stale` is what the strip above the table names, and it has to describe
+   * the SEARCH rather than the page: on page 3 of a filtered list, "4 leads
+   * nobody has touched" counted over the ten rows in front of you is a
+   * sentence about nothing. The four names are the ones the strip prints, so
+   * they are taken here rather than by scanning whatever the page happened to
+   * load.
+   */
+  const [counts] = await db.execute<{
+    total: number;
+    staleCount: number;
+    staleNames: string[] | null;
+  }>(sql`
+    select count(*)::int as total,
+           count(*) filter (
+             where c.lead_stage::text not in ('won', 'lost')
+               and coalesce(${day}::date - c.lead_last_activity_date, 0) >= ${staleDays}
+           )::int as "staleCount",
+           (array_agg(c.name order by c.lead_last_activity_date asc nulls first)
+              filter (
+                where c.lead_stage::text not in ('won', 'lost')
+                  and coalesce(${day}::date - c.lead_last_activity_date, 0) >= ${staleDays}
+              ))[1:4] as "staleNames"
+      from customers c
+      ${where}
+      ${narrowed}
+  `);
+
+  // The whole scoped list, before any filter — "12 of 511", so a filter that
+  // empties the table still says what it emptied.
+  const [book] = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n from customers c ${where}
+  `);
+
+  const total = Number(counts?.total ?? 0);
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  const page = Math.min(Math.max(options.page ?? 1, 1), pageCount);
+
+  const rows = await db.execute<LeadRow>(sql`
+    ${LEAD_ROW_SELECT},
+           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
+           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
+      from customers c
+      left join users u on u.id = c.owner_id
+      left join users lm on lm.id = c.lead_manager_id
+      ${where}
+      ${narrowed}
+     ${archived
+       ? sql`order by c.lead_archived_at desc nulls last, c.id desc`
+       : sql`order by c.lead_next_follow_up_date asc nulls last,
+                     c.lead_last_activity_date asc nulls last, c.id desc`}
+     limit ${perPage} offset ${(page - 1) * perPage}
+  `) as unknown as LeadRow[];
+
+  return {
+    rows: await withHealthBand(day, rows),
+    total,
+    listTotal: Number(book?.n ?? 0),
+    page,
+    pageCount,
+    perPage,
+    stale: {
+      count: Number(counts?.staleCount ?? 0),
+      names: counts?.staleNames ?? [],
+    },
+  };
+}
+
+/**
+ * WHAT THERE IS TO FILTER BY, read off the book rather than declared.
+ *
+ * Owner, source and stage are values the rows actually hold, so the dropdowns
+ * are built from a `group by` over the same scoped list the table shows: a
+ * salesman who joined this morning is offered because he is in the data, and
+ * a source nobody has used since March stops being offered on its own. A
+ * hand-kept list would be a second place to remember, and the half nobody
+ * remembers is the half that goes stale.
+ *
+ * They are counted over the UNFILTERED list on purpose. A dropdown whose
+ * options disappear as you tick boxes in the dropdown beside it is one you
+ * cannot widen a search from — you would have to clear the other filter first
+ * to find out the option existed.
+ */
+export async function leadFilterOptions(
+  archived = false,
+): Promise<{
+  owners: Array<FilterOption & { count: number }>;
+  sources: Array<FilterOption & { count: number }>;
+  stages: Array<FilterOption & { count: number }>;
+}> {
+  const scope = await managerScope();
+  const where = sql`
+     where c.lead_stage is not null
+       and c.lead_archived = ${archived}
+       ${leadsVisible(scope)}`;
+
+  const [owners, sources, stages] = await Promise.all([
+    db.execute<{ value: string | null; label: string | null; count: number }>(sql`
+      select c.owner_id as value, u.name as label, count(*)::int as count
+        from customers c
+        left join users u on u.id = c.owner_id
+        ${where}
+       group by c.owner_id, u.name
+       order by count(*) desc, u.name asc
+    `),
+    db.execute<{ value: string; count: number }>(sql`
+      select coalesce(c.lead_source, 'manual') as value, count(*)::int as count
+        from customers c
+        ${where}
+       group by 1
+       order by count(*) desc, 1 asc
+    `),
+    db.execute<{ value: string; count: number }>(sql`
+      select c.lead_stage::text as value, count(*)::int as count
+        from customers c
+        ${where}
+       group by 1
+       order by count(*) desc, 1 asc
+    `),
+  ]);
+
+  return {
+    owners: owners.map((o) => ({
+      // A lead nobody holds is a real row and a real answer, so it is an
+      // option rather than a blank one nothing can select.
+      value: o.value ?? UNASSIGNED,
+      label: o.label ?? "Nobody",
+      count: Number(o.count),
+    })),
+    // The label is the screen's own wording, `_` to a space, so what the
+    // dropdown offers reads exactly like the cell it filters.
+    sources: sources.map((r) => ({
+      value: r.value,
+      label: r.value.replace(/_/g, " "),
+      count: Number(r.count),
+    })),
+    // Labelled by `stageLabel`, the one vocabulary the ladders are named in.
+    stages: stages.map((r) => ({
+      value: r.value,
+      label: stageLabel(r.value as LeadStage),
+      count: Number(r.count),
+    })),
+  };
+}
+
 /**
  * Fill in each row's retention band.
  *
@@ -1168,31 +1533,13 @@ async function withHealthBand(day: string, rows: LeadRow[]): Promise<LeadRow[]> 
   }));
 }
 
-/**
- * Leads a manager has filed out of the way, newest first.
- *
- * Archiving here is a manual override of what the nightly sweep would
- * otherwise do on its own — a manager saying "I have looked at this and it
- * is not worth chasing right now" — and it stays reachable and reversible for
- * exactly the same reason the sweep never deletes: a shop that said no in
- * March is who somebody wants to find in September.
+/*
+ * `archivedLeadsList` used to sit here, and `leadsPage({ archived: true })` is
+ * what replaced it: the same select, the same order, now filtered and paged
+ * like the working list beside it. Deleted rather than left exported, because
+ * a function nothing calls is a second answer to "what does the archive show"
+ * waiting for somebody to call the wrong one.
  */
-export async function archivedLeadsList(day: string): Promise<LeadRow[]> {
-  const scope = await managerScope();
-  return db.execute<LeadRow>(sql`
-    ${LEAD_ROW_SELECT},
-           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
-           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
-      from customers c
-      left join users u on u.id = c.owner_id
-      left join users lm on lm.id = c.lead_manager_id
-     where c.lead_stage is not null
-       and c.lead_archived = true
-       ${onlyMine(scope, "c.owner_id")}
-     order by c.lead_archived_at desc nulls last
-     limit 400
-  `) as unknown as LeadRow[];
-}
 
 /** How many leads are filed away, for the link that leads there. */
 export async function archivedLeadsCount(): Promise<number> {

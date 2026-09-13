@@ -2,10 +2,12 @@ import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import {
   archivedLeadsCount,
-  archivedLeadsList,
   fieldTeam,
-  leadsList,
+  leadFilterOptions,
+  leadsPage,
+  LEADS_PER_PAGE,
 } from "@/lib/services/sales-service";
+import { splitFilter, type LeadFilters } from "@/lib/lead-filters";
 import {
   appointmentQueue,
   leadFunnel,
@@ -46,15 +48,44 @@ export const metadata = { title: "Leads — Sales Dashboard — MahekOne" };
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string }>;
+  /*
+   * EVERY FILTER IS A URL PARAMETER, like the customers list. A filtered view
+   * of five hundred leads is the thing a manager wants to send somebody —
+   * "these eleven, nobody is working them" — and holding it in component state
+   * makes that unsendable and the back button a lie. It is also what lets the
+   * filtering and the paging happen in the database rather than in a browser
+   * that has been handed the whole book.
+   */
+  searchParams: Promise<
+    {
+      view?: string;
+      page?: string;
+      per?: string;
+    } & Record<string, string | undefined>
+  >;
 }) {
-  const { view } = await searchParams;
-  const showArchived = view === "archived";
+  const params = await searchParams;
+  const showArchived = params.view === "archived";
+
+  const filters: LeadFilters = {
+    owner: params.owner,
+    source: params.source,
+    stage: params.stage,
+    potential: params.potential,
+    next: params.next,
+    age: params.age,
+    health: params.health,
+  };
 
   const day = await today();
-  const [leads, config, team, archivedCount, funnel, verification, exceptions, appointments] =
+  const [page, config, team, archivedCount, funnel, verification, exceptions, appointments, options] =
     await Promise.all([
-      showArchived ? archivedLeadsList(day) : leadsList(day),
+      leadsPage(day, {
+        archived: showArchived,
+        filters,
+        page: Number(params.page) || 1,
+        perPage: Number(params.per) || LEADS_PER_PAGE,
+      }),
       getConfig(),
       fieldTeam(),
       archivedLeadsCount(),
@@ -62,11 +93,30 @@ export default async function Page({
       verificationQueue(day, { limit: 1 }),
       leadsWithoutNextAction(day, { limit: 1 }),
       appointmentQueue(),
+      leadFilterOptions(showArchived),
     ]);
 
   return (
     <LeadsScreen
-      leads={leads}
+      leads={page.rows}
+      pageInfo={{
+        page: page.page,
+        pageCount: page.pageCount,
+        perPage: page.perPage,
+        total: page.total,
+        listTotal: page.listTotal,
+      }}
+      stale={page.stale}
+      filters={{
+        owner: splitFilter(filters.owner),
+        source: splitFilter(filters.source),
+        stage: splitFilter(filters.stage),
+        potential: splitFilter(filters.potential),
+        next: splitFilter(filters.next),
+        age: splitFilter(filters.age),
+        health: splitFilter(filters.health),
+      }}
+      options={options}
       showArchived={showArchived}
       archivedCount={archivedCount}
       staleDays={config["mbos.leads.staleDays"]}
