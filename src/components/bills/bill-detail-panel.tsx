@@ -22,13 +22,18 @@ export function BillDetailPanel({
 }: {
   billId: string;
   /**
-   * Where the customer's name leads, given as a function because the two apps
+   * Where the customer's name leads, given as a function because the apps
    * answer "show me this customer" with different screens — the CRM record in
    * the CRM, the account statement in Accounts, which is also where the rest
    * of that customer's bills are. Hardcoding the CRM route sent an accounts
    * user to a page their app redirects them out of.
+   *
+   * OMITTED where the app has no such screen at all. The Sales Dashboard has
+   * no customer page, and a link that exists because the component wanted one
+   * is a link that goes nowhere — worse than plain text, because somebody
+   * clicks it. Left out, the name is drawn as what it is: a name.
    */
-  customerHref: (customerId: string) => string;
+  customerHref?: (customerId: string) => string;
 }) {
   const [detail, setDetail] = React.useState<BillDetail | null>(null);
   const [state, setState] = React.useState<"loading" | "ready" | "failed">("loading");
@@ -74,7 +79,7 @@ function Detail({
   customerHref,
 }: {
   detail: BillDetail;
-  customerHref: (customerId: string) => string;
+  customerHref?: (customerId: string) => string;
 }) {
   const o = detail.order;
   const t = detail.totals;
@@ -116,12 +121,13 @@ function Detail({
           {o ? "Order behind this bill" : "This bill was not raised against an order"}
         </SectionLabel>
         <span className="text-[13px] text-muted">
-          <Link
-            href={customerHref(detail.customerId)}
-            className="no-underline"
-          >
-            {detail.customerName}
-          </Link>
+          {customerHref ? (
+            <Link href={customerHref(detail.customerId)} className="no-underline">
+              {detail.customerName}
+            </Link>
+          ) : (
+            detail.customerName
+          )}
           {" · "}
           Billed {money(detail.amount)}
           {" · "}

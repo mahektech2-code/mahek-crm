@@ -4453,7 +4453,19 @@ const travelLegSchema = z.object({
   ticketReference: z.string().max(100).nullish(),
   note: z.string().max(2000).nullish(),
   /** `day_log` | `visit`. See `mbosTravelLegs.origin`. */
-  origin: z.enum(["day_log", "visit"]).nullish(),
+  origin: z.enum(["day_log", "visit", "session"]).nullish(),
+  /**
+   * These kilometres are already counted by the session's own meter pair.
+   *
+   * Sent by the handset rather than derived here, because the decision is made
+   * where the facts are: the phone knows which session was open when the leg
+   * was opened, and re-deriving it server-side would mean reconstructing that
+   * from timestamps and getting it wrong on the legs that straddle a lunch
+   * break. The reason travels with it for the same reason it is a column — an
+   * exclusion nobody can read off the record is unanswerable six weeks later.
+   */
+  claimExcluded: z.boolean().nullish(),
+  claimExcludedReason: z.string().nullish(),
 });
 
 /**
@@ -4543,13 +4555,25 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
    * take would mean refusing to record a journey that happened, which is the
    * rule the whole expense module is built on.
    */
-  if (p.origin === "visit" && mode.requiresOdometer) {
+  /*
+   * A SESSION LEG IS HELD TO THE SAME STANDARD, and for the same reason.
+   *
+   * It is opened at the punch-in and closed at the punch-out, so the app is
+   * present at both ends exactly as it is for a visit leg — and it now carries
+   * the WHOLE of an own-vehicle day's distance rather than one ride of it, so
+   * a session accepted without its readings loses far more than a visit leg
+   * ever did. The visit legs on such a day arrive `claimExcluded`, priced by
+   * nothing, and this pair is what they were excluded in favour of.
+   */
+  if ((p.origin === "visit" || p.origin === "session") && mode.requiresOdometer) {
     if (p.odometerStartKm == null || !p.odometerPhotoId) {
       return {
         kind: "rejected",
         value: reject(
           "validation",
-          "A journey on your own vehicle is measured on your own meter, so it needs the reading at the start and the photograph showing it. Nothing was recorded — take the photo and set off again.",
+          p.origin === "session"
+            ? "A day on your own vehicle is measured on your own meter, so punching in needs the reading and the photograph showing it. Nothing was recorded — take the photo and punch in again."
+            : "A journey on your own vehicle is measured on your own meter, so it needs the reading at the start and the photograph showing it. Nothing was recorded — take the photo and set off again.",
         ),
       };
     }
@@ -4560,7 +4584,9 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
         kind: "rejected",
         value: reject(
           "validation",
-          "Arriving on your own vehicle needs the meter read and photographed again — that second reading is the whole of the distance claim.",
+          p.origin === "session"
+            ? "Punching out on your own vehicle needs the meter read and photographed again — that second reading is the whole of the day's distance claim."
+            : "Arriving on your own vehicle needs the meter read and photographed again — that second reading is the whole of the distance claim.",
         ),
       };
     }
@@ -4604,6 +4630,11 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
     ticketReference: p.ticketReference ?? null,
     note: p.note ?? null,
     origin: p.origin ?? "day_log",
+    /* Movement, recorded, and not a second claim — see the column's own note.
+       Defaulted false, so a handset one build behind goes on sending legs that
+       are claimed exactly as they always were. */
+    claimExcluded: p.claimExcluded ?? false,
+    claimExcludedReason: p.claimExcludedReason ?? null,
     updatedAt: new Date(),
     updatedById: principal.user.id,
   };

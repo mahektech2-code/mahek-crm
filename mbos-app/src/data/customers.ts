@@ -232,7 +232,43 @@ export type CustomerBill = {
   overdueDays: number | null;
   disputed: number | null;
   paymentPosition: string | null;
+  /** Settled, part paid or open, as Accounts holds it. */
+  status: string | null;
+  /** What was on it, as the JSON text the wire sent. See `billLines`. */
+  lines: string | null;
+  /** That list's length, so a card can say "4 items" without parsing it. */
+  lineCount: number | null;
 };
+
+/** One line of a bill. The shape the server builds in `billLines`. */
+export type BillLine = { product: string; qty: number; amountPaise: number | null };
+
+/**
+ * What was on a bill, parsed.
+ *
+ * The lines ride on the bill row as JSON text — see the handset migration that
+ * added the column for why that is a column and not a table. Parsed HERE
+ * rather than at the screen, and never trusted: this string came off a wire
+ * and through a SQLite column, and a card that throws while rendering a list
+ * takes the whole customer record down with it. An unreadable one is no lines,
+ * which is what the screen already has a sentence for.
+ */
+export function billLines(bill: { lines: string | null }): BillLine[] {
+  if (!bill.lines) return [];
+  try {
+    const parsed = JSON.parse(bill.lines) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((l): l is BillLine => !!l && typeof (l as BillLine).product === 'string')
+      .map((l) => ({
+        product: l.product,
+        qty: Number(l.qty) || 0,
+        amountPaise: l.amountPaise == null ? null : Number(l.amountPaise),
+      }));
+  } catch {
+    return [];
+  }
+}
 
 /**
  * What the office knows this shop bought and paid.
@@ -270,6 +306,55 @@ export async function customerBills(id: string): Promise<CustomerBill[]> {
     'SELECT * FROM customer_bills WHERE customerId = ? ORDER BY billDate ASC, id ASC',
     [id],
   );
+}
+
+/**
+ * The ones with something still owed on them — what a collection is allocated
+ * against.
+ *
+ * ITS OWN READ, and it did not need to be one until this window arrived. The
+ * channel used to carry open bills and nothing else, so `customerBills` WAS
+ * this list and the payment screen could read it directly. It carries settled
+ * bills now, because the customer record grew a statement — and a settled bill
+ * offered on the payment picker is a bill the salesman names, the server
+ * refuses with `bill_settled`, and the refusal reads as the app being wrong.
+ *
+ * The balance rather than the status, deliberately: `status` is the office's
+ * word for the bill and the balance is the arithmetic, and it is the
+ * arithmetic the server validates the allocation against.
+ */
+export async function openCustomerBills(id: string): Promise<CustomerBill[]> {
+  return all<CustomerBill>(
+    `SELECT * FROM customer_bills
+      WHERE customerId = ? AND coalesce(balancePaise, 0) > 0
+      ORDER BY billDate ASC, id ASC`,
+    [id],
+  );
+}
+
+/**
+ * The oldest day this handset holds a bill or a receipt for.
+ *
+ * Read off the rows themselves rather than from the window the server sent,
+ * and the difference is the point: the office's boundary says what it stopped
+ * SENDING, and this says what is actually here — which on a shop that has
+ * bought from us for three months is three months, not thirteen. A screen
+ * saying "everything since August 2025" over a list that starts in June is a
+ * screen nobody trusts twice.
+ *
+ * Null where there is nothing, which the screen answers with its own sentence
+ * rather than a date.
+ */
+export async function statementReach(id: string): Promise<string | null> {
+  const row = await one<{ from: string | null }>(
+    `SELECT min(d) AS "from" FROM (
+       SELECT billDate AS d FROM customer_bills WHERE customerId = ? AND billDate IS NOT NULL
+       UNION ALL
+       SELECT receivedAt AS d FROM customer_payments WHERE customerId = ? AND receivedAt IS NOT NULL
+     )`,
+    [id, id],
+  );
+  return row?.from ?? null;
 }
 
 /** Whole days since a `YYYY-MM-DD`, or null when there is no date to count from. */

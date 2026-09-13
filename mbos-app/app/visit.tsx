@@ -23,11 +23,12 @@ import { suspectFor, visitCapThresholds } from '../src/data/leads';
 import { visitCapLabel, visitCapState, type VisitCapThresholds } from '../src/engines/leads';
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { isoDate, pretty } from '../src/lib/format';
+import { hhmm, isoDate, pretty } from '../src/lib/format';
 import { elapsedLabel, FOLLOW_ON, visitChecks, visitVerdict } from '../src/lib/visit';
 import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, OUTCOMES } from '../src/data/fixtures';
 import { getConfig } from '../src/data/config';
 import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/visits';
+import { checkInAtShop, clearArrival, recordArrival } from '../src/data/arrival';
 import { logComplaint, requestSample } from '../src/data/requests';
 import { starterProducts } from '../src/data/customers';
 import { todayStops } from '../src/data/journey';
@@ -103,7 +104,9 @@ export default function Visit() {
   const notify = useStore((s) => s.notify);
   const markVisitDone = useStore((s) => s.markVisitDone);
   const askConfirm = useStore((s) => s.askConfirm);
-  const arrivedAt = useStore((s) => s.arrivedAt);
+  const checkedIntoShop = useStore((s) => s.checkedIntoShop);
+  const arrival = useStore((s) => s.arrival);
+  const setArrival = useStore((s) => s.setArrival);
 
   const [form, setForm] = React.useState<'complaint' | 'sample' | null>(null);
   const [draft, setDraft] = React.useState<Record<string, string>>({});
@@ -329,6 +332,7 @@ export default function Visit() {
      through it still saves as unverified. Losing it here would silently
      upgrade a flagged visit to a clean one. */
   const [pendingUnverified, setPendingUnverified] = React.useState<string | null>(null);
+  const [checkingIn, setCheckingIn] = React.useState(false);
 
   const custId = c?.id ?? null;
   const userId = boot.session?.user.id ?? '';
@@ -367,6 +371,23 @@ export default function Visit() {
     };
   }, [custId, userId]);
   React.useEffect(loadLeg, [loadLeg]);
+
+  /*
+   * THE CLOCK, PUT BACK AFTER A REAP.
+   *
+   * `visitStart` lives in memory and Android takes this app apart on the road
+   * for a phone call or a map. Before the arrival was written down there was
+   * nothing to restore it from, so a reaped visit was stamped at the save and
+   * left open — a real hole, and one that got wider the moment checking in
+   * became its own act. The disk holds the instant he walked in; this is what
+   * puts it back on the screen.
+   */
+  React.useEffect(() => {
+    if (!custId || visitStart != null) return;
+    if (arrival && arrival.customerId === custId && arrival.checkedInAt != null) {
+      checkedIntoShop(arrival.checkedInAt);
+    }
+  }, [custId, visitStart, arrival, checkedIntoShop]);
 
   const legMode = leg ? modes.find((m) => m.key === leg.modeKey) ?? null : null;
   const needsMeter = !!legMode?.requiresOdometer;
@@ -589,9 +610,26 @@ export default function Visit() {
       });
 
       if (override) setOverrideReason(override);
-      /* The dwell clock starts on the instant written onto the leg, not on a
-         second reading of the clock — see `arrivedAt` in the store. */
-      arrivedAt(at);
+      /*
+       * ARRIVED, AND NOT YET IN. The clock does NOT start here any more.
+       *
+       * The journey is over — the leg is closed and the meter photographed —
+       * and he is standing outside a shop. Checking in is the next tap, and it
+       * is what `checkedIntoShop` answers. Written to disk before the screen
+       * changes, because everything that proves he got here has already
+       * happened and Android may reap this app between the two.
+       */
+      /* Off the LEG, not off the screen's customer. The leg is what says which
+         shop this journey was to, it cannot be null here, and the record on it
+         outlives a customer row the store happens not to have loaded. */
+      setArrival(
+        await recordArrival({
+          customerId: leg.customerId ?? c?.id ?? '',
+          customerName: leg.toLabel ?? c?.name ?? 'this shop',
+          legId: leg.id,
+          arrivedAt: at,
+        }),
+      );
       loadLeg();
       /*
        * ASKED AFTER HE IS IN, never before. It is a second question about a
@@ -605,6 +643,43 @@ export default function Visit() {
       notify('That arrival could not be recorded on this phone. Nothing has been lost — try again.');
     } finally {
       setArriving(false);
+    }
+  };
+
+  /**
+   * WALKING IN. The second tap, and the one the dwell clock is measured from.
+   *
+   * It asks for nothing: no fix, no camera, no wait. The reading that proves
+   * he is at this shop was taken at the arrival and answered the radius gate
+   * there, and taking a second one here would let the two disagree about where
+   * the shop is — the "ONE FIX, TWO RECORDS" rule the arrival already keeps.
+   * It also means checking in works with the radio off, inside a godown, on a
+   * dead battery, which is where half of this book is.
+   *
+   * The instant is read ONCE and written to both places, for the same reason.
+   */
+  const checkIn = async () => {
+    if (checkingIn) return;
+    setCheckingIn(true);
+    try {
+      const at = Date.now();
+      const next = await checkInAtShop(at);
+      if (!next) {
+        /* The arrival is gone from under him — the day rolled over while the
+           screen sat open, which `readArrival` rubs out deliberately. Sending
+           him back to the journey is the honest answer; pretending to check
+           him into a shop with no arrival behind it is not. */
+        setArrival(null);
+        notify('That arrival is no longer today’s. Start the visit again.');
+        router.replace('/journey');
+        return;
+      }
+      setArrival(next);
+      checkedIntoShop(next.checkedInAt ?? at);
+    } catch {
+      notify('The check-in could not be recorded on this phone. Nothing has been lost — try again.');
+    } finally {
+      setCheckingIn(false);
     }
   };
 
@@ -1007,10 +1082,88 @@ export default function Visit() {
       }
     }
 
+    /* SPENT. The visit is in the ledger, so the shop he was standing at is no
+       longer outstanding — leaving it would put the "check in" bar back on his
+       screen for a visit he has just finished. It is cleared after the save
+       rather than before, so a failed write leaves him exactly where he was. */
+    setArrival(null);
+    void clearArrival();
+
     /* This screen asks before it lets a visit in progress be left. The visit is
        saved, so the question no longer applies. */
     leavingRef.current = true;
     router.replace('/saved');
+  }
+
+  /*
+   * ─────────────────────────────────────────── at the door, not through it
+   *
+   * ARRIVING IS NOT CHECKING IN, and this screen is the gap between them.
+   *
+   * The journey is over: the leg is closed, the meter is photographed, and
+   * nothing above can be undone by what happens here. What has NOT happened is
+   * the visit — he may be parking, finishing a call, or waiting for the owner
+   * to come back from lunch, and every one of those minutes used to be counted
+   * as time with the customer.
+   *
+   * "Not yet" is a real answer and costs him nothing: the arrival is on disk,
+   * the bar at the bottom of every screen offers the way back, and the ONLY
+   * thing it offers is checking into THIS shop — a salesman standing outside
+   * one shop is not about to set off for another, and letting him would leave
+   * an arrival nobody ever closed.
+   *
+   * NOTHING checks him in on his own behalf. A check-in is his assertion that
+   * he is in front of the customer, and a clock that made it for him would be
+   * the app putting words in his mouth on the record his day is read from.
+   */
+  if (legLoaded && arrival && arrival.customerId === custId && arrival.checkedInAt == null) {
+    return (
+      <AppFrame
+        title="Arrived"
+        activeTab="customers"
+        onBack={() => router.back()}
+        contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
+        <Card style={{ padding: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Icon name="shop" size={20} color={C.primaryDeep} strokeWidth={1.8} />
+            <Text style={[type.h2, { flex: 1, minWidth: 0 }]}>{c?.name ?? arrival.customerName}</Text>
+          </View>
+          <Text style={[type.caption, { marginTop: 8 }]}>
+            {'Arrived ' + hhmm(arrival.arrivedAt) + ' · the journey is closed'}
+          </Text>
+
+          <Text style={{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 14 }}>
+            Do you want to check in?
+          </Text>
+          {/* WHAT THE TWO ANSWERS COST, said before they are pressed. The whole
+              reason this screen exists is the number underneath it, and a
+              salesman who does not know the clock starts here will read his own
+              dwell figures later and not recognise his day. */}
+          <Text style={[type.caption, { marginTop: 4 }]}>
+            Checking in starts the clock on your time with the customer. Do it when
+            you go inside, not while you are parking.
+          </Text>
+
+          <View style={{ marginTop: 16 }}>
+            <PrimaryButton
+              label={checkingIn ? 'One moment…' : 'Check in at the shop'}
+              onPress={() => void checkIn()}
+              disabled={checkingIn}
+              whyDisabled="Recording the check-in."
+            />
+          </View>
+          <View style={{ marginTop: 10 }}>
+            <SecondaryButton
+              label="Not yet"
+              onPress={() => {
+                notify('Check in when you go in — the bar at the bottom brings you back.');
+                router.replace('/journey');
+              }}
+            />
+          </View>
+        </Card>
+      </AppFrame>
+    );
   }
 
   /*
@@ -1155,6 +1308,8 @@ export default function Visit() {
                   confirmLabel: 'Call off the trip',
                   run: (reason) => {
                     void abandonLeg(leg.id, reason).then(() => {
+                      setArrival(null);
+                      void clearArrival();
                       notify('Trip called off');
                       router.replace('/journey');
                     });
@@ -1199,6 +1354,10 @@ export default function Visit() {
           ) : null}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <View style={{ flex: 1, minWidth: 0 }}>
+              {/* CHECKED IN, and the clock says how long ago. The button beside
+                  it is the other end of the same pair — he checks in at the
+                  door and checks out at it, and calling that button "Save
+                  visit" named the filing rather than the act. */}
               <Text style={type.label}>In the shop</Text>
               <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{elapsedLabel(dwellSeconds)}</Text>
             </View>
@@ -1208,13 +1367,13 @@ export default function Visit() {
                 door. */}
             <Pressable
               onPress={() => (verdict.complete ? askTicketThenSave() : notify(verdict.firstFailure))}
-              accessibilityLabel={verdict.complete ? 'Save visit' : verdict.firstFailure}
+              accessibilityLabel={verdict.complete ? 'Check out of the shop and save the visit' : verdict.firstFailure}
               style={[
                 { height: 52, paddingHorizontal: 24, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.complete ? C.primary : C.hairline },
                 verdict.complete && { boxShadow: shadow.primary },
               ]}>
               <Text style={[{ fontSize: 16, color: verdict.complete ? '#FFFFFF' : C.faint }, weight(600)]}>
-                {saving ? 'Saving…' : 'Save visit'}
+                {saving ? 'Checking out…' : 'Check out'}
               </Text>
             </Pressable>
           </View>

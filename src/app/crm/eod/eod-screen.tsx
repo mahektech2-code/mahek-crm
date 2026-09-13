@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   Badge,
@@ -21,6 +22,7 @@ import { EOD_PERIODS, EOD_PERIOD_LABELS, type EodPeriod } from "@/lib/business-d
 
 type Due = {
   id: string;
+  customerId: string;
   note: string;
   dueDate: string;
   customerName: string;
@@ -38,6 +40,7 @@ export function EodScreen({
   rangeFrom,
   rangeTo,
   isManager,
+  canCloseReminders,
   lines,
   message,
   dueReminders,
@@ -51,6 +54,8 @@ export function EodScreen({
   rangeFrom: string;
   rangeTo: string;
   isManager: boolean;
+  /** `reminder.close` — see the Reminders screen's own prop for the argument. */
+  canCloseReminders: boolean;
   lines: Array<{ k: string; v: string }>;
   /** Only for "today" — a range has no single WhatsApp message to paste. */
   message: string | null;
@@ -163,16 +168,34 @@ export function EodScreen({
                 <span className="flex-1 text-sm text-ink">
                   {d.note} <span className="text-muted">- {d.customerName}</span>
                 </span>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={async () => {
-                    await run(completeReminder(d.id));
-                    router.refresh();
-                  }}
+                {/*
+                  * The gate is cleared by DOING the thing, and the first
+                  * button is the doing: the Call Log with this customer's
+                  * panel open. Saving the call closes the promise on its own
+                  * — see `lib/engines/reminder-closure.ts` — so the telecaller
+                  * comes back to an EOD that is no longer blocked because the
+                  * work is done, rather than because it was ticked off.
+                  */}
+                <Link
+                  href={`/crm/call-log?customer=${d.customerId}`}
+                  prefetch={false}
+                  className="inline-flex h-8 items-center rounded-[4px] border border-brand bg-brand px-3 text-[13px] font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
                 >
-                  Mark done
-                </Button>
+                  Call
+                </Link>
+                {canCloseReminders ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    title="Close it with no call behind it. Recorded as your decision."
+                    onClick={async () => {
+                      await run(completeReminder(d.id));
+                      router.refresh();
+                    }}
+                  >
+                    Mark done
+                  </Button>
+                ) : null}
                 <Button
                   size="sm"
                   variant="secondary"

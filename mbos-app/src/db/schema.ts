@@ -1578,6 +1578,72 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE visits ADD COLUMN pinCorrectionRequested INTEGER NOT NULL DEFAULT 0;`,
   ],
 
+  /*
+   * v(next) — THE STATEMENT. What was billed, what was on it, and what came in.
+   *
+   * `customer_bills` has carried the OPEN bills since the collections screen
+   * needed something to allocate a payment against, and that is all it carried:
+   * 410 rows of the 10,815 on this book. So a salesman asked "what did you bill
+   * us in July" — which is most of what he is asked, standing at a counter with
+   * a shopkeeper holding a file — had it on no screen he could reach.
+   *
+   * Three columns rather than three tables. `status` says which kind of bill it
+   * is now that settled ones arrive too; `lines` is what was ON it, as JSON
+   * text; `lineCount` is that list's length, so a card can say "4 items"
+   * without every row being parsed to draw a list.
+   *
+   * THE LINES RIDE ON THE BILL rather than in a table of their own, and that is
+   * the whole reason this is three columns of migration instead of thirty. A
+   * bill's lines do not change after it is raised — nobody re-invoices a
+   * delivered order — so there is no second cursor to keep, no second upsert to
+   * order correctly, and no moment where a bill has arrived and what was on it
+   * has not. A separate table would buy queryability this app has no question
+   * for: nothing here asks "which shops bought thinner in July", because that
+   * is a report and reports are the office's.
+   */
+  [
+    `ALTER TABLE customer_bills ADD COLUMN status TEXT;`,
+    `ALTER TABLE customer_bills ADD COLUMN lines TEXT;`,
+    `ALTER TABLE customer_bills ADD COLUMN lineCount INTEGER;`,
+  ],
+
+  /* ---- v30 · the vehicle is a fact about the SESSION, not about the stop --- */
+  [
+    /*
+     * WHERE A MODE IS OFFERED. `day` | `leg` | `both`.
+     *
+     * It was asked at every stop and got the same answer all day: a man on his
+     * own bike answered "own bike" eleven times and photographed the meter
+     * twenty-two times for one ride he never got off. The vehicle belongs to
+     * the session — he punches in on it and punches out on it — and only
+     * public transport genuinely changes leg to leg, which is why that one
+     * alone goes on asking.
+     *
+     * DEFAULT 'leg', so a handset that has not pulled since keeps offering
+     * every mode exactly where it offered it. The scopes arrive with the rows.
+     */
+    `ALTER TABLE travel_modes ADD COLUMN scope TEXT NOT NULL DEFAULT 'leg';`,
+    /*
+     * A leg that is a record of movement and not a second claim.
+     *
+     * On an own-vehicle session the money comes from the session leg's meter
+     * pair. The visits still open legs — the arrival gate and the navigation
+     * hang off one — and pricing those too would pay per-km twice over one
+     * ride, on the meter and again on the trail. The reason rides on the row,
+     * because an exclusion nobody can read off the record is how an expense
+     * argument becomes unanswerable.
+     */
+    `ALTER TABLE travel_legs ADD COLUMN claimExcluded INTEGER NOT NULL DEFAULT 0;`,
+    `ALTER TABLE travel_legs ADD COLUMN claimExcludedReason TEXT;`,
+    /*
+     * The session he is punched in on, if he is on one. Partial, like the open
+     * leg beside it: this is asked on every launch and at every punch-out, and
+     * it is what closes the right punch-in after Android has reaped the app.
+     */
+    `CREATE INDEX IF NOT EXISTS travel_legs_open_session
+       ON travel_legs (userId) WHERE origin = 'session' AND endedAt IS NULL;`,
+  ],
+
 ];
 
 /**

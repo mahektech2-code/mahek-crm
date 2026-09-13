@@ -44,7 +44,7 @@ function blankRow(person: Person): TargetRow {
     volumeTargetMl: null,
     newCustomerTarget: null,
     collectionTargetBp: null,
-    activityTarget: null,
+    activityTargetBp: null,
     publishedAt: null,
     bands: [],
     revisions: 0,
@@ -247,7 +247,9 @@ export function TargetsScreen({
                     <Td align="right">
                       {orDash(r.collectionTargetBp, (bp) => `${(bp / 100).toFixed(0)}%`)}
                     </Td>
-                    <Td align="right">{orDash(r.activityTarget, String)}</Td>
+                    <Td align="right">
+                      {orDash(r.activityTargetBp, (bp) => `${(bp / 100).toFixed(0)}%`)}
+                    </Td>
                     <Td>
                       <Growth target={r.revenueTargetPaise} baseline={base} months={baselineMonths} />
                     </Td>
@@ -432,14 +434,12 @@ function TargetEditorModalBody({
     row.newCustomerTarget === null ? "" : String(row.newCustomerTarget),
   );
   const [collection, setCollection] = React.useState(toPercent(row.collectionTargetBp));
-  const [activity, setActivity] = React.useState(
-    row.activityTarget === null ? "" : String(row.activityTarget),
-  );
+  const [activity, setActivity] = React.useState(toPercent(row.activityTargetBp));
   const [reason, setReason] = React.useState("");
   const [reasonNote, setReasonNote] = React.useState("");
   // Only the categories this target already carries — not every active one.
   // A book with two categories and a book with eight both start from what is
-  // actually theirs; "Add category" is how either grows, never a wall of
+  // actually theirs; "Add formulation" is how either grows, never a wall of
   // rows to skip past for the categories that do not apply here.
   const [bands, setBands] = React.useState<Band[]>(() =>
     row.bands.map((existing) => {
@@ -488,7 +488,7 @@ function TargetEditorModalBody({
           volumeTargetMl: toMl(volume),
           newCustomerTarget: toCount(newCustomers),
           collectionTargetBp: toBp(collection),
-          activityTarget: toCount(activity),
+          activityTargetBp: toBp(activity),
           notes: null,
           bands: filled.map((b) => ({
             categoryId: b.categoryId,
@@ -579,7 +579,7 @@ function TargetEditorModalBody({
         >
           <Input inputMode="numeric" value={collection} onChange={(e) => setCollection(e.target.value)} placeholder="not asked" />
         </Field>
-        <Field label="Tasks target" hint="tasks marked done">
+        <Field label="Tasks target" hint="of the tasks falling due in the month">
           <Input inputMode="numeric" value={activity} onChange={(e) => setActivity(e.target.value)} placeholder="not asked" />
         </Field>
         <div className="flex items-end">
@@ -594,15 +594,15 @@ function TargetEditorModalBody({
       <SectionLabel>Product mix — share of the month&rsquo;s value</SectionLabel>
       <p className="mt-1 mb-3 text-[12px] text-muted">
         Three numbers rather than one, because a book selling into furniture and one selling into
-        automotive cannot be held to the same 30%. Below the minimum a category falls away to
-        nothing; stretch is exceptional. Add only the categories that matter for this person —
-        one, two, or all of them.
+        automotive cannot be held to the same 30%. Below the minimum a formulation falls away
+        to nothing; stretch is exceptional. Add only the formulations that matter for this
+        person — one, two, or all of them.
       </p>
       <div className="mb-2 overflow-x-auto rounded-[4px] border border-line">
         <table className="w-full text-[13px]">
           <thead>
             <tr className="border-b border-line bg-canvas text-[11px] tracking-[0.04em] text-muted uppercase">
-              <th className="px-2.5 py-1.5 text-left font-medium">Category</th>
+              <th className="px-2.5 py-1.5 text-left font-medium">Formulation</th>
               <th className="px-2.5 py-1.5 text-right font-medium">Minimum %</th>
               <th className="px-2.5 py-1.5 text-right font-medium">Target %</th>
               <th className="px-2.5 py-1.5 text-right font-medium">Stretch %</th>
@@ -613,7 +613,7 @@ function TargetEditorModalBody({
             {bands.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-2.5 py-2 text-[13px] text-muted">
-                  No categories added yet. Product mix is left out of this target&rsquo;s score
+                  No formulations added yet. Product mix is left out of this target&rsquo;s score
                   until at least one is added below.
                 </td>
               </tr>
@@ -685,7 +685,7 @@ function TargetEditorModalBody({
               if (e.target.value) addCategory(e.target.value);
             }}
           >
-            <option value="">+ Add category…</option>
+            <option value="">+ Add formulation…</option>
             {available.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}

@@ -54,6 +54,7 @@ type SkuFacts = {
   productId: string;
   millilitresPerCan: number | null;
   categoryId: string | null;
+  formulationId: string | null;
 };
 
 type Catalogue = {
@@ -61,6 +62,8 @@ type Catalogue = {
   byName: Map<string, SkuFacts>;
   byId: Map<string, SkuFacts>;
   residualCategoryId: string | null;
+  /** "Other" — where value with no formulation goes. See `addTo` below. */
+  residualFormulationId: string | null;
   categories: { id: string; name: string; isResidual: boolean; displayOrder: number }[];
 };
 
@@ -75,19 +78,24 @@ type Catalogue = {
  * day a product silently stops counting towards anybody's mix.
  */
 export async function loadCatalogue(): Promise<Catalogue> {
-  const [skus, aliases, categories] = await Promise.all([
+  const [skus, aliases, residualFormulation, categories] = await Promise.all([
     db.execute<{
       id: string;
       name: string;
       millilitres_per_can: number | null;
       category_id: string | null;
+      formulation_id: string | null;
     }>(sql`
-      select p.id, p.name, p.millilitres_per_can, f.category_id
+      select p.id, p.name, p.millilitres_per_can, f.category_id,
+             p.formulation_id
         from products p
         left join product_formulations f on f.id = p.formulation_id
     `),
     db.execute<{ name: string; product_id: string }>(sql`
       select pa.name, pa.product_id from product_aliases pa
+    `),
+    db.execute<{ id: string }>(sql`
+      select id from product_formulations where is_residual limit 1
     `),
     db.execute<{
       id: string;
@@ -107,6 +115,7 @@ export async function loadCatalogue(): Promise<Catalogue> {
       productId: row.id,
       millilitresPerCan: row.millilitres_per_can,
       categoryId: row.category_id,
+      formulationId: row.formulation_id,
     };
     byId.set(row.id, facts);
     byName.set(matchKey(row.name), facts);
@@ -122,6 +131,7 @@ export async function loadCatalogue(): Promise<Catalogue> {
     byName,
     byId,
     residualCategoryId: categories.find((c) => c.is_residual)?.id ?? null,
+    residualFormulationId: residualFormulation[0]?.id ?? null,
     categories: categories.map((c) => ({
       id: c.id,
       name: c.name,
@@ -139,6 +149,14 @@ export type PersonActuals = {
   millilitres: number;
   /** Keyed by category id. */
   byCategory: Map<string, { valuePaise: number; millilitres: number }>;
+  /**
+   * The same value, bucketed by FORMULATION.
+   *
+   * A separate map rather than more entries in the one above, because
+   * `scoreMix` totals whatever it is handed to work out each share — one map
+   * holding both would double the total and halve every percentage.
+   */
+  byFormulation: Map<string, { valuePaise: number; millilitres: number }>;
   /** Line value whose product name resolved to nothing in the catalogue. */
   unmatchedPaise: number;
   newCustomers: number;
@@ -147,6 +165,14 @@ export type PersonActuals = {
   /** What that money is a share of — the book's overdue balance at month start. */
   overdueAtStartPaise: number;
   activity: number;
+  /**
+   * How many tasks were ASKED of them — the ones falling due inside the month.
+   *
+   * The count of completed tasks says nothing on its own: twelve tasks and a
+   * hundred tasks were both held to "ten done". This is what turns it into a
+   * share, and it is the same role `overdueAtStartPaise` plays for collection.
+   */
+  activityAssigned: number;
 };
 
 type LineRow = {
@@ -163,27 +189,26 @@ function emptyActuals(userId: string): PersonActuals {
     revenuePaise: 0,
     millilitres: 0,
     byCategory: new Map(),
+    byFormulation: new Map(),
     unmatchedPaise: 0,
     newCustomers: 0,
     collectionPaise: 0,
     overdueAtStartPaise: 0,
     activity: 0,
+    activityAssigned: 0,
   };
 }
 
-function addCategory(
-  actuals: PersonActuals,
-  categoryId: string,
+function addTo(
+  bucket: Map<string, { valuePaise: number; millilitres: number }>,
+  key: string,
   valuePaise: number,
   millilitres: number,
 ) {
-  const current = actuals.byCategory.get(categoryId) ?? {
-    valuePaise: 0,
-    millilitres: 0,
-  };
+  const current = bucket.get(key) ?? { valuePaise: 0, millilitres: 0 };
   current.valuePaise += valuePaise;
   current.millilitres += millilitres;
-  actuals.byCategory.set(categoryId, current);
+  bucket.set(key, current);
 }
 
 /**
@@ -315,7 +340,10 @@ export async function actualsForPeriod(
         // shrink the denominator and inflate every share on the screen.
         actuals.unmatchedPaise += amount;
         if (catalogue.residualCategoryId) {
-          addCategory(actuals, catalogue.residualCategoryId, amount, 0);
+          addTo(actuals.byCategory, catalogue.residualCategoryId, amount, 0);
+        }
+        if (catalogue.residualFormulationId) {
+          addTo(actuals.byFormulation, catalogue.residualFormulationId, amount, 0);
         }
         continue;
       }
@@ -325,8 +353,23 @@ export async function actualsForPeriod(
         : 0;
       actuals.millilitres += ml;
 
+      /*
+       * THE SAME VALUE, FILED TWICE — once under its category and once under
+       * its formulation — into two maps that never meet.
+       *
+       * A target's bands are set on one or the other, and which is read is
+       * decided where the mix is scored. Both are kept because a band set
+       * before formulations arrived is still scored exactly as it was: a
+       * decision somebody typed is not reinterpreted by a deploy.
+       *
+       * Value whose product names no formulation lands on the residual — the
+       * "Other" row — because a share that is missing from the denominator
+       * silently overstates every other one.
+       */
       const categoryId = facts.categoryId ?? catalogue.residualCategoryId;
-      if (categoryId) addCategory(actuals, categoryId, amount, ml);
+      if (categoryId) addTo(actuals.byCategory, categoryId, amount, ml);
+      const formulationId = facts.formulationId ?? catalogue.residualFormulationId;
+      if (formulationId) addTo(actuals.byFormulation, formulationId, amount, ml);
     }
   }
 
@@ -424,7 +467,7 @@ export async function actualsForPeriod(
     actuals.collectionPaise = Number(row.collected ?? 0);
   }
 
-  /* ---- activity: tasks completed, not visits made ---- */
+  /* ---- activity: the share of this month's tasks that got done ---- */
   /*
    * A task is an action item with somebody's name and a date on it —
    * assigned by a manager or raised by the system — and it is a different
@@ -433,20 +476,38 @@ export async function actualsForPeriod(
    *
    * Attributed to whoever the task was assigned TO, not whoever created it —
    * this is the one component that measures the act rather than the account.
-   * Any task marked done in the window counts, whenever its due date was;
-   * lateness is a different question to whether it happened at all.
+   *
+   * BOTH FIGURES COME OFF ONE POPULATION: the tasks DUE inside the month.
+   * That is what makes a percentage mean anything — a numerator counting
+   * "anything marked done this month" against a denominator of "what was asked
+   * this month" would let somebody clear a backlog of old tasks and show 300%.
+   *
+   * A task with NO due date is in neither. It was never asked of a particular
+   * month, so counting it in one would be inventing the month somebody was
+   * supposed to do it in.
+   *
+   * Lateness is still forgiven, which is what the count did too: a task due on
+   * the 5th and done on the 20th counts, and one due in March and finished in
+   * April raises MARCH's figure when the cache is next rebuilt — the month it
+   * was asked of, not the month it was got round to.
    */
-  const activity = await db.execute<{ user_id: string | null; n: number }>(sql`
-    select assigned_to_user_id as user_id, count(*)::int as n
+  const activity = await db.execute<{
+    user_id: string | null;
+    assigned: number;
+    done: number;
+  }>(sql`
+    select assigned_to_user_id as user_id,
+           count(*)::int as assigned,
+           count(*) filter (where status = 'done')::int as done
       from mbos_tasks
-     where status = 'done'
-       and completed_at >= ${windowStart}
-       and completed_at <= ${windowEnd}
+     where due_date >= ${from}::date
+       and due_date <= ${to}::date
      group by 1
   `);
   for (const row of activity) {
     if (!row.user_id) continue;
-    forUser(row.user_id).activity = Number(row.n);
+    forUser(row.user_id).activity = Number(row.done);
+    forUser(row.user_id).activityAssigned = Number(row.assigned);
   }
 
   return people;
@@ -532,6 +593,13 @@ export type PerformanceReading = {
   hasTarget: boolean;
   score: ScoreResult;
   mix: MixResult;
+  /**
+   * Whether the mix was scored on formulations or on the categories above
+   * them. Carried on the reading because the row that stores it holds a
+   * foreign key to one table or the other, and a formulation id written into
+   * `category_id` is a row nobody can join to.
+   */
+  mixIsFormulation: boolean;
   rating: string;
   alerts: Alert[];
   revenueForecast: Forecast;
@@ -550,7 +618,7 @@ type TargetRow = {
   volume_target_ml: string | null;
   new_customer_target: number | null;
   collection_target_bp: number | null;
-  activity_target: number | null;
+  activity_target_bp: number | null;
 };
 
 const num = (v: string | number | null | undefined) =>
@@ -576,7 +644,7 @@ export async function readingsForPeriod(
     db.execute<TargetRow>(sql`
       select t.id, t.user_id, u.name as user_name,
              t.revenue_target_paise, t.volume_target_ml,
-             t.new_customer_target, t.collection_target_bp, t.activity_target
+             t.new_customer_target, t.collection_target_bp, t.activity_target_bp
         from sales_targets t
         join users u on u.id = t.user_id
        where t.period = ${period}
@@ -600,9 +668,13 @@ export async function readingsForPeriod(
     if (wanted && !wanted.has(userId)) continue;
     const target = targetByUser.get(userId) ?? null;
     const a = actuals.get(userId) ?? emptyActuals(userId);
-    const mixBands = target ? (bands.get(target.id) ?? []) : [];
+    const targetBands = target ? bands.get(target.id) : undefined;
+    const mixBands = targetBands?.bands ?? [];
 
-    const mixActuals: MixActual[] = [...a.byCategory.entries()].map(
+    /* The bucket matching what the bands are about. Never both: `scoreMix`
+       totals whatever it is handed to work out each share. */
+    const bucket = targetBands?.isFormulation ? a.byFormulation : a.byCategory;
+    const mixActuals: MixActual[] = [...bucket.entries()].map(
       ([categoryId, v]) => ({
         categoryId,
         valuePaise: v.valuePaise,
@@ -637,7 +709,24 @@ export async function readingsForPeriod(
         actual: a.collectionPaise,
         target: Math.round((a.overdueAtStartPaise * num(target?.collection_target_bp)) / 10_000),
       },
-      { key: "activity", actual: a.activity, target: num(target?.activity_target) },
+      {
+        // A PERCENTAGE OF WHAT WAS ASKED, not a count of tasks — the same
+        // move `collection` makes one entry up, and for the same reason: ten
+        // tasks done means nothing without knowing whether ten or a hundred
+        // were set, and a target somebody meets by being given fewer tasks is
+        // not a target.
+        //
+        // Where nobody was given any, the implied target is zero, which
+        // `achievementBp` already treats as "not asked" and drops from the
+        // score — having no tasks is not the same as failing them.
+        //
+        // `activity_target` is the retired count and is deliberately not read:
+        // 10 was never a percentage, and reinterpreting it as one would mark
+        // somebody at 10% of their tasks.
+        key: "activity",
+        actual: a.activity,
+        target: Math.round((a.activityAssigned * num(target?.activity_target_bp)) / 10_000),
+      },
     ];
 
     const score = weightedScore(inputs, config);
@@ -678,6 +767,7 @@ export async function readingsForPeriod(
         workingDaysElapsed: days.elapsed,
         workingDaysTotal: days.total,
       }),
+      mixIsFormulation: targetBands?.isFormulation ?? false,
       actuals: a,
       unmatchedPaise: a.unmatchedPaise,
       workingDaysElapsed: days.elapsed,
@@ -688,40 +778,68 @@ export async function readingsForPeriod(
   return readings.sort((x, y) => y.score.totalBp - x.score.totalBp);
 }
 
+type TargetBands = {
+  bands: MixBand[];
+  /**
+   * Whether these bands are about formulations or about the categories above
+   * them. It decides which bucket of actuals is scored — the two are totalled
+   * separately by `scoreMix`, so handing it both would halve every share.
+   *
+   * Read off the first band rather than per band: a save writes every band
+   * from one picker, and a target holding some of each is a state the form
+   * cannot produce.
+   */
+  isFormulation: boolean;
+};
+
 async function bandsForTargets(
   targetIds: string[],
-): Promise<Map<string, MixBand[]>> {
+): Promise<Map<string, TargetBands>> {
   if (!targetIds.length) return new Map();
   const rows = await db.execute<{
     target_id: string;
     category_id: string;
+    is_formulation: boolean;
     name: string;
     minimum_bp: number;
     target_bp: number;
     stretch_bp: number;
     display_order: number;
   }>(sql`
-    select tc.target_id, tc.category_id, pc.name,
-           tc.minimum_bp, tc.target_bp, tc.stretch_bp, pc.display_order
+    /*
+     * A band is about a FORMULATION, or about a category where somebody set it
+     * before that changed. Both are read and coalesced onto one key — which
+     * BUCKET that key is looked up in is decided where the mix is scored, off
+     * the isFormulation flag below, because the two must never be totalled
+     * together. (No backticks in here: they end the sql template literal.)
+     */
+    select tc.target_id,
+           coalesce(tc.formulation_id, tc.category_id) as category_id,
+           tc.formulation_id is not null as is_formulation,
+           coalesce(pf.name, pc.name) as name,
+           tc.minimum_bp, tc.target_bp, tc.stretch_bp,
+           coalesce(pc.display_order, 0) as display_order
       from sales_target_categories tc
-      join product_categories pc on pc.id = tc.category_id
+      left join product_categories pc on pc.id = tc.category_id
+      left join product_formulations pf on pf.id = tc.formulation_id
      where tc.target_id in ${sql`(${sql.join(
        targetIds.map((i) => sql`${i}`),
        sql`, `,
      )})`}
-     order by pc.display_order
+     order by coalesce(pc.display_order, 0), coalesce(pf.name, pc.name)
   `);
-  const out = new Map<string, MixBand[]>();
+  const out = new Map<string, TargetBands>();
   for (const r of rows) {
-    const list = out.get(r.target_id) ?? [];
-    list.push({
+    const entry = out.get(r.target_id) ?? { bands: [], isFormulation: false };
+    entry.bands.push({
       categoryId: r.category_id,
       name: r.name,
       minimumBp: r.minimum_bp,
       targetBp: r.target_bp,
       stretchBp: r.stretch_bp,
     });
-    out.set(r.target_id, list);
+    if (r.is_formulation) entry.isFormulation = true;
+    out.set(r.target_id, entry);
   }
   return out;
 }
@@ -817,7 +935,10 @@ export async function recomputeSalesPerformance(
       await db.insert(salesPerformanceCategories).values({
         id: newId("sperfc"),
         performanceId,
-        categoryId: cat.categoryId,
+        /* The key is a formulation or a category; each has its own column and
+           its own foreign key. See `mixIsFormulation`. */
+        categoryId: reading.mixIsFormulation ? null : cat.categoryId,
+        formulationId: reading.mixIsFormulation ? cat.categoryId : null,
         targetBp: cat.targetBp,
         minimumBp: cat.minimumBp,
         stretchBp: cat.stretchBp,

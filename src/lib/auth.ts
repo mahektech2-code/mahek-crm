@@ -35,6 +35,26 @@ export async function createSession(userId: string, remember = true) {
   });
 }
 
+/**
+ * WHICH session this request is holding, or null.
+ *
+ * Exists for one caller: changing your own password ends every OTHER session
+ * and keeps this one. Ending them all would sign somebody out of the tab they
+ * are standing in as the reward for doing the responsible thing, and a
+ * password change is not a leak being contained — that is `resetPassword`,
+ * which deliberately ends the lot.
+ *
+ * Null is read as "cannot tell", and the caller then ends everything: the
+ * safe direction, because a session this function could not name is one it
+ * cannot promise is yours. Test runs take that path — they have no cookie jar
+ * at all, which is the same seam `getCurrentUser` opens two functions below.
+ */
+export async function currentSessionId(): Promise<string | null> {
+  if (process.env.NODE_ENV === "test") return null;
+  const jar = await cookies();
+  return jar.get(SESSION_COOKIE)?.value ?? null;
+}
+
 export async function destroySession() {
   const jar = await cookies();
   const id = jar.get(SESSION_COOKIE)?.value;

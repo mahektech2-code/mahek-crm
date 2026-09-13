@@ -3,6 +3,8 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
+import { ComboBox } from "@/components/ui/combo-box";
+import { splitBook } from "@/lib/city-match";
 import { addDays } from "@/lib/business-date";
 import { answerRefusal, proposeJourneyDays, saveJourneyPeriod } from "@/lib/actions/sales";
 import type { BookCustomer, JourneyPlan, Salesman } from "@/lib/services/sales-service";
@@ -401,6 +403,81 @@ export function JourneysScreen({
   );
 }
 
+/**
+ * One shop in the picker.
+ *
+ * Pulled out of the panel because it is now drawn from three lists — the
+ * city's own shops, the ones nothing can place, and the manager's deliberate
+ * pick from somewhere else — and three copies of a chip is three places for
+ * the health dot or the "no pin" mark to go missing from.
+ */
+function ShopChip({
+  c,
+  on,
+  onToggle,
+  showCity,
+}: {
+  c: BookCustomer;
+  on: boolean;
+  onToggle: (id: string) => void;
+  /** Where the shop is, drawn only where the point of the list is that it is
+   *  somewhere else. On the city's own list every row would say the same word. */
+  showCity?: boolean;
+}) {
+  return (
+    <button
+      onClick={() => onToggle(c.id)}
+      className={
+        "inline-flex h-7 items-center gap-1.5 rounded-[4px] border px-2 text-[12px] " +
+        (on
+          ? "border-brand bg-brand-soft text-[#5223E0]"
+          : "border-line bg-surface text-body hover:bg-canvas")
+      }
+    >
+      {on ? <SalesIcon name="tick" size={12} /> : null}
+      {/*
+        B3-16 — the retention band, as a dot.
+
+        This list fetched `health_score` and drew nothing with it for as long
+        as it has existed, so a manager arranging somebody's day could not see
+        which of these shops had gone quiet without opening each one. A dot
+        rather than a pill because the chip is a picker and a second word in it
+        would crowd out the name; the band is on the title, which is where
+        somebody looks once they have noticed a colour. No dot at all where
+        there is no band — a shop that has never ordered has not stopped
+        buying.
+      */}
+      {c.healthBand ? (
+        <span
+          aria-hidden
+          title={BAND_TITLE[c.healthBand]}
+          className={
+            "inline-block h-1.5 w-1.5 rounded-full " +
+            (c.healthBand === "active"
+              ? "bg-success"
+              : c.healthBand === "at-risk"
+                ? "bg-warn"
+                : "bg-danger")
+          }
+        />
+      ) : null}
+      {c.name}
+      {/* WHAT KIND OF ACCOUNT IT IS, where it is not an ordinary customer. A
+          salesman's day is a mix of shops we invoice, shops a distributor
+          invoices and shops that have never bought anything, and the three are
+          three different calls to make. Silent on a direct customer, because
+          that is the ordinary case and a word on every chip is no word at all. */}
+      {c.kind === "lead" ? (
+        <span className="text-muted">lead</span>
+      ) : c.thirdParty ? (
+        <span className="text-muted">third party</span>
+      ) : null}
+      {showCity && c.city ? <span className="text-muted">{c.city}</span> : null}
+      {!c.hasGps ? <span className="text-warn-ink">no pin</span> : null}
+    </button>
+  );
+}
+
 /* --------------------------------------------------------------- one day */
 
 function DayLine({
@@ -422,8 +499,26 @@ function DayLine({
 }) {
   const [open, setOpen] = React.useState(false);
   const [picked, setPicked] = React.useState<string[]>([]);
+  /* THE ESCAPE HATCH, shut by default. A day is a city — that is the model the
+     whole screen rests on — so a shop from somewhere else is a deliberate act
+     rather than one more chip in the same list. Opening it is what makes the
+     manager's own choice visible to him. */
+  const [anywhere, setAnywhere] = React.useState(false);
+  const [term, setTerm] = React.useState("");
   const state = row.plan?.dayState;
   const weekend = isSunday(row.date);
+
+  /* The three buckets, and the toggle they all share. Derived here rather than
+     inside the panel so the counts on the closed panel's own button are the
+     same numbers the open one lists. */
+  const proposed = row.city.trim();
+  const { here, elsewhere, unplaceable } = splitBook(book, proposed);
+  const othersShown = term.trim()
+    ? elsewhere.filter((c) => c.name.toLowerCase().includes(term.trim().toLowerCase()))
+    : elsewhere;
+
+  const toggle = (id: string) =>
+    setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const tone =
     state === "refused"
@@ -452,18 +547,28 @@ function DayLine({
           </span>
         ) : (
           <>
-            <input
-              list="sales-cities"
+            {/* A COMBOBOX, not a `datalist`. The browser draws a datalist's
+                popup itself — none of this product's type, spacing or shadow,
+                sized to its own content rather than to the field, and opened
+                UPWARD across the page header on the rows low down the week. It
+                read as a spellchecker's suggestion rather than as a control
+                somebody is meant to choose from. Free text is kept, because
+                `customers.city` holds whatever the sheet typed and proposing a
+                town nobody has sold in yet is an ordinary Tuesday. */}
+            <ComboBox
               value={row.city}
-              onChange={(e) => onCity(e.target.value)}
+              options={cities}
+              onChange={onCity}
               disabled={busy || state === "agreed"}
+              label={`City for ${shortDay(row.date)}`}
               placeholder="Propose a city"
+              emptyHint="No city in his book matches — what you type is still proposed"
               title={
                 state === "agreed"
                   ? "He has agreed this day. He picks the shops next."
                   : "The unit you propose. He divides it into a beat himself."
               }
-              className="h-8 w-[220px] flex-none rounded-[4px] border border-line bg-surface px-2 text-[13px] text-ink outline-none focus:border-brand disabled:opacity-60"
+              className="w-[220px] flex-none"
             />
             <span className="min-w-0 flex-1 truncate text-[13px] text-muted">
               {state === "refused" && row.plan?.refusalReason ? (
@@ -532,60 +637,101 @@ function DayLine({
             conversation — worth it when somebody genuinely has to be sent somewhere, and
             worth avoiding otherwise, because he knows the city and you do not.
           </p>
-          <div className="flex max-h-[240px] flex-wrap gap-1.5 overflow-y-auto">
-            {book.length === 0 ? (
-              <span className="text-[13px] text-muted">His book is empty.</span>
-            ) : (
-              book.map((c) => {
-                const on = picked.includes(c.id);
-                return (
-                  <button
-                    key={c.id}
-                    onClick={() =>
-                      setPicked(on ? picked.filter((x) => x !== c.id) : [...picked, c.id])
-                    }
-                    className={
-                      "inline-flex h-7 items-center gap-1.5 rounded-[4px] border px-2 text-[12px] " +
-                      (on
-                        ? "border-brand bg-brand-soft text-[#5223E0]"
-                        : "border-line bg-surface text-body hover:bg-canvas")
-                    }
-                  >
-                    {on ? <SalesIcon name="tick" size={12} /> : null}
-                    {/*
-                      B3-16 — the retention band, as a dot.
-                      
-                      This list fetched `health_score` and drew nothing with it
-                      for as long as it has existed, so a manager arranging
-                      somebody's day could not see which of these shops had
-                      gone quiet without opening each one. A dot rather than a
-                      pill because the chip is a picker and a second word in it
-                      would crowd out the name; the band is on the title, which
-                      is where somebody looks once they have noticed a colour.
-                      No dot at all where there is no band — a shop that has
-                      never ordered has not stopped buying.
-                    */}
-                    {c.healthBand ? (
-                      <span
-                        aria-hidden
-                        title={BAND_TITLE[c.healthBand]}
-                        className={
-                          "inline-block h-1.5 w-1.5 rounded-full " +
-                          (c.healthBand === "active"
-                            ? "bg-success"
-                            : c.healthBand === "at-risk"
-                              ? "bg-warn"
-                              : "bg-danger")
-                        }
-                      />
-                    ) : null}
-                    {c.name}
-                    {!c.hasGps ? <span className="text-warn-ink">no pin</span> : null}
-                  </button>
-                );
-              })
-            )}
-          </div>
+          {/* SPLIT BY THE CITY THAT WAS PROPOSED. The list used to be the whole
+              book, so a day in Gwalior was arranged from a list containing
+              every shop in Bhopal — and nothing said so, which made it look
+              like the salesman had a lot of shops in Gwalior. */}
+          {here.length ? (
+            <div className="flex max-h-[240px] flex-wrap gap-1.5 overflow-y-auto">
+              {here.map((c) => (
+                <ShopChip key={c.id} c={c} on={picked.includes(c.id)} onToggle={toggle} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-[13px] text-muted">
+              {book.length === 0
+                ? "His book is empty."
+                : proposed
+                  ? `No shop in his book is recorded in ${proposed}.`
+                  : "His book is empty."}
+            </p>
+          )}
+
+          {/* A SHOP NOBODY CAN PLACE IS NAMED, never quietly filed under
+              "somewhere else". "This one is in Bhopal" is a reason not to go
+              today; "nobody ever recorded where this shop is" is a gap in the
+              book, and hiding it inside a longer list is how it stays a gap.
+              It is offered for picking anyway — the salesman may well know
+              exactly where it is. */}
+          {unplaceable.length ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-[12px] text-warn-ink">
+                {plural(unplaceable.length, "shop")} with no city, area or beat recorded — nothing
+                can place {unplaceable.length === 1 ? "it" : "them"}
+              </summary>
+              <div className="mt-1.5 flex max-h-[160px] flex-wrap gap-1.5 overflow-y-auto">
+                {unplaceable.map((c) => (
+                  <ShopChip key={c.id} c={c} on={picked.includes(c.id)} onToggle={toggle} />
+                ))}
+              </div>
+            </details>
+          ) : null}
+
+          {/* ADDING ONE FROM ANYWHERE — the manager's own exception, made
+              deliberate rather than impossible. A shop on the road to the city,
+              or one the customer asked for by name, is a real reason; what it
+              must not be is the default, which is what an unfiltered list made
+              it. */}
+          {proposed && elsewhere.length ? (
+            <div className="mt-2">
+              {anywhere ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={term}
+                      onChange={(e) => setTerm(e.target.value)}
+                      placeholder={`Search his other ${elsewhere.length} shops`}
+                      className="h-7 w-[260px] rounded-[4px] border border-line bg-surface px-2 text-[12px] text-ink outline-none focus:border-brand"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAnywhere(false);
+                        setTerm("");
+                      }}
+                      className="cursor-pointer text-[12px] text-muted hover:text-ink"
+                    >
+                      Done
+                    </button>
+                  </div>
+                  <div className="mt-1.5 flex max-h-[160px] flex-wrap gap-1.5 overflow-y-auto">
+                    {othersShown.length ? (
+                      othersShown.map((c) => (
+                        <ShopChip
+                          key={c.id}
+                          c={c}
+                          on={picked.includes(c.id)}
+                          onToggle={toggle}
+                          showCity
+                        />
+                      ))
+                    ) : (
+                      <span className="text-[12px] text-muted">No shop of his matches that.</span>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setAnywhere(true)}
+                  className="cursor-pointer text-[12px] text-[#5223E0] hover:underline"
+                >
+                  Add a shop from somewhere else ({elsewhere.length})
+                </button>
+              )}
+            </div>
+          ) : null}
+
           {picked.length ? (
             <div className="mt-2">
               <Button
@@ -601,11 +747,6 @@ function DayLine({
         </div>
       ) : null}
 
-      <datalist id="sales-cities">
-        {cities.map((c) => (
-          <option key={c} value={c} />
-        ))}
-      </datalist>
     </div>
   );
 }

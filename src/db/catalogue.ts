@@ -31,7 +31,29 @@ export type SeedQuickNote = {
   labels: string[];
 };
 
-/** Exactly the thirteen lists from the brief, in the order given. */
+/*
+ * SEVEN LISTS, AND FIVE OUTCOMES DELIBERATELY HAVE NONE.
+ *
+ * It was thirteen — the lists the brief gave. No Order, No Answer, Follow-up,
+ * Not Interested and Casual Talk each ask a CODED question now
+ * (`lib/call-outcomes.ts`), and the chips they carried were answers to that
+ * same question in different words: "Price issue", "Stock sufficient", "Busy",
+ * "Switched Off", "Call Next Week", "Using another brand", "Relationship Call".
+ *
+ * Keeping both made the telecaller answer twice and let the two DISAGREE — a
+ * call coded `price_issue` carrying a "Business slow" chip is a record nobody
+ * can read back, and neither half of it is wrong. A single-select chip list and
+ * a single-select coded field are the same control asked twice.
+ *
+ * Where chips SURVIVE they answer nothing: "Cheque Ready", "Dispatch today",
+ * "LR Shared", "Urgent delivery" are shorthand into the note a human reads,
+ * which is what a quick note is for. That is the whole test for whether an
+ * outcome should have them.
+ *
+ * The existing rows are DEACTIVATED by 0125 rather than deleted — historical
+ * interactions hold their ids in `quick_note_ids`, and those references must
+ * keep resolving to something a person can read.
+ */
 export const QUICK_NOTES: SeedQuickNote[] = [
   {
     interactionType: "outbound_call",
@@ -46,39 +68,8 @@ export const QUICK_NOTES: SeedQuickNote[] = [
   },
   {
     interactionType: "outbound_call",
-    outcome: "no_order",
-    // §3 — the six structured reasons. Single-select, so these are mutually
-    // exclusive answers to "why not", not notes that stack. The five they
-    // replaced are deactivated rather than deleted, in the same migration:
-    // historical interactions still point at them and must keep resolving.
-    labels: [
-      "Stock sufficient",
-      "Price issue",
-      "Will order later",
-      "Not interested",
-      "Buying elsewhere",
-      "Business slow",
-    ],
-  },
-  {
-    interactionType: "outbound_call",
-    outcome: "no_answer",
-    labels: ["Phone rang", "Busy", "Switched Off", "No Response", "Call Disconnected"],
-  },
-  {
-    interactionType: "outbound_call",
     outcome: "payment_promised",
     labels: ["Payment Tomorrow", "Cheque Ready", "NEFT Today", "Accounts Processing"],
-  },
-  {
-    interactionType: "outbound_call",
-    outcome: "follow_up",
-    labels: ["Call Next Week", "Waiting for Approval", "Call After Stock Confirmation"],
-  },
-  {
-    interactionType: "outbound_call",
-    outcome: "not_interested",
-    labels: ["Using another brand", "Business closed", "No requirement", "Price high"],
   },
   {
     interactionType: "inbound_call",
@@ -97,11 +88,6 @@ export const QUICK_NOTES: SeedQuickNote[] = [
   },
   {
     interactionType: "inbound_call",
-    outcome: "follow_up",
-    labels: ["Call next week", "Waiting for quotation", "Waiting for approval"],
-  },
-  {
-    interactionType: "inbound_call",
     outcome: "complaint",
     labels: ["Leakage", "Wrong Material", "Damaged Product", "Delivery Delay"],
   },
@@ -114,17 +100,6 @@ export const QUICK_NOTES: SeedQuickNote[] = [
       "Vehicle Not Dispatched",
       "Driver Contact Shared",
       "Delivery Tomorrow",
-    ],
-  },
-  {
-    interactionType: "inbound_call",
-    outcome: "casual_talk",
-    labels: [
-      "Relationship Call",
-      "Festival Greetings",
-      "General Discussion",
-      "Product Enquiry",
-      "Business Discussion",
     ],
   },
   {

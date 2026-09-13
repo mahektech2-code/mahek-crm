@@ -92,6 +92,7 @@ const KIND_TONE: Record<
   "brand" | "success" | "warn" | "danger" | "neutral"
 > = {
   Call: "brand",
+  Opportunity: "brand",
   WhatsApp: "success",
   Order: "success",
   Reminder: "warn",
