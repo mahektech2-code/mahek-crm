@@ -166,6 +166,81 @@ export function onlyMine(scope: ManagerScope, column: string) {
 }
 
 /**
+ * AN ADMIN IS NOT NARROWED BY A TERRITORY, and this is the one place that is
+ * decided.
+ *
+ * Allocating somebody a region says which patch they OVERSEE. On a manager
+ * that is the whole of their remit; on an administrator it is an extra job on
+ * top of running the system, and reading it as a ceiling meant the person who
+ * can see every screen in MahekOne could not see Kerala on one map. That is
+ * how this was reported: an admin holding six states saw 4,205 of 4,930 pins
+ * and read the missing 725 as deleted data.
+ *
+ * It is resolved HERE rather than inside `managerScope`, and the distinction
+ * is the point. That function is what `canReadAttendanceSelfie` and
+ * `canReadTravelLegPhoto` narrow by, and this file already carries the scar of
+ * that path failing OPEN — widening it would hand out photographs of
+ * employees. This widens three WHERE clauses on one coverage screen and
+ * nothing else.
+ */
+export const placeScope = cache(async function placeScope(): Promise<ManagerScope> {
+  const scope = await managerScope();
+  if (scope.salesmanIds === null) return scope;
+  try {
+    const { requireUser } = await import("../auth");
+    const user = await requireUser();
+    if (user.role === "admin") return { national: true, regions: [], salesmanIds: null };
+  } catch {
+    /* No session — a script, a job or a test. `managerScope` already answers
+       national in that case, so reaching here means there IS a scope to keep;
+       keeping it is the safe direction. */
+  }
+  return scope;
+});
+
+/**
+ * THE SAME SCOPE, ASKED AS A GEOGRAPHY RATHER THAN AS A LIST OF PEOPLE.
+ *
+ * `onlyMine` narrows by WHOSE BOOK a shop is in, which is right for a worklist
+ * — a manager's queue is his team's work. It is the wrong axis for the
+ * Territory screen, whose whole question is geographic: "who covers Nagpur",
+ * "how much of Maharashtra has nobody". Answered through the owner, the second
+ * half of that question cannot be answered at all, because a shop with nobody
+ * on it matches no salesman and `x in (…)` never matches NULL.
+ *
+ * On the real book that is not an edge case. 1,408 of 1,606 active customers
+ * carry neither a sales AM nor an owner — the imported book, which nobody has
+ * allocated yet — so a regional manager saw 135 shops in 96 cities out of
+ * 4,930 pinned ones and read it as his data having been deleted. The shops he
+ * most needs to see on a coverage map are exactly the ones this dropped.
+ *
+ * So: a shop is his if it SITS in one of his regions, or if it belongs to one
+ * of his salesmen wherever it sits. Both arms are legitimately his, and it can
+ * only ever ADD rows to what `onlyMine` already allowed — no manager loses
+ * sight of anything they can see today.
+ *
+ * **It is deliberately NOT a change to `managerScope` itself.** That function
+ * is what `canReadAttendanceSelfie` and `canReadTravelLegPhoto` narrow by, and
+ * this file already carries the scar of that path failing OPEN. Widening the
+ * scope would hand out photographs; widening one screen's WHERE clause does
+ * not. A national manager is still national, and a regional one still sees
+ * only his regions.
+ */
+export function mineByPlace(scope: ManagerScope, ownerColumn: string, alias: string) {
+  if (scope.salesmanIds === null) return sql``;
+  const keys = [...new Set(scope.regions.flatMap((r) => stateVariants(r)))];
+  const here = keys.length
+    ? sql`${sql.raw(stateKeySql(qualify(TERRITORY_REGION_SQL, alias)))} in (${sql.join(
+        keys.map((k) => sql`${k}`),
+        sql`, `,
+      )})`
+    : sql`false`;
+  const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
+  const theirs = sql`${sql.raw(ownerColumn)} in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
+  return sql`and (${here} or ${theirs})`;
+}
+
+/**
  * A request somebody took back is not waiting on anybody.
  *
  * Withdrawing leave marks `cancelled_at` on the request and deliberately does
@@ -2185,7 +2260,7 @@ export type TerritoryRow = {
  * neither. The customer list itself is a screen away.
  */
 export async function territory(): Promise<TerritoryRow[]> {
-  const scope = await managerScope();
+  const scope = await placeScope();
   return db.execute<TerritoryRow>(sql`
     select c.territory_region as region, c.city, c.beat,
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
@@ -2196,10 +2271,18 @@ export async function territory(): Promise<TerritoryRow[]> {
       from customers c
       left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
      where c.status = 'active' and c.kind = 'customer'
-       ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
+       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
      group by c.territory_region, c.city, c.beat, coalesce(c.sales_am_id, c.owner_id), u.name
      order by c.territory_region asc nulls last, c.city asc, c.beat asc nulls last
-     limit 500
+     /* A CAP ON GROUPS, AND IT SITS ON THE BOUNDARY.
+        The group key is (region, city, beat, salesman), and this book produces
+        exactly 500 of them — so one new beat truncates the tiles silently, and
+        the rows that go are the ones sorting LAST, which nulls-last makes
+        precisely the shops with no region recorded. Raised rather than removed:
+        the screen groups rather than lists because a thousand rows answers
+        nothing, and an unbounded query on a book that keeps growing is the
+        other way to be wrong. */
+     limit 5000
   `) as unknown as TerritoryRow[];
 }
 
@@ -2807,11 +2890,20 @@ export async function fieldBook(filter?: {
 
 /** How much of the book has no coordinates. A count, and then a decision. */
 export async function gpsGap(): Promise<{ missing: number; total: number }> {
+  /* SCOPED LIKE EVERYTHING ELSE ON THE SCREEN. It was the one unscoped read
+     here, so a regional manager got a national "Without a pin" figure sitting
+     beside a "Shops" tile counting only his own — two numbers from one row of
+     tiles that could not be reconciled, on the screen somebody opens when they
+     suspect data is missing. Being national made it look like the gap, which
+     is exactly the wrong direction for a tile whose job is to say how much
+     work is left. */
+  const scope = await placeScope();
   const rows = await db.execute<{ missing: number; total: number }>(sql`
     select count(*) filter (where c.gps_lat is null or c.gps_lng is null)::int as missing,
            count(*)::int as total
       from customers c
      where c.status = 'active' and c.kind = 'customer'
+       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
   `);
   return { missing: Number(rows[0]?.missing ?? 0), total: Number(rows[0]?.total ?? 0) };
 }
@@ -2847,6 +2939,29 @@ export type ShopPin = {
    * measurement on the screen a territory is planned from.
    */
   approximate: boolean;
+  /**
+   * `customer` or `lead` — and it had to become a field the moment the map
+   * stopped refusing leads.
+   *
+   * A lead here is a shop somebody has stood outside and pinned; it is simply
+   * one that has never ordered. Drawing the two identically would tell a
+   * manager he has coverage he does not have, and leaving leads off the map
+   * entirely — which is what this did — hid 2,748 of the 4,115 pinned active
+   * shops on the real book. Most field-collected pins ARE leads, so the map
+   * was at its emptiest exactly where the team had done the most work.
+   */
+  kind: "customer" | "lead";
+  /**
+   * `active`, `inactive` or `deactivated`.
+   *
+   * The map used to draw only active shops, which is defensible on a planning
+   * screen and indefensible as a silent omission: 815 pinned shops simply were
+   * not there, and the screen said nothing. A closed shop is still a real
+   * address the team has stood outside, and a manager working out whether a
+   * town is covered needs to know one is there and shut — not to be shown a
+   * blank. It is drawn differently rather than left out.
+   */
+  status: string;
   salesmanId: string | null;
   salesmanName: string | null;
 };
@@ -2858,7 +2973,7 @@ export type ShopPin = {
  * something worth paginating.
  */
 export async function shopPins(): Promise<ShopPin[]> {
-  const scope = await managerScope();
+  const scope = await placeScope();
   return db.execute<ShopPin>(sql`
     select c.id, c.name, c.city, c.area, c.beat,
            /* The field pin first, then the looked-up one. 503 shops carry an
@@ -2871,14 +2986,20 @@ export async function shopPins(): Promise<ShopPin[]> {
               would present a guess as a measurement. The map draws it hollow,
               the same way a stale activity fix is drawn. */
            (c.gps_lat is null) as "approximate",
+           c.kind, c.status,
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName"
       from customers c
       left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
-     where c.status = 'active' and c.kind = 'customer'
-       and coalesce(c.gps_lat, c.geocoded_lat) is not null
+     /* EVERY PINNED SHOP, and the filtering is done on the map where it can
+        be seen and switched off. Leads and closed shops were excluded here,
+        in SQL, where a manager had no way to find out they existed — 3,563 of
+        the 4,930 pinned shops on the real book, absent with nothing saying so.
+        A map that quietly omits three quarters of the pins is one somebody
+        plans a day from and is wrong. */
+     where coalesce(c.gps_lat, c.geocoded_lat) is not null
        and coalesce(c.gps_lng, c.geocoded_lng) is not null
-       ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
+       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
   `) as unknown as ShopPin[];
 }
 
