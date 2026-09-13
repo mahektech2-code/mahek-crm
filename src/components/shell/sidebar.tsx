@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { NavLink } from "./nav-link";
 import { NAV, type NavGroup } from "./nav";
 import { Icon } from "./icons";
 import { cx } from "@/components/ui/primitives";
@@ -52,15 +52,12 @@ export function Sidebar({
                       : 0;
 
               return (
-                <Link
+                <NavLink
                   key={item.href}
                   href={item.href}
-                  // The sidebar is on every screen and every item is always
-                  // in view, so the default prefetch fires a full render of
-                  // every destination on every navigation. On the one shared
-                  // vCPU this app runs on, that self-inflicted burst is what
-                  // was delaying the page actually being waited for.
-                  prefetch={false}
+                  // Prefetched on hover rather than on sight, and only now
+                  // that `crm/loading.tsx` exists — see nav-link.tsx for why
+                  // both halves of that sentence are load bearing.
                   title={collapsed ? item.label : undefined}
                   className={cx(
                     "mb-0.5 flex h-9 items-center gap-2.5 rounded-[4px] px-2.5 text-sm no-underline hover:no-underline",
@@ -89,7 +86,7 @@ export function Sidebar({
                       ) : null}
                     </>
                   ) : null}
-                </Link>
+                </NavLink>
               );
             })}
           </div>

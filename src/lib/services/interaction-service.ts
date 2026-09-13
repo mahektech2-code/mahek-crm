@@ -934,7 +934,10 @@ export async function saveInteraction(
 
   if (orderId) {
     await recomputeBuyingCycle(customer.id);
-    await recomputeInactivity();
+    // THIS CUSTOMER, not the book. An order cannot move anybody else's
+    // inactivity, and the unscoped pass was ~5,900 queries awaited in series
+    // between the telecaller pressing Save and the confirmation appearing.
+    await recomputeInactivity(customer.id);
   }
 
   // A payment promise on either leg is a collections attempt by call. Stage 1

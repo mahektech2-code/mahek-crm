@@ -292,23 +292,60 @@ export async function recomputeOutstanding(customerId: string): Promise<void> {
 }
 
 export async function recomputeAllOutstanding(): Promise<number> {
+  /*
+   * ONLY THE ROWS WHOSE ANSWER CHANGED, and the `is distinct from` is the
+   * whole of it.
+   *
+   * This used to rewrite every customer row on every pass, and it runs twice
+   * an hour from the sheet projection. Production had 11.4 MILLION row updates
+   * against 5,915 live customers and 2,887 autovacuum runs to clean up after
+   * them — on a box with one vCPU that Postgres shares with the renderer, so
+   * the vacuuming competes directly with the page somebody is waiting for.
+   *
+   * The second cost was quieter and worse. Every one of those updates set
+   * `updated_at = now()`, and the MBOS delta asks `customers.updated_at >
+   * cursor` — so a handset's entire book looked changed on every sync, for
+   * ever. A salesman on a market lane's worth of signal re-downloaded a
+   * thousand shops every few minutes to learn nothing.
+   *
+   * `is distinct from` rather than `<>` because `outstanding` is nullable on
+   * rows the projection has never touched, and `null <> 0` is null, which is
+   * not true, which would skip exactly the rows that most need writing.
+   */
   const result = await db.execute(sql`
-    update customers c set outstanding = coalesce((
-      select sum(b.amount - b.paid_amount) from bills b
-       where b.customer_id = c.id and b.payment_position = 'stated'
-    ), 0), updated_at = now()
+    update customers c set outstanding = t.total, updated_at = now()
+      from (
+        select c2.id, coalesce((
+          select sum(b.amount - b.paid_amount) from bills b
+           where b.customer_id = c2.id and b.payment_position = 'stated'
+        ), 0) as total
+        from customers c2
+      ) t
+     where c.id = t.id and c.outstanding is distinct from t.total
   `);
   return Array.isArray(result) ? result.length : 0;
 }
 
 /** Bill status follows the amounts, so it can never disagree with them. */
 export async function recomputeBillStatuses(): Promise<number> {
+  /*
+   * The same `is distinct from` discipline as `recomputeAllOutstanding`, and
+   * for the same measured reason: this fires on every receipt confirmation and
+   * every credit note, and unfiltered it rewrote all 10,815 bills each time —
+   * 19.5 million row updates on production against a table that holds ten
+   * thousand rows. A bill whose status has not changed has nothing to say.
+   */
   await db.execute(sql`
     update bills set status = case
       when paid_amount >= amount then 'paid'::bill_status
       when paid_amount > 0 then 'partially_paid'::bill_status
       else 'unpaid'::bill_status
     end, updated_at = now()
+    where status is distinct from case
+      when paid_amount >= amount then 'paid'::bill_status
+      when paid_amount > 0 then 'partially_paid'::bill_status
+      else 'unpaid'::bill_status
+    end
   `);
   const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(bills);
   return row?.n ?? 0;
@@ -478,14 +515,44 @@ export async function recomputeSlowPayers(): Promise<number> {
       .push({ dueDate: due, paidOn: r.paidAt });
   }
 
-  const all = await db.select({ id: customers.id }).from(customers);
+  /*
+   * READ THE FLAG BEFORE WRITING IT, and write only where the answer moved.
+   *
+   * This was one UPDATE per customer, in series — 5,915 round trips twice an
+   * hour from the projection, every one of them rewriting the row and bumping
+   * `updated_at` whether or not the flag had changed. The two costs are the
+   * ones `recomputeAllOutstanding` documents above it: autovacuum on the one
+   * shared core, and every MBOS handset re-downloading its whole book because
+   * the delta is keyed on that column.
+   *
+   * On a real book almost nobody's flag changes between two passes half an
+   * hour apart, so the ordinary answer here is now two statements that update
+   * nothing.
+   */
+  const all = await db
+    .select({ id: customers.id, slowPayer: customers.slowPayer })
+    .from(customers);
+
+  const turnOn: string[] = [];
+  const turnOff: string[] = [];
   for (const c of all) {
     const { slowPayer } = isSlowPayer(byCustomer.get(c.id) ?? [], day, config);
-    await db
-      .update(customers)
-      .set({ slowPayer, updatedAt: new Date() })
-      .where(eq(customers.id, c.id));
+    if (slowPayer === c.slowPayer) continue;
+    (slowPayer ? turnOn : turnOff).push(c.id);
   }
+
+  for (const [value, ids] of [
+    [true, turnOn],
+    [false, turnOff],
+  ] as const) {
+    for (let i = 0; i < ids.length; i += 500) {
+      await db
+        .update(customers)
+        .set({ slowPayer: value, updatedAt: new Date() })
+        .where(inArray(customers.id, ids.slice(i, i + 500)));
+    }
+  }
+
   return all.length;
 }
 
@@ -659,28 +726,95 @@ async function linkTakenOrderRows(
     namesByCustomer.set(customerId, [...(namesByCustomer.get(customerId) ?? []), name]);
   }
 
+  /*
+   * ONLY THE ROWS THAT ARE NOT ALREADY SAYING THIS.
+   *
+   * Both statements restated a resolution the row usually already carried, on
+   * every taken-order sync — and this table is the biggest in the workbook.
+   * Production had 56.8 MILLION row updates against 21,221 live rows: about
+   * 2,700 rewrites each, every one of them a dead tuple for autovacuum to
+   * collect on the single core the app renders on. The matching itself has not
+   * changed; what changed is that a row nobody has re-matched is now left
+   * alone.
+   */
   for (const [customerId, names] of namesByCustomer) {
     await db
       .update(sheetTakenOrderRows)
       .set({ matchedCustomerId: customerId, customerMatchStatus: "matched" })
-      .where(inArray(sheetTakenOrderRows.billingPartyName, names));
+      .where(
+        and(
+          inArray(sheetTakenOrderRows.billingPartyName, names),
+          sql`(${sheetTakenOrderRows.matchedCustomerId} is distinct from ${customerId}
+               or ${sheetTakenOrderRows.customerMatchStatus} is distinct from 'matched')`,
+        ),
+      );
   }
 
   if (unresolved.length) {
     await db
       .update(sheetTakenOrderRows)
       .set({ matchedCustomerId: null, customerMatchStatus: "unmatched" })
-      .where(inArray(sheetTakenOrderRows.billingPartyName, unresolved));
+      .where(
+        and(
+          inArray(sheetTakenOrderRows.billingPartyName, unresolved),
+          sql`(${sheetTakenOrderRows.matchedCustomerId} is not null
+               or ${sheetTakenOrderRows.customerMatchStatus} is distinct from 'unmatched')`,
+        ),
+      );
   }
 }
 
 /* --------------------------------------------------------- E4 inactivity */
 
-export async function recomputeInactivity(): Promise<number> {
+export async function recomputeInactivity(
+  /**
+   * ONE CUSTOMER, OR THE WHOLE BOOK — and the request paths pass one.
+   *
+   * This ran unscoped from four places that each change exactly one customer:
+   * saving a call that took an order, deciding a deactivation, deciding a
+   * reactivation, recording a watch outcome. An order for one shop cannot move
+   * another shop's inactivity, so the other 5,914 rows were read, evaluated and
+   * written for nothing — and the telecaller who had just taken the order was
+   * the person waiting for it.
+   *
+   * The nightly job still calls it with no argument, which is where a
+   * whole-book pass belongs: inactivity is a function of the DATE as well as of
+   * orders, so a customer can cross the threshold with nothing happening to
+   * their row at all, and only a sweep notices that.
+   */
+  customerId?: string,
+): Promise<number> {
   const config = await getConfig();
   const day = await today();
 
-  const rows = await db.select().from(customers);
+  const rows = customerId
+    ? await db.select().from(customers).where(eq(customers.id, customerId))
+    : await db.select().from(customers);
+  if (!rows.length) return 0;
+
+  /*
+   * THE WATCH ROWS IN ONE READ, not one per customer.
+   *
+   * This was a `select` inside the loop — 5,915 round trips on a book this
+   * size, awaited in series, and the loop then issued its writes one at a time
+   * too. Nothing about the work needed that shape: the whole table is a few
+   * hundred rows and the comparison is done in memory anyway.
+   */
+  const existingRows = await db
+    .select({ customerId: inactiveWatchItems.customerId })
+    .from(inactiveWatchItems)
+    .where(customerId ? eq(inactiveWatchItems.customerId, customerId) : undefined);
+  const existing = new Set(existingRows.map((r) => r.customerId));
+
+  const upserts: Array<{
+    customerId: string;
+    cyclesElapsed: string;
+    daysSinceLastOrder: number;
+    valueAtRisk: number;
+  }> = [];
+  const clear: string[] = [];
+  const toInactive: string[] = [];
+  const toActive: string[] = [];
   let flagged = 0;
 
   for (const c of rows) {
@@ -696,55 +830,66 @@ export async function recomputeInactivity(): Promise<number> {
       config,
     );
 
-    const [existing] = await db
-      .select()
-      .from(inactiveWatchItems)
-      .where(eq(inactiveWatchItems.customerId, c.id));
-
     if (result.inactive) {
       flagged++;
-      if (existing) {
-        await db
-          .update(inactiveWatchItems)
-          .set({
-            cyclesElapsed: String(result.cyclesElapsed),
-            daysSinceLastOrder: result.daysSinceLastOrder ?? 0,
-            valueAtRisk: result.valueAtRisk,
-          })
-          .where(eq(inactiveWatchItems.customerId, c.id));
-      } else {
-        await db.insert(inactiveWatchItems).values({
-          customerId: c.id,
-          cyclesElapsed: String(result.cyclesElapsed),
-          daysSinceLastOrder: result.daysSinceLastOrder ?? 0,
-          valueAtRisk: result.valueAtRisk,
-        });
-      }
+      upserts.push({
+        customerId: c.id,
+        cyclesElapsed: String(result.cyclesElapsed),
+        daysSinceLastOrder: result.daysSinceLastOrder ?? 0,
+        valueAtRisk: result.valueAtRisk,
+      });
       // The status is the flag, not a second opinion on it: crossing twice the
       // cycle marks the customer inactive without anybody typing it.
-      if (c.status === "active") {
-        await db
-          .update(customers)
-          .set({ status: "inactive", updatedAt: new Date() })
-          .where(eq(customers.id, c.id));
-      }
+      if (c.status === "active") toInactive.push(c.id);
     } else {
-      if (existing) {
-        // An incoming order clears the flag automatically, with no manual action.
-        await db
-          .delete(inactiveWatchItems)
-          .where(eq(inactiveWatchItems.customerId, c.id));
-      }
+      // An incoming order clears the flag automatically, with no manual action.
+      if (existing.has(c.id)) clear.push(c.id);
       // …and puts the customer back to active. Only "inactive" is reversed:
       // deactivation was a decision somebody made, and an order does not undo
       // it. A telecaller who wants them back asks for that separately.
-      if (c.status === "inactive") {
-        await db
-          .update(customers)
-          .set({ status: "active", updatedAt: new Date() })
-          .where(eq(customers.id, c.id));
-      }
+      if (c.status === "inactive") toActive.push(c.id);
     }
+  }
+
+  /*
+   * WRITTEN IN BATCHES, and `flagged_at` is deliberately not among the columns
+   * the conflict clause sets: it is when this customer FIRST went quiet, and
+   * restating it every pass would reset the age on every watch row twice an
+   * hour. `outcome` and `dismissed_until` are left alone for the same reason —
+   * they are somebody's decision about the row, not a derived value.
+   */
+  for (let i = 0; i < upserts.length; i += 500) {
+    await db
+      .insert(inactiveWatchItems)
+      .values(upserts.slice(i, i + 500))
+      .onConflictDoUpdate({
+        target: inactiveWatchItems.customerId,
+        set: {
+          cyclesElapsed: sql`excluded.cycles_elapsed`,
+          daysSinceLastOrder: sql`excluded.days_since_last_order`,
+          valueAtRisk: sql`excluded.value_at_risk`,
+        },
+      });
+  }
+
+  for (let i = 0; i < clear.length; i += 500) {
+    await db
+      .delete(inactiveWatchItems)
+      .where(inArray(inactiveWatchItems.customerId, clear.slice(i, i + 500)));
+  }
+
+  for (let i = 0; i < toInactive.length; i += 500) {
+    await db
+      .update(customers)
+      .set({ status: "inactive", updatedAt: new Date() })
+      .where(inArray(customers.id, toInactive.slice(i, i + 500)));
+  }
+
+  for (let i = 0; i < toActive.length; i += 500) {
+    await db
+      .update(customers)
+      .set({ status: "active", updatedAt: new Date() })
+      .where(inArray(customers.id, toActive.slice(i, i + 500)));
   }
 
   return flagged;
