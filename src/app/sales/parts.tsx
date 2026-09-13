@@ -193,10 +193,13 @@ export function Table({
 export function HeadCell({
   align = "left",
   width,
+  /** For a pinned column — see `pinnedHead`. Everything else styles itself. */
+  className,
   children,
 }: {
   align?: "left" | "right";
   width?: number;
+  className?: string;
   children?: React.ReactNode;
 }) {
   return (
@@ -205,6 +208,7 @@ export function HeadCell({
       className={cx(
         "sticky top-0 z-2 h-8.5 border-b border-line bg-canvas px-4 text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase",
         align === "right" ? "text-right" : "text-left",
+        className,
       )}
     >
       {children}
