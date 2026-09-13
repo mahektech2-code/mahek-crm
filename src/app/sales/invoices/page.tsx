@@ -1,4 +1,9 @@
-import { fieldInvoices } from "@/lib/services/sales-service";
+import {
+  fieldInvoiceAges,
+  fieldInvoiceTotals,
+  fieldInvoicesPage,
+  type FieldInvoiceShow,
+} from "@/lib/services/sales-service";
 import { InvoicesScreen } from "./invoices-screen";
 
 export const metadata = { title: "Invoices — Sales Dashboard — MahekOne" };
@@ -17,22 +22,52 @@ export const metadata = { title: "Invoices — Sales Dashboard — MahekOne" };
  * aging strip, and says so — presenting an unknown as a debt is the mistake
  * that put nine crore of imaginary collections on this screen's ancestors.
  *
- * The screen itself is a client component now. Filtering, searching, paging
- * and opening a bill are all answered without a round trip, and the chips
- * stopped being links that reloaded the page to change one word in the URL.
- * `?show=` is still read, because it is in bookmarks and in links.
+ * **THE TILES USED TO DESCRIBE 300 BILLS AND SAY 8,682.** The read behind this
+ * screen was `limit 300` with no count, and "Bills in all" printed that 300.
+ * Every figure was computed from the three hundred biggest balances and
+ * presented as the whole book — not slow, wrong, and wrong in the direction
+ * nobody checks, because 300 is a plausible number of bills to have.
+ *
+ * So the three questions are asked separately now: one page of rows, one
+ * aggregate for the figures, and the open bills for the strip. Which means the
+ * chips, the search and the page all live in the URL — they narrow a database
+ * query rather than an array, so they have to reach the server.
  */
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ show?: string }>;
+  searchParams: Promise<{ show?: string; q?: string; page?: string; per?: string }>;
 }) {
   const params = await searchParams;
-  const all = await fieldInvoices();
 
-  const show = (["all", "open", "overdue", "unstated"] as const).find(
+  const show = ((["all", "open", "overdue", "unstated"] as const).find(
     (s) => s === params.show,
-  );
+  ) ?? "open") as FieldInvoiceShow;
+  const q = params.q?.trim() || undefined;
+  const perPage = Math.min(Math.max(Number(params.per) || 25, 1), 200);
+  const page = Math.max(Number(params.page) || 1, 1);
 
-  return <InvoicesScreen all={all} initialShow={show ?? "open"} />;
+  const [ledger, totals, ages] = await Promise.all([
+    fieldInvoicesPage({ show, q }, { page, perPage }),
+    fieldInvoiceTotals(),
+    fieldInvoiceAges(),
+  ]);
+
+  return (
+    <InvoicesScreen
+      /* KEYED ON THE FILTER, so changing it remounts with fresh state rather
+         than needing an effect to reset the search box and close an open bill.
+         Every modal and drawer in this codebase does the same — see
+         `ConfirmDialog` and `CallPanel`. */
+      key={`${show}|${q ?? ""}`}
+      rows={ledger.rows}
+      total={ledger.total}
+      totals={totals}
+      ages={ages}
+      show={show}
+      query={q ?? ""}
+      page={page}
+      perPage={perPage}
+    />
+  );
 }

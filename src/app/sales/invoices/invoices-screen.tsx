@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
+import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { BillDetailPanel } from "@/components/bills/bill-detail-panel";
 import { Pager } from "@/components/ui/pager";
@@ -47,73 +48,104 @@ const BANDS = [
 type Show = "open" | "overdue" | "unstated" | "all";
 
 export function InvoicesScreen({
-  all,
-  initialShow,
+  rows,
+  total,
+  totals,
+  ages,
+  show,
+  query,
+  page,
+  perPage,
 }: {
-  all: FieldInvoice[];
-  initialShow: Show;
+  /** ONE PAGE. Everything beside it describes the whole book. */
+  rows: FieldInvoice[];
+  total: number;
+  totals: {
+    all: number;
+    open: number;
+    overdue: number;
+    unstated: number;
+    owedPaise: number;
+    overdueOwedPaise: number;
+  };
+  ages: Array<{ overdueDays: number; openPaise: number }>;
+  show: Show;
+  query: string;
+  page: number;
+  perPage: number;
 }) {
+  const router = useRouter();
   const { push } = useToast();
-  const [show, setShow] = React.useState<Show>(initialShow);
-  const [query, setQuery] = React.useState("");
-  const [page, setPage] = React.useState(1);
-  const [perPage, setPerPage] = React.useState(25);
+
   /*
-   * One bill open at a time. Six rows expanded is a ledger you cannot read,
+   * ONE BILL OPEN AT A TIME. Six rows expanded is a ledger you cannot read,
    * and the panel fetches its own items — opening every row would fetch every
    * order behind a page of bills in order to show one.
    */
   const [openBillId, setOpenBillId] = React.useState<string | null>(null);
 
-  const stated = all.filter((b) => b.paymentPosition === "stated");
-  const unstated = all.filter((b) => b.paymentPosition !== "stated");
-  const open = stated.filter((b) => Number(b.openPaise) > 0);
-  const overdue = open.filter((b) => b.overdueDays > 0);
+  /*
+   * THE FILTERS LIVE IN THE URL, because they narrow a QUERY now rather than
+   * an array. When this screen held every bill, filtering in the browser was
+   * honest — the rows were all there. They are not: `rows` is 25 of 8,682, and
+   * a chip that filtered those 25 would answer "no overdue bills" on a book
+   * with hundreds.
+   *
+   * It also makes the screen linkable, which the chips were before this file
+   * turned them into state and quietly took away.
+   */
+  const go = (next: { show?: Show; q?: string; page?: number; per?: number }) => {
+    const params = new URLSearchParams();
+    params.set("show", next.show ?? show);
+    const q = next.q ?? query;
+    if (q.trim()) params.set("q", q.trim());
+    params.set("page", String(next.page ?? 1));
+    params.set("per", String(next.per ?? perPage));
+    router.push(`/sales/invoices?${params.toString()}`);
+  };
 
-  const byChip =
-    show === "all" ? all : show === "overdue" ? overdue : show === "unstated" ? unstated : open;
-
-  /* Bill number, customer, salesman — the three things somebody arrives here
-     holding. Not the amount: "1,43,063" typed into a search box is a figure
-     somebody read off this screen, and matching it would return the row they
-     are already looking at. */
-  const term = query.trim().toLowerCase();
-  const rows = term
-    ? byChip.filter((b) =>
-        [b.billNo, b.customerName, b.salesmanName ?? ""].some((f) =>
-          f.toLowerCase().includes(term),
-        ),
-      )
-    : byChip;
-
-  const owed = open.reduce((n, b) => n + Number(b.openPaise), 0);
-  const overdueOwed = overdue.reduce((n, b) => n + Number(b.openPaise), 0);
+  /* Typing should not put a request on the wire per keystroke — on one shared
+     core that is the difference between a search box and a load test. The box
+     holds its own text and submits on Enter or on the button.
+     
+     It is seeded from the URL and never synced back to it by an effect: the
+     page gives this component a KEY built from the filter, so a changed search
+     remounts it with fresh initial state. That is the house rule, and the
+     React Compiler enforces it — resetting state in an effect when a prop
+     changes is the cascading render it refuses to compile. */
+  const [draft, setDraft] = React.useState(query);
 
   const bands = BANDS.map((b) => ({
     ...b,
-    amount: open
+    amount: ages
       .filter((x) => x.overdueDays >= b.from && x.overdueDays <= b.to)
-      .reduce((n, x) => n + Number(x.openPaise), 0),
+      .reduce((n, x) => n + x.openPaise, 0),
   }));
   const widest = Math.max(1, ...bands.map((b) => b.amount));
 
-  const shown = rows.slice((page - 1) * perPage, page * perPage);
-
-  /* Any narrowing sends the reader back to the first page. Page 7 of a list
-     that now has two rows is an empty table, and an empty table is read as
-     "nothing matched" rather than as "you are past the end". */
-  const narrow = (next: () => void) => {
-    next();
-    setPage(1);
-    setOpenBillId(null);
-  };
+  const owed = totals.owedPaise;
+  const overdueOwed = totals.overdueOwedPaise;
+  const term = query.trim();
 
   const chips: { key: Show; label: string; count: number }[] = [
-    { key: "open", label: "Open", count: open.length },
-    { key: "overdue", label: "Overdue", count: overdue.length },
-    { key: "unstated", label: "Unspoken for", count: unstated.length },
-    { key: "all", label: "Everything", count: all.length },
+    { key: "open", label: "Open", count: totals.open },
+    { key: "overdue", label: "Overdue", count: totals.overdue },
+    { key: "unstated", label: "Unspoken for", count: totals.unstated },
+    { key: "all", label: "Everything", count: totals.all },
   ];
+
+  /* How many this chip holds without the search — what "clear it and you will
+     see N" is counting. */
+  const chipCount =
+    show === "open"
+      ? totals.open
+      : show === "overdue"
+        ? totals.overdue
+        : show === "unstated"
+          ? totals.unstated
+          : totals.all;
+
+  const shown = rows;
 
   return (
     <div className="p-6">
@@ -157,24 +189,27 @@ export function InvoicesScreen({
 
       <MetricRow
         metrics={[
-          { label: "Open", value: money(owed), sub: plural(open.length, "bill") },
+          /* Every one of these is now counted by Postgres over the whole
+             book. They were `.length` of arrays capped at 300, so "Bills in
+             all" read 300 against a real 8,682. */
+          { label: "Open", value: money(owed), sub: plural(totals.open, "bill") },
           {
             label: "Overdue",
             value: money(overdueOwed),
-            sub: plural(overdue.length, "bill"),
-            tone: overdue.length ? "danger" : undefined,
+            sub: plural(totals.overdue, "bill"),
+            tone: totals.overdue ? "danger" : undefined,
           },
           {
             label: "Nobody has spoken for",
-            value: String(unstated.length),
+            value: String(totals.unstated),
             sub: "neither paid nor owed",
-            tone: unstated.length ? "warn" : undefined,
+            tone: totals.unstated ? "warn" : undefined,
           },
-          { label: "Bills in all", value: String(all.length) },
+          { label: "Bills in all", value: totals.all.toLocaleString("en-IN") },
         ]}
       />
 
-      {open.length ? (
+      {totals.open ? (
         <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
           <div className="mb-3 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
             How old the money is
@@ -205,7 +240,7 @@ export function InvoicesScreen({
         {chips.map((c) => (
           <button
             key={c.key}
-            onClick={() => narrow(() => setShow(c.key))}
+            onClick={() => go({ show: c.key, page: 1 })}
             className={cx(
               "h-8.5 cursor-pointer rounded-[4px] border px-3 text-sm",
               show === c.key
@@ -217,13 +252,36 @@ export function InvoicesScreen({
           </button>
         ))}
         <span className="min-w-2 flex-1" />
-        <input
-          value={query}
-          onChange={(e) => narrow(() => setQuery(e.target.value))}
-          placeholder="Search a bill, customer or salesman"
-          aria-label="Search invoices"
-          className="h-8.5 w-[280px] rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
-        />
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            go({ q: draft, page: 1 });
+          }}
+          className="flex items-center gap-2"
+        >
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Search a bill, customer or salesman"
+            aria-label="Search invoices"
+            className="h-8.5 w-[280px] rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+          />
+          <button
+            type="submit"
+            className="h-8.5 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-sm text-body hover:bg-canvas"
+          >
+            Search
+          </button>
+          {term ? (
+            <button
+              type="button"
+              onClick={() => go({ q: "", page: 1 })}
+              className="h-8.5 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-sm text-muted hover:bg-canvas"
+            >
+              Clear
+            </button>
+          ) : null}
+        </form>
       </div>
 
       {rows.length === 0 ? (
@@ -231,7 +289,7 @@ export function InvoicesScreen({
           title={term ? "Nothing matches that" : show === "overdue" ? "Nothing is overdue" : "No bills"}
           body={
             term
-              ? `No bill, customer or salesman in this list matches “${query.trim()}”. ${byChip.length.toLocaleString("en-IN")} rows are here without it.`
+              ? `No bill, customer or salesman matches “${term}” in this list. Clear the search to see all ${chipCount.toLocaleString("en-IN")}.`
               : show === "unstated"
                 ? "Every bill has somebody's word behind it — either money was recorded against it, or the receivables report named it as still owing."
                 : "No bill has been raised against a shop in the field team's book."
@@ -351,15 +409,12 @@ export function InvoicesScreen({
           </Table>
 
           <Pager
-            total={rows.length}
+            total={total}
             page={page}
             perPage={perPage}
             note="The figures above describe every bill, not this page or this search"
-            onPage={setPage}
-            onPerPage={(n) => {
-              setPerPage(n);
-              setPage(1);
-            }}
+            onPage={(p) => go({ page: p })}
+            onPerPage={(n) => go({ page: 1, per: n })}
           />
         </div>
       )}
