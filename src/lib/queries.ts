@@ -834,6 +834,21 @@ export function resolveSort<T extends string>(
   return direction === "desc" ? desc(columns[column]) : asc(columns[column]);
 }
 
+/**
+ * A DIRECT CUSTOMER, in SQL: an account we invoice ourselves.
+ *
+ * `kind = 'customer'` on its own is not the answer, because the mark is the
+ * more specific one — a shop we deliver to and do not bill is routinely a
+ * `customer` by kind, since we may have invoiced it last month. See
+ * `lib/account-types.ts`, which states the same rule for the screens.
+ *
+ * It is a constant rather than a literal in each caller because two things
+ * have to agree about it: the Customers list's own type filter, and the
+ * Monthly Targets list, which is direct customers and nothing else. A second
+ * spelling is how one of them quietly starts counting a lead.
+ */
+export const DIRECT_CUSTOMER_SQL = sql`customers.kind = 'customer' and not customers.third_party`;
+
 /** One account-type filter's own clause — the value `customerFilterClause` used to inline directly. */
 function thirdPartyClause(value: string): SQL {
   switch (value) {
@@ -848,7 +863,7 @@ function thirdPartyClause(value: string): SQL {
     case "lead":
       return sql`customers.kind = 'lead' and not customers.third_party`;
     case "customer":
-      return sql`customers.kind = 'customer' and not customers.third_party`;
+      return DIRECT_CUSTOMER_SQL;
     case "nodistributor":
       /*
        * Converted, and nobody recorded as billing them. It should be empty —

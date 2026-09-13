@@ -49,6 +49,7 @@ import { nextStepForCustomer } from "./queue-service";
 import {
   customerFilterClause,
   customerFiltersOnly,
+  DIRECT_CUSTOMER_SQL,
   resolveSort,
   type CustomerListFilters,
 } from "../queries";
@@ -1033,6 +1034,27 @@ export async function listTargets(
         // A customer who has gone quiet still carries a target — that is the
         // gap the month has to explain. Only deactivation removes them.
         ne(customers.status, "deactivated"),
+        /*
+         * A TARGET IS SET ON AN ACCOUNT WE INVOICE, AND ON NOTHING ELSE.
+         * `DIRECT_CUSTOMER_SQL` — the same definition the Customers list's
+         * own type filter reads, so the two screens cannot disagree about
+         * what a direct customer is.
+         *
+         * A lead has never bought from us: a monthly figure against one is a
+         * target nobody could have met, and it dragged the whole list's
+         * achievement down with it. A third-party shop never buys from us
+         * directly either — its goods are billed to its distributor, so the
+         * rupees already count towards THAT account's month and counting them
+         * again here would be the same money twice.
+         *
+         * Neither is being hidden from the month for good: both become direct
+         * customers by buying. A lead's `kind` flips on its first order, and a
+         * third-party shop that starts buying from us has its mark lifted by
+         * a person — and either then arrives on this list carrying the default
+         * like any other customer. That is why nothing here has to carry a
+         * target for them in the meantime.
+         */
+        DIRECT_CUSTOMER_SQL,
         visibility,
         // Undefined where nothing is filtered, which `and` drops — so the
         // unfiltered read is the query it always was, byte for byte.
@@ -1180,13 +1202,19 @@ export async function targetFilterClause(
     backOfficeAm: filters.backOfficeAm,
   });
 
-  // A customer who has gone quiet still carries a target — that is the gap
-  // the month has to explain — so only deactivation removes them, same as
-  // `listTargets`. "Deactivated" is deliberately absent from the Status
-  // filter's own options for exactly this reason: offering it here would
-  // be a filter that always returns nothing.
-  const notDeactivated = ne(customers.status, "deactivated");
-  const clause = customerClause ? and(notDeactivated, customerClause) : notDeactivated;
+  // The two rules that are this screen's own, spelled exactly as `listTargets`
+  // spells them — the page and the list disagreeing about which accounts the
+  // month is measured over is the one thing pagination must not introduce.
+  //
+  // A customer who has gone quiet still carries a target: that is the gap the
+  // month has to explain, so only deactivation removes them. "Deactivated" is
+  // deliberately absent from the Status filter's own options for exactly that
+  // reason — offering it would be a filter that always returns nothing.
+  //
+  // `DIRECT_CUSTOMER_SQL` is the other: leads and third-party shops carry no
+  // target here. See `listTargets` for why.
+  const onThisScreen = and(ne(customers.status, "deactivated"), DIRECT_CUSTOMER_SQL);
+  const clause = customerClause ? and(onThisScreen, customerClause) : onThisScreen;
 
   return {
     clause,
@@ -1279,7 +1307,10 @@ export async function listTargetsPage(
   const [book] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(customers)
-    .where(and(ne(customers.status, "deactivated"), scoped));
+    // The same two rules the list itself applies, minus the filters — "of
+    // your book" has to count the book THIS SCREEN shows, or the unfiltered
+    // page reads as 480 of 1,100 with nothing saying where the rest went.
+    .where(and(ne(customers.status, "deactivated"), DIRECT_CUSTOMER_SQL, scoped));
 
   const total = Number(agg?.total ?? 0);
   const pageCount = Math.max(1, Math.ceil(total / perPage));
@@ -1387,6 +1418,37 @@ export async function setTarget(
     return err("Enter the monthly target in rupees.", "validation", [
       { field: "amount", message: "Must be a positive amount." },
     ]);
+  }
+
+  /*
+   * A TARGET IS SET ON AN ACCOUNT WE INVOICE, and the rule is checked here
+   * rather than only by what the list draws — a server action is a URL, and
+   * this one is reachable with any customer id.
+   *
+   * Refused rather than silently dropped, and the message says what the way
+   * forward is: both of these become direct customers by BUYING, and neither
+   * is moved by anything on this screen. A lead's `kind` flips on its first
+   * order (`promotesToCustomerAt`), and a third-party shop that starts buying
+   * from us has its mark lifted by a person — at which point it arrives on
+   * this list carrying the default like any other customer.
+   */
+  const [account] = await db
+    .select({ kind: customers.kind, thirdParty: customers.thirdParty })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+  if (!account) return err("That customer no longer exists.", "not_found");
+  if (account.thirdParty) {
+    return err(
+      "This shop is billed by a distributor, so its orders count towards that account's month rather than its own. No target here.",
+      "rule_violation",
+    );
+  }
+  if (account.kind === "lead") {
+    return err(
+      "A lead has never ordered, so there is nothing to measure a month against. It becomes a customer on its first order and picks up a target then.",
+      "rule_violation",
+    );
   }
 
   await db
