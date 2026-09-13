@@ -2806,6 +2806,19 @@ export type BookCustomer = {
   salesmanId: string | null;
   salesmanName: string | null;
   hasGps: boolean;
+  /**
+   * `customer` or `lead`, and `thirdParty` beside it.
+   *
+   * A salesman's day is a mix: shops we invoice, shops a distributor invoices,
+   * and shops that have never bought anything. All three are doors he walks
+   * through and all three belong on a journey — the picker used to offer only
+   * `kind = 'customer'`, so a day could not include a lead he was working or a
+   * third-party shop he services for a distributor. What the two fields are
+   * FOR here is the label on the chip: three different calls to make, and a
+   * manager arranging a day should be able to tell them apart.
+   */
+  kind: string;
+  thirdParty: boolean;
   outstandingPaise: number;
   creditLimitPaise: number | null;
   creditBlocked: boolean;
@@ -2852,6 +2865,7 @@ export async function fieldBook(filter?: {
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName",
            (c.gps_lat is not null and c.gps_lng is not null) as "hasGps",
+           c.kind, c.third_party as "thirdParty",
            coalesce(c.outstanding, 0) as "outstandingPaise",
            c.credit_limit_paise as "creditLimitPaise",
            c.credit_blocked as "creditBlocked",
@@ -2862,7 +2876,13 @@ export async function fieldBook(filter?: {
            c.last_order_date::text as "lastOrderDate"
       from customers c
       left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
-     where c.status = 'active' and c.kind = 'customer'
+     /* LEADS AND THIRD-PARTY SHOPS TOO. This read kind = 'customer', which
+        is the account we invoice — so a salesman could not be sent to a lead
+        he is working, nor to a shop he services on a distributor's behalf,
+        which between them are most of what he actually walks to. Third party
+        was never excluded by name; it is a MARK on a customer rather than a
+        kind, and it came through already. The lead is what was missing. */
+     where c.status = 'active' and c.kind in ('customer', 'lead')
        ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
        ${salesman} ${beat} ${gps} ${search}
      order by c.name asc
