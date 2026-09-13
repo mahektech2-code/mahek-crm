@@ -12,8 +12,24 @@ if (!connectionString) {
 }
 
 /**
- * Fluid Compute reuses function instances, so the pool is cached on
- * globalThis to survive hot reloads in dev and instance reuse in production.
+ * ONE POOL PER PROCESS, and until now that was true in development only.
+ *
+ * The line at the bottom of this file read `if (NODE_ENV !== "production")`,
+ * so the pool was cached on `globalThis` in dev and never in prod — which is
+ * the half this comment already claimed to do and the half that was missing.
+ * It matters because a Next.js production build evaluates a module once per
+ * bundle that imports it, and server components and route handlers are
+ * different bundles: `@/db` is evaluated more than once, and each evaluation
+ * opened its OWN pool of ten.
+ *
+ * Prod was measured with 20 idle backends against `max: 10`. On a droplet with
+ * 961 MB of RAM and 479 MB already in swap, ten surplus Postgres backends are
+ * tens of megabytes held to do nothing — memory the app cannot have, on the
+ * one box where memory is what it is short of.
+ *
+ * Caching it in production is also what the pool is FOR. A pool that is
+ * rebuilt whenever a second bundle loads is not a pool; it is a connection
+ * cost paid twice and a `max` that means nothing.
  */
 const globalForDb = globalThis as unknown as {
   __mahekSql?: ReturnType<typeof postgres>;
@@ -63,7 +79,9 @@ const sql =
     prepare: process.env.DATABASE_PREPARE !== "false",
   });
 
-if (process.env.NODE_ENV !== "production") globalForDb.__mahekSql = sql;
+/* In EVERY environment. See the note above the pool: the dev-only version of
+   this line is why production ran two pools. */
+globalForDb.__mahekSql = sql;
 
 export const db = drizzle(sql, { schema });
 export { schema, sql };
