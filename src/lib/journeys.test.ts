@@ -3305,7 +3305,9 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     );
     const held = after.suppressed.find((x) => x.customerId === customer.id);
     assert.ok(held, "and the telecaller can see why");
-    assert.match(held.reason, /asking again in/);
+    // The cooldown silences the ASK now rather than the customer, so it says
+    // what it is holding back rather than when it will ask again.
+    assert.match(held.reason, /no order chased for \d+ more day/);
   });
 
   test("a promised callback beats both the quiet window and the cooldown", async () => {
