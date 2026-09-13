@@ -6,13 +6,18 @@ import { popularProducts } from "@/lib/services/product-service";
 import { db } from "@/db";
 import { helpArticles, quickNotes as quickNotesTable } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { getQueue } from "@/lib/services/queue-service";
+import { adHocCallTarget, getQueue } from "@/lib/services/queue-service";
 import { QueueScreen } from "./queue-screen";
 import type { CallTarget } from "@/components/crm/call-panel";
 
 export const metadata = { title: "Call Log - MahekOne CRM" };
 
-export default async function QueuePage() {
+export default async function QueuePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ customer?: string }>;
+}) {
+  const { customer: requestedCustomerId } = await searchParams;
   const user = await requireUser();
   const scope = await getScope(user);
 
@@ -85,6 +90,43 @@ export default async function QueuePage() {
       } satisfies CallTarget,
     ]),
   );
+
+  /*
+   * A CUSTOMER NAMED IN THE URL IS CALLABLE EVEN WHEN THE QUEUE DID NOT RANK
+   * THEM.
+   *
+   * The Reminders screen sends people here to keep a promise, and a promise is
+   * owed whether or not today's list happened to include the customer — they
+   * may have been called this morning, held back by a cooldown, or sat past
+   * the size cap. Landing on a screen where the button does nothing is how
+   * somebody concludes the Call button is broken and goes back to ticking
+   * things off.
+   *
+   * No reason is attached, because there is none: the queue did not put them
+   * here, a promise did, and the panel says what the record says rather than
+   * inventing a sentence.
+   */
+  if (requestedCustomerId && !callTargets[requestedCustomerId]) {
+    const c = await adHocCallTarget(requestedCustomerId);
+    if (c) {
+      callTargets[requestedCustomerId] = {
+        customerId: c.id,
+        sourceModule: "ad_hoc",
+        name: c.name,
+        contactPerson: c.contactPerson,
+        phone: c.phone,
+        city: c.city,
+        ownerName: c.ownerName,
+        kind: c.kind,
+        outstanding: Number(c.outstanding),
+        lastOrderDate: c.lastOrderDate,
+        lastOrderValue: Number(c.lastOrderValue),
+        creditTermDays: c.creditTermDays,
+        targetGap: 0,
+        openComplaint: null,
+      } satisfies CallTarget;
+    }
+  }
 
   return (
     <QueueScreen

@@ -55,14 +55,49 @@ function overdueByPerson(overdue: Row[]) {
   return [...map.values()].sort((a, b) => b.overdue - a.overdue);
 }
 
+/**
+ * How a closed reminder was closed, as the sentence a person reads.
+ *
+ * Three states and they are three different facts. Evidence names the record
+ * behind it; a person names the person; and a row closed before any of this
+ * was recorded says only that it was closed — which is all that can honestly
+ * be said about it, and better than backfilling a claim nobody made.
+ */
+function closureLine(r: Row): string {
+  const on = r.closedOn ? ` on ${shortDate(r.closedOn)}` : "";
+  switch (r.closedBy) {
+    case "call":
+      return `Closed by the call logged${on}`;
+    case "order":
+      return `Closed by the order taken${on}`;
+    case "payment":
+      return `Closed by the payment accounts confirmed${on}`;
+    case "person":
+      return r.closedByName
+        ? `Marked ${r.status === "dismissed" ? "dismissed" : "done"} by ${r.closedByName}${on}`
+        : `Marked ${r.status === "dismissed" ? "dismissed" : "done"}${on}`;
+    default:
+      return `Closed${on}`;
+  }
+}
+
 export function RemindersScreen({
   scopeLabel,
   isTeamView,
+  canClose,
   rows,
   customers,
 }: {
   scopeLabel: string;
   isTeamView: boolean;
+  /**
+   * `reminder.close` — whether this person may close one BY HAND. Everybody
+   * closes them by doing the work; this is the escape hatch for what the work
+   * cannot reach, and it is a capability rather than a role check so the
+   * Access screen decides it. Checked again in the action, because a hidden
+   * button is not a permission.
+   */
+  canClose: boolean;
   rows: Row[];
   customers: Array<{ id: string; name: string }>;
 }) {
@@ -180,6 +215,22 @@ export function RemindersScreen({
           ]}
         />
 
+        {/*
+          * SAID ONCE, at the top, to whoever no longer has the button.
+          *
+          * A control that disappears with no explanation reads as a fault in
+          * the screen, and the person it disappeared for is the person who
+          * most needs to know what replaced it. It is not drawn for somebody
+          * who still has the button: they can see what they can do.
+          */}
+        {!canClose ? (
+          <div className="border-b border-divider bg-canvas px-5 py-2.5 text-[13px] text-muted">
+            These close themselves. Press Call, and saving the call closes the
+            reminder behind it — so this list is a record of calls actually
+            made rather than of boxes ticked.
+          </div>
+        ) : null}
+
         {visible.length ? (
           visible.map((r) => (
             <div
@@ -254,16 +305,37 @@ export function RemindersScreen({
 
               {r.status === "pending" ? (
                 <div className="flex flex-none items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={async () => {
-                      await run(completeReminder(r.id));
-                      router.refresh();
-                    }}
+                  {/*
+                   * THE ACTION IS THE CALL, not a tick.
+                   *
+                   * This list used to offer one button and it recorded that a
+                   * button had been pressed — which is the one thing nobody
+                   * needed to know. The promise is closed by making the call,
+                   * so the button that closes it is the one that makes it:
+                   * straight into the Call Log with this customer's panel
+                   * open, and the reminder closes itself when the call is
+                   * saved. See `lib/engines/reminder-closure.ts`.
+                   */}
+                  <Link
+                    href={`/crm/call-log?customer=${r.customerId}`}
+                    prefetch={false}
+                    className="inline-flex h-8 items-center rounded-[4px] border border-brand bg-brand px-3 text-[13px] font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
                   >
-                    Mark done
-                  </Button>
+                    Call
+                  </Link>
+                  {canClose ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      title="Close it without a call behind it - for the cases a call cannot reach. It is recorded as your decision."
+                      onClick={async () => {
+                        await run(completeReminder(r.id));
+                        router.refresh();
+                      }}
+                    >
+                      Mark done
+                    </Button>
+                  ) : null}
                   <RowMenu
                     items={[
                       ...(r.hasConflictToday && !r.holdOtherReasonsUntilDue
@@ -292,18 +364,40 @@ export function RemindersScreen({
                         label: "Open customer record",
                         onSelect: () => router.push(`/crm/customers/${r.customerId}`),
                       },
-                      {
-                        label: "Dismiss reminder",
-                        destructive: true,
-                        onSelect: () => setDismissing(r),
-                      },
+                      /*
+                       * Dismissing sits behind the SAME capability as marking
+                       * done. A reason typed into a dismissal clears the
+                       * overdue pile exactly as effectively as a tick does, so
+                       * gating one and leaving the other would rename the
+                       * escape rather than close it.
+                       */
+                      ...(canClose
+                        ? [
+                            {
+                              label: "Dismiss reminder",
+                              destructive: true,
+                              onSelect: () => setDismissing(r),
+                            },
+                          ]
+                        : []),
                     ]}
                   />
                 </div>
               ) : (
-                <Badge tone={r.status === "completed" ? "success" : "muted"}>
-                  {r.status === "completed" ? "Done" : "Dismissed"}
-                </Badge>
+                <div className="flex-none text-right">
+                  <Badge tone={r.status === "completed" ? "success" : "muted"}>
+                    {r.status === "completed" ? "Done" : "Dismissed"}
+                  </Badge>
+                  {/*
+                   * WHAT closed it, beside the fact that something did. "Done"
+                   * on its own is the state this screen was in: a promise kept
+                   * and a promise tidied away read identically, which is what
+                   * made the whole list unreadable as a record of work.
+                   */}
+                  <div className="mt-1 max-w-[220px] text-[11px] leading-[15px] text-muted">
+                    {closureLine(r)}
+                  </div>
+                </div>
               )}
             </div>
           ))
