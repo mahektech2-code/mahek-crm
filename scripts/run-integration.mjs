@@ -49,6 +49,7 @@ const files = [
   "src/lib/travel-on-visit.test.ts",
   "src/lib/check-in-gate.test.ts",
   "src/lib/credential-issue.test.ts",
+  "src/lib/change-password.test.ts",
   "src/lib/either-identifier.test.ts",
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",

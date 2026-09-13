@@ -10,7 +10,7 @@ import { AppSwitcher } from "./app-switcher";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { setScope, markNotificationsRead, markNotificationRead } from "@/lib/actions/crm";
-import { signOut } from "@/lib/actions/auth";
+import { AccountMenu } from "./account-menu";
 import { stamp } from "@/lib/format";
 import type { Notification, User } from "@/db/schema";
 import type { AppDefinition } from "@/lib/apps";
@@ -225,28 +225,13 @@ export function Header({
 
         <span className="mx-1 h-6 w-px bg-divider" />
 
-        <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
-            {user.initials}
-          </span>
-          <span className="leading-[14px]">
-            <span className="block text-[13px] font-medium text-ink">
-              {user.name}
-            </span>
-            <span className="block text-[11px] text-muted capitalize">
-              {user.role}
-            </span>
-          </span>
-          <form action={signOut}>
-            <button
-              type="submit"
-              title="Sign out"
-              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-            >
-              <Icon name="signOut" size={16} />
-            </button>
-          </form>
-        </div>
+        {/*
+          The same chip the sidebar draws on its floor, and it has to be the
+          same CONTROL: two identical-looking chips on one screen that behave
+          differently is worse than either arrangement on its own. Both were a
+          name with a sign-out icon welded to the side of it.
+        */}
+        <AccountMenu user={user} variant="header" />
       </div>
 
       <Modal
