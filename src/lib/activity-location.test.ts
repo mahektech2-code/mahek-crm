@@ -1108,16 +1108,38 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
       "occurredAt must be epoch milliseconds — the handset stores this column as INTEGER",
     );
 
-    /* And on the delta, which is every pull after sign-in. The two history
-       channels are deliberately not cursor-gated, so they come every time. */
+    /*
+     * And on the delta, which is every pull after sign-in.
+     *
+     * ORDERS COME EVERY TIME and the two money channels do NOT, and the
+     * difference is worth asserting rather than assuming. Orders are capped at
+     * ten a customer, so an eleventh does not change a row — it displaces one,
+     * and nothing carries an `updated_at` that says so. Bills and receipts are
+     * a WINDOW with no cap, so a row inside it is either already on the phone
+     * or has a moved `updated_at`; sending a salesman's share of thirteen
+     * months on every pull all day is what this stops.
+     */
     const delta = await buildPull(principal, boot.cursor);
     assert.ok(
       (delta.customerOrders as unknown[]).length > 0,
       "the delta carried no order history",
     );
+    assert.equal(
+      (delta.customerPayments as unknown[]).length,
+      0,
+      "nothing changed since the cursor, so a since-gated channel must send nothing",
+    );
+
+    /* And what HAS changed does ride. Without this the assertion above passes
+       just as happily on a channel that is broken and sends nothing ever. */
+    await db.execute(sql`
+      update payment_receipts set updated_at = now()
+       where customer_id = ${shop.id}
+    `);
+    const after = await buildPull(principal, boot.cursor);
     assert.ok(
-      (delta.customerPayments as unknown[]).length > 0,
-      "the delta carried no receipts",
+      (after.customerPayments as unknown[]).length > 0,
+      "a receipt touched since the cursor never reached the handset",
     );
   });
 
@@ -1357,19 +1379,163 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
       "without this the screen prints the full amount as a debt — the imported-book mistake, on a phone",
     );
 
-    assert.equal(
-      rows.find((b) => b.id === settled),
-      undefined,
-      "a settled bill must not be offered: naming it is refused with `bill_settled`, " +
-        "which reads as the app being wrong rather than the phone being stale",
-    );
+    /*
+     * A SETTLED BILL ARRIVES NOW, and that is a reversal of what this test
+     * used to assert.
+     *
+     * It asserted the opposite, and the reasoning was right for the channel as
+     * it then was: the handset offered every bill it held on the payment
+     * picker, so a settled one reaching the phone was a bill a salesman could
+     * name and the server would refuse with `bill_settled` — a refusal that
+     * reads as the app being wrong rather than the phone being stale.
+     *
+     * What changed is that the customer record grew a statement, and a
+     * statement made of open bills alone is a year with 10,405 of its 10,815
+     * rows missing. So the channel carries every bill in the window and the
+     * PICKER is what filters: `openCustomerBills` on the handset asks for a
+     * balance above zero. The old assertion's intent survives exactly, one
+     * layer down — see the handset's own test for it.
+     */
+    const closed = rows.find((b) => b.id === settled);
+    assert.ok(closed, "a settled bill is most of a statement and has to reach the phone");
+    assert.equal(closed.balancePaise, 0, "and it says plainly that nothing is left on it");
 
-    /* The customer's name, the aging bucket and the status are on the Accounts
-       row and have nowhere to land here. One extra key empties the phone. */
+    /* The customer's name and the aging bucket are on the Accounts row and
+       have nowhere to land here. One extra key empties the phone. */
     assert.deepEqual(
       Object.keys(open).filter((k) => !ALLOWED_BILL_KEYS.has(k)),
       [],
       "the payload was forwarded rather than trimmed to the handset",
+    );
+  });
+
+  /*
+   * WHAT WAS ON THE BILL, from the two places an order line can live.
+   *
+   * A sales bill IS the order, and every bill on the real book carries an
+   * `order_id` — but an order records its lines one of two ways depending on
+   * who took it. The sheet and the handset write `orders.line_items`, a jsonb
+   * array naming the product as TEXT; the CRM writes
+   * `interaction_product_lines`, keyed on the call, with a real product id.
+   * 10,867 of 10,957 orders on this book are the first kind and 90 are the
+   * second, which is exactly the ratio that makes the second easy to forget
+   * and impossible to notice — ninety bills would read "nothing itemised" and
+   * nobody would work out why.
+   */
+  test("a bill carries what was on it, whichever way the order recorded it", async () => {
+    const day = new Date().toISOString().slice(0, 10);
+
+    const sheetOrder = id("order");
+    const sheetBill = id("bill");
+    await db.execute(sql`
+      insert into orders (id, customer_id, source, ordered_at, total_amount, status, line_items)
+      values (${sheetOrder}, ${shop.id}, 'external', now(), 360000, 'dispatched',
+              ${JSON.stringify([
+                { product: "Nano Thinner - 20 Liter (Loose)", quantity: 6, unitPrice: 40000, amount: 240000 },
+                { product: "PU Hardener - 5 Liter", quantity: 3, unitPrice: 40000, amount: 120000 },
+              ])}::jsonb)
+    `);
+    await db.execute(sql`
+      insert into bills (id, customer_id, order_id, bill_no, bill_date, amount, paid_amount)
+      values (${sheetBill}, ${shop.id}, ${sheetOrder}, 'MMI/26-27/9101', ${day}::date, 360000, 0)
+    `);
+
+    /* And the CRM's own shape: a call, its product lines, and the order. */
+    const product = id("prod");
+    const call = id("call");
+    const crmOrder = id("order");
+    const crmBill = id("bill");
+    await db.execute(sql`
+      insert into products (id, name, raw_name, active)
+      values (${product}, 'Universal Thinner - 1 Liter', 'Universal Thinner - 1 Liter', true)
+    `);
+    await db.execute(sql`
+      insert into calls (id, customer_id, user_id, interaction_type, started_at)
+      values (${call}, ${shop.id}, ${salesman.id}, 'outbound_call', now())
+    `);
+    await db.execute(sql`
+      insert into interaction_product_lines (id, interaction_id, product_id, quantity)
+      values (${id("line")}, ${call}, ${product}, 12)
+    `);
+    await db.execute(sql`
+      insert into orders (id, customer_id, source, ordered_at, total_amount, status, call_id)
+      values (${crmOrder}, ${shop.id}, 'crm', now(), 0, 'captured', ${call})
+    `);
+    await db.execute(sql`
+      insert into bills (id, customer_id, order_id, bill_no, bill_date, amount, paid_amount)
+      values (${crmBill}, ${shop.id}, ${crmOrder}, 'MMI/26-27/9102', ${day}::date, 0, 0)
+    `);
+
+    const rows = (await buildBootstrap(principal)).customerBills as Array<
+      Record<string, unknown>
+    >;
+
+    const fromSheet = rows.find((b) => b.id === sheetBill);
+    assert.ok(fromSheet, "the sheet's bill never reached the handset");
+    assert.equal(fromSheet.lineCount, 2);
+    assert.deepEqual(JSON.parse(String(fromSheet.lines)), [
+      { product: "Nano Thinner - 20 Liter (Loose)", qty: 6, amountPaise: 240000 },
+      { product: "PU Hardener - 5 Liter", qty: 3, amountPaise: 120000 },
+    ]);
+
+    const fromCrm = rows.find((b) => b.id === crmBill);
+    assert.ok(fromCrm, "the CRM's bill never reached the handset");
+    assert.equal(
+      fromCrm.lineCount,
+      1,
+      "a CRM order keeps its lines on the CALL — a query that knew only about " +
+        "line_items would answer honestly for most bills and show nothing for these",
+    );
+    assert.deepEqual(JSON.parse(String(fromCrm.lines)), [
+      /* No amount: the product master holds no prices, so a quantity times
+         nothing is not a figure to put in front of a customer. */
+      { product: "Universal Thinner - 1 Liter", qty: 12, amountPaise: null },
+    ]);
+
+    /* JSON TEXT, not an object. The handset column is TEXT and `applyPull`
+       inserts what arrives — an object would land as "[object Object]". */
+    assert.equal(typeof fromSheet.lines, "string");
+  });
+
+  /*
+   * THE WINDOW IS WHAT MAKES THE REST OF IT AFFORDABLE.
+   *
+   * Thirteen months is 4,532 bills and 7,939 receipts on the real book, and
+   * the whole ledger is 10,815 bills. Without a bound, every handset would
+   * carry every bill ever raised against every shop in its territory.
+   */
+  test("a bill older than the statement window does not come down", async () => {
+    const old = id("bill");
+    const recent = id("bill");
+    await db.execute(sql`
+      insert into bills (id, customer_id, bill_no, bill_date, amount, paid_amount)
+      values
+        (${old},    ${shop.id}, 'MMI/20-21/0001', (now() - interval '5 years')::date, 100000, 0),
+        (${recent}, ${shop.id}, 'MMI/26-27/9201', (now() at time zone 'Asia/Kolkata')::date, 100000, 0)
+    `);
+
+    const payload = await buildBootstrap(principal);
+    const rows = payload.customerBills as Array<Record<string, unknown>>;
+    assert.ok(rows.find((b) => b.id === recent), "this month's bill has to be there");
+    assert.equal(
+      rows.find((b) => b.id === old),
+      undefined,
+      "a five-year-old bill is the office's, not a phone's",
+    );
+
+    /*
+     * AND THE HANDSET IS TOLD WHERE THE WINDOW STARTS, on both payloads.
+     *
+     * It prunes on this. Working the boundary out for itself would mean a
+     * phone deleting rows the office had just sent, or keeping rows it had
+     * stopped sending, with nothing on either side looking wrong.
+     */
+    assert.match(payload.statementFrom, /^\d{4}-\d{2}-01$/, "and it is a month start");
+    const delta = await buildPull(principal, payload.cursor);
+    assert.equal(
+      delta.statementFrom,
+      payload.statementFrom,
+      "the delta must prune on the same boundary the bootstrap filled from",
     );
   });
 
@@ -1906,6 +2072,11 @@ const ALLOWED_BILL_KEYS = new Set([
   "id", "customerId", "billNo", "billDate", "dueDate",
   "amountPaise", "paidPaise", "balancePaise", "overdueDays",
   "disputed", "paymentPosition",
+  /* The statement's three. `lines` is what was ON the bill, as JSON text —
+     a column rather than a table because a bill's lines never change after it
+     is raised, so there is no moment where a bill has arrived and its contents
+     have not. */
+  "status", "lines", "lineCount",
 ]);
 
 describe("The journey channels' delta pull", () => {

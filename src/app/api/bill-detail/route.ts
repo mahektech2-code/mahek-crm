@@ -16,10 +16,18 @@ export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ detail: null }, { status: 401 });
 
-  // The ledger this opens from lives in the CRM. A bookmarked endpoint must be
-  // gated the same way its screen is, not just hidden from the menu.
+  /*
+   * THREE LEDGERS OPEN THIS NOW. The CRM's, the Accounts bill list, and the
+   * Sales Dashboard's Invoices screen — a bookmarked endpoint must be gated
+   * the same way its screens are, not just hidden from a menu.
+   *
+   * Widening the list does not widen what comes back: `getBillDetail` resolves
+   * the caller's own scope and a bill outside it answers exactly as one that
+   * does not exist. What this decides is only whether somebody has a screen
+   * this belongs to at all.
+   */
   const apps = await listUserApps(user.id);
-  if (!apps.includes("crm") && !apps.includes("accounts")) {
+  if (!apps.some((a) => a === "crm" || a === "accounts" || a === "sales")) {
     return NextResponse.json({ detail: null }, { status: 403 });
   }
 

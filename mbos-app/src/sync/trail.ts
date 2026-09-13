@@ -385,7 +385,7 @@ async function startBackground(everyMs: number): Promise<boolean> {
       pausesUpdatesAutomatically: false,
       foregroundService: {
         notificationTitle: 'MahekOne is following your route',
-        notificationBody: 'Recording where the day takes you. Stops the moment you check out.',
+        notificationBody: 'Recording where the day takes you. Stops the moment you punch out.',
         killServiceOnDestroy: false,
       },
     });

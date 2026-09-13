@@ -166,12 +166,27 @@ export function QueueScreen({
   // as the initial state rather than held in sync with the URL — the pills are
   // the authority after the first render, and a filter that snapped back on
   // every navigation would fight the person clicking them.
-  const initialFilter = useSearchParams().get("filter");
+  const params = useSearchParams();
+  const initialFilter = params.get("filter");
   const [filter, setFilter] = React.useState<Filter>(
     FILTERS.includes(initialFilter as Filter) ? (initialFilter as Filter) : "all",
   );
   const [selectedRaw, setSelected] = React.useState(0);
-  const [openId, setOpenId] = React.useState<string | null>(null);
+  /*
+   * ?customer= OPENS THE PANEL, which is what makes the Reminders screen's
+   * Call button a call rather than a navigation.
+   *
+   * Read once as initial state, exactly as the filter above is: the panel is
+   * the authority afterwards, and a modal that reopened itself every time the
+   * URL was still on the screen would fight the person closing it.
+   *
+   * The customer need not be on today's list. `callTargets` carries one for
+   * them either way — see the page — because the promise is kept by ringing
+   * them whether or not the queue happened to rank them today.
+   */
+  const [openId, setOpenId] = React.useState<string | null>(
+    params.get("customer"),
+  );
   const [heldOpen, setHeldOpen] = React.useState(false);
   const [skipping, setSkipping] = React.useState<Row | null>(null);
   const [deactivating, setDeactivating] = React.useState<Row | null>(null);

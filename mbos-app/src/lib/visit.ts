@@ -215,3 +215,43 @@ export function visitVerdict(checks: VisitCheck[], f?: { checkInOverridden?: boo
 export function elapsedLabel(seconds: number): string {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
+
+/* ══════════════════════════════════════ arriving, and then going in */
+
+/**
+ * The two decisions behind an arrival, kept PURE and out of `data/arrival.ts`.
+ *
+ * That file imports the database, so nothing in it can be exercised without a
+ * handset — and these two are exactly the kind of rule that is invisible when
+ * it goes wrong. A stale arrival restored on the wrong morning offers to check
+ * somebody into yesterday's last shop, and a second check-in that overwrote
+ * the first would silently shorten every visit it happened on. Neither shows
+ * up as an error anywhere.
+ */
+
+/** What an arrival needs to be judged, and nothing more. */
+export type ArrivalFacts = { arrivedAt: number; checkedInAt: number | null; day: string };
+
+/**
+ * Is this arrival today's?
+ *
+ * An arrival from an earlier day is not restored: he did not go in, the day
+ * has ended, and the journey behind it was closed at the boundary by
+ * `closeStaleLegs`. Offering it back on Wednesday morning would put Tuesday's
+ * last shop on the one bar this app never lets him dismiss.
+ */
+export function arrivalIsCurrent(arrival: ArrivalFacts, today: string): boolean {
+  return arrival.day === today;
+}
+
+/**
+ * Walking in, applied once.
+ *
+ * A second tap is a slip — a slow screen, or Android redrawing it — and
+ * reading it as a second arrival would move the start of the visit forward and
+ * take the difference off the dwell figure. The FIRST instant is the one he
+ * walked in on, so it is the one that stands.
+ */
+export function withCheckIn<T extends ArrivalFacts>(arrival: T, now: number): T {
+  return arrival.checkedInAt != null ? arrival : { ...arrival, checkedInAt: now };
+}

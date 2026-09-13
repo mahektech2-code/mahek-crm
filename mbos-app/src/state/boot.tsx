@@ -8,12 +8,12 @@ import * as trail from '../sync/trail';
 import { currentSession, type Session } from '../data/session';
 import { autoCloseMissedCheckouts, dayState } from '../data/attendance';
 import { closeOpenVisits } from '../data/visits';
-import { closeStaleLegs } from '../data/travel';
+import { closeStaleLegs, closeStaleSessions } from '../data/travel';
 import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
 import { registerForPush } from '../native/push';
 import { fetchUpdateInBackground } from '../native/updates';
-import { restoreOffPlanReason } from './store';
+import { restoreArrival, restoreOffPlanReason } from './store';
 
 /**
  * Starting up.
@@ -62,6 +62,8 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
            it here is what stops the sentence being lost in silence. It expires
            itself at the day boundary; see `restoreOffPlanReason`. */
         void restoreOffPlanReason();
+        /* The shop he arrived at and did not go into. Same shape, same reason. */
+        void restoreArrival();
         void registerForPush();
         /* Behind the app, never in front of it: `setReady(true)` has already
            run, so the salesman is looking at his day while this downloads. It
@@ -154,6 +156,10 @@ async function runDayBoundaryWork(userId: string): Promise<void> {
        checked out of is. Nothing else ever ends a leg, so one left open
        overnight was read as this morning's — see `openLegOf`. */
     await closeStaleLegs(userId, startOfToday.getTime());
+    /* And the session he punched in on and never out of. Nothing closes one
+       but a punch-out, so a phone switched off on Friday evening would greet
+       its owner on Monday still on Friday's meter reading. */
+    await closeStaleSessions(userId, startOfToday.getTime());
     await autoCloseMissedCheckouts(userId);
     /* `mbos.tasks.escalationHours`, which is the PUBLISHED key. This read
        `mbos.tasks.escalateAfterHours` — the same question, one word apart, and

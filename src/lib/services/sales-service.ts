@@ -1,5 +1,12 @@
 import "server-only";
 import { bandFor, type HealthBand } from "../engines/inactivity";
+import {
+  splitFilter,
+  UNASSIGNED,
+  type FilterOption,
+  type LeadFilters,
+} from "../lead-filters";
+import { stageLabel, type LeadStage } from "../lead-labels";
 import type { BusinessDate } from "../business-date";
 import { cache } from "react";
 import { sql } from "drizzle-orm";
@@ -152,6 +159,37 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
 });
 
 /**
+ * WHICH LEADS A MANAGER MAY SEE — `onlyMine` plus the ones nobody holds.
+ *
+ * `onlyMine` renders `owner_id in (…)`, and `in` NEVER MATCHES NULL. On a book
+ * where every lead has an owner that is the same list either way; on this one
+ * it hid 3,265 of 3,776 leads from every regional manager in the company —
+ * 86% of the lead book, invisible on the one screen that exists to get leads
+ * assigned, with the count on the desk card above the table saying "nobody is
+ * working these" and the table beneath it showing none of them.
+ *
+ * They cannot be narrowed by territory either, which is the fix that looks
+ * right and delivers nothing: an unowned lead has no salesman to place it, and
+ * on prod not one of those 3,265 rows carries a state, so a region clause
+ * would show a manager exactly zero of them.
+ *
+ * So a lead nobody owns is visible to every manager who can open this screen.
+ * It is the argument `managerScope` already makes one function above, about a
+ * salesman nobody has given a book to: somebody nobody has been given is
+ * nobody's to hide, and an empty screen is the one outcome nobody debugs.
+ * Ownership is what this widens on and nothing else — a lead somebody else's
+ * salesman owns stays theirs.
+ *
+ * It can only ADD rows, so no manager loses sight of anything they see today.
+ */
+export function leadsVisible(scope: ManagerScope, column = "c.owner_id") {
+  if (scope.salesmanIds === null) return sql``;
+  const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
+  return sql`and (${sql.raw(column)} in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+              or ${sql.raw(column)} is null)`;
+}
+
+/**
  * `and <alias>.id in (…)`, or nothing at all for a national manager.
  *
  * An empty list produces `in ('')`, which matches nothing — deliberately. A
@@ -163,6 +201,81 @@ export function onlyMine(scope: ManagerScope, column: string) {
   if (scope.salesmanIds === null) return sql``;
   const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
   return sql`and ${sql.raw(column)} in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
+}
+
+/**
+ * AN ADMIN IS NOT NARROWED BY A TERRITORY, and this is the one place that is
+ * decided.
+ *
+ * Allocating somebody a region says which patch they OVERSEE. On a manager
+ * that is the whole of their remit; on an administrator it is an extra job on
+ * top of running the system, and reading it as a ceiling meant the person who
+ * can see every screen in MahekOne could not see Kerala on one map. That is
+ * how this was reported: an admin holding six states saw 4,205 of 4,930 pins
+ * and read the missing 725 as deleted data.
+ *
+ * It is resolved HERE rather than inside `managerScope`, and the distinction
+ * is the point. That function is what `canReadAttendanceSelfie` and
+ * `canReadTravelLegPhoto` narrow by, and this file already carries the scar of
+ * that path failing OPEN — widening it would hand out photographs of
+ * employees. This widens three WHERE clauses on one coverage screen and
+ * nothing else.
+ */
+export const placeScope = cache(async function placeScope(): Promise<ManagerScope> {
+  const scope = await managerScope();
+  if (scope.salesmanIds === null) return scope;
+  try {
+    const { requireUser } = await import("../auth");
+    const user = await requireUser();
+    if (user.role === "admin") return { national: true, regions: [], salesmanIds: null };
+  } catch {
+    /* No session — a script, a job or a test. `managerScope` already answers
+       national in that case, so reaching here means there IS a scope to keep;
+       keeping it is the safe direction. */
+  }
+  return scope;
+});
+
+/**
+ * THE SAME SCOPE, ASKED AS A GEOGRAPHY RATHER THAN AS A LIST OF PEOPLE.
+ *
+ * `onlyMine` narrows by WHOSE BOOK a shop is in, which is right for a worklist
+ * — a manager's queue is his team's work. It is the wrong axis for the
+ * Territory screen, whose whole question is geographic: "who covers Nagpur",
+ * "how much of Maharashtra has nobody". Answered through the owner, the second
+ * half of that question cannot be answered at all, because a shop with nobody
+ * on it matches no salesman and `x in (…)` never matches NULL.
+ *
+ * On the real book that is not an edge case. 1,408 of 1,606 active customers
+ * carry neither a sales AM nor an owner — the imported book, which nobody has
+ * allocated yet — so a regional manager saw 135 shops in 96 cities out of
+ * 4,930 pinned ones and read it as his data having been deleted. The shops he
+ * most needs to see on a coverage map are exactly the ones this dropped.
+ *
+ * So: a shop is his if it SITS in one of his regions, or if it belongs to one
+ * of his salesmen wherever it sits. Both arms are legitimately his, and it can
+ * only ever ADD rows to what `onlyMine` already allowed — no manager loses
+ * sight of anything they can see today.
+ *
+ * **It is deliberately NOT a change to `managerScope` itself.** That function
+ * is what `canReadAttendanceSelfie` and `canReadTravelLegPhoto` narrow by, and
+ * this file already carries the scar of that path failing OPEN. Widening the
+ * scope would hand out photographs; widening one screen's WHERE clause does
+ * not. A national manager is still national, and a regional one still sees
+ * only his regions.
+ */
+export function mineByPlace(scope: ManagerScope, ownerColumn: string, alias: string) {
+  if (scope.salesmanIds === null) return sql``;
+  const keys = [...new Set(scope.regions.flatMap((r) => stateVariants(r)))];
+  const here = keys.length
+    ? sql`${sql.raw(stateKeySql(qualify(TERRITORY_REGION_SQL, alias)))} in (${sql.join(
+        keys.map((k) => sql`${k}`),
+        sql`, `,
+      )})`
+    : sql`false`;
+  const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
+  const theirs = sql`${sql.raw(ownerColumn)} in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
+  return sql`and (${here} or ${theirs})`;
 }
 
 /**
@@ -901,9 +1014,46 @@ const FIELD_ACTIVITY_LIMIT = 200;
  * reviewing this backfill needs to see the rows that still need a customer
  * resolved too, which is why this reads `sheet_field_activity_rows` directly.
  */
+/**
+ * A ROW NOBODY OWNS IS NOBODY'S TO HIDE.
+ *
+ * `onlyMine(scope, "u.id")` over a LEFT JOIN excluded every row whose salesman
+ * did not resolve, because `u.id` is NULL there and `x in (…)` never matches
+ * NULL. On this backfill that is ALL 33,058 of them — the import ran on
+ * 1 September and the only salesman with a matching account was created on the
+ * 10th — so a scoped manager opened this screen and read "Nothing in this
+ * range" under a message blaming the date filter.
+ *
+ * Which is the exact opposite of what the screen is for. Its own subtitle says
+ * rows that do not resolve "are shown here so they can be reviewed": an
+ * unresolved row is the WORK, and scoping it away by the very field that has
+ * not been filled in yet means the screen is empty precisely when it has the
+ * most to show.
+ *
+ * So an unmatched row is visible to anybody who can open this screen, and a
+ * matched one still narrows to the manager who owns that salesman. It is the
+ * same carve-out `managerScope` already makes for a salesman with no book at
+ * all, for the same reason: nobody can be the wrong manager for a row that is
+ * nobody's.
+ */
+function mineOrNobodys(scope: ManagerScope, column: string) {
+  if (scope.salesmanIds === null) return sql``;
+  const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
+  return sql`and (${sql.raw(column)} is null or ${sql.raw(column)} in (${sql.join(
+    ids.map((i) => sql`${i}`),
+    sql`, `,
+  )}))`;
+}
+
 export async function fieldActivityHistory(
   filter: FieldActivityFilter,
-): Promise<{ rows: FieldActivityRow[]; total: number; capped: boolean }> {
+): Promise<{
+  rows: FieldActivityRow[];
+  total: number;
+  capped: boolean;
+  /** Rows in the staging table regardless of filter — see the note below. */
+  everInTable: number;
+}> {
   const scope = await managerScope();
   const matchClause = filter.matchStatus
     ? sql`and f.customer_match_status = ${filter.matchStatus}`
@@ -918,7 +1068,7 @@ export async function fieldActivityHistory(
       left join users u on u.id = f.matched_salesman_id
      where f.status = 'present'
        and f.visit_date between ${filter.from}::date and ${filter.to}::date
-       ${onlyMine(scope, "u.id")}
+       ${mineOrNobodys(scope, "u.id")}
        ${matchClause}
        ${salesmanClause}
   `);
@@ -940,14 +1090,38 @@ export async function fieldActivityHistory(
       left join customers c on c.id = f.matched_customer_id
      where f.status = 'present'
        and f.visit_date between ${filter.from}::date and ${filter.to}::date
-       ${onlyMine(scope, "u.id")}
+       ${mineOrNobodys(scope, "u.id")}
        ${matchClause}
        ${salesmanClause}
      order by f.visit_date desc nulls last, f.id desc
      limit ${FIELD_ACTIVITY_LIMIT}
   `) as unknown as FieldActivityRow[];
 
-  return { rows, total, capped: total > FIELD_ACTIVITY_LIMIT };
+  /*
+   * HOW MANY ROWS EXIST AT ALL, so an empty screen can say WHY it is empty.
+   *
+   * "Nothing in this range" and "nothing you are allowed to see" and "this
+   * table has never been filled" are three different situations with three
+   * different things to do about them, and the screen answered all of them
+   * with advice about the date filter. That advice was actively wrong on the
+   * day it was reported: 907 rows sat inside the default window, and the
+   * reason none were drawn was the scope clause above.
+   *
+   * Unfiltered and unscoped deliberately — it is a count of the staging table
+   * and nothing more, used only to choose a sentence. No row of it is shown.
+   */
+  const everything = total === 0
+    ? await db.execute<{ n: number }>(sql`
+        select count(*)::int as n from sheet_field_activity_rows where status = 'present'
+      `)
+    : null;
+
+  return {
+    rows,
+    total,
+    capped: total > FIELD_ACTIVITY_LIMIT,
+    everInTable: everything ? (everything[0]?.n ?? 0) : total,
+  };
 }
 
 /** Distinct salesmen the imported activity actually resolved to, for a filter. */
@@ -958,7 +1132,7 @@ export async function fieldActivitySalesmen(): Promise<{ id: string; name: strin
       from sheet_field_activity_rows f
       join users u on u.id = f.matched_salesman_id
      where f.status = 'present'
-       ${onlyMine(scope, "u.id")}
+       ${mineOrNobodys(scope, "u.id")}
      order by u.name
   `) as unknown as { id: string; name: string }[];
 }
@@ -982,7 +1156,7 @@ export async function fieldActivityMatchCounts(
       left join users u on u.id = f.matched_salesman_id
      where f.status = 'present'
        and f.visit_date between ${filter.from}::date and ${filter.to}::date
-       ${onlyMine(scope, "u.id")}
+       ${mineOrNobodys(scope, "u.id")}
        ${salesmanClause}
      group by f.customer_match_status
   `);
@@ -1139,6 +1313,333 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
   `) as unknown as LeadRow[]);
 }
 
+/* ═════════════════════════════════════════════ narrowing the leads list */
+
+/**
+ * WHAT THE FILTER BAR MEANS, IN SQL — one clause, built from the same option
+ * values `lib/lead-filters.ts` hands the dropdowns.
+ *
+ * Every predicate here is over a STORED column, which is what lets the list be
+ * filtered and paged in the database rather than in a browser holding all 400
+ * rows. The one derived value on the screen that is NOT here is the retention
+ * band: it is `bandFor`'s, computed in JS on purpose, and `lead-filters.ts`
+ * carries the paragraph on why the filter does not offer it.
+ *
+ * Empty means "all", matching `MultiSelect`'s own contract — an unticked
+ * dropdown adds no clause rather than matching nothing.
+ */
+function leadFilterClause(
+  filters: LeadFilters,
+  day: string,
+  health: { atRiskBelow: number; strongAtOrAbove: number },
+) {
+  const parts: ReturnType<typeof sql>[] = [];
+
+  /** One bucket list becomes `(a or b or c)`, or nothing at all. */
+  const anyOf = (values: string[], predicate: (v: string) => ReturnType<typeof sql> | null) => {
+    const clauses = values.map(predicate).filter((c): c is ReturnType<typeof sql> => c !== null);
+    if (!clauses.length) return;
+    parts.push(sql`and (${sql.join(clauses, sql` or `)})`);
+  };
+
+  const owners = splitFilter(filters.owner);
+  if (owners.length) {
+    const ids = owners.filter((o) => o !== UNASSIGNED);
+    const clauses: ReturnType<typeof sql>[] = [];
+    if (ids.length) {
+      clauses.push(sql`c.owner_id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
+    }
+    // "Nobody" is its own clause: `in (…)` never matches NULL, so an owner
+    // filter that only listed ids could never find the leads nobody holds —
+    // which are the ones a manager opens this screen for.
+    if (ids.length !== owners.length) clauses.push(sql`c.owner_id is null`);
+    parts.push(sql`and (${sql.join(clauses, sql` or `)})`);
+  }
+
+  const sources = splitFilter(filters.source);
+  if (sources.length) {
+    // The same COALESCE the SELECT applies, or a lead with no source could be
+    // offered as "manual" in the dropdown and then not match it.
+    parts.push(
+      sql`and coalesce(c.lead_source, 'manual') in (${sql.join(
+        sources.map((v) => sql`${v}`),
+        sql`, `,
+      )})`,
+    );
+  }
+
+  const stages = splitFilter(filters.stage);
+  if (stages.length) {
+    parts.push(
+      sql`and c.lead_stage::text in (${sql.join(stages.map((v) => sql`${v}`), sql`, `)})`,
+    );
+  }
+
+  anyOf(splitFilter(filters.potential), (v) => {
+    const p = sql`coalesce(c.lead_estimated_potential_paise, 0)`;
+    switch (v) {
+      // Nothing typed and a typed zero are the same answer to "what could this
+      // shop spend": nobody has judged it. See the note on `potential` — a
+      // stored estimate of zero is not an opportunity worth nothing.
+      case "none": return sql`${p} = 0`;
+      case "under50k": return sql`${p} > 0 and ${p} < 5000000`;
+      case "50kto2l": return sql`${p} >= 5000000 and ${p} <= 20000000`;
+      case "over2l": return sql`${p} > 20000000`;
+      default: return null;
+    }
+  });
+
+  anyOf(splitFilter(filters.next), (v) => {
+    const d = sql`c.lead_next_follow_up_date`;
+    switch (v) {
+      case "overdue": return sql`${d} is not null and ${d} < ${day}::date`;
+      case "today": return sql`${d} = ${day}::date`;
+      case "week": return sql`${d} > ${day}::date and ${d} <= ${day}::date + 7`;
+      case "later": return sql`${d} > ${day}::date + 7`;
+      case "none": return sql`${d} is null`;
+      default: return null;
+    }
+  });
+
+  anyOf(splitFilter(filters.age), (v) => {
+    // The same expression the row's own "N days old" is selected from, so a
+    // row can never sit in a bucket its own age contradicts.
+    const age = sql`(${day}::date - (c.created_at ${IST_DAY})::date)`;
+    switch (v) {
+      case "week": return sql`${age} < 7`;
+      case "month": return sql`${age} >= 7 and ${age} < 30`;
+      case "quarter": return sql`${age} >= 30 and ${age} < 90`;
+      case "older": return sql`${age} >= 90`;
+      default: return null;
+    }
+  });
+
+  anyOf(splitFilter(filters.health), (v) => {
+    /* `health_score`, NOT `customer_health_score`: the row's alias is
+       `customerHealthScore` because the lead and the customer are one row and
+       the screen reads the second half of it, and the column it comes from is
+       plain `health_score`. Guessing from the alias is a query that throws at
+       the database and nowhere else. */
+    const scored = sql`c.lead_converted_at is not null and c.health_score is not null`;
+    switch (v) {
+      case "lead": return sql`c.lead_converted_at is null`;
+      case "unscored": return sql`c.lead_converted_at is not null and c.health_score is null`;
+      case "watch": return sql`${scored} and c.health_score < ${health.atRiskBelow}`;
+      case "middle":
+        return sql`${scored} and c.health_score >= ${health.atRiskBelow}
+                   and c.health_score < ${health.strongAtOrAbove}`;
+      case "strong": return sql`${scored} and c.health_score >= ${health.strongAtOrAbove}`;
+      default: return null;
+    }
+  });
+
+  return parts.length ? sql.join(parts, sql` `) : sql``;
+}
+
+export type LeadsPage = {
+  rows: LeadRow[];
+  /** Matching the filters. */
+  total: number;
+  /** In the whole scoped list, before any filter — "of 511". */
+  listTotal: number;
+  page: number;
+  pageCount: number;
+  perPage: number;
+  /** Over the FILTERED set, not the page: the strip describes the search. */
+  stale: { count: number; names: string[] };
+};
+
+/** Ten, because the screen this replaced drew four hundred rows in one go. */
+export const LEADS_PER_PAGE = 10;
+const LEADS_PER_PAGE_MAX = 200;
+
+/**
+ * ONE PAGE of the leads list, filtered and counted in the database.
+ *
+ * The screen used to receive up to 400 rows and render every one of them —
+ * eight columns, an expandable panel and a row menu apiece — which is the same
+ * waste `listCustomersPage` was written to stop, arriving on a different
+ * screen. What made it worse here is that nothing was narrowed first: the only
+ * control was a funnel chip that filtered the BARS and not the table, so the
+ * only way to find one lead among five hundred was the browser's own find.
+ *
+ * The counts around the table are taken over the filtered set rather than the
+ * page, for the reason the customers list already carries: a total that
+ * changed as you paged would be a different number on every click.
+ */
+export async function leadsPage(
+  day: string,
+  options: {
+    archived?: boolean;
+    filters?: LeadFilters;
+    page?: number;
+    perPage?: number;
+  } = {},
+): Promise<LeadsPage> {
+  const scope = await managerScope();
+  const { getConfig } = await import("../config/store");
+  const config = await getConfig();
+  const archived = options.archived ?? false;
+  const filters = options.filters ?? {};
+  const perPage = Math.min(Math.max(options.perPage ?? LEADS_PER_PAGE, 1), LEADS_PER_PAGE_MAX);
+
+  const where = sql`
+     where c.lead_stage is not null
+       and c.lead_archived = ${archived}
+       ${leadsVisible(scope)}`;
+  const narrowed = leadFilterClause(filters, day, {
+    atRiskBelow: config["mbos.health.atRiskBelow"],
+    strongAtOrAbove: config["mbos.health.strongAtOrAbove"],
+  });
+  const staleDays = config["mbos.leads.staleDays"];
+
+  /*
+   * The counts and the stale summary in ONE pass over the filtered set.
+   *
+   * `stale` is what the strip above the table names, and it has to describe
+   * the SEARCH rather than the page: on page 3 of a filtered list, "4 leads
+   * nobody has touched" counted over the ten rows in front of you is a
+   * sentence about nothing. The four names are the ones the strip prints, so
+   * they are taken here rather than by scanning whatever the page happened to
+   * load.
+   */
+  const [counts] = await db.execute<{
+    total: number;
+    staleCount: number;
+    staleNames: string[] | null;
+  }>(sql`
+    select count(*)::int as total,
+           count(*) filter (
+             where c.lead_stage::text not in ('won', 'lost')
+               and coalesce(${day}::date - c.lead_last_activity_date, 0) >= ${staleDays}
+           )::int as "staleCount",
+           (array_agg(c.name order by c.lead_last_activity_date asc nulls first)
+              filter (
+                where c.lead_stage::text not in ('won', 'lost')
+                  and coalesce(${day}::date - c.lead_last_activity_date, 0) >= ${staleDays}
+              ))[1:4] as "staleNames"
+      from customers c
+      ${where}
+      ${narrowed}
+  `);
+
+  // The whole scoped list, before any filter — "12 of 511", so a filter that
+  // empties the table still says what it emptied.
+  const [book] = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n from customers c ${where}
+  `);
+
+  const total = Number(counts?.total ?? 0);
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  const page = Math.min(Math.max(options.page ?? 1, 1), pageCount);
+
+  const rows = await db.execute<LeadRow>(sql`
+    ${LEAD_ROW_SELECT},
+           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
+           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
+      from customers c
+      left join users u on u.id = c.owner_id
+      left join users lm on lm.id = c.lead_manager_id
+      ${where}
+      ${narrowed}
+     ${archived
+       ? sql`order by c.lead_archived_at desc nulls last, c.id desc`
+       : sql`order by c.lead_next_follow_up_date asc nulls last,
+                     c.lead_last_activity_date asc nulls last, c.id desc`}
+     limit ${perPage} offset ${(page - 1) * perPage}
+  `) as unknown as LeadRow[];
+
+  return {
+    rows: await withHealthBand(day, rows),
+    total,
+    listTotal: Number(book?.n ?? 0),
+    page,
+    pageCount,
+    perPage,
+    stale: {
+      count: Number(counts?.staleCount ?? 0),
+      names: counts?.staleNames ?? [],
+    },
+  };
+}
+
+/**
+ * WHAT THERE IS TO FILTER BY, read off the book rather than declared.
+ *
+ * Owner, source and stage are values the rows actually hold, so the dropdowns
+ * are built from a `group by` over the same scoped list the table shows: a
+ * salesman who joined this morning is offered because he is in the data, and
+ * a source nobody has used since March stops being offered on its own. A
+ * hand-kept list would be a second place to remember, and the half nobody
+ * remembers is the half that goes stale.
+ *
+ * They are counted over the UNFILTERED list on purpose. A dropdown whose
+ * options disappear as you tick boxes in the dropdown beside it is one you
+ * cannot widen a search from — you would have to clear the other filter first
+ * to find out the option existed.
+ */
+export async function leadFilterOptions(
+  archived = false,
+): Promise<{
+  owners: Array<FilterOption & { count: number }>;
+  sources: Array<FilterOption & { count: number }>;
+  stages: Array<FilterOption & { count: number }>;
+}> {
+  const scope = await managerScope();
+  const where = sql`
+     where c.lead_stage is not null
+       and c.lead_archived = ${archived}
+       ${leadsVisible(scope)}`;
+
+  const [owners, sources, stages] = await Promise.all([
+    db.execute<{ value: string | null; label: string | null; count: number }>(sql`
+      select c.owner_id as value, u.name as label, count(*)::int as count
+        from customers c
+        left join users u on u.id = c.owner_id
+        ${where}
+       group by c.owner_id, u.name
+       order by count(*) desc, u.name asc
+    `),
+    db.execute<{ value: string; count: number }>(sql`
+      select coalesce(c.lead_source, 'manual') as value, count(*)::int as count
+        from customers c
+        ${where}
+       group by 1
+       order by count(*) desc, 1 asc
+    `),
+    db.execute<{ value: string; count: number }>(sql`
+      select c.lead_stage::text as value, count(*)::int as count
+        from customers c
+        ${where}
+       group by 1
+       order by count(*) desc, 1 asc
+    `),
+  ]);
+
+  return {
+    owners: owners.map((o) => ({
+      // A lead nobody holds is a real row and a real answer, so it is an
+      // option rather than a blank one nothing can select.
+      value: o.value ?? UNASSIGNED,
+      label: o.label ?? "Nobody",
+      count: Number(o.count),
+    })),
+    // The label is the screen's own wording, `_` to a space, so what the
+    // dropdown offers reads exactly like the cell it filters.
+    sources: sources.map((r) => ({
+      value: r.value,
+      label: r.value.replace(/_/g, " "),
+      count: Number(r.count),
+    })),
+    // Labelled by `stageLabel`, the one vocabulary the ladders are named in.
+    stages: stages.map((r) => ({
+      value: r.value,
+      label: stageLabel(r.value as LeadStage),
+      count: Number(r.count),
+    })),
+  };
+}
+
 /**
  * Fill in each row's retention band.
  *
@@ -1168,31 +1669,13 @@ async function withHealthBand(day: string, rows: LeadRow[]): Promise<LeadRow[]> 
   }));
 }
 
-/**
- * Leads a manager has filed out of the way, newest first.
- *
- * Archiving here is a manual override of what the nightly sweep would
- * otherwise do on its own — a manager saying "I have looked at this and it
- * is not worth chasing right now" — and it stays reachable and reversible for
- * exactly the same reason the sweep never deletes: a shop that said no in
- * March is who somebody wants to find in September.
+/*
+ * `archivedLeadsList` used to sit here, and `leadsPage({ archived: true })` is
+ * what replaced it: the same select, the same order, now filtered and paged
+ * like the working list beside it. Deleted rather than left exported, because
+ * a function nothing calls is a second answer to "what does the archive show"
+ * waiting for somebody to call the wrong one.
  */
-export async function archivedLeadsList(day: string): Promise<LeadRow[]> {
-  const scope = await managerScope();
-  return db.execute<LeadRow>(sql`
-    ${LEAD_ROW_SELECT},
-           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
-           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
-      from customers c
-      left join users u on u.id = c.owner_id
-      left join users lm on lm.id = c.lead_manager_id
-     where c.lead_stage is not null
-       and c.lead_archived = true
-       ${onlyMine(scope, "c.owner_id")}
-     order by c.lead_archived_at desc nulls last
-     limit 400
-  `) as unknown as LeadRow[];
-}
 
 /** How many leads are filed away, for the link that leads there. */
 export async function archivedLeadsCount(): Promise<number> {
@@ -1892,7 +2375,7 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
          and v.check_in_lat is not null
       union all
       select d.user_id, d.check_in_lat, d.check_in_lng, d.check_in_at,
-             'Checked in' as place, d.check_in_accuracy_m
+             'Punched in' as place, d.check_in_accuracy_m
         from mbos_attendance_days d
        where d.day = ${day}::date and d.check_in_lat is not null
       union all
@@ -2185,7 +2668,7 @@ export type TerritoryRow = {
  * neither. The customer list itself is a screen away.
  */
 export async function territory(): Promise<TerritoryRow[]> {
-  const scope = await managerScope();
+  const scope = await placeScope();
   return db.execute<TerritoryRow>(sql`
     select c.territory_region as region, c.city, c.beat,
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
@@ -2196,10 +2679,18 @@ export async function territory(): Promise<TerritoryRow[]> {
       from customers c
       left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
      where c.status = 'active' and c.kind = 'customer'
-       ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
+       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
      group by c.territory_region, c.city, c.beat, coalesce(c.sales_am_id, c.owner_id), u.name
      order by c.territory_region asc nulls last, c.city asc, c.beat asc nulls last
-     limit 500
+     /* A CAP ON GROUPS, AND IT SITS ON THE BOUNDARY.
+        The group key is (region, city, beat, salesman), and this book produces
+        exactly 500 of them — so one new beat truncates the tiles silently, and
+        the rows that go are the ones sorting LAST, which nulls-last makes
+        precisely the shops with no region recorded. Raised rather than removed:
+        the screen groups rather than lists because a thousand rows answers
+        nothing, and an unbounded query on a book that keeps growing is the
+        other way to be wrong. */
+     limit 5000
   `) as unknown as TerritoryRow[];
 }
 
@@ -2723,6 +3214,19 @@ export type BookCustomer = {
   salesmanId: string | null;
   salesmanName: string | null;
   hasGps: boolean;
+  /**
+   * `customer` or `lead`, and `thirdParty` beside it.
+   *
+   * A salesman's day is a mix: shops we invoice, shops a distributor invoices,
+   * and shops that have never bought anything. All three are doors he walks
+   * through and all three belong on a journey — the picker used to offer only
+   * `kind = 'customer'`, so a day could not include a lead he was working or a
+   * third-party shop he services for a distributor. What the two fields are
+   * FOR here is the label on the chip: three different calls to make, and a
+   * manager arranging a day should be able to tell them apart.
+   */
+  kind: string;
+  thirdParty: boolean;
   outstandingPaise: number;
   creditLimitPaise: number | null;
   creditBlocked: boolean;
@@ -2769,6 +3273,7 @@ export async function fieldBook(filter?: {
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName",
            (c.gps_lat is not null and c.gps_lng is not null) as "hasGps",
+           c.kind, c.third_party as "thirdParty",
            coalesce(c.outstanding, 0) as "outstandingPaise",
            c.credit_limit_paise as "creditLimitPaise",
            c.credit_blocked as "creditBlocked",
@@ -2779,7 +3284,13 @@ export async function fieldBook(filter?: {
            c.last_order_date::text as "lastOrderDate"
       from customers c
       left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
-     where c.status = 'active' and c.kind = 'customer'
+     /* LEADS AND THIRD-PARTY SHOPS TOO. This read kind = 'customer', which
+        is the account we invoice — so a salesman could not be sent to a lead
+        he is working, nor to a shop he services on a distributor's behalf,
+        which between them are most of what he actually walks to. Third party
+        was never excluded by name; it is a MARK on a customer rather than a
+        kind, and it came through already. The lead is what was missing. */
+     where c.status = 'active' and c.kind in ('customer', 'lead')
        ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
        ${salesman} ${beat} ${gps} ${search}
      order by c.name asc
@@ -2807,11 +3318,20 @@ export async function fieldBook(filter?: {
 
 /** How much of the book has no coordinates. A count, and then a decision. */
 export async function gpsGap(): Promise<{ missing: number; total: number }> {
+  /* SCOPED LIKE EVERYTHING ELSE ON THE SCREEN. It was the one unscoped read
+     here, so a regional manager got a national "Without a pin" figure sitting
+     beside a "Shops" tile counting only his own — two numbers from one row of
+     tiles that could not be reconciled, on the screen somebody opens when they
+     suspect data is missing. Being national made it look like the gap, which
+     is exactly the wrong direction for a tile whose job is to say how much
+     work is left. */
+  const scope = await placeScope();
   const rows = await db.execute<{ missing: number; total: number }>(sql`
     select count(*) filter (where c.gps_lat is null or c.gps_lng is null)::int as missing,
            count(*)::int as total
       from customers c
      where c.status = 'active' and c.kind = 'customer'
+       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
   `);
   return { missing: Number(rows[0]?.missing ?? 0), total: Number(rows[0]?.total ?? 0) };
 }
@@ -2847,6 +3367,29 @@ export type ShopPin = {
    * measurement on the screen a territory is planned from.
    */
   approximate: boolean;
+  /**
+   * `customer` or `lead` — and it had to become a field the moment the map
+   * stopped refusing leads.
+   *
+   * A lead here is a shop somebody has stood outside and pinned; it is simply
+   * one that has never ordered. Drawing the two identically would tell a
+   * manager he has coverage he does not have, and leaving leads off the map
+   * entirely — which is what this did — hid 2,748 of the 4,115 pinned active
+   * shops on the real book. Most field-collected pins ARE leads, so the map
+   * was at its emptiest exactly where the team had done the most work.
+   */
+  kind: "customer" | "lead";
+  /**
+   * `active`, `inactive` or `deactivated`.
+   *
+   * The map used to draw only active shops, which is defensible on a planning
+   * screen and indefensible as a silent omission: 815 pinned shops simply were
+   * not there, and the screen said nothing. A closed shop is still a real
+   * address the team has stood outside, and a manager working out whether a
+   * town is covered needs to know one is there and shut — not to be shown a
+   * blank. It is drawn differently rather than left out.
+   */
+  status: string;
   salesmanId: string | null;
   salesmanName: string | null;
 };
@@ -2858,7 +3401,7 @@ export type ShopPin = {
  * something worth paginating.
  */
 export async function shopPins(): Promise<ShopPin[]> {
-  const scope = await managerScope();
+  const scope = await placeScope();
   return db.execute<ShopPin>(sql`
     select c.id, c.name, c.city, c.area, c.beat,
            /* The field pin first, then the looked-up one. 503 shops carry an
@@ -2871,14 +3414,20 @@ export async function shopPins(): Promise<ShopPin[]> {
               would present a guess as a measurement. The map draws it hollow,
               the same way a stale activity fix is drawn. */
            (c.gps_lat is null) as "approximate",
+           c.kind, c.status,
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName"
       from customers c
       left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
-     where c.status = 'active' and c.kind = 'customer'
-       and coalesce(c.gps_lat, c.geocoded_lat) is not null
+     /* EVERY PINNED SHOP, and the filtering is done on the map where it can
+        be seen and switched off. Leads and closed shops were excluded here,
+        in SQL, where a manager had no way to find out they existed — 3,563 of
+        the 4,930 pinned shops on the real book, absent with nothing saying so.
+        A map that quietly omits three quarters of the pins is one somebody
+        plans a day from and is wrong. */
+     where coalesce(c.gps_lat, c.geocoded_lat) is not null
        and coalesce(c.gps_lng, c.geocoded_lng) is not null
-       ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
+       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
   `) as unknown as ShopPin[];
 }
 

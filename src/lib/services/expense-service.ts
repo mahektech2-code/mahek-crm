@@ -67,6 +67,9 @@ export type LegRow = {
   ticketPhotoId: string | null;
   ticketReference: string | null;
   note: string | null;
+  /** The session's own meter pair already counts these kilometres. */
+  claimExcluded: boolean;
+  claimExcludedReason: string | null;
 };
 
 export type LineRow = {
@@ -157,7 +160,9 @@ export async function legsForDay(dayId: string): Promise<LegRow[]> {
            l.variance_bps as "varianceBps",
            l.ticket_amount_paise as "ticketAmountPaise",
            l.ticket_photo_id as "ticketPhotoId", l.ticket_reference as "ticketReference",
-           l.note
+           l.note,
+           l.claim_excluded as "claimExcluded",
+           l.claim_excluded_reason as "claimExcludedReason"
       from mbos_travel_legs l
       left join mbos_travel_modes m on m.key = l.mode_key
       left join customers c on c.id = l.customer_id
@@ -226,7 +231,24 @@ export function factsFor(day: DayRow, legs: LegRow[], lines: LineRow[]): DayFact
     departedFromHometown: day.departedFromHometown,
     stayedInHotel: day.stayedInHotel,
     overnight: day.overnight,
-    legs: legs.map(
+    /*
+     * A LEG THE SESSION ALREADY PAYS FOR IS NOT A SECOND CLAIM.
+     *
+     * On an own-vehicle day the money comes from one meter pair — read at the
+     * punch-in and again at the punch-out. The visits still open legs, because
+     * the arrival gate, the navigation and the record of where he actually
+     * went all hang off one, and letting those through here would pay per-km
+     * twice over a single ride: once on the meter and once on the GPS trail.
+     *
+     * Filtered HERE, in the one place legs become policy input, rather than in
+     * each of the queries that read them — the manager's travel ledger must go
+     * on listing them, with the reason on the row, because a journey that
+     * vanished from the record to avoid being paid twice is a journey nobody
+     * can account for.
+     */
+    legs: legs
+      .filter((l) => !l.claimExcluded)
+      .map(
       (l): TravelLegFacts => ({
         id: l.id,
         modeKey: l.modeKey,
