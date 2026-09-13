@@ -77,6 +77,11 @@ const JOBS: Record<string, JobName> = {
   "field-activity": "field-activity-append",
   "field-activity-reconcile": "field-activity-sync",
   "field-activity-project": "field-activity-project",
+  /* Re-read who the stored rows belong to, without touching Google. The
+     counterpart of `sheet-reparse`: a hash-driven sync never revisits an
+     unchanged row, so a salesman who got a MahekOne account after the import
+     never gets matched to the rows that are plainly his. */
+  "field-activity-rematch": "field-activity-rematch",
   // The derived values: buying cycles, the inactive watch, follow-up stages,
   // slow payers, bill statuses, today's queue snapshot.
   nightly: "nightly",

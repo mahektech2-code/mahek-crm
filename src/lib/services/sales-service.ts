@@ -976,9 +976,46 @@ const FIELD_ACTIVITY_LIMIT = 200;
  * reviewing this backfill needs to see the rows that still need a customer
  * resolved too, which is why this reads `sheet_field_activity_rows` directly.
  */
+/**
+ * A ROW NOBODY OWNS IS NOBODY'S TO HIDE.
+ *
+ * `onlyMine(scope, "u.id")` over a LEFT JOIN excluded every row whose salesman
+ * did not resolve, because `u.id` is NULL there and `x in (…)` never matches
+ * NULL. On this backfill that is ALL 33,058 of them — the import ran on
+ * 1 September and the only salesman with a matching account was created on the
+ * 10th — so a scoped manager opened this screen and read "Nothing in this
+ * range" under a message blaming the date filter.
+ *
+ * Which is the exact opposite of what the screen is for. Its own subtitle says
+ * rows that do not resolve "are shown here so they can be reviewed": an
+ * unresolved row is the WORK, and scoping it away by the very field that has
+ * not been filled in yet means the screen is empty precisely when it has the
+ * most to show.
+ *
+ * So an unmatched row is visible to anybody who can open this screen, and a
+ * matched one still narrows to the manager who owns that salesman. It is the
+ * same carve-out `managerScope` already makes for a salesman with no book at
+ * all, for the same reason: nobody can be the wrong manager for a row that is
+ * nobody's.
+ */
+function mineOrNobodys(scope: ManagerScope, column: string) {
+  if (scope.salesmanIds === null) return sql``;
+  const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
+  return sql`and (${sql.raw(column)} is null or ${sql.raw(column)} in (${sql.join(
+    ids.map((i) => sql`${i}`),
+    sql`, `,
+  )}))`;
+}
+
 export async function fieldActivityHistory(
   filter: FieldActivityFilter,
-): Promise<{ rows: FieldActivityRow[]; total: number; capped: boolean }> {
+): Promise<{
+  rows: FieldActivityRow[];
+  total: number;
+  capped: boolean;
+  /** Rows in the staging table regardless of filter — see the note below. */
+  everInTable: number;
+}> {
   const scope = await managerScope();
   const matchClause = filter.matchStatus
     ? sql`and f.customer_match_status = ${filter.matchStatus}`
@@ -993,7 +1030,7 @@ export async function fieldActivityHistory(
       left join users u on u.id = f.matched_salesman_id
      where f.status = 'present'
        and f.visit_date between ${filter.from}::date and ${filter.to}::date
-       ${onlyMine(scope, "u.id")}
+       ${mineOrNobodys(scope, "u.id")}
        ${matchClause}
        ${salesmanClause}
   `);
@@ -1015,14 +1052,38 @@ export async function fieldActivityHistory(
       left join customers c on c.id = f.matched_customer_id
      where f.status = 'present'
        and f.visit_date between ${filter.from}::date and ${filter.to}::date
-       ${onlyMine(scope, "u.id")}
+       ${mineOrNobodys(scope, "u.id")}
        ${matchClause}
        ${salesmanClause}
      order by f.visit_date desc nulls last, f.id desc
      limit ${FIELD_ACTIVITY_LIMIT}
   `) as unknown as FieldActivityRow[];
 
-  return { rows, total, capped: total > FIELD_ACTIVITY_LIMIT };
+  /*
+   * HOW MANY ROWS EXIST AT ALL, so an empty screen can say WHY it is empty.
+   *
+   * "Nothing in this range" and "nothing you are allowed to see" and "this
+   * table has never been filled" are three different situations with three
+   * different things to do about them, and the screen answered all of them
+   * with advice about the date filter. That advice was actively wrong on the
+   * day it was reported: 907 rows sat inside the default window, and the
+   * reason none were drawn was the scope clause above.
+   *
+   * Unfiltered and unscoped deliberately — it is a count of the staging table
+   * and nothing more, used only to choose a sentence. No row of it is shown.
+   */
+  const everything = total === 0
+    ? await db.execute<{ n: number }>(sql`
+        select count(*)::int as n from sheet_field_activity_rows where status = 'present'
+      `)
+    : null;
+
+  return {
+    rows,
+    total,
+    capped: total > FIELD_ACTIVITY_LIMIT,
+    everInTable: everything ? (everything[0]?.n ?? 0) : total,
+  };
 }
 
 /** Distinct salesmen the imported activity actually resolved to, for a filter. */
@@ -1033,7 +1094,7 @@ export async function fieldActivitySalesmen(): Promise<{ id: string; name: strin
       from sheet_field_activity_rows f
       join users u on u.id = f.matched_salesman_id
      where f.status = 'present'
-       ${onlyMine(scope, "u.id")}
+       ${mineOrNobodys(scope, "u.id")}
      order by u.name
   `) as unknown as { id: string; name: string }[];
 }
@@ -1057,7 +1118,7 @@ export async function fieldActivityMatchCounts(
       left join users u on u.id = f.matched_salesman_id
      where f.status = 'present'
        and f.visit_date between ${filter.from}::date and ${filter.to}::date
-       ${onlyMine(scope, "u.id")}
+       ${mineOrNobodys(scope, "u.id")}
        ${salesmanClause}
      group by f.customer_match_status
   `);
