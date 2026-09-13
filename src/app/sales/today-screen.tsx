@@ -178,7 +178,7 @@ export function TodayScreen({
                 <table className="w-full border-collapse" style={{ minWidth: 940 }}>
                   <thead>
                     <tr>
-                      {["Salesman", "Checked in", "Where", "Visits", "Orders", "Collected", "Route"].map(
+                      {["Salesman", "Punched in", "Where", "Visits", "Orders", "Collected", "Route"].map(
                         (h, i) => (
                           <th
                             key={h}
@@ -255,7 +255,7 @@ export function TodayScreen({
                             {p.withinGeofence === false ? (
                               <span
                                 className="ml-1.5 text-[12px] text-warn-ink"
-                                title="Checked in outside the permitted radius. Flagged, never blocked — a salesman who cannot mark attendance cannot work."
+                                title="Punched in outside the permitted radius. Flagged, never blocked — a salesman who cannot mark attendance cannot work."
                               >
                                 off site
                               </span>
@@ -382,7 +382,7 @@ export function TodayScreen({
  * `09:32`, in Asia/Kolkata.
  *
  * Named rather than left to the browser: this renders on the server too, the
- * server is UTC, and a check-in at half past nine would print as four in the
+ * server is UTC, and a punch-in at half past nine would print as four in the
  * morning — which reads as a handset writing rows in the night.
  */
 function clock(at: Date | string): string {

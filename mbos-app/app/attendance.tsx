@@ -17,7 +17,7 @@ import {
 import { useTicker } from '../src/components/ui/use-ticker';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { dmy } from '../src/lib/format';
+import { dmy, hhmm } from '../src/lib/format';
 import { color as C, weight, tabular, type BadgeTone } from '../src/theme/tokens';
 
 /**
@@ -48,11 +48,6 @@ import { color as C, weight, tabular, type BadgeTone } from '../src/theme/tokens
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function hhmm(ms: number | null): string {
-  if (ms == null) return '—';
-  const d = new Date(ms);
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-}
 
 /** 5h 48m. Minutes are what the row stores; hours are what a person reads. */
 function hoursLabel(minutes: number | null): string {
@@ -156,10 +151,10 @@ export default function AttendanceScreen() {
       <Card style={{ marginTop: 12 }}>
         <T s="label">Today</T>
         <T s="h3" style={{ marginTop: 4 }}>
-          {today?.checkInAt != null ? 'Checked in ' + hhmm(today.checkInAt) : 'Not checked in'}
+          {today?.checkInAt != null ? 'Punched in ' + hhmm(today.checkInAt) : 'Not punched in'}
         </T>
         <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-          {workedSoFar != null ? workedLabel(workedSoFar, running) + ' so far' : 'Start the day from Home.'}
+          {workedSoFar != null ? workedLabel(workedSoFar, running) + ' so far' : 'Punch in from Home.'}
         </T>
 
         {/*

@@ -1,4 +1,5 @@
 import { isManager, requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { today } from "@/lib/queries";
 import { getConfig } from "@/lib/config/store";
@@ -82,11 +83,16 @@ export default async function EodPage({
       rangeFrom={range.from}
       rangeTo={range.to}
       isManager={isManager(user)}
+      // The same capability the Reminders screen reads, for the same control.
+      // The gate is cleared by making the call or by carrying the promise
+      // forward; closing one where neither happened is the escape hatch.
+      canCloseReminders={await canFor(user, "reminder.close")}
       lines={lines}
       message={isToday ? report!.whatsappText : null}
       // The gate: reminders due today that are still open block finalisation.
       dueReminders={preflight.blocking.map((r) => ({
         id: r.id,
+        customerId: r.customerId,
         note: r.note,
         dueDate: r.dueDate,
         customerName: r.customerName,

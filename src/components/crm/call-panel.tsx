@@ -62,26 +62,53 @@ const FOLLOW_UP_PRESETS = [
 ] as const;
 
 /** The queue's reason kinds, as the badge on the modal header reads them. */
+/*
+ * Both maps cover EVERY kind the engine can attach, not the handful the old
+ * single badge happened to meet.
+ *
+ * They used to carry eight of the thirteen, which was survivable while only
+ * `reasons[0]` reached this panel — the strongest reason is usually one of the
+ * eight. Now that every reason is drawn, a missing entry would fall through to
+ * the raw enum name ("noAnswerRetry") in a neutral chip, in front of a
+ * telecaller, mid-call. `orderDueSoon` is kept although the engine stopped
+ * emitting it: a stored `queue.tierWeights` from before the rename can still
+ * produce one, and an unlabelled chip is the one outcome worth ruling out.
+ */
 const REASON_BADGE: Record<string, string> = {
+  paymentOverdue: "Payment overdue",
   reminderOverdue: "Reminder overdue",
   reminderDueToday: "Reminder due today",
   orderOverdueFullCycle: "Order overdue",
+  orderLongOverdue: "Stopped ordering",
   orderDue: "Order due",
   orderDueSoon: "Order due soon",
+  routineCall: "Stock check",
   prospect: "Never ordered",
   checkInOverdue: "Check-in overdue",
   checkInDue: "Check-in due",
+  orderStatus: "Order in progress",
+  noAnswerRetry: "No answer - try again",
+  unreachable: "Cannot reach them",
 };
 
 const REASON_TONE: Record<string, "danger" | "warn" | "brand" | "neutral"> = {
+  paymentOverdue: "danger",
   reminderOverdue: "danger",
   reminderDueToday: "warn",
   orderOverdueFullCycle: "danger",
+  // Muted on purpose, matching the queue list: red is for a debt or a promise
+  // broken, and somebody who stopped buying eight months ago is not an
+  // emergency. Drawing them like one teaches the eye to skip the colour.
+  orderLongOverdue: "neutral",
   orderDue: "brand",
   orderDueSoon: "brand",
+  routineCall: "brand",
   prospect: "brand",
   checkInOverdue: "warn",
   checkInDue: "neutral",
+  orderStatus: "neutral",
+  noAnswerRetry: "neutral",
+  unreachable: "warn",
 };
 
 export type CallTarget = {
@@ -104,6 +131,23 @@ export type CallTarget = {
   reason?: string;
   /** The engine's kind for the top reason, shown as the badge on the right. */
   reasonKind?: string;
+  /**
+   * EVERY reason the queue put this customer in front of you, strongest
+   * first — not just the top one.
+   *
+   * A customer routinely qualifies on more than one: a promise falling due
+   * and an order due by their own cycle are two conversations, and the call
+   * is the only moment both can be had. Handed the strongest alone, a
+   * telecaller working the Reminder filter would settle the promise, save,
+   * and `queue.excludeCalledToday` would take the customer off the list for
+   * the day with the second reason never raised — and an outcome logged
+   * about the first can then buy the second a cooldown it never earned.
+   *
+   * Optional because the record page and the payment worklist open this
+   * panel with no queue behind them; where it is absent the top reason is
+   * shown on its own, exactly as before.
+   */
+  reasons?: { kind: string; label: string }[];
   outstanding: number;
   lastOrderDate: string | null;
   lastOrderValue: number;
@@ -1239,16 +1283,34 @@ function CallPanelForm({
 
   if (!target) return null;
 
-  // The Reminder figure carries the reminder, not whatever reason put them in
-  // the queue. Showing "Order due today" under a heading that says Reminder is
-  // how a telecaller ends up looking for a promise nobody made.
   const isLead = target.kind === "lead";
 
-  const reminderText =
-    target.reasonKind === "reminderOverdue" ||
-    target.reasonKind === "reminderDueToday"
-      ? target.reason
-      : null;
+  /*
+   * WHY THIS CALL EXISTS — all of it.
+   *
+   * This used to be two separate pieces of furniture, and between them they
+   * could only ever say one thing: a "Reminder" figure in the stat strip that
+   * appeared when the TOP reason happened to be a reminder, and a single badge
+   * pushed to the right naming that same top reason. A customer carrying a
+   * promise and an order due showed the promise and nothing else.
+   *
+   * The strip was also the wrong place for it. Every other figure there is a
+   * short value — a name, a rupee amount — and a reminder's label carries the
+   * note somebody typed, so it was the one entry that had to `shrink` and
+   * truncate. "Reminder 1 day overdue - 20 ..." is a sentence cut off exactly
+   * where the useful half starts.
+   *
+   * So the reasons get their own full-width row under the strip, wrapping,
+   * nothing cut short, drawn the way the queue list row has always drawn
+   * them. A caller with no queue behind it — the record page, the payment
+   * worklist — falls back to the single top reason and loses nothing.
+   */
+  const reasons =
+    target.reasons?.length
+      ? target.reasons
+      : target.reasonKind
+        ? [{ kind: target.reasonKind, label: target.reason ?? "" }]
+        : [];
 
   return (
     <div
@@ -1358,14 +1420,6 @@ function CallPanelForm({
               <Stat label="Target gap">{money(target.targetGap)}</Stat>
             </>
           )}
-          {reminderText ? (
-            <>
-              <StatDivider />
-              <Stat label="Reminder" tone="warn" shrink>
-                {reminderText}
-              </Stat>
-            </>
-          ) : null}
           {target.openComplaint ? (
             <>
               <StatDivider />
@@ -1381,15 +1435,47 @@ function CallPanelForm({
             </>
           ) : null}
           <span className="flex-1" />
-          {/* Why this customer is in front of you, in the queue's own words. */}
-          {target.reasonKind ? (
-            <Badge tone={REASON_TONE[target.reasonKind] ?? "neutral"}>
-              {(
-                REASON_BADGE[target.reasonKind] ?? target.reasonKind
-              ).toUpperCase()}
-            </Badge>
-          ) : null}
         </div>
+
+        {/* Every reason this customer is in front of you, in the queue's own
+            words, strongest first — and NOTHING cut short. A reason a
+            telecaller cannot finish reading is a call that gets made about
+            half of what it was for. */}
+        {reasons.length ? (
+          <div className="flex items-start gap-3 border-b border-divider px-6 py-2.5">
+            <span className="mt-[5px] shrink-0 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+              {/* Counted, because "why am I calling" and "is that all of it"
+                  are two questions and the second one is the one that was
+                  going unanswered. */}
+              {reasons.length === 1 ? "Reason" : `Reasons · ${reasons.length}`}
+            </span>
+            <div className="flex min-w-0 flex-1 flex-wrap items-start gap-1.5">
+              {reasons.map((r, i) => (
+                <Badge
+                  // Two overdue reminders are two reasons of the same kind,
+                  // each naming its own note, so the kind alone is not a key.
+                  key={`${r.kind}:${i}`}
+                  tone={REASON_TONE[r.kind] ?? "neutral"}
+                  // WRAPS. A Badge is `h-5` and `whitespace-nowrap` by
+                  // default, which is right for a table row and wrong here:
+                  // the label carries whatever note somebody typed, and this
+                  // is the one place it has to be read in full.
+                  className="h-auto max-w-full items-start py-[3px] text-[12px] leading-[1.45] whitespace-normal"
+                >
+                  <span className="font-semibold">
+                    {REASON_BADGE[r.kind] ?? r.kind}
+                  </span>
+                  {/* The kind is the heading and the label is the detail; on
+                      most kinds the label restates the heading, so it is only
+                      drawn where it adds something. */}
+                  {r.label && r.label !== REASON_BADGE[r.kind] ? (
+                    <span className="font-normal opacity-90"> · {r.label}</span>
+                  ) : null}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {/*
          * This customer is ALREADY in the state the post-save dialog's hold

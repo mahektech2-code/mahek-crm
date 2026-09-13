@@ -161,6 +161,7 @@ export function CustomersScreen({
   amReasons,
   amSearchThreshold,
   amOptions,
+  cityOptions,
   team,
   backOfficePeople,
   salesManagerPeople,
@@ -211,6 +212,19 @@ export function CustomersScreen({
   amSearchThreshold: number;
   /** The names each filter offers — the ones the column actually shows. */
   amOptions: { sales: string[]; salesManager: string[]; backOffice: string[] };
+  /**
+   * EVERY CITY IN THE BOOK, read on the server each time this page loads —
+   * see `listCityFilterOptions`.
+   *
+   * A list rather than a set of names like `amOptions`, because these carry
+   * their shop count in the label and are ordered by it: `customers.city` is
+   * whatever the sheet typed, several hundred values on the real book with
+   * whole postal addresses among them, and alphabetical order buries the
+   * places somebody actually means. The `MultiSelect` draws its own search
+   * box past eight options and scrolls internally, so the long tail costs
+   * nothing to carry.
+   */
+  cityOptions: { value: string; label: string }[];
   team: Array<{ id: string; name: string; role?: string }>;
   /** Accounts plus the current HRMS employees — the back office seat only. */
   backOfficePeople: Array<{ id: string; name: string; role?: string }>;
@@ -236,6 +250,7 @@ export function CustomersScreen({
     salesAm: string;
     salesManager: string;
     backOfficeAm: string;
+    city: string;
     /** The type filter's own word, or empty for all of them. */
     accountType: string;
     /** "column:asc"/"column:desc", or empty — see lib/sort-param.ts. */
@@ -294,6 +309,7 @@ export function CustomersScreen({
   const salesAm = filters.salesAm || "";
   const salesManager = filters.salesManager || "";
   const backOfficeAm = filters.backOfficeAm || "";
+  const city = filters.city || "";
   const accountTypeFilter = filters.accountType || "";
   const perPage = filters.perPage;
   const { page, pageCount, total, bookTotal } = pageInfo;
@@ -449,6 +465,12 @@ export function CustomersScreen({
           clear: () => navigate({ party: undefined }),
         }
       : null,
+    city
+      ? {
+          label: `City: ${describeMulti(city, cityOptions)}`,
+          clear: () => navigate({ city: undefined }),
+        }
+      : null,
     query ? { label: `Search: ${query}`, clear: () => { setDraft(""); navigate({ q: undefined }); } } : null,
   ].filter(Boolean) as Array<{ label: string; clear: () => void }>;
 
@@ -467,6 +489,7 @@ export function CustomersScreen({
       salesmanager: undefined,
       backoffice: undefined,
       party: undefined,
+      city: undefined,
     });
   }
 
@@ -544,6 +567,7 @@ export function CustomersScreen({
         accountTypeFilter
           ? `Type: ${describeMulti(accountTypeFilter, accountTypeOptions)}`
           : null,
+        city ? `City: ${describeMulti(city, cityOptions)}` : null,
         query || null,
       ],
     );
@@ -749,6 +773,23 @@ export function CustomersScreen({
           options={backOfficeOptions}
           selected={asList(backOfficeAm)}
           onChange={(next) => navigate({ backoffice: next.join(",") || undefined })}
+        />
+        {/*
+          WHERE THE SHOP IS. Last in the bar because it is the widest list by a
+          long way and the one most often left alone — the four before it are
+          short, closed sets, and this is the book's own free text.
+
+          Nothing special is needed to make it usable: `MultiSelect` already
+          draws a search box past eight options and scrolls its list inside a
+          fixed panel, so a few hundred cities behave exactly like the five
+          statuses beside them.
+        */}
+        <MultiSelect
+          label="City"
+          placeholder="All cities"
+          options={cityOptions}
+          selected={asList(city)}
+          onChange={(next) => navigate({ city: next.join(",") || undefined })}
         />
         {chips.length ? (
           <button

@@ -962,7 +962,7 @@ export async function decideDeactivation(
       } as never,
     });
 
-    await recomputeInactivity();
+    await recomputeInactivity(customerId);
     refreshAll();
     return okVoid(approve ? "Customer deactivated" : "Request rejected");
   } catch (e) {
@@ -1131,7 +1131,7 @@ export async function decideReactivation(
     // A customer back in the book is a customer the queue has to place, and
     // one who has been quiet for months goes straight onto the inactive watch
     // rather than reading as freshly active.
-    await recomputeInactivity();
+    await recomputeInactivity(customerId);
     refreshAll();
     return okVoid(approve ? "Customer brought back" : "Request rejected");
   } catch (e) {

@@ -358,6 +358,25 @@ export const reminderTypeEnum = pgEnum("reminder_type", [
   "other",
 ]);
 
+/**
+ * WHAT CLOSED A REMINDER, which is a different question from who.
+ *
+ * `person` is somebody pressing the button, which is now a capability rather
+ * than something everybody holds. The other three are evidence: a call in the
+ * interaction log, an order, a receipt accounts confirmed — and
+ * `closed_by_source_id` names that row, so the claim can be opened and read
+ * rather than taken on trust.
+ *
+ * Null on a row closed before this existed. Not backfilled to `person`:
+ * guessing is exactly what this column was added to stop.
+ */
+export const reminderClosureSourceEnum = pgEnum("reminder_closure_source", [
+  "person",
+  "call",
+  "order",
+  "payment",
+]);
+
 export const complaintStatusEnum = pgEnum("complaint_status", [
   "open",
   "in_progress",
@@ -2677,6 +2696,18 @@ export const reminders = pgTable(
       .default(false),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     closedById: text("closed_by_id").references(() => users.id),
+    /**
+     * What closed it, and the row that is the evidence — see
+     * `lib/engines/reminder-closure.ts`. `closedById` still says WHO, which on
+     * an automatic closure is whoever made the call or took the order, not
+     * whoever tidied the list.
+     *
+     * No foreign key, like `callId` above it: the evidence lives in three
+     * different tables and a column that can point at any of them cannot
+     * constrain to one.
+     */
+    closedBy: reminderClosureSourceEnum("closed_by"),
+    closedBySourceId: text("closed_by_source_id"),
     closureNote: text("closure_note"),
     dismissReason: text("dismiss_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -5935,6 +5966,20 @@ export const mbosTravelModes = pgTable(
     requiresOdometer: boolean("requires_odometer").notNull().default(false),
     /** A ticket: the salesman is asked what it cost and for the ticket. */
     requiresTicket: boolean("requires_ticket").notNull().default(false),
+    /**
+     * `day` | `leg` | `both` — WHERE this mode is offered.
+     *
+     * The vehicle is a fact about the SESSION: he punches in on his bike and
+     * punches out on it, and asking again at every shop got the same answer
+     * eleven times and twenty-two meter photographs for one ride he never got
+     * off. Only `public_transport` leaves a question open, because the bus,
+     * the auto and the taxi genuinely change leg to leg — it is the day-level
+     * umbrella and its children are the `leg` rows.
+     *
+     * `walking` is the only `both`: it is a way to spend a day and a way to
+     * reach the next shop on a day spent on buses.
+     */
+    scope: text("scope").notNull().default("leg"),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -6112,7 +6157,14 @@ export const mbosTravelLegs = pgTable(
 
     note: text("note"),
     /**
-     * `day_log` | `visit` — and it decides what may be DEMANDED of the leg.
+     * `day_log` | `visit` | `session` — and it decides what may be DEMANDED.
+     *
+     * A SESSION leg runs from a punch-in to the matching punch-out and carries
+     * the two meter readings the day is priced on. It is a leg rather than a
+     * pair of columns on the attendance row so the policy engine prices it
+     * with everything else: one table, one per-km rule, one figure for the
+     * day. It is the strictest of the three — the app is present at both ends,
+     * so both readings and both photographs are required.
      *
      * A day-log leg is typed on `/travel` from memory once the journey is
      * over, so the photograph is optional and always will be: refusing to
@@ -6123,6 +6175,22 @@ export const mbosTravelLegs = pgTable(
      * reason asking at the moment of travelling is worth the two taps.
      */
     origin: text("origin").notNull().default("day_log"),
+    /**
+     * Movement, recorded, and NOT a second claim for the same kilometres.
+     *
+     * On an own-vehicle session the money comes from the session leg's own
+     * meter pair — one at the punch-in, one at the punch-out. The visits still
+     * open legs, because the arrival gate, the navigation and the record of
+     * where he actually went all hang off one, and pricing those as well would
+     * pay per-km twice over a single ride: once on the meter and once on the
+     * GPS trail.
+     *
+     * The reason is stored ON the row rather than re-derived, because a leg
+     * excluded from a claim by a rule nobody can read off the record is how an
+     * expense argument becomes unanswerable six weeks later.
+     */
+    claimExcluded: boolean("claim_excluded").notNull().default(false),
+    claimExcludedReason: text("claim_excluded_reason"),
   },
   (t) => [
     index("mbos_travel_legs_user_idx").on(t.userId, t.startedAt.desc()),

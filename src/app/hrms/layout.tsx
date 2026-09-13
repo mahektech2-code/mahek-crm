@@ -5,7 +5,7 @@ import { listUserApps, listUserModules } from "@/lib/access";
 import { getApp, webApps } from "@/lib/apps";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import { Wordmark } from "@/components/shell/wordmark";
-import { SignOutButton } from "@/components/shell/sign-out-button";
+import { AccountMenu } from "@/components/shell/account-menu";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 
@@ -67,11 +67,11 @@ export default async function HrmsLayout({
             ))}
           </nav>
           <span className="flex-1" />
-          <span className="text-[13px] text-muted">
-            {user.name} · {user.role}
-          </span>
           <FeedbackButton compact />
-          <SignOutButton />
+          {/* HRMS is the app somebody can hold on its own, so it lands them
+              straight in and they never see the launcher. Without the menu
+              here, an HRMS-only account has no door to its own password. */}
+          <AccountMenu user={user} variant="header" />
         </header>
 
         <div className="flex-1">{children}</div>

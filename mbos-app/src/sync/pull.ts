@@ -29,8 +29,8 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertSchemes(pull.schemes);
     touched += await upsertTimeline(pull.timeline);
     touched += await upsertCustomerOrders(pull.customerOrders, now);
-    touched += await upsertCustomerPayments(pull.customerPayments, now);
-    touched += await upsertCustomerBills(pull.customerBills, now);
+    touched += await upsertCustomerPayments(pull.customerPayments, now, pull.statementFrom);
+    touched += await upsertCustomerBills(pull.customerBills, now, pull.statementFrom);
     touched += await upsertStops(pull.journeyStops, now);
     touched += await upsertPlanDays(pull.planDays, now);
     touched += await upsertConfig(pull.config, now);
@@ -231,25 +231,42 @@ async function upsertPriceList(rows: unknown[] | undefined) {
 }
 
 /**
- * The open bills, REPLACED WHOLESALE — the price list's rule, for the same
- * reason it has it.
+ * The bills, UPSERTED AND THEN PRUNED BY DATE — and that is a reversal.
  *
- * A rate that was withdrawn has to disappear; so does a bill that has been
- * settled. A per-row upsert leaves it behind, and a bill left behind is one
- * the picker goes on offering — so a salesman names it, the server refuses the
- * allocation with `bill_settled`, and the refusal looks like the app being
- * wrong rather than the phone being stale. The server sends the CURRENT open
- * set for every customer on this handset on every pass, never a delta, which
- * is what makes replacing correct.
+ * It replaced the table wholesale, on the price list's rule and for the price
+ * list's reason: the server sent the CURRENT OPEN set every pass, so a bill
+ * that had been settled had to disappear, and a per-row upsert would have left
+ * it behind for the payment picker to go on offering.
  *
- * `!rows?.length` guards it exactly as the price list does: an empty payload
- * is the no-cursor pull saying nothing, not the office saying every bill in
- * the book has been paid.
+ * The channel is not that any more. It carries every bill inside a window now,
+ * settled ones included, because the customer record grew a statement — and
+ * inside a window the server can send only what CHANGED, which is the whole
+ * point: the last thirteen months is thousands of rows and re-sending a
+ * salesman's share of them every few minutes all day is not a thing to do to a
+ * phone on 2G. A delta and a wholesale delete cannot both be true, and the
+ * delete is the half that has to go: it would throw away every bill the
+ * current pass did not happen to mention, which is nearly all of them.
+ *
+ * WHAT REPLACES IT IS A DATE. A bill leaves this handset by ageing out of the
+ * window, and `statementFrom` is the same boundary the server built the
+ * payload from, so the phone prunes exactly what the office stopped sending.
+ * Nothing else removes a bill, which is what makes that sufficient: a bill is
+ * never deleted in the office either.
+ *
+ * The picker is unaffected by the widening — `openBills` filters on the
+ * balance, so a settled bill arriving here is not a settled bill being
+ * offered.
  */
-async function upsertCustomerBills(rows: unknown[] | undefined, now: number) {
-  if (!rows?.length) return 0;
-  await run('DELETE FROM customer_bills');
-  return upsert('customer_bills', 'id', rows, { lastSyncedAt: now });
+async function upsertCustomerBills(
+  rows: unknown[] | undefined,
+  now: number,
+  from: string | undefined,
+) {
+  const n = rows?.length ? await upsert('customer_bills', 'id', rows, { lastSyncedAt: now }) : 0;
+  /* Only where the server said what the window is. An older server sends no
+     boundary, and pruning against a guess would empty the table. */
+  if (from) await run('DELETE FROM customer_bills WHERE billDate IS NOT NULL AND billDate < ?', [from]);
+  return n;
 }
 
 function upsertSchemes(rows: unknown[] | undefined) {
@@ -266,8 +283,18 @@ function upsertCustomerOrders(rows: unknown[] | undefined, now: number) {
   return upsert('customer_orders', 'id', rows, { lastSyncedAt: now });
 }
 
-function upsertCustomerPayments(rows: unknown[] | undefined, now: number) {
-  return upsert('customer_payments', 'id', rows, { lastSyncedAt: now });
+async function upsertCustomerPayments(
+  rows: unknown[] | undefined,
+  now: number,
+  from: string | undefined,
+) {
+  const n = rows?.length ? await upsert('customer_payments', 'id', rows, { lastSyncedAt: now }) : 0;
+  /* Pruned on the same boundary as the bills, and it has to be the same one:
+     they are the two halves of one running balance, and a statement whose
+     receipts reach further back than its bills opens on a credit that pays
+     for an invoice not on the screen. */
+  if (from) await run('DELETE FROM customer_payments WHERE receivedAt IS NOT NULL AND receivedAt < ?', [from]);
+  return n;
 }
 
 function upsertStops(rows: unknown[] | undefined, now: number) {
@@ -908,17 +935,19 @@ async function upsertTravelModes(rows: unknown[] | undefined, now: number): Prom
       reimbursementKind: string;
       requiresOdometer: boolean;
       requiresTicket: boolean;
+      scope?: string;
     };
     await run(
       `INSERT INTO travel_modes (key, label, sortOrder, reimbursementKind,
-                                 requiresOdometer, requiresTicket, lastSyncedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+                                 requiresOdometer, requiresTicket, scope, lastSyncedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET
          label = excluded.label,
          sortOrder = excluded.sortOrder,
          reimbursementKind = excluded.reimbursementKind,
          requiresOdometer = excluded.requiresOdometer,
          requiresTicket = excluded.requiresTicket,
+         scope = excluded.scope,
          lastSyncedAt = excluded.lastSyncedAt`,
       [
         m.key,
@@ -927,6 +956,13 @@ async function upsertTravelModes(rows: unknown[] | undefined, now: number): Prom
         m.reimbursementKind,
         m.requiresOdometer ? 1 : 0,
         m.requiresTicket ? 1 : 0,
+        /* A SERVER THAT HAS NOT BEEN DEPLOYED YET SENDS NOTHING, and `leg` is
+           the answer that keeps a phone working: every mode goes on being
+           offered at the stop exactly as it was, which is where they were all
+           offered before this existed. Reading a missing scope as `day` would
+           empty the journey's own picker on a handset whose office is one
+           release behind. */
+        m.scope ?? 'leg',
         now,
       ],
     );

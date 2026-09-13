@@ -66,7 +66,7 @@ export function TeamList({
 
            `hasFix` above is deliberately NOT what answers "has his trail
            produced anything": it is true of a salesman whose only fix all day
-           is his own check-in, which is exactly the handset whose tracking is
+           is his own punch-in, which is exactly the handset whose tracking is
            dead. `trailSeenAt` comes down the row for that question and nothing
            else — see `handset-health`'s `trailIsDead`. */
         const notes = handsetNotes(
@@ -163,7 +163,7 @@ function deviceTitle(r: LastKnown): string {
 function whereLine(r: LastKnown): string {
   if (r.onLeave) return "On approved leave";
   if (!r.checkInAt) return "Not checked in";
-  if (r.place === "Checked in") return "At the day's start point";
+  if (r.place === "Punched in") return "At the day's start point";
   return r.place ?? "On the road";
 }
 

@@ -209,3 +209,50 @@ export function navigationLine(args: {
 
   return `${away} away, from your last fix ${travellingFor(0, (age ?? 0) * 1000)} ago`;
 }
+
+/* ═══════════════════════════════ what the session has already answered */
+
+/**
+ * THE TWO RULES THAT DECIDE WHETHER A STOP ASKS, AND WHETHER IT IS PAID.
+ *
+ * Both were expressions inside `TravelGate`, which is a component that imports
+ * the database through `data/travel` — so neither could be exercised without a
+ * handset, and both are the kind of rule that fails silently in the field.
+ * Getting the first wrong asks a man on his own bike which vehicle he is on,
+ * eleven times a day. Getting the second wrong pays per-km TWICE over one
+ * ride: once on the meter pair and again on the GPS trail behind it, on every
+ * own-vehicle day, for everybody.
+ */
+
+/** Only what the decision needs. `null` is no open session. */
+export type SessionFacts = { modeKey: string; odometerStartKm: number | null } | null;
+
+/**
+ * Does the journey still have to ask how he is getting there?
+ *
+ * No, where he punched in on a vehicle — the bike is still the bike at the
+ * eleventh shop. Yes for `public_transport`, which is a day-level umbrella
+ * over fares that genuinely change from one stop to the next.
+ *
+ * NO SESSION ALSO MEANS ASK, and that is the half worth stating. It is a
+ * handset whose punch-in predates this build, or a day opened before the
+ * question existed — and the old per-stop sheet is the right answer for both.
+ * A silent default would put somebody's mileage on a vehicle nobody named.
+ */
+export function stopMustAskMode(session: SessionFacts, umbrellaKey = 'public_transport'): boolean {
+  if (!session) return true;
+  return session.modeKey === umbrellaKey;
+}
+
+/**
+ * Are this leg's kilometres already counted somewhere else?
+ *
+ * Only where the session carries an OPENING READING. On a walking or
+ * customer's-vehicle session nothing is priced either way, and marking those
+ * excluded would put a sentence on the record explaining a deduction that
+ * never happened — which is worse than saying nothing, because somebody has to
+ * go and work out what it meant.
+ */
+export function legPricedBySession(session: SessionFacts): boolean {
+  return !!session && session.odometerStartKm !== null;
+}

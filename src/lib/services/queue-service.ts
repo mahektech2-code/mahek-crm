@@ -725,6 +725,48 @@ export async function getQueue(): Promise<QueueView> {
   };
 }
 
+/**
+ * ONE CUSTOMER, ready to be called, whether or not the queue ranked them
+ * today.
+ *
+ * The Reminders screen's Call button lands on the Call Log with a customer
+ * named, and that customer is routinely not on the list: they were called this
+ * morning, or held back by a cooldown, or sit past `queue.maxSizePerUser`. The
+ * promise is owed to them regardless, so the panel opens with what the record
+ * itself can supply and no queue reason attached — because there is none, and
+ * inventing one would put a sentence in front of a telecaller that nothing
+ * decided.
+ *
+ * Out of scope answers the same as missing, exactly as the attachment endpoint
+ * does: a screen that distinguishes the two is a way to find out who somebody
+ * else's customers are.
+ */
+export async function adHocCallTarget(customerId: string) {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+
+  const [row] = await db
+    .select({
+      id: customers.id,
+      name: customers.name,
+      contactPerson: customers.contactPerson,
+      phone: customers.phone,
+      city: customers.city,
+      kind: customers.kind,
+      outstanding: customers.outstanding,
+      lastOrderDate: customers.lastOrderDate,
+      lastOrderValue: customers.lastOrderValue,
+      creditTermDays: customers.creditTermDays,
+      ownerName: sql<
+        string | null
+      >`(select name from users u where u.id = customers.owner_id)`,
+    })
+    .from(customers)
+    .where(and(eq(customers.id, customerId), scopedToUsers(ids)));
+
+  return row ?? null;
+}
+
 /** Everything the call panel needs for one queue customer. */
 export async function getQueueCustomer(customerId: string) {
   const [row] = await db

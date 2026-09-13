@@ -482,6 +482,58 @@ a task ONCE — the standing open task is the guard — because thirty rows for 
 quiet shop is a list people stop reading. Measured cycles only: a default is a
 guess, and chasing on a guess rings a quarterly buyer every month.
 
+**THE STATEMENT IS ON THE PHONE, because the question is asked at a counter.**
+A shopkeeper with his own file open asks what was billed in July and what he
+has paid against it in one breath, and the answer cannot be an endpoint: there
+is no signal in a paint market. So `customer_bills` and `customer_payments`
+carry a WINDOW — `mbos.sync.statementMonths`, thirteen — and the record's
+Account tab builds the running balance from them locally.
+
+**IT USED TO BE OPEN BILLS ONLY, capped at ten, and that is a reversal.** That
+was the collections question: a bill with nothing owed on it is nothing to
+collect. It is also 10,405 of the 10,815 bills on this book, so the statement it
+would have made was a year with almost every row missing. Dropping `openOnly`
+is ALSO what lets the channel be a delta, which is what pays for the extra
+rows: the old one could not be `since`-gated, because a bill leaving the open
+set by being settled has no row left to carry a cursor. Inside a window there
+is no such case — a row is either on the phone already or has a moved
+`updated_at`, and a bill leaves only by ageing past a date the handset can read
+for itself.
+
+**So the PICKER filters where the wire used to.** `openCustomerBills` asks for
+a balance above zero, and `pay.tsx` reads that rather than `customerBills`. A
+settled bill offered there is one the salesman names, `handlePayment` refuses
+with `bill_settled`, and the refusal reads as the app being wrong rather than
+the phone being stale.
+
+**WHAT WAS ON A BILL RIDES ON THE BILL, as JSON text.** A bill IS the order, so
+the lines are the order's — and an order records them in one of two ways: the
+sheet and the handset write `orders.line_items` naming the product as TEXT, the
+CRM writes `interaction_product_lines` keyed on the CALL. 10,867 of 10,957
+orders are the first and 90 are the second, which is exactly the ratio that
+makes the second easy to forget and impossible to notice. A column rather than
+a table because a bill's lines never change after it is raised: no second
+cursor, and no moment where a bill has arrived and its contents have not.
+
+**The running balance is the handset's arithmetic and not a second opinion.**
+`engines/statement.ts` is pure and orders rows the office sent; every figure in
+it was written by the office. Outstanding stays `customers.outstandingPaise`,
+the office's own, and the screen says which figure is which — a total computed
+on a phone from thirteen months of rows is how a salesman and an accounts clerk
+quote one shopkeeper two different debts with him listening. Only `confirmed`
+money moves the balance, which is the one rule it shares with `customerLedger`.
+
+**A STATEMENT IS FOR AN ACCOUNT WE INVOICE, and the other two say so.** A lead
+has never ordered and a third-party shop is billed to its distributor, so both
+would draw a correct empty list — and an empty list with nothing saying why
+reads as a sync that has not finished. It is the sentence the Accounts app
+already puts above its own ledger for the same account.
+
+**And the tab says how far back THIS PHONE goes**, read off the rows rather
+than off the window the office sent. A shop billed for three months reaches
+back three months, not thirteen, and a screen claiming otherwise over a list
+that starts in June is one nobody trusts twice.
+
 **A SAMPLE HAS THREE DATES BECAUSE THREE PARTIES ASSERT THREE THINGS.**
 `dispatched_at` is us saying it went. `delivered_at` is the carrier, or our own
 man, saying it arrived. `received_at` is the SHOP saying it is in their hands.
@@ -556,6 +608,133 @@ below `negotiation`. This one IS a refusal, unlike the visit cap, and the
 difference is what is lost: refusing a visit loses a record of work that really
 happened, while refusing an order loses nothing, because the order was never
 agreed with anybody who could agree it. The message names the way forward.
+
+**THE VEHICLE IS A FACT ABOUT THE SESSION, not about the stop.** It was asked
+at every shop and got the same answer all day: a man on his own bike said "own
+bike" eleven times and photographed the meter twenty-two times to record one
+ride he never got off — twenty-two readings forming a chain anybody could break
+by forgetting one, after which the day's kilometres were an argument rather than
+a figure. He punches in on a vehicle and punches out on it, so the punch-in is
+where it is asked, right after the selfie and before anything is written.
+
+**`mbos_travel_modes.scope` is where a mode is offered — `day`, `leg` or
+`both`.** Own bike, own car, company vehicle and customer's vehicle are `day`;
+bus, train, auto and taxi are `leg`; `public_transport` is a new `day` row that
+is an UMBRELLA over the four, and the only day-level answer that leaves a
+question open, because the fare genuinely changes from one shop to the next.
+Walking is the only `both` — it is a way to spend a day and a way to reach the
+shop next door on a day spent on buses. It defaults to `leg`, which is the
+load-bearing half: a handset that has not pulled goes on offering every mode
+exactly where it offered it, and a server one release behind sends no scope at
+all, which reads as `leg` for the same reason.
+
+**THE SESSION IS A LEG, not two columns on the attendance row.** `origin =
+'session'` runs from the punch-in to the punch-out and carries the two meter
+readings the day is priced on. Making it a leg means the policy engine prices
+it with everything else — one per-km rule, one `odometer → gps → manual`
+precedence, one variance check — rather than a second pricing path beside the
+first. It is the STRICTEST of the three origins: a day-log leg is typed from
+memory so its photograph is optional, and this one is opened and closed by the
+app at both ends, so `handleTravelLeg` demands both readings and both pictures.
+Public transport and walking open NO session leg: there is no meter and no
+journey to measure, and an empty one would put a zero-kilometre row on every
+such day for the policy to reason about.
+
+**AND THE VISITS INSIDE IT ARE MOVEMENT, NOT A SECOND CLAIM.** This is the part
+that would otherwise pay twice. The visits still open legs — the arrival gate,
+the navigation and the record of where he actually went all hang off one — so
+an own-vehicle day has one meter pair AND eleven GPS-measured legs, and pricing
+both pays per-km twice over a single ride. `claim_excluded` marks them, with
+the REASON on the row, because an exclusion nobody can read off the record is
+unanswerable six weeks later. The filter sits in `factsFor` and in the
+handset's `pricedClaim` — the one place on each side where legs become policy
+input — and NOT in the queries that list them: a journey that vanished from the
+record to avoid being paid twice is a journey nobody can account for.
+
+**The two rules that decide it are PURE, in `lib/travel-leg.ts`.**
+`stopMustAskMode` and `legPricedBySession` were expressions inside `TravelGate`,
+which imports the database, so neither could be exercised without a handset —
+and both fail silently in the field. The first wrong asks a man his vehicle
+eleven times a day; the second wrong pays per-km twice on every own-vehicle day
+for everybody. NO SESSION means ASK, which is the half worth stating: it is a
+handset whose punch-in predates this build, and a silent default would put
+somebody's mileage on a vehicle nobody named.
+
+**It is asked at EVERY punch-in, and that is deliberate.** He can bike in the
+morning and take the bus after lunch, and a session inheriting the morning's
+vehicle would quietly claim per-km on an afternoon he spent on buses. The
+closing meter is asked at every punch-out for the same reason, and only where
+the session carries an opening reading — opening a camera on a bus day would be
+the app asking about a vehicle he told it this morning he was not on.
+
+**Nothing written until every capture is in.** Selfie, then vehicle, then meter,
+then the mark — the order `startDay` already followed for the photograph,
+extended. Backing out of any of the three leaves no half-started session, and
+the session leg is opened AFTER the punch-in and can never fail it: the
+attendance mark is what somebody is paid on, and losing it over a travel leg
+would be the wrong way round.
+
+**PUNCHING IN IS THE DAY; CHECKING IN IS THE SHOP.** One word was doing both
+jobs, and it is the one thing about this app everybody asks to have explained
+twice — "did he check in" meant either "is he at work" or "is he in front of a
+customer", and the two are asked by different people about different records.
+The day is `mbos_attendance_days` and it is PUNCH in / punch out, on the
+handset and on the Sales Dashboard both, because a salesman and the manager
+reading his row must not use different words for one mark. The shop is
+`mbos_visits` and it keeps CHECK in / check out. The COLUMNS are untouched:
+`check_in_at` on an attendance day still says what it always said, and
+renaming storage to chase a label is how a migration gets written for a
+vocabulary decision that may change again. Only what a person reads moved.
+
+**ARRIVING IS NOT CHECKING IN, AND THAT IS THE SECOND REVERSAL ON THIS TAP.**
+"Start visit" already stopped meaning "I am in the shop" and came to mean "I am
+setting off"; this moves the other end. Pressing "I am here" used to close the
+travel leg, photograph the meter, start the dwell clock and open the form in
+one act — so the walk from the bike, the wait at the counter and the call taken
+on the way in were all counted as time with the customer. That is the same
+error the ride itself used to make, one step further down, and the dwell figure
+is the one number this whole flow exists to be honest about.
+
+So the arrival ends the JOURNEY and a second tap starts the VISIT. Everything
+that can be refused still happens at the arrival: the radius gate, the closing
+meter photograph, the leg. Checking in asks for nothing — no fix, no camera, no
+wait — because the reading that proves he is at this shop was taken at the
+arrival and answered the gate there, and a second acquisition would let the two
+disagree about where the shop is. It is also what lets a check-in work inside a
+godown with the radio off, which is where half this book is.
+
+**"NOT YET" IS A REAL ANSWER, AND NOTHING CHECKS HIM IN ON HIS BEHALF.** A
+timer that made the assertion for him would be the app putting words in
+somebody's mouth on the record his day is read from — the same objection that
+keeps a delivery discrepancy from raising a complaint. What pays for the
+deferral is that it costs nothing to change his mind: `data/arrival.ts` writes
+the arrival to `kv` before the screen changes, a bar at the foot of EVERY
+screen offers the way back with the time on it, and while one is outstanding
+that bar is the only thing this app offers — `TravelGate` refuses a second
+journey and names the shop he is actually standing at. A salesman outside one
+shop is not about to set off for another, and letting him would leave an
+arrival nothing could ever close.
+
+**It is a record and not a flag, for the reason the leg itself is.** Android
+reaps this app on the road constantly, and an "arrived" flag in memory would be
+gone by the time he walked in — with the leg already closed and the meter
+already photographed, so there is no way back to the arrival he just made.
+`kv` rather than a table because there is exactly one at a time: he is at one
+shop. An arrival from an earlier day is rubbed out rather than restored, the
+same rule `restoreOffPlanReason` follows one file along.
+
+**NOTHING NEW GOES UP THE WIRE, and nothing needs to.** The arrival instant is
+already `travel_legs.ended_at`, which the visit is bound to on save, so the
+office reads "arrived 10:41, checked in 10:58" off two records it already
+holds. A second copy of an instant already stored is a copy that can disagree
+with it — and an APK cannot be recalled, so a change that needed no new column
+is a change every handset in the field keeps working through.
+
+**And the clock now survives a reap, which it never did.** `visitStart` lives
+in memory; before the arrival was written down there was nothing to restore it
+from, so a visit interrupted by a phone call was stamped at the save and left
+open. The disk holds the instant he walked in, and the visit screen puts it
+back.
 
 **THE CHECK-IN IS REFUSED PAST THE RADIUS, AND THAT IS A REVERSAL.**
 `engines/geo.ts` states the principle the field product was built on — a

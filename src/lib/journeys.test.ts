@@ -849,10 +849,132 @@ describe("Journey 4 - the EOD gate", () => {
     assert.equal(blocked.blocking.length, 1);
     assert.match(blocked.message, /reminder/i);
 
-    await completeReminder(created.data.id, "Spoke to them, will order Friday");
+    /*
+     * AND THE TELECALLER CANNOT SIMPLY TICK IT OFF.
+     *
+     * That is the whole gate: a report blocked by a promise that the person
+     * being measured could close by pressing a button was a gate in name
+     * only. `reminder.close` is a manager's, so Priya clears this by making
+     * the call — which is the test below — or by carrying the promise forward.
+     */
+    await assert.rejects(
+      () => completeReminder(created.data.id, "Spoke to them, will order Friday"),
+      /reminder\.close/,
+      "an associate may not close one by hand",
+    );
+
+    setTestUser(manager);
+    const closed = await completeReminder(
+      created.data.id,
+      "Spoke to them, will order Friday",
+    );
+    assert.equal(closed.ok, true, closed.ok ? "" : closed.error);
+    setTestUser(priya);
 
     const open = await eodPreflightFor(priya.id, TODAY);
     assert.equal(open.canFinalise, true);
+  });
+
+  test("a logged call closes the promise, and a no-answer does not", async () => {
+    const customer = await makeCustomer(priya.id);
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+
+    const created = await createReminder({
+      customerId: customer.id,
+      dueDate: TODAY,
+      note: "He said he will call me today between 3 and 4",
+    });
+    assert.ok(created.ok);
+
+    // Nobody picked up. The promise is still owed, and the list must go on
+    // saying so — otherwise it can be emptied by dialling and hanging up.
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_answer",
+      /* WHICH KIND OF SILENCE, which this outcome has demanded since
+         `call-outcomes.ts` landed. It is not incidental to what is being
+         tested here — a no-answer that cannot be saved cannot fail to close a
+         promise either, so without this the assertion below passes for the
+         wrong reason. */
+      outcomeDetail: { whyNoAnswer: "no_response" },
+      idempotencyKey: randomUUID(),
+    });
+    const [afterMiss] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, created.data.id));
+    assert.equal(afterMiss.status, "pending", "a missed call keeps the promise");
+
+    // And the call that actually happened closes it, with the interaction
+    // named as the evidence rather than somebody's word for it.
+    const call = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      notes: "Spoke to him, stock still on the shelf",
+      // No order has to say when to call back, or that they would not commit.
+      noOrderNoCommitment: true,
+      // And WHY there was no order, which `call-outcomes.ts` demands: the
+      // note says it in prose and a coded reason is what can be counted.
+      outcomeDetail: { whyNoOrder: "stock_available" },
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(call.ok, true, call.ok ? "" : call.error);
+
+    const [afterCall] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, created.data.id));
+    assert.equal(afterCall.status, "completed");
+    assert.equal(afterCall.closedBy, "call");
+    assert.equal(
+      afterCall.closedBySourceId,
+      call.data.interactionId,
+      "the reminder points back at the call that closed it",
+    );
+    assert.equal(afterCall.closedById, priya.id, "who made the call, not who tidied the list");
+  });
+
+  test("a call does not close a promise that is still ahead, nor the one it just made", async () => {
+    const customer = await makeCustomer(priya.id);
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+
+    // A promise for next week. Today's conversation was about something else.
+    const future = await createReminder({
+      customerId: customer.id,
+      dueDate: addDays(TODAY, 7),
+      note: "Call after their stock take",
+    });
+    assert.ok(future.ok);
+
+    const call = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "follow_up",
+      followUpDate: addDays(TODAY, 2),
+      notes: "Asked us to ring on Thursday",
+      /* WHAT WE ARE WAITING FOR, demanded by `call-outcomes.ts` — a date on
+         its own says when to ring and not what the call is for. */
+      outcomeDetail: { followUpReason: "waiting_stock_confirmation" },
+      idempotencyKey: randomUUID(),
+    });
+    assert.ok(call.ok, call.ok ? "" : call.error);
+
+    const [ahead] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, future.data.id));
+    assert.equal(ahead.status, "pending", "a commitment for next week is not met today");
+
+    // And the promise this very call wrote must survive it. Closing the thing
+    // it created would drop the customer with a next step everybody believes
+    // in and nothing chasing it.
+    const [fresh] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, call.data.reminderId!));
+    assert.equal(fresh.status, "pending");
   });
 
   test("a reminder is dismissed, never deleted, and stays on the record", async () => {
@@ -870,11 +992,24 @@ describe("Journey 4 - the EOD gate", () => {
     const noReason = await dismissReminder(created.data.id, "   ");
     assert.equal(noReason.ok, false, "dismissal without a reason is refused");
 
+    /*
+     * Dismissing takes the SAME capability as marking done, and for the same
+     * reason: a reason typed into a dismissal clears the overdue pile exactly
+     * as effectively as a tick does.
+     */
+    await assert.rejects(
+      () => dismissReminder(created.data.id, "Cheque already banked"),
+      /reminder\.close/,
+      "an associate may not dismiss one either",
+    );
+
+    setTestUser(manager);
     const done = await dismissReminder(
       created.data.id,
       "Cheque already banked",
     );
     assert.equal(done.ok, true);
+    setTestUser(priya);
 
     const [row] = await db
       .select()
@@ -1473,6 +1608,43 @@ describe("who may see a customer's target", () => {
     );
   });
 
+  test("a filter narrows the population and never answers who may see it", async () => {
+    // The shortfall takes the Targets tab's own filters now, and the honest
+    // way to read five filters is to run the clause the list ran. But
+    // `customerFilterClause` carries SCOPE as well as the filters, and the
+    // scope on this screen is `targetVisibilityClause` — wider than
+    // `scopedToUsers` by exactly the sales manager seat. ANDing the two
+    // narrows to the intersection and takes that seat away again, on the one
+    // screen it exists for, with a filter bar the likely place to notice.
+    //
+    // So the filter case is pinned, not just the unfiltered one: a filter
+    // removes rows and may not remove a seat.
+    const owner = await makeUser("Filtered Owner", "associate");
+    const salesman = await makeUser("Filtered Salesman", "associate");
+    const salesManagerUser = await makeUser("Filtered Line Manager", "associate");
+
+    const theirs = await makeCustomer(owner.id, {
+      salesAmId: salesman.id,
+      salesManagerId: salesManagerUser.id,
+    });
+    const otherSalesman = await makeUser("Other Salesman", "associate");
+    const alsoTheirs = await makeCustomer(owner.id, {
+      salesAmId: otherSalesman.id,
+      salesManagerId: salesManagerUser.id,
+    });
+
+    setTestUser(salesManagerUser);
+    const rows = await listTargets(undefined, { salesAm: salesman.name });
+    assert.ok(
+      rows.some((r) => r.customerId === theirs.id),
+      "the sales manager still sees the account they are named on",
+    );
+    assert.equal(
+      rows.some((r) => r.customerId === alsoTheirs.id),
+      false,
+      "and the filter did the narrowing it was asked for",
+    );
+  });
 
   test("a manager keeps their reports-to team, untouched by any of the three seats", async () => {
     const unrelatedManager = await makeUser("Unrelated Manager", "manager");
@@ -3877,7 +4049,9 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     );
     const held = after.suppressed.find((x) => x.customerId === customer.id);
     assert.ok(held, "and the telecaller can see why");
-    assert.match(held.reason, /asking again in/);
+    // The cooldown silences the ASK now rather than the customer, so it says
+    // what it is holding back rather than when it will ask again.
+    assert.match(held.reason, /no order chased for \d+ more day/);
   });
 
   test("a promised callback beats both the quiet window and the cooldown", async () => {

@@ -234,6 +234,11 @@ const WIRE: { fn: string; table: string; extra?: string[] }[] = [
   { fn: "coursesFor", table: "courses", extra: ["lastSyncedAt"] },
   { fn: "performanceFor", table: "performance", extra: ["lastSyncedAt"] },
   { fn: "salaryFor", table: "salary", extra: ["lastSyncedAt"] },
+  /* Not covered until `scope` was added to it, which is exactly the shape of
+     column this test exists for: a field the office knows about and the
+     handset has no place for throws on an unknown column and takes the whole
+     pull down with it. */
+  { fn: "travelModeRows", table: "travel_modes", extra: ["lastSyncedAt"] },
 ];
 
 test("every column MBOS sends has a column on the handset to land in", () => {
