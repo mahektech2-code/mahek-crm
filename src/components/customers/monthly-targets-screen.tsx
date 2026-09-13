@@ -333,6 +333,125 @@ export function MonthlyTargetsScreen({
     },
   ];
 
+  /*
+   * THE FILTERS BELONG TO THE SCREEN, NOT TO THE TARGETS TAB.
+   *
+   * They lived inside the Targets branch, so switching to Where the shortfall
+   * is took the bar off the screen — and the shortfall behind it was drawn
+   * over the whole scoped book while the table a manager had just narrowed to
+   * one salesperson sat behind the other tab. Two figures, one screen, two
+   * populations, and nothing anywhere saying so.
+   *
+   * The filter STATE was never the tab's either: it lives in the URL, so it
+   * survived the switch perfectly well. Only the rendering did not.
+   *
+   * `attached` is the single difference between the two. On Targets the bar is
+   * welded to the table beneath it and squares off its bottom edge; on
+   * Shortfall there is a grid of cards below rather than rows, so it closes
+   * itself.
+   */
+  const filterBar = (attached: boolean) => (
+    <>
+        <Card
+        className={cx(
+          "mb-0 flex flex-wrap items-center gap-2.5 px-4 py-3",
+          // Welded to the table on the Targets tab; a card in its own right on
+          // the Shortfall tab, which has a grid under it rather than rows.
+          // One control, two surroundings.
+          attached ? "rounded-b-none border-b-0" : "mb-4",
+        )}
+      >
+          <div className="relative w-[260px]">
+            <Icon
+              name="search"
+              size={16}
+              className="pointer-events-none absolute top-2 left-2.5 text-muted"
+            />
+            <input
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                // Typing settles before the server is asked. A round trip
+                // per keystroke would make the box feel broken on a 4G
+                // handset.
+                clearTimeout(searchTimer.current);
+                searchTimer.current = setTimeout(
+                  () => navigate({ q: e.target.value }),
+                  300,
+                );
+              }}
+              placeholder="Search customer name"
+              className="h-8 w-full rounded-[4px] border border-line pr-7 pl-7.5 text-sm outline-none focus:border-brand"
+            />
+            {filters.query ? (
+              <button
+                onClick={() => {
+                  setDraft("");
+                  navigate({ q: undefined });
+                }}
+                aria-label="Clear search"
+                className="absolute top-1.5 right-1.5 h-4.5 w-4.5 cursor-pointer text-muted"
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
+          <MultiSelect
+            label="Status"
+            placeholder="All statuses"
+            options={STATUS_OPTIONS}
+            selected={asList(filters.status)}
+            onChange={(next) => navigate({ status: next.join(",") || undefined })}
+          />
+          <MultiSelect
+            label="Sales people"
+            placeholder="All sales people"
+            options={salesAmOptions}
+            selected={asList(filters.salesAm)}
+            onChange={(next) => navigate({ sales: next.join(",") || undefined })}
+          />
+          <MultiSelect
+            label="Sales managers"
+            placeholder="All sales managers"
+            options={salesManagerOptions}
+            selected={asList(filters.salesManager)}
+            onChange={(next) => navigate({ salesmanager: next.join(",") || undefined })}
+          />
+          <MultiSelect
+            label="Back office"
+            placeholder="All back office"
+            options={backOfficeOptions}
+            selected={asList(filters.backOfficeAm)}
+            onChange={(next) => navigate({ backoffice: next.join(",") || undefined })}
+          />
+          {chips.length ? (
+            <Button variant="ghost" size="sm" onClick={clearAll}>
+              Clear filters
+            </Button>
+          ) : null}
+        </Card>
+        {chips.length ? (
+          <div
+          className={cx(
+            "flex flex-wrap items-center gap-1.5 border-r border-b border-l border-line bg-surface px-4 py-2.5",
+            attached ? "" : "mb-4 rounded-b-[6px]",
+          )}
+        >
+            {chips.map((c) => (
+              <button
+                key={c.label}
+                onClick={c.clear}
+                className="flex cursor-pointer items-center gap-1 rounded-[4px] border border-line bg-canvas px-2 py-1 text-[12px] text-body hover:bg-line-soft"
+              >
+                {c.label}
+                <span className="text-muted">×</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+    </>
+  );
+
   return (
     <div className="px-6 pt-6 pb-10">
       <PageHeader
@@ -424,7 +543,30 @@ export function MonthlyTargetsScreen({
         ]}
       />
 
-      {tab === "shortfall" ? (
+      {filterBar(tab === "targets")}
+
+      {tab === "shortfall" && !shortfall ? (
+        /*
+         * A PERMISSION IS NOT A NUMBER, and this is the one thing this tab may
+         * not do. `shortfall` is null where the reader does not hold
+         * `target.shortfall`, and every figure below falls back through `?? 0`
+         * — so a withheld breakdown drew two groups reading 0 customers, ₹0
+         * and "Nobody in this group", beside its own tab saying how many were
+         * behind. Both numbers true, one of them fabricated, and the sentence
+         * a reader takes away is that there is nothing to work.
+         *
+         * Nearly unreachable now that anybody working a book holds the read —
+         * which is exactly why it is worth saying rather than deleting: the
+         * fallbacks are still there, and the next role that cannot see this
+         * must not be told there is no shortfall.
+         */
+        <Card className="px-5 py-6 text-[13px] text-muted">
+          This breakdown is not part of your access. The count beside the tab is
+          real — {behind} of these customers are behind — but which of them are a
+          coverage gap and which are a customer gap is withheld, so nothing here
+          is a statement about your book.
+        </Card>
+      ) : tab === "shortfall" ? (
         <div className="grid grid-cols-[repeat(auto-fit,minmax(420px,1fr))] items-start gap-4">
           {groups.map((g) => (
             <Card key={g.title}>
@@ -492,90 +634,6 @@ export function MonthlyTargetsScreen({
         </div>
       ) : (
         <>
-          <Card className="mb-0 flex flex-wrap items-center gap-2.5 rounded-b-none border-b-0 px-4 py-3">
-            <div className="relative w-[260px]">
-              <Icon
-                name="search"
-                size={16}
-                className="pointer-events-none absolute top-2 left-2.5 text-muted"
-              />
-              <input
-                value={draft}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  // Typing settles before the server is asked. A round trip
-                  // per keystroke would make the box feel broken on a 4G
-                  // handset.
-                  clearTimeout(searchTimer.current);
-                  searchTimer.current = setTimeout(
-                    () => navigate({ q: e.target.value }),
-                    300,
-                  );
-                }}
-                placeholder="Search customer name"
-                className="h-8 w-full rounded-[4px] border border-line pr-7 pl-7.5 text-sm outline-none focus:border-brand"
-              />
-              {filters.query ? (
-                <button
-                  onClick={() => {
-                    setDraft("");
-                    navigate({ q: undefined });
-                  }}
-                  aria-label="Clear search"
-                  className="absolute top-1.5 right-1.5 h-4.5 w-4.5 cursor-pointer text-muted"
-                >
-                  ×
-                </button>
-              ) : null}
-            </div>
-            <MultiSelect
-              label="Status"
-              placeholder="All statuses"
-              options={STATUS_OPTIONS}
-              selected={asList(filters.status)}
-              onChange={(next) => navigate({ status: next.join(",") || undefined })}
-            />
-            <MultiSelect
-              label="Sales people"
-              placeholder="All sales people"
-              options={salesAmOptions}
-              selected={asList(filters.salesAm)}
-              onChange={(next) => navigate({ sales: next.join(",") || undefined })}
-            />
-            <MultiSelect
-              label="Sales managers"
-              placeholder="All sales managers"
-              options={salesManagerOptions}
-              selected={asList(filters.salesManager)}
-              onChange={(next) => navigate({ salesmanager: next.join(",") || undefined })}
-            />
-            <MultiSelect
-              label="Back office"
-              placeholder="All back office"
-              options={backOfficeOptions}
-              selected={asList(filters.backOfficeAm)}
-              onChange={(next) => navigate({ backoffice: next.join(",") || undefined })}
-            />
-            {chips.length ? (
-              <Button variant="ghost" size="sm" onClick={clearAll}>
-                Clear filters
-              </Button>
-            ) : null}
-          </Card>
-          {chips.length ? (
-            <div className="flex flex-wrap items-center gap-1.5 border-r border-b border-l border-line bg-surface px-4 py-2.5">
-              {chips.map((c) => (
-                <button
-                  key={c.label}
-                  onClick={c.clear}
-                  className="flex cursor-pointer items-center gap-1 rounded-[4px] border border-line bg-canvas px-2 py-1 text-[12px] text-body hover:bg-line-soft"
-                >
-                  {c.label}
-                  <span className="text-muted">×</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
           <Card className={cx("overflow-auto", chips.length ? "rounded-t-none" : "mt-0 rounded-t-none border-t-0")}>
             {rows.length ? (
           <table>

@@ -644,9 +644,14 @@ const ACCOUNTS_OR_MANAGER: ReadonlySet<Capability> = new Set<Capability>([
    * Holding this alongside `order.approve` is a new hat combination worth
    * naming: an accounts user who is ALSO a telecaller could now set their own
    * target. See the telecaller+accounts entry in `lib/role-conflicts.ts`.
+   *
+   * `target.shortfall` used to sit here beside it, and that was the mistake of
+   * treating one word as one decision. SETTING a number somebody is measured
+   * against and READING why this month is behind are not the same act, and
+   * only the first is a decision about anybody. See `BOOK_WORK` for where the
+   * read went and why.
    */
   "target.set",
-  "target.shortfall",
   /*
    * Marking an account as a shop we deliver to, or unmarking one — the same
    * action that reverts a third-party account back to reading as a plain
@@ -889,6 +894,26 @@ const restricted = new Set<Capability>([
  * Everything no set withholds — which is exactly what the old `can()` meant by
  * ending on `return !MANAGER_ONLY.has(capability)`, and is why a field salesman
  * could be stored as a "telecaller" and still work correctly.
+ *
+ * `target.shortfall` IS ONE OF THEM, and the day it was not is worth writing
+ * down. It was bundled with `target.set` on the strength of sharing a word,
+ * so a telecaller opening her own Monthly targets screen was handed a null
+ * shortfall — which the screen then drew as two empty groups reading "Nobody
+ * in this group", beside its own tab saying 58 customers were behind. A
+ * permission rendered as data, and the reading it invites is the false one:
+ * that there is no shortfall to work.
+ *
+ * It is a READ, and it is the read that tells somebody which half of a bad
+ * month is theirs to fix — a coverage gap is customers she has not rung often
+ * enough, which is her own work, and a customer gap is price, stock or terms,
+ * which is not. Withholding it left the person who can actually close the gap
+ * as the only person unable to see where it is.
+ *
+ * It needs no scope of its own to be safe. `targetVisibilityClause` already
+ * answers this question one layer down: a non-manager sees the accounts
+ * assigned to her, on her back-office seat, or reporting to her, and nothing
+ * else. The capability decides whether the section is drawn; the clause
+ * decides whose customers are in it, and it always has.
  */
 const BOOK_WORK: readonly Capability[] = CAPABILITIES.filter(
   (c) => !restricted.has(c),
@@ -907,8 +932,18 @@ const BOOK_MANAGEMENT: readonly Capability[] = [
  * customers, so the desk cannot work without this. `payment.record` is not
  * here because it is SHARED — writing down that a customer says they paid is
  * not a privilege, and what separates the levels is whether it is BELIEVED.
+ *
+ * `target.shortfall` is named EXPLICITLY rather than arriving with the rest of
+ * `BOOK_WORK`, because the ledger desk does not get `BOOK_WORK`: an accounts
+ * associate holds this list and nothing else. Leaving it implicit would have
+ * taken the shortfall breakdown off `/accounts/customer-targets` — the same
+ * screen, the other door — on the day it was widened for telecallers, which
+ * is a regression dressed up as a widening.
  */
-const LEDGER_WORK = ["customer.read"] as const satisfies readonly Capability[];
+const LEDGER_WORK = [
+  "customer.read",
+  "target.shortfall",
+] as const satisfies readonly Capability[];
 
 /**
  * The decisions that move money, and the seat that reassigns the accounts the

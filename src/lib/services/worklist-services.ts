@@ -40,7 +40,12 @@ import {
 import { err, ok, okVoid, type Result } from "../result";
 import { shortDateWithYear } from "../format";
 import { nextStepForCustomer } from "./queue-service";
-import { customerFilterClause, resolveSort, type CustomerListFilters } from "../queries";
+import {
+  customerFilterClause,
+  customerFiltersOnly,
+  resolveSort,
+  type CustomerListFilters,
+} from "../queries";
 import { creditedToSql, CREDITED_TO_SEAT_SQL, type CreditSeat } from "../sales-attribution";
 
 /**
@@ -752,9 +757,49 @@ function targetVisibilityClause(ctx: RequestScope) {
   );
 }
 
-export async function listTargets(period?: string) {
+export async function listTargets(
+  period?: string,
+  /*
+   * The Targets tab's own four filters, plus its search box, applied to this
+   * read as well.
+   *
+   * It used to take none, and the note above `targetFilterClause` said why:
+   * the shortfall "reads the whole scoped book to classify a coverage gap
+   * from a customer gap, and that classification has to stand independent of
+   * whatever the Targets tab's filters happen to be set to."
+   *
+   * That is right about the CLASSIFICATION and wrong about the POPULATION.
+   * Which side a customer falls on is decided from their own contacts against
+   * their own cycle, so narrowing the list cannot move anybody between the two
+   * groups — and a manager looking at one salesperson's book cannot read a
+   * shortfall drawn over the whole team's. The two figures sat on one screen,
+   * one filtered and one not, with nothing saying they were answering
+   * different questions.
+   *
+   * `customerFiltersOnly` is the SAME reading of those five the Customers list
+   * and `targetFilterClause` both run, for the reason this file already states
+   * about bulk writes: the honest way to act on "everyone these filters match"
+   * is to run the clause the screen ran, not a second reading of the same four
+   * filters that can drift from it.
+   *
+   * It is the FILTERS and not `customerFilterClause`, which carries scope as
+   * well. The scope here is `targetVisibilityClause`, which is wider than
+   * `scopedToUsers` by the sales manager seat — so ANDing the two narrows to
+   * the intersection and takes that seat away again, on the one screen it
+   * exists for. Filters narrow a population; they do not get to answer who may
+   * see it.
+   */
+  filters: TargetListFilters = {},
+) {
   const ctx = await resolveScope();
   const visibility = targetVisibilityClause(ctx);
+  const customerClause = customerFiltersOnly({
+    query: filters.query,
+    status: filters.status,
+    salesAm: filters.salesAm,
+    salesManager: filters.salesManager,
+    backOfficeAm: filters.backOfficeAm,
+  });
   const config = await getConfig();
   const day = await today();
   const key = period ?? monthKey(day);
@@ -805,6 +850,9 @@ export async function listTargets(period?: string) {
         // gap the month has to explain. Only deactivation removes them.
         ne(customers.status, "deactivated"),
         visibility,
+        // Undefined where nothing is filtered, which `and` drops — so the
+        // unfiltered read is the query it always was, byte for byte.
+        customerClause,
       ),
     )
     .orderBy(asc(customers.name));
@@ -899,10 +947,12 @@ export type TargetListPage = {
  * few hundred customers; sending all of them to show twenty-five is the
  * same waste the customers list stopped doing.
  *
- * `listTargets` above stays as it is: `shortfallAnalysis` reads the whole
- * scoped book to classify a coverage gap from a customer gap, and that
- * classification has to stand independent of whatever the Targets tab's
- * filters happen to be set to.
+ * `listTargets` above takes the same filters but no page: the shortfall is a
+ * worklist rather than a table, so it is narrowed by the same four answers
+ * and then read whole. What must NOT move with a filter is the
+ * classification, and it cannot — coverage gap versus customer gap is decided
+ * per customer from their own contacts and their own cycle, never from
+ * anything about the set they arrived in.
  *
  * TARGET AND ACHIEVED, FOR FILTERING, ARE THE STORED FIGURES — `target`
  * falls back to 0 rather than running `resolveTarget`'s trailing-average
@@ -1215,10 +1265,13 @@ export async function setTargetsBulk(
 }
 
 /** The view a manager opens before a coaching conversation. */
-export async function shortfallAnalysis(period?: string) {
+export async function shortfallAnalysis(
+  period?: string,
+  filters: TargetListFilters = {},
+) {
   await requireCapability("target.shortfall");
   const day = await today();
-  const rows = await listTargets(period);
+  const rows = await listTargets(period, filters);
 
   return classifyShortfall(
     rows.map((r) => ({
