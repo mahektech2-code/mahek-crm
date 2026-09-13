@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { BillDetailPanel } from "@/components/bills/bill-detail-panel";
-import { downloadCsv, toCsv } from "@/lib/csv";
 import { longDate, money } from "@/lib/format";
 import {
   AgingStrip,
@@ -55,31 +54,56 @@ export type BillRow = {
 
 export function BillsScreen({
   rows,
+  total,
+  page,
+  perPage,
+  totals,
   buckets,
   years,
   financialYear,
 }: {
+  /** ONE PAGE of the year. The figures beside it describe all of it. */
   rows: BillRow[];
+  total: number;
+  page: number;
+  perPage: number;
+  totals: { billed: number; received: number; open: number; count: number };
   buckets: Bucket[];
   years: string[];
   financialYear: string;
 }) {
   const router = useRouter();
   const { push } = useToast();
-  const [page, setPage] = React.useState(1);
-  const [perPage, setPerPage] = React.useState(25);
 
-  const billed = rows.reduce((a, r) => a + r.amount, 0);
-  const received = rows.reduce((a, r) => a + r.paid, 0);
-  const open = rows.filter((r) => r.balance > 0);
-  const openTotal = open.reduce((a, r) => a + r.balance, 0);
+  /*
+   * THE TOTALS COME FROM POSTGRES NOW, not from adding up what was sent.
+   *
+   * They used to be `rows.reduce(...)`, which was only correct because every
+   * row of the year was in the browser. With a page in hand that arithmetic
+   * would silently describe 25 bills under a heading saying "Whole year" —
+   * the most believable kind of wrong number, because nothing about it looks
+   * broken.
+   */
+  const billed = totals.billed;
+  const received = totals.received;
+  const openTotal = totals.open;
   /*
    * One bill open at a time. Six rows expanded is a ledger you cannot read,
    * and the panel fetches its own items — opening every row would fetch every
    * order behind a page of bills to show one.
    */
   const [openBillId, setOpenBillId] = React.useState<string | null>(null);
-  const shown = rows.slice((page - 1) * perPage, page * perPage);
+  /* Already the page — the server cut it. Kept as a name so the table below
+     reads the same as every other ledger in this app. */
+  const shown = rows;
+
+  const go = (next: { page?: number; per?: number }) => {
+    const params = new URLSearchParams();
+    params.set("fy", financialYear);
+    params.set("page", String(next.page ?? page));
+    params.set("per", String(next.per ?? perPage));
+    router.push(`/accounts/bills?${params.toString()}`);
+  };
 
   return (
     <div className="px-6 pt-6 pb-12">
@@ -88,41 +112,26 @@ export function BillsScreen({
           title="Bills"
           subtitle="Every bill raised, cut by financial year. The totals, the aging strip and the export describe the whole year — only the table is paged."
           actions={
-            <button
-              onClick={() => {
-                downloadCsv(
-                  `mahek-bills-${financialYear}`,
-                  toCsv(
-                    [
-                      "Bill",
-                      "Customer",
-                      "Billed",
-                      "Due",
-                      "Amount (₹)",
-                      "Received (₹)",
-                      "Open (₹)",
-                      "Days overdue",
-                      "Status",
-                    ],
-                    rows.map((r) => [
-                      r.billNo,
-                      r.customerName,
-                      r.billDate,
-                      r.dueDate,
-                      String(Math.round(r.amount / 100)),
-                      String(Math.round(r.paid / 100)),
-                      String(Math.round(r.balance / 100)),
-                      r.overdueDays ? String(r.overdueDays) : "",
-                      statusWord(r),
-                    ]),
-                  ),
-                );
-                push(`Exported ${plural(rows.length, "row")} — the whole year`);
-              }}
-              className="h-9 cursor-pointer rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body hover:bg-canvas"
+            /*
+             * THE WHOLE YEAR, BUILT ON THE SERVER.
+             *
+             * This assembled the CSV from `rows`, which was only a whole year
+             * because the whole year was in the browser. With a page in hand
+             * that would have written out 25 bills under a filename saying
+             * 26-27 — a file somebody opens, reads as the year, and acts on.
+             *
+             * A plain link rather than a fetch: the browser's own download is
+             * what a `content-disposition` is for, it needs no JavaScript, and
+             * it does not hold ten thousand rows in memory to hand them
+             * straight back out again.
+             */
+            <a
+              href={`/accounts/bills/export?fy=${encodeURIComponent(financialYear)}`}
+              onClick={() => push("Building the file — the whole year, not this page")}
+              className="inline-flex h-9 cursor-pointer items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas"
             >
               Export
-            </button>
+            </a>
           }
         />
 
@@ -131,10 +140,9 @@ export function BillsScreen({
           {years.map((y) => (
             <button
               key={y}
-              onClick={() => {
-                setPage(1);
-                router.push(`/accounts/bills?fy=${y}`);
-              }}
+              /* A different year starts at its first page — carrying page 7
+                 across would land on an empty table in a year that has six. */
+              onClick={() => router.push(`/accounts/bills?fy=${y}&page=1&per=${perPage}`)}
               className={cx(
                 "h-7.5 cursor-pointer rounded-[4px] border px-3 text-[13px]",
                 y === financialYear
@@ -304,15 +312,12 @@ export function BillsScreen({
             </Table>
 
             <Pager
-              total={rows.length}
+              total={total}
               page={page}
               perPage={perPage}
               note="Totals, the aging strip and the export describe the whole year, not this page"
-              onPage={setPage}
-              onPerPage={(n) => {
-                setPerPage(n);
-                setPage(1);
-              }}
+              onPage={(p) => go({ page: p })}
+              onPerPage={(n) => go({ page: 1, per: n })}
             />
           </div>
         )}
