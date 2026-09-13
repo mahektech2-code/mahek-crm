@@ -75,6 +75,15 @@ export default async function QueuePage() {
         ownerName: r.ownerName,
         reason: r.reasons[0]?.label,
         reasonKind: r.reasons[0]?.kind,
+        // EVERY reason, not the strongest one. A customer can be due a
+        // promised callback AND due to reorder, and the panel used to be
+        // handed `reasons[0]` alone — so a telecaller working the Reminder
+        // filter saw only the promise, talked about it, saved, and
+        // `queue.excludeCalledToday` took the customer off the list for the
+        // rest of the day with the order never mentioned. The list row has
+        // always drawn all of them; the screen somebody is actually looking
+        // at while they speak is the one that had to be told.
+        reasons: r.reasons.map((x) => ({ kind: x.kind, label: x.label })),
         kind: r.kind,
         outstanding: r.outstanding,
         lastOrderDate: r.lastOrderDate,
