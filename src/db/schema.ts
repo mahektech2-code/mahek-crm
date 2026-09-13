@@ -305,6 +305,25 @@ export const reminderTypeEnum = pgEnum("reminder_type", [
   "other",
 ]);
 
+/**
+ * WHAT CLOSED A REMINDER, which is a different question from who.
+ *
+ * `person` is somebody pressing the button, which is now a capability rather
+ * than something everybody holds. The other three are evidence: a call in the
+ * interaction log, an order, a receipt accounts confirmed — and
+ * `closed_by_source_id` names that row, so the claim can be opened and read
+ * rather than taken on trust.
+ *
+ * Null on a row closed before this existed. Not backfilled to `person`:
+ * guessing is exactly what this column was added to stop.
+ */
+export const reminderClosureSourceEnum = pgEnum("reminder_closure_source", [
+  "person",
+  "call",
+  "order",
+  "payment",
+]);
+
 export const complaintStatusEnum = pgEnum("complaint_status", [
   "open",
   "in_progress",
@@ -2490,6 +2509,18 @@ export const reminders = pgTable(
       .default(false),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     closedById: text("closed_by_id").references(() => users.id),
+    /**
+     * What closed it, and the row that is the evidence — see
+     * `lib/engines/reminder-closure.ts`. `closedById` still says WHO, which on
+     * an automatic closure is whoever made the call or took the order, not
+     * whoever tidied the list.
+     *
+     * No foreign key, like `callId` above it: the evidence lives in three
+     * different tables and a column that can point at any of them cannot
+     * constrain to one.
+     */
+    closedBy: reminderClosureSourceEnum("closed_by"),
+    closedBySourceId: text("closed_by_source_id"),
     closureNote: text("closure_note"),
     dismissReason: text("dismiss_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

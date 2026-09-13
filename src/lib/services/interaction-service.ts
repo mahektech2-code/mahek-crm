@@ -30,6 +30,7 @@ import {
 import { isAttemptAllowed } from "../engines/escalation";
 import type { NextStep, NextStepKind } from "../engines/next-step";
 import { nextStepForCustomer } from "./queue-service";
+import { closeRemindersOnEvidence } from "./worklist-services";
 import { addDays, onOrAfterWorkingDay } from "../business-date";
 import { err, ok, type Result } from "../result";
 import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "../timeline";
@@ -191,6 +192,8 @@ export type SaveInteractionInput = z.input<typeof saveInteractionSchema>;
 export type SaveInteractionResult = {
   interactionId: string;
   produced: string[];
+  /** Promises the evidence of this call closed. Never fewer than zero. */
+  remindersClosed?: number;
   duplicate: boolean;
   orderId: string | null;
   reminderId: string | null;
@@ -551,6 +554,8 @@ export async function saveInteraction(
   let complaintId: string | null = null;
   let complaintUpdated = false;
   let orderValue = 0;
+  /** Promises this call settled, counted so the save can say so. */
+  let remindersClosed = 0;
 
   // §6 — which of the three dates each outcome touches.
   // A ringing phone is not contact: No Answer moves last CALL but never last
@@ -787,6 +792,65 @@ export async function saveInteraction(
       updatedById: ctx.user.id,
     });
 
+    /* ------------------------------------- the promises this call settles */
+    /*
+     * A reminder is closed by the evidence that it was kept, and this is the
+     * commonest piece of evidence there is — see
+     * `lib/engines/reminder-closure.ts` for the rule and why the manual
+     * button was not good enough.
+     *
+     * In THIS transaction, for the same reason the timeline entry below is:
+     * a promise closed by a call that rolled back is a promise nobody is
+     * chasing and a conversation that never happened.
+     *
+     * `no_answer` closes nothing. The customer still owes us the
+     * conversation, and a list that can be emptied by dialling and hanging up
+     * is the button we just took away wearing a different hat.
+     *
+     * `reminderId` is excluded because the branches above may have just
+     * written tomorrow's promise from this very call, and an event must never
+     * close the thing it created.
+     *
+     * AND AN ORDER RECEIVED IS NOT A CALL, which this file's own enum says in
+     * as many words: it arrived by WhatsApp or the ERP with nobody speaking to
+     * anybody. "He said he will ring me at three" is not answered by a
+     * WhatsApp order landing, and treating it as one would close promises on
+     * conversations that never happened — the exact failure the manual button
+     * produced. The order itself still closes what an order settles, below.
+     */
+    if (!isOrderReceived) {
+      remindersClosed = await closeRemindersOnEvidence(tx, {
+        customerId: customer.id,
+        event: {
+          kind: "call",
+          on: day,
+          answered: input.outcome !== "no_answer",
+        },
+        sourceId: interactionId,
+        actorId: ctx.user.id,
+        exclude: [reminderId],
+      });
+    }
+
+    /*
+     * AND AN ORDER CLOSES THE PROMISE TO CONFIRM ONE, whatever day it was due.
+     *
+     * Separate from the call above rather than folded into it: the call rule
+     * needs the reminder to be DUE, and this one deliberately does not. An
+     * order confirmation promised for Friday is met by the order arriving on
+     * Tuesday, and holding it open until Friday would put a call on somebody's
+     * list about an order already on the book.
+     */
+    if (orderId) {
+      remindersClosed += await closeRemindersOnEvidence(tx, {
+        customerId: customer.id,
+        event: { kind: "order", on: day },
+        sourceId: orderId,
+        actorId: ctx.user.id,
+        exclude: [reminderId],
+      });
+    }
+
     /* ------------------------------------------------- the shared timeline */
     /*
      * §1.1 — the stream both apps write. In THIS transaction, because a
@@ -926,6 +990,10 @@ export async function saveInteraction(
         interactionType: input.interactionType,
         outcome: input.outcome ?? null,
         produced,
+        // Promises this call closed. The reminders themselves point back at
+        // this interaction; this is the same fact from the other end, so
+        // "which promises did that call settle" is answerable without a join.
+        remindersClosed,
       } as never,
     });
   });
@@ -1021,9 +1089,20 @@ export async function saveInteraction(
       reminderId,
       complaintId,
       complaintUpdated,
+      remindersClosed,
       nextStep: step,
     },
-    complaintUpdated ? "Added to the open complaint" : "Interaction saved",
+    /*
+     * SAID OUT LOUD, because a promise disappearing off a list without a word
+     * is indistinguishable from one that was lost. The telecaller closed it by
+     * making the call, which is the whole point, and being told so is what
+     * teaches them the list keeps itself.
+     */
+    complaintUpdated
+      ? "Added to the open complaint"
+      : remindersClosed
+        ? `Interaction saved - ${remindersClosed} reminder${remindersClosed === 1 ? "" : "s"} closed`
+        : "Interaction saved",
     warnings,
   );
 }

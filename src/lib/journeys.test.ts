@@ -848,10 +848,120 @@ describe("Journey 4 - the EOD gate", () => {
     assert.equal(blocked.blocking.length, 1);
     assert.match(blocked.message, /reminder/i);
 
-    await completeReminder(created.data.id, "Spoke to them, will order Friday");
+    /*
+     * AND THE TELECALLER CANNOT SIMPLY TICK IT OFF.
+     *
+     * That is the whole gate: a report blocked by a promise that the person
+     * being measured could close by pressing a button was a gate in name
+     * only. `reminder.close` is a manager's, so Priya clears this by making
+     * the call — which is the test below — or by carrying the promise forward.
+     */
+    await assert.rejects(
+      () => completeReminder(created.data.id, "Spoke to them, will order Friday"),
+      /reminder\.close/,
+      "an associate may not close one by hand",
+    );
+
+    setTestUser(manager);
+    const closed = await completeReminder(
+      created.data.id,
+      "Spoke to them, will order Friday",
+    );
+    assert.equal(closed.ok, true, closed.ok ? "" : closed.error);
+    setTestUser(priya);
 
     const open = await eodPreflightFor(priya.id, TODAY);
     assert.equal(open.canFinalise, true);
+  });
+
+  test("a logged call closes the promise, and a no-answer does not", async () => {
+    const customer = await makeCustomer(priya.id);
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+
+    const created = await createReminder({
+      customerId: customer.id,
+      dueDate: TODAY,
+      note: "He said he will call me today between 3 and 4",
+    });
+    assert.ok(created.ok);
+
+    // Nobody picked up. The promise is still owed, and the list must go on
+    // saying so — otherwise it can be emptied by dialling and hanging up.
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_answer",
+      idempotencyKey: randomUUID(),
+    });
+    const [afterMiss] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, created.data.id));
+    assert.equal(afterMiss.status, "pending", "a missed call keeps the promise");
+
+    // And the call that actually happened closes it, with the interaction
+    // named as the evidence rather than somebody's word for it.
+    const call = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      notes: "Spoke to him, stock still on the shelf",
+      // No order has to say when to call back, or that they would not commit.
+      noOrderNoCommitment: true,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(call.ok, true, call.ok ? "" : call.error);
+
+    const [afterCall] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, created.data.id));
+    assert.equal(afterCall.status, "completed");
+    assert.equal(afterCall.closedBy, "call");
+    assert.equal(
+      afterCall.closedBySourceId,
+      call.data.interactionId,
+      "the reminder points back at the call that closed it",
+    );
+    assert.equal(afterCall.closedById, priya.id, "who made the call, not who tidied the list");
+  });
+
+  test("a call does not close a promise that is still ahead, nor the one it just made", async () => {
+    const customer = await makeCustomer(priya.id);
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+
+    // A promise for next week. Today's conversation was about something else.
+    const future = await createReminder({
+      customerId: customer.id,
+      dueDate: addDays(TODAY, 7),
+      note: "Call after their stock take",
+    });
+    assert.ok(future.ok);
+
+    const call = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "follow_up",
+      followUpDate: addDays(TODAY, 2),
+      notes: "Asked us to ring on Thursday",
+      idempotencyKey: randomUUID(),
+    });
+    assert.ok(call.ok);
+
+    const [ahead] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, future.data.id));
+    assert.equal(ahead.status, "pending", "a commitment for next week is not met today");
+
+    // And the promise this very call wrote must survive it. Closing the thing
+    // it created would drop the customer with a next step everybody believes
+    // in and nothing chasing it.
+    const [fresh] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, call.data.reminderId!));
+    assert.equal(fresh.status, "pending");
   });
 
   test("a reminder is dismissed, never deleted, and stays on the record", async () => {
@@ -869,11 +979,24 @@ describe("Journey 4 - the EOD gate", () => {
     const noReason = await dismissReminder(created.data.id, "   ");
     assert.equal(noReason.ok, false, "dismissal without a reason is refused");
 
+    /*
+     * Dismissing takes the SAME capability as marking done, and for the same
+     * reason: a reason typed into a dismissal clears the overdue pile exactly
+     * as effectively as a tick does.
+     */
+    await assert.rejects(
+      () => dismissReminder(created.data.id, "Cheque already banked"),
+      /reminder\.close/,
+      "an associate may not dismiss one either",
+    );
+
+    setTestUser(manager);
     const done = await dismissReminder(
       created.data.id,
       "Cheque already banked",
     );
     assert.equal(done.ok, true);
+    setTestUser(priya);
 
     const [row] = await db
       .select()

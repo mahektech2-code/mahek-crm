@@ -1939,6 +1939,7 @@ describe("E6 EOD aggregator", () => {
     const blocked = eodPreflight([
       {
         id: "r1",
+        customerId: "cus_1",
         customerName: "Shree Paints",
         note: "Call back",
         dueDate: TODAY,
@@ -1954,7 +1955,7 @@ describe("E6 EOD aggregator", () => {
 
   test("the gate wording is singular for one reminder", () => {
     const one = eodPreflight([
-      { id: "r", customerName: "X", note: "n", dueDate: TODAY },
+      { id: "r", customerId: "cus_x", customerName: "X", note: "n", dueDate: TODAY },
     ]) as { message: string };
     assert.match(one.message, /^1 reminder due today is still open/);
   });

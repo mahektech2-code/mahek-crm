@@ -270,6 +270,8 @@ export function aggregateEod(input: EodInput): EodReport {
 
 export type BlockingReminder = {
   id: string;
+  /** So the screen can offer the CALL that closes it, not only a tick. */
+  customerId: string;
   customerName: string;
   note: string;
   dueDate: BusinessDate;

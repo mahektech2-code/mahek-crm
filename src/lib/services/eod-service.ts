@@ -319,6 +319,7 @@ export async function eodPreflightFor(userId: string, day: BusinessDate) {
   const rows = await db
     .select({
       id: reminders.id,
+      customerId: reminders.customerId,
       note: reminders.note,
       dueDate: reminders.dueDate,
       customerName: customers.name,
@@ -335,6 +336,7 @@ export async function eodPreflightFor(userId: string, day: BusinessDate) {
 
   const blocking: BlockingReminder[] = rows.map((r) => ({
     id: r.id,
+    customerId: r.customerId,
     customerName: r.customerName,
     note: r.note,
     dueDate: r.dueDate,

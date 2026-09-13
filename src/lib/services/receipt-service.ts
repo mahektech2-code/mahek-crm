@@ -30,6 +30,7 @@ import {
   today,
 } from "../recompute";
 import { bindAttachments } from "./attachment-service";
+import { closeRemindersOnEvidence } from "./worklist-services";
 import { err, ok, okVoid, type Result } from "../result";
 import { CRM_EVENT, writeTimelineEvents } from "../timeline";
 import { money } from "../format";
@@ -431,7 +432,10 @@ export async function recordReceipt(
     );
   }
 
-  if (confirms) await applyToLedger(input.customerId);
+  if (confirms) {
+    await applyToLedger(input.customerId);
+    await closePaymentPromises(input.customerId, receiptId, ctx.user.id);
+  }
 
   const billsTouched = result.lines.filter((l) => l.billId).length;
   return ok(
@@ -446,6 +450,35 @@ export async function recordReceipt(
       ? `${rupees(input.amount)} received from ${customer.name}`
       : `${rupees(input.amount)} recorded — waiting for accounts to confirm it`,
   );
+}
+
+/**
+ * MONEY THAT ARRIVED CLOSES THE PROMISE TO PAY IT — and only money that
+ * actually arrived.
+ *
+ * Called from the two paths that CONFIRM, never from `applyToLedger` itself,
+ * although that is the one place every route to confirmed money passes
+ * through. Rejecting and reversing pass through it too, and they are money
+ * going the other way: a promise closed there would be closed by the discovery
+ * that the customer had not paid.
+ *
+ * A credit note is not one of these either. It writes a confirmed receipt to
+ * settle a bill against goods returned, and AGENTS.md is explicit that an
+ * adjustment is not money arriving — a promise to pay is not met by us
+ * allowing a claim.
+ */
+async function closePaymentPromises(
+  customerId: string,
+  receiptId: string,
+  actorId: string,
+): Promise<void> {
+  const day = await today();
+  await closeRemindersOnEvidence(db, {
+    customerId,
+    event: { kind: "payment", on: day },
+    sourceId: receiptId,
+    actorId,
+  });
 }
 
 /**
@@ -991,6 +1024,7 @@ export async function confirmReceipt(
   });
 
   await applyToLedger(receipt.customerId);
+  await closePaymentPromises(receipt.customerId, receiptId, ctx.user.id);
 
   const [customer] = await db
     .select({ outstanding: customers.outstanding, name: customers.name })

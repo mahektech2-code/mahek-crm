@@ -28,6 +28,12 @@ import {
 import { getConfig } from "../config/store";
 import { classifyShortfall, resolveTarget } from "../engines/targets";
 import { watchAge } from "../engines/inactivity";
+import {
+  closureNoteFor,
+  remindersClosedBy,
+  type ClosableReminderType,
+  type ClosureEvent,
+} from "../engines/reminder-closure";
 import { recomputeInactivity, today } from "../recompute";
 import {
   addDays,
@@ -104,6 +110,17 @@ export type ReminderRow = {
    * reminder: an overdue or due-today one already IS the answer.
    */
   hasConflictToday: boolean;
+  /**
+   * HOW it was closed, and by whom — null on a pending one, and null on a row
+   * closed before any of this was recorded. The screen draws those three
+   * cases differently: "closed by the call on 12 Sep" is a fact somebody can
+   * check, "marked done by Vikram" is a person standing behind it, and a bare
+   * "Done" is all that can honestly be said about the rest.
+   */
+  closedBy: "person" | "call" | "order" | "payment" | null;
+  closedBySourceId: string | null;
+  closedByName: string | null;
+  closedOn: string | null;
 };
 
 export async function listReminders(view?: ReminderView): Promise<ReminderRow[]> {
@@ -117,6 +134,12 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
       reminder: reminders,
       customerName: customers.name,
       assignedUserName: users.name,
+      // The closer, not the assignee — a subquery rather than a second join,
+      // because it is null on every pending row and an inner join would drop
+      // exactly the rows this screen is for.
+      closedByName: sql<
+        string | null
+      >`(select name from users u where u.id = ${reminders.closedById})`,
     })
     .from(reminders)
     .innerJoin(customers, eq(customers.id, reminders.customerId))
@@ -143,7 +166,7 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
     ).filter((id): id is string => id !== null),
   );
 
-  const mapped = rows.map(({ reminder: r, customerName, assignedUserName }) => {
+  const mapped = rows.map(({ reminder: r, customerName, assignedUserName, closedByName }) => {
     const overdueDays = Math.max(0, daysBetween(r.dueDate, day));
     const displayStatus =
       r.status === "completed"
@@ -173,6 +196,18 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
         r.rescheduleCount >= config["reminders.rescheduleWarningCount"],
       holdOtherReasonsUntilDue: r.holdOtherReasonsUntilDue,
       hasConflictToday: conflicts.has(r.id),
+      closedBy: r.closedBy,
+      closedBySourceId: r.closedBySourceId,
+      closedByName,
+      // A date, not the instant: this is read on a list, and the hour a
+      // reminder was ticked has never been the question anybody asks of it.
+      closedOn: r.closedAt
+        ? businessDate(r.closedAt, {
+            timezone: config["workingDay.timezone"],
+            dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+            workingDays: config["workingDay.workingDays"],
+          })
+        : null,
     } satisfies ReminderRow;
   });
 
@@ -242,22 +277,61 @@ export async function createReminder(
   return ok({ id: reminderId }, `Reminder set for ${due}`);
 }
 
+/**
+ * CLOSING ONE BY HAND, which is now a capability rather than a button
+ * everybody has.
+ *
+ * What it used to be is the reason: a promise was closed by asserting it had
+ * been kept, which is a claim nobody can check and the one person who could
+ * make it was the person being measured. Evidence closes these now — see
+ * `closeRemindersOnEvidence` below — and this is what is left for the cases
+ * evidence cannot reach: settled over WhatsApp, the shop has shut, the same
+ * promise written down twice.
+ *
+ * Checked here rather than by drawing the button conditionally, because a
+ * server action is a URL and a hidden control is not a permission. It is
+ * audited for the same reason: a closure with no evidence behind it is exactly
+ * the one somebody will want to ask about later.
+ */
 export async function completeReminder(
   reminderId: string,
   closureNote?: string,
 ): Promise<Result> {
-  const ctx = await resolveScope();
+  const ctx = await requireCapability("reminder.close");
+  const [existing] = await db
+    .select()
+    .from(reminders)
+    .where(eq(reminders.id, reminderId));
+  if (!existing) return err("That reminder no longer exists.", "not_found");
+
   await db
     .update(reminders)
     .set({
       status: "completed",
       closedAt: new Date(),
       closedById: ctx.user.id,
+      closedBy: "person",
+      // Nothing to point at. That IS the distinction this column draws: a
+      // closure with no source row is one somebody stood behind personally.
+      closedBySourceId: null,
       closureNote: closureNote ?? null,
       updatedAt: new Date(),
       updatedById: ctx.user.id,
     })
     .where(eq(reminders.id, reminderId));
+
+  await db.insert(auditLog).values({
+    id: id("aud"),
+    actorId: ctx.user.id,
+    actorRole: ctx.authorisedBy,
+    actorApp: ctx.authorisedIn,
+    action: "reminder.close",
+    entityType: "reminder",
+    entityId: reminderId,
+    beforeState: { status: existing.status, dueDate: existing.dueDate } as never,
+    afterState: { status: "completed", note: closureNote ?? null } as never,
+  });
+
   return okVoid("Reminder completed");
 }
 
@@ -270,7 +344,22 @@ export async function dismissReminder(
       { field: "reason", message: "Give a reason." },
     ]);
   }
-  const ctx = await resolveScope();
+  /*
+   * The SAME capability as completing, deliberately.
+   *
+   * A reason typed into a dismissal clears the overdue pile exactly as
+   * effectively as a tick does, so gating one and not the other would leave
+   * the escape open and merely rename it. The reason is still required, and it
+   * is worth more here than it was: the people who can now write one are the
+   * people who have to answer for the list.
+   */
+  const ctx = await requireCapability("reminder.close");
+  const [existing] = await db
+    .select()
+    .from(reminders)
+    .where(eq(reminders.id, reminderId));
+  if (!existing) return err("That reminder no longer exists.", "not_found");
+
   await db
     .update(reminders)
     .set({
@@ -278,11 +367,106 @@ export async function dismissReminder(
       dismissReason: reason.trim(),
       closedAt: new Date(),
       closedById: ctx.user.id,
+      closedBy: "person",
+      closedBySourceId: null,
       updatedAt: new Date(),
       updatedById: ctx.user.id,
     })
     .where(eq(reminders.id, reminderId));
+
+  await db.insert(auditLog).values({
+    id: id("aud"),
+    actorId: ctx.user.id,
+    actorRole: ctx.authorisedBy,
+    actorApp: ctx.authorisedIn,
+    action: "reminder.dismiss",
+    entityType: "reminder",
+    entityId: reminderId,
+    beforeState: { status: existing.status, dueDate: existing.dueDate } as never,
+    afterState: { status: "dismissed", reason: reason.trim() } as never,
+  });
+
   return okVoid("Reminder dismissed");
+}
+
+/* ------------------------------------------- closing a promise on evidence */
+
+/**
+ * The engine wired to data: what just happened to this customer, and the
+ * pending promises it settles.
+ *
+ * Takes the TRANSACTION it is called inside, never `db`. The call, the order
+ * and the receipt are each written in one transaction with everything they
+ * produced — "half-saved calls are how telecaller data goes wrong" — and a
+ * reminder closed outside it would survive a rolled-back call, leaving the
+ * promise gone and no record of the conversation that supposedly closed it.
+ *
+ * `exclude` is the reminder the same transaction has just CREATED. A call
+ * whose outcome is "follow up" writes tomorrow's promise, and the event that
+ * wrote it must not then close it — the customer would be dropped on the spot,
+ * with a next step everybody believes in and nothing anywhere chasing it.
+ *
+ * Returns how many it closed, so a caller can say so; it is never an error
+ * that the answer is none.
+ */
+export async function closeRemindersOnEvidence(
+  tx: Pick<typeof db, "select" | "update">,
+  input: {
+    customerId: string;
+    event: ClosureEvent;
+    /** The row that is the evidence — a call, an order, a receipt. */
+    sourceId: string;
+    /** Whoever made the call, took the order or confirmed the money. */
+    actorId: string;
+    exclude?: Array<string | null | undefined>;
+  },
+): Promise<number> {
+  const excluded = new Set(input.exclude?.filter(Boolean) as string[]);
+
+  const pending = await tx
+    .select({
+      id: reminders.id,
+      type: reminders.type,
+      dueDate: reminders.dueDate,
+    })
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.customerId, input.customerId),
+        eq(reminders.status, "pending"),
+      ),
+    );
+
+  const closing = remindersClosedBy(
+    pending
+      .filter((r) => !excluded.has(r.id))
+      .map((r) => ({
+        id: r.id,
+        type: r.type as ClosableReminderType,
+        dueDate: r.dueDate,
+      })),
+    input.event,
+  );
+  if (!closing.length) return 0;
+
+  await tx
+    .update(reminders)
+    .set({
+      status: "completed",
+      closedAt: new Date(),
+      // WHO, still — the person who made the call, not the person who tidied
+      // the list. The two used to be the same and the whole point of this
+      // change is that they are no longer.
+      closedById: input.actorId,
+      closedBy: input.event.kind,
+      closedBySourceId: input.sourceId,
+      closureNote: closureNoteFor(input.event),
+      updatedAt: new Date(),
+      updatedById: input.actorId,
+    })
+    .where(inArray(reminders.id, closing));
+
+  return closing.length;
 }
 
 export async function rescheduleReminder(

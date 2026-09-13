@@ -385,6 +385,29 @@ export const CAPABILITIES = [
   "call.log",
   "order.capture",
   "reminder.write",
+  /*
+   * CLOSING a promise by hand, which is a different act from making one.
+   *
+   * `reminder.write` is everybody's — setting a callback is the ordinary work
+   * of the person on the phone. This one is not, and the reason is that a
+   * reminder is the only record of what somebody undertook to do: while
+   * anybody could press "Mark done", the overdue pile could be cleared in a
+   * minute by the one person it was measuring, and no screen could tell a
+   * promise kept from a promise tidied away.
+   *
+   * What closes one now is the EVIDENCE — a call, an order, a confirmed
+   * receipt; see `lib/engines/reminder-closure.ts`. This capability is the
+   * escape hatch for the cases evidence cannot reach: the customer settled it
+   * on WhatsApp, the shop has shut, the promise was written down twice. It
+   * covers dismissing as well as completing, because a reason typed into a
+   * dismissal clears the pile exactly as effectively as a tick does.
+   *
+   * Not a role check on the screen. It is in `MANAGER_ONLY`, so it follows the
+   * CRM hat somebody was granted on the Access screen, and moving it to
+   * `SHARED` or `ACCOUNTS_OR_MANAGER` later is a one-line change here rather
+   * than a hunt through components.
+   */
+  "reminder.close",
   "target.set",
   "target.shortfall",
   "complaint.resolve",
@@ -451,6 +474,7 @@ export type Capability = (typeof CAPABILITIES)[number];
 /** §8's matrix, as data. Telecallers get everything not listed here. */
 const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "customer.export",
+  "reminder.close",
   "customer.deactivate",
   "complaint.resolve",
   "whatsapp.bulk",
