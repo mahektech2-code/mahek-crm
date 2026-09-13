@@ -700,7 +700,7 @@ export async function recordWatchOutcome(
   // "Not actually inactive" is a data correction, so re-evaluate rather than
   // leaving a row that the engine would immediately re-create.
   if (outcome === "not_actually_inactive") {
-    await recomputeInactivity();
+    await recomputeInactivity(customerId);
   }
 
   await db.insert(auditLog).values({
