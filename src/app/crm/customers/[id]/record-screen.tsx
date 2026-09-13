@@ -247,10 +247,21 @@ export function RecordScreen({
     heldReason: string | null;
   } | null;
   target: {
-    amount: number;
+    /**
+     * Null on an account the Monthly Targets list does not carry — a lead,
+     * which has never bought from us, or a third-party shop, whose goods are
+     * billed to its distributor. `achieved` is beside it rather than inside
+     * it because the month's value is a fact about every account, target or
+     * no target: it is read off the orders and not off `monthly_targets`.
+     *
+     * Rendering a null as ₹0 drew "₹1,20,000 of ₹0" at 0% on a delivery shop
+     * with real orders behind it, which is worse than saying nothing — that
+     * figure is not a shortfall, there is no target for it to fall short of.
+     */
+    amount: number | null;
     achieved: number;
     isDefault: boolean;
-    shareOfBook: number;
+    shareOfBook: number | null;
   };
   openComplaint: { description: string; category: string } | null;
   openPromise: { amount: number; promisedBy: string } | null;
@@ -378,7 +389,7 @@ export function RecordScreen({
     lastOrderDate: customer.lastOrderDate,
     lastOrderValue: customer.lastOrderValue,
     creditTermDays: customer.creditTermDays,
-    targetGap: Math.max(0, target.amount - target.achieved),
+    targetGap: target.amount === null ? 0 : Math.max(0, target.amount - target.achieved),
     openComplaint: openComplaint?.description ?? null,
     history: timeline.slice(0, 3).map((t) => ({
       kind: t.kind,
@@ -903,7 +914,7 @@ export function RecordScreen({
                 </span>
               </Figure>
               <Figure label="Share of your target" last>
-                {target.shareOfBook}%
+                {target.shareOfBook === null ? "-" : `${target.shareOfBook}%`}
               </Figure>
             </div>
             <Link
@@ -917,27 +928,46 @@ export function RecordScreen({
           <Card className="p-5">
             <div className="flex items-center justify-between">
               <SectionLabel>
-                Target vs achieved - {monthLabel(period)}
+                {target.amount === null
+                  ? `This month - ${monthLabel(period)}`
+                  : `Target vs achieved - ${monthLabel(period)}`}
               </SectionLabel>
-              {target.isDefault ? <Badge tone="muted">Default</Badge> : null}
+              {target.amount !== null && target.isDefault ? (
+                <Badge tone="muted">Default</Badge>
+              ) : null}
             </div>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-[32px] leading-9 font-semibold text-ink">
                 {money(target.achieved)}
               </span>
-              <span className="text-[13px] text-muted">
-                of {money(target.amount)}
-              </span>
+              {target.amount === null ? null : (
+                <span className="text-[13px] text-muted">
+                  of {money(target.amount)}
+                </span>
+              )}
             </div>
-            <div className="mt-3 flex items-center gap-2.5">
-              <Progress
-                value={pct(target.achieved, target.amount)}
-                className="flex-1"
-              />
-              <span className="text-[13px] font-medium text-ink">
-                {pct(target.achieved, target.amount)}%
-              </span>
-            </div>
+            {target.amount === null ? (
+              /*
+               * Said in words rather than drawn as a 0% bar. The account is
+               * not behind on anything — a monthly target is set on accounts
+               * we invoice, and this one becomes one by buying from us.
+               */
+              <p className="mt-3 text-[13px] text-muted">
+                {customer.thirdParty
+                  ? "No monthly target - this shop is billed by its distributor, so what it takes counts towards that account's month."
+                  : "No monthly target - a lead has never ordered. It picks one up as a customer on its first order."}
+              </p>
+            ) : (
+              <div className="mt-3 flex items-center gap-2.5">
+                <Progress
+                  value={pct(target.achieved, target.amount)}
+                  className="flex-1"
+                />
+                <span className="text-[13px] font-medium text-ink">
+                  {pct(target.achieved, target.amount)}%
+                </span>
+              </div>
+            )}
           </Card>
 
           <Card className="p-5">

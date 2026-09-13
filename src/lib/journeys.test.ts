@@ -176,6 +176,7 @@ import {
   listInactiveWatch,
   listReminders,
   listTargets,
+  listTargetsPage,
   recordWatchOutcome,
   setTarget,
 } from "@/lib/services/worklist-services";
@@ -1470,6 +1471,56 @@ describe("who may see a customer's target", () => {
       false,
       "an accounts user is no longer shown the whole book on this screen",
     );
+  });
+
+  test("a lead and a third-party shop carry no target, however the list is read", async () => {
+    const manager = await makeUser("Targets Manager", "manager");
+    const telecaller = await makeUser("Their Telecaller", "associate", manager.id);
+
+    const direct = await makeCustomer(telecaller.id, { name: "Direct Customer Ltd" });
+    // Never ordered, so there is nothing to measure a month against.
+    const lead = await makeCustomer(telecaller.id, {
+      name: "Lead Paints",
+      kind: "lead",
+    });
+    // Buys through a distributor, so its rupees count towards that account's
+    // month. Kind is `customer` on purpose: the mark is the more specific
+    // answer, and reading the kind alone would put the shop back on the list.
+    const shop = await makeCustomer(telecaller.id, {
+      name: "Delivered Shop",
+      thirdParty: true,
+    });
+
+    setTestUser(manager);
+    const rows = await listTargets();
+    const ids = rows.map((r) => r.customerId);
+    assert.ok(ids.includes(direct.id), "a direct customer carries a target");
+    assert.equal(ids.includes(lead.id), false, "a lead does not");
+    assert.equal(
+      ids.includes(shop.id),
+      false,
+      "nor does a shop somebody else bills",
+    );
+
+    // The paged read is a second query over the same rule, and the two
+    // disagreeing is exactly what pagination must not introduce.
+    const page = await listTargetsPage(undefined, {});
+    const pagedIds = page.rows.map((r) => r.customerId);
+    assert.ok(pagedIds.includes(direct.id));
+    assert.equal(pagedIds.includes(lead.id), false);
+    assert.equal(pagedIds.includes(shop.id), false);
+    assert.equal(
+      page.bookTotal,
+      1,
+      "and the book total counts the book this screen shows",
+    );
+
+    // A server action is a URL, so the rule is checked there too rather than
+    // only by what the list draws.
+    const refusedLead = await setTarget(lead.id, 500000);
+    assert.equal(refusedLead.ok, false, "a target cannot be set on a lead");
+    const refusedShop = await setTarget(shop.id, 500000);
+    assert.equal(refusedShop.ok, false, "nor on a third-party shop");
   });
 
   test("a manager keeps their reports-to team, untouched by any of the three seats", async () => {

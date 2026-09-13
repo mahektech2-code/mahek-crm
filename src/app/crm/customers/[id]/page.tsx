@@ -301,12 +301,21 @@ export default async function CustomerRecordPage({
           : null
       }
       target={{
-        amount: target?.target ?? 0,
+        /*
+         * NULL WHERE THERE IS NO ROW, never 0. `listTargets` carries direct
+         * customers only — a lead has never bought from us and a third-party
+         * shop is billed by its distributor — so an account absent from it
+         * has no target rather than a target of nothing, and the card says
+         * which. Coalescing to 0 here would put "of ₹0" and a 0% bar on a
+         * delivery shop with a month of real orders behind it.
+         */
+        amount: target?.target ?? null,
         achieved: Number(stats?.thisMonth ?? 0),
         isDefault: target?.isDefault ?? true,
-        shareOfBook: totalTarget
-          ? Math.round(((target?.target ?? 0) / totalTarget) * 100)
-          : 0,
+        shareOfBook:
+          target && totalTarget
+            ? Math.round((target.target / totalTarget) * 100)
+            : null,
       }}
       openComplaint={
         openComplaint
