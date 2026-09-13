@@ -16,6 +16,7 @@ import { today } from "../recompute";
 import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
 import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
 import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
+import { metresBetween } from "@/lib/geo";
 import {
   leaveBalances as leaveBalancesFor,
   leaveDebitDays,
@@ -3357,6 +3358,15 @@ export type ShopPin = {
   lat: number;
   lng: number;
   /**
+   * The mark that a shop is delivered to and billed to somebody else.
+   *
+   * `kind` below and this are the two columns `lib/account-types.ts` decides
+   * the WORD from — the mark wins over the kind — and they travel together
+   * for that reason rather than a colour expression on a map re-deriving a
+   * rule that lives in one place.
+   */
+  thirdParty: boolean;
+  /**
    * True where the pin was looked up from an address rather than captured by
    * standing in the shop.
    *
@@ -3395,15 +3405,85 @@ export type ShopPin = {
 };
 
 /**
- * Every active customer with a coordinate. Unpaged, unlike `fieldBook` —
+ * Every active account with a coordinate. Unpaged, unlike `fieldBook` —
  * this feeds one map layer rather than a table somebody scrolls, and the
  * whole book is a few thousand points, one GeoJSON payload rather than
  * something worth paginating.
+ *
+ * **LEADS ARE IN IT, and they were not.** `kind = 'customer'` was in the
+ * where clause, so a lead carrying a perfectly good field-captured pin was
+ * drawn on no map in MahekOne — not Territory's, not the Live map's. A
+ * prospect the team has already been to and pinned is exactly the shop a
+ * manager is looking for when he asks what else is near a beat, and it was
+ * the one category the maps could not show him. Which kind each row is
+ * rides on the row now (`kind`, `thirdParty`), so the map colours them
+ * apart rather than a second query fetching the leads separately and the
+ * two disagreeing about who is in scope.
+ *
+ * **A CATCHMENT IS OPTIONAL AND IS NOT A SCOPE.** Territory reads the whole
+ * book — that screen's question is where the book sits. The Live map asks a
+ * narrower one, which is what a salesman is standing next to, so it passes
+ * the team's own positions and a radius and gets the shops around them. It
+ * can only ever REMOVE rows from what `managerScope` already allows, the
+ * same relationship a handset's territory clause has to its two seats, and
+ * for the same reason: the two look alike from a distance and only one of
+ * them is the security boundary.
+ *
+ * The box is done in SQL and the CIRCLE in JavaScript. A bounding box is an
+ * index-friendly comparison on two columns and a circle is not, and the
+ * corners of a ten-kilometre box are four kilometres further out than its
+ * edges — near enough to matter on a map somebody reads distances off.
+ * `metresBetween` is the same function the check-in gate and the On-your-way
+ * screen measure with, so one distance is never phrased two ways.
  */
-export async function shopPins(): Promise<ShopPin[]> {
+export async function shopPins(options?: {
+  near?: {
+    /** Where the team is. An EMPTY list is not "everywhere" — see below. */
+    centres: Array<{ lat: number; lng: number }>;
+    radiusKm: number;
+  };
+}): Promise<ShopPin[]> {
+  const near = options?.near;
   const scope = await placeScope();
-  return db.execute<ShopPin>(sql`
+
+  /*
+   * NO CENTRES MEANS NOTHING, never the whole book.
+   *
+   * A caller that asked for a catchment and has none to give has nobody in
+   * the field — and answering that with every shop in the country is the
+   * dangerous reading of an absence, the same trap `territoryClause` names:
+   * an absent narrowing and an empty one look alike in a type signature and
+   * are opposite answers. Territory asks for no catchment at all, which is a
+   * different thing and is how it still gets the book.
+   */
+  if (near && !near.centres.length) return [];
+
+  const box = near
+    ? (() => {
+        const latPad = near.radiusKm / 111;
+        /* Longitude degrees shrink towards the poles. Taken at the widest
+           latitude in the set so the box can never be narrower than the
+           circle it has to contain. */
+        const widest = Math.max(...near.centres.map((c) => Math.abs(c.lat)));
+        const lngPad = near.radiusKm / (111 * Math.max(Math.cos((widest * Math.PI) / 180), 0.1));
+        return sql`and (${sql.join(
+          near.centres.map(
+            (c) => sql`(
+              coalesce(c.gps_lat, c.geocoded_lat) between ${c.lat - latPad} and ${c.lat + latPad}
+              and coalesce(c.gps_lng, c.geocoded_lng) between ${c.lng - lngPad} and ${c.lng + lngPad}
+            )`,
+          ),
+          sql` or `,
+        )})`;
+      })()
+    : sql``;
+
+  const rows = (await db.execute<ShopPin>(sql`
     select c.id, c.name, c.city, c.area, c.beat,
+           /* Both columns, because the WORD for an account is decided from
+              the pair and lib/account-types.ts is the one place that
+              decision lives — the mark wins over the kind. */
+           c.kind, c.third_party as "thirdParty", c.status,
            /* The field pin first, then the looked-up one. 503 shops carry an
               address and no pin, and they were absent from this map entirely
               — a shop nobody can see is a shop nobody plans a day around. */
@@ -3427,8 +3507,15 @@ export async function shopPins(): Promise<ShopPin[]> {
         plans a day from and is wrong. */
      where coalesce(c.gps_lat, c.geocoded_lat) is not null
        and coalesce(c.gps_lng, c.geocoded_lng) is not null
+       ${box}
        ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
-  `) as unknown as ShopPin[];
+  `)) as unknown as ShopPin[];
+
+  if (!near) return rows;
+  const radiusM = near.radiusKm * 1000;
+  return rows.filter((r) =>
+    near.centres.some((c) => metresBetween(c.lat, c.lng, Number(r.lat), Number(r.lng)) <= radiusM),
+  );
 }
 
 export type ProspectPin = {

@@ -11,7 +11,7 @@ import {
   olaMapsTransformRequest,
   type OlaMapsStyleMode,
 } from "../ola-maps";
-import { CustomerQuickView } from "./customer-quick-view";
+import { CustomerQuickView } from "../customer-quick-view";
 
 /**
  * The territory table's own gap ("N of M shops have no coordinates") drawn as

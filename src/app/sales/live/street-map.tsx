@@ -15,7 +15,7 @@ import {
 } from "@/lib/engines/trail-trips";
 import { clock, clockSeconds } from "@/lib/format";
 import { formatDistance } from "@/lib/geo";
-import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
+import type { ActivityPoint, LastKnown, ShopPin, TrackPoint } from "@/lib/services/sales-service";
 import { activityLabel } from "@/lib/mbos/activity-labels";
 import {
   OlaMapsStyleSwitcher,
@@ -24,6 +24,16 @@ import {
   olaMapsTransformRequest,
   type OlaMapsStyleMode,
 } from "../ola-maps";
+import {
+  BOOK_PIN_COLOUR,
+  BOOK_PIN_LABEL,
+  addBookPinLayers,
+  bookPinFeatures,
+  countByTone,
+  setBookPinsVisible,
+  type BookPinTone,
+} from "../book-pins";
+import { CustomerQuickView } from "../customer-quick-view";
 
 /**
  * The map, with streets under it.
@@ -100,6 +110,34 @@ import {
  * densely-sampled one is how a manager ends up certain about a road that was
  * never confirmed; the dashed line says plainly that this part is a straight
  * line between two real points and nothing more.
+ *
+ * **THE SHOPS AROUND THE TEAM ARE DRAWN UNDER THE DAY.** A trail over blank
+ * streets answers where somebody went and not the question a manager is
+ * actually asking, which is what he went PAST: eleven shops in that lane,
+ * four of them leads nobody has been to this quarter, and a line running
+ * straight through the middle of them. Customers, leads and third-party
+ * shops apart by colour — `../book-pins.tsx` holds the colours and the
+ * layers, shared with Territory's map so the two cannot disagree about what
+ * colour a lead is.
+ *
+ * **A CATCHMENT, not the book.** Everything within
+ * `mbos.location.nearbyBookRadiusKm` of where each man actually is. The
+ * whole book at national scale is a wash of dots that answers nothing, and
+ * Territory is the screen for reading it — this one is about a day. Which
+ * also means the count is small enough to draw honestly: no clustering, so
+ * zooming out still shows every shop rather than a bubble reading 240, and
+ * a bubble cannot be walked past.
+ *
+ * It is fetched by the CLIENT from `/api/sales/book-pins` rather than handed
+ * down as a prop — see that route for why: this page re-runs its Server
+ * Component every thirty seconds, and the shops do not move. It is asked
+ * again only when the team has moved far enough for the catchment to mean
+ * somewhere else.
+ *
+ * **It is deliberately NOT part of the fit.** `fitBounds` covers the day's
+ * travel; letting the backdrop move the camera would zoom a day out to fit a
+ * shop at the edge of the catchment, which is a version of a bug this file
+ * already carries a long comment about.
  *
  * **Map and satellite are the same map, not two.** `setStyle` swaps the
  * style JSON in place rather than tearing the map down — the camera,
@@ -339,6 +377,21 @@ function trailPointsFeatureCollection(trails: [string, { lat: number; lng: numbe
 }
 
 /** A ring round whoever the team list has picked, drawn above everybody else. */
+/**
+ * The first layer this file added, in the style's own draw order — what the
+ * book has to be inserted beneath when it arrives after the map is up.
+ *
+ * Ola's own style layers are skipped by name: everything of ours is a trail,
+ * a dwell ring or an activity dot, and anything else in the list is the
+ * street map itself, which the book belongs on top of.
+ */
+function lowestOwnLayer(map: maplibregl.Map): string | undefined {
+  return map
+    .getStyle()
+    .layers.map((l) => l.id)
+    .find((id) => id.startsWith("trail-") || id === "dwells" || id === "activity");
+}
+
 function highlightMarker(el: HTMLDivElement, selected: boolean) {
   el.style.boxShadow = selected
     ? "0 0 0 3px #5223E0, 0 2px 8px rgba(22,22,22,0.4)"
@@ -399,6 +452,23 @@ export function StreetMap({
   const hoveredTrip = React.useRef<number | null>(null);
   const [failed, setFailed] = React.useState(false);
   const [styleMode, setStyleMode] = React.useState<OlaMapsStyleMode>("map");
+  /* The book, fetched once by the client — see the effect below and the
+     route's own comment. Held in a ref as well as in state: `drawOverlays`
+     runs again on every Map/Satellite switch and reads it imperatively, and
+     it is the state copy that draws the legend. */
+  const [book, setBook] = React.useState<ShopPin[]>([]);
+  const bookRef = React.useRef<ShopPin[]>([]);
+  const [showBook, setShowBook] = React.useState(true);
+  /* What the office set the catchment to, as the route answered it — so the
+     legend says the same number the query was run with rather than a second
+     copy of the default. */
+  const [radiusKm, setRadiusKm] = React.useState<number | null>(null);
+  /* Declared beside its state rather than beside the effect that keeps it in
+     step: `drawOverlays` reads it on every style switch, and a ref used
+     above where it is written reads as an accident. */
+  const showBookRef = React.useRef(true);
+  /* Which shop's record is open. The same drawer Territory's map opens. */
+  const [selectedShopId, setSelectedShopId] = React.useState<string | null>(null);
 
   const pinned = rows.filter((r) => r.lat != null && r.lng != null);
   const marks = view === "today" ? activity : [];
@@ -406,12 +476,19 @@ export function StreetMap({
   const stops = view === "today" ? [...dwells.values()].flat() : [];
 
   /* Everything being shown, so the fit covers the whole day's travel in the
-     `today` view rather than only where each person ended up. */
+     `today` view rather than only where each person ended up.
+
+     THE BOOK IS NOT IN HERE, deliberately. The shops are drawn around where
+     the team is; making them decide where the camera opens would let the
+     backdrop move the subject, and a stray pin at the edge of the catchment
+     would zoom the day out to fit it. */
   const points: [number, number][] = [
     ...pinned.map((r) => [r.lng as number, r.lat as number] as [number, number]),
     ...trails.flatMap(([, ps]) => ps.map((p) => [p.lng, p.lat] as [number, number])),
     ...marks.map((a) => [a.lng, a.lat] as [number, number]),
   ];
+
+  const bookCounts = countByTone(book);
 
   const hasAnything = points.length > 0;
 
@@ -507,6 +584,18 @@ export function StreetMap({
        * it is harmless that the "activity" layer does not exist yet on the
        * very first style load.
        */
+      /* A shop pin opens the same record drawer Territory's map opens — a
+         real account, so it gets the record rather than a text popup. Bound
+         to the MAP rather than the layer for the reason every handler here
+         is: `drawOverlays` runs again on every style switch, and a handler
+         registered in there would stack a second copy each time. */
+      built.on("click", "book-points", (e: maplibregl.MapLayerMouseEvent) => {
+        const id = e.features?.[0]?.properties?.customerId;
+        if (typeof id === "string") setSelectedShopId(id);
+      });
+      built.on("mouseenter", "book-points", () => (built.getCanvas().style.cursor = "pointer"));
+      built.on("mouseleave", "book-points", () => (built.getCanvas().style.cursor = ""));
+
       built.on("click", "activity", (e: maplibregl.MapLayerMouseEvent) => {
         const f = e.features?.[0];
         if (!f) return;
@@ -671,7 +760,20 @@ export function StreetMap({
           .querySelector(".maplibregl-ctrl-attrib")
           ?.classList.remove("maplibregl-compact-show");
 
-        /* The trail first, so pins and marks sit on top of it. */
+        /* THE BOOK FIRST OF ALL, so every line, ring, fix and pin that
+           follows lands on top of it. MapLibre draws in the order layers are
+           added, and the shops are the ground a day is read against. Read
+           from the ref rather than the closure: this function runs again on
+           every style switch, and by then the fetch below has usually
+           landed. */
+        if (bookRef.current.length) {
+          addBookPinLayers(built, {
+            features: bookPinFeatures(bookRef.current),
+            visible: showBookRef.current,
+          });
+        }
+
+        /* The trail next, so pins and marks sit on top of it. */
         for (const [id, ps] of trails) {
           /* The road-matched line if it has arrived, the raw fixes until it
              does. Both are the same shape, so nothing below knows which. */
@@ -1005,6 +1107,97 @@ export function StreetMap({
   }, [styleMode]);
 
   /*
+   * THE SHOPS AROUND THE TEAM, FETCHED WHEN THE TEAM IS SOMEWHERE NEW.
+   *
+   * Not a prop, because this page re-runs its Server Component every thirty
+   * seconds and the shops would ride down inside each of those answers to
+   * move a handful of pins — see `/api/sales/book-pins`.
+   *
+   * `catchmentKey` is what decides when to ask again, and it is deliberately
+   * COARSE: the positions themselves change on every poll, and refetching a
+   * ten-kilometre catchment because somebody walked forty metres is a
+   * request a minute for the same answer. Rounded to about five kilometres,
+   * it changes when a man reaches a genuinely different part of the map, or
+   * when somebody who had no fix this morning reports one — which are the
+   * two moments the catchment really is somewhere else.
+   *
+   * A failure is silent and costs the shops, never the day. The trail, the
+   * pins and the team list are all unaffected by it, and a manager looking
+   * at where his salesmen are should not be shown an error about the
+   * backdrop they are drawn on.
+   */
+  const centres = pinned.map((r) => ({ lat: r.lat as number, lng: r.lng as number }));
+  const catchmentKey = [
+    ...new Set(centres.map((c) => `${c.lat.toFixed(1)},${c.lng.toFixed(1)}`)),
+  ]
+    .sort()
+    .join("|");
+  React.useEffect(() => {
+    /* No key means no map to draw them on — see the state below. Nobody with
+       a fix means nothing to be near, and the route reads that the same way
+       rather than answering with the whole book. */
+    if (!apiKey || !catchmentKey) return;
+    let cancelled = false;
+    const near = centres.map((c) => `${c.lat},${c.lng}`).join("|");
+    fetch(`/api/sales/book-pins?near=${encodeURIComponent(near)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: { pins: ShopPin[]; radiusKm: number } | null) => {
+        /* A NULL BODY is the request having failed; an EMPTY list is a real
+           answer — the team has moved somewhere with nothing of ours around
+           it. Treating the two alike would leave the morning's shops drawn
+           around a man who is now forty kilometres away. */
+        if (cancelled || !body?.pins) return;
+        bookRef.current = body.pins;
+        setBook(body.pins);
+        setRadiusKm(body.radiusKm);
+        /* If the map is already up, its `style.load` has been and gone and
+           `drawOverlays` ran with an empty book — so the layers are added
+           here instead. Every later style switch re-adds them from the ref. */
+        const built = map.current;
+        if (!built?.isStyleLoaded()) return;
+        /* A SECOND ANSWER REPLACES THE FIRST rather than being dropped. The
+           catchment moves when the team does, and a `getSource` guard alone
+           would leave the morning's shops on the map for the rest of the
+           day — the layers exist, so nothing would look wrong. */
+        const existing = built.getSource("book") as maplibregl.GeoJSONSource | undefined;
+        if (existing) {
+          existing.setData(bookPinFeatures(body.pins));
+        } else if (body.pins.length) {
+          addBookPinLayers(built, {
+            features: bookPinFeatures(body.pins),
+            visible: showBookRef.current,
+            /* UNDERNEATH THE DAY, however late it arrives. `drawOverlays`
+               adds the book before the trail because it is drawn first;
+               added here it is drawn LAST, which would put a few thousand
+               shops over the line they are meant to be the ground for. So
+               it goes in beneath the lowest layer this file owns. */
+            beforeId: lowestOwnLayer(built),
+          });
+        }
+      })
+      .catch(() => {
+        /* The map draws exactly as it did before the book existed. */
+      });
+    return () => {
+      cancelled = true;
+    };
+    /* `centres` is a fresh array on every render and `apiKey` is read once,
+       server-side, per page. The rounded key is the only thing here that
+       carries a real change. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catchmentKey]);
+
+  /* Showing and hiding moves visibility on the map that already exists,
+     rather than rebuilding it — the same imperative-ref pattern the
+     selection highlight below uses. The ref is what `drawOverlays` reads on
+     a style switch, so a hidden book stays hidden across one. */
+  React.useEffect(() => {
+    showBookRef.current = showBook;
+    const built = map.current;
+    if (built) setBookPinsVisible(built, showBook);
+  }, [showBook]);
+
+  /*
    * Picking somebody in the team list moves the CAMERA on the map that
    * already exists — it does not rebuild it. Rebuilding would refetch the
    * style and every tile in view for one click, and it would throw away the
@@ -1175,6 +1368,45 @@ export function StreetMap({
     <Frame key="map">
       <div ref={host} className="h-full w-full" />
       <OlaMapsStyleSwitcher mode={styleMode} onChange={setStyleMode} />
+      {/* The catchment's own legend, stacked under the style switcher rather
+          than beside it — both anchored top-left read as one cluster of map
+          controls, and MapLibre's zoom sits top-right. Drawn only once there
+          is something to say: an empty legend beside an empty map is
+          furniture.
+
+          IT NAMES THE RADIUS, because a count on its own invites the wrong
+          reading. "412 shops" beside a map reads as the book; "within 10 km
+          of the team" says what it actually is, which is the half somebody
+          would otherwise have to be told. */}
+      {book.length ? (
+        <div className="absolute top-11 left-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-x-3 gap-y-1.5 rounded-[6px] border border-line bg-surface/95 px-3 py-2 text-[12px] text-ink shadow-[0_1px_4px_rgba(22,22,22,0.15)]">
+          <label className="flex cursor-pointer items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={showBook}
+              onChange={(e) => setShowBook(e.target.checked)}
+            />
+            {radiusKm
+              ? `Within ${radiusKm} km of the team (${book.length})`
+              : `Nearby shops (${book.length})`}
+          </label>
+          {(["customer", "lead", "third", "closed"] as BookPinTone[])
+            .filter((tone) => bookCounts[tone] > 0)
+            .map((tone) => (
+              <span key={tone} className="flex items-center gap-1.5 text-muted">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ background: BOOK_PIN_COLOUR[tone] }}
+                />
+                {BOOK_PIN_LABEL[tone]} ({bookCounts[tone]})
+              </span>
+            ))}
+        </div>
+      ) : null}
+      {/* The same drawer Territory's map opens, from the same two reads the
+          CRM record page makes — so a figure read off a pin here and one
+          read off a pin there are one answer. */}
+      <CustomerQuickView customerId={selectedShopId} onClose={() => setSelectedShopId(null)} />
     </Frame>
   );
 }
@@ -1182,7 +1414,7 @@ export function StreetMap({
 /** One shape for the map and both of the states that replace it. */
 function Frame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
+    <div className="relative overflow-hidden rounded-[6px] border border-line bg-surface">
       <div className="relative h-[calc(100vh-280px)] min-h-[480px] bg-[#F0F2F6]">{children}</div>
     </div>
   );
