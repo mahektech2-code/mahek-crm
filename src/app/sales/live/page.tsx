@@ -39,6 +39,16 @@ export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };
  * somebody with no position appears in the team list saying so and nowhere on
  * the canvas.
  *
+ * **The shops around the team are drawn underneath, in the colours
+ * Territory uses.** Everything within `mbos.location.nearbyBookRadiusKm` of
+ * where each man actually is — direct customers, leads and third-party shops
+ * apart by colour — so a trail reads against what it went past rather than
+ * against blank streets. A catchment and not the book: the whole book at
+ * national scale answers nothing, and Territory is the screen for reading
+ * it. Fetched by the map itself, from `/api/sales/book-pins`, and not handed
+ * down from here: this page re-runs every thirty seconds while somebody
+ * watches it, and the shops do not move.
+ *
  * The trail is a fix every few minutes between the check-in and the check-out;
  * the check-in and each visit leave one apiece regardless, so somebody whose
  * tracking is off or whose permission was refused still appears. The time shown
@@ -269,6 +279,10 @@ export default async function Page({
           : ""}
         The streets come from Ola Maps; the pins are drawn here from MahekOne&rsquo;s own data,
         so no position is ever sent to it — only which square of map is being looked at.
+        {" "}The shops and leads within a few kilometres of each salesman are drawn under
+        the day, coloured by what the account is — zoom in for their names, click one for
+        its record, or turn them off in the corner of the map. The whole book is on the
+        Territory screen.
         {!olaMapsKey ? " No key is set for it yet, so no streets are drawn below." : ""}
         {view === "today" && olaMapsKey
           ? " A dashed stretch of a trail is a real gap — two fixes far enough apart that the road actually taken between them is not known, most often a stretch driven rather than walked, or a dropped signal."

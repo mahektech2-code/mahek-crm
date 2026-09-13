@@ -1777,6 +1777,17 @@ export const SETTINGS = [
     default: "block",
   },
   {
+    key: "mbos.location.nearbyBookRadiusKm",
+    type: "integer",
+    category: "mbos-location",
+    label: "How far around the team the Live map draws the book",
+    description:
+      "Kilometres from each salesman's last known position within which the Live map draws the shops and leads he could be standing next to. It is a catchment and not a territory: the point of drawing the book under a trail is to read the day against what he went past, and the whole book at national scale is a wash of dots that answers nothing. Ten is about a morning's reach on a bike. Raising it puts more on the screen and more on the wire; the Territory screen is where the whole book is read.",
+    default: 10,
+    min: 1,
+    max: 50,
+  },
+  {
     key: "mbos.location.dwellRadiusMeters",
     type: "integer",
     category: "mbos-location",
@@ -3672,6 +3683,7 @@ export type Config = {
   "mbos.location.queueRetentionDays": number;
   "mbos.location.queuedPositionsWorthSaying": number;
   "mbos.location.trailStalledMinSilenceSeconds": number;
+  "mbos.location.nearbyBookRadiusKm": number;
   "mbos.location.dwellRadiusMeters": number;
   "mbos.location.dwellMinMinutes": number;
   "mbos.location.tripBreakMinutes": number;
