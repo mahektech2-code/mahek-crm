@@ -482,6 +482,58 @@ a task ONCE — the standing open task is the guard — because thirty rows for 
 quiet shop is a list people stop reading. Measured cycles only: a default is a
 guess, and chasing on a guess rings a quarterly buyer every month.
 
+**THE STATEMENT IS ON THE PHONE, because the question is asked at a counter.**
+A shopkeeper with his own file open asks what was billed in July and what he
+has paid against it in one breath, and the answer cannot be an endpoint: there
+is no signal in a paint market. So `customer_bills` and `customer_payments`
+carry a WINDOW — `mbos.sync.statementMonths`, thirteen — and the record's
+Account tab builds the running balance from them locally.
+
+**IT USED TO BE OPEN BILLS ONLY, capped at ten, and that is a reversal.** That
+was the collections question: a bill with nothing owed on it is nothing to
+collect. It is also 10,405 of the 10,815 bills on this book, so the statement it
+would have made was a year with almost every row missing. Dropping `openOnly`
+is ALSO what lets the channel be a delta, which is what pays for the extra
+rows: the old one could not be `since`-gated, because a bill leaving the open
+set by being settled has no row left to carry a cursor. Inside a window there
+is no such case — a row is either on the phone already or has a moved
+`updated_at`, and a bill leaves only by ageing past a date the handset can read
+for itself.
+
+**So the PICKER filters where the wire used to.** `openCustomerBills` asks for
+a balance above zero, and `pay.tsx` reads that rather than `customerBills`. A
+settled bill offered there is one the salesman names, `handlePayment` refuses
+with `bill_settled`, and the refusal reads as the app being wrong rather than
+the phone being stale.
+
+**WHAT WAS ON A BILL RIDES ON THE BILL, as JSON text.** A bill IS the order, so
+the lines are the order's — and an order records them in one of two ways: the
+sheet and the handset write `orders.line_items` naming the product as TEXT, the
+CRM writes `interaction_product_lines` keyed on the CALL. 10,867 of 10,957
+orders are the first and 90 are the second, which is exactly the ratio that
+makes the second easy to forget and impossible to notice. A column rather than
+a table because a bill's lines never change after it is raised: no second
+cursor, and no moment where a bill has arrived and its contents have not.
+
+**The running balance is the handset's arithmetic and not a second opinion.**
+`engines/statement.ts` is pure and orders rows the office sent; every figure in
+it was written by the office. Outstanding stays `customers.outstandingPaise`,
+the office's own, and the screen says which figure is which — a total computed
+on a phone from thirteen months of rows is how a salesman and an accounts clerk
+quote one shopkeeper two different debts with him listening. Only `confirmed`
+money moves the balance, which is the one rule it shares with `customerLedger`.
+
+**A STATEMENT IS FOR AN ACCOUNT WE INVOICE, and the other two say so.** A lead
+has never ordered and a third-party shop is billed to its distributor, so both
+would draw a correct empty list — and an empty list with nothing saying why
+reads as a sync that has not finished. It is the sentence the Accounts app
+already puts above its own ledger for the same account.
+
+**And the tab says how far back THIS PHONE goes**, read off the rows rather
+than off the window the office sent. A shop billed for three months reaches
+back three months, not thirteen, and a screen claiming otherwise over a list
+that starts in June is one nobody trusts twice.
+
 **A SAMPLE HAS THREE DATES BECAUSE THREE PARTIES ASSERT THREE THINGS.**
 `dispatched_at` is us saying it went. `delivered_at` is the carrier, or our own
 man, saying it arrived. `received_at` is the SHOP saying it is in their hands.

@@ -8,7 +8,7 @@ import { Icon, type IconName } from '../src/components/ui/Icon';
 import { color as C, radius, shadow, tabular, weight } from '../src/theme/tokens';
 import { dmy, inr, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
-import { customerBills, type Customer, type CustomerBill } from '../src/data/customers';
+import { openCustomerBills, type Customer, type CustomerBill } from '../src/data/customers';
 import { copyToClipboard, openWhatsApp, receiptMessage } from '../src/lib/messaging';
 import { takePhoto } from '../src/native/capture';
 import { useCustomer, useStore } from '../src/state/store';
@@ -51,7 +51,7 @@ const CHEQUE_PHOTO_LINE = 'Photograph the cheque before you hand it back.';
 /**
  * How many bills are drawn before the rest are folded away.
  *
- * `customerBills` has no LIMIT, so every open bill for the shop sat between the
+ * `openCustomerBills` has no LIMIT, so every open bill for the shop sat between the
  * outstanding line and the amount box: on an account with thirty of them that
  * is thirty rows to scroll past with money in his hand, and nothing on the
  * screen counting them.
@@ -124,7 +124,12 @@ export default function PayScreen() {
          tick against a bill that is no longer on the list simply does not
          match one, which `chosen` below works out on every render. Clearing
          state in an effect is what the React Compiler rules forbid. */
-      if (customerId) void customerBills(customerId).then((b) => live && setBills(b));
+      /* OPEN ones only, and that is a read of its own now. The bills channel
+         carries settled bills too since the customer record grew a statement,
+         and a settled bill on this picker is one the salesman names, the server
+         refuses with `bill_settled`, and the refusal reads as the app being
+         wrong rather than the phone being stale. */
+      if (customerId) void openCustomerBills(customerId).then((b) => live && setBills(b));
       return () => {
         live = false;
       };
@@ -147,7 +152,7 @@ export default function PayScreen() {
   /*
    * NEWEST FIRST, which is presentation and nothing else.
    *
-   * `customerBills` reads them oldest first because that is the order the
+   * `openCustomerBills` reads them oldest first because that is the order the
    * automatic spread settles them in — and naming nothing still spreads oldest
    * first on the server, which the line under the list says. But the bill the
    * customer is actually paying against is the one he was just handed, and
