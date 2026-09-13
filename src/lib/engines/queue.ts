@@ -294,6 +294,22 @@ export function buildQueue(
     if (funnel) reasons = reasons.filter((r) => r.kind !== "prospect");
     if (outcome) reasons = reasons.filter((r) => !isOrderAsk(r.kind));
 
+    // Suppression is a return value, not a filter. The interface has a strip
+    // that explains who is missing and why; silently dropping them would
+    // remove a telecaller's ability to understand their own queue.
+    //
+    // Read BEFORE the emptied-by-a-window sentence below, and that ordering is
+    // load-bearing. These are facts about the WHOLE CUSTOMER — do not contact,
+    // already spoken to today, skipped by name — and a window that strips one
+    // KIND of reason is the narrower answer whenever both are true. Read the
+    // other way round, a customer marked do-not-contact whose only reason was
+    // an order ask is explained to the telecaller as an order cooldown, and
+    // the standing instruction never appears anywhere.
+    //
+    // Only the sentence moves. A customer held by either is held by both, so
+    // nobody enters or leaves the list because of this.
+    const held = suppressionReason(c, today, config, hasReminderReason, nowMs);
+
     if (!reasons.length) {
       // Nothing left but a reason one of the four windows says not yet. Shown
       // rather than dropped: a customer late by their own cycle would
@@ -312,15 +328,11 @@ export function buildQueue(
       suppressed.push({
         customerId: c.customerId,
         name: c.name,
-        reason: quiet ?? hold ?? outcome ?? funnel!,
+        reason: held ?? quiet ?? hold ?? outcome ?? funnel!,
       });
       continue;
     }
 
-    // Suppression is a return value, not a filter. The interface has a strip
-    // that explains who is missing and why; silently dropping them would
-    // remove a telecaller's ability to understand their own queue.
-    const held = suppressionReason(c, today, config, hasReminderReason, nowMs);
     if (held) {
       suppressed.push({ customerId: c.customerId, name: c.name, reason: held });
       continue;

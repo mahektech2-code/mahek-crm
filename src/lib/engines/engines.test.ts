@@ -1139,6 +1139,26 @@ describe("E2 queue builder", () => {
     assert.ok(!kinds.some((k) => k.startsWith("order") || k === "routineCall"));
   });
 
+  test("a fact about the customer names the sentence, not the window", () => {
+    // The windows above strip one KIND of reason; do-not-contact, skipped and
+    // "already called today" are facts about the WHOLE customer. Where both
+    // apply — which, now that the cooldown empties a list rather than
+    // suppressing outright, is an ordinary Tuesday — the narrower answer must
+    // not be the one a telecaller reads. Told "no order chased for 4 more
+    // days" about somebody marked do not contact, they would ring them on the
+    // fifth.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      lastAnsweredOutcome: "no_order",
+      lastAnsweredDate: addDays(TODAY, -1),
+      doNotContact: true,
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 0);
+    assert.match(r.suppressed[0].reason, /do not contact/i);
+  });
+
   test("a prospect who said no is not cold-called again inside the cooldown", () => {
     // `isOrderChasing` leaves `prospect` out, which is right for the quiet
     // window — somebody who has never ordered has no order to be quiet after.
