@@ -1822,28 +1822,190 @@ export type FieldInvoice = {
  * means nobody has spoken for this bill either way, and it is held out of
  * outstanding rather than counted as debt.
  */
-export async function fieldInvoices(): Promise<FieldInvoice[]> {
-  const scope = await managerScope();
-  return db.execute<FieldInvoice>(sql`
-    select b.id, b.bill_no as "billNo", c.name as "customerName",
-           coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
-           u.name as "salesmanName",
-           b.bill_date::text as "billDate",
-           b.due_date::text as "dueDate",
-           b.amount as "amountPaise",
-           b.paid_amount as "paidPaise",
-           (b.amount - b.paid_amount) as "openPaise",
-           greatest(0, current_date - b.due_date)::int as "overdueDays",
-           b.payment_position::text as "paymentPosition"
-      from bills b
-      join customers c on c.id = b.customer_id
-      left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
+/** What the Invoices screen is narrowed to. Mirrors the chips on it. */
+export type FieldInvoiceShow = "open" | "overdue" | "unstated" | "all";
+
+/**
+ * WHICH BILLS THE FIELD SCREEN IS ASKING ABOUT — one clause, three readers.
+ *
+ * The page, the totals and the aging strip must agree about what "this list"
+ * is, and three functions each spelling the set out for themselves is three
+ * answers waiting to differ.
+ *
+ * `stated` is the pivot the chips turn on: a bill nobody has spoken for counts
+ * as neither paid nor owed, so it is neither open nor settled, and it has its
+ * own chip rather than being quietly folded into one of theirs.
+ */
+function fieldInvoiceWhere(scope: ManagerScope, show: FieldInvoiceShow, q?: string) {
+  const narrow =
+    show === "open"
+      ? sql`and b.payment_position = 'stated' and b.amount > b.paid_amount`
+      : show === "overdue"
+        ? sql`and b.payment_position = 'stated' and b.amount > b.paid_amount
+              and b.due_date is not null and b.due_date < current_date`
+        : show === "unstated"
+          ? sql`and b.payment_position <> 'stated'`
+          : sql``;
+
+  /* Bill number, customer, salesman — the three things somebody arrives here
+     holding. Not the amount: a figure typed into a search box is one read off
+     this screen, and matching it returns the row already being looked at. */
+  const term = q?.trim();
+  const search = term
+    ? sql`and (b.bill_no ilike ${"%" + term + "%"}
+            or c.name ilike ${"%" + term + "%"}
+            or coalesce(u.name, '') ilike ${"%" + term + "%"})`
+    : sql``;
+
+  return sql`
      where exists (select 1 from app_access a
                     where a.user_id = coalesce(c.sales_am_id, c.owner_id) and a.app = 'field')
        ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
-     order by (b.amount - b.paid_amount) desc, b.due_date asc nulls last
-     limit 300
-  `) as unknown as FieldInvoice[];
+       ${narrow}
+       ${search}`;
+}
+
+/**
+ * ONE PAGE OF THE FIELD'S BILLS.
+ *
+ * This used to be `limit 300` with no paging and no count — and the screen
+ * printed that 300 in a tile headed "Bills in all". The real number is 8,682.
+ * Every figure on the screen was computed from the 300 biggest balances and
+ * presented as the whole book: not slow, WRONG, and wrong in the direction
+ * nobody checks, because 300 is a plausible number of bills.
+ *
+ * So the cap is gone and the questions are asked separately — the page here,
+ * the figures in `fieldInvoiceTotals`, the strip in `fieldInvoiceAges`. Same
+ * shape as the Accounts bill ledger, and for the same reasons.
+ */
+export async function fieldInvoicesPage(
+  filter: { show: FieldInvoiceShow; q?: string },
+  paging: { page: number; perPage: number },
+): Promise<{ rows: FieldInvoice[]; total: number }> {
+  const scope = await managerScope();
+  const where = fieldInvoiceWhere(scope, filter.show, filter.q);
+  const perPage = Math.min(Math.max(paging.perPage, 1), 200);
+  const page = Math.max(paging.page, 1);
+
+  const [rows, counted] = await Promise.all([
+    db.execute<FieldInvoice>(sql`
+      select b.id, b.bill_no as "billNo", c.name as "customerName",
+             coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
+             u.name as "salesmanName",
+             b.bill_date::text as "billDate",
+             b.due_date::text as "dueDate",
+             b.amount as "amountPaise",
+             b.paid_amount as "paidPaise",
+             (b.amount - b.paid_amount) as "openPaise",
+             greatest(0, current_date - b.due_date)::int as "overdueDays",
+             b.payment_position::text as "paymentPosition"
+        from bills b
+        join customers c on c.id = b.customer_id
+        left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
+        ${where}
+       /* The biggest debt first, as it always was — and b.id behind it,
+          because thousands of bills share a balance of zero and once a list is
+          paged an unstable sort is a row on two pages and another on none. */
+       order by (b.amount - b.paid_amount) desc, b.due_date asc nulls last, b.id desc
+       limit ${perPage} offset ${(page - 1) * perPage}
+    `),
+    db.execute<{ n: number }>(sql`
+      select count(*)::int as n
+        from bills b
+        join customers c on c.id = b.customer_id
+        left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
+        ${where}
+    `),
+  ]);
+
+  return {
+    rows: rows as unknown as FieldInvoice[],
+    total: Number(counted[0]?.n ?? 0),
+  };
+}
+
+/**
+ * The four counts and the two sums the tiles show, over the WHOLE book.
+ *
+ * One aggregate row rather than four queries or, as it was, four `filter()`
+ * calls over whatever happened to be in the browser. The chips carry these
+ * counts too, so a chip says how many it would show before it is pressed.
+ */
+export async function fieldInvoiceTotals(): Promise<{
+  all: number;
+  open: number;
+  overdue: number;
+  unstated: number;
+  owedPaise: number;
+  overdueOwedPaise: number;
+}> {
+  const scope = await managerScope();
+  const where = fieldInvoiceWhere(scope, "all");
+  const rows = await db.execute<{
+    all: number;
+    open: number;
+    overdue: number;
+    unstated: number;
+    owed: string;
+    overdueOwed: string;
+  }>(sql`
+    select count(*)::int as all,
+           count(*) filter (
+             where b.payment_position = 'stated' and b.amount > b.paid_amount
+           )::int as open,
+           count(*) filter (
+             where b.payment_position = 'stated' and b.amount > b.paid_amount
+               and b.due_date is not null and b.due_date < current_date
+           )::int as overdue,
+           count(*) filter (where b.payment_position <> 'stated')::int as unstated,
+           coalesce(sum(b.amount - b.paid_amount) filter (
+             where b.payment_position = 'stated' and b.amount > b.paid_amount
+           ), 0) as owed,
+           coalesce(sum(b.amount - b.paid_amount) filter (
+             where b.payment_position = 'stated' and b.amount > b.paid_amount
+               and b.due_date is not null and b.due_date < current_date
+           ), 0) as "overdueOwed"
+      from bills b
+      join customers c on c.id = b.customer_id
+      left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
+      ${where}
+  `);
+  const r = rows[0];
+  return {
+    all: r?.all ?? 0,
+    open: r?.open ?? 0,
+    overdue: r?.overdue ?? 0,
+    unstated: r?.unstated ?? 0,
+    owedPaise: Number(r?.owed ?? 0),
+    overdueOwedPaise: Number(r?.overdueOwed ?? 0),
+  };
+}
+
+/**
+ * The aging strip: the open bills only, two columns each.
+ *
+ * A settled bill has no overdue days and an unstated one is held out of the
+ * strip entirely — presenting an unknown as a debt is the mistake that put
+ * nine crore of imaginary collections on this screen's ancestors. So the whole
+ * question lives in a few hundred rows.
+ */
+export async function fieldInvoiceAges(): Promise<
+  Array<{ overdueDays: number; openPaise: number }>
+> {
+  const scope = await managerScope();
+  const where = fieldInvoiceWhere(scope, "open");
+  const rows = await db.execute<{ overdueDays: number; openPaise: string }>(sql`
+    select greatest(0, current_date - b.due_date)::int as "overdueDays",
+           (b.amount - b.paid_amount) as "openPaise"
+      from bills b
+      join customers c on c.id = b.customer_id
+      left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
+      ${where}
+  `);
+  return rows.map((r) => ({
+    overdueDays: Number(r.overdueDays ?? 0),
+    openPaise: Number(r.openPaise ?? 0),
+  }));
 }
 
 export type FieldSample = {

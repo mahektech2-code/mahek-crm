@@ -6,7 +6,8 @@ import { today } from "@/lib/recompute";
 import {
   consoleCounts,
   expenseClaims,
-  fieldInvoices,
+  fieldInvoiceTotals,
+  fieldInvoicesPage,
   fieldOrders,
   fieldReceipts,
   fieldSamples,
@@ -38,7 +39,7 @@ import { readingsForPeriod, type PerformanceReading } from "@/lib/services/perfo
  * the model chooses what to look up. Every section below reads the SAME
  * function the corresponding screen reads — `teamDay`, `performance`,
  * `consoleCounts`, `pendingApprovals`, `fieldOrders`, `fieldReceipts`,
- * `fieldInvoices`, `leaveRequests`, `expenseClaims`, `fieldSamples`,
+ * `fieldInvoicesPage`, `leaveRequests`, `expenseClaims`, `fieldSamples`,
  * `leadsList`, `readingsForPeriod` — so the panel and the screen it is
  * standing in for cannot quote different numbers for one salesman.
  *
@@ -159,7 +160,8 @@ export async function teamBrief(): Promise<TeamBrief> {
     receipts,
     pendingOrders,
     leads,
-    invoices,
+    invoiceTotals,
+    overdueInvoicePage,
     leave,
     expenses,
     samples,
@@ -177,7 +179,17 @@ export async function teamBrief(): Promise<TeamBrief> {
     fieldReceipts(),
     fieldOrders(true),
     leadsList(day),
-    fieldInvoices(),
+    /*
+     * THE FIGURES FROM AN AGGREGATE, THE LIST FROM A PAGE.
+     *
+     * This called `fieldInvoices()`, which was capped at 300 rows with no
+     * count — so the brief's "N bills open, total ₹X" was the 300 biggest
+     * balances described as the book. The real number is 8,682. The counts and
+     * the sums come from Postgres now; only the overdue lines it actually
+     * prints are fetched, and it caps those itself a few lines down.
+     */
+    fieldInvoiceTotals(),
+    fieldInvoicesPage({ show: "overdue" }, { page: 1, perPage: 200 }),
     leaveRequests(),
     expenseClaims(),
     fieldSamples(),
@@ -278,14 +290,15 @@ export async function teamBrief(): Promise<TeamBrief> {
       : ["- none"]),
   );
 
-  const openInvoices = invoices.filter((b) => b.paymentPosition !== "unstated" && b.openPaise > 0);
-  const overdueInvoices = openInvoices.filter((b) => b.overdueDays > 0);
-  const outstandingTotal = openInvoices.reduce((sum, b) => sum + b.openPaise, 0);
-  const overdueTotal = overdueInvoices.reduce((sum, b) => sum + b.openPaise, 0);
+  /* Counted and summed over the whole book by `fieldInvoiceTotals`, not over
+     whatever rows happened to be fetched. */
+  const outstandingTotal = invoiceTotals.owedPaise;
+  const overdueTotal = invoiceTotals.overdueOwedPaise;
+  const overdueInvoices = overdueInvoicePage.rows;
 
   lines.push(
     "",
-    `WHAT THE TEAM'S BOOK OWES (${openInvoices.length} bills open, total ${rupees(outstandingTotal)}; ${overdueInvoices.length} overdue, total ${rupees(overdueTotal)}):`,
+    `WHAT THE TEAM'S BOOK OWES (${invoiceTotals.open} bills open, total ${rupees(outstandingTotal)}; ${invoiceTotals.overdue} overdue, total ${rupees(overdueTotal)}):`,
     ...capped(
       [...overdueInvoices].sort((a, b) => b.overdueDays - a.overdueDays),
       (b) => `- ${b.customerName} via ${b.salesmanName ?? "unassigned"}: ${rupees(b.openPaise)}, ${b.overdueDays} days overdue`,
@@ -340,7 +353,7 @@ export async function teamBrief(): Promise<TeamBrief> {
     cashHeld.length === 0 &&
     pendingOrders.length === 0 &&
     leads.length === 0 &&
-    openInvoices.length === 0 &&
+    invoiceTotals.open === 0 &&
     pendingLeave.length === 0 &&
     pendingExpenses.length === 0 &&
     lateSamples.length === 0;

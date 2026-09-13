@@ -52,7 +52,14 @@ export default async function WhatsappPage({
     findResumableRun(user.id),
     dayActivity(user.id, day),
     getFollowUpWorklist(),
-    listBills(),
+    /*
+     * OPEN BILLS ONLY. This asked for every bill ever raised — 10,815 rows,
+     * 1.98 MB — and then threw 10,405 of them away in the loop below, which
+     * keeps a bill only while `balance > 0`. `openOnly` is the same condition
+     * in SQL (`amount > paid_amount`), so the loop's own filter stays exactly
+     * as it was and is still the authority on what a statement may quote.
+     */
+    listBills({ openOnly: true }),
     isManager(user) ? listUnconfirmedCopies() : Promise.resolve([]),
   ]);
 
