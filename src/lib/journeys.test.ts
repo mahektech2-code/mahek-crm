@@ -1472,6 +1472,44 @@ describe("who may see a customer's target", () => {
     );
   });
 
+  test("a filter narrows the population and never answers who may see it", async () => {
+    // The shortfall takes the Targets tab's own filters now, and the honest
+    // way to read five filters is to run the clause the list ran. But
+    // `customerFilterClause` carries SCOPE as well as the filters, and the
+    // scope on this screen is `targetVisibilityClause` — wider than
+    // `scopedToUsers` by exactly the sales manager seat. ANDing the two
+    // narrows to the intersection and takes that seat away again, on the one
+    // screen it exists for, with a filter bar the likely place to notice.
+    //
+    // So the filter case is pinned, not just the unfiltered one: a filter
+    // removes rows and may not remove a seat.
+    const owner = await makeUser("Filtered Owner", "associate");
+    const salesman = await makeUser("Filtered Salesman", "associate");
+    const salesManagerUser = await makeUser("Filtered Line Manager", "associate");
+
+    const theirs = await makeCustomer(owner.id, {
+      salesAmId: salesman.id,
+      salesManagerId: salesManagerUser.id,
+    });
+    const otherSalesman = await makeUser("Other Salesman", "associate");
+    const alsoTheirs = await makeCustomer(owner.id, {
+      salesAmId: otherSalesman.id,
+      salesManagerId: salesManagerUser.id,
+    });
+
+    setTestUser(salesManagerUser);
+    const rows = await listTargets(undefined, { salesAm: salesman.name });
+    assert.ok(
+      rows.some((r) => r.customerId === theirs.id),
+      "the sales manager still sees the account they are named on",
+    );
+    assert.equal(
+      rows.some((r) => r.customerId === alsoTheirs.id),
+      false,
+      "and the filter did the narrowing it was asked for",
+    );
+  });
+
   test("a manager keeps their reports-to team, untouched by any of the three seats", async () => {
     const unrelatedManager = await makeUser("Unrelated Manager", "manager");
     const owner = await makeUser("Book Owner", "associate");

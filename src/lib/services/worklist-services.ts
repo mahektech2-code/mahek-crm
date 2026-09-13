@@ -40,7 +40,12 @@ import {
 import { err, ok, okVoid, type Result } from "../result";
 import { shortDateWithYear } from "../format";
 import { nextStepForCustomer } from "./queue-service";
-import { customerFilterClause, resolveSort, type CustomerListFilters } from "../queries";
+import {
+  customerFilterClause,
+  customerFiltersOnly,
+  resolveSort,
+  type CustomerListFilters,
+} from "../queries";
 import { creditedToSql, CREDITED_TO_SEAT_SQL, type CreditSeat } from "../sales-attribution";
 
 /**
@@ -771,17 +776,24 @@ export async function listTargets(
    * one filtered and one not, with nothing saying they were answering
    * different questions.
    *
-   * `customerFilterClause` is the SAME clause the Customers list and
-   * `targetFilterClause` both run, for the reason this file already states
+   * `customerFiltersOnly` is the SAME reading of those five the Customers list
+   * and `targetFilterClause` both run, for the reason this file already states
    * about bulk writes: the honest way to act on "everyone these filters match"
    * is to run the clause the screen ran, not a second reading of the same four
    * filters that can drift from it.
+   *
+   * It is the FILTERS and not `customerFilterClause`, which carries scope as
+   * well. The scope here is `targetVisibilityClause`, which is wider than
+   * `scopedToUsers` by the sales manager seat — so ANDing the two narrows to
+   * the intersection and takes that seat away again, on the one screen it
+   * exists for. Filters narrow a population; they do not get to answer who may
+   * see it.
    */
   filters: TargetListFilters = {},
 ) {
   const ctx = await resolveScope();
   const visibility = targetVisibilityClause(ctx);
-  const customerClause = await customerFilterClause({
+  const customerClause = customerFiltersOnly({
     query: filters.query,
     status: filters.status,
     salesAm: filters.salesAm,

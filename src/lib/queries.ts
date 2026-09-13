@@ -626,9 +626,29 @@ export async function customerFilterClause(
 ): Promise<SQL | undefined> {
   const ctx = await resolveScope();
   const scoped = scopedToUsers(scopedUserIds(ctx.scope));
+  const picked = customerFiltersOnly(filters);
+  if (!scoped) return picked;
+  return picked ? and(scoped, picked) : scoped;
+}
 
+/**
+ * The same five filters, and NOT the scope.
+ *
+ * Every caller above wants both, which is why they are welded together there.
+ * The Monthly Targets shortfall wants one: `targetVisibilityClause` is that
+ * screen's own answer to who may see a target, and it is deliberately WIDER
+ * than `scopedToUsers` by one seat — a sales manager has no other way to find
+ * the accounts they are named on. ANDing the two narrows back to the
+ * intersection, which silently takes that seat away again, on the screen the
+ * seat was added for.
+ *
+ * So what is shared is the reading of the five filters, which is the part that
+ * would drift if it were typed twice, and each caller states its own scope.
+ */
+export function customerFiltersOnly(
+  filters: CustomerListFilters = {},
+): SQL | undefined {
   const where: SQL[] = [];
-  if (scoped) where.push(scoped);
 
   const q = filters.query?.trim();
   if (q) {
