@@ -31,7 +31,7 @@ import { popularProducts } from "@/lib/services/product-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
 import { listTargets } from "@/lib/services/worklist-services";
 import { customerStatusLabel, daysBetween } from "@/lib/format";
-import { categoryLabel } from "@/lib/complaint-labels";
+import { categoryLabel, categoryValue } from "@/lib/complaint-labels";
 // How much of the timeline the page arrives with — see `TIMELINE_PAGE`. The
 // number that matters is not the ten, it is that it IS a number: the page used
 // to carry the account's whole history, so the oldest customers took the
@@ -334,10 +334,9 @@ export default async function CustomerRecordPage({
       categories={config["complaints.categories"]}
       period={period}
       complaintCategories={config["complaints.categories"].map((c) => ({
-        value: c
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "_")
-          .replace(/^_|_$/g, ""),
+        // NOT a slug. "Packaging" slugified to `packaging`, which is not a
+        // member of the enum, so the save refused it — see `categoryValue`.
+        value: categoryValue(c),
         label: c,
       }))}
       quickNotes={quickNoteRows.map((n) => ({

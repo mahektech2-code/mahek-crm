@@ -114,6 +114,7 @@ export const saveInteractionSchema = z.object({
       "pricing",
       "service",
       "shortage",
+      "wrong_product",
       "other",
     ])
     .optional(),

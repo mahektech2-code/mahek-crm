@@ -101,6 +101,12 @@ test('a note with no timestamp keeps its sentence', () => {
 });
 
 test('the five complaint buttons map onto the nine stored categories', () => {
+  assert.equal(wireComplaintCategory('Delivery Delay'), 'dispatch_delay');
+  assert.equal(wireComplaintCategory('Leakage / Packaging'), 'packaging_damage');
+  assert.equal(wireComplaintCategory('Wrong Product'), 'wrong_product');
+  assert.equal(wireComplaintCategory('Transport Issue'), 'delivery');
+  assert.equal(wireComplaintCategory('Sales Service'), 'service');
+  // An APK cannot be recalled: the old build's five words still arrive.
   assert.equal(wireComplaintCategory('Late delivery'), 'dispatch_delay');
   assert.equal(wireComplaintCategory('Damaged goods'), 'packaging_damage');
   assert.equal(wireComplaintCategory('Wrong material'), 'product_quality');

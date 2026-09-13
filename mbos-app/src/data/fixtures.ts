@@ -34,12 +34,49 @@ export const OUTCOMES: { k: OutcomeKey; label: string }[] = [
   { k: 'closed', label: 'Shop closed' },
 ];
 
+/**
+ * THE SAME TEN THE OFFICE OFFERS. They were five of the handset's own
+ * invention — "Damaged goods", "Wrong material", "Rate dispute" — so a
+ * salesman and a telecaller filing the same complaint filed it under different
+ * headings, and the count by category could not be read across the two.
+ *
+ * They are a literal here and configuration in MahekOne (`complaints.
+ * categories`) because nothing on this wire sends them: the list reaches the
+ * phone only in a new APK. Keep them in step with `src/lib/constants.ts` by
+ * hand until a channel carries them — `wire.ts` maps each to the enum the
+ * column holds, and anything it does not recognise becomes `other` rather than
+ * being refused.
+ */
 export const COMPLAINT_CATEGORIES = [
-  'Late delivery',
-  'Damaged goods',
-  'Wrong material',
-  'Short quantity',
-  'Rate dispute',
+  'Product Quality',
+  'Short Quantity',
+  'Leakage / Packaging',
+  'Wrong Product',
+  'Delivery Delay',
+  'Price Issue',
+  'Billing Issue',
+  'Transport Issue',
+  'Sales Service',
+  'Other',
+] as const;
+
+/**
+ * HOW BADLY THIS ONE NEEDS ANSWERING.
+ *
+ * The same three the office offers, stored in the same `severity` column,
+ * which is what `complaints.slaHours` keys the resolution deadline off. The
+ * salesman standing in the shop is the person who can actually tell an
+ * ordinary grumble from a line that has stopped, and until now he had no way
+ * to say so — every complaint from a handset took the configured default.
+ *
+ * Normal is `medium` because that IS the configured default, so a phone still
+ * on an older build goes on sending nothing and its complaints keep landing
+ * exactly where they always did.
+ */
+export const COMPLAINT_PRIORITIES = [
+  { value: 'medium', label: 'Normal' },
+  { value: 'high', label: 'Urgent' },
+  { value: 'critical', label: 'Critical' },
 ] as const;
 
 /* ------------------------------------------------------------------ home */

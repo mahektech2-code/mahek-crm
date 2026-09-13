@@ -191,15 +191,3 @@ export const OUTCOME_LABEL: Record<OutcomeKey, string> = {
   transport_follow_up: "Transport Follow-up",
   casual_talk: "Casual Talk",
 };
-
-export const COMPLAINT_CATEGORY_LABEL: Record<string, string> = {
-  product_quality: "Product Quality",
-  packaging_damage: "Packaging Damage",
-  dispatch_delay: "Dispatch Delay",
-  billing_issue: "Billing Issue",
-  delivery: "Delivery",
-  pricing: "Pricing",
-  service: "Service",
-  shortage: "Shortage",
-  other: "Other",
-};

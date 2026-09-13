@@ -370,7 +370,7 @@ export function localPriority(priority: string | undefined): string {
 /* -------------------------------------------------------------- complaints */
 
 /**
- * The five categories on the buttons and the nine the column holds are two
+ * The categories on the buttons and the members the column holds are two
  * different lists, and neither can be derived from the other — the CRM has the
  * same problem in reverse and answers it the same way, in
  * `lib/complaint-labels.ts`.
@@ -381,10 +381,23 @@ export function localPriority(priority: string | undefined): string {
  * has to move fast.
  */
 const COMPLAINT_CATEGORIES: Record<string, string> = {
+  /* the ten offered today, the same words the office offers */
+  'product quality': 'product_quality',
+  'short quantity': 'shortage',
+  'leakage / packaging': 'packaging_damage',
+  'wrong product': 'wrong_product',
+  'delivery delay': 'dispatch_delay',
+  'price issue': 'pricing',
+  'billing issue': 'billing_issue',
+  'transport issue': 'delivery',
+  'sales service': 'service',
+  other: 'other',
+
+  /* the five this app used to offer, because an APK cannot be recalled and a
+   * handset still on the old build goes on sending these words for weeks */
   'late delivery': 'dispatch_delay',
   'damaged goods': 'packaging_damage',
   'wrong material': 'product_quality',
-  'short quantity': 'shortage',
   'rate dispute': 'pricing',
 };
 
