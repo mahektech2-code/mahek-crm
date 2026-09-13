@@ -61,6 +61,7 @@ import {
 import {
   fieldActivitySheetId,
   FIELD_ACTIVITY_TAB,
+  rematchFieldActivitySalesmen,
   syncFieldActivitySheet,
 } from "./services/field-activity-sync-service";
 import { projectFieldActivityTimeline } from "./services/field-activity-projection-service";
@@ -109,6 +110,7 @@ export type JobName =
   | "field-activity-append"
   | "field-activity-sync"
   | "field-activity-project"
+  | "field-activity-rematch"
   | "customer-master-sync"
   | "customer-master-project"
   /** Address to a coordinate, for the shops nobody has stood in. */
@@ -743,6 +745,8 @@ export async function runJob(
       return [await runFieldActivitySync(triggeredById, "reconcile")];
     case "field-activity-project":
       return [await runFieldActivityProjection(triggeredById)];
+    case "field-activity-rematch":
+      return [await runFieldActivityRematch(triggeredById)];
     case "customer-master-sync":
       return [await runCustomerMasterSync(triggeredById)];
     case "customer-master-project":
@@ -937,6 +941,26 @@ async function runCustomerMasterProjection(options: JobOptions): Promise<JobResu
       };
     },
     undefined,
+  );
+}
+
+/**
+ * Ask again who these rows belong to. Google is not touched — see
+ * `rematchFieldActivitySalesmen`, and `taken-order-reparse` beside it for the
+ * rule this follows: a hash-driven sync never re-reads an unchanged row, so a
+ * changed READING only lands when something goes and asks.
+ */
+async function runFieldActivityRematch(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "field-activity-rematch",
+    async () => {
+      const r = await rematchFieldActivitySalesmen();
+      return {
+        recordsAffected: r.matched,
+        detail: `${r.scanned} rows re-read · ${r.matched} matched to a salesman · ${r.ambiguous} ambiguous · ${r.stillUnmatched} belong to nobody with an account`,
+      };
+    },
+    triggeredById,
   );
 }
 

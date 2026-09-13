@@ -326,7 +326,7 @@ export function SalesmanScreen({
         record.attendance.length === 0 ? (
           <Empty
             title="No days recorded"
-            body="Attendance is a check-in on the handset. Nothing has been marked yet."
+            body="Attendance is a punch-in on the handset. Nothing has been marked yet."
           />
         ) : (
           <Table
@@ -365,7 +365,7 @@ export function SalesmanScreen({
                   {a.withinGeofence === false ? (
                     <span
                       className="mr-1.5"
-                      title="Checked in outside the permitted radius. Flagged, never blocked."
+                      title="Punched in outside the permitted radius. Flagged, never blocked."
                     >
                       <Pill tone="warn">Off site</Pill>
                     </span>

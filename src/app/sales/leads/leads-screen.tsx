@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
 import { Modal } from "@/components/ui/overlays";
@@ -10,10 +10,20 @@ import { ExportButton } from "@/app/reports/export-button";
 import {
   archiveLead,
   chaseLeadOwner,
+  exportLeadRows,
   reassignLead,
   restoreLead,
 } from "@/lib/actions/sales";
 import { healthView } from "@/lib/customer-health";
+import { MultiSelect } from "@/components/ui/multi-select";
+import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
+import {
+  AGE_BUCKETS,
+  HEALTH_BUCKETS,
+  NEXT_BUCKETS,
+  POTENTIAL_BUCKETS,
+  type FilterOption,
+} from "@/lib/lead-filters";
 import type { LeadRow } from "@/lib/services/sales-service";
 import type { FunnelByType } from "@/lib/services/lead-console-service";
 import { salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
@@ -39,6 +49,29 @@ import {
  * than the enum value that produced it and a distributor's `management_review`
  * folds into "Qualified" without either word appearing.
  */
+/**
+ * THE SEVEN COLUMNS THAT CAN BE NARROWED, in the order they appear in the
+ * table — so the filter bar reads left to right exactly like the header under
+ * it, and "which control filters which column" is never a question.
+ *
+ * Declared once and iterated: the URL parameter, the ticked state, the clear
+ * action and the bar itself all walk this list, which is what stops an eighth
+ * filter being added to the bar and quietly not being cleared by "Clear all".
+ */
+const FILTER_COLUMNS = [
+  "owner",
+  "source",
+  "potential",
+  "stage",
+  "next",
+  "age",
+  "health",
+] as const;
+type FilterColumn = (typeof FILTER_COLUMNS)[number];
+
+/** Ten by default — see `LEADS_PER_PAGE`. The rest are for a wide monitor. */
+const PER_PAGE = [10, 25, 50, 100] as const;
+
 const BAND_LABEL: Record<"new" | "contacted" | "qualified" | "negotiation", string> = {
   new: "New / Suspect",
   contacted: "Contacted / Prospect",
@@ -67,6 +100,10 @@ type Acting =
  */
 export function LeadsScreen({
   leads,
+  pageInfo,
+  stale,
+  filters,
+  options,
   showArchived,
   archivedCount,
   staleDays,
@@ -76,7 +113,27 @@ export function LeadsScreen({
   funnel,
   desks,
 }: {
+  /** ONE PAGE of them. Everything counted around the table comes from SQL. */
   leads: LeadRow[];
+  pageInfo: {
+    page: number;
+    pageCount: number;
+    perPage: number;
+    /** Matching the filters. */
+    total: number;
+    /** The whole scoped list, before any filter. */
+    listTotal: number;
+  };
+  /** Over the filtered set, not the page — see `leadsPage`. */
+  stale: { count: number; names: string[] };
+  /** What is ticked, read off the URL by the page. */
+  filters: Record<FilterColumn, string[]>;
+  /** What there is to tick: owner, source and stage are read off the book. */
+  options: {
+    owners: Array<FilterOption & { count: number }>;
+    sources: Array<FilterOption & { count: number }>;
+    stages: Array<FilterOption & { count: number }>;
+  };
   showArchived: boolean;
   archivedCount: number;
   staleDays: number;
@@ -96,7 +153,38 @@ export function LeadsScreen({
   };
 }) {
   const router = useRouter();
+  const search = useSearchParams();
   const toast = useToast();
+
+  /*
+   * One place a filter is written to the URL, like the customers list. Any
+   * change to WHAT is being looked at returns to the first page — unless the
+   * change is the page — because page 7 of a list you have just narrowed to
+   * eleven rows is an empty table that reads as a broken filter.
+   */
+  const navigate = React.useCallback(
+    (patch: Record<string, string | number | undefined>) => {
+      const next = new URLSearchParams(search.toString());
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined || v === "" || v === null) next.delete(k);
+        else next.set(k, String(v));
+      }
+      if (!("page" in patch)) next.delete("page");
+      router.push(`?${next.toString()}`, { scroll: false });
+    },
+    [router, search],
+  );
+
+  const anyFilter = FILTER_COLUMNS.some((c) => filters[c].length > 0);
+  const clearFilters = () =>
+    navigate(Object.fromEntries(FILTER_COLUMNS.map((c) => [c, undefined])));
+
+  /* The count goes on the label rather than the value: "Pritesh Bipin Doshi
+     (511)" is what tells a manager which name is worth ticking, and it is the
+     one thing a dropdown of twenty names can say that a list of twenty names
+     cannot. */
+  const withCounts = (rows: Array<FilterOption & { count: number }>) =>
+    rows.map((r) => ({ value: r.value, label: `${r.label} (${r.count})` }));
 
   /* The type filter is local state rather than a URL parameter, unlike the
      archived view beside it. Archived is a different LIST and worth sending to
@@ -161,9 +249,6 @@ export function LeadsScreen({
     }
   }
 
-  const working = leads.filter((l) => l.stage !== "won" && l.stage !== "lost");
-  const stale = working.filter((l) => l.quietDays >= staleDays);
-
   const funnelKey = (t: FunnelByType["salesType"]) => t ?? "legacy";
   const shownFunnels =
     funnelType === "all" ? funnel : funnel.filter((f) => funnelKey(f.salesType) === funnelType);
@@ -175,32 +260,6 @@ export function LeadsScreen({
     ...shownFunnels.flatMap((f) => f.bands.map((b) => b.count)),
   );
 
-  const exportRows = [
-    [
-      "Lead",
-      "Company",
-      "City",
-      "Owner",
-      "Source",
-      "Potential (₹)",
-      "Stage",
-      "Next follow-up",
-      "Age (days)",
-      "Notes",
-    ],
-    ...leads.map((l) => [
-      l.name,
-      l.companyName ?? "",
-      l.city ?? "",
-      l.salesmanName ?? "Nobody",
-      l.source.replace(/_/g, " "),
-      Number(l.estimatedPotentialPaise) ? Math.round(Number(l.estimatedPotentialPaise) / 100) : "",
-      l.stage,
-      l.nextFollowUpDate ?? "",
-      l.ageDays,
-      l.notes ?? "",
-    ]),
-  ];
 
   return (
     <div className="p-6">
@@ -221,7 +280,26 @@ export function LeadsScreen({
             </Link>
           ) : (
             <div className="flex items-center gap-2">
-              <ExportButton name="leads" rows={exportRows} />
+              {/* The whole filtered list, fetched on the click — the table
+                  holds one page now, and a ten-row file from a list of 3,776
+                  is the version of this bug that looks like it worked. */}
+              <ExportButton
+                name="leads"
+                count={pageInfo.total}
+                fetchRows={async () => {
+                  const res = await exportLeadRows({
+                    archived: showArchived,
+                    filters: Object.fromEntries(
+                      FILTER_COLUMNS.map((c) => [c, filters[c].join(",") || undefined]),
+                    ),
+                  });
+                  if (!res.ok) {
+                    toast.push(res.error, "error");
+                    return null;
+                  }
+                  return res.data.rows;
+                }}
+              />
               {archivedCount > 0 ? (
                 <Link
                   href="/sales/leads?view=archived"
@@ -332,26 +410,47 @@ export function LeadsScreen({
             </>
           ) : null}
 
-          {!showArchived && stale.length ? (
+          {/* Counted over the FILTERED list in SQL, not over the ten rows this
+              page happens to hold — see `leadsPage`. Before pagination the two
+              were the same number; they are not any more, and the one worth
+              saying is how many the search found. */}
+          {!showArchived && stale.count ? (
             <div className="mb-4 rounded-[6px] border-l-[3px] border-warn bg-warn-soft px-4 py-3">
               <div className="text-sm font-semibold text-ink">
-                {plural(stale.length, "lead")} nobody has touched in {plural(staleDays, "day")}
+                {plural(stale.count, "lead")} nobody has touched in {plural(staleDays, "day")}
               </div>
               <div className="mt-0.5 text-[13px] text-body">
-                {stale
-                  .slice(0, 4)
-                  .map((l) => `${l.name} (${l.quietDays}d)`)
-                  .join(" · ")}
-                {stale.length > 4 ? ` and ${stale.length - 4} more` : ""}
+                {stale.names.join(" · ")}
+                {stale.count > stale.names.length
+                  ? ` and ${stale.count - stale.names.length} more`
+                  : ""}
               </div>
             </div>
           ) : null}
 
+          <FilterBar
+            filters={filters}
+            options={options}
+            withCounts={withCounts}
+            navigate={navigate}
+            anyFilter={anyFilter}
+            onClear={clearFilters}
+            total={pageInfo.total}
+            listTotal={pageInfo.listTotal}
+          />
+
           <Table
-            minWidth={1274}
+            minWidth={1302}
             head={
               <>
-                <HeadCell width={230}>Lead</HeadCell>
+                {/* PINNED. The row's name and its actions are the two cells
+                    that must survive a sideways scroll — `pinned.ts` carries
+                    the argument: scroll the name off and every remaining cell
+                    is an orphaned value, scroll the menu off and whether you
+                    can act on a row depends on where the table is scrolled. */}
+                <HeadCell width={230} className={pinnedHead("left")}>
+                  Lead
+                </HeadCell>
                 <HeadCell width={160}>Owner</HeadCell>
                 <HeadCell width={140}>Source</HeadCell>
                 <HeadCell align="right" width={130}>Potential</HeadCell>
@@ -359,7 +458,11 @@ export function LeadsScreen({
                 <HeadCell width={130}>Next</HeadCell>
                 <HeadCell width={110}>Age</HeadCell>
                 <HeadCell width={190}>Health &amp; metrics</HeadCell>
-                <HeadCell width={44} />
+                {/* Wide enough for the menu trigger AND the cell's own padding: at the
+                    44 it was drawn at, the pinned cell clipped its own ⋯ and
+                    printed the ellipsis `Cell` adds on overflow, so the column
+                    read as a truncated value rather than a control. */}
+                <HeadCell width={72} className={pinnedHead("right")} />
               </>
             }
           >
@@ -371,7 +474,7 @@ export function LeadsScreen({
               return (
                 <React.Fragment key={l.id}>
                   <Row striped={i % 2 === 1} onClick={() => toggleExpanded(l.id)}>
-                    <Cell truncate={230}>
+                    <Cell truncate={230} className={pinnedCell("left", i)}>
                       {/* The name is the door to the record. The row itself
                           still expands, so the one-line summary is a click and
                           the whole climb is a click — the two questions a
@@ -439,7 +542,11 @@ export function LeadsScreen({
                     <Cell truncate={190}>
                       <HealthCell lead={l} atRiskBelow={healthAtRiskBelow} strongAtOrAbove={healthStrongAtOrAbove} />
                     </Cell>
-                    <Cell align="right" onClick={(e) => e.stopPropagation()}>
+                    <Cell
+                      align="right"
+                      className={pinnedCell("right", i)}
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {showArchived ? (
                         <RowMenu items={[{ label: "Restore it", run: () => begin(l, "restore") }]} />
                       ) : (
@@ -475,6 +582,16 @@ export function LeadsScreen({
               );
             })}
           </Table>
+
+          {pageInfo.total > pageInfo.perPage ? (
+            <Pager
+              page={pageInfo.page}
+              pageCount={pageInfo.pageCount}
+              perPage={pageInfo.perPage}
+              total={pageInfo.total}
+              navigate={navigate}
+            />
+          ) : null}
         </>
       )}
 
@@ -810,5 +927,198 @@ function TypeChip({
       {label}
       {count != null ? <span className={on ? "tabular-nums" : "tabular-nums text-muted"}>{count}</span> : null}
     </button>
+  );
+}
+
+/**
+ * The filter bar.
+ *
+ * Every control is a `MultiSelect` — the same Excel-style checkbox dropdown
+ * the customers list uses, which already searches above eight options, scrolls
+ * its own list without closing, and portals out of the table's `overflow` so
+ * it is not clipped. A second dropdown written here would be a second set of
+ * those bugs.
+ *
+ * OWNER, SOURCE AND STAGE ARE READ OFF THE BOOK and carry their counts;
+ * potential, next, age and health are named ranges from `lib/lead-filters.ts`,
+ * because a dropdown of four hundred distinct ages is not a filter. The
+ * counts are on the labels rather than beside them: `MultiSelect` draws a
+ * label, and "Pritesh Bipin Doshi (511)" is what tells somebody which name is
+ * worth ticking.
+ */
+function FilterBar({
+  filters,
+  options,
+  withCounts,
+  navigate,
+  anyFilter,
+  onClear,
+  total,
+  listTotal,
+}: {
+  filters: Record<FilterColumn, string[]>;
+  options: {
+    owners: Array<FilterOption & { count: number }>;
+    sources: Array<FilterOption & { count: number }>;
+    stages: Array<FilterOption & { count: number }>;
+  };
+  withCounts: (rows: Array<FilterOption & { count: number }>) => FilterOption[];
+  navigate: (patch: Record<string, string | number | undefined>) => void;
+  anyFilter: boolean;
+  onClear: () => void;
+  total: number;
+  listTotal: number;
+}) {
+  const pick = (column: FilterColumn) => (next: string[]) =>
+    navigate({ [column]: next.join(",") || undefined });
+
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2">
+      <MultiSelect
+        label="Owner"
+        placeholder="All owners"
+        options={withCounts(options.owners)}
+        selected={filters.owner}
+        onChange={pick("owner")}
+        title="Who is working the lead. Nobody is a real answer and is offered as one."
+      />
+      <MultiSelect
+        label="Source"
+        placeholder="All sources"
+        options={withCounts(options.sources)}
+        selected={filters.source}
+        onChange={pick("source")}
+      />
+      <MultiSelect
+        label="Potential"
+        placeholder="Any potential"
+        options={[...POTENTIAL_BUCKETS]}
+        selected={filters.potential}
+        onChange={pick("potential")}
+        title="Somebody's estimate of what the shop could spend in a month. Not estimated is not the same as nothing."
+      />
+      <MultiSelect
+        label="Stage"
+        placeholder="All stages"
+        options={withCounts(options.stages)}
+        selected={filters.stage}
+        onChange={pick("stage")}
+      />
+      <MultiSelect
+        label="Next"
+        placeholder="Any next step"
+        options={[...NEXT_BUCKETS]}
+        selected={filters.next}
+        onChange={pick("next")}
+        title="The follow-up somebody promised. None promised is the one worth looking at."
+      />
+      <MultiSelect
+        label="Age"
+        placeholder="Any age"
+        options={[...AGE_BUCKETS]}
+        selected={filters.age}
+        onChange={pick("age")}
+      />
+      <MultiSelect
+        label="Health"
+        placeholder="Any health"
+        options={[...HEALTH_BUCKETS]}
+        selected={filters.health}
+        onChange={pick("health")}
+        title="What the health column says. A lead that has never ordered is in no band at all — that is an option rather than a gap."
+      />
+
+      {anyFilter ? (
+        <button
+          type="button"
+          onClick={onClear}
+          className="h-8.5 cursor-pointer rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-muted hover:bg-canvas hover:text-body"
+        >
+          Clear filters
+        </button>
+      ) : null}
+
+      <span className="flex-1" />
+      {/* What the filters found, against what there is. A count that only ever
+          showed the page would say "10" on every screen in the product. */}
+      <span className="text-[13px] text-muted">
+        {anyFilter
+          ? `${total.toLocaleString("en-IN")} of ${listTotal.toLocaleString("en-IN")}`
+          : `${listTotal.toLocaleString("en-IN")} ${listTotal === 1 ? "lead" : "leads"}`}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The pager, in the shape the customers list already uses: a RANGE rather than
+ * a page number, because "26–35 of 3,776" says where you are and "page 3" only
+ * does once you know how big a page is.
+ */
+function Pager({
+  page,
+  pageCount,
+  perPage,
+  total,
+  navigate,
+}: {
+  page: number;
+  pageCount: number;
+  perPage: number;
+  total: number;
+  navigate: (patch: Record<string, string | number | undefined>) => void;
+}) {
+  const from = (page - 1) * perPage;
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-b-[6px] border-r border-b border-l border-line bg-surface px-4 py-3">
+      <span className="text-[13px] text-muted">
+        {from + 1}&ndash;{Math.min(from + perPage, total)} of{" "}
+        {total.toLocaleString("en-IN")}
+      </span>
+      <span className="flex items-center gap-2 text-[13px] text-muted">
+        <label htmlFor="leads-per-page">Show</label>
+        <select
+          id="leads-per-page"
+          value={perPage}
+          onChange={(e) => {
+            // Keep the first row of this page in view rather than jumping to
+            // the top: a page size is a change of zoom, not of place.
+            const next = Number(e.target.value);
+            navigate({ per: next, page: Math.floor(from / next) + 1 });
+          }}
+          className="h-8 cursor-pointer rounded-[4px] border border-line bg-canvas px-2 text-[13px] text-body"
+        >
+          {PER_PAGE.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </span>
+      <span className="flex-1" />
+      <span className="flex items-center gap-2">
+        <Button
+          tone="default"
+          size="sm"
+          disabled={page <= 1}
+          title={page <= 1 ? "This is the first page" : undefined}
+          onClick={() => navigate({ page: page - 1 })}
+        >
+          Previous
+        </Button>
+        <span className="text-[13px] text-body tabular-nums">
+          {page} / {pageCount}
+        </span>
+        <Button
+          tone="default"
+          size="sm"
+          disabled={page >= pageCount}
+          title={page >= pageCount ? "This is the last page" : undefined}
+          onClick={() => navigate({ page: page + 1 })}
+        >
+          Next
+        </Button>
+      </span>
+    </div>
   );
 }

@@ -14,6 +14,7 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { NO_ORDER_REASONS } from "@/lib/call-outcomes";
 import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -849,10 +850,132 @@ describe("Journey 4 - the EOD gate", () => {
     assert.equal(blocked.blocking.length, 1);
     assert.match(blocked.message, /reminder/i);
 
-    await completeReminder(created.data.id, "Spoke to them, will order Friday");
+    /*
+     * AND THE TELECALLER CANNOT SIMPLY TICK IT OFF.
+     *
+     * That is the whole gate: a report blocked by a promise that the person
+     * being measured could close by pressing a button was a gate in name
+     * only. `reminder.close` is a manager's, so Priya clears this by making
+     * the call — which is the test below — or by carrying the promise forward.
+     */
+    await assert.rejects(
+      () => completeReminder(created.data.id, "Spoke to them, will order Friday"),
+      /reminder\.close/,
+      "an associate may not close one by hand",
+    );
+
+    setTestUser(manager);
+    const closed = await completeReminder(
+      created.data.id,
+      "Spoke to them, will order Friday",
+    );
+    assert.equal(closed.ok, true, closed.ok ? "" : closed.error);
+    setTestUser(priya);
 
     const open = await eodPreflightFor(priya.id, TODAY);
     assert.equal(open.canFinalise, true);
+  });
+
+  test("a logged call closes the promise, and a no-answer does not", async () => {
+    const customer = await makeCustomer(priya.id);
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+
+    const created = await createReminder({
+      customerId: customer.id,
+      dueDate: TODAY,
+      note: "He said he will call me today between 3 and 4",
+    });
+    assert.ok(created.ok);
+
+    // Nobody picked up. The promise is still owed, and the list must go on
+    // saying so — otherwise it can be emptied by dialling and hanging up.
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_answer",
+      /* WHICH KIND OF SILENCE, which this outcome has demanded since
+         `call-outcomes.ts` landed. It is not incidental to what is being
+         tested here — a no-answer that cannot be saved cannot fail to close a
+         promise either, so without this the assertion below passes for the
+         wrong reason. */
+      outcomeDetail: { whyNoAnswer: "no_response" },
+      idempotencyKey: randomUUID(),
+    });
+    const [afterMiss] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, created.data.id));
+    assert.equal(afterMiss.status, "pending", "a missed call keeps the promise");
+
+    // And the call that actually happened closes it, with the interaction
+    // named as the evidence rather than somebody's word for it.
+    const call = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      notes: "Spoke to him, stock still on the shelf",
+      // No order has to say when to call back, or that they would not commit.
+      noOrderNoCommitment: true,
+      // And WHY there was no order, which `call-outcomes.ts` demands: the
+      // note says it in prose and a coded reason is what can be counted.
+      outcomeDetail: { whyNoOrder: "stock_available" },
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(call.ok, true, call.ok ? "" : call.error);
+
+    const [afterCall] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, created.data.id));
+    assert.equal(afterCall.status, "completed");
+    assert.equal(afterCall.closedBy, "call");
+    assert.equal(
+      afterCall.closedBySourceId,
+      call.data.interactionId,
+      "the reminder points back at the call that closed it",
+    );
+    assert.equal(afterCall.closedById, priya.id, "who made the call, not who tidied the list");
+  });
+
+  test("a call does not close a promise that is still ahead, nor the one it just made", async () => {
+    const customer = await makeCustomer(priya.id);
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+
+    // A promise for next week. Today's conversation was about something else.
+    const future = await createReminder({
+      customerId: customer.id,
+      dueDate: addDays(TODAY, 7),
+      note: "Call after their stock take",
+    });
+    assert.ok(future.ok);
+
+    const call = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "follow_up",
+      followUpDate: addDays(TODAY, 2),
+      notes: "Asked us to ring on Thursday",
+      /* WHAT WE ARE WAITING FOR, demanded by `call-outcomes.ts` — a date on
+         its own says when to ring and not what the call is for. */
+      outcomeDetail: { followUpReason: "waiting_stock_confirmation" },
+      idempotencyKey: randomUUID(),
+    });
+    assert.ok(call.ok, call.ok ? "" : call.error);
+
+    const [ahead] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, future.data.id));
+    assert.equal(ahead.status, "pending", "a commitment for next week is not met today");
+
+    // And the promise this very call wrote must survive it. Closing the thing
+    // it created would drop the customer with a next step everybody believes
+    // in and nothing chasing it.
+    const [fresh] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.id, call.data.reminderId!));
+    assert.equal(fresh.status, "pending");
   });
 
   test("a reminder is dismissed, never deleted, and stays on the record", async () => {
@@ -870,11 +993,24 @@ describe("Journey 4 - the EOD gate", () => {
     const noReason = await dismissReminder(created.data.id, "   ");
     assert.equal(noReason.ok, false, "dismissal without a reason is refused");
 
+    /*
+     * Dismissing takes the SAME capability as marking done, and for the same
+     * reason: a reason typed into a dismissal clears the overdue pile exactly
+     * as effectively as a tick does.
+     */
+    await assert.rejects(
+      () => dismissReminder(created.data.id, "Cheque already banked"),
+      /reminder\.close/,
+      "an associate may not dismiss one either",
+    );
+
+    setTestUser(manager);
     const done = await dismissReminder(
       created.data.id,
       "Cheque already banked",
     );
     assert.equal(done.ok, true);
+    setTestUser(priya);
 
     const [row] = await db
       .select()
@@ -1523,6 +1659,44 @@ describe("who may see a customer's target", () => {
     assert.equal(refusedShop.ok, false, "nor on a third-party shop");
   });
 
+  test("a filter narrows the population and never answers who may see it", async () => {
+    // The shortfall takes the Targets tab's own filters now, and the honest
+    // way to read five filters is to run the clause the list ran. But
+    // `customerFilterClause` carries SCOPE as well as the filters, and the
+    // scope on this screen is `targetVisibilityClause` — wider than
+    // `scopedToUsers` by exactly the sales manager seat. ANDing the two
+    // narrows to the intersection and takes that seat away again, on the one
+    // screen it exists for, with a filter bar the likely place to notice.
+    //
+    // So the filter case is pinned, not just the unfiltered one: a filter
+    // removes rows and may not remove a seat.
+    const owner = await makeUser("Filtered Owner", "associate");
+    const salesman = await makeUser("Filtered Salesman", "associate");
+    const salesManagerUser = await makeUser("Filtered Line Manager", "associate");
+
+    const theirs = await makeCustomer(owner.id, {
+      salesAmId: salesman.id,
+      salesManagerId: salesManagerUser.id,
+    });
+    const otherSalesman = await makeUser("Other Salesman", "associate");
+    const alsoTheirs = await makeCustomer(owner.id, {
+      salesAmId: otherSalesman.id,
+      salesManagerId: salesManagerUser.id,
+    });
+
+    setTestUser(salesManagerUser);
+    const rows = await listTargets(undefined, { salesAm: salesman.name });
+    assert.ok(
+      rows.some((r) => r.customerId === theirs.id),
+      "the sales manager still sees the account they are named on",
+    );
+    assert.equal(
+      rows.some((r) => r.customerId === alsoTheirs.id),
+      false,
+      "and the filter did the narrowing it was asked for",
+    );
+  });
+
   test("a manager keeps their reports-to team, untouched by any of the three seats", async () => {
     const unrelatedManager = await makeUser("Unrelated Manager", "manager");
     const owner = await makeUser("Book Owner", "associate");
@@ -1696,6 +1870,7 @@ describe("Journey 8 - the interaction log", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_answer",
+      outcomeDetail: { whyNoAnswer: "no_response" },
       idempotencyKey: randomUUID(),
     });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
@@ -1800,6 +1975,7 @@ describe("Journey 8 - the interaction log", () => {
       customerId: customer.id,
       interactionType: "inbound_call",
       outcome: "no_answer",
+      outcomeDetail: { whyNoAnswer: "no_response" },
       idempotencyKey: randomUUID(),
     });
     assert.equal(wrong.ok, false, "nobody rings us and then does not answer");
@@ -1813,6 +1989,7 @@ describe("Journey 8 - the interaction log", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "complaint",
+      outcomeDetail: { requiredAction: "replacement" },
       complaintCategory: "packaging_damage",
       notes: "Two drums arrived dented",
       idempotencyKey: randomUUID(),
@@ -1843,6 +2020,7 @@ describe("Journey 8 - the interaction log", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "complaint",
+      outcomeDetail: { requiredAction: "replacement" },
       complaintCategory: "shortage",
       complaintDescription: "Two drums short against the last consignment",
       complaintRequestCn: true,
@@ -1874,6 +2052,7 @@ describe("Journey 8 - the interaction log", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "follow_up",
+      outcomeDetail: { followUpReason: "call_next_week" },
       idempotencyKey: randomUUID(),
     });
     assert.equal(noDate.ok, false);
@@ -1883,6 +2062,7 @@ describe("Journey 8 - the interaction log", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "follow_up",
+      outcomeDetail: { followUpReason: "call_next_week" },
       followUpDate: addDays(TODAY, -1),
       idempotencyKey: randomUUID(),
     });
@@ -1891,6 +2071,11 @@ describe("Journey 8 - the interaction log", () => {
     const inbound = await saveInteraction({
       customerId: customer.id,
       interactionType: "inbound_call",
+      // Inbound asks who rang and why before anything else, so both are given
+      // here — otherwise this never reaches the assertion it is about.
+      callerRole: "accounts",
+      callReason: "payment_outstanding",
+      reasonDetail: { customerQuery: "When is the next cheque due" },
       outcome: "payment_promised",
       idempotencyKey: randomUUID(),
     });
@@ -1908,12 +2093,18 @@ describe("Journey 8 - the interaction log", () => {
 
   test("quick notes are stored as references and accumulate in the text", async () => {
     const customer = await makeCustomer(priya.id);
+    /* Payment Promised rather than No Order: the chips are about the MECHANISM
+       — stored as references so they can be counted — and No Order no longer
+       has any, because it asks a coded question and a chip list saying the same
+       thing in different words was the telecaller answering twice. Payment
+       Promised keeps its chips precisely because they answer nothing: "Cheque
+       Ready" is shorthand into the note a human reads. */
     const chips = await db
       .select()
       .from(quickNotesTable)
       .where(
         sql`${quickNotesTable.interactionType} = 'outbound_call'
-            and ${quickNotesTable.outcome} = 'no_order'`,
+            and ${quickNotesTable.outcome} = 'payment_promised'`,
       )
       .limit(2);
     assert.equal(chips.length, 2, "the seeded lists must be there");
@@ -1921,9 +2112,8 @@ describe("Journey 8 - the interaction log", () => {
     const r = await saveInteraction({
       customerId: customer.id,
       interactionType: "outbound_call",
-      outcome: "no_order",
-      // No date was recorded on these calls, which is now said explicitly.
-      noOrderNoCommitment: true,
+      outcome: "payment_promised",
+      paymentPromiseDate: addDays(TODAY, 3),
       notes: `${chips[0].label} ${chips[1].label}`,
       quickNoteIds: [chips[0].id, chips[1].id],
       idempotencyKey: randomUUID(),
@@ -1959,6 +2149,7 @@ describe("Journey 8 - the interaction log", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       // No date was recorded on these calls, which is now said explicitly.
       noOrderNoCommitment: true,
       quickNoteIds: [foreign.id],
@@ -2007,13 +2198,535 @@ describe("Journey 8 - the interaction log", () => {
     );
   });
 
+  /* ------------------------------------------------------------------------
+   * WHY THE CUSTOMER RANG.
+   *
+   * The panel asked one question — "what was the outcome?" — and made it do two
+   * jobs. These pin the half that was missing: who rang, what they wanted, what
+   * the reason asks for, what we said we would do, and what that produces.
+   * --------------------------------------------------------------------- */
+
+  /* ------------------------------------------------------------------------
+   * WHAT EACH OUTCOME ASKS FOR — both directions.
+   * --------------------------------------------------------------------- */
+
+  test("a No Order must say why, whoever dialled", async () => {
+    /* Six quick notes carried this and could not: they are multi-select, and a
+       figure built by counting chips two of which can be tapped at once is one
+       nobody can add up. */
+    const customer = await makeCustomer(priya.id);
+    const bare = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: addDays(TODAY, 5),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(bare.ok, false);
+    assert.equal(bare.fieldErrors?.[0].field, "outcomeDetail.whyNoOrder");
+
+    const coded = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "credit_issue" },
+      noOrderNextCallDate: addDays(TODAY, 5),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(coded.ok, true, coded.ok ? "" : coded.error);
+    const [row] = await db
+      .select()
+      .from(calls)
+      .where(eq(calls.id, coded.ok ? coded.data.interactionId : ""));
+    /* Which is what makes "how many did we lose on credit terms this quarter"
+       a question somebody can ask rather than a grep over free text. */
+    assert.equal(row.outcomeDetail?.whyNoOrder, "credit_issue");
+  });
+
+  test("an invented reason code is refused", async () => {
+    const customer = await makeCustomer(priya.id);
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "they_were_rude" },
+      noOrderNextCallDate: addDays(TODAY, 5),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, false, "a picker is not a permission");
+    assert.equal(r.fieldErrors?.[0].field, "outcomeDetail.whyNoOrder");
+  });
+
+  test("a No Answer stamps which attempt it was, off the queue's own ladder", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    const attempts: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await saveInteraction({
+        customerId: customer.id,
+        interactionType: "outbound_call",
+        outcome: "no_answer",
+        outcomeDetail: { whyNoAnswer: "switched_off" },
+        idempotencyKey: randomUUID(),
+      });
+      assert.equal(r.ok, true, r.ok ? "" : r.error);
+      const [row] = await db
+        .select()
+        .from(calls)
+        .where(eq(calls.id, r.ok ? r.data.interactionId : ""));
+      attempts.push(row.callAttempt!);
+    }
+    assert.deepEqual(attempts, [1, 2, 3]);
+
+    /* And it is a STAMP, not a read: the ladder resets the moment somebody
+       answers, so a call logged as attempt 3 would read as attempt 0 a week
+       later and the one question this outcome exists to answer would have no
+       answer left anywhere. */
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "casual_talk",
+      idempotencyKey: randomUUID(),
+    });
+    const stamped = await db
+      .select()
+      .from(calls)
+      .where(and(eq(calls.customerId, customer.id), eq(calls.outcome, "no_answer")));
+    assert.deepEqual(
+      stamped.map((c) => c.callAttempt).sort(),
+      [1, 2, 3],
+      "an answered call must not rewrite what earlier calls were told",
+    );
+  });
+
+  test("a customer who asks not to be called again is marked, once", async () => {
+    /* `do_not_contact` outranks every reason the queue can produce, including a
+       reminder — the single most consequential thing this panel can write. */
+    const customer = await makeCustomer(priya.id);
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "not_interested",
+      outcomeDetail: {
+        whyNotInterested: "permanently_not_interested",
+        futureOpportunity: "never",
+      },
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.ok(r.ok && r.data.produced.includes("do-not-contact"));
+
+    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(row.doNotContact, true);
+  });
+
+  test("and it is never lifted by a later call saying otherwise", async () => {
+    /* The other two answers are this call's verdict. A customer who asked to be
+       left alone last year did not change their mind by being marked "possible
+       later" today — lifting it is a deliberate act on the record, where
+       somebody can see what they are undoing. */
+    const customer = await makeCustomer(priya.id);
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "not_interested",
+      outcomeDetail: { whyNotInterested: "other", futureOpportunity: "never" },
+      idempotencyKey: randomUUID(),
+    });
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "not_interested",
+      outcomeDetail: {
+        whyNotInterested: "price_too_high",
+        futureOpportunity: "possible_later",
+        recallDate: addDays(TODAY, 30),
+      },
+      idempotencyKey: randomUUID(),
+    });
+    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(row.doNotContact, true);
+  });
+
+  test("a later they named becomes a reminder", async () => {
+    /* "Possible later" with no date is the state that makes a lapsed customer
+       invisible for ever — nothing brings them back. */
+    const customer = await makeCustomer(priya.id);
+
+    const undated = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "not_interested",
+      outcomeDetail: {
+        whyNotInterested: "no_requirement",
+        futureOpportunity: "possible_later",
+      },
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(undated.ok, false);
+    assert.equal(undated.fieldErrors?.[0].field, "outcomeDetail.recallDate");
+
+    const dated = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "not_interested",
+      outcomeDetail: {
+        whyNotInterested: "buying_competitor",
+        competitorName: "Asian Paints",
+        futureOpportunity: "possible_later",
+        recallDate: addDays(TODAY, 30),
+      },
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(dated.ok, true, dated.ok ? "" : dated.error);
+    const [rem] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.customerId, customer.id));
+    assert.match(rem.note ?? "", /Asian Paints/, "the competitor rides on the note");
+  });
+
+  test("an answer from a branch they answered their way out of is dropped", async () => {
+    const customer = await makeCustomer(priya.id);
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "not_interested",
+      outcomeDetail: {
+        whyNotInterested: "no_requirement",
+        /* Belongs to "buying from a competitor". Kept, it would store a
+           competitor against a customer who said they have no requirement. */
+        competitorName: "Asian Paints",
+        futureOpportunity: "no",
+        /* Belongs to "possible later". */
+        recallDate: addDays(TODAY, 30),
+      },
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const [row] = await db
+      .select()
+      .from(calls)
+      .where(eq(calls.id, r.ok ? r.data.interactionId : ""));
+    assert.equal(row.outcomeDetail?.competitorName, undefined);
+    assert.equal(row.outcomeDetail?.recallDate, undefined);
+    /* And nothing was scheduled off a date nobody meant. */
+    const rems = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.customerId, customer.id));
+    assert.equal(rems.length, 0);
+  });
+
+  test("what the customer wants done routes the complaint", async () => {
+    /* `assigned_to` has defaulted to "Operations" on every complaint ever
+       raised, which is not a routing decision but the absence of one. */
+    const customer = await makeCustomer(priya.id);
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "shortage",
+      complaintDescription: "Two drums short on the last consignment",
+      outcomeDetail: { requiredAction: "credit_note" },
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const [cmp] = await db
+      .select()
+      .from(complaints)
+      .where(eq(complaints.id, r.ok ? r.data.complaintId! : ""));
+    assert.equal(cmp.requiredAction, "credit_note");
+    assert.equal(cmp.assignedTo, "Accounts", "a credit note is accounts' work");
+    /* The severity is deliberately NOT asserted here: the priority that sets it
+       is PR #358's, and until that lands a complaint keeps the configured
+       default exactly as it always did. */
+  });
+
+  test("an inbound call must say who rang and why", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    const noRole = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callReason: "price_quotation",
+      reasonDetail: { product: "Nano Thinner 20L" },
+      outcome: "follow_up",
+      outcomeDetail: { followUpReason: "call_next_week" },
+      followUpDate: addDays(TODAY, 3),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(noRole.ok, false);
+    assert.equal(noRole.fieldErrors?.[0].field, "callerRole");
+
+    const noReason = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "purchase",
+      outcome: "follow_up",
+      outcomeDetail: { followUpReason: "call_next_week" },
+      followUpDate: addDays(TODAY, 3),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(noReason.ok, false);
+    assert.equal(noReason.fieldErrors?.[0].field, "callReason");
+  });
+
+  test("an outbound call is not asked, and is refused if it answers", async () => {
+    /* Its reason is already recorded — it is whatever the queue put the
+       customer in front of us for — and a second answer is free to disagree
+       with the first. Nothing on any screen can send this, so anything that
+       arrives came from something other than the form. */
+    const customer = await makeCustomer(priya.id);
+
+    const plain = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "casual_talk",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(plain.ok, true, plain.ok ? "" : plain.error);
+
+    const answered = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      callReason: "price_quotation",
+      outcome: "casual_talk",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(answered.ok, false);
+    assert.equal(answered.fieldErrors?.[0].field, "callReason");
+  });
+
+  test("a reason's mandatory answer is enforced on the server", async () => {
+    /* The form draws its boxes from `reasonFieldsFor` and the server validates
+       against the same function. A price enquiry with no product named is a
+       note saying somebody rang about a price, which is what it exists to
+       stop. */
+    const customer = await makeCustomer(priya.id);
+
+    const bare = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "purchase",
+      callReason: "price_quotation",
+      outcome: "follow_up",
+      outcomeDetail: { followUpReason: "call_next_week" },
+      followUpDate: addDays(TODAY, 2),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(bare.ok, false);
+    assert.equal(bare.fieldErrors?.[0].field, "reasonDetail.product");
+  });
+
+  test("the detail is stored, and detail from another reason is dropped", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "owner",
+      callerName: "Mr Shah",
+      callReason: "price_quotation",
+      reasonDetail: {
+        product: "Nano Thinner 20L",
+        expectedPrice: "Paying 132 now",
+        quotationRequired: "yes",
+        /* A field belonging to a reason they changed off. Kept, it would store
+           an answer to a question this call never asked. */
+        issue: "damaged",
+      },
+      outcome: "follow_up",
+      outcomeDetail: { followUpReason: "call_next_week" },
+      followUpDate: addDays(TODAY, 2),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const [row] = await db
+      .select()
+      .from(calls)
+      .where(eq(calls.id, r.ok ? r.data.interactionId : ""));
+    assert.equal(row.callerRole, "owner");
+    assert.equal(row.callerName, "Mr Shah");
+    assert.equal(row.callReason, "price_quotation");
+    assert.equal(row.reasonDetail?.product, "Nano Thinner 20L");
+    assert.equal(row.reasonDetail?.quotationRequired, "yes");
+    assert.equal(
+      row.reasonDetail?.issue,
+      undefined,
+      "a field from another reason must not ride along",
+    );
+  });
+
+  test("a next action must belong to the reason it was given under", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    const stray = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "store",
+      callReason: "price_quotation",
+      reasonDetail: { product: "Nano Thinner 20L" },
+      /* Belongs to Stock Availability. A picker is not a permission. */
+      nextActions: ["arrange_stock"],
+      outcome: "follow_up",
+      outcomeDetail: { followUpReason: "call_next_week" },
+      followUpDate: addDays(TODAY, 2),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(stray.ok, false);
+    assert.equal(stray.fieldErrors?.[0].field, "nextActions");
+  });
+
+  test("a dated next action becomes a reminder, and an undated one is refused", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    const undated = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "purchase",
+      callReason: "price_quotation",
+      reasonDetail: { product: "Nano Thinner 20L" },
+      nextActions: ["send_quotation"],
+      outcome: "casual_talk",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(undated.ok, false, "a quotation with no day is how a call is forgotten");
+    assert.equal(undated.fieldErrors?.[0].field, "nextActionDate");
+
+    const due = addDays(TODAY, 2);
+    const dated = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "purchase",
+      callReason: "price_quotation",
+      reasonDetail: { product: "Nano Thinner 20L" },
+      nextActions: ["send_quotation"],
+      nextActionDate: due,
+      outcome: "casual_talk",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(dated.ok, true, dated.ok ? "" : dated.error);
+    assert.ok(dated.ok && dated.data.produced.includes("reminder"));
+
+    const [rem] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.customerId, customer.id));
+    assert.equal(rem.type, "send_information", "the errand is not a call-back");
+    assert.match(rem.note ?? "", /quotation/i, "the note says what, not 'follow up'");
+  });
+
+  test("an action that needs no date refuses one", async () => {
+    /* "Payment already made" is a statement about the past, and a date beside
+       it is a question nobody can answer. */
+    const customer = await makeCustomer(priya.id);
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "accounts",
+      callReason: "payment_outstanding",
+      reasonDetail: { customerQuery: "Says the transfer went on Monday" },
+      nextActions: ["payment_already_made"],
+      nextActionDate: addDays(TODAY, 3),
+      outcome: "casual_talk",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.fieldErrors?.[0].field, "nextActionDate");
+  });
+
+  test("a payment date in the past is refused", async () => {
+    /* Both other date fields on this form rejected the past and this one did
+       not, so a mistyped year produced a reminder already overdue — which puts
+       the customer at the strongest tier in the queue the next morning, for a
+       promise they had just made. */
+    const customer = await makeCustomer(priya.id);
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "accounts",
+      callReason: "payment_outstanding",
+      reasonDetail: { customerQuery: "Confirming the cheque" },
+      outcome: "payment_promised",
+      paymentPromiseDate: addDays(TODAY, -3),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.fieldErrors?.[0].field, "paymentPromiseDate");
+  });
+
+  test("an opportunity is recorded, valued in paise, and lands on the record", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "owner",
+      callReason: "product_enquiry",
+      reasonDetail: { product: "PU Clear", application: "Furniture topcoat" },
+      nextActions: ["send_brochure"],
+      nextActionDate: addDays(TODAY, 1),
+      opportunity: {
+        product: "PU Clear 20L",
+        estimatedQuantity: "About 15 cans a month",
+        estimatedValueRupees: 40_000,
+        expectedOrderDate: addDays(TODAY, 20),
+      },
+      outcome: "follow_up",
+      outcomeDetail: { followUpReason: "call_next_week" },
+      followUpDate: addDays(TODAY, 5),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.ok(r.ok && r.data.produced.includes("opportunity"));
+
+    const [{ n, value }] = await db.execute<{ n: number; value: number }>(sql`
+      select count(*)::int as n, max(estimated_value_paise)::bigint as value
+        from call_opportunities where customer_id = ${customer.id}
+    `);
+    assert.equal(Number(n), 1);
+    assert.equal(Number(value), 40_000_00, "rupees in, paise stored");
+
+    /* It has no worklist of its own yet, so the customer record is where it is
+       actually read. A record nobody can see is a record nobody acts on. */
+    const counts = await customerTimelineCounts(customer.id);
+    assert.equal(counts.Opportunity, 1);
+    const page = await customerTimeline(customer.id, { kind: "Opportunity" });
+    assert.match(page.entries[0].content, /PU Clear 20L/);
+  });
+
+  test("no opportunity means no row, not an empty one", async () => {
+    /* "No" is the absence of a record rather than one with nothing in it —
+       there is nothing to chase. */
+    const customer = await makeCustomer(priya.id);
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "store",
+      callReason: "followup_previous",
+      outcome: "casual_talk",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const [{ n }] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from call_opportunities where customer_id = ${customer.id}
+    `);
+    assert.equal(Number(n), 0);
+  });
+
   test("an inbound complaint on an existing open one updates rather than duplicates", async () => {
     const customer = await makeCustomer(priya.id);
 
     const first = await saveInteraction({
       customerId: customer.id,
       interactionType: "inbound_call",
+      callerRole: "store",
+      callReason: "complaint",
       outcome: "complaint",
+      outcomeDetail: { requiredAction: "replacement" },
       complaintCategory: "delivery",
       notes: "Consignment short by two drums",
       idempotencyKey: randomUUID(),
@@ -2024,7 +2737,10 @@ describe("Journey 8 - the interaction log", () => {
     const again = await saveInteraction({
       customerId: customer.id,
       interactionType: "inbound_call",
+      callerRole: "store",
+      callReason: "complaint",
       outcome: "complaint",
+      outcomeDetail: { requiredAction: "replacement" },
       complaintCategory: "delivery",
       notes: "Still not resolved",
       idempotencyKey: randomUUID(),
@@ -2086,6 +2802,7 @@ describe("Journey 9 - the Information tab", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       // No date was recorded on these calls, which is now said explicitly.
       noOrderNoCommitment: true,
       idempotencyKey: randomUUID(),
@@ -2360,6 +3077,7 @@ describe("Journey 9 - the Information tab", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       // No date was recorded on these calls, which is now said explicitly.
       noOrderNoCommitment: true,
       quickNoteIds: [retired.id],
@@ -2389,27 +3107,43 @@ describe("Journey 9 - the Information tab", () => {
     );
   });
 
-  test("the No Order form offers the six reasons, and only the six", async () => {
-    const offered = await db
-      .select()
-      .from(quickNotesTable)
-      .where(
-        and(
-          eq(quickNotesTable.outcome, "no_order"),
-          eq(quickNotesTable.active, true),
-        ),
-      );
-    assert.deepEqual(
-      offered.map((n) => n.label).sort(),
-      [
-        "Business slow",
-        "Buying elsewhere",
-        "Not interested",
-        "Price issue",
-        "Stock sufficient",
-        "Will order later",
-      ],
-    );
+  test("No Order asks its reason ONCE, not twice", async () => {
+    /*
+     * It used to offer six single-select chips — "Price issue", "Stock
+     * sufficient", "Buying elsewhere" — and it now asks a coded question with
+     * ten options that mean the same things. Keeping both made the telecaller
+     * answer the same question twice and let the two DISAGREE: a call coded
+     * `price_issue` carrying a "Business slow" chip is a record nobody can read
+     * back, and neither half of it is wrong.
+     *
+     * Deactivated rather than deleted, so the ids on interactions already
+     * logged still resolve to words a person can read.
+     */
+    for (const direction of ["outbound_call", "inbound_call"] as const) {
+      const offered = await db
+        .select()
+        .from(quickNotesTable)
+        .where(
+          and(
+            eq(quickNotesTable.interactionType, direction),
+            eq(quickNotesTable.outcome, "no_order"),
+            eq(quickNotesTable.active, true),
+          ),
+        );
+      assert.deepEqual(offered, [], `${direction} still offers chips as well`);
+    }
+
+    /* The ten are the answer, and they cover every word the chips carried. */
+    const codes: string[] = NO_ORDER_REASONS.map((r) => r.code);
+    for (const covered of [
+      "price_issue",
+      "stock_available",
+      "buying_elsewhere",
+      "business_slow",
+      "will_order_later",
+    ]) {
+      assert.ok(codes.includes(covered), `${covered} was lost with the chips`);
+    }
   });
 });
 
@@ -2763,12 +3497,18 @@ describe("Complaints raised on a call we made", () => {
       outcome: "complaint" as const,
       complaintCategory: "product_quality" as const,
       complaintDescription: "Drum arrived dented and leaking.",
+      outcomeDetail: { requiredAction: "replacement" },
       notes: "Sounded genuinely annoyed.",
       idempotencyKey: randomUUID(),
     });
 
     const a = await saveInteraction({ ...args(outbound.id), interactionType: "outbound_call" });
-    const b = await saveInteraction({ ...args(inbound.id), interactionType: "inbound_call" });
+    const b = await saveInteraction({
+      ...args(inbound.id),
+      interactionType: "inbound_call",
+      callerRole: "owner",
+      callReason: "complaint",
+    });
     assert.equal(a.ok, true, a.ok ? "" : a.error);
     assert.equal(b.ok, true, b.ok ? "" : b.error);
 
@@ -2790,6 +3530,7 @@ describe("Complaints raised on a call we made", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "complaint",
+      outcomeDetail: { requiredAction: "replacement" },
       complaintCategory: "billing_issue",
       complaintDescription: "Charged for a drum that never arrived.",
       complaintRequestCn: false,
@@ -2813,6 +3554,7 @@ describe("Complaints raised on a call we made", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "complaint",
+      outcomeDetail: { requiredAction: "replacement" },
       complaintCategory: "billing_issue",
       complaintDescription: "Short supply against last week's bill.",
       complaintRequestCn: true,
@@ -2845,6 +3587,7 @@ describe("Complaints raised on a call we made", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "complaint",
+      outcomeDetail: { requiredAction: "replacement" },
       complaintCategory: "shortage",
       complaintDescription: "Two drums short on the last delivery.",
       complaintRequestCn: true,
@@ -3337,6 +4080,7 @@ describe("Who the Call Log puts in front of a telecaller", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       // No date was recorded on these calls, which is now said explicitly.
       noOrderNoCommitment: true,
       notes: "Still has stock",
@@ -3356,7 +4100,9 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     );
     const held = after.suppressed.find((x) => x.customerId === customer.id);
     assert.ok(held, "and the telecaller can see why");
-    assert.match(held.reason, /asking again in/);
+    // The cooldown silences the ASK now rather than the customer, so it says
+    // what it is holding back rather than when it will ask again.
+    assert.match(held.reason, /no order chased for \d+ more day/);
   });
 
   test("a promised callback beats both the quiet window and the cooldown", async () => {
@@ -3369,6 +4115,7 @@ describe("Who the Call Log puts in front of a telecaller", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "follow_up",
+      outcomeDetail: { followUpReason: "call_next_week" },
       followUpDate: TODAY,
       notes: "Asked us to ring back today about the rate",
       sourceModule: "call_queue",
@@ -3684,6 +4431,7 @@ describe("Cross-cutting rules", () => {
       customerId: customer.id,
       interactionType: "outbound_call" as const,
       outcome: "no_order" as const,
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       notes: "Asked us to call back next week",
       // The note says they asked for next week, so the date is recorded.
       noOrderNextCallDate: addDays(TODAY, 7),
@@ -3723,6 +4471,7 @@ describe("Cross-cutting rules", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       // No date was recorded on these calls, which is now said explicitly.
       noOrderNoCommitment: true,
       notes: "Will confirm quantities tomorrow",
@@ -5699,6 +6448,7 @@ describe("figures over a span of days", () => {
       userId: rakesh.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       startedAt: new Date(`${TODAY}T11:00:00+05:30`),
     });
 
@@ -7478,6 +8228,7 @@ describe("No order, and when we ring back", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       idempotencyKey: randomUUID(),
     });
     assert.equal(r.ok, false, "a no-order call saved without saying when to call back");
@@ -7494,6 +8245,7 @@ describe("No order, and when we ring back", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNextCallDate: when,
       idempotencyKey: randomUUID(),
     });
@@ -7514,6 +8266,7 @@ describe("No order, and when we ring back", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNoCommitment: true,
       idempotencyKey: randomUUID(),
     });
@@ -7533,6 +8286,7 @@ describe("No order, and when we ring back", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNextCallDate: addDays(TODAY, -1),
       idempotencyKey: randomUUID(),
     });
@@ -7542,6 +8296,7 @@ describe("No order, and when we ring back", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNextCallDate: addDays(TODAY, 3),
       noOrderNoCommitment: true,
       idempotencyKey: randomUUID(),
@@ -7580,6 +8335,7 @@ describe("The next call reaches the lists a telecaller works from", () => {
       customerId: called.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNextCallDate: when,
       idempotencyKey: randomUUID(),
     });
@@ -7610,6 +8366,7 @@ describe("The next call reaches the lists a telecaller works from", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNextCallDate: addDays(TODAY, 3),
       idempotencyKey: randomUUID(),
     });
@@ -7617,6 +8374,7 @@ describe("The next call reaches the lists a telecaller works from", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNextCallDate: addDays(TODAY, 20),
       idempotencyKey: randomUUID(),
     });
@@ -7638,6 +8396,7 @@ describe("The next call reaches the lists a telecaller works from", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNextCallDate: addDays(TODAY, 6),
       idempotencyKey: randomUUID(),
     });
@@ -7664,6 +8423,7 @@ describe("The next call reaches the lists a telecaller works from", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNoCommitment: true,
       idempotencyKey: randomUUID(),
     });
@@ -7684,6 +8444,7 @@ describe("What the telecaller was told would happen next", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNextCallDate: when,
       idempotencyKey: randomUUID(),
     });
@@ -7727,6 +8488,7 @@ describe("What the telecaller was told would happen next", () => {
       customerId: customer.id,
       interactionType: "outbound_call" as const,
       outcome: "no_order" as const,
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNextCallDate: addDays(TODAY, 9),
       idempotencyKey: key,
     };
@@ -7756,6 +8518,7 @@ describe("What the telecaller was told would happen next", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      outcomeDetail: { whyNoOrder: "will_order_later" },
       noOrderNoCommitment: true,
       idempotencyKey: randomUUID(),
     });

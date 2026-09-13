@@ -1,11 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { NavLink } from "./nav-link";
 import { NAV, type NavGroup } from "./nav";
 import { Icon } from "./icons";
 import { cx } from "@/components/ui/primitives";
-import { signOut } from "@/lib/actions/auth";
+import { AccountMenu } from "./account-menu";
 import type { User } from "@/db/schema";
 
 export function Sidebar({
@@ -52,15 +52,12 @@ export function Sidebar({
                       : 0;
 
               return (
-                <Link
+                <NavLink
                   key={item.href}
                   href={item.href}
-                  // The sidebar is on every screen and every item is always
-                  // in view, so the default prefetch fires a full render of
-                  // every destination on every navigation. On the one shared
-                  // vCPU this app runs on, that self-inflicted burst is what
-                  // was delaying the page actually being waited for.
-                  prefetch={false}
+                  // Prefetched on hover rather than on sight, and only now
+                  // that `crm/loading.tsx` exists — see nav-link.tsx for why
+                  // both halves of that sentence are load bearing.
                   title={collapsed ? item.label : undefined}
                   className={cx(
                     "mb-0.5 flex h-9 items-center gap-2.5 rounded-[4px] px-2.5 text-sm no-underline hover:no-underline",
@@ -89,38 +86,21 @@ export function Sidebar({
                       ) : null}
                     </>
                   ) : null}
-                </Link>
+                </NavLink>
               );
             })}
           </div>
         ))}
       </nav>
 
-      <div className="flex flex-none items-center gap-2.5 border-t border-divider px-3 py-2.5">
-        <span className="flex h-7.5 w-7.5 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
-          {user.initials}
-        </span>
-        {!collapsed ? (
-          <>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] leading-4 font-medium text-ink">
-                {user.name}
-              </span>
-              <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                {user.role}
-              </span>
-            </span>
-            <form action={signOut}>
-              <button
-                type="submit"
-                title="Sign out"
-                className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-              >
-                <Icon name="signOut" size={16} />
-              </button>
-            </form>
-          </>
-        ) : null}
+      {/*
+        The chip is the account menu now, not a label with a sign-out icon
+        stuck to it — see `AccountMenu`. Collapsed, the avatar is the trigger:
+        the rail used to draw the chip and hide every control on it, so a
+        collapsed sidebar had no way to sign out at all.
+      */}
+      <div className="flex flex-none items-center border-t border-divider px-2 py-2">
+        <AccountMenu user={user} variant="sidebar" collapsed={collapsed} />
       </div>
     </aside>
   );

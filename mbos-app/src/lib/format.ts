@@ -275,3 +275,19 @@ export function initialsOf(name: string): string {
     .map((p) => p[0]!.toUpperCase())
     .join('');
 }
+
+/**
+ * 09:41 — a time of day, in the handset's own zone.
+ *
+ * One copy, because there were three: the route screen, the attendance screen
+ * and the status strip each carried the same six lines, and the only thing
+ * separating them was that one of them handled null. Three identical helpers
+ * are three places for a formatting decision to be made differently the day
+ * somebody wants seconds, or a twelve-hour clock, or a dash where there is no
+ * answer — and the one that drifts is always the one somebody is reading.
+ */
+export function hhmm(ms: number | null): string {
+  if (ms == null) return '—';
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}

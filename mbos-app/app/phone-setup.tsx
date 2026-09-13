@@ -293,7 +293,7 @@ export default function PhoneSetupScreen() {
 
       {readiness?.mayCheckIn ? (
         <PrimaryButton
-          label="All set — go back and start the day"
+          label="All set — go back and punch in"
           onPress={back.go}
           style={{ marginTop: 16, borderRadius: radius.xl }}
         />

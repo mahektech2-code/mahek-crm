@@ -26,14 +26,14 @@ export const metadata = { title: "Attendance — Sales Dashboard — MahekOne" }
  *
  * **This is not the sign-in log.** MahekOne's `attendance` table is a misnomer
  * kept until the real thing took it — it records that somebody opened the app,
- * from home, on a phone, at 2am. This is the check-in system, and on a screen
+ * from home, on a phone, at 2am. This is the punch-in system, and on a screen
  * a manager might pay somebody from, the difference is the whole point.
  *
  * Everybody appears, including those who never checked in. A missing row IS
  * the fact worth seeing, and a list of only the people who turned up cannot
  * answer the question the screen exists for.
  *
- * A check-in outside the permitted radius is FLAGGED and never blocked: a
+ * A punch-in outside the permitted radius is FLAGGED and never blocked: a
  * salesman who cannot mark attendance cannot work, so the handset lets him in
  * and records where he was.
  */
@@ -59,7 +59,7 @@ export default async function Page({
     <div className="p-6">
       <ScreenHeader
         title="Attendance"
-        subtitle={`Who started the day and from where. A check-in outside the permitted radius is flagged, never blocked — a salesman who cannot mark attendance cannot work. Photographs are kept for ${retentionWords(retentionHours)} and then deleted.`}
+        subtitle={`Who punched in and from where. A punch-in outside the permitted radius is flagged, never blocked — a salesman who cannot mark attendance cannot work. Photographs are kept for ${retentionWords(retentionHours)} and then deleted.`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
             <Link
@@ -89,7 +89,7 @@ export default async function Page({
 
       <MetricRow
         metrics={[
-          { label: "Checked in", value: `${inToday.length} of ${rows.length}` },
+          { label: "Punched in", value: `${inToday.length} of ${rows.length}` },
           {
             label: "Never started",
             value: String(missing.length),
@@ -103,7 +103,7 @@ export default async function Page({
           {
             label: "Still open",
             value: String(openDays.length),
-            sub: "no check-out yet",
+            sub: "no punch-out yet",
           },
           {
             label: "Corrections asked for",
@@ -234,9 +234,9 @@ export default async function Page({
       */}
       {rows.length ? (
         <p className="mt-3 text-[13px] text-muted">
-          A photograph is taken at every check-in and every check-out, and is
+          A photograph is taken at every punch-in and every punch-out, and is
           deleted {retentionWords(retentionHours)} after it reaches the office.
-          The check-in itself, its time and its place are kept — only the image
+          The punch-in itself, its time and its place are kept — only the image
           goes, so an older day shows when somebody arrived and no longer shows
           their face.
         </p>

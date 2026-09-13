@@ -115,6 +115,59 @@ export const interactionOutcomeEnum = pgEnum("interaction_outcome", [
 ]);
 
 /**
+ * WHO WAS ON THE OTHER END, as a job rather than a name.
+ *
+ * A price question from the owner and the same question from a store boy are
+ * different calls, and only one of them is worth a salesman's morning. There
+ * is no contact master to read this from — `customers.contact_person` is a
+ * single free-text field holding whoever last answered the phone — so it is
+ * asked on the call, and `caller_name` beside it is what a contact master
+ * would eventually be built out of.
+ */
+export const callerRoleEnum = pgEnum("caller_role", [
+  "owner",
+  "purchase",
+  "accounts",
+  "store",
+  "production",
+  "other",
+]);
+
+/**
+ * WHY THE CUSTOMER RANG — the question this module did not ask.
+ *
+ * `interaction_outcome` is how a call ENDED. This is what the customer wanted
+ * when they picked up the phone, and on an inbound call the two are routinely
+ * different: somebody rings to ask a price and the call ends as a follow-up.
+ * Collapsed onto the outcome, the first half was not recorded at all, and
+ * "how many people rang us about price this quarter" was a grep over free
+ * text rather than something anybody could count.
+ *
+ * NULL is the fourth answer and it is what let this ship: every call logged
+ * before the column existed carries none, and nothing backfills one. Guessing
+ * a reason from an outcome is a decision dressed up as a migration — the
+ * outcome is genuinely a different fact, so the guess would be wrong on
+ * exactly the calls this column exists to tell apart.
+ *
+ * Inbound only, for now. An outbound call's reason is whatever the queue put
+ * the customer in front of us for, which is already recorded as the queue
+ * reason — asking the telecaller to restate it would be a second answer that
+ * can disagree with the first.
+ */
+export const callReasonEnum = pgEnum("call_reason", [
+  "place_order",
+  "price_quotation",
+  "product_enquiry",
+  "stock_availability",
+  "payment_outstanding",
+  "delivery_transport",
+  "complaint",
+  "technical_support",
+  "followup_previous",
+  "other",
+]);
+
+/**
  * What kind of thing the next step is, kept apart from WHEN it is.
  *
  * `booked` is a date the customer is expecting and we owe them; `scheduled` is
@@ -303,6 +356,25 @@ export const reminderTypeEnum = pgEnum("reminder_type", [
   "send_information",
   "check_stock",
   "other",
+]);
+
+/**
+ * WHAT CLOSED A REMINDER, which is a different question from who.
+ *
+ * `person` is somebody pressing the button, which is now a capability rather
+ * than something everybody holds. The other three are evidence: a call in the
+ * interaction log, an order, a receipt accounts confirmed — and
+ * `closed_by_source_id` names that row, so the claim can be opened and read
+ * rather than taken on trust.
+ *
+ * Null on a row closed before this existed. Not backfilled to `person`:
+ * guessing is exactly what this column was added to stop.
+ */
+export const reminderClosureSourceEnum = pgEnum("reminder_closure_source", [
+  "person",
+  "call",
+  "order",
+  "payment",
 ]);
 
 export const complaintStatusEnum = pgEnum("complaint_status", [
@@ -1686,6 +1758,80 @@ export const calls = pgTable(
      */
     quickNoteIds: jsonb("quick_note_ids").$type<string[]>().notNull().default([]),
 
+    /* ------------------------------------------------- who rang, and why
+     *
+     * Both are INBOUND's, and both are null on every call logged before they
+     * existed. Nothing backfills either: a reason guessed from an outcome
+     * would be wrong on exactly the calls the column exists to tell apart,
+     * and a caller role guessed from `contact_person` would assert that the
+     * person who last answered is the person who rang this time.
+     */
+    callerRole: callerRoleEnum("caller_role"),
+    /** Free text beside the role — a role with no name cannot be rung back. */
+    callerName: text("caller_name"),
+    callReason: callReasonEnum("call_reason"),
+
+    /**
+     * The answers the chosen reason asked for, keyed by field.
+     *
+     * JSONB rather than thirteen columns because the questions differ per
+     * reason and most are null on any one row — a price enquiry's packaging
+     * and a delivery chase's issue code have nothing to do with each other,
+     * and a table of columns that are null 90% of the time is one nobody can
+     * read. What is NOT in here is anything that has to be counted across
+     * reasons or joined to: those are columns, above and below.
+     *
+     * `lib/call-reasons.ts` owns the shape and BOTH ends read it — the form
+     * draws from `reasonFieldsFor` and `saveInteraction` validates against the
+     * same function, so a box that is mandatory on the screen is mandatory in
+     * the rule.
+     */
+    reasonDetail: jsonb("reason_detail").$type<Record<string, string>>(),
+
+    /**
+     * WHAT SOMEBODY UNDERTOOK TO DO, as codes.
+     *
+     * A list rather than one value: "send the price and have the salesman call
+     * in" is one sentence a customer says and two things that have to happen,
+     * and storing the first would lose the second silently.
+     */
+    /**
+     * The answers the OUTCOME asked for, keyed by field.
+     *
+     * `reason_detail` above is inbound's "why did they ring"; this is "what
+     * does this ending need to record", and it applies to both directions.
+     * Same shape and same argument for jsonb over columns: the questions
+     * differ per outcome and most are null on any one row — a No Order's
+     * reason code and a complaint's priority have nothing to do with each
+     * other. It is still queryable (`outcome_detail->>'whyNoOrder'`), which is
+     * the whole point: "how many did we lose on credit terms this quarter" has
+     * to be a question somebody can ask.
+     *
+     * `lib/call-outcomes.ts` owns the shape and both ends read it.
+     */
+    outcomeDetail: jsonb("outcome_detail").$type<Record<string, string>>(),
+
+    /**
+     * WHICH ATTEMPT THIS WAS, on a No Answer.
+     *
+     * Stamped rather than derived on read, because it is the answer as it
+     * stood when the call was made — the same kind of mark as `next_step_*`
+     * beside it. `customers.no_answer_count` is the live counter the queue's
+     * own ladder reads and it is reset the moment somebody answers, so a call
+     * logged as "attempt 3" would read as attempt 0 a week later, and the one
+     * question this outcome exists to answer would have no answer left.
+     */
+    callAttempt: integer("call_attempt"),
+
+    nextActions: jsonb("next_actions").$type<string[]>().notNull().default([]),
+    /**
+     * The day it was undertaken FOR. Where one is given it becomes a reminder
+     * — the same mechanism a promised payment already uses rather than a
+     * second one beside it, so a next action cannot be a dropdown nobody acts
+     * on.
+     */
+    nextActionDate: date("next_action_date"),
+
     sourceModule: sourceModuleEnum("source_module").notNull().default("ad_hoc"),
     /** Where in the day's queue this fell, when it came from the queue. */
     queuePosition: integer("queue_position"),
@@ -1736,6 +1882,66 @@ export const calls = pgTable(
     index("calls_user_started_idx").on(t.userId, t.startedAt),
     index("calls_started_idx").on(t.startedAt),
     uniqueIndex("calls_idempotency_key").on(t.idempotencyKey),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+ * A SALES OPPORTUNITY THE CALL CREATED.
+ *
+ * Its own table and deliberately NOT a lead. A lead here is an account that
+ * has never ordered — about thirty places read `customers.kind` on exactly
+ * that understanding — so an opportunity spotted on a call with a customer of
+ * four years cannot be modelled as one without making every reader wrong. It
+ * is not a jsonb field on the call either: the whole point of asking is that
+ * somebody can later count what was spotted and what came of it, and an answer
+ * buried in a detail blob is one nobody queries.
+ *
+ * What it does NOT have yet is a screen of its own to be worked on. That is
+ * stated rather than hidden: every row also writes a `timeline_events` entry,
+ * so an opportunity lands on the customer record where the next person to read
+ * that account will see it, rather than sitting in a table nothing renders.
+ * A worklist is the obvious next thing to build on top; the record being
+ * honest is what makes building it possible.
+ *
+ * The value is PAISE like all money here, and it is what the telecaller was
+ * told — never derived. `products.priceSource` is still `unset` and
+ * `canValueOrders()` still answers no, so a figure computed from the catalogue
+ * would be an invention.
+ * ------------------------------------------------------------------------- */
+export const callOpportunities = pgTable(
+  "call_opportunities",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** The call it came out of. Every row has one — this is the only writer. */
+    callId: text("call_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+
+    /**
+     * What they might buy, in their words. Free text rather than a product id
+     * for the same reason `lead_requirement` is: resolving "thinner for a
+     * spray booth" to a SKU at capture is the telecaller guessing on the
+     * customer's behalf, mid-call.
+     */
+    product: text("product").notNull(),
+    /** Their words again — "about 20 cans a month" is a real answer. */
+    estimatedQuantity: text("estimated_quantity"),
+    /** Paise. Null means nobody put a number on it, which is not zero. */
+    estimatedValuePaise: bigint("estimated_value_paise", { mode: "number" }),
+    expectedOrderDate: date("expected_order_date"),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    index("call_opportunities_customer_idx").on(t.customerId),
+    index("call_opportunities_call_idx").on(t.callId),
   ],
 );
 
@@ -2490,6 +2696,18 @@ export const reminders = pgTable(
       .default(false),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     closedById: text("closed_by_id").references(() => users.id),
+    /**
+     * What closed it, and the row that is the evidence — see
+     * `lib/engines/reminder-closure.ts`. `closedById` still says WHO, which on
+     * an automatic closure is whoever made the call or took the order, not
+     * whoever tidied the list.
+     *
+     * No foreign key, like `callId` above it: the evidence lives in three
+     * different tables and a column that can point at any of them cannot
+     * constrain to one.
+     */
+    closedBy: reminderClosureSourceEnum("closed_by"),
+    closedBySourceId: text("closed_by_source_id"),
     closureNote: text("closure_note"),
     dismissReason: text("dismiss_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2521,6 +2739,20 @@ export const complaints = pgTable(
     /** Mandatory — the customer's own words. */
     description: text("description").notNull(),
     severity: severityEnum("severity").notNull().default("medium"),
+    /**
+     * WHAT THE CUSTOMER IS ASKING FOR — a replacement, a credit note, a visit.
+     *
+     * A code from `COMPLAINT_ACTIONS`, and it is what ROUTES the complaint:
+     * `assigned_to` below has defaulted to "Operations" on every complaint ever
+     * raised, which is not a routing decision but the absence of one. The desk
+     * is derived from this rather than asked as a second question the
+     * telecaller has no way to answer.
+     *
+     * Null on every complaint raised before it was asked. Nothing backfills
+     * one: guessing what a customer wanted from a category is a decision
+     * dressed up as a migration.
+     */
+    requiredAction: text("required_action"),
     assignedTo: text("assigned_to").notNull().default("Operations"),
     status: complaintStatusEnum("status").notNull().default("open"),
     relatedBillId: text("related_bill_id"),
@@ -5734,6 +5966,20 @@ export const mbosTravelModes = pgTable(
     requiresOdometer: boolean("requires_odometer").notNull().default(false),
     /** A ticket: the salesman is asked what it cost and for the ticket. */
     requiresTicket: boolean("requires_ticket").notNull().default(false),
+    /**
+     * `day` | `leg` | `both` — WHERE this mode is offered.
+     *
+     * The vehicle is a fact about the SESSION: he punches in on his bike and
+     * punches out on it, and asking again at every shop got the same answer
+     * eleven times and twenty-two meter photographs for one ride he never got
+     * off. Only `public_transport` leaves a question open, because the bus,
+     * the auto and the taxi genuinely change leg to leg — it is the day-level
+     * umbrella and its children are the `leg` rows.
+     *
+     * `walking` is the only `both`: it is a way to spend a day and a way to
+     * reach the next shop on a day spent on buses.
+     */
+    scope: text("scope").notNull().default("leg"),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -5911,7 +6157,14 @@ export const mbosTravelLegs = pgTable(
 
     note: text("note"),
     /**
-     * `day_log` | `visit` — and it decides what may be DEMANDED of the leg.
+     * `day_log` | `visit` | `session` — and it decides what may be DEMANDED.
+     *
+     * A SESSION leg runs from a punch-in to the matching punch-out and carries
+     * the two meter readings the day is priced on. It is a leg rather than a
+     * pair of columns on the attendance row so the policy engine prices it
+     * with everything else: one table, one per-km rule, one figure for the
+     * day. It is the strictest of the three — the app is present at both ends,
+     * so both readings and both photographs are required.
      *
      * A day-log leg is typed on `/travel` from memory once the journey is
      * over, so the photograph is optional and always will be: refusing to
@@ -5922,6 +6175,22 @@ export const mbosTravelLegs = pgTable(
      * reason asking at the moment of travelling is worth the two taps.
      */
     origin: text("origin").notNull().default("day_log"),
+    /**
+     * Movement, recorded, and NOT a second claim for the same kilometres.
+     *
+     * On an own-vehicle session the money comes from the session leg's own
+     * meter pair — one at the punch-in, one at the punch-out. The visits still
+     * open legs, because the arrival gate, the navigation and the record of
+     * where he actually went all hang off one, and pricing those as well would
+     * pay per-km twice over a single ride: once on the meter and once on the
+     * GPS trail.
+     *
+     * The reason is stored ON the row rather than re-derived, because a leg
+     * excluded from a claim by a rule nobody can read off the record is how an
+     * expense argument becomes unanswerable six weeks later.
+     */
+    claimExcluded: boolean("claim_excluded").notNull().default(false),
+    claimExcludedReason: text("claim_excluded_reason"),
   },
   (t) => [
     index("mbos_travel_legs_user_idx").on(t.userId, t.startedAt.desc()),

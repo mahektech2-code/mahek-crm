@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, ne, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   calls,
@@ -58,6 +58,16 @@ export type QueueRow = QueueResult["entries"][number] & {
   lastOrderValue: number;
   creditTermDays: number;
   openComplaint: string | null;
+  /**
+   * How many times in a row we have rung and nobody answered.
+   *
+   * Carried onto the row so the call panel can say "this is the third attempt"
+   * on a No Answer without asking the server a second time — and, more to the
+   * point, without counting it itself. The queue's own ladder is built on this
+   * number; a second count in a screen is how the badge and the record come to
+   * disagree about whether somebody has been tried three times.
+   */
+  noAnswerCount: number;
   lastNote: string | null;
 };
 
@@ -181,18 +191,7 @@ async function queueInputs(
        * path that reaches the customer, and one missed reset leaves somebody
        * permanently unreachable.
        */
-      noAnswerCount: sql<number>`(
-        select count(*)::int from ${calls} c
-         where c.customer_id = customers.id
-           and c.interaction_type = 'outbound_call'
-           and c.outcome = 'no_answer'
-           and c.started_at > coalesce((
-             select c2.started_at from ${calls} c2
-              where c2.customer_id = customers.id
-                and c2.outcome is not null and c2.outcome <> 'no_answer'
-              order by c2.started_at desc limit 1
-           ), '-infinity'::timestamptz)
-      )`,
+      noAnswerCount: consecutiveNoAnswerSql(sql`customers.id`),
       /* The instant, not the date: the first retry is an hour later. */
       lastNoAnswerAt: sql<string | null>`(
         select to_char(c.started_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
@@ -362,6 +361,41 @@ async function queueInputs(
  * Null when there is nothing to answer about — a deactivated customer, or one
  * that has gone since the call was logged.
  */
+/**
+ * HOW MANY TIMES IN A ROW WE HAVE RUNG AND NOBODY ANSWERED.
+ *
+ * Counted rather than stored: a column would have to be reset by every path
+ * that reaches the customer, and one missed reset leaves somebody permanently
+ * unreachable. The window is "since the last call that ended in anything else",
+ * which is what makes an answered call clear the ladder without a reset step.
+ *
+ * It is a FRAGMENT taking the customer-id expression rather than two copies of
+ * the same query, because the queue asks it of every row at once — correlated
+ * against `customers.id` — while `saveInteraction` asks it of one known
+ * customer in order to stamp which attempt a No Answer was. Two spellings of
+ * one ladder is two answers to "is this the third time", and the screens would
+ * disagree with the record.
+ *
+ * The outer column is written out in full (`customers.id`, not a Drizzle
+ * reference) because Drizzle renders `${customers.id}` as a bare `"id"`, which
+ * inside a correlated subquery binds to the INNER table and silently makes the
+ * condition false.
+ */
+export function consecutiveNoAnswerSql(customerId: SQL | string) {
+  return sql<number>`(
+    select count(*)::int from ${calls} c
+     where c.customer_id = ${customerId}
+       and c.interaction_type = 'outbound_call'
+       and c.outcome = 'no_answer'
+       and c.started_at > coalesce((
+         select c2.started_at from ${calls} c2
+          where c2.customer_id = ${customerId}
+            and c2.outcome is not null and c2.outcome <> 'no_answer'
+          order by c2.started_at desc limit 1
+       ), '-infinity'::timestamptz)
+  )`;
+}
+
 export async function nextStepForCustomer(
   customerId: string,
 ): Promise<NextStep | null> {
@@ -620,6 +654,11 @@ export async function getQueue(): Promise<QueueView> {
 
   // Re-attach the customer detail the screen and call panel need. The scan
   // already read these rows, so this costs nothing extra.
+  /* The candidate carries the derived figures the customer row does not —
+     among them the no-answer ladder's own count, which the call panel prints
+     on a No Answer rather than counting a second time. */
+  const candidateById = new Map(candidates.map((x) => [x.customerId, x]));
+
   const entries: QueueRow[] = result.entries.map((e) => {
     const row = detail.get(e.customerId)!;
     const c = row.customer;
@@ -643,6 +682,7 @@ export async function getQueue(): Promise<QueueView> {
       lastOrderValue: c.lastOrderValue,
       creditTermDays: c.creditTermDays,
       openComplaint: row.openComplaint,
+      noAnswerCount: candidateById.get(e.customerId)?.noAnswerCount ?? 0,
       lastNote: row.lastNote,
     };
   });
@@ -683,6 +723,48 @@ export async function getQueue(): Promise<QueueView> {
     scopeLabel:
       ctx.scope.kind === "own" ? `${ctx.user.name}'s book` : "Whole team",
   };
+}
+
+/**
+ * ONE CUSTOMER, ready to be called, whether or not the queue ranked them
+ * today.
+ *
+ * The Reminders screen's Call button lands on the Call Log with a customer
+ * named, and that customer is routinely not on the list: they were called this
+ * morning, or held back by a cooldown, or sit past `queue.maxSizePerUser`. The
+ * promise is owed to them regardless, so the panel opens with what the record
+ * itself can supply and no queue reason attached — because there is none, and
+ * inventing one would put a sentence in front of a telecaller that nothing
+ * decided.
+ *
+ * Out of scope answers the same as missing, exactly as the attachment endpoint
+ * does: a screen that distinguishes the two is a way to find out who somebody
+ * else's customers are.
+ */
+export async function adHocCallTarget(customerId: string) {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+
+  const [row] = await db
+    .select({
+      id: customers.id,
+      name: customers.name,
+      contactPerson: customers.contactPerson,
+      phone: customers.phone,
+      city: customers.city,
+      kind: customers.kind,
+      outstanding: customers.outstanding,
+      lastOrderDate: customers.lastOrderDate,
+      lastOrderValue: customers.lastOrderValue,
+      creditTermDays: customers.creditTermDays,
+      ownerName: sql<
+        string | null
+      >`(select name from users u where u.id = customers.owner_id)`,
+    })
+    .from(customers)
+    .where(and(eq(customers.id, customerId), scopedToUsers(ids)));
+
+  return row ?? null;
 }
 
 /** Everything the call panel needs for one queue customer. */

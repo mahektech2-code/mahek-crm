@@ -641,7 +641,7 @@ export default function Customers() {
           salesman is the one who can do something about it. */}
       {noFix && originMode === 'me' ? (
         <Text style={[type.caption, { marginTop: 4, color: C.muted }]}>
-          {'No location fix yet, so this is A–Z for now. Check in, or pick a city.'}
+          {'No location fix yet, so this is A–Z for now. Punch in, or pick a city.'}
         </Text>
       ) : null}
 
