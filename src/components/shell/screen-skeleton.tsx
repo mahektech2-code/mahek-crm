@@ -89,6 +89,31 @@ export function DashboardSkeleton() {
   return (
     <div className="flex flex-col gap-5 p-6" aria-hidden="true">
       <HeaderBlock />
+      <DashboardFigureBlocks />
+    </div>
+  );
+}
+
+/**
+ * The same shape WITHOUT the header, for a page that has already drawn its own.
+ *
+ * The CRM dashboard streams: its title and the Start calling link render
+ * immediately and only the figures wait. A fallback that drew a header too
+ * would put a grey bar under the real one and then swap it out — the page
+ * would look like it was loading twice.
+ */
+export function DashboardFiguresSkeleton() {
+  return (
+    <div className="flex flex-col gap-5 pt-5" aria-hidden="true">
+      <DashboardFigureBlocks />
+    </div>
+  );
+}
+
+/** The figures and panels both of the above draw. One shape, one definition. */
+function DashboardFigureBlocks() {
+  return (
+    <>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {Array.from({ length: 4 }, (_, i) => (
           <div
@@ -119,7 +144,7 @@ export function DashboardSkeleton() {
           ))}
         </div>
       </div>
-    </div>
+    </>
   );
 }
 

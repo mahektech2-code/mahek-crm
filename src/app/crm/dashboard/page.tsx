@@ -1,5 +1,6 @@
 import * as React from "react";
 import Link from "next/link";
+import { DashboardFiguresSkeleton } from "@/components/shell/screen-skeleton";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { isManager, requireUser } from "@/lib/auth";
@@ -25,6 +26,7 @@ import {
   DASHBOARD_PERIODS,
   periodRange,
   previousRange,
+  type BusinessDate,
   type DashboardPeriod,
   type DateRange,
 } from "@/lib/business-date";
@@ -45,6 +47,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { DayStages } from "./day-stages";
 
 export const metadata = { title: "Dashboard - MahekOne CRM" };
+
 
 export default async function DashboardPage({
   searchParams,
@@ -86,6 +89,105 @@ export default async function DashboardPage({
   // the sentence under them has to say the span rather than always "today".
   const spanWord = span === "today" ? "today" : PERIOD_LABELS[span].toLowerCase();
 
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: APP_TIMEZONE,
+      hour: "numeric",
+      hour12: false,
+    }).format(new Date()),
+  );
+  const greeting =
+    hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+
+  /*
+   * THE PAGE PAINTS BEFORE THE DATA ARRIVES, and the one button a telecaller
+   * came for is clickable while it does.
+   *
+   * Everything above this line is cheap — a session, a scope, the clock, some
+   * date arithmetic — and everything below it was eleven parallel reads that
+   * the whole screen waited on. `Promise.all` makes them one wave rather than
+   * eleven, which is the right fix for round trips and does nothing for this:
+   * the page still cannot render until the SLOWEST of them answers, so one
+   * heavy read holds the entire dashboard blank for as long as it takes.
+   *
+   * `loading.tsx` did not solve this and could not. That is a boundary for
+   * NAVIGATION: it paints a skeleton the moment somebody clicks, which this app
+   * has had all along, and then the skeleton sits there for exactly as long as
+   * the page does. What was missing is a boundary INSIDE the page, so the parts
+   * that are ready stop waiting for the parts that are not.
+   *
+   * So the header and its Start calling link render immediately and the figures
+   * arrive when they arrive. A telecaller whose whole job is that button no
+   * longer waits for a team overview in order to reach it.
+   */
+  return (
+    <div className="max-w-[1440px] px-6 pt-6 pb-10">
+      <PageHeader
+        title={teamView ? "Team overview" : `${greeting}, ${user.name.split(" ")[0]}`}
+        subtitle={`${scopeLabel(scope, user)} · ${
+          teamView
+            ? `${PERIOD_LABELS[span]} against ${deltaSuffix}, and today's red flags`
+            : "Everything below is live - the numbers open the records behind them"
+        }`}
+        actions={
+          <Link
+            href="/crm/call-log"
+            className="inline-flex h-9 items-center gap-2 rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:border-brand-hover hover:bg-brand-hover hover:no-underline"
+          >
+            <Icon name="phone" size={16} />
+            Start calling
+          </Link>
+        }
+      />
+
+      <React.Suspense fallback={<DashboardFiguresSkeleton />}>
+        <DashboardFigures
+          user={user}
+          teamView={teamView}
+          day={day}
+          period={period}
+          config={config}
+          span={span}
+          range={range}
+          comparison={comparison}
+          deltaSuffix={deltaSuffix}
+          spanWord={spanWord}
+        />
+      </React.Suspense>
+    </div>
+  );
+}
+
+/**
+ * Everything the dashboard has to ASK for, behind one Suspense boundary.
+ *
+ * It is its own component for one reason: an await in the page body blocks the
+ * page, and the same await in a child streams. The eleven reads and the markup
+ * that spends them are unchanged — what moved is where they are awaited.
+ */
+async function DashboardFigures({
+  user,
+  teamView,
+  day,
+  period,
+  config,
+  span,
+  range,
+  comparison,
+  deltaSuffix,
+  spanWord,
+}: {
+  user: Awaited<ReturnType<typeof requireUser>>;
+  teamView: boolean;
+  day: BusinessDate;
+  period: Awaited<ReturnType<typeof currentPeriod>>;
+  config: Awaited<ReturnType<typeof getConfig>>;
+  span: DashboardPeriod;
+  range: DateRange;
+  comparison: DateRange;
+  deltaSuffix: string;
+  spanWord: string;
+}) {
   // One wave, not three. Each of these is a round trip to a database in another
   // continent, so waiting on them in sequence shows up directly as page load.
   const [activity, yesterday, queue, followUps, inactive, targets, counts, badgeCounts, team, over60, teamActivity] =
@@ -122,15 +224,6 @@ export default async function DashboardPage({
   const achieved = targets.reduce((a, t) => a + t.achieved, 0);
   const targetPct = pct(achieved, targetTotal);
 
-  const hour = Number(
-    new Intl.DateTimeFormat("en-GB", {
-      timeZone: APP_TIMEZONE,
-      hour: "numeric",
-      hour12: false,
-    }).format(new Date()),
-  );
-  const greeting =
-    hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
   const needs = [
     {
@@ -177,24 +270,7 @@ export default async function DashboardPage({
   ] as const;
 
   return (
-    <div className="max-w-[1440px] px-6 pt-6 pb-10">
-      <PageHeader
-        title={teamView ? "Team overview" : `${greeting}, ${user.name.split(" ")[0]}`}
-        subtitle={`${scopeLabel(scope, user)} · ${
-          teamView
-            ? `${PERIOD_LABELS[span]} against ${deltaSuffix}, and today's red flags`
-            : "Everything below is live - the numbers open the records behind them"
-        }`}
-        actions={
-          <Link
-            href="/crm/call-log"
-            className="inline-flex h-9 items-center gap-2 rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:border-brand-hover hover:bg-brand-hover hover:no-underline"
-          >
-            <Icon name="phone" size={16} />
-            Start calling
-          </Link>
-        }
-      />
+    <>
 
       <DayStages
         worked={queue.progress.worked}
@@ -425,9 +501,10 @@ export default async function DashboardPage({
           </div>
         </>
       )}
-    </div>
+    </>
   );
 }
+
 
 function RedFlags({ flags }: { flags: React.ReactNode[] }) {
   const raised = flags.filter(Boolean);
