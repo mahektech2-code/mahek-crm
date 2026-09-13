@@ -8,7 +8,7 @@ import * as trail from '../sync/trail';
 import { currentSession, type Session } from '../data/session';
 import { autoCloseMissedCheckouts, dayState } from '../data/attendance';
 import { closeOpenVisits } from '../data/visits';
-import { closeStaleLegs } from '../data/travel';
+import { closeStaleLegs, closeStaleSessions } from '../data/travel';
 import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
 import { registerForPush } from '../native/push';
@@ -156,6 +156,10 @@ async function runDayBoundaryWork(userId: string): Promise<void> {
        checked out of is. Nothing else ever ends a leg, so one left open
        overnight was read as this morning's — see `openLegOf`. */
     await closeStaleLegs(userId, startOfToday.getTime());
+    /* And the session he punched in on and never out of. Nothing closes one
+       but a punch-out, so a phone switched off on Friday evening would greet
+       its owner on Monday still on Friday's meter reading. */
+    await closeStaleSessions(userId, startOfToday.getTime());
     await autoCloseMissedCheckouts(userId);
     /* `mbos.tasks.escalationHours`, which is the PUBLISHED key. This read
        `mbos.tasks.escalateAfterHours` — the same question, one word apart, and

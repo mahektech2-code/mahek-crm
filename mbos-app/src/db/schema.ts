@@ -1578,6 +1578,43 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE visits ADD COLUMN pinCorrectionRequested INTEGER NOT NULL DEFAULT 0;`,
   ],
 
+  /* ---- v29 · the vehicle is a fact about the SESSION, not about the stop --- */
+  [
+    /*
+     * WHERE A MODE IS OFFERED. `day` | `leg` | `both`.
+     *
+     * It was asked at every stop and got the same answer all day: a man on his
+     * own bike answered "own bike" eleven times and photographed the meter
+     * twenty-two times for one ride he never got off. The vehicle belongs to
+     * the session — he punches in on it and punches out on it — and only
+     * public transport genuinely changes leg to leg, which is why that one
+     * alone goes on asking.
+     *
+     * DEFAULT 'leg', so a handset that has not pulled since keeps offering
+     * every mode exactly where it offered it. The scopes arrive with the rows.
+     */
+    `ALTER TABLE travel_modes ADD COLUMN scope TEXT NOT NULL DEFAULT 'leg';`,
+    /*
+     * A leg that is a record of movement and not a second claim.
+     *
+     * On an own-vehicle session the money comes from the session leg's meter
+     * pair. The visits still open legs — the arrival gate and the navigation
+     * hang off one — and pricing those too would pay per-km twice over one
+     * ride, on the meter and again on the trail. The reason rides on the row,
+     * because an exclusion nobody can read off the record is how an expense
+     * argument becomes unanswerable.
+     */
+    `ALTER TABLE travel_legs ADD COLUMN claimExcluded INTEGER NOT NULL DEFAULT 0;`,
+    `ALTER TABLE travel_legs ADD COLUMN claimExcludedReason TEXT;`,
+    /*
+     * The session he is punched in on, if he is on one. Partial, like the open
+     * leg beside it: this is asked on every launch and at every punch-out, and
+     * it is what closes the right punch-in after Android has reaped the app.
+     */
+    `CREATE INDEX IF NOT EXISTS travel_legs_open_session
+       ON travel_legs (userId) WHERE origin = 'session' AND endedAt IS NULL;`,
+  ],
+
 ];
 
 /**

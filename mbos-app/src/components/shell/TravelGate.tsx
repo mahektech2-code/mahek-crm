@@ -1,15 +1,22 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { router } from 'expo-router';
 
 import { BottomSheet } from '../ui/overlays';
 import { SecondaryButton, T } from '../ui/primitives';
 import { OdometerCamera, type OdometerResult } from '../ui/odometer-camera';
-import { Icon } from '../ui/Icon';
-import { color as C, HIT, radius, weight } from '../../theme/tokens';
+import { color as C, weight } from '../../theme/tokens';
 import { useStore } from '../../state/store';
 import { useBoot } from '../../state/boot';
-import { departForVisit, travelModes, type TravelMode } from '../../data/travel';
+import {
+  departForVisit,
+  openSessionLeg,
+  travelModesFor,
+  type TravelLeg,
+  type TravelMode,
+} from '../../data/travel';
+import { TravelModeList } from '../ui/travel-mode-list';
+import { legPricedBySession, stopMustAskMode } from '../../lib/travel-leg';
 import { getConfig } from '../../data/config';
 import { isoDate } from '../../lib/format';
 import { fixOf, getFix } from '../../native/location';
@@ -53,6 +60,8 @@ export function TravelGate() {
   const userId = boot.session?.user.id ?? '';
 
   const [modes, setModes] = React.useState<TravelMode[]>([]);
+  const [session, setSession] = React.useState<TravelLeg | null>(null);
+  const [sessionMode, setSessionMode] = React.useState<TravelMode | null>(null);
   const [maxKm, setMaxKm] = React.useState(400);
   const [busy, setBusy] = React.useState(false);
 
@@ -62,20 +71,37 @@ export function TravelGate() {
   const [metering, setMetering] = React.useState(false);
   const answerOdometer = React.useRef<((r: OdometerResult) => void) | null>(null);
 
+  /*
+   * READ WHEN THE QUESTION IS ASKED, not once when the app started.
+   *
+   * The session is what decides whether there is a question at all, and it
+   * changes in the middle of a day — he punches out for lunch on his bike and
+   * punches back in on a bus. Read at mount only, this sheet would spend the
+   * afternoon answering for the morning's vehicle.
+   */
   React.useEffect(() => {
+    if (!to || !userId) return;
     let live = true;
     void Promise.all([
-      travelModes(),
+      travelModesFor('leg'),
       getConfig<number>('mbos.travel.maxLegKilometres', 400),
-    ]).then(([rows, km]) => {
+      openSessionLeg(userId),
+    ]).then(async ([rows, km, running]) => {
       if (!live) return;
       setModes(rows);
       setMaxKm(km);
+      setSession(running);
+      if (running) {
+        const all = await travelModesFor('day');
+        if (live) setSessionMode(all.find((m) => m.key === running.modeKey) ?? null);
+      } else if (live) {
+        setSessionMode(null);
+      }
     });
     return () => {
       live = false;
     };
-  }, []);
+  }, [to, userId]);
 
   const close = () => set({ travelTo: null });
 
@@ -106,7 +132,14 @@ export function TravelGate() {
     router.push('/visit');
   };
 
-  const choose = async (mode: TravelMode) => {
+  /* The two rules that decide whether this sheet opens and whether the leg it
+     produces is a claim. PURE and in `lib/travel-leg.ts`, because both fail
+     silently in the field and neither could be tested from in here. */
+  const facts = session ? { modeKey: session.modeKey, odometerStartKm: session.odometerStartKm } : null;
+  const sessionAnswers = !!sessionMode && !stopMustAskMode(facts);
+  const pricedBySession = legPricedBySession(facts);
+
+  const choose = async (mode: TravelMode, opts?: { askMeter?: boolean }) => {
     if (!to || busy || !userId) return;
     setBusy(true);
     try {
@@ -115,7 +148,7 @@ export function TravelGate() {
       const fixing = getFix({ accuracyThresholdM: threshold });
 
       let odometer: { km: number; photoId: string } | null = null;
-      if (mode.requiresOdometer) {
+      if (mode.requiresOdometer && opts?.askMeter !== false) {
         const shot = await askOdometer();
         /*
          * Cancelled. NOTHING has been written, so there is nothing to undo —
@@ -147,6 +180,10 @@ export function TravelGate() {
         purpose: 'visit',
         fix: fix ? { lat: fix.lat, lng: fix.lng } : null,
         odometer,
+        claimExcluded: pricedBySession,
+        claimExcludedReason: pricedBySession
+          ? 'Counted in the meter readings taken at the punch-in and the punch-out.'
+          : null,
       });
       if (!out.ok) {
         notify(out.reason);
@@ -165,21 +202,23 @@ export function TravelGate() {
     }
   };
 
-  /**
-   * What this option is about to DO, on the option itself.
+  /*
+   * THE SHEET IS NOT DRAWN WHEN THERE IS NOTHING TO ASK.
    *
-   * The list is read once by somebody who is already late, and three words
-   * each gives him no reason to expect that two of them open a camera. Said
-   * here, the camera reads as the thing he chose; unsaid, it reads as the app
-   * misbehaving. It is derived from the mode's own flags rather than written
-   * per mode, so a mode an admin adds tomorrow explains itself.
+   * A sheet that opened, said "Own bike", and closed itself would be a screen
+   * flashing past eleven times a day to tell him what he told it this morning.
+   * The departure happens straight away, with the session's mode and no meter
+   * — the meter was read at the punch-in and will be read again at the
+   * punch-out, and asking here would be the twenty-two photographs this change
+   * exists to remove.
    */
-  const hint = (m: TravelMode) =>
-    m.requiresOdometer
-      ? 'Photograph the meter now and again when you get there'
-      : m.requiresTicket
-        ? 'Add the ticket when you save the visit, if you keep it'
-        : 'Nothing to record';
+  React.useEffect(() => {
+    if (!to || !sessionAnswers || !sessionMode || busy || outstanding) return;
+    void choose(sessionMode, { askMeter: false });
+    /* `choose` is redeclared on every render and depending on it would fire
+       this on each one; the guards above are what make it run once. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [to, sessionAnswers, sessionMode, outstanding]);
 
   if (to && outstanding) {
     const same = outstanding.customerId === to.customerId;
@@ -207,7 +246,7 @@ export function TravelGate() {
 
   return (
     <>
-      <BottomSheet open={!!to && !metering} onClose={close}>
+      <BottomSheet open={!!to && !metering && !sessionAnswers} onClose={close}>
         <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
           <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
             How are you getting there?
@@ -216,36 +255,7 @@ export function TravelGate() {
             {to?.customerName ?? ''}
           </T>
 
-          <View style={{ marginTop: 14, gap: 8 }}>
-            {modes.map((mode) => (
-              <Pressable
-                key={mode.key}
-                accessibilityRole="button"
-                accessibilityLabel={`${mode.label} — ${hint(mode)}`}
-                disabled={busy}
-                onPress={() => void choose(mode)}
-                style={{
-                  minHeight: HIT,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                  borderWidth: 1,
-                  borderColor: C.border,
-                  borderRadius: radius.md,
-                  paddingHorizontal: 14,
-                  paddingVertical: 10,
-                  opacity: busy ? 0.5 : 1,
-                }}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{mode.label}</T>
-                  <T style={{ fontSize: 12, lineHeight: 16, color: C.muted, marginTop: 1 }}>
-                    {hint(mode)}
-                  </T>
-                </View>
-                <Icon name="forward" size={18} color={C.muted} strokeWidth={1.6} />
-              </Pressable>
-            ))}
-          </View>
+          <TravelModeList modes={modes} where="leg" busy={busy} onPick={(m) => void choose(m)} />
 
           {/* An empty list is not a broken screen and must not look like one.
               `travel_modes` is reference data, so a handset that has not

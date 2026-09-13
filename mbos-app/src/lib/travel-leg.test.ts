@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
@@ -6,7 +6,9 @@ import {
   checkFare,
   checkOdometer,
   legLine,
+  legPricedBySession,
   navigationLine,
+  stopMustAskMode,
   travellingFor,
 } from './travel-leg';
 
@@ -187,4 +189,58 @@ test('no reading yet says nothing at all', () => {
     navigationLine({ hasPin: true, metresAway: null, fixAgeSeconds: null, staleAfterSeconds: 300 }),
     null,
   );
+});
+
+/* ═════════════════════════ what the punch-in has already answered */
+
+describe('the session answers the journey', () => {
+  test('a man on his own bike is not asked again at each shop', () => {
+    assert.equal(stopMustAskMode({ modeKey: 'own_bike', odometerStartKm: 42_180 }), false);
+    assert.equal(stopMustAskMode({ modeKey: 'own_car', odometerStartKm: 88_400 }), false);
+    assert.equal(stopMustAskMode({ modeKey: 'walking', odometerStartKm: null }), false);
+    assert.equal(stopMustAskMode({ modeKey: 'customer_vehicle', odometerStartKm: null }), false);
+  });
+
+  test('public transport is the one day-level answer that leaves a question open', () => {
+    assert.equal(
+      stopMustAskMode({ modeKey: 'public_transport', odometerStartKm: null }),
+      true,
+      'the bus, the auto and the taxi genuinely change from one stop to the next',
+    );
+  });
+
+  test('NO SESSION MEANS ASK — a handset whose punch-in predates this build', () => {
+    assert.equal(
+      stopMustAskMode(null),
+      true,
+      'a silent default would put somebody’s mileage on a vehicle nobody named',
+    );
+  });
+
+  test('the umbrella is a key, not a word written into the rule', () => {
+    /* An admin adding a second umbrella gets the same behaviour by naming it,
+       rather than by somebody remembering to edit a condition. */
+    assert.equal(stopMustAskMode({ modeKey: 'hired_car', odometerStartKm: null }, 'hired_car'), true);
+  });
+});
+
+describe('a leg the session already pays for', () => {
+  test('an own-vehicle session excludes the legs inside it', () => {
+    assert.equal(
+      legPricedBySession({ modeKey: 'own_bike', odometerStartKm: 42_180 }),
+      true,
+      'the meter pair counts these kilometres — pricing the leg too pays twice',
+    );
+  });
+
+  test('a session with no meter excludes nothing', () => {
+    /* Nothing is priced either way, and a sentence on the record explaining a
+       deduction that never happened is worse than saying nothing at all. */
+    assert.equal(legPricedBySession({ modeKey: 'walking', odometerStartKm: null }), false);
+    assert.equal(legPricedBySession({ modeKey: 'public_transport', odometerStartKm: null }), false);
+  });
+
+  test('no session excludes nothing', () => {
+    assert.equal(legPricedBySession(null), false);
+  });
 });

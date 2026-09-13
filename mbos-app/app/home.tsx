@@ -3,7 +3,7 @@ import { View, Text, Pressable } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
-import { Card } from '../src/components/ui/primitives';
+import { Card, SecondaryButton, T } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
@@ -34,8 +34,18 @@ import { lastPullAt } from '../src/sync/api';
 import { withinGeofence } from '../src/engines/geo';
 import { fixOf, getFix } from '../src/native/location';
 import { ensureLocationPermission } from '../src/native/permissions';
-import { queueSelfie } from '../src/native/capture';
+import { queueOdometerPhoto, queueSelfie } from '../src/native/capture';
 import { SelfieCamera, type SelfieResult } from '../src/components/ui/selfie-camera';
+import { OdometerCamera, type OdometerResult } from '../src/components/ui/odometer-camera';
+import { BottomSheet } from '../src/components/ui/overlays';
+import { TravelModeList } from '../src/components/ui/travel-mode-list';
+import {
+  endSession,
+  openSessionLeg,
+  startSession,
+  travelModesFor,
+  type TravelMode,
+} from '../src/data/travel';
 
 /**
  * Home is the first thing on screen at 9am and the thing returned to between
@@ -347,6 +357,129 @@ export default function Home() {
       setSelfieOpen(true);
     });
 
+  /*
+   * ───────────────────────────── how he is travelling today
+   *
+   * THE VEHICLE IS A FACT ABOUT THE SESSION, asked once at the punch-in.
+   *
+   * It used to be asked at every stop and got the same answer all day: a man
+   * on his own bike said "own bike" eleven times and photographed the meter
+   * twenty-two times for one ride he never got off. He punches in on a vehicle
+   * and punches out on it, so this is where it belongs — and only public
+   * transport leaves a question open for the journey, because the bus, the
+   * auto and the taxi genuinely change from one shop to the next.
+   *
+   * Both overlays are promise-answered like the selfie beside them, and for
+   * the same reason: this is one flow with three captures in it, and pushing a
+   * route for any of them would take the flow off the stack half-way through.
+   */
+  const [modeOpen, setModeOpen] = React.useState(false);
+  const [dayModes, setDayModes] = React.useState<TravelMode[]>([]);
+  const answerMode = React.useRef<((m: TravelMode | null) => void) | null>(null);
+
+  const [metering, setMetering] = React.useState(false);
+  const [meterWords, setMeterWords] = React.useState({ title: '', subtitle: '', cancelLabel: '' });
+  const [meterFrom, setMeterFrom] = React.useState<number | null>(null);
+  const [maxLegKm, setMaxLegKm] = React.useState(400);
+  const answerMeter = React.useRef<((r: OdometerResult) => void) | null>(null);
+
+  /**
+   * Three answers, and two of them look alike from a distance.
+   *
+   * `{ ok: false }` is him dismissing the sheet — nothing is written and the
+   * punch-in is abandoned. `{ ok: true, mode: null }` is there being nothing
+   * to ask, which is a handset whose office has not published the day-scoped
+   * rows yet: the punch-in goes through and the journey asks per stop, exactly
+   * as every build before this one did. Collapsing the two onto a bare null
+   * would either refuse a punch-in nobody meant to refuse, or open a day on a
+   * vehicle nobody named.
+   */
+  const askMode = async (): Promise<{ ok: true; mode: TravelMode | null } | { ok: false }> => {
+    const [rows, km] = await Promise.all([
+      travelModesFor('day'),
+      getConfig<number>('mbos.travel.maxLegKilometres', 400),
+    ]);
+    setMaxLegKm(km);
+    setDayModes(rows);
+    /*
+     * NOTHING TO ASK IS NOT A QUESTION. A handset that has not pulled since
+     * this shipped has no day-scoped rows, and a sheet with nothing under the
+     * heading is a dead end at the one moment a salesman cannot afford one —
+     * he is at the gate at half past eight. The punch-in goes through and the
+     * journey asks per stop exactly as it did before, which is the behaviour
+     * every build before this one had.
+     */
+    if (!rows.length) return { ok: true, mode: null };
+    const picked = await new Promise<TravelMode | null>((resolve) => {
+      answerMode.current = resolve;
+      setModeOpen(true);
+    });
+    return picked ? { ok: true, mode: picked } : { ok: false };
+  };
+
+  const askMeter = (words: typeof meterWords, previousKm: number | null) =>
+    new Promise<OdometerResult>((resolve) => {
+      setMeterWords(words);
+      setMeterFrom(previousKm);
+      answerMeter.current = resolve;
+      setMetering(true);
+    });
+
+  /**
+   * The reading and its photograph, or null if this mode has no meter.
+   *
+   * `false` is the third answer and it is not the same as null: it means he
+   * backed out of the camera, and the caller has to abandon rather than carry
+   * on with no reading. A cancelled camera that read as "no meter on this
+   * mode" would open a per-km session with nothing to price it on.
+   */
+  const meterFor = async (
+    mode: TravelMode,
+    words: typeof meterWords,
+    previousKm: number | null,
+  ): Promise<{ km: number; photoId: string } | null | false> => {
+    if (!mode.requiresOdometer) return null;
+    const shot = await askMeter(words, previousKm);
+    if (!shot) return false;
+    try {
+      return { km: shot.km, photoId: await queueOdometerPhoto(shot.uri, 'pending') };
+    } catch {
+      notify('The photo could not be saved on this phone, so nothing was recorded. Try again.');
+      return false;
+    }
+  };
+
+  /**
+   * The session as a journey, opened at the punch-in.
+   *
+   * It never fails the punch-in. The attendance mark is what somebody is paid
+   * on and it is already written by the time this runs; losing it because a
+   * travel leg would not write would be exactly the wrong way round. A session
+   * that did not open costs the day's mileage, which the `/travel` screen can
+   * still be typed up on — a mark that did not open costs the day.
+   */
+  const openSessionFor = async (
+    mode: TravelMode,
+    fix: { lat: number; lng: number } | null,
+    meter: { km: number; photoId: string } | null,
+  ): Promise<void> => {
+    /* The callers all guard on it, so this is a type narrowing rather than a
+       check — but it is a real one: `startSession` writes a row keyed on the
+       person, and there is no such thing as a session belonging to nobody. */
+    if (!userId) return;
+    try {
+      await startSession({
+        userId,
+        day: isoDate(new Date()),
+        modeKey: mode.key,
+        fix: fix ? { lat: fix.lat, lng: fix.lng } : null,
+        odometer: meter,
+      });
+    } catch {
+      notify('Punched in. The travel for this session could not be started — add it on Travel.');
+    }
+  };
+
   /**
    * The photograph, queued, or null if there is no photograph.
    *
@@ -434,6 +567,25 @@ export default function Home() {
         return;
       }
 
+      /*
+       * AND THEN: WHAT IS HE ON TODAY.
+       *
+       * Asked after the photograph and before anything is written, so backing
+       * out of either leaves no half-started day behind — the same order the
+       * selfie itself follows. A metered vehicle opens the camera here and
+       * nowhere else all day: this reading and the one at the punch-out are
+       * the whole of the day's mileage.
+       */
+      const answer = await askMode();
+      if (!answer.ok) return;
+      const mode = answer.mode;
+      const meter = mode ? await meterFor(mode, {
+        title: 'Photograph the meter',
+        subtitle: 'Before you set off — this is where the day is measured from.',
+        cancelLabel: 'Cancel the punch-in',
+      }, null) : null;
+      if (meter === false) return;
+
       const fix = fixOf(await fixing);
 
       const row = await checkIn({
@@ -443,6 +595,13 @@ export default function Home() {
         mayOpen: gate.gate,
         homeLocation: base,
       });
+
+      /* AFTER the punch-in, never before: the session is a journey belonging
+         to a day that is now open, and a leg written first would have to guess
+         at a day id or open a second one. It cannot fail the punch-in — the
+         mark is the thing a salesman is paid on, and losing it over a travel
+         leg would be the wrong way round. */
+      if (mode) await openSessionFor(mode, fix, meter);
 
       set({ gps: fix ? 'locked' : 'off' });
       load();
@@ -495,8 +654,50 @@ export default function Home() {
         return;
       }
 
+      /*
+       * THE CLOSING METER, and the other half of the pair taken at the
+       * punch-in. Read BEFORE the punch-out is written, like the photograph
+       * above it: backing out of the camera has to leave him on the clock
+       * rather than punched out with a session nothing can close.
+       *
+       * Only where the session actually carries an opening reading. A day
+       * spent on buses has no meter to read and never had one, and opening a
+       * camera on it would be the app asking about a vehicle he told it this
+       * morning he was not on.
+       */
+      const session = await openSessionLeg(userId);
+      const sessionMode = session
+        ? (await travelModesFor('day')).find((m) => m.key === session.modeKey) ?? null
+        : null;
+      const closing =
+        session && sessionMode && session.odometerStartKm != null
+          ? await meterFor(
+              sessionMode,
+              {
+                title: 'Photograph the meter',
+                subtitle: 'Before you punch out — this is where the day is measured to.',
+                cancelLabel: 'Stay on the clock',
+              },
+              session.odometerStartKm,
+            )
+          : null;
+      if (closing === false) return;
+
       const fix = fixOf(await fixing);
       const out = await checkOut(userId, fix, selfie.id);
+      /* After the mark, and unable to undo it. Same order, same reason as the
+         punch-in: the session is a journey belonging to a day. */
+      if (session) {
+        try {
+          await endSession({
+            legId: session.id,
+            fix: fix ? { lat: fix.lat, lng: fix.lng } : null,
+            odometer: closing,
+          });
+        } catch {
+          notify('Punched out. The travel for this session could not be closed — check Travel.');
+        }
+      }
       load();
       notify(
         out.ok
@@ -547,8 +748,31 @@ export default function Home() {
         return;
       }
 
+      /*
+       * AND THEN: WHAT IS HE ON TODAY.
+       *
+       * Asked after the photograph and before anything is written, so backing
+       * out of either leaves no half-started day behind — the same order the
+       * selfie itself follows. A metered vehicle opens the camera here and
+       * nowhere else all day: this reading and the one at the punch-out are
+       * the whole of the day's mileage.
+       */
+      const answer = await askMode();
+      if (!answer.ok) return;
+      const mode = answer.mode;
+      const meter = mode ? await meterFor(mode, {
+        title: 'Photograph the meter',
+        subtitle: 'Before you set off — this is where the day is measured from.',
+        cancelLabel: 'Cancel the punch-in',
+      }, null) : null;
+      if (meter === false) return;
+
       const fix = fixOf(await fixing);
       await checkIn({ userId, fix, selfieMediaId: selfie.id, mayOpen: gate.gate, homeLocation: null });
+      /* ASKED AGAIN, and that is deliberate: he can bike in the morning and
+         take the bus after lunch, and a session that inherited the morning's
+         vehicle would quietly claim per-km on a day he spent on buses. */
+      if (mode) await openSessionFor(mode, fix, meter);
       set({ gps: fix ? 'locked' : 'off' });
       load();
       notify('Punched back in');
@@ -841,6 +1065,67 @@ export default function Home() {
           setSelfieOpen(false);
           answerSelfie.current?.(result);
           answerSelfie.current = null;
+        }}
+      />
+
+      {/*
+        WHAT IS HE ON TODAY. Between the photograph and the mark.
+
+        There is no "skip": the vehicle is what the day's travel is paid on,
+        and a session with no mode would be a day of movement nobody can
+        price. Backing out abandons the punch-in instead, which costs him one
+        tap and leaves nothing written — the same bargain the selfie strikes
+        one step earlier.
+      */}
+      <BottomSheet
+        open={modeOpen}
+        onClose={() => {
+          setModeOpen(false);
+          answerMode.current?.(null);
+          answerMode.current = null;
+        }}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
+          <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
+            How are you travelling today?
+          </T>
+          <T s="small" style={{ marginTop: 4 }}>
+            Asked once, for this session. You are not asked again at each shop.
+          </T>
+
+          <TravelModeList
+            modes={dayModes}
+            where="day"
+            onPick={(m) => {
+              setModeOpen(false);
+              answerMode.current?.(m);
+              answerMode.current = null;
+            }}
+          />
+
+          <View style={{ marginTop: 12 }}>
+            <SecondaryButton
+              label="Not punching in yet"
+              onPress={() => {
+                setModeOpen(false);
+                answerMode.current?.(null);
+                answerMode.current = null;
+              }}
+            />
+          </View>
+        </View>
+      </BottomSheet>
+
+      <OdometerCamera
+        open={metering}
+        title={meterWords.title}
+        subtitle={meterWords.subtitle}
+        cancelLabel={meterWords.cancelLabel}
+        previousKm={meterFrom}
+        maxLegKilometres={maxLegKm}
+        onDone={(result) => {
+          setMetering(false);
+          answerMeter.current?.(result);
+          answerMeter.current = null;
         }}
       />
     </AppFrame>

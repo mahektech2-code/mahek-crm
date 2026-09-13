@@ -557,6 +557,71 @@ difference is what is lost: refusing a visit loses a record of work that really
 happened, while refusing an order loses nothing, because the order was never
 agreed with anybody who could agree it. The message names the way forward.
 
+**THE VEHICLE IS A FACT ABOUT THE SESSION, not about the stop.** It was asked
+at every shop and got the same answer all day: a man on his own bike said "own
+bike" eleven times and photographed the meter twenty-two times to record one
+ride he never got off — twenty-two readings forming a chain anybody could break
+by forgetting one, after which the day's kilometres were an argument rather than
+a figure. He punches in on a vehicle and punches out on it, so the punch-in is
+where it is asked, right after the selfie and before anything is written.
+
+**`mbos_travel_modes.scope` is where a mode is offered — `day`, `leg` or
+`both`.** Own bike, own car, company vehicle and customer's vehicle are `day`;
+bus, train, auto and taxi are `leg`; `public_transport` is a new `day` row that
+is an UMBRELLA over the four, and the only day-level answer that leaves a
+question open, because the fare genuinely changes from one shop to the next.
+Walking is the only `both` — it is a way to spend a day and a way to reach the
+shop next door on a day spent on buses. It defaults to `leg`, which is the
+load-bearing half: a handset that has not pulled goes on offering every mode
+exactly where it offered it, and a server one release behind sends no scope at
+all, which reads as `leg` for the same reason.
+
+**THE SESSION IS A LEG, not two columns on the attendance row.** `origin =
+'session'` runs from the punch-in to the punch-out and carries the two meter
+readings the day is priced on. Making it a leg means the policy engine prices
+it with everything else — one per-km rule, one `odometer → gps → manual`
+precedence, one variance check — rather than a second pricing path beside the
+first. It is the STRICTEST of the three origins: a day-log leg is typed from
+memory so its photograph is optional, and this one is opened and closed by the
+app at both ends, so `handleTravelLeg` demands both readings and both pictures.
+Public transport and walking open NO session leg: there is no meter and no
+journey to measure, and an empty one would put a zero-kilometre row on every
+such day for the policy to reason about.
+
+**AND THE VISITS INSIDE IT ARE MOVEMENT, NOT A SECOND CLAIM.** This is the part
+that would otherwise pay twice. The visits still open legs — the arrival gate,
+the navigation and the record of where he actually went all hang off one — so
+an own-vehicle day has one meter pair AND eleven GPS-measured legs, and pricing
+both pays per-km twice over a single ride. `claim_excluded` marks them, with
+the REASON on the row, because an exclusion nobody can read off the record is
+unanswerable six weeks later. The filter sits in `factsFor` and in the
+handset's `pricedClaim` — the one place on each side where legs become policy
+input — and NOT in the queries that list them: a journey that vanished from the
+record to avoid being paid twice is a journey nobody can account for.
+
+**The two rules that decide it are PURE, in `lib/travel-leg.ts`.**
+`stopMustAskMode` and `legPricedBySession` were expressions inside `TravelGate`,
+which imports the database, so neither could be exercised without a handset —
+and both fail silently in the field. The first wrong asks a man his vehicle
+eleven times a day; the second wrong pays per-km twice on every own-vehicle day
+for everybody. NO SESSION means ASK, which is the half worth stating: it is a
+handset whose punch-in predates this build, and a silent default would put
+somebody's mileage on a vehicle nobody named.
+
+**It is asked at EVERY punch-in, and that is deliberate.** He can bike in the
+morning and take the bus after lunch, and a session inheriting the morning's
+vehicle would quietly claim per-km on an afternoon he spent on buses. The
+closing meter is asked at every punch-out for the same reason, and only where
+the session carries an opening reading — opening a camera on a bus day would be
+the app asking about a vehicle he told it this morning he was not on.
+
+**Nothing written until every capture is in.** Selfie, then vehicle, then meter,
+then the mark — the order `startDay` already followed for the photograph,
+extended. Backing out of any of the three leaves no half-started session, and
+the session leg is opened AFTER the punch-in and can never fail it: the
+attendance mark is what somebody is paid on, and losing it over a travel leg
+would be the wrong way round.
+
 **PUNCHING IN IS THE DAY; CHECKING IN IS THE SHOP.** One word was doing both
 jobs, and it is the one thing about this app everybody asks to have explained
 twice — "did he check in" meant either "is he at work" or "is he in front of a

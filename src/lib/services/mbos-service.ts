@@ -546,11 +546,13 @@ async function travelModeRows() {
     reimbursementKind: string;
     requiresOdometer: boolean;
     requiresTicket: boolean;
+    scope: string;
   }>(sql`
     select key, label, sort_order as "sortOrder",
            reimbursement_kind as "reimbursementKind",
            requires_odometer as "requiresOdometer",
-           requires_ticket as "requiresTicket"
+           requires_ticket as "requiresTicket",
+           scope
       from mbos_travel_modes
      where active
      order by sort_order asc
