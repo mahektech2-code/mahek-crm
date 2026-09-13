@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/auth";
+import { categoryValue } from "@/lib/complaint-labels";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { dayActivity, today } from "@/lib/queries";
 import { getConfig } from "@/lib/config/store";
@@ -174,10 +175,9 @@ export default async function QueuePage({
       snapshotHour={queue.snapshotHour}
       callTargets={callTargets}
       categories={config["complaints.categories"].map((c) => ({
-        value: c
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "_")
-          .replace(/^_|_$/g, ""),
+        // NOT a slug. "Packaging" slugified to `packaging`, which is not a
+        // member of the enum, so the save refused it — see `categoryValue`.
+        value: categoryValue(c),
         label: c,
       }))}
       quickNotes={quickNoteOptions}

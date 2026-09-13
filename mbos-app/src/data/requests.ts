@@ -423,6 +423,8 @@ export async function logComplaint(args: {
   customerId: string;
   category: string;
   description: string;
+  /** Normal, Urgent or Critical, as the severity the column stores. */
+  priority?: string;
   photoIds?: string[];
   visitId?: string | null;
 }): Promise<string> {
@@ -439,11 +441,21 @@ export async function logComplaint(args: {
       photoIds: args.photoIds ?? [],
       status: 'open',
     },
-    /* The five categories on the buttons are the design's words and MahekOne's
+    /* The categories on the buttons are the design's words and MahekOne's
        column is an enum, so the picker's own string was refused outright —
        a complaint lost at the door is the one record here that had to move
-       fast. PROTOCOL.md §4.1. */
-    payloadExtras: { category: wireComplaintCategory(args.category) },
+       fast. PROTOCOL.md §4.1.
+
+       `severity` rides here rather than as a column because nothing on this
+       phone ever reads it back: the office decides the deadline and the office
+       displays it. The outbox snapshots the payload at enqueue, so it survives
+       every retry without a schema migration. Omitted where nobody picked, so
+       the server applies `complaints.defaultSeverity` exactly as it does for a
+       handset still on the old build. */
+    payloadExtras: {
+      category: wireComplaintCategory(args.category),
+      ...(args.priority ? { severity: args.priority } : {}),
+    },
     dependsOn: args.visitId ? [args.visitId] : [],
   });
 

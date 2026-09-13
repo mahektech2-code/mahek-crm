@@ -7,13 +7,14 @@
  * here so the literal is written in exactly one place.
  */
 export const COMPLAINT_CATEGORIES = [
-  "Packaging",
-  "Staff",
-  "Product",
-  "Transport",
-  "Rate / Discount",
-  "Immediate Payment",
-  "Transportation",
-  "Product Complaint",
-  "Sales Promotion",
+  "Product Quality",
+  "Short Quantity",
+  "Leakage / Packaging",
+  "Wrong Product",
+  "Delivery Delay",
+  "Price Issue",
+  "Billing Issue",
+  "Transport Issue",
+  "Sales Service",
+  "Other",
 ] as const;

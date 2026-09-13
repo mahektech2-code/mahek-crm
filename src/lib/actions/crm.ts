@@ -1,6 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import {
+  COMPLAINT_PRIORITIES,
+  categoryValue,
+} from "@/lib/complaint-labels";
 import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -53,6 +57,7 @@ import {
   recordWatchOutcome,
   rescheduleReminder as rescheduleReminderService,
   resolveComplaint as resolveComplaintService,
+  setComplaintPriority,
   setTarget as setTargetService,
   setTargetsBulk as setTargetsBulkService,
   resolveTargetCustomerIds,
@@ -141,29 +146,6 @@ export async function setScope(scope: "mine" | "team") {
 }
 
 /* -------------------------------------------------------------- the call */
-
-/** Jyoti's dialog offers business labels; the column is an enum. */
-const CATEGORY_MAP: Record<string, string> = {
-  Packaging: "packaging_damage",
-  "Packaging Damage": "packaging_damage",
-  Staff: "service",
-  Product: "product_quality",
-  "Product Quality": "product_quality",
-  "Product Complaint": "product_quality",
-  Transport: "delivery",
-  Transportation: "delivery",
-  Delivery: "delivery",
-  "Dispatch Delay": "dispatch_delay",
-  "Rate / Discount": "pricing",
-  Pricing: "pricing",
-  "Immediate Payment": "billing_issue",
-  "Billing Issue": "billing_issue",
-  Billing: "billing_issue",
-  "Sales Promotion": "other",
-  Service: "service",
-  Shortage: "shortage",
-  Other: "other",
-};
 
 function parseRupees(input?: string): number | null {
   if (!input?.trim()) return null;
@@ -1193,6 +1175,12 @@ export async function logComplaint(input: {
   customerId: string;
   category: string;
   description: string;
+  /**
+   * Normal, Urgent or Critical, as the stored severity. Absent from the
+   * handset and from any caller that does not ask, which is what
+   * `complaints.defaultSeverity` is for.
+   */
+  priority?: string;
   mobileNumber?: string;
   requestCn?: boolean;
   billId?: string | null;
@@ -1218,7 +1206,13 @@ export async function logComplaint(input: {
     // interaction record there.
     const ctx = await resolveScope();
     const config = await getConfig();
-    const severity = config["complaints.defaultSeverity"];
+    /*
+     * WHAT THE PERSON PICKED, and the configured default where nobody was
+     * asked. Validated against the offered list rather than trusted: a server
+     * action is a URL, and the SLA hangs off this value.
+     */
+    const picked = COMPLAINT_PRIORITIES.find((p) => p.value === input.priority);
+    const severity = picked?.value ?? config["complaints.defaultSeverity"];
     const slaHours = config["complaints.slaHours"][severity];
     const complaintId = id("cmp");
 
@@ -1227,7 +1221,11 @@ export async function logComplaint(input: {
         id: complaintId,
         customerId: input.customerId,
         loggedByUserId: ctx.user.id,
-        category: (CATEGORY_MAP[input.category] ?? "other") as never,
+        // The dialog offers business labels; the column is an enum, and
+        // `categoryValue` is the one place that translation lives — it used to
+        // be this map, a second map on the handset, and a slug computed on two
+        // page components that agreed with neither.
+        category: categoryValue(input.category) as never,
         description: input.description.trim(),
         severity,
         slaDueAt: new Date(Date.now() + slaHours * 3_600_000),
@@ -1301,6 +1299,27 @@ export async function reassignComplaint(
     }
     refreshAll();
     return r.ok ? okVoid(`Reassigned to ${assignedTo}`) : r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Raising or lowering a complaint's priority once it is open.
+ *
+ * The judgement most likely to be made late, by somebody who knows more than
+ * the person who took the call — see `setComplaintPriority` for why the
+ * deadline is recomputed from when the complaint was RAISED rather than from
+ * now.
+ */
+export async function setComplaintPriorityAction(
+  complaintId: string,
+  priority: string,
+): Promise<Result> {
+  try {
+    const r = await setComplaintPriority(complaintId, priority);
+    refreshAll();
+    return r;
   } catch (e) {
     return fromThrown(e);
   }

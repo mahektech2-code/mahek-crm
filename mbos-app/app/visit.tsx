@@ -25,7 +25,7 @@ import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { hhmm, isoDate, pretty } from '../src/lib/format';
 import { elapsedLabel, FOLLOW_ON, visitChecks, visitVerdict } from '../src/lib/visit';
-import { COMPLAINT_CATEGORIES, OUTCOMES } from '../src/data/fixtures';
+import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, OUTCOMES } from '../src/data/fixtures';
 import { getConfig } from '../src/data/config';
 import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/visits';
 import { checkInAtShop, clearArrival, recordArrival } from '../src/data/arrival';
@@ -762,6 +762,8 @@ export default function Visit() {
       const id = await logComplaint({
         customerId: c.id,
         category: draft.cat,
+        // Normal unless he said otherwise, which is the server's default too.
+        priority: draft.priority ?? 'medium',
         description: draft.what.trim(),
       });
       setLinked((l) => ({ ...l, complaintId: id }));
@@ -1886,6 +1888,22 @@ export default function Visit() {
           />
         ))}
         {formErr === 'cat' ? <Text style={{ fontSize: 13, color: C.danger }}>Pick what it is about.</Text> : null}
+
+        {/* Laid out across rather than down: three short words fit one row,
+            and a second scrolling list under the first would push the box he
+            actually has to type in off the screen. */}
+        <Text style={[type.label, { marginTop: 14, marginBottom: 8 }]}>How urgent</Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {COMPLAINT_PRIORITIES.map((p) => (
+            <Choice
+              key={p.value}
+              label={p.label}
+              selected={(draft.priority ?? 'medium') === p.value}
+              onPress={() => setDraft({ ...draft, priority: p.value })}
+              style={{ flex: 1, paddingHorizontal: 6 }}
+            />
+          ))}
+        </View>
 
         <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>In their words</Text>
         <VoiceField

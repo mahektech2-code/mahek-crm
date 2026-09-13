@@ -638,7 +638,7 @@ describe("Credit notes", () => {
     assert.equal(rows[0].billNo, bill.billNo);
     assert.equal(rows[0].billBalance, 20_000_00);
     // The stored enum is never what reaches the screen.
-    assert.equal(rows[0].categoryLabel, "Packaging damage");
+    assert.equal(rows[0].categoryLabel, "Leakage / Packaging");
     assert.equal(rows[0].raisedByName, "Priya");
     assert.equal(await pendingCreditNoteCount(), 1);
   });

@@ -400,10 +400,35 @@ export const complaintCategoryEnum = pgEnum("complaint_category", [
   "pricing",
   "service",
   "shortage",
+  /*
+   * APPENDED, because `alter type ... add value` appends and the list here has
+   * to match what the database actually holds.
+   *
+   * Wrong Product is the one category in the business's new list with nowhere
+   * to go: goods arriving that are not the goods ordered is not a quality
+   * fault, not a packaging fault and not a shortage, and folding it into
+   * `other` would lose exactly the distinction somebody asked for the category
+   * to draw. Every other new label maps onto a member that already existed —
+   * see `lib/complaint-labels.ts`, which holds both directions.
+   */
+  "wrong_product",
   "other",
 ]);
 
-export const severityEnum = pgEnum("severity", ["low", "medium", "high"]);
+/*
+ * `critical` is the fourth PRIORITY, and it is a fourth severity rather than a
+ * relabelling of `high`: the business wants Normal, Urgent and Critical to be
+ * three different answers, and three answers cannot be stored in two values.
+ * `complaints.slaHours` is keyed by this column, so each one carries its own
+ * deadline. `low` is no longer offered on any form and stays for the rows that
+ * already hold it.
+ */
+export const severityEnum = pgEnum("severity", [
+  "low",
+  "medium",
+  "high",
+  "critical",
+]);
 
 /**
  * §6.2 — where a credit note request has got to. The CRM owns the REQUEST and

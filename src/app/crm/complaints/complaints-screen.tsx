@@ -10,10 +10,8 @@ import {
   Checkbox,
   EmptyState,
   Field,
-  Input,
   MetricStrip,
   PageHeader,
-  Radio,
   SectionLabel,
   Select,
   Td,
@@ -24,10 +22,21 @@ import {
 import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
-import { logComplaint, reassignComplaint, resolveComplaint } from "@/lib/actions/crm";
+import {
+  logComplaint,
+  reassignComplaint,
+  resolveComplaint,
+  setComplaintPriorityAction,
+} from "@/lib/actions/crm";
 import { ageLabel, money, shortDate, stamp } from "@/lib/format";
-import { ImagePicker } from "@/components/crm/image-picker";
-import { CN_STATUS_LABEL, categoryLabel } from "@/lib/complaint-labels";
+import { LogComplaintDialog } from "@/components/crm/log-complaint-dialog";
+import {
+  CN_STATUS_LABEL,
+  COMPLAINT_PRIORITIES,
+  categoryLabel,
+  isEscalatedPriority,
+  priorityLabel,
+} from "@/lib/complaint-labels";
 
 type Status =
   | "open"
@@ -374,9 +383,55 @@ export function ComplaintsScreen({
                 <Badge tone={current.slaBreached ? "danger" : "neutral"}>
                   {current.slaBreached ? "SLA breached" : `SLA ${stamp(current.slaDueAt.toISOString())}`}
                 </Badge>
-                <Badge tone={current.severity === "critical" || current.severity === "high" ? "danger" : "neutral"}>
-                  {current.severity}
-                </Badge>
+                {/* The stored severity is not a label either — this printed
+                  * `medium` at a manager, which is the database's word and not
+                  * the business's. Normal, Urgent, Critical.
+                  *
+                  * A SELECT rather than a badge, because the priority is the
+                  * judgement most likely to be made LATE: the person who took
+                  * the call had a sentence, and whoever opens this has the
+                  * story. Changing it moves the resolution deadline with it —
+                  * see `setComplaintPriority`. Closed complaints keep the
+                  * badge: there is no deadline left to move. */}
+                {CLOSED.includes(current.status) ? (
+                  <Badge tone={isEscalatedPriority(current.severity) ? "danger" : "neutral"}>
+                    {priorityLabel(current.severity)}
+                  </Badge>
+                ) : (
+                  <Select
+                    aria-label="Priority"
+                    value={current.severity}
+                    disabled={busy}
+                    className={cx(
+                      "h-6 w-auto py-0 pr-6 pl-2 text-[11px] font-medium",
+                      isEscalatedPriority(current.severity)
+                        ? "border-danger text-danger"
+                        : undefined,
+                    )}
+                    onChange={async (e) => {
+                      const next = e.target.value;
+                      setBusy(true);
+                      const result = await run(
+                        setComplaintPriorityAction(current.id, next),
+                      );
+                      setBusy(false);
+                      if (result.ok) {
+                        // The drawer holds its own copy of the row, so the
+                        // badge under the cursor has to move before the
+                        // refresh lands or it reads as a click that did
+                        // nothing.
+                        setCurrent({ ...current, severity: next as Row["severity"] });
+                        router.refresh();
+                      }
+                    }}
+                  >
+                    {COMPLAINT_PRIORITIES.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </Select>
+                )}
                 <span className="text-[13px] text-muted">
                   {categoryLabel(current.category)} · open {ageLabel(current.ageDays)}
                 </span>
@@ -536,7 +591,7 @@ export function ComplaintsScreen({
         }}
       />
 
-      <LogComplaintModal
+      <LogComplaintDialog
         open={logging}
         onClose={() => setLogging(false)}
         categories={categories}
@@ -607,253 +662,6 @@ function ReassignModalBody({ open, current, onClose, onSubmit }: ReassignProps) 
           ))}
         </Select>
       </Field>
-    </Modal>
-  );
-}
-
-type LogComplaintInput = {
-  customerId: string;
-  category: string;
-  description: string;
-  mobileNumber: string;
-  requestCn: boolean;
-  images: File[];
-};
-
-type CustomerHit = { id: string; name: string; city: string; phone: string };
-
-function LogComplaintModal({
-  open,
-  onClose,
-  categories,
-  maxImages,
-  onSubmit,
-}: {
-  open: boolean;
-  onClose: () => void;
-  categories: string[];
-  maxImages: number;
-  onSubmit: (input: LogComplaintInput) => Promise<void>;
-}) {
-  if (!open) return null;
-  return (
-    <LogComplaintModalBody
-      categories={categories}
-      maxImages={maxImages}
-      onClose={onClose}
-      onSubmit={onSubmit}
-    />
-  );
-}
-
-function LogComplaintModalBody({
-  categories,
-  maxImages,
-  onClose,
-  onSubmit,
-}: {
-  categories: string[];
-  maxImages: number;
-  onClose: () => void;
-  onSubmit: (input: LogComplaintInput) => Promise<void>;
-}) {
-  const [customerQuery, setCustomerQuery] = React.useState("");
-  const [customerHits, setCustomerHits] = React.useState<CustomerHit[]>([]);
-  const [customer, setCustomer] = React.useState<
-    { id: string; name: string; phone: string } | null
-  >(null);
-  const [category, setCategory] = React.useState<string>(categories[0] ?? "Other");
-  const [description, setDescription] = React.useState("");
-  const [images, setImages] = React.useState<File[]>([]);
-  const [requestCn, setRequestCn] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [errors, setErrors] = React.useState<{
-    customer?: string;
-    description?: string;
-  }>({});
-
-  const searchActive = !customer && customerQuery.trim().length >= 2;
-
-  // Stale hits from a previous query must never show once search is inactive.
-  const visibleHits = searchActive ? customerHits : [];
-
-  React.useEffect(() => {
-    if (!searchActive) return;
-    const term = customerQuery.trim();
-    const controller = new AbortController();
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`, {
-          signal: controller.signal,
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setCustomerHits(data.customers ?? []);
-        }
-      } catch {
-        /* aborted */
-      }
-    }, 180);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [customerQuery, searchActive]);
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title="Log complaint"
-      width={480}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            disabled={busy}
-            onClick={async () => {
-              if (!customer) {
-                setErrors({ customer: "Pick the customer this complaint is about." });
-                return;
-              }
-              if (!description.trim()) {
-                setErrors({
-                  description: "Describe the complaint in the customer's words.",
-                });
-                return;
-              }
-              setErrors({});
-              setBusy(true);
-              try {
-                await onSubmit({
-                  customerId: customer.id,
-                  category,
-                  description,
-                  mobileNumber: customer.phone,
-                  requestCn,
-                  images,
-                });
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Save
-          </Button>
-        </>
-      }
-    >
-      <div className="grid gap-3">
-        <Field label="Company / Customer Name" error={errors.customer ?? null}>
-          {customer ? (
-            <div className="flex h-8.5 items-center justify-between rounded-[4px] border border-line bg-canvas px-2.5 text-sm text-ink">
-              <span>{customer.name}</span>
-              <button
-                type="button"
-                className="cursor-pointer text-[13px] text-muted hover:text-ink"
-                onClick={() => {
-                  setCustomer(null);
-                  setCustomerQuery("");
-                }}
-              >
-                Change
-              </button>
-            </div>
-          ) : (
-            <div className="relative">
-              <Input
-                value={customerQuery}
-                onChange={(e) => setCustomerQuery(e.target.value)}
-                placeholder="Search by company, customer name or mobile number…"
-              />
-              {visibleHits.length ? (
-                <div className="absolute top-9 right-0 left-0 z-10 max-h-48 overflow-auto rounded-[6px] border border-line bg-surface py-1 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-                  {visibleHits.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      className="flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-[7px] text-left hover:bg-canvas"
-                      onClick={() => {
-                        setCustomer({ id: c.id, name: c.name, phone: c.phone });
-                        setCustomerHits([]);
-                        setCustomerQuery("");
-                      }}
-                    >
-                      <span className="text-sm font-medium text-ink">{c.name}</span>
-                      <span className="text-[13px] text-muted">{c.city}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          )}
-        </Field>
-
-        <Field label="Mobile number">
-          <Input
-            value={customer?.phone ?? ""}
-            readOnly
-            disabled
-            placeholder="Pick a customer first"
-          />
-        </Field>
-
-        <Field label="Category">
-          <Select value={category} onChange={(e) => setCategory(e.target.value)}>
-            {categories.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </Select>
-        </Field>
-
-        <Field
-          label="Complaint description"
-          error={errors.description ?? null}
-        >
-          <VoiceTextarea
-            value={description}
-            onChange={(e) => {
-              setDescription(e.target.value);
-              setErrors({});
-            }}
-            onDictate={(v) => {
-              setDescription(v);
-              setErrors({});
-            }}
-            className="h-24"
-            placeholder="Describe the complaint in detail."
-          />
-        </Field>
-
-        <ImagePicker files={images} onChange={setImages} max={maxImages} />
-
-        <Field
-          label="Request CN"
-          hint={
-            requestCn
-              ? "Accounts take it from here - they pick up the bill and the amount."
-              : undefined
-          }
-        >
-          <div className="flex items-center gap-4">
-            <Radio
-              name="requestCn"
-              label="No"
-              checked={!requestCn}
-              onChange={() => setRequestCn(false)}
-            />
-            <Radio
-              name="requestCn"
-              label="Yes"
-              checked={requestCn}
-              onChange={() => setRequestCn(true)}
-            />
-          </div>
-        </Field>
-      </div>
     </Modal>
   );
 }

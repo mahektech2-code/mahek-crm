@@ -20,6 +20,7 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { FilterPills, Modal } from "@/components/ui/overlays";
+import { LogComplaintDialog } from "@/components/crm/log-complaint-dialog";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
@@ -1296,15 +1297,23 @@ export function RecordScreen({
         }}
       />
 
-      <QuickComplaint
-        categories={categories}
+      {/* The SAME dialog the complaints screen opens — photographs, the
+        * mobile number and the Request CN answer included. What it does not
+        * do here is ask who the complaint is about: we are standing on that
+        * customer's record, so the answer is handed over rather than
+        * searched for. */}
+      <LogComplaintDialog
         open={cmpOpen}
-        customerName={customer.name}
+        categories={categories}
+        maxImages={maxComplaintImages}
+        customer={{
+          id: customer.id,
+          name: customer.name,
+          phone: customer.phone,
+        }}
         onClose={() => setCmpOpen(false)}
-        onSubmit={async (category, description) => {
-          const result = await run(
-            logComplaint({ customerId: customer.id, category, description }),
-          );
+        onSubmit={async (input) => {
+          const result = await run(logComplaint(input));
           if (result.ok) {
             setCmpOpen(false);
             router.refresh();
@@ -1766,80 +1775,6 @@ export function QuickReminder({
             onDictate={setNote}
             className="h-20"
             placeholder="Call back with the revised drum rate"
-          />
-        </Field>
-      </div>
-    </Modal>
-  );
-}
-
-export function QuickComplaint({
-  open,
-  customerName,
-  categories,
-  onClose,
-  onSubmit,
-}: {
-  open: boolean;
-  customerName: string;
-  categories: string[];
-  onClose: () => void;
-  onSubmit: (category: string, description: string) => Promise<void>;
-}) {
-  const [category, setCategory] = React.useState<string>(
-    categories[0] ?? "Other",
-  );
-  const [description, setDescription] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Log complaint"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                await onSubmit(category, description);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Log complaint
-          </Button>
-        </>
-      }
-    >
-      <div className="mb-3 text-sm text-muted">{customerName}</div>
-      <div className="grid gap-3">
-        <Field label="Category">
-          <Select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-          >
-            {categories.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field
-          label="Description · required"
-          hint="Write it in the customer's words - this is what the resolver reads."
-        >
-          <VoiceTextarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onDictate={setDescription}
-            className="h-20"
           />
         </Field>
       </div>

@@ -1268,17 +1268,19 @@ export const SETTINGS = [
     type: "structured",
     category: "complaints",
     label: "Resolution SLA",
-    description: "Hours to resolution by severity.",
-    default: { low: 120, medium: 48, high: 24 },
+    description:
+      "Hours to resolution by priority - Normal, Urgent and Critical are stored as medium, high and critical. `low` is no longer offered on any form and is kept for complaints that already carry it.",
+    default: { low: 120, medium: 48, high: 24, critical: 8 },
   },
   {
     key: "complaints.defaultSeverity",
     type: "text",
     category: "complaints",
-    label: "Default severity",
-    description: "Severity given to a complaint raised on a call, which sets its SLA.",
+    label: "Default priority",
+    description:
+      "The priority a complaint takes when nobody picks one - on the sheet import, the handset, and any form that does not ask. Normal is `medium`, which is what every complaint raised before the field existed carries.",
     default: "medium",
-    options: ["low", "medium", "high"],
+    options: ["low", "medium", "high", "critical"],
   },
   {
     key: "interactions.maxNotesLength",
@@ -3641,11 +3643,16 @@ export type Config = {
   "reminders.rollForwardOnNonWorkingDays": boolean;
   "reminders.rescheduleWarningCount": number;
 
-  "complaints.slaHours": { low: number; medium: number; high: number };
+  "complaints.slaHours": {
+    low: number;
+    medium: number;
+    high: number;
+    critical: number;
+  };
   "complaints.categories": string[];
   "dashboard.reminderOverdueFlagDays": number;
   "dashboard.complaintUnresolvedFlagDays": number;
-  "complaints.defaultSeverity": "low" | "medium" | "high";
+  "complaints.defaultSeverity": "low" | "medium" | "high" | "critical";
   "interactions.maxNotesLength": number;
   "customers.defaultCreditDays": number;
 
