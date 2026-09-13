@@ -366,7 +366,16 @@ export function MonthlyTargetsScreen({
       <Card className="mb-4 flex items-center gap-8 px-5 py-4">
         <span>
           <SectionLabel>Target</SectionLabel>
-          <span className="text-[22px] font-semibold text-ink">{money(total)}</span>
+          {/*
+            * `target`, never `total`. `total` is the paging COUNT — 67
+            * customers — and `money` reads its argument as paise, so sixty-
+            * seven rows rendered as ₹1 on the one figure this card exists to
+            * state. Nothing else on the screen was wrong, which is what made
+            * it survive: the gap and the percentage are computed from `target`
+            * a few lines up, so they agreed with each other and with the table
+            * while the headline disagreed with all of them.
+            */}
+          <span className="text-[22px] font-semibold text-ink">{money(target)}</span>
         </span>
         <span>
           <SectionLabel>Achieved</SectionLabel>
