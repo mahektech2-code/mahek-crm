@@ -1826,12 +1826,41 @@ export const productFormulations = pgTable(
      * disappears out of the denominator.
      */
     categoryId: text("category_id").references(() => productCategories.id),
+    /**
+     * The catch-all formulation — "Other".
+     *
+     * A mix is now set on FORMULATIONS rather than on the three categories
+     * above them: Universal / PU / Nano is too broad to aim anybody at, and
+     * the liquid is the thing a salesman actually sells. Nineteen rows is a
+     * list somebody can pick three from; three rows was a list that told them
+     * almost nothing.
+     *
+     * Shares have to add up, so there must be somewhere for value to go when
+     * its product names no formulation at all — an unmatched order line, or a
+     * SKU nobody has filed yet. That is this row. At most one may carry it,
+     * enforced by the partial unique index below, exactly as on
+     * `product_categories`: two residuals would count unclassified value twice
+     * and overstate every share.
+     *
+     * It is a real row rather than a sentinel id because the mix tables hold a
+     * foreign key, and a made-up id in a foreign key is a row nobody can join
+     * to. `catalogue-import.ts` only ever creates and updates formulations —
+     * it never deactivates one missing from the document — so it will not
+     * remove this.
+     */
+    isResidual: boolean("is_residual").notNull().default(false),
     active: boolean("active").notNull().default(true),
     displayOrder: integer("display_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("product_formulations_slug_key").on(t.slug)],
+  (t) => [
+    uniqueIndex("product_formulations_slug_key").on(t.slug),
+    /* At most one "Other" — two would count unclassified value twice. */
+    uniqueIndex("product_formulations_residual_key")
+      .on(t.isResidual)
+      .where(sql`is_residual`),
+  ],
 );
 
 export const productBrands = pgTable(
@@ -7054,7 +7083,39 @@ export const salesTargets = pgTable(
      * the same way any other unset component does.
      */
     collectionTargetBp: integer("collection_target_bp"),
+    /**
+     * A COUNT OF TASKS, and the reason it is retired is the same one that
+     * retired `collection_target_paise` two lines up.
+     *
+     * "Ten tasks marked done" means nothing without knowing how many were
+     * asked for. A salesman given twelve tasks and one given a hundred were
+     * held to the same ten — the first can barely fail it and the second
+     * cannot pass it — and neither figure says anything about whether the
+     * person did what was asked. A target somebody can meet by being given
+     * fewer tasks is not a target.
+     *
+     * Left in place and simply stops scoring, exactly as the retired
+     * collection column does: a target set before this shipped is not
+     * reinterpreted as a percentage, because 10 was never a percentage and
+     * pretending otherwise would mark somebody at 10% of their tasks.
+     */
     activityTarget: integer("activity_target"),
+    /**
+     * Basis points of THE TASKS THEY WERE ASKED TO DO — the ones falling due
+     * inside the month — rather than a count of them.
+     *
+     * The same shape as `collection_target_bp` beside it, and for the same
+     * reason: the thing being measured has a base that differs from person to
+     * person and month to month, so the only figure that means the same thing
+     * everywhere is a share of it.
+     *
+     * Where nobody was given any tasks the implied target is zero, which
+     * `achievementBp` already reads as "not asked" and drops from the score.
+     * A salesman with no tasks has nothing to be measured on here, which is
+     * not the same as failing.
+     */
+    activityTargetBp: integer("activity_target_bp"),
+
 
     status: salesTargetStatusEnum("status").notNull().default("draft"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
@@ -7097,9 +7158,23 @@ export const salesTargetCategories = pgTable(
     targetId: text("target_id")
       .notNull()
       .references(() => salesTargets.id, { onDelete: "cascade" }),
-    categoryId: text("category_id")
-      .notNull()
-      .references(() => productCategories.id),
+    categoryId: text("category_id").references(() => productCategories.id),
+    /**
+     * WHAT THIS BAND IS ABOUT, when it is a formulation rather than a category.
+     *
+     * Exactly one of `category_id` and `formulation_id` is set, which the check
+     * below enforces. New bands are set on formulations — Universal / PU / Nano
+     * is too broad to aim a salesman at, and nineteen liquids is a list
+     * somebody can pick three from.
+     *
+     * `category_id` is NOT dropped and the rows already set against it are not
+     * rewritten: a band somebody typed is a decision, and reinterpreting
+     * "Universal 40%" as a formulation would be inventing which liquid they
+     * meant. They go on scoring exactly as before until somebody replaces them,
+     * which is the same treatment `activity_target` and
+     * `collection_target_paise` get one table up.
+     */
+    formulationId: text("formulation_id").references(() => productFormulations.id),
     /** Basis points of total value. 3000 is 30%. */
     minimumBp: integer("minimum_bp").notNull().default(0),
     targetBp: integer("target_bp").notNull().default(0),
@@ -7107,6 +7182,13 @@ export const salesTargetCategories = pgTable(
   },
   (t) => [
     uniqueIndex("sales_target_categories_key").on(t.targetId, t.categoryId),
+    uniqueIndex("sales_target_categories_formulation_key").on(t.targetId, t.formulationId),
+    /* One subject per band. Neither set is a row that scores nothing; both set
+       is a row that would score twice. */
+    check(
+      "sales_target_categories_one_subject",
+      sql`(category_id is null) <> (formulation_id is null)`,
+    ),
     /* A band that does not increase would score a larger share lower than a
        smaller one — invisible until somebody is marked down for selling more
        of exactly what they were asked to sell. */
@@ -7235,9 +7317,9 @@ export const salesPerformanceCategories = pgTable(
     performanceId: text("performance_id")
       .notNull()
       .references(() => salesPerformance.id, { onDelete: "cascade" }),
-    categoryId: text("category_id")
-      .notNull()
-      .references(() => productCategories.id),
+    categoryId: text("category_id").references(() => productCategories.id),
+    /** The formulation this reading is about, where the band was set on one. */
+    formulationId: text("formulation_id").references(() => productFormulations.id),
     targetBp: integer("target_bp").notNull().default(0),
     minimumBp: integer("minimum_bp").notNull().default(0),
     stretchBp: integer("stretch_bp").notNull().default(0),
@@ -7251,6 +7333,10 @@ export const salesPerformanceCategories = pgTable(
   },
   (t) => [
     uniqueIndex("sales_performance_categories_key").on(t.performanceId, t.categoryId),
+    uniqueIndex("sales_performance_categories_formulation_key").on(
+      t.performanceId,
+      t.formulationId,
+    ),
   ],
 );
 

@@ -25,7 +25,7 @@ export type TargetRow = {
   newCustomerTarget: number | null;
   /** Basis points of what was already overdue at the start of the month. */
   collectionTargetBp: number | null;
-  activityTarget: number | null;
+  activityTargetBp: number | null;
   publishedAt: Date | null;
   bands: {
     categoryId: string;
@@ -80,7 +80,7 @@ export async function targetableCandidates(period: string): Promise<TargetRow[]>
     volume_target_ml: string | null;
     new_customer_target: number | null;
     collection_target_bp: number | null;
-    activity_target: number | null;
+    activity_target_bp: number | null;
     published_at: Date | null;
     revisions: number;
     carried_forward: boolean | null;
@@ -93,7 +93,7 @@ export async function targetableCandidates(period: string): Promise<TargetRow[]>
     select u.id as user_id, u.name as user_name,
            t.id as target_id, t.status,
            t.revenue_target_paise, t.volume_target_ml, t.new_customer_target,
-           t.collection_target_bp, t.activity_target, t.published_at,
+           t.collection_target_bp, t.activity_target_bp, t.published_at,
            t.carried_forward,
            (select count(*)::int from sales_target_revisions r
              where r.target_id = t.id) as revisions
@@ -125,7 +125,7 @@ export async function targetableCandidates(period: string): Promise<TargetRow[]>
     volumeTargetMl: r.volume_target_ml === null ? null : Number(r.volume_target_ml),
     newCustomerTarget: r.new_customer_target,
     collectionTargetBp: r.collection_target_bp,
-    activityTarget: r.activity_target,
+    activityTargetBp: r.activity_target_bp,
     publishedAt: r.published_at,
     bands: r.target_id ? (bands.get(r.target_id) ?? []) : [],
     revisions: Number(r.revisions ?? 0),
@@ -178,15 +178,24 @@ async function bandsByTarget(ids: string[]) {
     target_bp: number;
     stretch_bp: number;
   }>(sql`
-    select tc.target_id, tc.category_id, pc.name,
+    /*
+     * A band is about a FORMULATION now, or about a category where somebody
+     * set it before that changed. Both are read, coalesced onto one id and one
+     * name, because the screen draws a row either way and re-typing an old
+     * band as a new one is the user's decision rather than a migration's.
+     */
+    select tc.target_id,
+           coalesce(tc.formulation_id, tc.category_id) as category_id,
+           coalesce(pf.name, pc.name) as name,
            tc.minimum_bp, tc.target_bp, tc.stretch_bp
       from sales_target_categories tc
-      join product_categories pc on pc.id = tc.category_id
+      left join product_categories pc on pc.id = tc.category_id
+      left join product_formulations pf on pf.id = tc.formulation_id
      where tc.target_id in ${sql`(${sql.join(
        ids.map((i) => sql`${i}`),
        sql`, `,
      )})`}
-     order by pc.display_order
+     order by coalesce(pf.name, pc.name)
   `);
   for (const r of rows) {
     const list = out.get(r.target_id) ?? [];
@@ -319,13 +328,24 @@ export async function baselineFor(
   };
 }
 
-/** The mix categories a target can be set on. */
+/**
+ * THE FORMULATIONS A MIX CAN BE SET ON.
+ *
+ * Formulations, not the three categories above them: Universal / PU / Nano is
+ * too broad to aim a salesman at, and the liquid is the thing he actually
+ * sells. The residual — "Other" — sorts last, because it is where value goes
+ * rather than something anybody is asked to sell.
+ *
+ * Still called `mixCategories` by both screens and both pages; renaming it
+ * would be a change to five files that alters nothing a user sees, and the
+ * word on the SCREEN is what matters here — that reads "formulation" now.
+ */
 export async function mixCategories(): Promise<
   { id: string; name: string; isResidual: boolean }[]
 > {
   const rows = await db.execute<{ id: string; name: string; is_residual: boolean }>(sql`
-    select id, name, is_residual from product_categories
-     where active order by display_order
+    select id, name, is_residual from product_formulations
+     order by is_residual, name
   `);
   return rows.map((r) => ({ id: r.id, name: r.name, isResidual: r.is_residual }));
 }
