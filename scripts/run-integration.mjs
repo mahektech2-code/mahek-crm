@@ -55,6 +55,7 @@ const files = [
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
   "src/lib/sample-logistics.test.ts",
+  "src/lib/enquiries.test.ts",
 ];
 
 let failed = 0;

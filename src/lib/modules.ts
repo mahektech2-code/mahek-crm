@@ -115,6 +115,20 @@ const founder = (
   note,
 });
 
+const enquiries = (
+  slug: string,
+  label: string,
+  group: string,
+  note?: string,
+): AppModule => ({
+  key: `enquiries.${slug}`,
+  app: "enquiries",
+  label,
+  group,
+  href: `/enquiries/${slug}`,
+  note,
+});
+
 /**
  * Every module MahekOne has, in the order its app draws them.
  *
@@ -436,6 +450,22 @@ export const APP_MODULES: AppModule[] = [
     "CRM",
     "Company",
     "The order book's own five, with links into the Reports app for the full breakdown.",
+  ),
+
+  /* -------------------------------------------------- the Website Enquiries app */
+  /*
+   * Two modules: the pipeline at a glance, and the worklist behind it. Its own
+   * app rather than a screen inside the CRM, Accounts or HRMS — Sales, Accounts
+   * and HR each work enquiries that belong to their own team, and a shared
+   * workspace granted separately is what lets somebody hold it without also
+   * holding whichever of those three apps happens to be nearby.
+   */
+  { key: "enquiries.overview", app: "enquiries", label: "Overview", group: "Website Enquiries", href: "/enquiries", exact: true },
+  enquiries(
+    "list",
+    "Enquiries",
+    "Website Enquiries",
+    "The worklist itself — every enquiry, who it is assigned to, and what it is waiting on.",
   ),
 ];
 

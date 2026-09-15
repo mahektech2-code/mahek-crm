@@ -132,6 +132,7 @@ const LABELS: Record<SecretName, string> = {
   "openai.apiKey": "The OpenAI key",
   "msg91.authKey": "The MSG91 key",
   "olamaps.apiKey": "The Ola Maps key",
+  "enquiries.ingestSecret": "The website enquiry ingest secret",
 };
 
 /**
@@ -147,4 +148,6 @@ const USED_FROM: Record<SecretName, string> = {
   "msg91.authKey": "WhatsApp sending uses it from the next message.",
   "olamaps.apiKey":
     "The Live map and Territory's shop map draw their streets from the next time either is opened.",
+  "enquiries.ingestSecret":
+    "The website's next enquiry submission is accepted or refused based on this value — it must match what the website itself is configured with.",
 };
