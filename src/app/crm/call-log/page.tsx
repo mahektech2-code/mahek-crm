@@ -1,4 +1,6 @@
 import { requireUser } from "@/lib/auth";
+import { categoryValue } from "@/lib/complaint-labels";
+import { cached } from "@/lib/reference-cache";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { dayActivity, today } from "@/lib/queries";
 import { getConfig } from "@/lib/config/store";
@@ -6,13 +8,18 @@ import { popularProducts } from "@/lib/services/product-service";
 import { db } from "@/db";
 import { helpArticles, quickNotes as quickNotesTable } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { getQueue } from "@/lib/services/queue-service";
+import { adHocCallTarget, getQueue } from "@/lib/services/queue-service";
 import { QueueScreen } from "./queue-screen";
 import type { CallTarget } from "@/components/crm/call-panel";
 
 export const metadata = { title: "Call Log - MahekOne CRM" };
 
-export default async function QueuePage() {
+export default async function QueuePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ customer?: string }>;
+}) {
+  const { customer: requestedCustomerId } = await searchParams;
   const user = await requireUser();
   const scope = await getScope(user);
 
@@ -31,18 +38,37 @@ export default async function QueuePage() {
   // comes up front is the handful worth offering unprompted; everything else
   // is the search box, which reaches the formulation and the brand as well as
   // the name.
+  /*
+   * THE SAME THREE LISTS FOR EVERYBODY, EVERY TIME.
+   *
+   * 63 quick notes, 198 products and a handful of call scripts — none of it
+   * scoped, none of it changing except when an admin edits it, and all of it
+   * re-read from Postgres on every open of the screen a telecaller lives in
+   * all day. Three round trips and three lots of row parsing, on one shared
+   * core, to produce bytes identical to the ones produced a second earlier.
+   *
+   * `cached` holds them for thirty seconds — the same window and the same
+   * reasoning `getConfig` has used since it was written. See
+   * `lib/reference-cache.ts` for what may and may not go in there; the queue
+   * below is deliberately NOT cached, because a telecaller who logs a call has
+   * to see the list change.
+   */
   const [quickNoteRows, productRows, scriptRows] = await Promise.all([
-    db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
-    popularProducts(),
+    cached("crm.quickNotes", () =>
+      db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
+    ),
+    cached("crm.popularProducts", () => popularProducts()),
     // Call scripts live in the help centre, so there is one place they are
     // written and the panel simply shows the relevant one.
-    db
-      .select()
-      .from(helpArticles)
-      .where(eq(helpArticles.type, "call_script"))
-      // Ordered, or which script greets the telecaller is whatever the
-      // planner happened to return first.
-      .orderBy(helpArticles.title),
+    cached("crm.callScripts", () =>
+      db
+        .select()
+        .from(helpArticles)
+        .where(eq(helpArticles.type, "call_script"))
+        // Ordered, or which script greets the telecaller is whatever the
+        // planner happened to return first.
+        .orderBy(helpArticles.title),
+    ),
   ]);
   const quickNoteOptions = quickNoteRows.map((n) => ({
     id: n.id,
@@ -75,6 +101,15 @@ export default async function QueuePage() {
         ownerName: r.ownerName,
         reason: r.reasons[0]?.label,
         reasonKind: r.reasons[0]?.kind,
+        // EVERY reason, not the strongest one. A customer can be due a
+        // promised callback AND due to reorder, and the panel used to be
+        // handed `reasons[0]` alone — so a telecaller working the Reminder
+        // filter saw only the promise, talked about it, saved, and
+        // `queue.excludeCalledToday` took the customer off the list for the
+        // rest of the day with the order never mentioned. The list row has
+        // always drawn all of them; the screen somebody is actually looking
+        // at while they speak is the one that had to be told.
+        reasons: r.reasons.map((x) => ({ kind: x.kind, label: x.label })),
         kind: r.kind,
         outstanding: r.outstanding,
         lastOrderDate: r.lastOrderDate,
@@ -82,9 +117,49 @@ export default async function QueuePage() {
         creditTermDays: r.creditTermDays,
         targetGap: r.targetGap,
         openComplaint: r.openComplaint,
+        /* The queue's own ladder count, so the panel can say which attempt a
+           No Answer is without counting it a second time. */
+        noAnswerCount: r.noAnswerCount,
       } satisfies CallTarget,
     ]),
   );
+
+  /*
+   * A CUSTOMER NAMED IN THE URL IS CALLABLE EVEN WHEN THE QUEUE DID NOT RANK
+   * THEM.
+   *
+   * The Reminders screen sends people here to keep a promise, and a promise is
+   * owed whether or not today's list happened to include the customer — they
+   * may have been called this morning, held back by a cooldown, or sat past
+   * the size cap. Landing on a screen where the button does nothing is how
+   * somebody concludes the Call button is broken and goes back to ticking
+   * things off.
+   *
+   * No reason is attached, because there is none: the queue did not put them
+   * here, a promise did, and the panel says what the record says rather than
+   * inventing a sentence.
+   */
+  if (requestedCustomerId && !callTargets[requestedCustomerId]) {
+    const c = await adHocCallTarget(requestedCustomerId);
+    if (c) {
+      callTargets[requestedCustomerId] = {
+        customerId: c.id,
+        sourceModule: "ad_hoc",
+        name: c.name,
+        contactPerson: c.contactPerson,
+        phone: c.phone,
+        city: c.city,
+        ownerName: c.ownerName,
+        kind: c.kind,
+        outstanding: Number(c.outstanding),
+        lastOrderDate: c.lastOrderDate,
+        lastOrderValue: Number(c.lastOrderValue),
+        creditTermDays: c.creditTermDays,
+        targetGap: 0,
+        openComplaint: null,
+      } satisfies CallTarget;
+    }
+  }
 
   return (
     <QueueScreen
@@ -120,10 +195,9 @@ export default async function QueuePage() {
       snapshotHour={queue.snapshotHour}
       callTargets={callTargets}
       categories={config["complaints.categories"].map((c) => ({
-        value: c
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "_")
-          .replace(/^_|_$/g, ""),
+        // NOT a slug. "Packaging" slugified to `packaging`, which is not a
+        // member of the enum, so the save refused it — see `categoryValue`.
+        value: categoryValue(c),
         label: c,
       }))}
       quickNotes={quickNoteOptions}

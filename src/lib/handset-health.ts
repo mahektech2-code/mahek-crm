@@ -42,13 +42,64 @@ export type HandsetFacts = {
   batteryCharging: boolean | null;
   deviceStateAt: Date | string | null;
   lastHeardAt: Date | string | null;
+  /**
+   * UNSENT FIXES STILL ON THE PHONE, or null where the build cannot say.
+   *
+   * Never read as zero when absent: a phone holding nothing and a phone that
+   * cannot tell us are different facts, and drawing the second as "clear" is
+   * the reassuring answer on the row that has earned it least.
+   */
+  queuedPositions: number | null;
+  queuedPositionsAt: Date | string | null;
   /** A day that is open changes what silence MEANS — see below. */
   dayOpen: boolean;
+  /** When he checked in — what a dead trail is measured from. */
+  checkInAt: Date | string | null;
+  /**
+   * THE NEWEST FIX THE TRAIL ITSELF HAS PRODUCED, and nothing else.
+   *
+   * Deliberately NOT the row's `seenAt`, which is the newest of three sources
+   * — the trail, the check-in and each visit — and is exactly the fact that
+   * hid this for as long as it was hidden. A salesman whose tracking is dead
+   * still checks in, and that one fix gives him a pin, a place and a time on
+   * the team list; read as evidence of a trail it says the opposite of the
+   * truth. Null here means the trail has produced nothing at all today.
+   */
+  trailSeenAt: Date | string | null;
+  /**
+   * WHAT THE PHONE SAID ABOUT ITSELF WHEN THE DAY OPENED — see the three
+   * columns on `mbos_attendance_days`.
+   *
+   * `setupReady` false is a day that opened on a phone that could not show it
+   * would record; `setupAcknowledgedAt` is the man saying he had done the
+   * autostart and battery steps, which no API can check and which is therefore
+   * a CLAIM. Null is a handset too old to report any of it and is never read
+   * as "nothing was wrong".
+   */
+  setupReady: boolean | null;
+  setupAcknowledgedAt: Date | string | null;
+  setupUnverified: string[] | null;
+  /**
+   * WHETHER THE BACKGROUND MACHINERY IS ACTUALLY RUNNING.
+   *
+   * `registered` is what the OS answered when asked; `lastRunAt` is the only
+   * evidence it meant it. An OEM battery manager leaves the first true and
+   * never delivers the second, which is precisely the failure that made "it
+   * is switched on and nothing arrives" unanswerable. Null on both is a
+   * handset too old to report it and is never read as a no.
+   */
+  backgroundSyncRegistered: boolean | null;
+  backgroundSyncLastRunAt: Date | string | null;
+  /** When the handset's own watchdog last caught the tracker accepted and silent. */
+  trackerStalledAt: Date | string | null;
 };
 
 export type HandsetThresholds = {
   quietMinutes: number;
+  noTrailMinutes: number;
   lowBatteryPercent: number;
+  /** Unsent fixes worth saying out loud. See the note where it is read. */
+  queuedPositionsWorthSaying: number;
 };
 
 const ms = (at: Date | string | null): number | null => {
@@ -81,6 +132,15 @@ export function ageWords(fromMs: number, nowMs: number): string {
  * maps cleanly onto `always`. `false` does NOT map onto anything, because it
  * is exactly the ambiguity the new column was added to end — it becomes
  * `restricted`, which says the trail has gaps without inventing a reason.
+ *
+ * AND `always` IS NOT A PROMISE OF A TRAIL. It is the strongest thing this
+ * column can say and it still only says what the OS granted — an OEM battery
+ * manager is perfectly free to kill a service that started with every
+ * permission it asked for, and on some handsets it does so within minutes.
+ * Nothing in this function can see that; what sees it is `trailIsDead` below,
+ * reading the positions themselves. The two are not alternatives: a phone
+ * reading `always` here and producing nothing all day is the exact shape of
+ * the incident this module was corrected for, and it is caught downstairs.
  */
 type LocationState = "always" | "while_using" | "denied" | "undetermined" | "restricted" | "unknown";
 
@@ -117,6 +177,49 @@ export function trailHasGaps(
 }
 
 /**
+ * CHECKED IN, AND THE TRAIL HAS PRODUCED NOTHING.
+ *
+ * The fault that had no sentence anywhere. A salesman checked in at 04:16 and
+ * by half past twelve had posted not one position — ever, since his phone was
+ * bound — while his handset was demonstrably fine: it had synced ninety
+ * minutes earlier, the check-in and its photograph had both arrived, and the
+ * check-in's own GPS fix was good. The map drew him at that fix, the team list
+ * said "Last seen 04:16", and the only note against him was that he had gone
+ * quiet — a sentence that is true of the interval and wrong about the phone,
+ * and which sends a manager hunting a signal problem that does not exist.
+ *
+ * EVERY PERMISSION HE HOLDS READS CORRECT, and that is the point rather than a
+ * complication. `background_location_granted` is written at the end of the
+ * handset's `start()` from an answer that has already refused to be true
+ * unless the OS reported the background permission granted — so it maps onto
+ * `always` above and it is not lying. The service started with everything it
+ * asked for and an OEM battery manager killed it anyway, which is a thing no
+ * column on `mbos_devices` can report and only the absence of positions can.
+ * That makes this the ONLY line that catches a handset like his, which is why
+ * it fires whatever the permissions say.
+ *
+ * It is measured from the CHECK-IN and not from the start of the day, because
+ * the trail cannot produce anything before there is a day to produce it in,
+ * and a threshold is what keeps a morning's first four minutes from reading as
+ * a fault. And it asks `trailSeenAt`, never the row's `seenAt` — see that
+ * field's own note: the check-in fix is precisely what made this invisible.
+ *
+ * One function, because the Live map's banner counts these and each row
+ * explains its own, exactly as `trailHasGaps` is shared above it.
+ */
+export function trailIsDead(
+  f: Pick<HandsetFacts, "dayOpen" | "checkInAt" | "trailSeenAt">,
+  t: Pick<HandsetThresholds, "noTrailMinutes">,
+  nowMs: number,
+): boolean {
+  if (!f.dayOpen) return false;
+  if (ms(f.trailSeenAt) !== null) return false;
+  const checkedIn = ms(f.checkInAt);
+  if (checkedIn === null) return false;
+  return nowMs - checkedIn > t.noTrailMinutes * 60_000;
+}
+
+/**
  * Everything worth saying about one handset, worst first.
  *
  * NOTHING IS SAID ABOUT A HEALTHY PHONE. A row that lists four green facts is
@@ -131,6 +234,56 @@ export function handsetNotes(
   nowMs: number,
 ): HandsetNote[] {
   const notes: HandsetNote[] = [];
+
+  /*
+   * THE PHONE KILLED THE TRACKER, and it is first because it outranks every
+   * permission below it.
+   *
+   * Each of those sends somebody to a settings screen to grant something. This
+   * one is the opposite case: everything IS granted, the OS accepted the task,
+   * and the handset's own watchdog then caught it delivering nothing. Drawing
+   * a permission note over the top of that sends a manager to ask for a switch
+   * that is already on, and the salesman — who can see it is on — stops
+   * believing the next thing the office tells him.
+   */
+  const stalled = ms(f.trackerStalledAt);
+  if (stalled !== null && f.dayOpen) {
+    notes.push({
+      tone: "bad",
+      text: `His phone stopped the tracker — ${ageWords(stalled, nowMs)} ago`,
+      detail:
+        "Every permission is granted and the OS accepted the task; the handset's battery manager killed it anyway, which no API reports. He fixes it once on Sync → Keep tracking on, and until he does the route records only while the app is open.",
+    });
+  }
+
+  /*
+   * IT CAN NEVER SYNC WITH THE APP SHUT, which is a different fault.
+   *
+   * `false` here is the OS refusing to register the periodic wake-up at all —
+   * the handset is not being killed, it was never started. It had looked
+   * exactly like a working phone from this screen, because nothing asked.
+   */
+  if (f.backgroundSyncRegistered === false) {
+    notes.push({
+      tone: "bad",
+      text: "Background sync never started on this phone",
+      detail:
+        "The OS refused the periodic wake-up, so nothing reaches the office while the app is shut — his work goes up only when he opens it. Reinstalling the app is what re-asks; if it refuses again the handset is too restricted and he should be given another.",
+    });
+  } else if (f.backgroundSyncRegistered === true && f.dayOpen) {
+    /* REGISTERED AND SILENT is the one worth a warning of its own. The floor
+       is roughly fifteen minutes on both Android and iOS, so silence well past
+       that is the OS having quietly stopped honouring it. */
+    const ran = ms(f.backgroundSyncLastRunAt);
+    if (ran !== null && nowMs - ran > 45 * 60_000) {
+      notes.push({
+        tone: "warn",
+        text: `No background sync for ${ageWords(ran, nowMs)}`,
+        detail:
+          "The wake-up is registered and the phone has stopped honouring it — the usual cause is battery optimisation. His work is safe on the handset and goes up the moment he opens the app.",
+      });
+    }
+  }
 
   /*
    * LOCATION OFF ON THE PHONE OUTRANKS ANY PERMISSION, and is checked first
@@ -180,6 +333,89 @@ export function handsetNotes(
   }
 
   /*
+   * THE TRAIL ITSELF, and it outranks everything below it.
+   *
+   * It sits above the battery and above the silence because it is the only
+   * line on the row that names what is actually broken — the two under it are
+   * context and a duration, and on the day this was written the duration was
+   * the ONLY thing said, which is how a manager spent a morning looking for a
+   * signal fault on a phone that was syncing.
+   *
+   * It is not folded into the permission block above and does not replace any
+   * of it: those sentences are about a SETTING and this one is about TODAY.
+   * A handset can hold "Allow all the time" and still produce nothing — this
+   * one did — and a phone reporting `while_using` with a trail full of holes
+   * is a different row from one with no trail at all. Both lines can appear
+   * and each is worth its own reading.
+   *
+   * WHAT IT ASKS FOR IS THE BATTERY MANAGER, not the permission. The commonest
+   * reader of this line is a manager looking at a row whose permission is
+   * already correct, and sending him to a settings screen that is right takes
+   * the one person who could fix this and spends his call proving nothing.
+   * Autostart and battery optimisation are where these handsets kill a service
+   * that started properly; the permission is named last, and only because a
+   * build too old to report `location_permission` leaves it unconfirmed.
+   */
+  const checkedIn = ms(f.checkInAt);
+  if (checkedIn !== null && trailIsDead(f, t, nowMs)) {
+    /*
+     * AND IF HE WAS ALREADY MADE TO ANSWER FOR IT, the sentence is a different
+     * one — the one pattern the start-of-day gate exists to make visible.
+     *
+     * The handset stops a day from opening on a phone that cannot show it will
+     * record, and where the failing steps are ones no API can check — the
+     * autostart and battery screens an OEM buries — it opens on the man saying
+     * he has done them. That claim is worth exactly as much as the trail that
+     * follows it, and here there is none: this is somebody who has been
+     * through the setup screen, pressed the button, and is STILL not being
+     * recorded. Telling a manager to send him to those settings a second time
+     * spends the one call that could fix this on the thing that has already
+     * failed, which is why the two sentences are not both shown and not the
+     * same sentence.
+     */
+    const claimedAt = ms(f.setupAcknowledgedAt);
+    if (claimedAt !== null) {
+      const outstanding = f.setupUnverified?.length
+        ? ` Still outstanding when he answered: ${f.setupUnverified.join(", ")}.`
+        : "";
+      notes.push({
+        tone: "bad",
+        text: `No position all day — and he said the phone was set up`,
+        detail:
+          "He was stopped at the start of the day, taken through the setup screen, and answered that he had allowed MahekOne to autostart and set its battery usage to unrestricted. No phone can verify that answer, and the trail since says it did not take. This one needs a person rather than another instruction: go through those two settings WITH him, and if they are already correct then this is a handset this product cannot track and the office should know which model it is." +
+          outstanding,
+      });
+    } else {
+      notes.push({
+        tone: "bad",
+        text: `No position all day — checked in ${ageWords(checkedIn, nowMs)} ago`,
+        detail:
+          "The check-in reached MahekOne and not one position has since, so this is the tracking service on his phone rather than a handset we cannot hear from — the silence line, if there is one below, is measuring an interval and not naming this. The usual cause is the phone killing the service after it started perfectly well: ask him to allow MahekOne to autostart and to set its battery usage to unrestricted, in the phone's own battery settings, then check out and back in. Only if this row also says something about Location is the permission worth changing.",
+      });
+    }
+  }
+
+  /*
+   * OPENED ANYWAY, WITH NOTHING CLAIMED. A day that started on a phone that
+   * could not show it would record, and nobody said anything about it — which
+   * means the gate is at `warn` (or `off`) in the office's own settings.
+   *
+   * It is worth a line at nine in the morning rather than a discovery at six
+   * in the evening: this is a prediction of a lost day, made while there is
+   * still a day to save. It is `warn` and not `bad` because the trail may yet
+   * appear — the reading is of what the phone could PROVE, and plenty of
+   * handsets that cannot prove it record perfectly well.
+   */
+  if (f.dayOpen && f.setupReady === false && ms(f.setupAcknowledgedAt) === null) {
+    notes.push({
+      tone: "warn",
+      text: "Day opened on a phone that could not show it would record",
+      detail:
+        "The start-of-day check found something wrong and the day was allowed to start regardless, which is what `warn` on the field setting means. Nobody has claimed to have fixed anything, so expect the trail to be thin or absent — the row above says whether it has appeared.",
+    });
+  }
+
+  /*
    * BATTERY IS SHOWN WHEN IT IS ACTIONABLE, which is low or working, and it
    * ALWAYS carries the time it was read.
    *
@@ -210,6 +446,17 @@ export function handsetNotes(
    * opened it means nothing at all — a phone in a drawer overnight is not a
    * fault, and flagging it would put a warning on every row every morning,
    * which is how a screen teaches people to ignore its warnings.
+   *
+   * IT STILL FIRES ON A PHONE WE HAVE HEARD FROM, and that was reconsidered
+   * rather than left alone. The vivo above had synced ninety minutes earlier
+   * and was told it had not been heard from for ninety minutes, which read as
+   * an accusation and was merely a measurement — so the temptation was to
+   * suppress it on a handset that has spoken recently. There is no such thing:
+   * `quietMinutes` IS the definition of recently, a manager set it, and a
+   * second definition written in here would be two answers to one question on
+   * one screen. What was actually wrong was that this was the only line on the
+   * row. It now sits under a line that names the fault, which is where a
+   * duration belongs.
    */
   const heard = ms(f.lastHeardAt);
   if (f.dayOpen) {
@@ -230,6 +477,44 @@ export function handsetNotes(
           "Nothing has reached MahekOne from this handset since then. A phone with no signal cannot tell us it has no signal, so this is the only evidence there is — no signal, no battery and a closed app all look exactly like this.",
       });
     }
+  }
+
+  /*
+   * HOW MUCH OF HIS DAY HAS NOT REACHED US, in plain words.
+   *
+   * This is the question a manager is really asking and the one nothing could
+   * answer: not "is he tracking" but "is his day going to reach me". Every fix
+   * waits on the phone until the server confirms it, so a handset can be
+   * perfectly healthy, answering every heartbeat, and holding hours of work —
+   * and until this column existed the only way to find out was to read the
+   * positions table and notice the newest row was old.
+   *
+   * IT IS NOT A FAULT AND IS NOT DRAWN AS ONE. A queue is the design working:
+   * the connection went, nothing was lost, and it will arrive. So it is
+   * `info` rather than `warn`, and it is said in minutes of WORK rather than
+   * in rows — "about 25 min of his route has not reached us yet" is something
+   * anybody can act on, and "12,412 positions queued" is a number only the
+   * person who built this can read. That is the whole rule for this panel:
+   * the people reading it are managers, not engineers.
+   *
+   * SILENT BELOW THE THRESHOLD, like every other line here. A phone that is a
+   * few fixes behind is a phone syncing normally, and a row that always says
+   * something is a row nobody reads.
+   *
+   * The age travels with it for the same reason the battery's does: a count
+   * from breakfast would have somebody chasing a queue that has long since
+   * drained.
+   */
+  const queued = f.queuedPositions;
+  if (queued !== null && queued >= Math.max(1, t.queuedPositionsWorthSaying)) {
+    const readAt = ms(f.queuedPositionsAt);
+    const when = readAt === null ? "" : ` — read ${ageWords(readAt, nowMs)} ago`;
+    notes.push({
+      tone: "info",
+      text: `${queued.toLocaleString("en-IN")} fixes still on his phone${when}`,
+      detail:
+        "His phone records every position and keeps it until we confirm we have it, so none of this is lost — it is waiting for a connection. It arrives on its own, usually within minutes of him getting signal or opening the app. Worth a look only if the number keeps growing all day.",
+    });
   }
 
   return notes;

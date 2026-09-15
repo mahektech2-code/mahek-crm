@@ -26,8 +26,26 @@ export type SaveVisitArgs = {
   customerId: string;
   customerName: string;
   userId: string;
+  /**
+   * WHERE he was, and nothing about WHEN.
+   *
+   * These carry the coordinates and their accuracy. The instants below are what
+   * the row is stamped with, because a fix is evidence and the clock is not
+   * evidence of anything — reading the times off `Fix.at` meant a visit made in
+   * a godown with no signal had a NULL `checkInAt`, a NULL duration and
+   * `openEnded = 1`: invisible to `visitsToday`, unreachable by
+   * `closeOpenVisits` (a NULL compares false), and enough to make the next
+   * visit's "Last time" card print 1 Jan 1970. That is the one case this whole
+   * app is built around.
+   */
   checkIn: Fix | null;
   checkOut: Fix | null;
+  /** The dwell clock's start — the instant he said he had arrived. */
+  checkInAt: number;
+  /** The instant he saved. Null only where no arrival was ever recorded, which
+      leaves the visit open for the day-boundary sweep rather than claiming a
+      duration nobody measured. */
+  checkOutAt: number | null;
   outcome: string;
   notes: string | null;
   transcript: string | null;
@@ -86,7 +104,7 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
   const base = await stamp('visit');
 
   const durationSeconds =
-    args.checkIn && args.checkOut ? Math.max(0, Math.round((args.checkOut.at - args.checkIn.at) / 1000)) : null;
+    args.checkOutAt != null ? Math.max(0, Math.round((args.checkOutAt - args.checkInAt) / 1000)) : null;
 
   await tx(async () => {
     await run(
@@ -104,14 +122,14 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
        ) VALUES (?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?, ?,?,?)`,
       [
         base.id, args.customerId, args.userId,
-        args.checkIn?.lat ?? null, args.checkIn?.lng ?? null, args.checkIn?.accuracyM ?? null, args.checkIn?.at ?? null,
-        args.checkOut?.lat ?? null, args.checkOut?.lng ?? null, args.checkOut?.accuracyM ?? null, args.checkOut?.at ?? null,
+        args.checkIn?.lat ?? null, args.checkIn?.lng ?? null, args.checkIn?.accuracyM ?? null, args.checkInAt,
+        args.checkOut?.lat ?? null, args.checkOut?.lng ?? null, args.checkOut?.accuracyM ?? null, args.checkOutAt,
         durationSeconds, args.outcome, args.notes, args.transcript, args.transcriptIsAi ? 1 : 0,
         args.shopPhotoId, args.custPhotoId, args.voiceNoteId,
         args.linkedOrderId ?? null, args.linkedPaymentId ?? null, args.linkedComplaintId ?? null, args.linkedSampleId ?? null,
         args.nextFollowUpDate, args.journeyStopId, args.wasPlanned ? 1 : 0, args.deviationReason,
         args.locationMismatch ? 1 : 0, args.metresFromShop, args.verified ? 1 : 0, args.unverifiedReason,
-        args.checkOut ? 0 : 1,
+        args.checkOutAt == null ? 1 : 0,
         args.checkInOverrideReason ?? null, args.pinCorrectionRequested ? 1 : 0,
         base.clientCreatedAt, base.deviceId, 'queued',
       ],
@@ -160,7 +178,7 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       eventType: 'visit',
       sourceApp: 'mbos',
       sourceRecordId: base.id,
-      occurredAt: args.checkIn?.at ?? Date.now(),
+      occurredAt: args.checkInAt,
       actor: 'You',
       summary: args.notes || args.transcript || 'Visited',
     });
@@ -203,11 +221,11 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       id: base.id,
       customerId: args.customerId,
       customerName: args.customerName,
-      checkInAt: args.checkIn?.at ?? undefined,
+      checkInAt: args.checkInAt,
       checkInLat: args.checkIn?.lat ?? undefined,
       checkInLng: args.checkIn?.lng ?? undefined,
       checkInAccuracyM: round(args.checkIn?.accuracyM),
-      checkOutAt: args.checkOut?.at ?? undefined,
+      checkOutAt: args.checkOutAt ?? undefined,
       checkOutLat: args.checkOut?.lat ?? undefined,
       checkOutLng: args.checkOut?.lng ?? undefined,
       checkOutAccuracyM: round(args.checkOut?.accuracyM),
@@ -279,11 +297,21 @@ async function addDependency(entityType: string, entityId: string, dependsOnId: 
 
 /* ----------------------------------------------------------------- reads */
 
+/*
+ * `COALESCE(checkInAt, clientCreatedAt)` in the three reads below is for the
+ * rows this bug already wrote. Until the save above stamped the dwell clock,
+ * every visit made without a GPS fix landed with a NULL `checkInAt` — and an
+ * APK cannot be recalled, so those rows are sitting on handsets in the field.
+ * A NULL compares false, so they were missing from the day's count, could never
+ * be closed, and sorted to the top of "last time" as 1 Jan 1970. The row's own
+ * creation instant is the nearest true thing about when the visit happened.
+ */
+
 export async function visitsToday(userId: string): Promise<number> {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
   const row = await one<{ n: number }>(
-    'SELECT COUNT(*) AS n FROM visits WHERE userId = ? AND checkInAt >= ?',
+    'SELECT COUNT(*) AS n FROM visits WHERE userId = ? AND COALESCE(checkInAt, clientCreatedAt) >= ?',
     [userId, startOfDay.getTime()],
   );
   return row?.n ?? 0;
@@ -322,9 +350,9 @@ export type PreviousNote = { checkInAt: number; note: string; outcome: string | 
  */
 export async function previousVisitNote(customerId: string): Promise<PreviousNote | null> {
   return one<PreviousNote>(
-    `SELECT checkInAt, notes AS note, outcome FROM visits
+    `SELECT COALESCE(checkInAt, clientCreatedAt) AS checkInAt, notes AS note, outcome FROM visits
       WHERE customerId = ? AND notes IS NOT NULL AND trim(notes) <> ''
-      ORDER BY checkInAt DESC LIMIT 1`,
+      ORDER BY COALESCE(checkInAt, clientCreatedAt) DESC LIMIT 1`,
     [customerId],
   );
 }
@@ -336,7 +364,7 @@ export async function previousVisitNote(customerId: string): Promise<PreviousNot
  */
 export async function closeOpenVisits(dayBoundaryMs: number): Promise<number> {
   const open = await all<{ id: string; checkInAt: number }>(
-    'SELECT id, checkInAt FROM visits WHERE openEnded = 1 AND checkInAt < ?',
+    'SELECT id, COALESCE(checkInAt, clientCreatedAt) AS checkInAt FROM visits WHERE openEnded = 1 AND COALESCE(checkInAt, clientCreatedAt) < ?',
     [dayBoundaryMs],
   );
   for (const v of open) {

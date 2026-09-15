@@ -30,7 +30,20 @@ import { color as C, radius, weight, tabular, type BadgeTone } from '../src/them
  * The overlap check is the server's rule run locally: a second request for a
  * day already asked for is not a second day off, it is a deduction taken
  * twice, so `applyForLeave` refuses it and the sentence it refuses with is
- * shown as written.
+ * shown as written. It reads the table BEFORE the first insert has committed,
+ * though, so it is not what stops a double tap — the button's own lock is.
+ *
+ * **WITH NO BALANCES ON THE PHONE, UNPAID WAS THE ONLY LEAVE HE COULD ASK
+ * FOR.** `leave_balances` arrives on the pull, so before the first successful
+ * sync the balances card was an empty hairline box, the type row offered
+ * exactly one chip — "Loss of pay" — and the consequence line read "Unpaid. It
+ * comes off this month's salary." He applied for unpaid leave and was told his
+ * salary would be cut because a table had not synced, with nothing anywhere
+ * saying so. Nothing is REFUSED here — sick leave is asked for on the morning
+ * it is needed and a phone with no signal must not stand in the way — but the
+ * screen says plainly that the list is short because the balances have not
+ * arrived, and it says it in both places: where the card is, and above the
+ * chips he is choosing from.
  */
 
 const SPANS: [string, string][] = [
@@ -67,14 +80,28 @@ export default function LeaveScreen() {
   const [err, setErr] = React.useState<'dates' | 'reason' | null>(null);
   /** Which end of the range the calendar sheet is picking, or null for closed. */
   const [pick, setPick] = React.useState<'from' | 'to' | null>(null);
+  /* Read, or still reading. "Your balance has not reached this phone" is a
+     definite statement and must not be made while the SQLite read is in
+     flight — an empty list and an unread one look identical. */
+  const [loaded, setLoaded] = React.useState(false);
+  /* One request per press. `PrimaryButton` carries no busy state, the sheet
+     stays open for the whole await, and the overlap guard above reads the
+     table before the first insert has committed — so it does not catch a
+     double tap either. */
+  const [sending, setSending] = React.useState(false);
 
   const load = React.useCallback(() => {
     let live = true;
-    void Promise.all([listLeave(), leaveBalances()]).then(([l, b]) => {
-      if (!live) return;
-      setRows(l);
-      setBalances(b);
-    });
+    void Promise.all([listLeave(), leaveBalances()])
+      .then(([l, b]) => {
+        if (!live) return;
+        setRows(l);
+        setBalances(b);
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (live) setLoaded(true);
+      });
     return () => {
       live = false;
     };
@@ -105,6 +132,10 @@ export default function LeaveScreen() {
   const chosen = balances.find((b) => b.kind === lv.type) ?? null;
   const left = lv.type === LOSS_OF_PAY ? null : (chosen?.available ?? 0);
 
+  /* Not "he has no leave left" — the office has never told this phone what he
+     has. The two look the same on an empty card and are opposite facts. */
+  const balancesMissing = loaded && balances.length === 0;
+
   const daysLine = !dayCount
     ? span === 'many'
       ? 'Pick both dates'
@@ -115,7 +146,9 @@ export default function LeaveScreen() {
 
   const afterLine =
     left == null
-      ? 'Unpaid. It comes off this month’s salary.'
+      ? balancesMissing
+        ? 'Unpaid — it would come off this month’s salary. Your paid balance has not reached this phone, so ask the office before you send this as unpaid.'
+        : 'Unpaid. It comes off this month’s salary.'
       : dayCount
         ? dayCount > left
           ? 'You have ' + left + ' left — ' + plural(dayCount - left, 'day') + ' of this goes unpaid.'
@@ -124,36 +157,62 @@ export default function LeaveScreen() {
 
   const afterWarn = (left != null && dayCount > left) || left == null;
 
+  /**
+   * A range cannot end before it starts, and the calendar refuses it rather
+   * than the Send button.
+   *
+   * Picking "From" already carried the end with it; picking "To" did not
+   * compare at all, and the `Calendar` was given the range but no
+   * `disabledReason` — so From 20 Aug, To 18 Aug was fully selectable, gave a
+   * day count of 0, and produced "Pick both dates" with both dates plainly on
+   * screen and "Pick the day this leave is for." on Send. Refused for
+   * something he has done, in words telling him to do it again.
+   */
+  const refuseTo = (iso: string) =>
+    pick === 'to' && !!lv.from && iso < lv.from ? 'Leave cannot end before it starts' : null;
+
   const send = async () => {
+    /* The second press ANSWERS rather than doing nothing — `whyDisabled` keeps
+       the button pressable for exactly this. A leave request written twice is
+       a deduction taken twice, and the overlap guard cannot catch it: it reads
+       the table before the first insert has committed. */
+    if (sending) return notify('This request is on its way — give it a moment.');
     if (!lv.from || (span === 'many' && (!lv.to || dayCount < 1))) return setErr('dates');
     if (!lv.reason.trim()) return setErr('reason');
 
-    const outcome = await applyForLeave({
-      userId: boot.session?.user.id ?? '',
-      kind: lv.type,
-      span: span as 'half' | 'one' | 'many',
-      fromDate: lv.from,
-      toDate: span === 'many' ? lv.to : null,
-      half: span === 'half' ? (lv.half as 'Morning' | 'Afternoon') : null,
-      reason: lv.reason.trim(),
-    });
+    setSending(true);
+    try {
+      const outcome = await applyForLeave({
+        userId: boot.session?.user.id ?? '',
+        kind: lv.type,
+        span: span as 'half' | 'one' | 'many',
+        fromDate: lv.from,
+        toDate: span === 'many' ? lv.to : null,
+        half: span === 'half' ? (lv.half as 'Morning' | 'Afternoon') : null,
+        reason: lv.reason.trim(),
+      });
 
-    /* An overlap is refused with the engine's own sentence — it names the
-       request it clashes with, which is the only useful thing to say. */
-    if (!outcome.ok) return notify(outcome.message);
+      /* An overlap is refused with the engine's own sentence — it names the
+         request it clashes with, which is the only useful thing to say. */
+      if (!outcome.ok) return notify(outcome.message);
 
-    const when =
-      span === 'half'
-        ? dmy(lv.from) + ' · ' + halfHours
-        : span === 'one'
-          ? dmy(lv.from)
-          : dmy(lv.from) + ' – ' + dmy(lv.to);
+      const when =
+        span === 'half'
+          ? dmy(lv.from) + ' · ' + halfHours
+          : span === 'one'
+            ? dmy(lv.from)
+            : dmy(lv.from) + ' – ' + dmy(lv.to);
 
-    setOpen(false);
-    setLv(EMPTY);
-    setErr(null);
-    load();
-    notify(outcome.unpaidSentence ? 'Sent to your manager · ' + outcome.unpaidSentence : 'Sent to your manager · ' + when);
+      setOpen(false);
+      setLv(EMPTY);
+      setErr(null);
+      load();
+      notify(
+        outcome.unpaidSentence ? 'Sent to your manager · ' + outcome.unpaidSentence : 'Sent to your manager · ' + when,
+      );
+    } finally {
+      setSending(false);
+    }
   };
 
   const dateBtnStyle = (active: boolean) => ({
@@ -178,22 +237,45 @@ export default function LeaveScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Leave</T>
 
-      <Card padded={false} style={{ marginTop: 12, flexDirection: 'row' }}>
-        {balances.map((b) => (
-          <View key={b.kind} style={{ flex: 1, minWidth: 0, padding: 14 }}>
-            <T s="label">{b.kind}</T>
-            <T
-              style={[
-                { fontSize: 22, lineHeight: 28, marginVertical: 2, color: b.available <= 2 ? C.warn : C.ink },
-                weight(600),
-                tabular,
-              ]}>
-              {String(b.available)}
-            </T>
-            <T s="micro">{'of ' + b.entitled + ' left'}</T>
-          </View>
-        ))}
-      </Card>
+      {/* An empty hairline box said nothing at all where the balances had not
+          arrived, and the chip list underneath then read as "unpaid is all you
+          can ask for". The sentence is the same shape `policy.tsx` uses for a
+          policy this phone has not yet been sent. */}
+      {!loaded ? (
+        <Card style={{ marginTop: 12 }}>
+          <T s="small" style={{ color: C.muted }}>
+            Reading your balance…
+          </T>
+        </Card>
+      ) : balancesMissing ? (
+        <Card style={{ marginTop: 12, backgroundColor: C.warnBg }}>
+          <T style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(600)]}>
+            Your leave balance has not reached this phone yet
+          </T>
+          <T s="small" style={{ color: C.ink, marginTop: 4 }}>
+            Either the office has not sent it, or this phone has not synced since it did. It does not mean you
+            have no leave left. You can still ask for leave — but only unpaid can be picked here until the
+            balance arrives, so ask the office first if you have paid days to use.
+          </T>
+        </Card>
+      ) : (
+        <Card padded={false} style={{ marginTop: 12, flexDirection: 'row' }}>
+          {balances.map((b) => (
+            <View key={b.kind} style={{ flex: 1, minWidth: 0, padding: 14 }}>
+              <T s="label">{b.kind}</T>
+              <T
+                style={[
+                  { fontSize: 22, lineHeight: 28, marginVertical: 2, color: b.available <= 2 ? C.warn : C.ink },
+                  weight(600),
+                  tabular,
+                ]}>
+                {String(b.available)}
+              </T>
+              <T s="micro">{'of ' + b.entitled + ' left'}</T>
+            </View>
+          ))}
+        </Card>
+      )}
 
       <PrimaryButton
         label="Apply for leave"
@@ -263,7 +345,19 @@ export default function LeaveScreen() {
           <T s="label" style={{ marginBottom: 8 }}>
             Which type
           </T>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+          {/* Why the list is one chip long. Without this the single "Loss of
+              pay" chip reads as the whole of what he is entitled to ask for. */}
+          {balancesMissing ? (
+            <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk, marginBottom: 8 }}>
+              Your leave balance has not reached this phone, so only unpaid leave can be picked here. If you
+              have paid days left, ask the office to put this in for you instead.
+            </T>
+          ) : null}
+          {/* WRAPPED, not N equal columns. With three balance kinds beside
+              "Loss of pay" each chip had about 50dp of text at 14px inside a
+              48dp box, and the longest label — the one that costs him money —
+              broke mid-word. The travel screen has always done it this way. */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
             {kinds.map((k) => {
               const b = balances.find((x) => x.kind === k);
               return (
@@ -273,7 +367,6 @@ export default function LeaveScreen() {
                   sub={b ? b.available + ' left' : 'Unpaid'}
                   selected={lv.type === k}
                   onPress={() => patch({ type: k })}
-                  style={{ flex: 1 }}
                 />
               );
             })}
@@ -365,7 +458,13 @@ export default function LeaveScreen() {
 
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <SecondaryButton label="Cancel" onPress={() => setOpen(false)} style={{ flex: 1 }} />
-          <PrimaryButton label="Send request" onPress={send} style={{ flex: 1 }} />
+          <PrimaryButton
+            label={sending ? 'Sending…' : 'Send request'}
+            onPress={send}
+            disabled={sending}
+            whyDisabled="This request is on its way — give it a moment."
+            style={{ flex: 1 }}
+          />
         </View>
       </BottomSheet>
 
@@ -379,6 +478,7 @@ export default function LeaveScreen() {
           selected={pick === 'to' ? lv.to : lv.from}
           rangeFrom={lv.from}
           rangeTo={lv.to}
+          disabledReason={refuseTo}
           onPick={(iso) => {
             if (pick === 'to') patch({ to: iso });
             /* A start after the end is not a range — carry the end with it. */
@@ -401,6 +501,10 @@ export default function LeaveScreen() {
             accessibilityRole="button"
             onPress={() => {
               const iso = isoDate(new Date());
+              /* The same refusal the grid makes — this shortcut is the other
+                 way a backwards range could be set. */
+              const refusal = refuseTo(iso);
+              if (refusal) return notify(refusal + '.');
               if (pick === 'to') patch({ to: iso });
               else patch({ from: iso, to: lv.to && iso > lv.to ? iso : lv.to });
               setPick(null);

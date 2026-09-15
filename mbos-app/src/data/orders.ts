@@ -28,6 +28,20 @@ export type CartLine = {
 };
 
 export type OrderAssessment = {
+  /**
+   * WHOSE FIGURES THESE ARE.
+   *
+   * The two figures are the ones the verdict below was reached on, read off
+   * the BILLING party. The order screen drew the SHOP's owing and the SHOP's
+   * credit limit beside the biller's name instead — so an account served
+   * through a distributor showed a comfortable bar over an assessment saying
+   * the order needed approval, and "nothing owing" over a distributor already
+   * past their limit. The id rides with them so a screen can tell an answer
+   * about this biller from one still on screen about the last.
+   */
+  billingCustomerId: string;
+  billingOutstandingPaise: number;
+  billingCreditLimitPaise: number | null;
   canOrder: boolean;
   blockReason: string | null;
   valuePaise: number | null;
@@ -154,6 +168,11 @@ export async function assessCart(billingCustomerId: string, lines: CartLine[]): 
   });
 
   return {
+    /* The same three the verdict was reached on, handed back so the screen
+       draws the biller's credit rather than the shop's. */
+    billingCustomerId,
+    billingOutstandingPaise: customer?.outstandingPaise ?? 0,
+    billingCreditLimitPaise: customer?.creditLimitPaise ?? null,
     canOrder: verdict.decision !== 'blocked',
     blockReason: verdict.decision === 'blocked' ? (customer?.creditBlockReason ?? verdict.reason) : null,
     valuePaise,

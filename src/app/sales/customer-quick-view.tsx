@@ -8,7 +8,12 @@ import { customerStatusLabel, money, phoneDisplay, shortDate } from "@/lib/forma
 import { NEXT_STEP_LABELS, type NextStepKind } from "@/lib/next-step-labels";
 
 /* ---------------------------------------------------------------------------
- * What a shop pin opens into on Territory's map.
+ * What a shop pin opens into — on Territory's map and on the Live map.
+ *
+ * It sits beside `ola-maps.tsx` rather than inside one of those two folders
+ * for the same reason that file does: both maps open it, and a second copy
+ * of a drawer that quotes outstanding and a buying cycle is a second answer
+ * about one account.
  *
  * Reads `/api/sales/customer-quick-view` — the same two functions the CRM's
  * own record page and Information tab call (`getCustomer`,

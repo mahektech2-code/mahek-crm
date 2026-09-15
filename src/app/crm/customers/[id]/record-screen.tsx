@@ -20,6 +20,7 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { FilterPills, Modal } from "@/components/ui/overlays";
+import { LogComplaintDialog } from "@/components/crm/log-complaint-dialog";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
@@ -91,6 +92,7 @@ const KIND_TONE: Record<
   "brand" | "success" | "warn" | "danger" | "neutral"
 > = {
   Call: "brand",
+  Opportunity: "brand",
   WhatsApp: "success",
   Order: "success",
   Reminder: "warn",
@@ -247,10 +249,21 @@ export function RecordScreen({
     heldReason: string | null;
   } | null;
   target: {
-    amount: number;
+    /**
+     * Null on an account the Monthly Targets list does not carry — a lead,
+     * which has never bought from us, or a third-party shop, whose goods are
+     * billed to its distributor. `achieved` is beside it rather than inside
+     * it because the month's value is a fact about every account, target or
+     * no target: it is read off the orders and not off `monthly_targets`.
+     *
+     * Rendering a null as ₹0 drew "₹1,20,000 of ₹0" at 0% on a delivery shop
+     * with real orders behind it, which is worse than saying nothing — that
+     * figure is not a shortfall, there is no target for it to fall short of.
+     */
+    amount: number | null;
     achieved: number;
     isDefault: boolean;
-    shareOfBook: number;
+    shareOfBook: number | null;
   };
   openComplaint: { description: string; category: string } | null;
   openPromise: { amount: number; promisedBy: string } | null;
@@ -378,7 +391,7 @@ export function RecordScreen({
     lastOrderDate: customer.lastOrderDate,
     lastOrderValue: customer.lastOrderValue,
     creditTermDays: customer.creditTermDays,
-    targetGap: Math.max(0, target.amount - target.achieved),
+    targetGap: target.amount === null ? 0 : Math.max(0, target.amount - target.achieved),
     openComplaint: openComplaint?.description ?? null,
     history: timeline.slice(0, 3).map((t) => ({
       kind: t.kind,
@@ -903,7 +916,7 @@ export function RecordScreen({
                 </span>
               </Figure>
               <Figure label="Share of your target" last>
-                {target.shareOfBook}%
+                {target.shareOfBook === null ? "-" : `${target.shareOfBook}%`}
               </Figure>
             </div>
             <Link
@@ -917,27 +930,46 @@ export function RecordScreen({
           <Card className="p-5">
             <div className="flex items-center justify-between">
               <SectionLabel>
-                Target vs achieved - {monthLabel(period)}
+                {target.amount === null
+                  ? `This month - ${monthLabel(period)}`
+                  : `Target vs achieved - ${monthLabel(period)}`}
               </SectionLabel>
-              {target.isDefault ? <Badge tone="muted">Default</Badge> : null}
+              {target.amount !== null && target.isDefault ? (
+                <Badge tone="muted">Default</Badge>
+              ) : null}
             </div>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-[32px] leading-9 font-semibold text-ink">
                 {money(target.achieved)}
               </span>
-              <span className="text-[13px] text-muted">
-                of {money(target.amount)}
-              </span>
+              {target.amount === null ? null : (
+                <span className="text-[13px] text-muted">
+                  of {money(target.amount)}
+                </span>
+              )}
             </div>
-            <div className="mt-3 flex items-center gap-2.5">
-              <Progress
-                value={pct(target.achieved, target.amount)}
-                className="flex-1"
-              />
-              <span className="text-[13px] font-medium text-ink">
-                {pct(target.achieved, target.amount)}%
-              </span>
-            </div>
+            {target.amount === null ? (
+              /*
+               * Said in words rather than drawn as a 0% bar. The account is
+               * not behind on anything — a monthly target is set on accounts
+               * we invoice, and this one becomes one by buying from us.
+               */
+              <p className="mt-3 text-[13px] text-muted">
+                {customer.thirdParty
+                  ? "No monthly target - this shop is billed by its distributor, so what it takes counts towards that account's month."
+                  : "No monthly target - a lead has never ordered. It picks one up as a customer on its first order."}
+              </p>
+            ) : (
+              <div className="mt-3 flex items-center gap-2.5">
+                <Progress
+                  value={pct(target.achieved, target.amount)}
+                  className="flex-1"
+                />
+                <span className="text-[13px] font-medium text-ink">
+                  {pct(target.achieved, target.amount)}%
+                </span>
+              </div>
+            )}
           </Card>
 
           <Card className="p-5">
@@ -1265,15 +1297,23 @@ export function RecordScreen({
         }}
       />
 
-      <QuickComplaint
-        categories={categories}
+      {/* The SAME dialog the complaints screen opens — photographs, the
+        * mobile number and the Request CN answer included. What it does not
+        * do here is ask who the complaint is about: we are standing on that
+        * customer's record, so the answer is handed over rather than
+        * searched for. */}
+      <LogComplaintDialog
         open={cmpOpen}
-        customerName={customer.name}
+        categories={categories}
+        maxImages={maxComplaintImages}
+        customer={{
+          id: customer.id,
+          name: customer.name,
+          phone: customer.phone,
+        }}
         onClose={() => setCmpOpen(false)}
-        onSubmit={async (category, description) => {
-          const result = await run(
-            logComplaint({ customerId: customer.id, category, description }),
-          );
+        onSubmit={async (input) => {
+          const result = await run(logComplaint(input));
           if (result.ok) {
             setCmpOpen(false);
             router.refresh();
@@ -1735,80 +1775,6 @@ export function QuickReminder({
             onDictate={setNote}
             className="h-20"
             placeholder="Call back with the revised drum rate"
-          />
-        </Field>
-      </div>
-    </Modal>
-  );
-}
-
-export function QuickComplaint({
-  open,
-  customerName,
-  categories,
-  onClose,
-  onSubmit,
-}: {
-  open: boolean;
-  customerName: string;
-  categories: string[];
-  onClose: () => void;
-  onSubmit: (category: string, description: string) => Promise<void>;
-}) {
-  const [category, setCategory] = React.useState<string>(
-    categories[0] ?? "Other",
-  );
-  const [description, setDescription] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Log complaint"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                await onSubmit(category, description);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Log complaint
-          </Button>
-        </>
-      }
-    >
-      <div className="mb-3 text-sm text-muted">{customerName}</div>
-      <div className="grid gap-3">
-        <Field label="Category">
-          <Select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-          >
-            {categories.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field
-          label="Description · required"
-          hint="Write it in the customer's words - this is what the resolver reads."
-        >
-          <VoiceTextarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onDictate={setDescription}
-            className="h-20"
           />
         </Field>
       </div>

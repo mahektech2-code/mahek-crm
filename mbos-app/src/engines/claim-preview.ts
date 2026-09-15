@@ -22,6 +22,7 @@ import {
   type Policy,
   type PolicySubject,
 } from './generated/expense-policy';
+import { inrFromPaise } from '../lib/format';
 
 /** What `data/travel.ts` holds for the policy in force — structurally. */
 export type PricingPolicy = { policy: Policy; subject: PolicySubject };
@@ -91,12 +92,23 @@ const PROBE_PAISE = 100_000_000;
  *
  * So the day is probed with a DOUBLING number of lines until the answer stops
  * changing. Convergence is the stopping rule rather than a count somebody
- * picked: a total that is still climbing at 1,024 lines is a kind this policy
+ * picked: a total that is still climbing at the ceiling is a kind this policy
  * puts no daily limit on at all, and that is reported as no limit rather than
  * as the largest figure we happened to reach. A wrong budget is worse than
  * none — he plans the afternoon on it.
+ *
+ * **THE CEILING IS A REAL COST, and it was 1,024.** Nothing converges past it,
+ * so an uncapped kind ran eleven `computeDay` passes over 1+2+…+1024 = 2,047
+ * synthetic lines, each of which can push an exception whose message is built
+ * with two or three `toLocaleString` calls — and this runs while somebody is
+ * typing an amount with a shop owner waiting. 64 is 127 lines across seven
+ * passes, and it is chosen as a RATIO rather than as a round number: n probe
+ * lines saturate a daily cap once n × the per-instance cap reaches it, so 64
+ * covers any policy whose day allows up to sixty-four of its own largest single
+ * claim. A ₹300 fare against a ₹600 day — the shape the client's own policy is
+ * written in — needs two.
  */
-const PROBE_CEILING = 1024;
+const PROBE_CEILING = 64;
 
 /**
  * What the policy allows for one claim, worked out on the phone.
@@ -242,7 +254,7 @@ export function previewClaim(args: {
         remainingBefore === null
           ? ''
           : remainingBefore > 0
-            ? `${rupees(remainingBefore)} left for ${what} today.`
+            ? `${inrFromPaise(remainingBefore)} left for ${what} today.`
             : `Nothing left for ${what} today — anything you claim now needs your manager to agree it.`,
     };
   }
@@ -263,7 +275,7 @@ export function previewClaim(args: {
       proofRequired,
       remainingBeforePaise: remainingBefore,
       remainingAfterPaise: remainingAfter,
-      line: `The policy allows ${rupees(eligible)} of this. The other ${rupees(excess)} needs your manager to agree it — send it anyway and say why.`,
+      line: `The policy allows ${inrFromPaise(eligible)} of this. The other ${inrFromPaise(excess)} needs your manager to agree it — send it anyway and say why.`,
     };
   }
   if (proofRequired && !hasBill) {
@@ -286,15 +298,11 @@ export function previewClaim(args: {
     remainingAfterPaise: remainingAfter,
     line:
       remainingAfter === null
-        ? `Within policy — ${rupees(eligible)}.`
+        ? `Within policy — ${inrFromPaise(eligible)}.`
         : remainingAfter > 0
-          ? `Within policy — ${rupees(eligible)}. ${rupees(remainingAfter)} left for ${what} today.`
-          : `Within policy — ${rupees(eligible)}. Nothing left for ${what} today.`,
+          ? `Within policy — ${inrFromPaise(eligible)}. ${inrFromPaise(remainingAfter)} left for ${what} today.`
+          : `Within policy — ${inrFromPaise(eligible)}. Nothing left for ${what} today.`,
   };
-}
-
-function rupees(paise: number): string {
-  return '₹' + Math.round(paise / 100).toLocaleString('en-IN');
 }
 
 /**

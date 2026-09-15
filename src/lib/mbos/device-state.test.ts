@@ -79,3 +79,74 @@ describe("the timestamp is the server's", () => {
     assert.ok(state.deviceStateAt!.getFullYear() > 2020);
   });
 });
+
+describe("a condition ending is a thing a handset can say", () => {
+  /* ABSENT IS NOT NULL is the rule that lets an old build post its one boolean
+     without wiping a newer build's answers. What it could not express is a mark
+     going away: a recovered — or reinstalled — handset simply stopped sending
+     the field, so a stall mark once written could never be cleared, and a phone
+     fixing to three metres every three seconds went on reading "his phone
+     stopped the tracker" off a timestamp from a previous installation. */
+
+  test("an explicit null clears the mark", () => {
+    const state = readDeviceState({ trackerStalledAgoSeconds: null });
+    assert.ok("trackerStalledAt" in state, "the key must be written for the clear to reach the column");
+    assert.equal(state.trackerStalledAt, null);
+
+    const sync = readDeviceState({ backgroundSyncLastRunAgoSeconds: null });
+    assert.equal(sync.backgroundSyncLastRunAt, null);
+  });
+
+  test("an absent key still leaves the column exactly as it was", () => {
+    /* The protection this whole function is built on, and the half that must
+       not move: an old build sends neither field and must clear neither. */
+    const state = readDeviceState({ batteryPercent: 50 });
+    assert.ok(!("trackerStalledAt" in state));
+    assert.ok(!("backgroundSyncLastRunAt" in state));
+  });
+
+  test("a real duration still sets it", () => {
+    const state = readDeviceState({ trackerStalledAgoSeconds: 600 });
+    assert.ok(state.trackerStalledAt instanceof Date);
+    assert.ok(Date.now() - state.trackerStalledAt.getTime() >= 600_000 - 5_000);
+  });
+
+  test("a nonsense value is neither stored nor read as a clear", () => {
+    /* A string, a negative, a fortnight — all dropped by `instantFromAgo`, and
+       none of them is somebody saying the condition is over. */
+    for (const v of ["soon", -5, 60 * 60 * 24 * 30]) {
+      const state = readDeviceState({ trackerStalledAgoSeconds: v });
+      assert.ok(!("trackerStalledAt" in state), `${String(v)} must not touch the column`);
+    }
+  });
+});
+
+describe("how far behind the phone is", () => {
+  test("zero is a real answer and is stored", () => {
+    /* Unlike the two marks above, a handset reporting an empty queue is
+       telling us something — it is caught up. Absence is what means "cannot
+       say", and the two must not collapse. */
+    const state = readDeviceState({ queuedPositions: 0 });
+    assert.equal(state.queuedPositions, 0);
+    assert.ok(state.queuedPositionsAt instanceof Date);
+  });
+
+  test("a backlog is stored with its own timestamp", () => {
+    const state = readDeviceState({ queuedPositions: 12_412 });
+    assert.equal(state.queuedPositions, 12_412);
+    assert.ok(state.queuedPositionsAt instanceof Date, "a count with no age reads as now");
+  });
+
+  test("an absent count is not a clear queue", () => {
+    const state = readDeviceState({ batteryPercent: 50 });
+    assert.ok(!("queuedPositions" in state));
+    assert.ok(!("queuedPositionsAt" in state));
+  });
+
+  test("nonsense is dropped rather than rounded into something plausible", () => {
+    for (const v of ["lots", -1, Number.NaN, null]) {
+      const state = readDeviceState({ queuedPositions: v });
+      assert.ok(!("queuedPositions" in state), `${String(v)} must not reach the column`);
+    }
+  });
+});

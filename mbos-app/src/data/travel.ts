@@ -43,6 +43,15 @@ export type TravelMode = {
   reimbursementKind: 'per_km' | 'actuals' | 'zero';
   requiresOdometer: number;
   requiresTicket: number;
+  /**
+   * `day` | `leg` | `both` — where the office offers this one.
+   *
+   * The vehicle belongs to the SESSION: he punches in on his bike and punches
+   * out on it, and the journey has nothing left to ask. Public transport is
+   * the one day-level answer that leaves a question open, because the bus, the
+   * auto and the taxi genuinely change from one shop to the next.
+   */
+  scope: 'day' | 'leg' | 'both';
 };
 
 export type ExpenseDay = {
@@ -72,6 +81,15 @@ export type TravelLeg = {
   modeKey: string;
   fromLabel: string | null;
   toLabel: string | null;
+  /* Where he set off from and where he arrived, both written by the app that
+     was standing there. The pair is declared because `SELECT *` returns it and
+     the journey screen navigates to the leg's own destination rather than to
+     whatever stop the plan had queued — reading the plan's coordinates under
+     the leg's shop name is how somebody rides to the wrong shop. */
+  fromLat: number | null;
+  fromLng: number | null;
+  toLat: number | null;
+  toLng: number | null;
   startedAt: number | null;
   endedAt: number | null;
   purpose: string | null;
@@ -83,6 +101,9 @@ export type TravelLeg = {
   odometerPhotoId: string | null;
   odometerEndPhotoId: string | null;
   origin: string;
+  /** 1 where the session's own meter pair already prices these kilometres. */
+  claimExcluded: number;
+  claimExcludedReason: string | null;
   ticketAmountPaise: number | null;
   ticketPhotoId: string | null;
   ticketReference: string | null;
@@ -145,6 +166,21 @@ export async function activePolicy(): Promise<LocalPolicy | null> {
 
 export async function travelModes(): Promise<TravelMode[]> {
   return all<TravelMode>('SELECT * FROM travel_modes ORDER BY sortOrder ASC');
+}
+
+/**
+ * The modes offered at the punch-in, and the ones offered at a stop.
+ *
+ * `both` is in either list — walking is a way to spend a day and a way to
+ * reach the shop next door on a day spent on buses. Asked of the database
+ * rather than filtered in a screen, because two screens filtering the same
+ * column by hand is two places for a mode to go missing from.
+ */
+export async function travelModesFor(where: 'day' | 'leg'): Promise<TravelMode[]> {
+  return all<TravelMode>(
+    `SELECT * FROM travel_modes WHERE scope = ? OR scope = 'both' ORDER BY sortOrder ASC`,
+    [where],
+  );
 }
 
 /* ----------------------------------------------------------------- the day */
@@ -319,8 +355,11 @@ export async function addLeg(args: {
   note?: string | null;
   /** The meter on arrival, where the two readings were taken apart. */
   odometerEndPhotoId?: string | null;
-  /** `day_log` | `visit`. See the note above `departForVisit`. */
-  origin?: 'day_log' | 'visit';
+  /** `day_log` | `visit` | `session`. See the note above `departForVisit`. */
+  origin?: 'day_log' | 'visit' | 'session';
+  /** Movement, recorded, and not a second claim. See the column's own note. */
+  claimExcluded?: boolean;
+  claimExcludedReason?: string | null;
 }): Promise<string> {
   const base = await stamp('leg');
   const id = await insertAndQueue({
@@ -354,6 +393,8 @@ export async function addLeg(args: {
       ticketReference: args.ticketReference ?? null,
       note: args.note ?? null,
       origin: args.origin ?? 'day_log',
+      claimExcluded: args.claimExcluded ? 1 : 0,
+      claimExcludedReason: args.claimExcludedReason ?? null,
     },
     /* The day is a dependency: a leg that reached the office before the day it
        belongs to would open a second one. PROTOCOL.md §3. */
@@ -448,7 +489,14 @@ export async function priceDay(
     departedFromHometown: row.departedFromHometown === 1,
     stayedInHotel: row.stayedInHotel === 1,
     overnight: row.overnight === 1,
-    legs: legs.map((l) => ({
+    /* A LEG THE SESSION ALREADY PAYS FOR IS NOT A SECOND CLAIM. The same
+       filter the office applies in `factsFor`, in the same position — the one
+       place legs become policy input — so the preview a salesman reads on his
+       own phone and the figure the office pays cannot disagree about the same
+       day. The travel screen still LISTS them; only the pricing skips them. */
+    legs: legs
+      .filter((l) => !l.claimExcluded)
+      .map((l) => ({
       id: l.id,
       modeKey: l.modeKey,
       /* The handset never measures GPS distance — the trail lives on the
@@ -567,14 +615,54 @@ export async function submitDay(
  * store, exactly as it finds out the attendance day is open.
  */
 
-/** The journey he is on, if he is on one. The ONE definition of travelling. */
-export async function openLegOf(userId: string): Promise<TravelLeg | null> {
+/**
+ * The journey he is on, if he is on one. The ONE definition of travelling.
+ *
+ * `startedSince` is the day boundary, and it is what stops a journey he set off
+ * on yesterday and never arrived at from being read as this morning's. A leg
+ * has no natural end — nothing closes one but arriving or calling it off — so
+ * without the bound the route screen greeted him with "On your way to
+ * <yesterday's shop> · 19h 47m" and replaced today's first Start visit with a
+ * Continue into the wrong shop.
+ *
+ * Left off by `departForVisit`, deliberately: the leg it has to close before
+ * opening a new one is ANY open leg, whatever day it began. Two open legs is a
+ * state nothing in this module can make sense of, and a stale one is exactly
+ * the leg that would produce it.
+ */
+export async function openLegOf(userId: string, startedSince?: number): Promise<TravelLeg | null> {
   return one<TravelLeg>(
     `SELECT * FROM travel_legs
-      WHERE userId = ? AND endedAt IS NULL
-      ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
-    [userId],
+      WHERE userId = ? AND endedAt IS NULL` +
+      (startedSince == null ? '' : ' AND startedAt >= ?') +
+      ` ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
+    startedSince == null ? [userId] : [userId, startedSince],
   );
+}
+
+/**
+ * Journeys still open from a day that has ended, closed at their own reading.
+ *
+ * The counterpart of the bound above, and the reason it is safe: an open leg is
+ * either today's — and drawn — or it is this, and closed. Run from
+ * `runDayBoundaryWork` beside `closeOpenVisits`, for the same reason and with
+ * the same shape: nothing on a handset runs overnight, so the tidying happens
+ * on the next launch, and closing an already-closed leg does nothing.
+ *
+ * Closed at its start reading so it measures ZERO, and NAMED — a leg worth
+ * nothing with no sentence against it is indistinguishable from one somebody
+ * forgot to fill in.
+ */
+export async function closeStaleLegs(userId: string, dayBoundaryMs: number): Promise<number> {
+  const open = await all<TravelLeg>(
+    `SELECT * FROM travel_legs
+      WHERE userId = ? AND endedAt IS NULL AND startedAt IS NOT NULL AND startedAt < ?`,
+    [userId, dayBoundaryMs],
+  );
+  for (const leg of open) {
+    await closeAbandoned(leg, 'Closed automatically at the end of the day — no arrival was recorded.');
+  }
+  return open.length;
 }
 
 /** The leg he took to this shop, closed and not yet spent on a visit. */
@@ -605,6 +693,9 @@ export async function departForVisit(args: {
   purpose: string | null;
   fix: { lat: number; lng: number } | null;
   odometer: { km: number; photoId: string } | null;
+  /** The session's own meter already counts these kilometres. */
+  claimExcluded?: boolean;
+  claimExcludedReason?: string | null;
 }): Promise<{ ok: true; legId: string } | { ok: false; reason: string }> {
   /*
    * A LEG ALREADY OPEN IS CLOSED FIRST, at the reading it started from.
@@ -651,6 +742,8 @@ export async function departForVisit(args: {
     odometerStartKm: args.odometer?.km ?? null,
     odometerPhotoId: args.odometer?.photoId ?? null,
     origin: 'visit',
+    claimExcluded: args.claimExcluded,
+    claimExcludedReason: args.claimExcludedReason,
   });
 
   return { ok: true, legId };
@@ -784,4 +877,140 @@ async function patchLeg(leg: TravelLeg, patch: Record<string, string | number | 
       origin: row.origin,
     },
   });
+}
+
+/* ═══════════════════════════════════ the session he punched in on */
+
+/**
+ * THE VEHICLE IS A FACT ABOUT THE SESSION, and this is where it lives.
+ *
+ * It was asked at every stop and got the same answer all day. A man on his own
+ * bike answered "own bike" eleven times and photographed the meter twenty-two
+ * times to record one ride he never got off — and the twenty-two readings were
+ * a chain anybody could break by forgetting one, after which the day's
+ * kilometres were an argument rather than a figure. Two readings, at the two
+ * moments the app is certainly in his hand, is both less to ask and harder to
+ * fudge.
+ *
+ * **IT IS A LEG, not two columns on the attendance row.** The policy engine
+ * prices legs — one per-km rule, one `odometer → gps → manual` precedence, one
+ * variance check — so a session that is a leg is priced by everything that
+ * already exists rather than by a second path beside it. `origin = 'session'`
+ * is what tells it apart, and it is the STRICTEST of the three origins: a
+ * day-log leg is typed from memory so its photograph is optional, a visit leg
+ * is opened and closed by the app, and this one is too.
+ *
+ * **PUBLIC TRANSPORT AND WALKING OPEN NO SESSION LEG.** There is no meter to
+ * read and no journey to measure — the day is a series of separate fares and
+ * each is its own leg with its own ticket. Opening an empty one would put a
+ * zero-kilometre row on every such day for the policy to reason about.
+ */
+
+/** The session he is punched in on, if he is on one. */
+export async function openSessionLeg(userId: string): Promise<TravelLeg | null> {
+  return one<TravelLeg>(
+    `SELECT * FROM travel_legs
+      WHERE userId = ? AND origin = 'session' AND endedAt IS NULL
+      ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
+    [userId],
+  );
+}
+
+/**
+ * Punching in on a vehicle.
+ *
+ * `odometer` is the reading and its photograph or neither, exactly as it is
+ * for a visit leg: a metered mode brings both and an unmetered one brings
+ * none. The caller has already refused a reading it could not check.
+ *
+ * Any session still open is CLOSED first, at its own reading so it measures
+ * nothing. It means he punched in yesterday and never punched out — the day
+ * boundary tidies those, but a phone that was switched off for a week has not
+ * seen a boundary — and the unique index would otherwise refuse the insert in
+ * front of somebody standing at a gate at half past eight in the morning.
+ */
+export async function startSession(args: {
+  userId: string;
+  day: string;
+  modeKey: string;
+  fix: { lat: number; lng: number } | null;
+  odometer: { km: number; photoId: string } | null;
+}): Promise<{ ok: true; legId: string } | { ok: false; reason: string }> {
+  const running = await openSessionLeg(args.userId);
+  if (running) {
+    await closeAbandoned(running, 'Closed automatically — a new session was started.');
+  }
+
+  const dayId = await openDay({ userId: args.userId, day: args.day });
+
+  const legId = await addLeg({
+    userId: args.userId,
+    expenseDayId: dayId,
+    day: args.day,
+    modeKey: args.modeKey,
+    fromLabel: null,
+    toLabel: null,
+    fromLat: args.fix?.lat ?? null,
+    fromLng: args.fix?.lng ?? null,
+    startedAt: Date.now(),
+    /* Open until he punches out. The whole point. */
+    endedAt: null,
+    purpose: 'session',
+    customerId: null,
+    odometerStartKm: args.odometer?.km ?? null,
+    odometerPhotoId: args.odometer?.photoId ?? null,
+    origin: 'session',
+  });
+
+  return { ok: true, legId };
+}
+
+/**
+ * Punching out.
+ *
+ * Closing at the meter, which is the reading the day is paid on. A session
+ * with no meter — he was on a bus, or on foot — closes on the clock alone and
+ * carries no distance, which is correct: its money is in the fares.
+ */
+export async function endSession(args: {
+  legId: string;
+  fix: { lat: number; lng: number } | null;
+  odometer: { km: number; photoId: string } | null;
+}): Promise<{ ok: boolean; reason?: string }> {
+  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [args.legId]);
+  if (!leg) return { ok: false, reason: 'That session is not on this phone.' };
+  if (leg.endedAt != null) return { ok: true };
+
+  await patchLeg(leg, {
+    endedAt: Date.now(),
+    toLat: args.fix?.lat ?? null,
+    toLng: args.fix?.lng ?? null,
+    odometerEndKm: args.odometer?.km ?? null,
+    odometerEndPhotoId: args.odometer?.photoId ?? null,
+  });
+  if (args.odometer) {
+    await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [leg.id, args.odometer.photoId]);
+  }
+  return { ok: true };
+}
+
+/**
+ * Sessions left open by a day that has ended, closed at their own reading.
+ *
+ * The counterpart of `closeStaleLegs` beside it, and run from the same place.
+ * A session has no natural end either — nothing closes one but punching out —
+ * so a phone switched off on Friday evening would otherwise greet its owner on
+ * Monday still punched in on Friday's meter reading.
+ */
+export async function closeStaleSessions(userId: string, dayBoundaryMs: number): Promise<number> {
+  const open = await all<TravelLeg>(
+    `SELECT * FROM travel_legs
+      WHERE userId = ? AND origin = 'session' AND endedAt IS NULL
+        AND startedAt IS NOT NULL AND startedAt < ?`,
+    [userId, dayBoundaryMs],
+  );
+  for (const leg of open) {
+    await closeAbandoned(leg, 'Closed automatically at the end of the day — no punch-out was recorded.');
+  }
+  return open.length;
 }

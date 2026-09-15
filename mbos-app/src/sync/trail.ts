@@ -4,6 +4,7 @@ import { all, getKv, run, setKv } from '../db';
 import { getConfig } from '../data/config';
 import { getFix, fixOf, rememberFix } from '../native/location';
 import { shouldKeepFix } from '../engines/cadence';
+import { trailVerdict } from '../engines/trail-watchdog';
 import { postPositions, reportLocationPermission } from './api';
 
 /**
@@ -109,10 +110,36 @@ async function store(lat: number, lng: number, accuracyM: number | null, at: num
 
 const LAST_KEPT = 'trailLastKeptAt';
 
-/** Milliseconds between kept fixes, from configuration. */
+/**
+ * When the watchdog last caught the background task accepted and silent.
+ *
+ * Persisted rather than held in memory, unlike `backgroundStartedAt` beside
+ * it: that describes a registration THIS process made, and a fresh process
+ * must not inherit a verdict about it. This describes the HANDSET, and it is
+ * still true after the OS reaps the app — which is exactly when it happens.
+ */
+const STALLED_AT = 'keepalive.stalledAt';
+
+/**
+ * Milliseconds between kept fixes, from configuration.
+ *
+ * SECONDS, because the thing this is measured against is. It was minutes, and
+ * the two units could not meet: the ask beside it runs at three seconds and
+ * the finest this could express was sixty, so every spacing in between — which
+ * is the whole of the useful range — was unreachable, and the densest trail
+ * the office could ask for still cut corners through buildings. Five minutes
+ * was the default nobody had ever changed, and it drew a working day as a
+ * handful of points joined by straight lines across the map.
+ *
+ * The floor is `3` rather than `1` to match `trackEverySeconds`'s own floor:
+ * a keep interval under the ask interval cannot be honoured by anything, since
+ * there is no fix to keep, and a number that silently means something else is
+ * worse than one that is refused. `checkConsistency` refuses the pair the
+ * other way round — a keep floor shorter than the ask — on the server.
+ */
 async function minGapMs(): Promise<number> {
-  const minutes = await getConfig<number>('mbos.location.trackEveryMinutes', 5);
-  return Math.max(1, minutes) * 60_000;
+  const seconds = await getConfig<number>('mbos.location.trailKeepEverySeconds', 3);
+  return Math.max(3, seconds) * 1_000;
 }
 
 /**
@@ -180,9 +207,42 @@ let foregroundTimer: ReturnType<typeof setInterval> | null = null;
  */
 let mode: 'background' | 'foreground' | null = null;
 
+/**
+ * When the OS last said yes to the background task, and whether it has since
+ * been caught delivering nothing.
+ *
+ * In memory rather than in the kv store, deliberately: both describe THIS
+ * process's belief about a task this process started, and a fresh process —
+ * which is what the OS hands back after it reaps a backgrounded app — has to
+ * start the whole judgement again rather than inherit a verdict about a
+ * registration it no longer knows the fate of.
+ */
+let backgroundStartedAt = 0;
+let backgroundProvedSilent = false;
+let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * `precise` FOR THE SAME REASON THE BACKGROUND TASK ASKS FOR `High`.
+ *
+ * This is the floor, and a floor that records nothing usable is not a floor.
+ * It already passed `accuracyThresholdM: 50` — the same number the map filters
+ * on — and then stored the answer regardless, because `fixOf` deliberately
+ * accepts a `coarse` result as well as an `ok` one. That is right for a visit,
+ * where a poor reading is still evidence of which part of town somebody was
+ * in and the record stands without it. It is wrong here: the trail is the one
+ * consumer whose fixes are silently DISCARDED when they are coarse, so asking
+ * for Balanced and keeping whatever came back meant the floor's fixes reached
+ * the database and never reached the screen.
+ *
+ * The threshold stays 50 and is deliberately NOT raised to let coarse fixes
+ * through. A 100 m reading cannot say which road, and a trail drawn from
+ * readings that cannot name a road is a prediction wearing the same colour as
+ * a measurement — which is the objection `road-snap-service.ts` already
+ * carries about `enhancePath`, arriving from underneath.
+ */
 async function takeForeground(): Promise<void> {
   try {
-    const result = await getFix({ accuracyThresholdM: 50, timeoutMs: 15_000 });
+    const result = await getFix({ accuracyThresholdM: 50, timeoutMs: 15_000, precise: true });
     const fix = fixOf(result);
     if (!fix) return;
     await store(fix.lat, fix.lng, fix.accuracyM, fix.at);
@@ -214,11 +274,13 @@ async function takeForeground(): Promise<void> {
  * the uploads succeeded, the connection was fine, and the Live map simply
  * showed where somebody had been the night before.
  *
- * So the cadence is enforced in TWO places and neither is this argument.
- * `deferredUpdatesInterval` below is read with a coercing `getLong` and does
- * arrive, but it is the battery half only — expo bypasses it outright while
- * the app is in the foreground. `keep()` is the authority on what is actually
- * written, because it is JavaScript and no cast can lose it.
+ * So the cadence is enforced in ONE place and it is not either of these
+ * arguments: `keep()`, in JavaScript, where no cast can lose it.
+ * `deferredUpdatesInterval` is the one Android honours and it is now 0 — see
+ * the note on it below for the eight and a half minutes of a pocketed handset
+ * that bought. It never belonged to the cadence at all: it decides when we are
+ * TOLD about a fix, not how often one is taken, and the two were conflated
+ * because both are measured in milliseconds.
  */
 async function startBackground(everyMs: number): Promise<boolean> {
   try {
@@ -234,37 +296,237 @@ async function startBackground(everyMs: number): Promise<boolean> {
 
     await Location.startLocationUpdatesAsync(TASK_NAME, {
       /*
-       * BALANCED, not High. High asks for GPS continuously; Balanced is happy
-       * with the network fixes a trail is made of — this records which part of
-       * a city somebody was in, not which doorway, and the difference is
-       * roughly the whole of the battery cost.
+       * HIGH, AND IT USED TO BE BALANCED — REVERSED BECAUSE THE MAP THROWS A
+       * BALANCED FIX AWAY.
+       *
+       * The old argument is quoted here because every word of it was true of
+       * the trail it was written for: "Balanced is happy with the network
+       * fixes a trail is made of — this records which part of a city somebody
+       * was in, not which doorway, and the difference is roughly the whole of
+       * the battery cost."
+       *
+       * What it did not account for is `dropInaccurateFixes`, which the Live
+       * map runs over every trail before drawing it and which discards any fix
+       * worse than `mbos.location.gpsAccuracyThresholdM` — 50 m. Balanced on
+       * Android is roughly a city block: it returns 100 m indoors, and
+       * `native/location.ts` says so in as many words. So the two settings
+       * contradicted each other, and the trail was asking the radio for a
+       * precision the screen had already decided it would refuse.
+       *
+       * The cost was not a coarse line. It was NO line: a fix was woken for,
+       * taken, kept, queued, uploaded, stored and indexed, and then dropped
+       * on the way to the map. On this handset 14 of 96 fixes in half an hour
+       * went that way, and in the last two minutes of it, 3 of 3 — the trail
+       * simply stopped growing while the phone reported perfect health. That
+       * is the same shape as the five-minute cadence bug one rule along:
+       * paying for data and discarding it, with nothing anywhere looking
+       * wrong.
+       *
+       * IT DOES COST MORE BATTERY, and saying otherwise would be the same
+       * kind of wrong the old comment was. The WAKE rate is unchanged — that
+       * is `trackEverySeconds`, and it was already 3 — but High engages the
+       * GPS chip where Balanced was content with wifi and cell triangulation,
+       * and that is a real draw, over a full field day a large one. What is
+       * not true is the old framing of it as a trade of battery for detail:
+       * at Balanced the battery bought fixes that were discarded, so the
+       * previous setting was not the cheap option, it was the one that paid
+       * and got nothing. The dial for the cost is `trackEverySeconds`, which
+       * decides how often the radio is asked at all; this decides whether
+       * what comes back can be used.
+       *
+       * A trail whose whole stated purpose is the road ridden cannot be built
+       * out of readings that cannot name a road.
        */
-      accuracy: Location.Accuracy.Balanced,
+      accuracy: Location.Accuracy.High,
       /* Kept for iOS, which reads it, and for the day expo-location fixes the
          cast that loses it on Android. Nothing depends on it arriving. */
       timeInterval: everyMs,
       distanceInterval: 0,
-      /* THE ONE ANDROID HONOURS. `deferredUpdatesInterval` is read with a
-         coercing `getLong`, so the number survives the JSON round trip that
-         `timeInterval` does not — see the note above this function. It batches
-         fixes while the app is in the BACKGROUND instead of waking us every
-         three seconds, which is the battery half of the cadence. Expo bypasses
-         it in the foreground through its own `shouldReportDeferredLocations`,
-         which is exactly why `keep()` and not this is the authority on what
-         gets written. */
-      deferredUpdatesInterval: everyMs,
+      /*
+       * ZERO — NO DEFERRAL — AND IT USED TO BE THE CADENCE.
+       *
+       * `deferredUpdatesInterval` is the one of these Android actually honours
+       * (it is read with a coercing `getLong`, so it survives the JSON round
+       * trip `timeInterval` does not), and it was set to the sampling interval
+       * on the reasoning that batching in the background is "the battery half
+       * of the cadence". Expo bypasses it in the FOREGROUND through its own
+       * `shouldReportDeferredLocations`, and that asymmetry is the whole bug:
+       * batched in the background, immediate in the foreground.
+       *
+       * WHAT THAT MEANT IN THE FIELD. A salesman pocketed a working handset at
+       * 16:37 and opened the app again at 16:46. Android had collected 123
+       * fixes at three-second spacing across those eight and a half minutes —
+       * and handed MBOS not one of them until the app came forward, when the
+       * entire batch arrived in a single delivery. So `store()` never ran,
+       * `flush()` never ran, and the office saw nothing at all: not a stale
+       * position, NOTHING, for as long as the phone stayed in a pocket. The
+       * data was not lost — Android was holding it — but "the console is blind
+       * until he opens the app" is not background tracking, and it is exactly
+       * what a manager watching the Live map is relying on it not to be.
+       *
+       * It also made the watchdog next door right about the wrong thing: the
+       * task genuinely was delivering nothing, so the only argument was over
+       * how long to wait before saying so.
+       *
+       * The battery this bought is real and is not worth it. A trail that only
+       * exists once somebody opens the app is a trail whose whole purpose has
+       * been traded away — and the dial for cost is `trackEverySeconds`, which
+       * decides how often the radio is asked in the first place. Deferral only
+       * decides whether we are TOLD, and being told late is being told nothing
+       * on the one screen that reads this live.
+       *
+       * `deferredUpdatesDistance` stays 0 for the reason it always was: a
+       * salesman standing still in a shop is a fact the trail wants, and
+       * distance-gating would drop the dwell that proves he was there.
+       */
+      deferredUpdatesInterval: 0,
       deferredUpdatesDistance: 0,
       showsBackgroundLocationIndicator: true,
       pausesUpdatesAutomatically: false,
       foregroundService: {
         notificationTitle: 'MahekOne is following your route',
-        notificationBody: 'Recording where the day takes you. Stops the moment you check out.',
+        notificationBody: 'Recording where the day takes you. Stops the moment you punch out.',
         killServiceOnDestroy: false,
       },
     });
     return true;
   } catch {
     return false;
+  }
+}
+
+/* ----------------------------------------------------------- the watchdog */
+
+/**
+ * NOTICING THAT THE OS LIED.
+ *
+ * `startLocationUpdatesAsync` succeeding is not the same fact as fixes
+ * arriving, and on these handsets it is routinely not even close. A salesman on
+ * a vivo V2403 checked in at 04:16 and had posted no position at all by half
+ * past twelve — none ever, since the day the phone was bound. The check-in
+ * landed, its selfie landed, the device heartbeat was ninety minutes old, and
+ * `background_location_granted` read TRUE, which is written from one place only:
+ * the end of `start()`, with the answer this function's subject gave. The task
+ * was registered and Funtouch's battery manager killed the service behind it.
+ * Oppo and Xiaomi do the same thing, and between the three of them that is most
+ * of the handsets in this field force.
+ *
+ * So the app has to be able to disbelieve the OS, and silence is the only
+ * evidence there is. The rule itself is pure and lives in
+ * `engines/trail-watchdog.ts` — not here, because nothing in this file can be
+ * exercised without a device, which is the whole reason the `timeInterval` bug
+ * above ran for three days.
+ *
+ * IT IS A TIMER, AND A TIMER IS THE RIGHT INSTRUMENT FOR EXACTLY THIS ONE JOB.
+ * A `setInterval` only advances while the app is open, which is the limitation
+ * this whole file exists to work around — but what it falls back TO is the
+ * foreground floor, which only records while the app is open either. There is
+ * nothing to notice in the background that could be acted on there, and the
+ * handset in the incident had its app open at 11:04 with seven hours of
+ * silence behind it and no mechanism anywhere to re-evaluate.
+ *
+ * It asks the OS for NOTHING — no permission call, no restart of the task. The
+ * note above `start()` says why: a handset that keeps being asked is a handset
+ * somebody turns off. This reads two numbers out of the local database and
+ * compares them.
+ */
+async function watch(): Promise<void> {
+  if (mode !== 'background') return;
+
+  try {
+    const gap = await minGapMs();
+    const misses = await getConfig<number>('mbos.location.trailStalledAfterMisses', 4);
+    /* The floor on the window, and the reason it exists is in the engine: four
+       misses of a three-second cadence is twelve seconds, which any walk
+       indoors clears — and the penalty for clearing it is that background
+       tracking is switched off for the rest of the process. */
+    const minSilence = await getConfig<number>('mbos.location.trailStalledMinSilenceSeconds', 300);
+    const raw = await getKv(LAST_KEPT);
+
+    const verdict = trailVerdict({
+      now: Date.now(),
+      startedAt: backgroundStartedAt,
+      lastKeptAt: raw ? Number(raw) : 0,
+      gapMs: gap,
+      silentCadences: misses,
+      minSilenceMs: Math.max(1, minSilence) * 1_000,
+    });
+
+    /* The clock went backwards under us. The window starts again from here
+       rather than being read as either "just started" or "silent for ever". */
+    if (verdict === 'restart-the-clock') {
+      backgroundStartedAt = Date.now();
+      return;
+    }
+    if (verdict === 'stalled') {
+      /* MARKED, not just worked around.
+      
+         Falling back to the foreground floor keeps SOME of the day and hides
+         the cause: the phone is killing the tracker, and the only cure is two
+         switches nobody has been asked to touch. The mark is what lets the
+         Sync screen say so and what rides up to the office on the device
+         report, so a handset going quiet is a support call somebody can
+         answer rather than a fortnight of silence. */
+      await setKv(STALLED_AT, String(Date.now()));
+      await fallBackToFloor();
+    }
+  } catch {
+    /* A watchdog is not allowed to cost a fix or break a day. Whatever could
+       not be read here is read again on the next tick. */
+  }
+}
+
+/**
+ * The task was accepted and is delivering nothing. Take what we can while the
+ * app is open, and tell the office what is really happening.
+ *
+ * THE BACKGROUND TASK IS LEFT REGISTERED, which looks like the wrong half of
+ * the decision and is not. Stopping it would buy nothing — it is already
+ * delivering nothing — and would throw away the one good outcome still
+ * available: a battery manager that relents, or a salesman who plugs the phone
+ * in, and fixes start arriving again. `keep()` gates whatever does arrive at
+ * the same cadence the floor is keeping, and the id of a position is its own
+ * reading, so the two mechanisms cannot double anything between them.
+ *
+ * It does not try the upgrade again either, for the rest of this process.
+ * `start()` retrying on every resume would clear the floor's timer each time,
+ * hand the dead task another whole window to prove itself, and leave the day
+ * full of holes exactly the size of the window — the retry is right where the
+ * answer might have changed (a permission granted in Settings) and wrong where
+ * the OS has already said yes and meant nothing by it. A fresh process starts
+ * the judgement over, which is what a phone reaped and reopened is.
+ *
+ * `false` is the honest thing to report. The column means "is a real background
+ * trail running", and it is not — while `locationPermission`, riding the same
+ * request, still reads `always`, so the office can tell this apart from a
+ * salesman who refused the prompt. Those are two different conversations to
+ * have with him, and only one of them is about the phone.
+ */
+async function fallBackToFloor(): Promise<void> {
+  backgroundProvedSilent = true;
+  stopWatching();
+  mode = 'foreground';
+
+  /* One fix straight away, for the same reason the first start takes one: the
+     alternative is a gap that starts the moment we noticed. */
+  void takeForeground();
+  if (!foregroundTimer) {
+    const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 3);
+    foregroundTimer = setInterval(() => void takeForeground(), Math.max(3, seconds) * 1_000);
+  }
+
+  void reportLocationPermission(false).catch(() => {});
+}
+
+function startWatching(everyMs: number): void {
+  stopWatching();
+  watchdogTimer = setInterval(() => void watch(), everyMs);
+}
+
+function stopWatching(): void {
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
   }
 }
 
@@ -278,14 +540,23 @@ export function isTracking(): boolean {
  *
  * Safe to call repeatedly — on check-in, on app resume, on a cold start
  * while the day is already open, and after a sign-in — and it is meant to
- * be, because it is also the only mechanism that notices a permission
- * granted mid-session. Already on the real background task, it does
- * nothing; still on the foreground floor, it retries the upgrade every
- * time, which costs nothing when the answer is still no and is the only
- * way it ever becomes yes without a check-out. A handset whose permission
- * keeps being refused takes no fixes beyond the floor and says nothing more
- * than the one report below — asking the OS again on every fix is how
- * somebody turns the app off.
+ * be, because it is the mechanism that notices a permission granted
+ * mid-session. Already on the real background task, it does nothing; still
+ * on the foreground floor, it retries the upgrade every time, which costs
+ * nothing when the answer is still no and is the only way it ever becomes
+ * yes without a check-out. A handset whose permission keeps being refused
+ * takes no fixes beyond the floor and says nothing more than the one report
+ * below — asking the OS again on every fix is how somebody turns the app off.
+ *
+ * WHAT IT DOES NOT DO IS RETRY A TASK THE OS HAS ALREADY ACCEPTED, and this
+ * comment used to claim otherwise. "It retries the upgrade every time" is true
+ * of the foreground floor and was never true of a background task that has
+ * silently died: the first line of this function returned, so once the OS had
+ * said yes, this process believed it was tracking for the rest of the day
+ * whatever arrived. That is exactly the state a vivo handset spent eight hours
+ * in with nothing on any screen and nothing in the office saying so. Noticing
+ * is the watchdog's job, above; the early return is honest again because
+ * something else is now doing the re-evaluating.
  */
 export async function start(): Promise<void> {
   if (mode === 'background') return;
@@ -296,7 +567,9 @@ export async function start(): Promise<void> {
   const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 3);
   const every = Math.max(3, seconds) * 1_000;
 
-  const backgroundStarted = await startBackground(every);
+  /* Caught delivering nothing once already in this process. See
+     `fallBackToFloor` for why that answer stands until the process does not. */
+  const backgroundStarted = backgroundProvedSilent ? false : await startBackground(every);
   if (backgroundStarted) {
     /* Upgrading off the floor — its timer is now redundant, and running
        both would double the very sampling this exists to fix. */
@@ -305,6 +578,12 @@ export async function start(): Promise<void> {
       foregroundTimer = null;
     }
     mode = 'background';
+    /* From here the OS's word is on probation. The window is measured from
+       this moment, and it is ticked at the cadence because a watchdog that
+       looked less often than the thing it is watching would be reporting on a
+       silence it had not actually waited through. */
+    backgroundStartedAt = Date.now();
+    startWatching(await minGapMs());
   } else if (mode !== 'foreground') {
     /* First start, floor only: one fix straight away, so a check-in puts a
        point on the map rather than a gap at the start of every day. A retry
@@ -331,6 +610,11 @@ export async function start(): Promise<void> {
  */
 async function stopTicking(): Promise<void> {
   mode = null;
+  /* The day is over, so there is nothing left to watch — and `backgroundStartedAt`
+     goes with it, because a mark left standing would have the next check-in's
+     task judged on the silence of the one before it. */
+  stopWatching();
+  backgroundStartedAt = 0;
   if (foregroundTimer) {
     clearInterval(foregroundTimer);
     foregroundTimer = null;
@@ -388,7 +672,45 @@ const MAX_PASSES = 50;
  * never made it. Days of that is worth surviving; a fortnight of it is a queue
  * nobody will ever drain.
  */
-const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const RETENTION_DAYS_FALLBACK = 7;
+
+/**
+ * CONFIGURATION, because it decides how durable somebody's working day is.
+ *
+ * It was a constant for the life of the module, which put the one number
+ * governing whether a day survives a bad week beyond the reach of anybody who
+ * would ever need to change it — the same mistake `trailKeepEverySeconds` was
+ * made of, one rule along, and the standing rule in AGENTS.md that a threshold
+ * a manager might one day want to move belongs in the registry.
+ *
+ * The fallback is the number it always was, so a handset with no configuration
+ * yet behaves exactly as it did.
+ */
+async function retentionMs(): Promise<number> {
+  const days = await getConfig<number>(
+    'mbos.location.queueRetentionDays',
+    RETENTION_DAYS_FALLBACK,
+  );
+  return Math.max(1, days) * 24 * 60 * 60 * 1000;
+}
+
+/**
+ * How many fixes are still waiting to be sent.
+ *
+ * The number the office could never see. A handset can answer every heartbeat,
+ * report its battery, look perfectly healthy — and be holding hours of somebody's
+ * route, because every fix waits here until the server confirms it. That is the
+ * design working rather than a fault, and it is exactly why nothing is lost to a
+ * bad connection; what was missing is any way to say how far behind a phone is.
+ *
+ * Counted rather than remembered: the queue is written by a background task and
+ * emptied by `flush()`, so a cached figure would be wrong the moment either ran.
+ */
+export async function queueDepth(): Promise<number> {
+  const rows = await all<{ n: number }>('SELECT COUNT(*) as n FROM positions');
+  const n = rows[0]?.n;
+  return typeof n === 'number' && Number.isFinite(n) ? n : 0;
+}
 
 let flushing = false;
 
@@ -440,7 +762,7 @@ export async function flush(): Promise<number> {
          check-in is ever coming goes, so this cannot become a queue that only
          grows. */
       if (answer.tracking === 'no-session-yet') {
-        await run('DELETE FROM positions WHERE at < ?', [Date.now() - RETENTION_MS]);
+        await run('DELETE FROM positions WHERE at < ?', [Date.now() - (await retentionMs())]);
         return sent;
       }
 
@@ -457,4 +779,20 @@ export async function flush(): Promise<number> {
   } finally {
     flushing = false;
   }
+}
+
+
+/**
+ * When this handset was last caught with its tracker silenced, or null.
+ *
+ * Read by the Sync screen and by the device report. Never cleared by a
+ * successful fix on purpose: one fix arriving does not mean the battery
+ * manager has changed its mind, and a mark that clears itself on the first
+ * good reading would flicker off every time the salesman opened the app —
+ * which is the one moment tracking always works.
+ */
+export async function stalledAt(): Promise<number | null> {
+  const raw = await getKv(STALLED_AT);
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) ? n : null;
 }

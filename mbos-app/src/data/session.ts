@@ -1,4 +1,4 @@
-import { getSecret, setSecret } from '../native/secure';
+import { deleteSecret, getSecret, setSecret } from '../native/secure';
 import * as Crypto from 'expo-crypto';
 import { getKv, setKv } from '../db';
 import * as api from '../sync/api';
@@ -45,6 +45,15 @@ export async function signIn(args: {
   mobile: string;
   password?: string;
   otp?: string;
+  /**
+   * Whether this phone may sign him in again without signal.
+   *
+   * The screen has always drawn the switch and nothing has ever read it — the
+   * credential was cached whichever way it was set, so a salesman who turned it
+   * off still left seven days of offline sign-in open behind him. Absent means
+   * yes, which is what every caller before this meant.
+   */
+  remember?: boolean;
   onStep?: (step: LoginStep) => void;
 }): Promise<LoginOutcome> {
   args.onStep?.('mobile');
@@ -59,13 +68,6 @@ export async function signIn(args: {
     args.onStep?.('territory');
 
     const session: Session = { user: out.bootstrap.user, signedInAt: Date.now() };
-    await persist(session);
-
-    /* What makes the NEXT sign-in possible without signal. Only the hash is
-       kept, and only after the server has actually accepted the password —
-       so the offline path can never be a way in that the online path refuses. */
-    if (args.password) await rememberForOffline(args.mobile, args.password);
-    await setKv(LAST_ONLINE_KEY, String(Date.now()));
 
     /* The payload came back with the token — applying it here is what makes
        the book, the catalogue and the configuration real before the first
@@ -100,6 +102,34 @@ export async function signIn(args: {
             : "Signed in, but the day's data could not be saved on this phone.",
       };
     }
+
+    /*
+     * NOTHING IS WRITTEN DOWN UNTIL THE BOOK IS, and the order is the whole
+     * fix.
+     *
+     * These three lines used to run BEFORE `applyPull`. So a payload that threw
+     * returned `ok: false`, the screen correctly stayed on the form — and
+     * `mbos.session` was already in the kv. Kill the app and reopen it and
+     * `BootProvider` reads that session, the sign-in screen redirects straight
+     * to `/home`, and he is inside MBOS with no customers, no products and no
+     * way back to the form: the exact "signed in against an empty database with
+     * nothing on the screen saying so" this file's own comment above says was
+     * fixed. A session is the record that a sign-in COMPLETED, and one that
+     * could not save the day did not.
+     */
+    await persist(session);
+
+    /* What makes the NEXT sign-in possible without signal. Only the hash is
+       kept, and only after the server has actually accepted the password —
+       so the offline path can never be a way in that the online path refuses.
+       Where he has asked us not to, any hash an earlier sign-in left behind
+       goes with it: an old one still sitting in the keychain would sign the
+       last person in for a week under a switch that says it will not. */
+    if (args.password) {
+      if (args.remember === false) await deleteSecret(OFFLINE_HASH_KEY);
+      else await rememberForOffline(args.mobile, args.password);
+    }
+    await setKv(LAST_ONLINE_KEY, String(Date.now()));
 
     return { ok: true, session, offline: false };
   } catch (e) {

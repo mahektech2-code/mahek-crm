@@ -1,0 +1,12 @@
+Keeps `public/` in git, because the Dockerfile copies it.
+
+The five files that used to be here — file.svg, globe.svg, next.svg,
+vercel.svg, window.svg — were create-next-app scaffold and were referenced by
+nothing. The favicon is not among them: it lives at `src/app/favicon.ico`,
+which is where the App Router looks for it.
+
+Git does not track empty directories, so deleting the last file here would
+delete the directory, and `COPY --from=builder /app/public ./public` in the
+Dockerfile would fail the build on the next deploy. Dropping that COPY instead
+would be worse: the day somebody adds a genuine static file here it would
+silently not ship, which is the kind of thing nobody debugs quickly.

@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "@/db";
+import { storedSettingValue as stored } from "@/lib/config/storage";
 import { appSettings, auditLog } from "@/db/schema";
 import { randomUUID } from "node:crypto";
 import {
@@ -69,7 +70,7 @@ export async function seedConfig(): Promise<number> {
     await db.insert(appSettings).values(
       missing.map((s: SettingDefinition) => ({
         key: s.key,
-        value: s.default as never,
+        value: stored(s.default),
         valueType: s.type,
         category: s.category,
         label: s.label,
@@ -109,7 +110,7 @@ export async function updateSetting(
     .insert(appSettings)
     .values({
       key,
-      value: validated.value as never,
+      value: stored(validated.value),
       valueType: def.type,
       category: def.category,
       label: def.label,
@@ -120,7 +121,7 @@ export async function updateSetting(
     .onConflictDoUpdate({
       target: appSettings.key,
       set: {
-        value: validated.value as never,
+        value: stored(validated.value),
         updatedAt: new Date(),
         updatedById: actorId,
       },
@@ -205,7 +206,7 @@ export async function updateSettings(
         .insert(appSettings)
         .values({
           key: def.key,
-          value: value as never,
+          value: stored(value),
           valueType: def.type,
           category: def.category,
           label: def.label,
@@ -215,7 +216,7 @@ export async function updateSettings(
         })
         .onConflictDoUpdate({
           target: appSettings.key,
-          set: { value: value as never, updatedAt: new Date(), updatedById: actorId },
+          set: { value: stored(value), updatedAt: new Date(), updatedById: actorId },
         });
 
       // One entry per setting, not one per change set — the audit answers

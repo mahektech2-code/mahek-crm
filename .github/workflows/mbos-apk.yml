@@ -284,6 +284,29 @@ jobs:
             'mv /opt/mahekone/downloads/.mbos.apk.incoming /opt/mahekone/downloads/mbos.apk && ls -l /opt/mahekone/downloads/mbos.apk'
           echo "Serving from the droplet at /downloads/mbos.apk"
 
+          # THE RELEASE STATES ITS OWN VERSION, beside the file it describes.
+          #
+          # Sideloading has no auto-update, so a handset can only find out it
+          # is behind by being told — and the only thing that reliably knows a
+          # release happened is the release. Anything else is a step somebody
+          # has to remember, which is exactly how the field came to be running
+          # 1.0.0 and 1.1.0 while 1.4.0 had been published for hours.
+          #
+          # Read back out of app.json rather than passed in: these are the same
+          # two values the build itself was stamped from, so the manifest
+          # cannot describe a build that was never made.
+          VERSION=$(node -p "require('./mbos-app/app.json').expo.version")
+          CODE=$(node -p "require('./mbos-app/app.json').expo.android.versionCode")
+          printf '{"version":"%s","versionCode":%s,"url":"https://one.mahekindia.com/downloads/mbos.apk"}\n' \
+            "$VERSION" "$CODE" > /tmp/mbos.json
+          # Same atomic move as the APK: a handset reading a half-written
+          # manifest would get a parse error, which reads as "no update" and
+          # would be wrong for as long as nobody looked.
+          scp -o BatchMode=yes /tmp/mbos.json "deploy@${HOST}:/opt/mahekone/downloads/.mbos.json.incoming"
+          ssh -o BatchMode=yes "deploy@${HOST}" \
+            'mv /opt/mahekone/downloads/.mbos.json.incoming /opt/mahekone/downloads/mbos.json'
+          echo "Announced $VERSION ($CODE) at /downloads/mbos.json"
+
       # Proof, not assumption. A publish that reported success while the field
       # kept the previous build is exactly what happened last time, so the run
       # fails if the bytes now being served are not the bytes just built.

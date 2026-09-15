@@ -86,9 +86,25 @@ export function AppLock({ children }: { children: React.ReactNode }) {
    * seeing this screen at all.
    */
   const raise = React.useCallback(async () => {
-    const can = await capability();
-    setLabel(can.label);
+    /*
+     * THE COVER GOES UP FIRST, before anything is asked of anybody.
+     *
+     * It used to wait on `capability()` — four calls into
+     * expo-local-authentication — so on resume the customer list and what each
+     * of them owes were on screen for the few hundred milliseconds the lock
+     * took to decide what to CALL itself. Nothing about putting the cover up
+     * needs that answer; it only chooses the word "Fingerprint" or "Face
+     * unlock", which the cover can correct once it arrives. A lock screen that
+     * previews the book it is protecting is not a lock screen, and that is as
+     * true of the half-second before it as of the screen itself.
+     */
     setLocked(true);
+    void capability()
+      .then((can) => setLabel(can.label))
+      .catch(() => {
+        /* The default label stands. Being unable to name the sensor is not a
+           reason to leave the app uncovered. */
+      });
     await ask();
   }, [ask]);
 

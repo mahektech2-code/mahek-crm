@@ -2,16 +2,77 @@ import React from 'react';
 import { View, Text, Pressable, Platform, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, usePathname } from 'expo-router';
-import { color as C, type, weight } from '../../theme/tokens';
-import { Header, StatusStrip, TabBar, type StripTone, type TabKey } from './Chrome';
+import { color as C, HIT, type, weight } from '../../theme/tokens';
+import { Header, StatusStrip, TabBar, TabBarAction, type StripTone, type TabKey } from './Chrome';
 import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
+import { Icon } from '../ui/Icon';
 import { useKeyboardHeight } from '../ui/keyboard';
+import { useTicker } from '../ui/use-ticker';
 import { Appear } from '../ui/motion';
 import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCount } from '../../state/store';
 import { TravelGate } from './TravelGate';
 import { useBoot } from '../../state/boot';
 import { todayRow } from '../../data/attendance';
-import { plural } from '../../lib/format';
+import { hhmm, plural } from '../../lib/format';
+import { gpsVerdict, type GpsHealth } from '../../engines/gps-health';
+import { gpsSignal } from '../../native/where';
+import { hasPermission } from '../../native/location';
+import { getConfig } from '../../data/config';
+
+/**
+ * The GPS light, from the radio rather than from a flag.
+ *
+ * It read `store.gps`, which is written only by the two check-in flows and the
+ * visit screen's own acquire — so on a handset that reinstalled while already
+ * checked in, none of them ever ran and the strip said "Finding GPS" for the
+ * life of the install while the phone fixed to three metres every three
+ * seconds. The rule is in `engines/gps-health.ts`; this is the polling.
+ *
+ * FIVE SECONDS, and only while the app is in front. `useTicker` already
+ * handles the second half — it creates no timer when the app is backgrounded
+ * and re-reads immediately on return — and a strip nobody is looking at does
+ * not need refreshing. Nothing here touches the radio: every fix the app takes
+ * already leaves its mark, so this is two local reads.
+ */
+function useGpsHealth(): GpsHealth {
+  const tick = useTicker(5_000);
+  const [health, setHealth] = React.useState<GpsHealth>('acquiring');
+
+  React.useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const [permitted, signal, threshold] = await Promise.all([
+          hasPermission(),
+          gpsSignal(),
+          getConfig<number>('mbos.location.gpsAccuracyThresholdM', 50),
+        ]);
+        if (!alive) return;
+        setHealth(
+          gpsVerdict({
+            permitted,
+            ageSeconds: signal?.ageSeconds ?? null,
+            accuracyM: signal?.accuracyM ?? null,
+            /* The same sixty seconds `whereNow()` already calls `fresh`, so
+               two parts of the app cannot disagree about what "now" means for
+               one reading. */
+            freshSeconds: 60,
+            thresholdM: threshold,
+          }),
+        );
+      } catch {
+        /* A status light may not break a screen. Whatever could not be read is
+           read again on the next tick, and until then the strip says it is
+           still looking — which is the honest answer to not knowing. */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [tick]);
+
+  return health;
+}
 
 /**
  * The frame. Every in-app screen renders its content inside one of these, and
@@ -50,6 +111,7 @@ export const FROM_LABEL: Record<string, string> = {
   'lead-qualify': 'Qualification',
   maps: 'Offline maps',
   pick: 'Pick your shops',
+  nearby: 'Near me',
 };
 
 /** Reads the recorded entry route, so the label and the destination agree. */
@@ -132,12 +194,16 @@ export function AppFrame({
   const daysToAgree = useDaysToAgreeCount();
   const checkInAt = useCheckInTime();
   const checkedIn = checkInAt != null;
-  const gps = useStore((s) => s.gps);
+  /* From the radio, not from `store.gps` — see `useGpsHealth` above, and
+     `engines/gps-health.ts` for why that field cannot answer this question. */
+  const gps = useGpsHealth();
   const toast = useStore((s) => s.toast);
+  const toastTone = useStore((s) => s.toastTone);
   const clearToast = useStore((s) => s.clearToast);
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
   const askTravel = useStore((s) => s.askTravel);
+  const arrival = useStore((s) => s.arrival);
   const customer = useCustomer();
   const notify = useStore((s) => s.notify);
   const custId = useStore((s) => s.custId);
@@ -149,7 +215,16 @@ export function AppFrame({
   const strip: { key: string; label: string; tone: StripTone; onPress: () => void }[] = [
     {
       key: 'att',
-      label: checkInAt != null ? 'In since ' + hhmm(checkInAt) : 'Not checked in',
+      /*
+       * SHORT ENOUGH FOR THE CELL IT HAS.
+       *
+       * Three cells share the width: on a 360pt handset each gets about 117,
+       * less 16 of padding, less the dot and its gap, which leaves roughly 88
+       * for the text. "Not checked in" and "In since 09:12" both measure about
+       * that at 12pt, so the one fact somebody looks for first thing in the
+       * morning rendered as "Not checked i…". These fit with room to spare.
+       */
+      label: checkInAt != null ? 'In ' + hhmm(checkInAt) : 'Not in',
       tone: checkedIn ? 'ok' : 'idle',
       onPress: () => router.push(`/attendance${fromHere}`),
     },
@@ -157,7 +232,19 @@ export function AppFrame({
       key: 'gps',
       label: gps === 'locked' ? 'GPS locked' : gps === 'off' ? 'GPS off' : 'Finding GPS',
       tone: gps === 'locked' ? 'ok' : gps === 'off' ? 'warn' : 'idle',
-      onPress: () => router.push('/home'),
+      /*
+       * Home IS the screen that explains this one — it is where the location
+       * permission is asked for on first open, and where starting the day
+       * takes the fix that sets this light. What it was not is a PUSH:
+       * standing on Home, which is where he is most of the day, tapping "GPS
+       * off" stacked a second copy of the page underneath itself, exactly the
+       * defect the bell was rewritten to avoid two files down. Home is a tab
+       * root, so it is reached the way the tab bar reaches one, and from Home
+       * there is nowhere to go.
+       */
+      onPress: () => {
+        if (here !== 'home') router.replace('/home');
+      },
     },
     {
       key: 'sync',
@@ -169,8 +256,15 @@ export function AppFrame({
        * light stops meaning anything: the one state worth noticing looked
        * exactly like the ordinary one. And "0 to send" is a count of nothing,
        * where the fact somebody wants is that the handset is clear.
+       *
+       * "Waiting" rather than "to send" because `pendingCount` now counts a
+       * refused record too, and a refusal is not going to be sent — it is
+       * waiting for him. It is also the word the Sync card's own headline uses
+       * for the same number, and the two disagreeing about one queue on one
+       * screen is what this was: three refusals read "3 things waiting" on the
+       * card under a green "All sent" thirty points above it.
        */
-      label: waiting === 0 ? 'All sent' : `${waiting} to send`,
+      label: waiting === 0 ? 'All sent' : `${waiting} waiting`,
       tone: waiting === 0 ? 'ok' : 'warn',
       onPress: () => router.push(`/sync${fromHere}`),
     },
@@ -185,6 +279,12 @@ export function AppFrame({
       label: 'Start visit',
       sub: 'How you travel, then GPS and photos',
       run: () => {
+        /* One shop at a time. See the bar below: a salesman standing outside a
+           shop he has arrived at is not about to set off for another, and
+           letting him would leave an arrival nobody could ever close. */
+        if (arrival && arrival.checkedInAt == null) {
+          return notify(`Check in at ${arrival.customerName} first — you arrived there at ${hhmm(arrival.arrivedAt)}.`);
+        }
         if (!custId) return notify('Choose the shop first, then start the visit.');
         askTravel({ customerId: custId, customerName: customer?.name ?? 'this shop' });
       },
@@ -242,6 +342,26 @@ export function AppFrame({
 
       {body}
 
+      {/*
+        THE WAY BACK INTO A SHOP HE IS ALREADY STANDING OUTSIDE.
+        "Not yet" on the arrival screen is a real answer and it has to cost him
+        nothing to change his mind — so the arrival follows him onto every
+        screen until he goes in. It is not a nag: it is the ONLY control this
+        app offers while one is outstanding, which is what makes it findable
+        rather than something to dismiss. Hidden on the visit screen itself,
+        where the same question is already the whole page.
+      */}
+      {arrival && arrival.checkedInAt == null && here !== 'visit' ? (
+        <ArrivedBar
+          name={arrival.customerName}
+          at={arrival.arrivedAt}
+          onPress={() => {
+            set({ custId: arrival.customerId });
+            router.push('/visit');
+          }}
+        />
+      ) : null}
+
       {/* Measured rather than guessed, so the toast can sit above whatever the
           screen pinned here — see `Toast`. A screen with no footer measures 0
           and nothing moves. */}
@@ -252,17 +372,23 @@ export function AppFrame({
       {/* The tab bar is hidden while typing. Left in place it floats over the
           keyboard on Android, covering the top row of keys. */}
       {keyboardHeight === 0 ? (
-        <TabBar
-          active={activeTab}
-          bottomInset={insets.bottom}
-          onTab={(k) => router.replace(`/${k}`)}
-          onAction={() => set({ sheet: 'action' })}
-          /* The office proposes a day and waits on the answer to plan a week.
-             The Journey screen has always listed those days at the top; what
-             it could not do was say so from anywhere else in the app, so being
-             asked and never noticing looked identical to having no plan. */
-          badges={{ journey: daysToAgree }}
-        />
+        <>
+          <TabBar
+            active={activeTab}
+            bottomInset={insets.bottom}
+            onTab={(k) => router.replace(`/${k}`)}
+            /* The office proposes a day and waits on the answer to plan a week.
+               The Journey screen has always listed those days at the top; what
+               it could not do was say so from anywhere else in the app, so being
+               asked and never noticing looked identical to having no plan. */
+            badges={{ journey: daysToAgree }}
+          />
+          {/* Beside the bar rather than inside it, because it is taller than
+              the bar is — see `TabBarAction`. Same pixel, same behaviour, and
+              it no longer depends on a renderer being willing to hit-test
+              outside a parent's bounds. */}
+          <TabBarAction bottomInset={insets.bottom} onPress={() => set({ sheet: 'action' })} />
+        </>
       ) : null}
 
       <ActionSheet
@@ -297,8 +423,46 @@ export function AppFrame({
           would be four gates, and three of them would be right. */}
       <TravelGate />
 
-      <Toast message={toast} onDone={clearToast} lift={footerHeight} />
+      <Toast message={toast} tone={toastTone} onDone={clearToast} lift={footerHeight} />
     </View>
+  );
+}
+
+/**
+ * "You are at Shah Paints — check in." One line, one tap, every screen.
+ *
+ * Drawn in the app's own primary colour rather than as a warning, because
+ * arriving and not yet going in is ordinary — he is parking, or the owner is
+ * out the back — and an amber bar for the ordinary case is how a colour stops
+ * meaning anything. The time is on it so he can tell this morning's forgotten
+ * arrival from the one he made ninety seconds ago.
+ */
+function ArrivedBar({ name, at, onPress }: { name: string; at: number; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Check in at ${name}, arrived ${hhmm(at)}`}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        minHeight: HIT,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        backgroundColor: pressed ? C.primaryDeep : C.primary,
+      })}>
+      <Icon name="shop" size={18} color="#FFFFFF" strokeWidth={1.8} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>
+          {'At ' + name}
+        </Text>
+        <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
+          {'Arrived ' + hhmm(at) + ' · not checked in'}
+        </Text>
+      </View>
+      <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Check in</Text>
+    </Pressable>
   );
 }
 
@@ -335,11 +499,6 @@ function useCheckInTime(): number | null {
   return at;
 }
 
-/** 09:12, in the handset's own zone — the only place the strip formats a time. */
-function hhmm(ms: number): string {
-  const d = new Date(ms);
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-}
 
 /** The empty-state card the design reuses for anything not built yet. */
 export function StubCard({ title, body }: { title: string; body: string }) {

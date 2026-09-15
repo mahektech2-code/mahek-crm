@@ -28,14 +28,71 @@ const DEFAULTS: Record<string, unknown> = {
      base there is nothing to be outside of, and a check-in is never refused
      for want of one. */
   'mbos.attendance.baseLocation': null,
-  'mbos.location.gpsAccuracyThresholdM': 100,
-  'mbos.location.visitMismatchM': 150,
+  /*
+   * BOTH OF THESE WERE WIDER THAN THE OFFICE'S OWN NUMBERS, and the second
+   * decides whether a salesman is let through the door.
+   *
+   * `getConfig` returns `DEFAULTS[key]` whenever the key is present, so a
+   * caller's own fallback argument never fires — these two values ARE what the
+   * app runs on until the first pull lands, and they said 100 and 150 where
+   * `lib/config/registry.ts` says 50 and 100. The accuracy one is the worse
+   * half: a fix the office would call untrustworthy was being trusted, and the
+   * check-in gate is measured against it, so on a handset signing in for the
+   * first time a man standing in the right shop could be refused on a reading
+   * nobody should have believed.
+   */
+  'mbos.location.gpsAccuracyThresholdM': 50,
+  'mbos.location.visitMismatchM': 100,
   'mbos.location.routeDeviationM': 2000,
   'mbos.location.unplannedVisitsPerDay': 3,
   /* Following the route while the day is open. The office decides; this is
      what a handset does before it has ever heard from the office. */
   'mbos.location.trackWhileWorking': true,
   'mbos.location.trackEverySeconds': 3,
+  /* The floor on what is KEPT, as opposed to what is asked for above. It was
+     read here and published nowhere for the life of the module, so every
+     handset in the field has run the trail at this compiled number whatever
+     the office wanted — the silent fallback `getConfig` is built to make safe,
+     and invisible precisely because the number it fell back to was the number
+     everybody assumed was in force.
+
+     It was five MINUTES, which is the other half of the same story: once the
+     key was finally published the unit was the thing that made it useless.
+     The ask above runs at three seconds, so a floor stated in minutes could
+     never be set nearer than sixty — and five minutes of a working day drew
+     as a handful of points joined by straight lines. Seconds now, and it
+     matches the ask above exactly: every fix the handset pays the battery to
+     take is one it keeps, which is what makes the trail road-by-road rather
+     than a line between the places somebody stopped. Discarding four fixes in
+     five saved upload and storage and saved no battery at all, because the
+     cost is paid at the ask. */
+  'mbos.location.trailKeepEverySeconds': 3,
+  /* How long the OS may claim to be tracking while delivering nothing before
+     the handset stops believing it — in multiples of its own cadence. See
+     `engines/trail-watchdog.ts`; the number matches the registry's default,
+     because a handset on the floor for want of a bootstrap must behave as the
+     office would have told it to. */
+  'mbos.location.trailStalledAfterMisses': 4,
+  /* The FLOOR under the misses above. Four misses of a three-second cadence is
+     twelve seconds, and concluding "stopped" switches background tracking off
+     for the rest of the run — so the dense cadence had the watchdog demoting
+     healthy handsets a minute after check-in. See `engines/trail-watchdog.ts`. */
+  /* How long an unsent fix survives on the phone. Configuration now, because
+     it decides how durable somebody's working day is — see `retentionMs`. */
+  'mbos.location.queueRetentionDays': 7,
+  /* How far behind a handset has to be before the team list mentions it. A
+     queue is the design working, not a fault, so the panel stays quiet until
+     there is something worth a manager's attention. */
+  'mbos.location.queuedPositionsWorthSaying': 200,
+  'mbos.location.trailStalledMinSilenceSeconds': 300,
+  /* Whether a day may open on a phone that cannot show it will record one.
+     `block` matches the registry's default, because a handset that has never
+     bootstrapped must behave as the office would have told it to — and because
+     the failure this exists to stop is silent at both ends: a salesman walks a
+     full day and the office sees him standing at his check-in point. A
+     fallback of `off` would put exactly the untested, never-configured
+     handsets through the gap the gate was built for. */
+  'mbos.location.startOfDayGate': 'block',
 
   /* maps kept for no signal — see `engines/tiles.ts` for what each one costs */
   'mbos.maps.offlineEnabled': true,
@@ -54,7 +111,11 @@ const DEFAULTS: Record<string, unknown> = {
 
   /* route optimisation — the honest average speed differs by a factor of three
      between a city beat on a two-wheeler and a district tour in a car, which
-     is exactly why the engine takes it as an argument */
+     is exactly why the engine takes it as an argument. All four are published
+     under `mbos-route` in the registry and these four numbers are its
+     defaults, deliberately: they are what every handset in the field has
+     actually been running on, so a fallback that disagreed would change a
+     day's route on the phones that had not bootstrapped and nowhere else. */
   'mbos.route.averageSpeedKmph': 22,
   'mbos.route.maxTwoOptPasses': 4,
   'mbos.route.maxStopsForTwoOpt': 40,
@@ -71,18 +132,20 @@ const DEFAULTS: Record<string, unknown> = {
 
   /* expenses */
   'mbos.expenses.billPhotoThresholdPaise': 0,
+  /* How far back a claim may be dated, and the ONE key that asks it. The
+     screen used to read `mbos.expenses.maxClaimAgeDays` — same question, a
+     different spelling, published nowhere — so the date picker greyed out days
+     on a compiled 30 while the sync refused them on this one. A phantom key is
+     indistinguishable from a working one until somebody changes the real
+     setting and nothing moves.
+
+     `mbos.expenses.categoryCapsPaise` was here too and is retired. What a
+     claim is worth is the POLICY's answer, `engines/claim-preview.ts` asks it
+     the same way the office does, and this fallback was a third reading of a
+     key two others already disagreed about — with category names
+     (Fuel, Hospitality, Parking) that matched neither the server's nor the
+     ones a salesman can pick. */
   'mbos.expenses.backdatedDaysAllowed': 30,
-  'mbos.expenses.maxClaimAgeDays': 30,
-  /* The categories a claim can be filed under, and the monthly ceiling on
-     each. A handset that has never bootstrapped still has to be able to record
-     what was spent this morning; real configuration replaces this wholesale,
-     category names included. */
-  'mbos.expenses.categoryCapsPaise': {
-    Fuel: 600_000,
-    Hospitality: 300_000,
-    Parking: 80_000,
-    Other: 200_000,
-  },
 
   /* attendance and leave */
   'mbos.attendance.halfDayHours': 4,
@@ -146,6 +209,19 @@ const DEFAULTS: Record<string, unknown> = {
   'mbos.leads.staleDays': 30,
   'mbos.leads.archiveDays': 90,
   'mbos.leads.escalateAfterDays': 7,
+  /*
+   * §B's two, and their absence printed the database on a lead card.
+   *
+   * `visitCapThresholds()` reads both and returns an object either way, so the
+   * `capCfg &&` guard on the Leads list passed with `maxSuspectVisits`
+   * undefined and `visitCapLabel` concatenated it: "Visit 2 / undefined", on a
+   * salesman's first day. Worse quietly: `visitCapState` compares against
+   * undefined, every comparison is false, and the answer is always `ok` — so
+   * nobody was ever asked to decide. Both are copied from the registry, which
+   * warns at two and demands an answer at three.
+   */
+  'mbos.leads.visitsBeforeDecision': 2,
+  'mbos.leads.maxSuspectVisits': 3,
 
   /*
    * The funnel's own thresholds and its four coded lists.

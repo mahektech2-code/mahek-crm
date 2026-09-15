@@ -1,11 +1,15 @@
 import React from 'react';
 import { create } from 'zustand';
 import { useFocusEffect } from 'expo-router';
+import { getKv, setKv } from '../db';
+import { readArrival, type Arrival } from '../data/arrival';
 import { getCustomer, type Customer } from '../data/customers';
 import { unreadCount } from '../data/notifications';
 import { daysAwaitingAnswer } from '../data/journey';
 import { pendingCount } from '../sync/queue';
+import { isoDate } from '../lib/format';
 import type { OutcomeKey } from '../data/fixtures';
+import type { ToastTone } from '../components/ui/overlays';
 
 /**
  * One store, holding what the design's single `this.state` held.
@@ -70,6 +74,7 @@ type State = {
 
   /* ---- transient chrome ---- */
   toast: string | null;
+  toastTone: ToastTone;
   sheet: SheetKind;
   confirm: Confirm;
   confirmReason: string;
@@ -101,6 +106,16 @@ type State = {
    * lets all four Start-visit buttons ask by setting one field.
    */
   travelTo: { customerId: string; customerName: string } | null;
+  /**
+   * The shop he has arrived at and not yet walked into.
+   *
+   * Arriving ends the journey; checking in starts the dwell clock. Between the
+   * two he is standing outside a shop, and this is the only thing that says
+   * so — see `data/arrival.ts` for why it is a record on disk rather than a
+   * flag in memory. Null is the ordinary state: he is either travelling, in a
+   * shop, or between them with nothing outstanding.
+   */
+  arrival: Arrival | null;
   visitSpent: string | null;
   /**
    * Why the next visit is off the plan.
@@ -113,8 +128,19 @@ type State = {
    * sent null for the first of them on every visit ever logged; the button
    * that was supposed to fill it raised a toast and wrote nothing, on a screen
    * whose own words are "your manager sees the reason".
+   *
+   * It is written down as well as held — see `rememberOffPlan` below.
    */
   offPlanReason: string | null;
+  /**
+   * When that sentence was typed.
+   *
+   * Not decoration: it is what the route screen prints beside the pending
+   * reason so he can tell this morning's from one he typed an hour ago and
+   * abandoned, and it is what the expiry is measured on. Written by the `set`
+   * action rather than by the caller, so the two cannot disagree.
+   */
+  offPlanReasonAt: number | null;
   /** What this visit has already produced, so returning to it shows the work is done. */
   visitDone: Partial<Record<OutcomeKey, string>>;
   overrodeReason: string | null;
@@ -131,6 +157,16 @@ type State = {
   payAmt: string;
   payChq: string;
 
+  /**
+   * Which shop the cart and the payment fields above were built for.
+   *
+   * See `draftMovedShop`. It is not read by any screen — it exists so the
+   * store can tell "he navigated away and came back" from "he is standing in
+   * a different shop", which are the two cases a draft has to answer
+   * differently.
+   */
+  cartFor: string;
+
   /* ---- people ---- */
   catQ: string;
 
@@ -141,14 +177,27 @@ type State = {
 
 type Actions = {
   set: <K extends keyof State>(patch: Pick<State, K> | Partial<State>) => void;
-  notify: (msg: string) => void;
+  /**
+   * The app's only message channel, and therefore its only ERROR channel.
+   *
+   * `tone` is optional and defaults to the confirmation this has always drawn,
+   * so the hundred-odd existing call sites keep working unchanged — but a
+   * refusal must pass `'warn'`. Every one of them used to arrive under a green
+   * tick: "No number on this customer", "that shop is billed to somebody who is
+   * not on your book", "the ticket could not be added just now". A refusal
+   * somebody half-read, marked with a tick, reads as a confirmation, and he
+   * walks away from the shop believing it went.
+   */
+  notify: (msg: string, tone?: ToastTone) => void;
   clearToast: () => void;
   signIn: () => void;
   signOut: () => void;
   startDay: () => void;
   beginVisit: (custId: string) => void;
   askTravel: (to: { customerId: string; customerName: string }) => void;
-  arrivedAt: (at: number) => void;
+  /** He has walked in. The dwell clock starts on this instant and no other. */
+  checkedIntoShop: (at: number) => void;
+  setArrival: (a: Arrival | null) => void;
   markVisitDone: (k: OutcomeKey, line: string) => void;
   setQty: (skuId: string, qty: string) => void;
   dropLine: (skuId: string) => void;
@@ -165,6 +214,125 @@ type Actions = {
  */
 const NO_DATE_YET = '';
 
+/**
+ * A DRAFT BELONGS TO A SHOP, and it used to follow him to the next one.
+ *
+ * `cart`, `oQ`, `payMode`, `payAmt` and `payChq` live up here so half-finished
+ * work survives NAVIGATION — he opens the customer record to check a balance
+ * mid-order and comes back to his three lines. Nothing cleared them when
+ * `custId` changed, so those three lines were still on the screen at the next
+ * shop, priced and credit-checked against it, and the "42500" typed at one
+ * counter pre-filled the amount box at the next with Collect already live. On
+ * the order side it was worse than it looked: `inCart` is the cart's ids
+ * resolved through the products THIS shop knows, so a line the next shop has
+ * never bought vanished off the screen with its quantity still in the cart,
+ * and reappeared at the shop after that.
+ *
+ * Changing shop clears the draft; setting the SAME id again changes nothing,
+ * because that is exactly the navigation the draft exists to survive.
+ */
+function draftMovedShop(nextCustId: string, cartFor: string): Partial<State> {
+  if (nextCustId === cartFor) return {};
+  return { cartFor: nextCustId, cart: {}, oQ: '', payMode: null, payAmt: '', payChq: '' };
+}
+
+/**
+ * THE OFF-PLAN REASON IS A RECORD, NOT SCREEN STATE, and it lived only here.
+ *
+ * It is typed on the route screen, the shop is chosen on the Customers list,
+ * and the visit two screens later is what spends it — and this store is memory.
+ * Android reaps this app between any two of those, so the reason was routinely
+ * gone by the time the visit saved, which then wrote `deviationReason: null`
+ * with nothing anywhere saying the sentence had been lost. It is the same
+ * argument `travel_legs` makes about a journey in progress, one screen over: a
+ * sentence somebody has typed is a record, and a record goes to SQLite.
+ *
+ * THE DAY IT WAS TYPED ON IS STORED WITH IT, and that is the expiry. A window
+ * of minutes or hours is the DANGEROUS direction — dropping a reason he is
+ * about to spend loses it exactly the way the app kill did, silently — while no
+ * expiry at all is the other half of the same finding, attaching a sentence
+ * about one shop to an unrelated visit next week. Within the day it is held and
+ * SHOWN: the route screen draws it as pending, says when it was typed, and
+ * offers to let it go.
+ */
+const OFF_PLAN_KEY = 'mbos.offPlanReason';
+
+type OffPlanPending = { reason: string; at: number; day: string };
+
+/**
+ * Write the pending reason down, or rub it out. Fire and forget on purpose:
+ * the reason is already in memory either way, so a failed write costs the app
+ * kill and never the visit in front of him.
+ */
+function rememberOffPlan(reason: string | null, at: number | null): void {
+  void (async () => {
+    try {
+      if (!reason || at == null) {
+        await setKv(OFF_PLAN_KEY, '');
+        return;
+      }
+      const pending: OffPlanPending = { reason, at, day: isoDate(new Date(at)) };
+      await setKv(OFF_PLAN_KEY, JSON.stringify(pending));
+    } catch {
+      /* Nothing to tell him: the sentence is on the screen he is looking at. */
+    }
+  })();
+}
+
+/**
+ * Put the shop he is standing at back on the screen, after a kill.
+ *
+ * Run once at launch beside `restoreOffPlanReason`, and for the same reason:
+ * the arrival is on disk, the bar that offers the check-in reads it from the
+ * store, and without this the bar is missing for exactly as long as the app
+ * has been reaped — which on the road is most of the day. `readArrival` is
+ * what rubs out an arrival belonging to an earlier day, so nothing here has to
+ * know about the boundary.
+ */
+export async function restoreArrival(): Promise<void> {
+  try {
+    if (useStore.getState().arrival) return;
+    const value = await readArrival();
+    if (value) useStore.setState({ arrival: value });
+  } catch {
+    /* Housekeeping must never stop the app opening. The worst this costs is a
+       bar that appears on the next launch instead of this one, and the visit
+       screen reads the same record directly. */
+  }
+}
+
+/**
+ * Put a reason typed before the app was killed back on the screen that took it.
+ *
+ * Run once at launch from `BootProvider`. A reason from an earlier day is
+ * rubbed out rather than restored — a deviation is recorded against the day it
+ * was made, and a Tuesday sentence arriving on Wednesday's first walk-in is the
+ * leak this exists to close.
+ */
+export async function restoreOffPlanReason(): Promise<void> {
+  try {
+    /* Whatever is in hand is newer than whatever is on disk, always: the only
+       way the store holds one already is that somebody typed it in this
+       session. It also makes a second call do nothing, which is what a
+       restore should do. */
+    if (useStore.getState().offPlanReason) return;
+    const raw = await getKv(OFF_PLAN_KEY);
+    if (!raw) return;
+    const pending = JSON.parse(raw) as OffPlanPending | null;
+    if (!pending?.reason || pending.day !== isoDate(new Date())) {
+      await setKv(OFF_PLAN_KEY, '');
+      return;
+    }
+    useStore.setState({ offPlanReason: pending.reason, offPlanReasonAt: pending.at });
+  } catch {
+    /* A value that will not parse is one nothing can spend. It is cleared
+       rather than left to be re-read and re-thrown on every launch — and the
+       clearing is itself allowed to fail, because this runs at startup and
+       housekeeping must never be what stops the app opening. */
+    void setKv(OFF_PLAN_KEY, '').catch(() => {});
+  }
+}
+
 export const useStore = create<State & Actions>((set, get) => ({
   signedIn: false,
   method: 'password',
@@ -177,6 +345,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   gps: 'acquiring',
 
   toast: null,
+  toastTone: 'success',
   sheet: null,
   confirm: null,
   confirmReason: '',
@@ -194,8 +363,10 @@ export const useStore = create<State & Actions>((set, get) => ({
   nextDate: NO_DATE_YET,
   visitStart: null,
   travelTo: null,
+  arrival: null,
   visitSpent: null,
   offPlanReason: null,
+  offPlanReasonAt: null,
   visitDone: {},
   overrodeReason: null,
   form: null,
@@ -208,16 +379,35 @@ export const useStore = create<State & Actions>((set, get) => ({
   payMode: null,
   payAmt: '',
   payChq: '',
+  cartFor: '',
 
   catQ: '',
 
   pfSaved: {},
   pfPrefs: { wifi: true, push: true },
 
-  set: (patch) => set(patch as Partial<State>),
+  /* Every screen that opens a shop does it through here — the customers list,
+     the record, the map, a task, the rejections screen — so this is the one
+     place that can notice the shop changed. See `draftMovedShop`. */
+  set: (patch) => {
+    const given = patch as Partial<State>;
+    /* The off-plan reason is mirrored to the kv HERE rather than at the two
+       call sites, and that placement is the whole of it: the screen that SPENDS
+       the reason clears it with this same `set`, so a clear intercepted
+       anywhere else would leave a spent sentence on disk to be restored onto
+       the next walk-in after a kill. One door in, one door out. */
+    let p = given;
+    if (given.offPlanReason !== undefined) {
+      const at = given.offPlanReason ? Date.now() : null;
+      rememberOffPlan(given.offPlanReason, at);
+      p = { ...given, offPlanReasonAt: at };
+    }
+    const custId = p.custId;
+    set(custId !== undefined ? { ...p, ...draftMovedShop(custId, get().cartFor) } : p);
+  },
 
-  notify: (msg) => set({ toast: msg }),
-  clearToast: () => set({ toast: null }),
+  notify: (msg, tone = 'success') => set({ toast: msg, toastTone: tone }),
+  clearToast: () => set({ toast: null, toastTone: 'success' }),
 
   signIn: () => set({ signedIn: true }),
 
@@ -233,6 +423,10 @@ export const useStore = create<State & Actions>((set, get) => ({
   beginVisit: (custId) =>
     set({
       custId,
+      /* This writes `custId` through zustand's own setter rather than the
+         action above, so it has to ask the same question itself — starting a
+         visit at the next shop is the commonest way the cart moved. */
+      ...draftMovedShop(custId, get().cartFor),
       gps: 'acquiring',
       shots: {},
       voice: 'none',
@@ -263,14 +457,22 @@ export const useStore = create<State & Actions>((set, get) => ({
   askTravel: (to) => set({ travelTo: to }),
 
   /**
-   * He is at the shop. The dwell clock starts HERE and nowhere else.
+   * He has gone INTO the shop. The dwell clock starts HERE and nowhere else.
    *
-   * It takes the arrival instant rather than reading the clock itself, because
-   * the caller has already written that instant onto the leg — two readings of
-   * `Date.now()` a few lines apart would put the record and the screen a
-   * second or two out of step for no reason anybody could later explain.
+   * This used to be the arrival, and moving it is the whole of the change: an
+   * arrival is a bike parked outside, and the walk to the counter, the wait
+   * and the call taken on the way in were all being counted as time with the
+   * customer — the same error the ride itself used to make, one step further
+   * down. The arrival still ends the journey; this starts the visit.
+   *
+   * It takes the instant rather than reading the clock itself, because the
+   * caller has already written that instant down — two readings of `Date.now()`
+   * a few lines apart would put the record and the screen a second or two out
+   * of step for no reason anybody could later explain.
    */
-  arrivedAt: (at) => set({ visitStart: at, travelTo: null }),
+  checkedIntoShop: (at) => set({ visitStart: at, travelTo: null }),
+
+  setArrival: (a) => set({ arrival: a }),
 
   markVisitDone: (k, line) => set({ visitDone: { ...get().visitDone, [k]: line } }),
 

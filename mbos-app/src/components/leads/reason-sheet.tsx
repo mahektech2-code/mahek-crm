@@ -48,10 +48,29 @@ export function ReasonSheet({
   const [note, setNote] = React.useState('');
   const [err, setErr] = React.useState<string | null>(null);
 
+  /*
+   * NOTHING TO PICK IS A REAL STATE, and it used to be a dead end.
+   *
+   * The four lists are configuration and an office can legitimately empty one.
+   * `options.map` over an empty array drew no chips at all, so the sheet became
+   * a title, a note box and a button that could only ever answer "Pick one" —
+   * and on the forced Suspect decision, where the whole record is replaced by
+   * this question, neither answer could complete and the lead was stuck for
+   * good.
+   *
+   * So where there is nothing to pick, the sentence IS the answer. The server
+   * agrees: `handleLeadUpdate` refuses a loss with neither a reason code nor a
+   * sentence, and accepts either. The code stays empty rather than being
+   * invented out of the note — a stored label is the one thing §26 forbids.
+   */
+  const nothingToPick = options.length === 0;
+
   const confirm = () => {
-    if (!code) return setErr('Pick one — it is what gets counted afterwards.');
-    if (requireNote && !note.trim()) return setErr('A sentence, so whoever reads this next knows what happened.');
-    onConfirm(code, note.trim());
+    if (!code && !nothingToPick) return setErr('Pick one — it is what gets counted afterwards.');
+    if ((requireNote || nothingToPick) && !note.trim()) {
+      return setErr('A sentence, so whoever reads this next knows what happened.');
+    }
+    onConfirm(code ?? '', note.trim());
   };
 
   return (
@@ -59,24 +78,37 @@ export function ReasonSheet({
       <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>{title}</T>
       {body ? <T s="caption" style={{ marginTop: 2 }}>{body}</T> : null}
 
-      <View style={{ gap: 8, marginTop: 14 }}>
-        {options.map((o) => (
-          <Choice
-            key={o.code}
-            label={o.label}
-            selected={code === o.code}
-            onPress={() => { setCode(o.code); setErr(null); }}
-            style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
-          />
-        ))}
-      </View>
+      {nothingToPick ? (
+        <View style={{ marginTop: 14, backgroundColor: C.wash, borderRadius: radius.lg, padding: 12 }}>
+          <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>
+            Your office has not set any reasons to pick from yet — tell them. Write what happened below and this will
+            still save.
+          </T>
+        </View>
+      ) : (
+        <View style={{ gap: 8, marginTop: 14 }}>
+          {options.map((o) => (
+            <Choice
+              key={o.code}
+              label={o.label}
+              selected={code === o.code}
+              onPress={() => { setCode(o.code); setErr(null); }}
+              style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
+            />
+          ))}
+        </View>
+      )}
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>{noteLabel ?? 'Anything to add'}</SectionLabel>
         <Input
           value={note}
           onChangeText={(v) => { setNote(v); setErr(null); }}
-          placeholder={notePlaceholder ?? 'Optional — what they actually said'}
+          placeholder={
+            nothingToPick
+              ? 'What happened, in your own words'
+              : notePlaceholder ?? 'Optional — what they actually said'
+          }
           multiline
         />
       </View>

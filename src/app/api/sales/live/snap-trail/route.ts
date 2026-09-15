@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { listUserModules } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
-import { dropInaccurateFixes, splitTrailByGaps } from "@/lib/engines/trail-gaps";
+import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
 import { metresBetween } from "@/lib/geo";
 import {
+  dayTrailSegments,
+  NO_TRIP_COLOUR,
   offsetPolyline,
   splitTrailIntoTrips,
   tripColour,
@@ -113,47 +115,82 @@ export async function GET(request: Request) {
    */
   const COLLAPSED_BELOW = 0.25;
 
+  /*
+   * EVERY PIECE OF THE DAY, not only the journeys in it.
+   *
+   * This walked `trips` and pushed a segment per piece of each, which is the
+   * same hole the map itself had: a hop of `gapMetres` or more belongs to no
+   * trip, and what is left between such hops is standing still, which is not
+   * a journey either. On a real day — 95 fixes, 4.07 km, four hops carrying
+   * 3.85 km of it because the handset slept between stops — `trips` held one
+   * leg of 71 metres, so that is what this answered and that is what the map
+   * drew. Worse than the client's own copy of the bug, because the client
+   * REPLACES its geometry with whatever this returns: fixing the map alone
+   * changed nothing on screen.
+   *
+   * `dayTrailSegments` covers every consecutive pair exactly once. Which
+   * pieces reach Ola is unchanged — only a solid run inside a trip is
+   * road-matched, a gap keeps its straight line — so this costs no extra call.
+   */
+  const byIndex = new Map(trips.map((t) => [t.index, t] as const));
   const segments = [];
-  for (const trip of trips) {
-    let roadMetres = 0;
+  const roadMetresByTrip = new Map<number, number>();
 
-    for (const piece of splitTrailByGaps(trip.points, gapMetres)) {
-      const raw = piece.coordinates;
-      /* `[lng, lat]` on the wire, `{lat,lng}` through the service — GeoJSON
-         and Ola disagree about the order and this is where they meet. */
-      const road = piece.gap
-        ? null
-        : await roadPathFor(raw.map(([lng, lat]) => ({ lat, lng })));
-      const drawn = offsetPolyline(
-        road ? (road.map((p) => [p.lng, p.lat]) as [number, number][]) : raw,
-        tripOffset(trip.index),
-      );
+  for (const piece of dayTrailSegments(accurate, {
+    gapMetres,
+    dwellRadiusMetres: config["mbos.location.dwellRadiusMeters"],
+    tripBreakMinutes: config["mbos.location.tripBreakMinutes"],
+  })) {
+    const raw = piece.coordinates;
+    const trip = byIndex.get(piece.trip);
+    /* `[lng, lat]` on the wire, `{lat,lng}` through the service — GeoJSON
+       and Ola disagree about the order and this is where they meet. */
+    const road = piece.gap
+      ? null
+      : await roadPathFor(raw.map(([lng, lat]) => ({ lat, lng })));
+    /* Trips are 1-based and `NO_TRIP` is 0, which `tripOffset` would stagger
+       the wrong way off the line. Ground in no journey sits where it is. */
+    const offset = trip ? tripOffset(piece.trip) : 0;
+    const drawn = offsetPolyline(
+      road ? (road.map((p) => [p.lng, p.lat]) as [number, number][]) : raw,
+      offset,
+    );
 
-      /* A gap contributes its straight line — nobody knows the road taken, and
-         pretending it was longer than the crow flies would be an invention. */
+    /* A gap contributes its straight line — nobody knows the road taken, and
+       pretending it was longer than the crow flies would be an invention. */
+    if (trip) {
+      let metres = 0;
       for (let i = 1; i < drawn.length; i++) {
-        roadMetres += metresBetween(drawn[i - 1][1], drawn[i - 1][0], drawn[i][1], drawn[i][0]);
+        metres += metresBetween(drawn[i - 1][1], drawn[i - 1][0], drawn[i][1], drawn[i][0]);
       }
-
-      segments.push({
-        gap: piece.gap,
-        trip: trip.index,
-        colour: tripColour(trip.index),
-        offset: tripOffset(trip.index),
-        metres: trip.metres,
-        fromMs: trip.startAt.getTime(),
-        toMs: trip.endAt.getTime(),
-        /* Nudged into its lane in the geometry rather than by the renderer —
-           see `offsetPolyline` for why `line-offset` breaks at exactly the
-           corners somebody is trying to follow. */
-        coordinates: drawn,
-      });
+      roadMetresByTrip.set(piece.trip, (roadMetresByTrip.get(piece.trip) ?? 0) + metres);
     }
 
-    /* Written back onto this trip's segments now the whole leg is known. */
+    segments.push({
+      gap: piece.gap,
+      trip: piece.trip,
+      colour: trip ? tripColour(piece.trip) : NO_TRIP_COLOUR,
+      offset,
+      /* A piece in no journey has no leg to answer for, so it carries its own
+         two ends and no distance — a hop nobody recorded a path for has no
+         honest length to quote. */
+      metres: trip ? trip.metres : 0,
+      fromMs: (trip ? trip.startAt : piece.fromAt).getTime(),
+      toMs: (trip ? trip.endAt : piece.toAt).getTime(),
+      /* Nudged into its lane in the geometry rather than by the renderer —
+         see `offsetPolyline` for why `line-offset` breaks at exactly the
+         corners somebody is trying to follow. */
+      coordinates: drawn,
+    });
+  }
+
+  /* Written back onto each trip's segments now the whole leg is known. */
+  for (const [index, roadMetres] of roadMetresByTrip) {
+    const trip = byIndex.get(index);
+    if (!trip) continue;
     const measurable = roadMetres >= trip.metres * COLLAPSED_BELOW;
     if (measurable && roadMetres > 0) {
-      for (const seg of segments) if (seg.trip === trip.index) seg.metres = roadMetres;
+      for (const seg of segments) if (seg.trip === index) seg.metres = roadMetres;
     }
   }
 

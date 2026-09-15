@@ -8,10 +8,12 @@ import * as trail from '../sync/trail';
 import { currentSession, type Session } from '../data/session';
 import { autoCloseMissedCheckouts, dayState } from '../data/attendance';
 import { closeOpenVisits } from '../data/visits';
+import { closeStaleLegs, closeStaleSessions } from '../data/travel';
 import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
 import { registerForPush } from '../native/push';
 import { fetchUpdateInBackground } from '../native/updates';
+import { restoreArrival, restoreOffPlanReason } from './store';
 
 /**
  * Starting up.
@@ -54,6 +56,14 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
         startBackgroundSync();
         void registerBackgroundSync();
         void runDayBoundaryWork(existing.user.id).then(() => resumeTrailIfDayOpen(existing.user.id));
+        /* Half-finished work put back on the screen that took it. An off-plan
+           reason is typed on the route screen and spent by a visit two screens
+           later, and this app is reaped between the two routinely — restoring
+           it here is what stops the sentence being lost in silence. It expires
+           itself at the day boundary; see `restoreOffPlanReason`. */
+        void restoreOffPlanReason();
+        /* The shop he arrived at and did not go into. Same shape, same reason. */
+        void restoreArrival();
         void registerForPush();
         /* Behind the app, never in front of it: `setReady(true)` has already
            run, so the salesman is looking at his day while this downloads. It
@@ -142,8 +152,22 @@ async function runDayBoundaryWork(userId: string): Promise<void> {
     startOfToday.setHours(0, 0, 0, 0);
 
     await closeOpenVisits(startOfToday.getTime());
+    /* A journey nobody arrived at, closed for the same reason a visit nobody
+       checked out of is. Nothing else ever ends a leg, so one left open
+       overnight was read as this morning's — see `openLegOf`. */
+    await closeStaleLegs(userId, startOfToday.getTime());
+    /* And the session he punched in on and never out of. Nothing closes one
+       but a punch-out, so a phone switched off on Friday evening would greet
+       its owner on Monday still on Friday's meter reading. */
+    await closeStaleSessions(userId, startOfToday.getTime());
     await autoCloseMissedCheckouts(userId);
-    await escalateOverdue(await getConfig<number>('mbos.tasks.escalateAfterHours', 24));
+    /* `mbos.tasks.escalationHours`, which is the PUBLISHED key. This read
+       `mbos.tasks.escalateAfterHours` — the same question, one word apart, and
+       a spelling no office could ever set — so the handset marked a task
+       escalated on a compiled 24 while the server's own hourly pass ran on
+       whatever the registry said. Two clocks on one rule, and the phone's was
+       the one the salesman saw. */
+    await escalateOverdue(await getConfig<number>('mbos.tasks.escalationHours', 24));
   } catch {
     /* Housekeeping must never stop the app opening. Whatever failed here will
        be retried on the next launch, and none of it is the salesman's problem. */

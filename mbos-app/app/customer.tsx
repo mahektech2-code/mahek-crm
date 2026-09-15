@@ -12,16 +12,31 @@ import { stageLabel } from '../src/engines/funnel';
 import { complaintsFor, customerSamples, type Complaint, type Sample } from '../src/data/requests';
 import { writeInternalNote } from '../src/data/internal-notes';
 import {
+  billLines,
   competitorRecords,
+  customerBills,
   customerOrders,
   customerPayments,
   customerTimeline,
+  OUTSTANDING_ALERT_PAISE,
   recordCompetitor,
+  statementReach,
+  type CustomerBill,
   type CustomerOrder,
   type CustomerPayment,
   type TimelineEvent,
 } from '../src/data/customers';
-import { inr, isoDate, pretty, shopName } from '../src/lib/format';
+import { accountType } from '../src/lib/account-label';
+import {
+  buildStatement,
+  countsAsMoney,
+  periodRange,
+  PERIODS,
+  type PeriodKey,
+} from '../src/engines/statement';
+import { TIMELINE_PAGE } from '../src/data/customer-query';
+import { getConfig } from '../src/data/config';
+import { inr, inrFromPaise, isoDate, pretty, shopName } from '../src/lib/format';
 import { callNumber, openWhatsApp } from '../src/lib/messaging';
 
 /**
@@ -38,7 +53,19 @@ import { callNumber, openWhatsApp } from '../src/lib/messaging';
  * know which he has.
  */
 
-const TABS = ['Overview', 'Timeline', 'Orders', 'Payments', 'Samples', 'Complaints', 'Competitors'];
+/*
+ * "Payments" IS "Account" NOW, in the same position, which is why nothing had
+ * to be done about `pTab` — it is an index in the store and a salesman who
+ * left the record on that tab comes back to the tab that replaced it.
+ *
+ * The old one listed receipts alone, and a list of payments with no bills
+ * beside them cannot answer the question it is opened for. A shopkeeper with
+ * his own file open asks what was billed in July and what he has paid against
+ * it, in one breath; two tabs made the salesman hold one half in his head
+ * while he read the other. It is the same shape the Accounts app has for the
+ * same reason — a customer account, not a payments list.
+ */
+const TABS = ['Overview', 'Timeline', 'Orders', 'Account', 'Samples', 'Complaints', 'Competitors'];
 const TL_FILTERS = ['All', 'Visits', 'Orders', 'Payments', 'Calls', 'Complaints'];
 
 /** The stream's own event types, in the words the design puts on the badge. */
@@ -62,10 +89,19 @@ const TONES: Record<string, BadgeTone> = {
   Telecaller: 'amber',
 };
 
-/** "a minute ago", "4 hours ago" — how old the cached figures are. */
-function freshness(at: number): string {
+/**
+ * "a minute ago", "4 hours ago" — how old the cached figures are.
+ *
+ * THE CLOCK IS PASSED IN rather than read here, which is the repo's rule and,
+ * on this particular line, the whole point of it. This read `Date.now()` in the
+ * render body of a screen that re-renders only when something else changes, so
+ * "From the office 4 min ago" stayed "4 min ago" for as long as he sat on the
+ * screen — the one line on which he decides whether to trust the credit limit
+ * and the outstanding above it was the line lying about its own age.
+ */
+function freshness(at: number, nowMs: number): string {
   if (!at) return 'not synced yet';
-  const mins = Math.max(0, Math.round((Date.now() - at) / 60_000));
+  const mins = Math.max(0, Math.round((nowMs - at) / 60_000));
   if (mins < 1) return 'just now';
   if (mins < 60) return mins + ' min ago';
   const hours = Math.round(mins / 60);
@@ -96,6 +132,14 @@ export default function CustomerRecord() {
   const [events, setEvents] = React.useState<TimelineEvent[]>([]);
   const [orders, setOrders] = React.useState<CustomerOrder[]>([]);
   const [receipts, setReceipts] = React.useState<CustomerPayment[]>([]);
+  const [bills, setBills] = React.useState<CustomerBill[]>([]);
+  /* The oldest day this handset actually holds something for — see
+     `statementReach`. Not the window the office sent: what is HERE. */
+  const [reach, setReach] = React.useState<string | null>(null);
+  const [period, setPeriod] = React.useState<PeriodKey>('three_months');
+  /* Which bill is open to show what was on it. One at a time: a list of
+     twenty bills each unfolded into four lines is a screen nobody scrolls. */
+  const [openBillId, setOpenBillId] = React.useState<string | null>(null);
   const [samples, setSamples] = React.useState<Sample[]>([]);
   const [gripes, setGripes] = React.useState<Complaint[]>([]);
   const [note, setNote] = React.useState('');
@@ -104,53 +148,112 @@ export default function CustomerRecord() {
   const [compForm, setCompForm] = React.useState(false);
   const [comp, setComp] = React.useState({ name: '', rate: '', note: '', credit: '', delivery: '', strengths: '', weaknesses: '' });
   const [compBusy, setCompBusy] = React.useState(false);
+  /*
+   * WHETHER THE SIX READS HAVE ANSWERED YET.
+   *
+   * Every list above starts empty and the six queries are awaited together, so
+   * each tab drew its terminal verdict over a query still in flight — Orders
+   * and Payments both instructing him to "sign out and in once", which is the
+   * one action that is genuinely risky with a full outbox, about a shop whose
+   * orders were a moment from appearing. Nothing terminal is claimed until
+   * `loaded`, and a read that fails says so rather than leaving a placeholder
+   * that never resolves.
+   */
+  const [loaded, setLoaded] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  /*
+   * THE CLOCK, READ OUTSIDE RENDER and refreshed while the screen is open —
+   * see `freshness`. A minute is the resolution the sentence is written in, so
+   * it is the interval: anything finer is work nobody can read the result of.
+   */
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
 
   const id = c?.id ?? null;
 
-  const reload = React.useCallback(() => {
-    if (!id) return;
-    void Promise.all([
+  /* ONE READ, and both callers go through it. There were two copies of this
+     `Promise.all`, and only one of them checked `live` — on two of the six
+     setters. */
+  const read = React.useCallback(() => {
+    if (!id) return null;
+    return Promise.all([
       customerTimeline(id, tlFilter),
       competitorRecords(id),
       customerOrders(id),
       customerPayments(id),
       customerSamples(id),
       complaintsFor(id),
-    ]).then(([t, k, o, r, sm, g]) => {
+      customerBills(id),
+      statementReach(id),
+    ]);
+  }, [id, tlFilter]);
+
+  const apply = React.useCallback(
+    ([t, k, o, r, sm, g, b, from]: Awaited<NonNullable<ReturnType<typeof read>>>) => {
       setOrders(o);
       setReceipts(r);
+      setBills(b);
+      setReach(from);
       setSamples(sm);
       setGripes(g);
       setEvents(t);
       setCompetitors(k);
-    });
-  }, [id, tlFilter]);
+      setFailed(false);
+      setLoaded(true);
+    },
+    [],
+  );
+
+  const reload = React.useCallback(() => {
+    void read()?.then(apply);
+  }, [read, apply]);
 
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
-      if (!id) return;
-      void Promise.all([
-      customerTimeline(id, tlFilter),
-      competitorRecords(id),
-      customerOrders(id),
-      customerPayments(id),
-      customerSamples(id),
-      complaintsFor(id),
-    ]).then(([t, k, o, r, sm, g]) => {
-      setOrders(o);
-      setReceipts(r);
-      setSamples(sm);
-      setGripes(g);
-        if (!live) return;
-        setEvents(t);
-        setCompetitors(k);
-      });
+      void read()
+        ?.then((r) => {
+          if (live) apply(r);
+        })
+        .catch(() => {
+          if (!live) return;
+          setFailed(true);
+          setLoaded(true);
+        });
       return () => {
         live = false;
       };
-    }, [id, tlFilter]),
+    }, [read, apply]),
   );
+
+  /* Coming back to the screen is the moment the figure above is most likely to
+     be wrong, so the clock is re-read on focus as well as on the tick. */
+  useFocusEffect(
+    React.useCallback(() => {
+      setNowMs(Date.now());
+      const t = setInterval(() => setNowMs(Date.now()), 60_000);
+      return () => clearInterval(t);
+    }, []),
+  );
+
+  /* The two health thresholds, from configuration — the same two keys the
+     book's list reads. The pill's own defaults are 70/40, so taking them here
+     gave one shop two colours one tap apart on a team that had set its own. */
+  const [healthWatch, setHealthWatch] = React.useState(40);
+  const [healthStrong, setHealthStrong] = React.useState(70);
+  React.useEffect(() => {
+    let live = true;
+    void Promise.all([
+      getConfig<number>('mbos.health.atRiskBelow', 40),
+      getConfig<number>('mbos.health.strongAtOrAbove', 70),
+    ]).then(([w, st]) => {
+      if (!live) return;
+      setHealthWatch(w);
+      setHealthStrong(st);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const saveCompetitor = async () => {
     if (!id) return;
@@ -203,6 +306,41 @@ export default function CustomerRecord() {
   const dues = c.outstandingPaise / 100;
   const owner = c.contactPerson ?? c.name;
 
+  /* WHAT KIND OF ACCOUNT THIS IS, from the shared pure rule rather than from
+     `c.kind` — the office keeps one row for a lead and a customer, and the
+     lead arrives down its own channel. See `lib/account-label.ts`. */
+  const accountKind = accountType({ ...c, isLead: lead ? 1 : 0 });
+
+  /* The statement for the window on screen. Derived rather than held in state:
+     it is a pure function of three things already here, and a copy in state is
+     a copy that can be stale by exactly one render — on a screen showing money
+     to a customer. */
+  const window = periodRange(period, isoDate(new Date(nowMs)));
+  const statement = buildStatement(bills, receipts, window);
+  const billsInWindow = statement.entries.filter((e) => e.kind === 'bill').length;
+
+  /*
+   * THREE REASONS A TAB IS BLANK, and only the last is the one those sentences
+   * were written about. Still reading, could not read, and genuinely nothing
+   * here are different facts, and the terminal one tells him to sign out and in
+   * — which is the one action that is genuinely risky with a full outbox. So it
+   * is not said until the read has actually answered.
+   */
+  const nothingYet = (head: string, body: string) => {
+    if (!loaded) {
+      return <Empty head="Reading…" body="Getting this shop's history off this phone." />;
+    }
+    if (failed) {
+      return (
+        <Empty
+          head="Could not read it off this phone"
+          body="Nothing of yours is lost. Leave the screen and come back, and if it keeps happening tell the office."
+        />
+      );
+    }
+    return <Empty head={head} body={body} />;
+  };
+
   return (
     <AppFrame title={shopName(c.name)} activeTab="customers" onBack={() => router.back()} contentStyle={{ paddingBottom: 24 }}>
       {/* ---- the head ---- */}
@@ -215,7 +353,15 @@ export default function CustomerRecord() {
             </Text>
           </View>
           {c.healthScore != null || c.healthBand ? (
-            <HealthPill value={c.healthScore ?? null} band={c.healthBand ?? null} large />
+            <HealthPill
+              value={c.healthScore ?? null}
+              band={c.healthBand ?? null}
+              /* The configured pair, never the primitive's defaults — this is
+                 the same shop the list one screen back has just coloured. */
+              strongAtOrAbove={healthStrong}
+              watchBelow={healthWatch}
+              large
+            />
           ) : null}
         </View>
 
@@ -261,7 +407,14 @@ export default function CustomerRecord() {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline }}>
           <View>
             <Text style={type.label}>Outstanding</Text>
-            <Text style={[{ fontSize: 15, color: dues > 300000 ? C.danger : C.ink }, weight(500), tabular]}>
+            {/* Compared in PAISE against the one shared threshold, so the
+                record and the list card cannot turn red at two figures. */}
+            <Text
+              style={[
+                { fontSize: 15, color: c.outstandingPaise > OUTSTANDING_ALERT_PAISE ? C.danger : C.ink },
+                weight(500),
+                tabular,
+              ]}>
               {dues ? inr(dues) : 'Nothing due'}
             </Text>
           </View>
@@ -276,7 +429,9 @@ export default function CustomerRecord() {
 
         {/* The age of the figures above, in the caption slot the design already
             uses for exactly this kind of aside. */}
-        <Text style={[type.caption, { marginTop: 6 }]}>{'From the office ' + freshness(c.lastSyncedAt)}</Text>
+        <Text style={[type.caption, { marginTop: 6 }]}>
+          {'From the office ' + freshness(c.lastSyncedAt, nowMs)}
+        </Text>
 
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
           <Pressable
@@ -344,7 +499,7 @@ export default function CustomerRecord() {
                    the one place it could not be read. */
                 {
                   label: 'Outstanding',
-                  value: c.outstandingPaise ? inr(c.outstandingPaise / 100) : 'Nothing outstanding',
+                  value: c.outstandingPaise ? inrFromPaise(c.outstandingPaise) : 'Nothing outstanding',
                 },
                 { label: 'Contact', value: c.contactPerson ?? '—' },
                 { label: 'Phone', value: c.phone ?? '—' },
@@ -354,7 +509,7 @@ export default function CustomerRecord() {
                 { label: 'Dealer code', value: c.dealerCode ?? '—' },
                 {
                   label: 'Credit limit',
-                  value: c.creditLimitPaise != null ? inr(c.creditLimitPaise / 100) : 'Not set',
+                  value: c.creditLimitPaise != null ? inrFromPaise(c.creditLimitPaise) : 'Not set',
                 },
                 { label: 'Credit days', value: c.creditDays != null ? c.creditDays + ' days' : '—' },
                 { label: 'Price list', value: c.priceTag ?? '—' },
@@ -462,17 +617,23 @@ export default function CustomerRecord() {
                 and reported as exactly that. The two causes are worth telling
                 apart in the words, because only one of them is the salesman's
                 to act on: a filter that excludes everything is undone by
-                pressing All, and an empty stream is the office's to fill. */}
-            {events.length === 0 ? (
-              <Empty
-                head={tlFilter === 'All' ? 'Nothing recorded yet' : 'Nothing under ' + tlFilter}
-                body={
+                pressing All, and an empty stream is the office's to fill.
+
+                AND THE FILTERED SENTENCE NO LONGER ASSERTS THE HALF IT CANNOT
+                SEE. It read "this shop has history, but none of it is
+                payments" — two claims, and the screen has evidence for neither
+                when the filtered read comes back empty: it has not asked what
+                else is here. What it can stand behind is what is on this phone
+                under this chip, which is now a real question asked of SQL
+                rather than a hundred-row window narrowed afterwards. */}
+            {events.length === 0
+              ? nothingYet(
+                  tlFilter === 'All' ? 'Nothing recorded yet' : 'Nothing under ' + tlFilter,
                   tlFilter === 'All'
                     ? 'Visits, calls, orders and payments appear here as the office records them. A shop nobody has dealt with yet has nothing to show.'
-                    : 'This shop has history, but none of it is ' + tlFilter.toLowerCase() + '. Tap All to see the rest.'
-                }
-              />
-            ) : null}
+                    : 'No ' + tlFilter.toLowerCase() + ' are recorded against this shop on this phone. Tap All to see the rest.',
+                )
+              : null}
 
             {events.map((e, i) => {
               const last = i === events.length - 1;
@@ -515,6 +676,19 @@ export default function CustomerRecord() {
               );
             })}
 
+            {/* A CAPPED LIST ADMITS IT, the same rule Orders and Payments
+                follow one tab along. A full page means the read hit its cap,
+                not that this is the whole story — and a salesman who reads a
+                hundred entries as everything tells a customer so. */}
+            {events.length >= TIMELINE_PAGE ? (
+              <Text style={[type.caption, { marginTop: 8 }]}>
+                {'The newest ' +
+                  TIMELINE_PAGE +
+                  (tlFilter === 'All' ? ' entries' : ' under ' + tlFilter) +
+                  '. There is older history than this.'}
+              </Text>
+            ) : null}
+
             <Text style={[type.caption, { marginTop: 8 }]}>
               This is a record of what happened, so nothing can be added here — every entry comes from the screen that
               created it.
@@ -527,17 +701,17 @@ export default function CustomerRecord() {
         {pTab === 2 ? (
           <View style={{ gap: 10 }}>
             {orders.length === 0 ? (
-              <Empty
-                head="No orders on this handset"
-                body="The office's order history arrives with the day's sync. If this shop has ordered and nothing is here, sign out and in once."
-              />
+              nothingYet(
+                'No orders on this handset',
+                "The office's order history arrives with the day's sync. If this shop has ordered and nothing is here, sign out and in once.",
+              )
             ) : (
               <>
                 {orders.map((o) => (
                   <Card key={o.id} style={{ gap: 4 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
                       <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-                        {o.valuePaise != null ? inr(o.valuePaise / 100) : 'Value not recorded'}
+                        {o.valuePaise != null ? inrFromPaise(o.valuePaise) : 'Value not recorded'}
                       </Text>
                       <Text style={type.caption}>{pretty(o.orderedAt)}</Text>
                     </View>
@@ -558,42 +732,151 @@ export default function CustomerRecord() {
           </View>
         ) : null}
 
-        {/* ---- what they paid ---- */}
+        {/* ---- the account: what was billed, what came in ---- */}
         {pTab === 3 ? (
           <View style={{ gap: 10 }}>
-            {receipts.length === 0 ? (
+            {/*
+              A STATEMENT IS FOR AN ACCOUNT WE INVOICE, and the two that are
+              not say so rather than showing an empty list.
+
+              A lead has never ordered — that is the whole definition — and a
+              third-party shop is one we deliver to and do not bill, so its
+              invoices are the distributor's and always will be. Both would
+              draw a correct, empty screen, and an empty screen with nothing
+              saying why reads as a sync that has not finished. It is the same
+              sentence the Accounts app puts above its own ledger for the same
+              account, one screen over.
+            */}
+            {accountKind === 'Lead' ? (
               <Empty
-                head="No payments on this handset"
-                body="Receipts the office has recorded arrive with the day's sync. If this shop has paid and nothing is here, sign out and in once."
+                head="Nothing billed to a lead"
+                body="A lead is a shop that has never ordered from us. When the first order is billed, it will be on this tab."
+              />
+            ) : accountKind === 'Third party' ? (
+              <Empty
+                head="We deliver here and do not bill it"
+                body="The goods are invoiced to the distributor, so there are no bills on this shop. What it has taken is under Orders."
               />
             ) : (
               <>
-                {receipts.map((r) => (
-                  <Card key={r.id} style={{ gap: 4 }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-                      <Text
-                        style={[
-                          {
-                            fontSize: 15,
-                            /* Only confirmed money has moved anything. A
-                               rejected or reversed receipt is shown rather than
-                               hidden — the customer will say "we paid that",
-                               and he needs an answer — but it must not read
-                               like money in the bank. */
-                            color: r.status === 'confirmed' ? C.ink : C.muted,
-                          },
-                          weight(600),
-                        ]}>
-                        {r.amountPaise != null ? inr(r.amountPaise / 100) : '—'}
-                      </Text>
-                      <Text style={type.caption}>{pretty(r.receivedAt)}</Text>
-                    </View>
-                    <Text style={type.caption}>
-                      {[r.mode, r.reference, r.status].filter(Boolean).join(' · ')}
-                    </Text>
-                  </Card>
-                ))}
-                <Slice n={receipts.length} noun="payment" />
+                {/* ---- the window ---- */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 8, paddingRight: 16 }}
+                  style={{ flexGrow: 0, marginHorizontal: -16, paddingHorizontal: 16 }}>
+                  {PERIODS.map((p) => {
+                    const on = period === p.key;
+                    return (
+                      <Pressable
+                        key={p.key}
+                        onPress={() => setPeriod(p.key)}
+                        style={{
+                          height: 34,
+                          paddingHorizontal: 14,
+                          borderRadius: radius.pill,
+                          borderWidth: 1,
+                          borderColor: on ? C.primary : C.border,
+                          backgroundColor: on ? C.primaryTint : C.surface,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                        <Text
+                          style={[
+                            { fontSize: 14, color: on ? C.primaryDeep : C.body },
+                            weight(on ? 500 : 400),
+                          ]}>
+                          {p.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* ---- the four figures ----
+
+                    OUTSTANDING IS THE OFFICE'S OWN and is not added up here.
+                    Everything else on this card describes the window; that one
+                    describes the account, and a second total computed on a
+                    phone from thirteen months of rows is exactly how a salesman
+                    and an accounts clerk come to quote a shopkeeper two
+                    different debts with him listening. */}
+                <Card style={{ gap: 10 }}>
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <Figure label="Billed" value={inrFromPaise(statement.billedPaise)} />
+                    <Figure label="Received" value={inrFromPaise(statement.receivedPaise)} />
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 12, borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 10 }}>
+                    <Figure
+                      label="Outstanding now"
+                      value={c.outstandingPaise ? inrFromPaise(c.outstandingPaise) : 'Nothing'}
+                      tone={c.outstandingPaise ? C.danger : undefined}
+                    />
+                    {statement.awaitingCount ? (
+                      <Figure
+                        label="With accounts"
+                        value={inrFromPaise(statement.awaitingPaise)}
+                        tone={C.warn}
+                      />
+                    ) : (
+                      <Figure label="Bills" value={String(billsInWindow)} />
+                    )}
+                  </View>
+                  <Text style={type.caption}>
+                    Billed and received are for the window above. Outstanding is the office&apos;s own
+                    figure for the whole account, and only money accounts have found in the bank
+                    counts towards it.
+                  </Text>
+                </Card>
+
+                {statement.openingPaise !== 0 ? (
+                  <Text style={type.caption}>
+                    {inrFromPaise(statement.openingPaise)} was outstanding before this window opened.
+                  </Text>
+                ) : null}
+
+                {/* ---- the lines ---- */}
+                {statement.entries.length === 0 ? (
+                  nothingYet(
+                    bills.length || receipts.length
+                      ? 'Nothing in this window'
+                      : 'Nothing billed on this handset',
+                    bills.length || receipts.length
+                      ? 'No bill or payment falls inside these dates. Try a wider one.'
+                      : "The office's bills and receipts arrive with the day's sync. If this shop has been billed and nothing is here, sign out and in once.",
+                  )
+                ) : (
+                  statement.entries.map((e) =>
+                    e.kind === 'bill' ? (
+                      <BillCard
+                        key={'b' + e.bill.id}
+                        bill={e.bill}
+                        balanceAfterPaise={e.balancePaise}
+                        open={openBillId === e.bill.id}
+                        onToggle={() =>
+                          setOpenBillId(openBillId === e.bill.id ? null : e.bill.id)
+                        }
+                      />
+                    ) : (
+                      <ReceiptCard
+                        key={'r' + e.receipt.id}
+                        receipt={e.receipt}
+                        balanceAfterPaise={e.balancePaise}
+                      />
+                    ),
+                  )
+                )}
+
+                {/* HOW FAR BACK THIS PHONE GOES, said plainly. A capped list
+                    has to admit what it is a slice of — otherwise a salesman
+                    reads "This year" over eight months of bills and tells a
+                    shopkeeper that is all there was. */}
+                {reach ? (
+                  <Text style={[type.caption, { marginTop: 4 }]}>
+                    This phone holds the account back to {pretty(reach)}. Anything older is in
+                    the office.
+                  </Text>
+                ) : null}
               </>
             )}
           </View>
@@ -603,10 +886,10 @@ export default function CustomerRecord() {
         {pTab === 4 ? (
           <View style={{ gap: 10 }}>
             {samples.length === 0 ? (
-              <Empty
-                head="No trials on this shop"
-                body="Samples you raise here show up straight away. The office only sends down the ones still open, so a trial closed at a desk stays there."
-              />
+              nothingYet(
+                'No trials on this shop',
+                'Samples you raise here show up straight away. The office only sends down the ones still open, so a trial closed at a desk stays there.',
+              )
             ) : (
               <>
                 {samples.map((sm) => (
@@ -657,12 +940,10 @@ export default function CustomerRecord() {
         {pTab === 5 ? (
           <View>
             {gripes.length === 0 ? (
-              <Card style={{ paddingVertical: 24 }}>
-                <Text style={[type.small, { color: C.muted, textAlign: 'center' }]}>
-                  Nothing logged against this shop. A complaint is raised from the visit, under the
-                  Complaint outcome.
-                </Text>
-              </Card>
+              nothingYet(
+                'Nothing logged against this shop',
+                'A complaint is raised from the visit, under the Complaint outcome.',
+              )
             ) : (
               <View style={{ gap: 10 }}>
                 {gripes.map((g) => (
@@ -732,6 +1013,18 @@ export default function CustomerRecord() {
                   onChangeText={(v) => setComp((s) => ({ ...s, credit: v }))}
                   placeholder="Credit terms they offer (optional)"
                 />
+                {/* THE BOX THAT WAS NEVER DRAWN. `delivery` is initialised in
+                    this form's state, trimmed into `recordCompetitor`, carried
+                    on the wire and printed on the saved card beside the credit
+                    terms — and there was no input between credit and strengths,
+                    so it could never be anything but empty from this app. A
+                    column the record page shows is one the salesman standing in
+                    the shop has to be able to fill in. */}
+                <Input
+                  value={comp.delivery}
+                  onChangeText={(v) => setComp((s) => ({ ...s, delivery: v }))}
+                  placeholder="How quickly they deliver (optional)"
+                />
                 <Input
                   value={comp.strengths}
                   onChangeText={(v) => setComp((s) => ({ ...s, strengths: v }))}
@@ -764,7 +1057,7 @@ export default function CustomerRecord() {
                   <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
                     <Text style={[{ fontSize: 15, color: C.ink, flexShrink: 1 }, weight(500)]}>{k.competitorName}</Text>
                     <Text style={[{ fontSize: 15, color: C.ink }, weight(500), tabular]}>
-                      {k.ratePaise != null ? inr(k.ratePaise / 100) : (k.rateNote ?? '')}
+                      {k.ratePaise != null ? inrFromPaise(k.ratePaise) : (k.rateNote ?? '')}
                     </Text>
                   </View>
                   <Text style={[type.caption, { marginTop: 2 }]}>
@@ -874,6 +1167,187 @@ function Slice({ n, noun }: { n: number; noun: string }) {
     <Text style={[type.caption, { textAlign: 'center', marginTop: 2 }]}>
       {'The last ' + n + ' ' + noun + 's. Older ones stay in the office.'}
     </Text>
+  );
+}
+
+/** One figure on the account card. */
+function Figure({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <View style={{ flex: 1, minWidth: 0 }}>
+      <Text style={type.label}>{label}</Text>
+      <Text style={[{ fontSize: 17, color: tone ?? C.ink, marginTop: 2 }, weight(600), tabular]}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * ONE BILL, and what was on it.
+ *
+ * The number, the date and the amount are what a shopkeeper reads off his own
+ * copy, so they are what the card leads with — an invoice conversation starts
+ * with "MMI/26-27/1119" and not with a balance.
+ *
+ * WHAT IT WAS FOR IS FOLDED AWAY until he taps. Half these bills are one line
+ * and half are eight, and unfolding every one of them turns a year's statement
+ * into a scroll nobody reaches the bottom of. The count is on the closed card,
+ * because "4 items" is usually the whole answer.
+ *
+ * AN UNSTATED BILL SAYS SO INSTEAD OF SHOWING A BALANCE. Its balance is the
+ * full amount purely because nobody has recorded anything against it either
+ * way — the office keeps it out of the outstanding figure, and drawing it
+ * beside real balances is the imported-book mistake arriving on a phone.
+ */
+function BillCard({
+  bill,
+  balanceAfterPaise,
+  open,
+  onToggle,
+}: {
+  bill: CustomerBill;
+  balanceAfterPaise: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const lines = open ? billLines(bill) : [];
+  const unstated = bill.paymentPosition === 'unstated';
+  const settled = !unstated && (bill.balancePaise ?? 0) <= 0;
+  const count = bill.lineCount ?? 0;
+
+  return (
+    <Card style={{ gap: 8 }}>
+      <Pressable
+        onPress={onToggle}
+        accessibilityLabel={'What was on bill ' + (bill.billNo ?? '')}
+        style={{ gap: 6 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+          <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(600)]} numberOfLines={1}>
+            {bill.billNo ?? 'Bill'}
+          </Text>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
+            {bill.amountPaise != null ? inrFromPaise(bill.amountPaise) : '—'}
+          </Text>
+        </View>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <Text style={type.caption}>{pretty(bill.billDate)}</Text>
+          {bill.dueDate ? <Text style={type.caption}>· due {pretty(bill.dueDate)}</Text> : null}
+          {settled ? (
+            <Badge tone="success">Settled</Badge>
+          ) : unstated ? (
+            <Badge tone="neutral">Not stated</Badge>
+          ) : (bill.overdueDays ?? 0) > 0 ? (
+            <Badge tone="danger">{bill.overdueDays} days late</Badge>
+          ) : (
+            <Badge tone="amber">Open</Badge>
+          )}
+          {bill.disputed ? <Badge tone="danger">Disputed</Badge> : null}
+        </View>
+
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+          <Text style={type.caption}>
+            {count ? count + (count === 1 ? ' item' : ' items') + (open ? '' : ' · tap to see them') : 'Nothing itemised'}
+          </Text>
+          <Text style={type.caption}>
+            {unstated
+              ? 'No payment recorded either way'
+              : settled
+                ? 'Paid in full'
+                : inrFromPaise(bill.balancePaise ?? 0) + ' still open'}
+          </Text>
+        </View>
+      </Pressable>
+
+      {open ? (
+        lines.length ? (
+          <View style={{ borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8, gap: 6 }}>
+            {lines.map((l, i) => (
+              <View
+                key={l.product + i}
+                style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+                <Text style={{ flex: 1, minWidth: 0, fontSize: 14, color: C.body }}>{l.product}</Text>
+                <Text style={[{ fontSize: 14, color: C.ink }, tabular]}>
+                  {/* CANS, which is what the customer says and what the office
+                      stores. Litres are derived from the pack size and are not
+                      on the wire, so naming a unit we were not sent would be
+                      the screen inventing one. */}
+                  {l.qty}
+                </Text>
+                <Text style={[{ width: 92, textAlign: 'right', fontSize: 14, color: C.body }, tabular]}>
+                  {l.amountPaise != null ? inrFromPaise(l.amountPaise) : '—'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
+            Nothing itemised against this bill in the office.
+          </Text>
+        )
+      ) : null}
+
+      <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
+        {inrFromPaise(balanceAfterPaise)} outstanding after this line
+      </Text>
+    </Card>
+  );
+}
+
+/**
+ * ONE PAYMENT, with what it was and whether it has counted.
+ *
+ * A REJECTED OR REVERSED receipt is drawn rather than hidden: the shopkeeper
+ * will say "we paid that" and the salesman has to be able to answer. It is
+ * drawn muted with its own word, because the one thing it must not read like
+ * is money in the bank.
+ */
+function ReceiptCard({
+  receipt,
+  balanceAfterPaise,
+}: {
+  receipt: CustomerPayment;
+  balanceAfterPaise: number;
+}) {
+  const counted = countsAsMoney(receipt.status);
+  const tone: BadgeTone =
+    receipt.status === 'confirmed'
+      ? 'success'
+      : receipt.status === 'rejected' || receipt.status === 'reversed'
+        ? 'danger'
+        : 'amber';
+  const word =
+    receipt.status === 'confirmed'
+      ? 'Received'
+      : receipt.status === 'reported'
+        ? 'With accounts'
+        : receipt.status === 'held'
+          ? 'Being checked'
+          : receipt.status === 'rejected'
+            ? 'Never arrived'
+            : receipt.status === 'reversed'
+              ? 'Reversed'
+              : (receipt.status ?? 'Unknown');
+
+  return (
+    <Card style={{ gap: 6, borderLeftWidth: 3, borderLeftColor: counted ? C.success : C.warn }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+        <Text style={[{ fontSize: 15, color: counted ? C.success : C.muted }, weight(600), tabular]}>
+          {receipt.amountPaise != null ? inrFromPaise(receipt.amountPaise) : '—'}
+        </Text>
+        <Text style={type.caption}>{pretty(receipt.receivedAt)}</Text>
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <Badge tone={tone}>{word}</Badge>
+        {receipt.mode ? <Text style={type.caption}>{receipt.mode}</Text> : null}
+        {receipt.reference ? <Text style={type.caption}>· {receipt.reference}</Text> : null}
+      </View>
+      <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
+        {counted
+          ? inrFromPaise(balanceAfterPaise) + ' outstanding after this line'
+          : 'Nothing has come off the balance for this one yet'}
+      </Text>
+    </Card>
   );
 }
 

@@ -13,7 +13,7 @@ import {
   type CollectedPayment,
 } from '../src/data/payments';
 import { takePhoto } from '../src/native/capture';
-import { dmy, inr, isoDate } from '../src/lib/format';
+import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, tabular, weight, type BadgeTone } from '../src/theme/tokens';
@@ -63,12 +63,24 @@ export default function CollectionsScreen() {
   const [rows, setRows] = React.useState<CollectedPayment[] | null>(null);
   const [cash, setCash] = React.useState<{ totalPaise: number; sentence: string } | null>(null);
   const [busy, setBusy] = React.useState<string | null>(null);
+  /**
+   * ONE reading of the clock per load, rather than one per render.
+   *
+   * `Date.now()` in the component body is impure and the React Compiler rules
+   * forbid it — and the consequence here was real rather than theoretical: the
+   * "past the deposit deadline" line was decided at whatever moment React
+   * happened to re-render, so it could flip on an unrelated state change and
+   * never flip on its own. Taken with the rows, the deadline line and the "as
+   * at" date below cannot disagree about what time it is either.
+   */
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
 
   const load = React.useCallback(() => {
     let live = true;
     if (!userId) return;
     void Promise.all([listPayments(), cashInHand(userId)]).then(([p, c]) => {
       if (!live) return;
+      setNowMs(Date.now());
       setRows(p);
       setCash({ totalPaise: c.totalPaise, sentence: c.sentence });
     });
@@ -94,7 +106,7 @@ export default function CollectionsScreen() {
    */
   const deposit = (p: CollectedPayment) => {
     askConfirm({
-      title: 'Banked ' + inr(p.amountPaise / 100) + '?',
+      title: 'Banked ' + inrFromPaise(p.amountPaise) + '?',
       body:
         'This says you have paid it in. The office still checks it against the bank statement — ' +
         'you are recording your half of it, not closing it.',
@@ -138,7 +150,7 @@ export default function CollectionsScreen() {
     askConfirm({
       title: 'Did this cheque bounce?',
       body:
-        inr(p.amountPaise / 100) +
+        inrFromPaise(p.amountPaise) +
         ' goes back onto ' +
         (p.customerName ?? 'the customer') +
         ", and you get a task to ring them. They believe they have already paid, so this is a call worth preparing for.",
@@ -150,7 +162,7 @@ export default function CollectionsScreen() {
           try {
             await markBounced(p.id, reason);
             load();
-            notify('Recorded · ' + inr(p.amountPaise / 100) + ' is back on their account');
+            notify('Recorded · ' + inrFromPaise(p.amountPaise) + ' is back on their account');
           } finally {
             setBusy(null);
           }
@@ -159,7 +171,7 @@ export default function CollectionsScreen() {
     });
   };
 
-  const today = isoDate(new Date());
+  const today = isoDate(new Date(nowMs));
 
   return (
     <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
@@ -183,7 +195,7 @@ export default function CollectionsScreen() {
         }}>
         <T s="label">Cash on you</T>
         <T style={[{ fontSize: 26, lineHeight: 32, color: C.ink, marginTop: 2 }, weight(600), tabular]}>
-          {inr((cash?.totalPaise ?? 0) / 100)}
+          {inrFromPaise(cash?.totalPaise ?? 0)}
         </T>
         <T s="small" style={{ color: cash?.totalPaise ? C.warnInk : C.muted, marginTop: 2 }}>
           {cash?.sentence ?? 'Reading…'}
@@ -207,7 +219,7 @@ export default function CollectionsScreen() {
         <ListCard style={{ marginTop: 16 }}>
           {rows.map((p, i) => {
             const state = stateOf(p);
-            const late = !p.deposited && !p.bounced && p.depositSlaDueAt != null && p.depositSlaDueAt <= Date.now();
+            const late = !p.deposited && !p.bounced && p.depositSlaDueAt != null && p.depositSlaDueAt <= nowMs;
             /* Only a cheque can bounce, and only one that has not already. */
             const canBounce = p.mode === 'Cheque' && !p.bounced;
             const canDeposit = !p.deposited && !p.bounced && p.mode === 'Cash';
@@ -223,7 +235,7 @@ export default function CollectionsScreen() {
                     {p.customerName ?? 'Unknown customer'}
                   </T>
                   <T style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
-                    {inr(p.amountPaise / 100)}
+                    {inrFromPaise(p.amountPaise)}
                   </T>
                   <Badge tone={state.tone}>{state.label}</Badge>
                 </View>

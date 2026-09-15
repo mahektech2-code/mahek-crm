@@ -27,6 +27,41 @@ const nextConfig: NextConfig = {
    */
   outputFileTracingRoot: process.cwd(),
 
+  /**
+   * NOTHING HERE OPTIMISES AN IMAGE, so the optimiser does not ship.
+   *
+   * `next/image` is imported nowhere in this app, and that is deliberate
+   * rather than an oversight: the only picture any screen renders is an
+   * attachment, served from `/api/attachments/[id]`, which is authenticated,
+   * scope-checked and has no width or height until it is fetched — so
+   * `selfies.tsx` uses a plain `<img>` with the lint rule disabled and a
+   * comment saying why.
+   *
+   * Next still bundles `sharp` for the optimiser regardless, and the standalone
+   * trace carries it into the runtime image: 16.6 MB of native binaries, a
+   * QUARTER of the 62 MB application layer, to resize pictures that are never
+   * asked for. The container registry this pushes to holds 500 MB in total and
+   * keeps a few tags for rolling back, so a quarter of the app layer is a real
+   * constraint rather than housekeeping — deploys have already failed on that
+   * quota.
+   *
+   * `unoptimized` does not disable images; it disables the RESIZING ENDPOINT,
+   * which nothing calls. If somebody adds `next/image` later this must be
+   * reconsidered rather than worked around — the pictures would still render,
+   * simply at their natural size, which is a slower page nobody would notice
+   * was slower.
+   *
+   * IT DOES NOT, ON ITS OWN, STOP SHARP SHIPPING. That was measured rather
+   * than assumed: the build was run with and without this, and with
+   * `outputFileTracingExcludes` aimed at it, and `standalone/node_modules/@img`
+   * survived all three — Next copies the optimiser's binaries into standalone
+   * outside the file trace. The Dockerfile removes them in the runtime stage,
+   * and the comment there explains why that is safe. The two belong together:
+   * this setting is what makes the removal correct rather than a gamble.
+   */
+  images: { unoptimized: true },
+
+
   /*
    * Version-skew protection: without it, a browser tab left open across a
    * deploy submits a form whose Server Action id belonged to the OLD build,

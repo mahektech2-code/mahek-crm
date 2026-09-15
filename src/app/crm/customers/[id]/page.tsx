@@ -31,7 +31,7 @@ import { popularProducts } from "@/lib/services/product-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
 import { listTargets } from "@/lib/services/worklist-services";
 import { customerStatusLabel, daysBetween } from "@/lib/format";
-import { categoryLabel } from "@/lib/complaint-labels";
+import { categoryLabel, categoryValue } from "@/lib/complaint-labels";
 // How much of the timeline the page arrives with — see `TIMELINE_PAGE`. The
 // number that matters is not the ten, it is that it IS a number: the page used
 // to carry the account's whole history, so the oldest customers took the
@@ -301,12 +301,21 @@ export default async function CustomerRecordPage({
           : null
       }
       target={{
-        amount: target?.target ?? 0,
+        /*
+         * NULL WHERE THERE IS NO ROW, never 0. `listTargets` carries direct
+         * customers only — a lead has never bought from us and a third-party
+         * shop is billed by its distributor — so an account absent from it
+         * has no target rather than a target of nothing, and the card says
+         * which. Coalescing to 0 here would put "of ₹0" and a 0% bar on a
+         * delivery shop with a month of real orders behind it.
+         */
+        amount: target?.target ?? null,
         achieved: Number(stats?.thisMonth ?? 0),
         isDefault: target?.isDefault ?? true,
-        shareOfBook: totalTarget
-          ? Math.round(((target?.target ?? 0) / totalTarget) * 100)
-          : 0,
+        shareOfBook:
+          target && totalTarget
+            ? Math.round((target.target / totalTarget) * 100)
+            : null,
       }}
       openComplaint={
         openComplaint
@@ -334,10 +343,9 @@ export default async function CustomerRecordPage({
       categories={config["complaints.categories"]}
       period={period}
       complaintCategories={config["complaints.categories"].map((c) => ({
-        value: c
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "_")
-          .replace(/^_|_$/g, ""),
+        // NOT a slug. "Packaging" slugified to `packaging`, which is not a
+        // member of the enum, so the save refused it — see `categoryValue`.
+        value: categoryValue(c),
         label: c,
       }))}
       quickNotes={quickNoteRows.map((n) => ({

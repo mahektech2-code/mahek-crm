@@ -42,8 +42,56 @@ export type DeviceState = {
   connectionType?: ConnectionType;
   batteryPercent?: number;
   batteryCharging?: boolean;
+  backgroundSyncRegistered?: boolean;
+  /**
+   * `null` is a CLEAR and absent is still "leave it alone" — the two used to
+   * be the same thing and could only ever set the column, never unset it. See
+   * the note where they are read.
+   */
+  backgroundSyncLastRunAt?: Date | null;
+  trackerStalledAt?: Date | null;
+  /** Unsent fixes still on the phone. Zero is a real answer; absent is not. */
+  queuedPositions?: number;
+  queuedPositionsAt?: Date;
   deviceStateAt?: Date;
 };
+
+/**
+ * A duration the handset reports, turned into an instant on OUR clock.
+ *
+ * The rule everywhere else here is the server's clock and never the phone's,
+ * because a phone's clock is its owner's to set. It cannot be followed
+ * literally for "when did the background task last run" — that is a fact only
+ * the handset holds. A duration is the way out: an absolute instant from a
+ * phone two hours fast is two hours wrong, while seconds-ago is exposed only
+ * to drift across the interval itself.
+ *
+ * A NEGATIVE is refused rather than clamped. It means the handset measured a
+ * gap ending in its own future, which is a clock that moved under it, and the
+ * honest answer to that is to say nothing rather than to stamp `now` and let a
+ * screen call it fresh. The cap is a fortnight for the same reason: past that
+ * the reading answers no question anybody is asking, and a number that large
+ * is far likelier to be arithmetic on a corrected clock than a real silence.
+ */
+const FOURTEEN_DAYS_S = 14 * 24 * 60 * 60;
+
+function instantFromAgo(v: unknown): Date | undefined {
+  if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
+  if (v < 0 || v > FOURTEEN_DAYS_S) return undefined;
+  return new Date(Date.now() - Math.round(v) * 1000);
+}
+
+/**
+ * Was the key THERE, carrying null — as opposed to never sent at all?
+ *
+ * The one question `instantFromAgo` cannot answer, because both arrive as
+ * `undefined` by the time it sees a value. A handset saying "there is no stall"
+ * and a handset that cannot say are different facts about a phone, and only
+ * the first of them should clear a column.
+ */
+function isPresentNull(body: Record<string, unknown>, key: string): boolean {
+  return key in body && body[key] === null;
+}
 
 const oneOf = <T extends string>(all: readonly T[], v: unknown): T | undefined =>
   typeof v === "string" && (all as readonly string[]).includes(v) ? (v as T) : undefined;
@@ -90,6 +138,61 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
   }
 
   /*
+   * HOW FAR BEHIND THE PHONE IS, which is the number managers actually ask for.
+   *
+   * Not "is he tracking" but "is his day going to reach me". Zero IS a real
+   * answer here and the common one — the handset is clear — so unlike the marks
+   * below this is stored whenever it arrives, and it is absence rather than
+   * zero that means "this build cannot say".
+   *
+   * A negative or a fraction is dropped rather than rounded into something
+   * plausible, for the reason every other reading here is: a figure a screen
+   * will draw has to have come from somewhere.
+   */
+  if (typeof body.queuedPositions === "number" && Number.isFinite(body.queuedPositions)) {
+    const queued = Math.round(body.queuedPositions);
+    if (queued >= 0) state.queuedPositions = queued;
+  }
+
+  /* Whether the OS accepted the periodic wake-up at all. False is a real
+     answer and the one worth having: it is a handset that will never sync
+     with the app shut, and it looked identical to a working one until this
+     column existed. */
+  if (typeof body.backgroundSyncRegistered === "boolean") {
+    state.backgroundSyncRegistered = body.backgroundSyncRegistered;
+  }
+
+  /*
+   * AN EXPLICIT NULL IS A CLEAR, AND AN ABSENT KEY IS STILL NOT.
+   *
+   * "Absent is not null" above is the rule that lets an old build post its one
+   * boolean without wiping a newer build's richer answers, and it stays. What
+   * it could not express is a condition ENDING: a handset whose tracker
+   * recovered, or which was reinstalled, simply stopped sending the field, and
+   * a mark once written could never be taken off. A phone fixing to three
+   * metres every three seconds went on reading "his phone stopped the tracker"
+   * from a timestamp belonging to a previous installation — and the panel
+   * these feed is built on the discipline that a healthy handset says nothing,
+   * which two permanent false alarms destroy.
+   *
+   * JSON tells null from missing, so the handset now sends `null` for "I can
+   * report this and there is nothing to report" and omits the key only when it
+   * genuinely cannot say. `in` rather than a truthiness test, because that is
+   * the only check that separates the two.
+   */
+  const ranAgo = instantFromAgo(body.backgroundSyncLastRunAgoSeconds);
+  if (ranAgo) state.backgroundSyncLastRunAt = ranAgo;
+  else if (isPresentNull(body, "backgroundSyncLastRunAgoSeconds")) {
+    state.backgroundSyncLastRunAt = null;
+  }
+
+  const stalledAgo = instantFromAgo(body.trackerStalledAgoSeconds);
+  if (stalledAgo) state.trackerStalledAt = stalledAgo;
+  else if (isPresentNull(body, "trackerStalledAgoSeconds")) {
+    state.trackerStalledAt = null;
+  }
+
+  /*
    * THE SERVER'S CLOCK, NEVER THE HANDSET'S.
    *
    * The same rule `mbos_visits` follows for anything anybody is paid on: a
@@ -103,6 +206,13 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
    * to look like "we heard, and it was nothing".
    */
   if (Object.keys(state).length > 0) state.deviceStateAt = new Date();
+
+  /* The queue depth carries its OWN age, and a check constraint refuses the
+     count without it. It is stamped separately from `deviceStateAt` because a
+     report can carry a battery reading and no queue depth — an older build —
+     and dating the count off the report would say we had been told something
+     we had not. */
+  if (state.queuedPositions !== undefined) state.queuedPositionsAt = new Date();
 
   return state;
 }

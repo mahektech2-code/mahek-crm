@@ -3,11 +3,11 @@ import { View, Text, Pressable } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
-import { Card } from '../src/components/ui/primitives';
+import { Card, SecondaryButton, T } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { compactInr, inr, isoDate, plural } from '../src/lib/format';
+import { compactInrFromPaise, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { DASH_CARDS, DAY_AHEAD } from '../src/data/fixtures';
 import {
   checkIn,
@@ -24,16 +24,28 @@ import { useTicker } from '../src/components/ui/use-ticker';
 import { collectionDue } from '../src/data/customers';
 import { listPerformance, shortfalls, type PerformanceMonth } from '../src/data/performance';
 import { getConfig } from '../src/data/config';
+import { mayOpenDay } from '../src/data/day-gate';
 import { ordersToday } from '../src/data/orders';
 import { cashInHand } from '../src/data/payments';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
 import { followUpCounts, visitsToday } from '../src/data/visits';
 import { stopCounts } from '../src/data/journey';
+import { lastPullAt } from '../src/sync/api';
 import { withinGeofence } from '../src/engines/geo';
 import { fixOf, getFix } from '../src/native/location';
 import { ensureLocationPermission } from '../src/native/permissions';
-import { queueSelfie } from '../src/native/capture';
+import { queueOdometerPhoto, queueSelfie } from '../src/native/capture';
 import { SelfieCamera, type SelfieResult } from '../src/components/ui/selfie-camera';
+import { OdometerCamera, type OdometerResult } from '../src/components/ui/odometer-camera';
+import { BottomSheet } from '../src/components/ui/overlays';
+import { TravelModeList } from '../src/components/ui/travel-mode-list';
+import {
+  endSession,
+  openSessionLeg,
+  startSession,
+  travelModesFor,
+  type TravelMode,
+} from '../src/data/travel';
 
 /**
  * Home is the first thing on screen at 9am and the thing returned to between
@@ -100,6 +112,33 @@ function greetingFor(hour: number): string {
   return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 }
 
+/** `September 2026` from the row's own `2026-09`, off the list already here. */
+function monthLabel(period: string): string {
+  const [y, m] = period.split('-').map(Number);
+  const name = MONTHS[m - 1];
+  return y && name ? name + ' ' + y : period;
+}
+
+/**
+ * When the office last worked the score out.
+ *
+ * Asia/Kolkata by name, like everything else that turns a stored instant into
+ * a wall clock here: the phone's own zone is whatever the handset is set to,
+ * and a figure a salesman is appraised on must not read differently because he
+ * crossed a border. The same shape `/performance` prints.
+ */
+function asAt(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return 'unknown';
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: 'numeric',
+    minute: '2-digit',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'Asia/Kolkata',
+  }).format(at);
+}
+
 export default function Home() {
   const boot = useBoot();
   const userId = boot.session?.user.id ?? null;
@@ -107,11 +146,46 @@ export default function Home() {
   const notify = useStore((s) => s.notify);
   const askConfirm = useStore((s) => s.askConfirm);
 
-  const [day, setDay] = React.useState<Day>(EMPTY);
+  /*
+   * `undefined` IS STILL READING, and every figure on this screen now says so.
+   *
+   * The reasoning three lines below was written for `month` and applied to that
+   * card alone. `day` started at `EMPTY` — every figure a literal zero — and
+   * was rendered immediately while ten SQLite reads were still in flight, so
+   * the first screen after sign-in read "₹0 · 0 orders", "0 of 0 · No plan
+   * today", "₹0 · Nothing to deposit". On a handset whose pull has never landed
+   * those zeros were not a frame, they were permanent, and the status strip
+   * said "All sent" over them because that pip counts the outbox and not the
+   * inbox. He opens the app at 9am and reads a screen saying he has no work,
+   * which is the one failure nobody reports: it looks like having nothing to
+   * do.
+   *
+   * `EMPTY` survives as the stand-in for the mechanical reads below — the
+   * ticker interval and the worked-time sum need a shape, not a sentence — and
+   * nothing DISPLAYED comes from it.
+   */
+  const [day, setDay] = React.useState<Day | undefined>(undefined);
   /* `undefined` is still reading, `null` is read and there is nothing. Two
      different sentences, and collapsing them shows "no target" for a frame to
      somebody who has one. */
   const [month, setMonth] = React.useState<PerformanceMonth | null | undefined>(undefined);
+  /*
+   * Nothing has ever come down from the office onto this handset.
+   *
+   * Answered by the pull's own marker rather than guessed at from the figures:
+   * a salesman with no plan and no orders at 9am has honest zeros, and a
+   * handset that has never synced has no book at all. Drawing those two the
+   * same way is what made a broken install indistinguishable from a quiet
+   * morning.
+   */
+  const [neverPulled, setNeverPulled] = React.useState(false);
+  /*
+   * A READ THAT FAILED IS NOT A READ STILL RUNNING. `load` had no `catch` at
+   * all, so one rejected promise among the eleven left this screen reading
+   * "Reading…" for the rest of the session — which is a spinner that never
+   * resolves, and reads as a dead handset with nothing saying what to do.
+   */
+  const [readErr, setReadErr] = React.useState<string | null>(null);
   const [starting, setStarting] = React.useState(false);
 
   /*
@@ -129,8 +203,11 @@ export default function Home() {
    * The duration is derived from the sessions and this clock now, so it moves
    * because the day is running rather than because something re-fetched.
    */
-  const now = useTicker(day.running ? 1000 : 60_000);
-  const workedSoFarMs = workedMs(day.sessions, now);
+  /* The shape the clock and the worked-time sum need, before the read lands.
+     Nothing on the screen is drawn from it — see the note on `day` above. */
+  const dayOrEmpty = day ?? EMPTY;
+  const now = useTicker(dayOrEmpty.running ? 1000 : 60_000);
+  const workedSoFarMs = workedMs(dayOrEmpty.sessions, now);
 
   /*
    * Location is asked for HERE, on the first open, and not at the check-in.
@@ -164,7 +241,13 @@ export default function Home() {
          than on a focus of its own so the card and the six figures above it
          describe the same moment. */
       listPerformance(),
-    ]).then(([stops, due, follow, orders, visits, cash, tasks, attendance, state, months]) => {
+      /* Whether anything has EVER arrived on this phone. Read beside the
+         figures rather than on its own, so the sentence under them and the
+         figures themselves describe the same moment. */
+      lastPullAt(),
+    ]).then(([stops, due, follow, orders, visits, cash, tasks, attendance, state, months, pulledAt]) => {
+      setReadErr(null);
+      setNeverPulled(pulledAt === 0);
       setMonth(months[0] ?? null);
       setDay({
         stops: stops.total,
@@ -187,34 +270,69 @@ export default function Home() {
         sessionCount: state.sessionCount,
         sessions: state.sessions,
       });
+    }).catch(() => {
+      /* Left `undefined` on purpose: the screen below draws the sentence rather
+         than a grid of zeros or a spinner that will never stop. `month` is
+         settled too, or its card would read "Reading…" for ever beside it. */
+      setMonth(null);
+      setReadErr('Your day could not be read on this phone. Close MBOS and open it again.');
     });
   }, [userId]);
 
   useFocusEffect(load);
 
-  const checkedIn = day.sessionCount > 0;
+  const checkedIn = !!day && day.sessionCount > 0;
 
   const today = new Date(now);
   const dateLine = `${WEEKDAYS[today.getDay()]}, ${today.getDate()} ${MONTHS[today.getMonth()]}`;
 
-  /* The six figures, labelled by the design and valued by the store. */
-  const dashValues: { v: string; s: string }[] = [
+  /*
+   * The six figures — or, until there are six figures, six dashes.
+   *
+   * Three states and they are three different sentences. Still reading is a
+   * moment; a read that failed is a handset to restart; and a handset nothing
+   * has ever reached is one to find signal for. A zero is none of those, and a
+   * zero is what all three used to print.
+   */
+  const figuresPending = !day || neverPulled;
+  const dashValues: { v: string; s: string; small?: boolean }[] = !day
+    ? DASH_CARDS.map(() => ({ v: '—', s: readErr ? 'Not read' : 'Reading…' }))
+    : neverPulled
+      ? DASH_CARDS.map(() => ({ v: '—', s: 'Nothing here yet' }))
+      : [
     {
-      v: day.orderValueUnknown ? 'Not known yet' : inr(day.orderValuePaise / 100),
+      /* "Not known yet" is a SENTENCE in a slot sized for ₹1,24,500 — one line,
+         tabular, in half of a 328-point card — so at Android's larger font
+         settings it truncated to "Not known y…". It is the honest answer this
+         tile exists to give, so it is drawn smaller rather than cut off. */
+      v: day.orderValueUnknown ? 'Not known yet' : inrFromPaise(day.orderValuePaise),
       s: plural(day.orders, 'order'),
+      small: day.orderValueUnknown,
     },
-    { v: `${day.visits} of ${day.stops}`, s: day.stops ? 'On the plan' : 'No plan today' },
-    { v: inr(day.collectPaise / 100), s: plural(day.collectCustomers, 'customer') },
-    { v: inr(day.cashPaise / 100), s: day.cashSentence || 'Nothing to deposit' },
+    {
+      /* THE NUMERATOR IS STOPS DONE, not visits. `visitsToday` counts every
+         visit logged today, off-plan walk-ins included, and it was printed
+         against a denominator of today's PLANNED stops — so after two calls
+         nobody planned the tile legitimately read "5 of 3", while the day card
+         four lines above said "3 of 3 done" about the same morning. One
+         question, two numerators, both on one screen. The visits are still
+         here; they are the subtitle now. With no plan at all there is no
+         denominator to print, so the count stands on its own. */
+      v: day.stops ? `${day.stopsDone} of ${day.stops}` : String(day.visits),
+      s: day.stops ? plural(day.visits, 'visit') + ' logged' : 'No plan today',
+    },
+    { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer') },
+    { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit' },
     { v: String(day.tasks), s: day.tasksOverdue ? plural(day.tasksOverdue, 'overdue') : 'None overdue' },
     { v: String(day.followUps), s: `${day.followUpsToday} today` },
   ];
 
-  const dayAheadValues = [
-    String(day.stops),
-    compactInr(day.collectPaise / 100),
-    String(day.followUpsToday),
-  ];
+  /* Same rule, on the strip under the Start day button: a dash where there is
+     no answer yet, never a nought. */
+  const dayAheadValues =
+    !day || neverPulled
+      ? DAY_AHEAD.map(() => '—')
+      : [String(day.stops), compactInrFromPaise(day.collectPaise), String(day.followUpsToday)];
 
   /*
    * The selfie camera is a COMPONENT, and `startDay` needs a value from it, so
@@ -226,9 +344,9 @@ export default function Home() {
    */
   const [selfieOpen, setSelfieOpen] = React.useState(false);
   const [selfieWords, setSelfieWords] = React.useState({
-    title: 'Start your day',
-    subtitle: 'A photo of you goes with the check-in.',
-    cancelLabel: 'Cancel the check-in',
+    title: 'Punch in',
+    subtitle: 'A photo of you goes with the punch-in.',
+    cancelLabel: 'Cancel the punch-in',
   });
   const answerSelfie = React.useRef<((r: SelfieResult) => void) | null>(null);
 
@@ -238,6 +356,129 @@ export default function Home() {
       answerSelfie.current = resolve;
       setSelfieOpen(true);
     });
+
+  /*
+   * ───────────────────────────── how he is travelling today
+   *
+   * THE VEHICLE IS A FACT ABOUT THE SESSION, asked once at the punch-in.
+   *
+   * It used to be asked at every stop and got the same answer all day: a man
+   * on his own bike said "own bike" eleven times and photographed the meter
+   * twenty-two times for one ride he never got off. He punches in on a vehicle
+   * and punches out on it, so this is where it belongs — and only public
+   * transport leaves a question open for the journey, because the bus, the
+   * auto and the taxi genuinely change from one shop to the next.
+   *
+   * Both overlays are promise-answered like the selfie beside them, and for
+   * the same reason: this is one flow with three captures in it, and pushing a
+   * route for any of them would take the flow off the stack half-way through.
+   */
+  const [modeOpen, setModeOpen] = React.useState(false);
+  const [dayModes, setDayModes] = React.useState<TravelMode[]>([]);
+  const answerMode = React.useRef<((m: TravelMode | null) => void) | null>(null);
+
+  const [metering, setMetering] = React.useState(false);
+  const [meterWords, setMeterWords] = React.useState({ title: '', subtitle: '', cancelLabel: '' });
+  const [meterFrom, setMeterFrom] = React.useState<number | null>(null);
+  const [maxLegKm, setMaxLegKm] = React.useState(400);
+  const answerMeter = React.useRef<((r: OdometerResult) => void) | null>(null);
+
+  /**
+   * Three answers, and two of them look alike from a distance.
+   *
+   * `{ ok: false }` is him dismissing the sheet — nothing is written and the
+   * punch-in is abandoned. `{ ok: true, mode: null }` is there being nothing
+   * to ask, which is a handset whose office has not published the day-scoped
+   * rows yet: the punch-in goes through and the journey asks per stop, exactly
+   * as every build before this one did. Collapsing the two onto a bare null
+   * would either refuse a punch-in nobody meant to refuse, or open a day on a
+   * vehicle nobody named.
+   */
+  const askMode = async (): Promise<{ ok: true; mode: TravelMode | null } | { ok: false }> => {
+    const [rows, km] = await Promise.all([
+      travelModesFor('day'),
+      getConfig<number>('mbos.travel.maxLegKilometres', 400),
+    ]);
+    setMaxLegKm(km);
+    setDayModes(rows);
+    /*
+     * NOTHING TO ASK IS NOT A QUESTION. A handset that has not pulled since
+     * this shipped has no day-scoped rows, and a sheet with nothing under the
+     * heading is a dead end at the one moment a salesman cannot afford one —
+     * he is at the gate at half past eight. The punch-in goes through and the
+     * journey asks per stop exactly as it did before, which is the behaviour
+     * every build before this one had.
+     */
+    if (!rows.length) return { ok: true, mode: null };
+    const picked = await new Promise<TravelMode | null>((resolve) => {
+      answerMode.current = resolve;
+      setModeOpen(true);
+    });
+    return picked ? { ok: true, mode: picked } : { ok: false };
+  };
+
+  const askMeter = (words: typeof meterWords, previousKm: number | null) =>
+    new Promise<OdometerResult>((resolve) => {
+      setMeterWords(words);
+      setMeterFrom(previousKm);
+      answerMeter.current = resolve;
+      setMetering(true);
+    });
+
+  /**
+   * The reading and its photograph, or null if this mode has no meter.
+   *
+   * `false` is the third answer and it is not the same as null: it means he
+   * backed out of the camera, and the caller has to abandon rather than carry
+   * on with no reading. A cancelled camera that read as "no meter on this
+   * mode" would open a per-km session with nothing to price it on.
+   */
+  const meterFor = async (
+    mode: TravelMode,
+    words: typeof meterWords,
+    previousKm: number | null,
+  ): Promise<{ km: number; photoId: string } | null | false> => {
+    if (!mode.requiresOdometer) return null;
+    const shot = await askMeter(words, previousKm);
+    if (!shot) return false;
+    try {
+      return { km: shot.km, photoId: await queueOdometerPhoto(shot.uri, 'pending') };
+    } catch {
+      notify('The photo could not be saved on this phone, so nothing was recorded. Try again.');
+      return false;
+    }
+  };
+
+  /**
+   * The session as a journey, opened at the punch-in.
+   *
+   * It never fails the punch-in. The attendance mark is what somebody is paid
+   * on and it is already written by the time this runs; losing it because a
+   * travel leg would not write would be exactly the wrong way round. A session
+   * that did not open costs the day's mileage, which the `/travel` screen can
+   * still be typed up on — a mark that did not open costs the day.
+   */
+  const openSessionFor = async (
+    mode: TravelMode,
+    fix: { lat: number; lng: number } | null,
+    meter: { km: number; photoId: string } | null,
+  ): Promise<void> => {
+    /* The callers all guard on it, so this is a type narrowing rather than a
+       check — but it is a real one: `startSession` writes a row keyed on the
+       person, and there is no such thing as a session belonging to nobody. */
+    if (!userId) return;
+    try {
+      await startSession({
+        userId,
+        day: isoDate(new Date()),
+        modeKey: mode.key,
+        fix: fix ? { lat: fix.lat, lng: fix.lng } : null,
+        odometer: meter,
+      });
+    } catch {
+      notify('Punched in. The travel for this session could not be started — add it on Travel.');
+    }
+  };
 
   /**
    * The photograph, queued, or null if there is no photograph.
@@ -268,7 +509,10 @@ export default function Home() {
   /**
    * Starting the day: GPS, then attendance with a selfie, then the timer.
    *
-   * Check-in is NEVER blocked. Outside the radius the day starts all the same
+   * Check-in is never blocked BY A LOCATION, which is not the same sentence it
+   * used to be: a phone that cannot run the tracking service is stopped at the
+   * gate below, because the cost there is the whole day's record rather than
+   * one coordinate. Outside the radius the day starts all the same
    * and the override reason is asked for afterwards — asking first and losing
    * the check-in to a dismissed dialog is exactly the failure this module
    * exists to avoid. A refused camera or a missing fix is recorded as what it
@@ -281,6 +525,20 @@ export default function Home() {
       const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
       const radius = await getConfig<number>('mbos.attendance.geofenceRadiusM', 200);
       const base = await getConfig<{ lat: number; lng: number } | null>('mbos.attendance.baseLocation', null);
+
+      /* THE GATE COMES BEFORE THE CAMERA, and before anything is written.
+         A phone that cannot run the tracking service loses the whole record of
+         where the day was spent, and a man finds that out in the evening — so
+         the day does not open at all until it can. Asked first because nothing
+         else has happened yet: no photograph taken for a day that will not
+         start, no half-written row, nothing to undo. `mayOpenDay` is the only
+         thing that can produce what `checkIn` requires, so this is not a check
+         this screen could forget to make — leaving it out does not compile. */
+      const gate = await mayOpenDay(userId);
+      if (!gate.ok) {
+        router.push('/phone-setup');
+        return;
+      }
 
       /* Started, not awaited: it settles while the photograph is being taken.
          `void` on the promise would drop the value, so it is held. */
@@ -297,9 +555,9 @@ export default function Home() {
          half-started day behind — which is why the order is photograph, then
          write, and not the other way round. */
       const selfie = await captureSelfie({
-        title: 'Start your day',
-        subtitle: 'A photo of you goes with the check-in.',
-        cancelLabel: 'Cancel the check-in',
+        title: 'Punch in',
+        subtitle: 'A photo of you goes with the punch-in.',
+        cancelLabel: 'Cancel the punch-in',
       });
       if (!selfie.ok) {
         /* Nothing has been written, so there is nothing to undo. The fix is
@@ -309,14 +567,41 @@ export default function Home() {
         return;
       }
 
+      /*
+       * AND THEN: WHAT IS HE ON TODAY.
+       *
+       * Asked after the photograph and before anything is written, so backing
+       * out of either leaves no half-started day behind — the same order the
+       * selfie itself follows. A metered vehicle opens the camera here and
+       * nowhere else all day: this reading and the one at the punch-out are
+       * the whole of the day's mileage.
+       */
+      const answer = await askMode();
+      if (!answer.ok) return;
+      const mode = answer.mode;
+      const meter = mode ? await meterFor(mode, {
+        title: 'Photograph the meter',
+        subtitle: 'Before you set off — this is where the day is measured from.',
+        cancelLabel: 'Cancel the punch-in',
+      }, null) : null;
+      if (meter === false) return;
+
       const fix = fixOf(await fixing);
 
       const row = await checkIn({
         userId,
         fix,
         selfieMediaId: selfie.id,
+        mayOpen: gate.gate,
         homeLocation: base,
       });
+
+      /* AFTER the punch-in, never before: the session is a journey belonging
+         to a day that is now open, and a leg written first would have to guess
+         at a day id or open a second one. It cannot fail the punch-in — the
+         mark is the thing a salesman is paid on, and losing it over a travel
+         leg would be the wrong way round. */
+      if (mode) await openSessionFor(mode, fix, meter);
 
       set({ gps: fix ? 'locked' : 'off' });
       load();
@@ -360,8 +645,8 @@ export default function Home() {
          proved that somebody arrived and proved nothing whatever about when
          they stopped, which is the half that decides the hours. */
       const selfie = await captureSelfie({
-        title: 'Close your day',
-        subtitle: 'A photo of you goes with the check-out.',
+        title: 'Punch out',
+        subtitle: 'A photo of you goes with the punch-out.',
         cancelLabel: 'Stay on the clock',
       });
       if (!selfie.ok) {
@@ -369,12 +654,54 @@ export default function Home() {
         return;
       }
 
+      /*
+       * THE CLOSING METER, and the other half of the pair taken at the
+       * punch-in. Read BEFORE the punch-out is written, like the photograph
+       * above it: backing out of the camera has to leave him on the clock
+       * rather than punched out with a session nothing can close.
+       *
+       * Only where the session actually carries an opening reading. A day
+       * spent on buses has no meter to read and never had one, and opening a
+       * camera on it would be the app asking about a vehicle he told it this
+       * morning he was not on.
+       */
+      const session = await openSessionLeg(userId);
+      const sessionMode = session
+        ? (await travelModesFor('day')).find((m) => m.key === session.modeKey) ?? null
+        : null;
+      const closing =
+        session && sessionMode && session.odometerStartKm != null
+          ? await meterFor(
+              sessionMode,
+              {
+                title: 'Photograph the meter',
+                subtitle: 'Before you punch out — this is where the day is measured to.',
+                cancelLabel: 'Stay on the clock',
+              },
+              session.odometerStartKm,
+            )
+          : null;
+      if (closing === false) return;
+
       const fix = fixOf(await fixing);
       const out = await checkOut(userId, fix, selfie.id);
+      /* After the mark, and unable to undo it. Same order, same reason as the
+         punch-in: the session is a journey belonging to a day. */
+      if (session) {
+        try {
+          await endSession({
+            legId: session.id,
+            fix: fix ? { lat: fix.lat, lng: fix.lng } : null,
+            odometer: closing,
+          });
+        } catch {
+          notify('Punched out. The travel for this session could not be closed — check Travel.');
+        }
+      }
       load();
       notify(
         out.ok
-          ? `Day closed · ${durationLabel(out.workedMinutes)} worked`
+          ? `Punched out · ${durationLabel(out.workedMinutes)} worked`
           : (out.reason ?? 'The day was already closed.'),
       );
     } finally {
@@ -391,6 +718,18 @@ export default function Home() {
     if (!userId || starting) return;
     setStarting(true);
     try {
+      /* THE SAME GATE, on the same terms. Coming back after lunch opens a
+         session that is tracked exactly like the morning's, so a phone that
+         has stopped being able to record must not be able to open one — and a
+         rule enforced at one of two doors is a rule salesmen learn to walk
+         round. Nothing here is a second copy of it: both doors call the one
+         function, and `checkIn` takes what only that function can make. */
+      const gate = await mayOpenDay(userId);
+      if (!gate.ok) {
+        router.push('/phone-setup');
+        return;
+      }
+
       const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
       const fixing = getFix({ accuracyThresholdM: threshold });
 
@@ -400,8 +739,8 @@ export default function Home() {
          is the same mandatory photograph as the morning's, because they are
          the same act. */
       const selfie = await captureSelfie({
-        title: 'Back on the clock',
-        subtitle: 'A photo of you goes with every check-in.',
+        title: 'Punch in again',
+        subtitle: 'A photo of you goes with every punch-in.',
         cancelLabel: 'Stay off the clock',
       });
       if (!selfie.ok) {
@@ -409,11 +748,34 @@ export default function Home() {
         return;
       }
 
+      /*
+       * AND THEN: WHAT IS HE ON TODAY.
+       *
+       * Asked after the photograph and before anything is written, so backing
+       * out of either leaves no half-started day behind — the same order the
+       * selfie itself follows. A metered vehicle opens the camera here and
+       * nowhere else all day: this reading and the one at the punch-out are
+       * the whole of the day's mileage.
+       */
+      const answer = await askMode();
+      if (!answer.ok) return;
+      const mode = answer.mode;
+      const meter = mode ? await meterFor(mode, {
+        title: 'Photograph the meter',
+        subtitle: 'Before you set off — this is where the day is measured from.',
+        cancelLabel: 'Cancel the punch-in',
+      }, null) : null;
+      if (meter === false) return;
+
       const fix = fixOf(await fixing);
-      await checkIn({ userId, fix, selfieMediaId: selfie.id, homeLocation: null });
+      await checkIn({ userId, fix, selfieMediaId: selfie.id, mayOpen: gate.gate, homeLocation: null });
+      /* ASKED AGAIN, and that is deliberate: he can bike in the morning and
+         take the bus after lunch, and a session that inherited the morning's
+         vehicle would quietly claim per-km on a day he spent on buses. */
+      if (mode) await openSessionFor(mode, fix, meter);
       set({ gps: fix ? 'locked' : 'off' });
       load();
-      notify('Back on the clock');
+      notify('Punched back in');
     } finally {
       setStarting(false);
     }
@@ -436,8 +798,22 @@ export default function Home() {
         </View>
       </View>
 
-      {/* ---- start the day, or what is left of it ---- */}
-      {!checkedIn ? (
+      {/* ---- start the day, or what is left of it ----
+
+          THE MOST CONSEQUENTIAL ZERO WAS THIS ONE. `checkedIn` is
+          `sessionCount > 0`, and before the read landed that was false — so a
+          salesman who had marked his attendance an hour earlier was shown
+          "Start day", and pressing it in that window opens a SECOND session
+          against his own record. Neither of the two answers is drawn until
+          there is one. */}
+      {!day ? (
+        <Card style={{ marginTop: 14, padding: 14 }}>
+          <Text style={type.label}>Your day</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 4 }}>
+            {readErr ?? 'Reading…'}
+          </Text>
+        </Card>
+      ) : !checkedIn ? (
         <View style={{ marginTop: 14 }}>
           <Pressable
             onPress={startDay}
@@ -448,7 +824,7 @@ export default function Home() {
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={[{ fontSize: 18, color: '#FFFFFF' }, weight(600)]}>
-                {starting ? 'Starting…' : 'Start day'}
+                {starting ? 'Punching in…' : 'Punch in'}
               </Text>
               <Text style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.82)', marginTop: 2 }}>
                 Takes your photo, marks attendance, starts the timer
@@ -482,10 +858,18 @@ export default function Home() {
                 <Text style={[type.caption, { marginTop: 2 }]}>{plural(day.sessionCount, 'session')} today</Text>
               ) : null}
             </View>
+            {/* NAMED FOR WHERE IT GOES. It read "Navigate", which is the word
+                `NavigateButton` uses two taps away on the journey and visit
+                screens — and that one launches turn-by-turn in Google Maps.
+                One word, two things, pressed on a bike. This opens the list,
+                so it is called what the list is called. */}
             <Pressable
               onPress={() => router.push('/journey')}
+              accessibilityRole="button"
               style={{ height: HIT, paddingHorizontal: 16, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(500)]}>Navigate</Text>
+              <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(500)]}>
+                Today’s route
+              </Text>
             </Pressable>
           </View>
 
@@ -516,7 +900,7 @@ export default function Home() {
                 here than the one restating the label. */}
             <Icon name="camera" size={18} color={day.running ? C.body : C.primaryDeep} />
             <Text style={[{ fontSize: 15, color: day.running ? C.body : C.primaryDeep }, weight(500)]}>
-              {day.running ? 'End day · photo' : 'Start again · photo'}
+              {day.running ? 'Punch out · photo' : 'Punch in again · photo'}
             </Text>
           </Pressable>
         </Card>
@@ -543,7 +927,25 @@ export default function Home() {
               <Text
                 numberOfLines={1}
                 style={[
-                  { fontSize: 20, lineHeight: 26, marginVertical: 2, color: d.tone === 'danger' ? C.danger : d.tone === 'amber' ? C.warnInk : C.ink },
+                  /* The line height does not move with the size, so a tile
+                     saying a sentence is exactly as tall as one saying a
+                     number and the grid cannot jump. */
+                  /* A tile's tone belongs to its FIGURE. Left on, the em-dash
+                     standing in for a figure nobody has yet read drew in red
+                     under "Collection due" — an alarm about a number that does
+                     not exist. */
+                  {
+                    fontSize: dashValues[i].small ? 15 : 20,
+                    lineHeight: 26,
+                    marginVertical: 2,
+                    color: figuresPending
+                      ? C.muted
+                      : d.tone === 'danger'
+                        ? C.danger
+                        : d.tone === 'amber'
+                          ? C.warnInk
+                          : C.ink,
+                  },
                   weight(600),
                   tabular,
                 ]}>
@@ -554,6 +956,27 @@ export default function Home() {
           ))}
         </View>
       </Card>
+
+      {/*
+        NOTHING HAS COME DOWN FROM THE OFFICE YET, SAID IN WORDS.
+
+        This is the state the zeros hid, and it is permanent rather than a
+        frame: a handset whose pull has never landed has no customers, no plan
+        and no tasks, so every tile answered nought and the status strip said
+        "All sent" over the top of them — because that pip counts the outbox and
+        has nothing to say about the inbox. A salesman reads that as a day with
+        no work in it and gets on with something else.
+      */}
+      {day && neverPulled ? (
+        <Card style={{ marginTop: 12, padding: 14 }}>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Your book has not arrived</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
+            Nothing has come down from the office onto this phone yet, so these figures are empty
+            rather than nought. Find some signal and leave MBOS open for a minute — your customers,
+            today&rsquo;s plan and your tasks all arrive together.
+          </Text>
+        </Card>
+      ) : null}
 
       {/* ---- how the period is going ----
 
@@ -576,7 +999,13 @@ export default function Home() {
         style={{ marginTop: 12 }}>
         <Card style={{ padding: 14 }}>
           <Text style={type.label}>Your target</Text>
-          {month === undefined ? (
+          {readErr ? (
+            /* The read failed, and "the office has not set one" would be a
+               claim about the office rather than about this phone. */
+            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
+              Not read on this phone.
+            </Text>
+          ) : month === undefined ? (
             <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>Reading…</Text>
           ) : month === null || !month.hasTarget ? (
             <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
@@ -603,8 +1032,24 @@ export default function Home() {
               <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
                 {shortfalls(month)[0] ?? 'You are at or above every target set for you.'}
               </Text>
+              {/*
+                WHICH MONTH, AND WHEN IT WAS WORKED OUT.
+
+                `load` takes the newest row the handset holds, which on the 3rd
+                is still last month's — and this card printed a score at 22
+                points with neither the period nor the as-at on it, so a big
+                number read as this month's live standing. `computedAt` was
+                here all along and was used as a BOOLEAN, to decide whether to
+                append "tap for the rest", and never printed. AGENTS.md states
+                the rule in as many words: the handset is sent the cache with
+                its `computed_at` and prints it, because a screen that implied
+                it was live would be believed. `/performance`, one tap away,
+                has done both since it shipped.
+              */}
               <Text style={[type.caption, { marginTop: 4 }]}>
-                {'As the office scored it' + (month.computedAt ? ' · tap for the rest' : '')}
+                {monthLabel(month.period) +
+                  (month.computedAt ? ' · as at ' + asAt(month.computedAt) : '') +
+                  ' · tap for the rest'}
               </Text>
             </>
           )}
@@ -620,6 +1065,67 @@ export default function Home() {
           setSelfieOpen(false);
           answerSelfie.current?.(result);
           answerSelfie.current = null;
+        }}
+      />
+
+      {/*
+        WHAT IS HE ON TODAY. Between the photograph and the mark.
+
+        There is no "skip": the vehicle is what the day's travel is paid on,
+        and a session with no mode would be a day of movement nobody can
+        price. Backing out abandons the punch-in instead, which costs him one
+        tap and leaves nothing written — the same bargain the selfie strikes
+        one step earlier.
+      */}
+      <BottomSheet
+        open={modeOpen}
+        onClose={() => {
+          setModeOpen(false);
+          answerMode.current?.(null);
+          answerMode.current = null;
+        }}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
+          <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
+            How are you travelling today?
+          </T>
+          <T s="small" style={{ marginTop: 4 }}>
+            Asked once, for this session. You are not asked again at each shop.
+          </T>
+
+          <TravelModeList
+            modes={dayModes}
+            where="day"
+            onPick={(m) => {
+              setModeOpen(false);
+              answerMode.current?.(m);
+              answerMode.current = null;
+            }}
+          />
+
+          <View style={{ marginTop: 12 }}>
+            <SecondaryButton
+              label="Not punching in yet"
+              onPress={() => {
+                setModeOpen(false);
+                answerMode.current?.(null);
+                answerMode.current = null;
+              }}
+            />
+          </View>
+        </View>
+      </BottomSheet>
+
+      <OdometerCamera
+        open={metering}
+        title={meterWords.title}
+        subtitle={meterWords.subtitle}
+        cancelLabel={meterWords.cancelLabel}
+        previousKm={meterFrom}
+        maxLegKilometres={maxLegKm}
+        onDone={(result) => {
+          setMetering(false);
+          answerMeter.current?.(result);
+          answerMeter.current = null;
         }}
       />
     </AppFrame>

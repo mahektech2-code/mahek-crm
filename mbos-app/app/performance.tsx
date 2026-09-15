@@ -5,12 +5,13 @@ import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, T } from '../src/components/ui/primitives';
 import { color as C, radius, weight, tabular } from '../src/theme/tokens';
-import { inr } from '../src/lib/format';
+import { inrFromPaise, plural } from '../src/lib/format';
 import {
   listPerformance,
   litres,
   priceNotVolume,
   shortfalls,
+  untargetedLine,
   type PerformanceMonth,
 } from '../src/data/performance';
 
@@ -52,6 +53,7 @@ export default function PerformanceScreen() {
 
   const current = months?.[0] ?? null;
   const previous = months?.[1] ?? null;
+  const dropped = current ? untargetedLine(current) : null;
 
   return (
     <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
@@ -106,6 +108,16 @@ export default function PerformanceScreen() {
                   {monthName(previous.period)} was {(previous.totalScoreBp / 100).toFixed(0)}
                 </T>
               ) : null}
+              {/* WHAT WAS LEFT OUT IS PART OF THE NUMBER, not a footnote to it.
+                  An 84 earned across six components and an 84 earned across
+                  three are different months, and the office's own screen has
+                  always said which — this one drew the 34-point figure and
+                  stopped. */}
+              {dropped ? (
+                <T s="micro" style={{ marginTop: 6 }}>
+                  {dropped}
+                </T>
+              ) : null}
             </Card>
           ) : (
             <Card style={{ marginTop: 12 }}>
@@ -120,12 +132,19 @@ export default function PerformanceScreen() {
           )}
 
           {/* Revenue and volume, side by side and in that order. See the note
-              at the top of the file — this pairing is the point of the screen. */}
+              at the top of the file — this pairing is the point of the screen.
+
+              `inr()` TAKES RUPEES. Every money column on this row is paise, and
+              these five call sites passed the column straight in — so a month
+              of ₹8,50,000 was drawn as ₹8,50,00,000, against a target printed
+              100× too big as well. The "What is short" card at the foot of the
+              same screen has its own correct helper, so the two disagreed by
+              two decimal places with nothing saying which half to believe. */}
           <Card padded={false} style={{ marginTop: 12, flexDirection: 'row', overflow: 'hidden' }}>
             <Figure
               label="Revenue"
-              value={inr(current.revenueActualPaise)}
-              target={current.revenueTargetPaise ? inr(current.revenueTargetPaise) : null}
+              value={inrFromPaise(current.revenueActualPaise)}
+              target={current.revenueTargetPaise ? inrFromPaise(current.revenueTargetPaise) : null}
               bp={current.revenueAchievementBp}
             />
             <Figure
@@ -165,9 +184,9 @@ export default function PerformanceScreen() {
             <Figure
               half
               label="Collected"
-              value={inr(current.collectionActualPaise)}
+              value={inrFromPaise(current.collectionActualPaise)}
               target={
-                current.collectionTargetPaise ? inr(current.collectionTargetPaise) : null
+                current.collectionTargetPaise ? inrFromPaise(current.collectionTargetPaise) : null
               }
               bp={null}
             />
@@ -186,7 +205,17 @@ export default function PerformanceScreen() {
                   ? '—'
                   : `${(current.mixAchievementBp / 100).toFixed(0)}%`
               }
-              target={null}
+              /* NOT `null`, which `Figure` prints as "nothing asked" — directly
+                 above the card listing this component's per-category targets,
+                 and in the same words the dropped-component sentence uses for a
+                 component nobody set a target for at all. The mix target is a
+                 set of category bands rather than one figure, so the honest
+                 summary is how many were asked. */
+              target={
+                current.categories.length
+                  ? `${plural(current.categories.length, 'category', 'categories')} set`
+                  : null
+              }
               bp={null}
             />
           </Card>
@@ -250,7 +279,7 @@ export default function PerformanceScreen() {
               ))}
               {current.unmatchedRevenuePaise ? (
                 <T s="micro" style={{ marginTop: 12 }}>
-                  {inr(current.unmatchedRevenuePaise)} of this month is on products the
+                  {inrFromPaise(current.unmatchedRevenuePaise)} of this month is on products the
                   catalogue does not recognise. It counts as revenue and adds no litres.
                 </T>
               ) : null}

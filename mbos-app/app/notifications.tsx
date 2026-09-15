@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Pressable } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
+import { AppFrame, BackLink, StubCard, useCameFrom } from '../src/components/shell/AppFrame';
 import { ListCard, SectionLabel, T } from '../src/components/ui/primitives';
 import { color as C, type, weight } from '../src/theme/tokens';
 import { dmy, isoDate, plural } from '../src/lib/format';
@@ -66,11 +66,28 @@ export default function NotificationsScreen() {
     yesterday: isoDate(new Date(Date.now() - 86_400_000)),
   }));
 
+  /* Whether the read has answered yet, kept apart from what it answered. Drawn
+     without it, "Nothing yet" is on screen for as long as SQLite takes — and a
+     definitive sentence that turns out to be wrong is worse than a moment of
+     saying nothing. A failure clears it rather than leaving a screen that says
+     "Reading…" for ever. */
+  const [loaded, setLoaded] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+
   const load = React.useCallback(() => {
     let live = true;
-    void listNotifications().then((r) => {
-      if (live) setRows(r);
-    });
+    void listNotifications()
+      .then((r) => {
+        if (!live) return;
+        setRows(r);
+        setFailed(false);
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (!live) return;
+        setFailed(true);
+        setLoaded(true);
+      });
     return () => {
       live = false;
     };
@@ -87,8 +104,18 @@ export default function NotificationsScreen() {
       <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <T style={type.h1}>Notifications</T>
+          {/* "Nothing unread" was shown both to somebody who has never had a
+              notification and to somebody who has read forty, so the two were
+              indistinguishable — and under a heading with nothing beneath it,
+              the first case read as a screen that had failed to load. */}
           <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            {unread ? plural(unread, 'unread notification') : 'Nothing unread'}
+            {!loaded
+              ? 'Reading…'
+              : unread
+                ? plural(unread, 'unread notification')
+                : rows.length > 0
+                  ? plural(rows.length, 'notification') + ', all read'
+                  : 'Nothing yet'}
           </T>
         </View>
         {unread > 0 ? (
@@ -103,6 +130,28 @@ export default function NotificationsScreen() {
           </Pressable>
         ) : null}
       </View>
+
+      {/* Every group returns null when there is nothing in it, so with no rows
+          at all what was left was a back link, a heading and white space — on
+          the app's own bell, which is a screen somebody taps again, and again,
+          believing it did not load. It says what will arrive here instead. */}
+      {loaded && !failed && rows.length === 0 ? (
+        <View style={{ marginTop: 20 }}>
+          <StubCard
+            title="Nothing yet"
+            body="The office reaches you here — an order it could not accept, a day it wants you to agree, a task somebody has given you."
+          />
+        </View>
+      ) : null}
+
+      {loaded && failed ? (
+        <View style={{ marginTop: 20 }}>
+          <StubCard
+            title="Could not read your notifications"
+            body="Nothing has been lost — they are still on this phone. Leave the screen and come back."
+          />
+        </View>
+      ) : null}
 
       {WHENS.map((g) => {
         const items = rows.filter((n) => bucketOf(n.createdAt, days.today, days.yesterday) === g);

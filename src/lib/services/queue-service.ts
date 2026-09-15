@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, ne, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   calls,
@@ -8,8 +8,10 @@ import {
   orders,
   queueSnapshots,
   reminders,
+  users,
 } from "@/db/schema";
 import { getConfig } from "../config/store";
+import { cached } from "../reference-cache";
 import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds, scopedToUsers} from "../access-control";
 import {
   buildQueue,
@@ -58,6 +60,16 @@ export type QueueRow = QueueResult["entries"][number] & {
   lastOrderValue: number;
   creditTermDays: number;
   openComplaint: string | null;
+  /**
+   * How many times in a row we have rung and nobody answered.
+   *
+   * Carried onto the row so the call panel can say "this is the third attempt"
+   * on a No Answer without asking the server a second time — and, more to the
+   * point, without counting it itself. The queue's own ladder is built on this
+   * number; a second count in a screen is how the badge and the record come to
+   * disagree about whether somebody has been tried three times.
+   */
+  noAnswerCount: number;
   lastNote: string | null;
 };
 
@@ -102,28 +114,88 @@ async function queueInputs(
   const ownerFilter = scopedToUsers(ids);
 
   // Deactivated customers are never candidates.
-  const rows = await db
+  /*
+   * THREE INDEPENDENT READS, STARTED TOGETHER.
+   *
+   * The candidates, the reminders and today's skips do not depend on one
+   * another — none of the three reads a row the others produce — and they were
+   * awaited one after the next, so a page paid three round trips end to end
+   * where it needed the slowest of the three. It is the same "one wave, not
+   * three" the dashboard already does one layer up, and it matters more here:
+   * on a single core the app is not doing anything useful while it waits.
+   */
+  const rowsPromise = db
     .select({
-      customer: customers,
+      /*
+       * THE COLUMNS THIS FUNCTION ACTUALLY USES, and not the whole row.
+       *
+       * `customers` has 121 columns. This read used every one of them and
+       * touches 24 — so on a manager's book of 5,143 rows it was building
+       * 622,303 JavaScript values per page load to use 123,432 of them, and
+       * dragging 1,619 kB out of Postgres to spend 780 kB.
+       *
+       * On a box with one core that is the whole cost: the SQL was never slow
+       * (116 ms measured on the real book), and the time went on parsing rows
+       * nobody read. Naming the columns is the single cheapest thing that can
+       * be done to the CRM's hot path.
+       *
+       * ADDING A FIELD TO THE SCREEN MEANS ADDING IT HERE. That is the trade
+       * for the speed, and it fails loudly — the mapping below is typed off
+       * this object, so a column that is read and not selected does not
+       * compile. It cannot silently come back undefined the way a hand-rolled
+       * handler's column list can.
+       */
+      customer: {
+        id: customers.id,
+        name: customers.name,
+        ownerId: customers.ownerId,
+        contactPerson: customers.contactPerson,
+        phone: customers.phone,
+        city: customers.city,
+        kind: customers.kind,
+        status: customers.status,
+        createdAt: customers.createdAt,
+        cycleDays: customers.cycleDays,
+        cycleConfidence: customers.cycleConfidence,
+        cycleIsDefault: customers.cycleIsDefault,
+        lastOrderDate: customers.lastOrderDate,
+        lastOrderValue: customers.lastOrderValue,
+        lastContactDate: customers.lastContactDate,
+        lastConfirmedWhatsappDate: customers.lastConfirmedWhatsappDate,
+        creditTermDays: customers.creditTermDays,
+        outstanding: customers.outstanding,
+        slowPayer: customers.slowPayer,
+        doNotContact: customers.doNotContact,
+        thirdParty: customers.thirdParty,
+        leadSalesType: customers.leadSalesType,
+        activeInOrderSystem: customers.activeInOrderSystem,
+        deactivationRequested: customers.deactivationRequested,
+      },
       calledToday: sql<boolean>`exists (
         select 1 from ${calls} c
          where c.customer_id = customers.id
            and c.started_at >= ${window.start}::timestamptz
            and c.started_at <  ${window.end}::timestamptz
       )`,
-      ownerName: sql<
-        string | null
-      >`(select name from users u where u.id = customers.owner_id)`,
-      // Who is actually to make this call. Not the owner: whose book a record
-      // sits in is ASSIGNED_TO_SQL, so on a team list the owner's name would
-      // put a call against somebody it was reassigned away from. The sheet's
-      // salesperson is a NAME and may be nobody with an account, so it is
-      // shown where there is one and the assigned user underneath — the
-      // person who can sign in and work the row is the answer that matters.
-      assignedToName: sql<string | null>`coalesce(
-        nullif(customers.sales_person_name, ''),
-        (select name from users u where u.id = ${ASSIGNED_TO_SQL})
-      )`,
+      /*
+       * THE ID HERE, THE NAME IN JAVASCRIPT — and `ASSIGNED_TO_SQL` stays in
+       * SQL, because it is the single definition of whose book a record is and
+       * re-deriving that CASE in JS would be a second answer to the one
+       * question this codebase is most insistent has only one.
+       *
+       * What changes is only where the NAME comes from. These were two
+       * correlated subqueries against `users`, run once per candidate row:
+       * 10,286 executions per queue build on a manager's book, and prod shows
+       * `users` sequentially scanned 35 million times for exactly this shape.
+       * The table has TEN rows. Reading it once and resolving the names in a
+       * Map costs one query and a hash lookup.
+       *
+       * `salesPersonName` comes down as a column now for the same reason: it
+       * is the first arm of the coalesce below, and the sheet's salesperson is
+       * a NAME that may belong to nobody with an account.
+       */
+      salesPersonName: customers.salesPersonName,
+      assignedToId: sql<string | null>`${ASSIGNED_TO_SQL}`,
       /*
        * What this customer's order is usually worth, in paise.
        *
@@ -181,18 +253,7 @@ async function queueInputs(
        * path that reaches the customer, and one missed reset leaves somebody
        * permanently unreachable.
        */
-      noAnswerCount: sql<number>`(
-        select count(*)::int from ${calls} c
-         where c.customer_id = customers.id
-           and c.interaction_type = 'outbound_call'
-           and c.outcome = 'no_answer'
-           and c.started_at > coalesce((
-             select c2.started_at from ${calls} c2
-              where c2.customer_id = customers.id
-                and c2.outcome is not null and c2.outcome <> 'no_answer'
-              order by c2.started_at desc limit 1
-           ), '-infinity'::timestamptz)
-      )`,
+      noAnswerCount: consecutiveNoAnswerSql(sql`customers.id`),
       /* The instant, not the date: the first retry is an hour later. */
       lastNoAnswerAt: sql<string | null>`(
         select to_char(c.started_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
@@ -251,7 +312,7 @@ async function queueInputs(
     );
 
   // Pending reminders assigned to whoever is asking, in one query.
-  const reminderRows = await db
+  const reminderRowsPromise = db
     .select({
       id: reminders.id,
       customerId: reminders.customerId,
@@ -267,6 +328,51 @@ async function queueInputs(
       ),
     );
 
+  // Skips are recorded in the audit log rather than as queue rows — there is
+  // no stored queue to mark. They last for the business day only.
+  const skipsPromise = db.execute<{ entity_id: string; reason: string }>(sql`
+    select distinct on (entity_id) entity_id, after_state->>'reason' as reason
+      from audit_log
+     where action = 'queue.skip'
+       and after_state->>'day' = ${day}
+     order by entity_id, at desc
+  `);
+
+  /*
+   * The whole `users` table, once, from the reference cache.
+   *
+   * Ten rows, the same for everybody, changing only when somebody is hired —
+   * exactly what `lib/reference-cache.ts` is for. It replaces two correlated
+   * subqueries per candidate row; see the note in the select above.
+   */
+  const peoplePromise = cached("crm.userNames", () =>
+    db.select({ id: users.id, name: users.name }).from(users),
+  );
+
+  /* All four in flight before any of them is read — see the note above the
+     candidates query. Awaited here, together, and not one at a time. */
+  const [rows, reminderRows, skips, people] = await Promise.all([
+    rowsPromise,
+    reminderRowsPromise,
+    skipsPromise,
+    peoplePromise,
+  ]);
+  const nameById = new Map(people.map((p) => [p.id, p.name]));
+
+  /**
+   * Who is actually to make this call. Not the owner: whose book a record sits
+   * in is `ASSIGNED_TO_SQL`, so on a team list the owner's name would put a
+   * call against somebody it was reassigned away from. The sheet's salesperson
+   * is shown where there is one and the assigned user underneath — the person
+   * who can sign in and work the row is the answer that matters.
+   *
+   * The coalesce that used to be in SQL, kept identical: a blank
+   * `sales_person_name` is not a name, which is what `nullif(…, '')` said.
+   */
+  const assignedName = (r: { salesPersonName: string | null; assignedToId: string | null }) =>
+    (r.salesPersonName?.trim() ? r.salesPersonName : null) ??
+    (r.assignedToId ? (nameById.get(r.assignedToId) ?? null) : null);
+
   const remindersByCustomer = new Map<string, QueueCandidate["reminders"]>();
   for (const r of reminderRows) {
     const list = remindersByCustomer.get(r.customerId) ?? [];
@@ -279,18 +385,24 @@ async function queueInputs(
     remindersByCustomer.set(r.customerId, list);
   }
 
-  // Skips are recorded in the audit log rather than as queue rows — there is
-  // no stored queue to mark. They last for the business day only.
-  const skips = await db.execute<{ entity_id: string; reason: string }>(sql`
-    select distinct on (entity_id) entity_id, after_state->>'reason' as reason
-      from audit_log
-     where action = 'queue.skip'
-       and after_state->>'day' = ${day}
-     order by entity_id, at desc
-  `);
   const skipReason = new Map(skips.map((s) => [s.entity_id, s.reason]));
 
-  const detail = new Map(rows.map((r) => [r.customer.id, r]));
+  /*
+   * The two names attached ONCE, here, so everything downstream reads
+   * `row.ownerName` and `row.assignedToName` exactly as it did when they were
+   * subqueries. What changed is that they are now two hash lookups against a
+   * ten-row Map instead of two correlated scans per candidate.
+   */
+  const detail = new Map(
+    rows.map((r) => [
+      r.customer.id,
+      {
+        ...r,
+        ownerName: r.customer.ownerId ? (nameById.get(r.customer.ownerId) ?? null) : null,
+        assignedToName: assignedName(r),
+      },
+    ]),
+  );
 
   const candidates: QueueCandidate[] = rows.map(
     ({
@@ -362,6 +474,41 @@ async function queueInputs(
  * Null when there is nothing to answer about — a deactivated customer, or one
  * that has gone since the call was logged.
  */
+/**
+ * HOW MANY TIMES IN A ROW WE HAVE RUNG AND NOBODY ANSWERED.
+ *
+ * Counted rather than stored: a column would have to be reset by every path
+ * that reaches the customer, and one missed reset leaves somebody permanently
+ * unreachable. The window is "since the last call that ended in anything else",
+ * which is what makes an answered call clear the ladder without a reset step.
+ *
+ * It is a FRAGMENT taking the customer-id expression rather than two copies of
+ * the same query, because the queue asks it of every row at once — correlated
+ * against `customers.id` — while `saveInteraction` asks it of one known
+ * customer in order to stamp which attempt a No Answer was. Two spellings of
+ * one ladder is two answers to "is this the third time", and the screens would
+ * disagree with the record.
+ *
+ * The outer column is written out in full (`customers.id`, not a Drizzle
+ * reference) because Drizzle renders `${customers.id}` as a bare `"id"`, which
+ * inside a correlated subquery binds to the INNER table and silently makes the
+ * condition false.
+ */
+export function consecutiveNoAnswerSql(customerId: SQL | string) {
+  return sql<number>`(
+    select count(*)::int from ${calls} c
+     where c.customer_id = ${customerId}
+       and c.interaction_type = 'outbound_call'
+       and c.outcome = 'no_answer'
+       and c.started_at > coalesce((
+         select c2.started_at from ${calls} c2
+          where c2.customer_id = ${customerId}
+            and c2.outcome is not null and c2.outcome <> 'no_answer'
+          order by c2.started_at desc limit 1
+       ), '-infinity'::timestamptz)
+  )`;
+}
+
 export async function nextStepForCustomer(
   customerId: string,
 ): Promise<NextStep | null> {
@@ -620,6 +767,11 @@ export async function getQueue(): Promise<QueueView> {
 
   // Re-attach the customer detail the screen and call panel need. The scan
   // already read these rows, so this costs nothing extra.
+  /* The candidate carries the derived figures the customer row does not —
+     among them the no-answer ladder's own count, which the call panel prints
+     on a No Answer rather than counting a second time. */
+  const candidateById = new Map(candidates.map((x) => [x.customerId, x]));
+
   const entries: QueueRow[] = result.entries.map((e) => {
     const row = detail.get(e.customerId)!;
     const c = row.customer;
@@ -643,6 +795,7 @@ export async function getQueue(): Promise<QueueView> {
       lastOrderValue: c.lastOrderValue,
       creditTermDays: c.creditTermDays,
       openComplaint: row.openComplaint,
+      noAnswerCount: candidateById.get(e.customerId)?.noAnswerCount ?? 0,
       lastNote: row.lastNote,
     };
   });
@@ -683,6 +836,48 @@ export async function getQueue(): Promise<QueueView> {
     scopeLabel:
       ctx.scope.kind === "own" ? `${ctx.user.name}'s book` : "Whole team",
   };
+}
+
+/**
+ * ONE CUSTOMER, ready to be called, whether or not the queue ranked them
+ * today.
+ *
+ * The Reminders screen's Call button lands on the Call Log with a customer
+ * named, and that customer is routinely not on the list: they were called this
+ * morning, or held back by a cooldown, or sit past `queue.maxSizePerUser`. The
+ * promise is owed to them regardless, so the panel opens with what the record
+ * itself can supply and no queue reason attached — because there is none, and
+ * inventing one would put a sentence in front of a telecaller that nothing
+ * decided.
+ *
+ * Out of scope answers the same as missing, exactly as the attachment endpoint
+ * does: a screen that distinguishes the two is a way to find out who somebody
+ * else's customers are.
+ */
+export async function adHocCallTarget(customerId: string) {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+
+  const [row] = await db
+    .select({
+      id: customers.id,
+      name: customers.name,
+      contactPerson: customers.contactPerson,
+      phone: customers.phone,
+      city: customers.city,
+      kind: customers.kind,
+      outstanding: customers.outstanding,
+      lastOrderDate: customers.lastOrderDate,
+      lastOrderValue: customers.lastOrderValue,
+      creditTermDays: customers.creditTermDays,
+      ownerName: sql<
+        string | null
+      >`(select name from users u where u.id = customers.owner_id)`,
+    })
+    .from(customers)
+    .where(and(eq(customers.id, customerId), scopedToUsers(ids)));
+
+  return row ?? null;
 }
 
 /** Everything the call panel needs for one queue customer. */

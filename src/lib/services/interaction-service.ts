@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import {
   auditLog,
+  callOpportunities,
   calls,
   complaints,
   complaintStatusHistory,
@@ -29,17 +30,67 @@ import {
 } from "../recompute";
 import { isAttemptAllowed } from "../engines/escalation";
 import type { NextStep, NextStepKind } from "../engines/next-step";
-import { nextStepForCustomer } from "./queue-service";
+import { consecutiveNoAnswerSql, nextStepForCustomer } from "./queue-service";
+import { closeRemindersOnEvidence } from "./worklist-services";
 import { addDays, onOrAfterWorkingDay } from "../business-date";
 import { err, ok, type Result } from "../result";
+import { money, shortDate } from "../format";
 import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "../timeline";
 import {
   conversionColumns,
   hasOrderedBefore,
   recordConversion,
 } from "./lead-conversion-service";
+import {
+  deskForAction,
+  NEVER_CALL_AGAIN,
+  outcomeFieldRequired,
+  outcomeFieldsVisible,
+} from "../call-outcomes";
+import {
+  CALL_REASON_CODES,
+  CALL_REASON_LABEL,
+  EXCLUSIVE_ACTION,
+  type CallReason,
+  NEXT_ACTION_LABEL,
+  nextActionsFor,
+  reasonFieldsFor,
+  reminderTypeFor,
+  wantsDate,
+} from "../call-reasons";
+
+/**
+ * Zod wants a non-empty tuple and the vocabulary is a plain array, because
+ * everything else that reads it wants a list. Asserted rather than retyped: a
+ * second copy of ten codes is a second answer to "what may be stored", and the
+ * one that drifts is always the one the server checks.
+ */
+const CALL_REASON_CODES_TUPLE = CALL_REASON_CODES as [CallReason, ...CallReason[]];
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
+
+/**
+ * The sentence an opportunity reads as on the customer record.
+ *
+ * Built from what was actually answered rather than a fixed template with gaps
+ * in it: "Opportunity: Nano Thinner — about ₹40,000" and "Opportunity: Nano
+ * Thinner" are both true sentences, and "Opportunity: Nano Thinner — ₹0 —
+ * (no date)" is a record that reads as somebody having judged it worthless.
+ */
+function opportunitySummary(o: {
+  product: string;
+  estimatedQuantity?: string;
+  estimatedValueRupees?: number;
+  expectedOrderDate?: string;
+}): string {
+  const parts = [`Opportunity: ${o.product.trim()}`];
+  if (o.estimatedQuantity?.trim()) parts.push(o.estimatedQuantity.trim());
+  if (o.estimatedValueRupees !== undefined) {
+    parts.push(money(o.estimatedValueRupees * 100));
+  }
+  if (o.expectedOrderDate) parts.push(`expected ${shortDate(o.expectedOrderDate)}`);
+  return parts.join(" — ");
+}
 
 /* ---------------------------------------------------------------------------
  * The save operation. One entry point for all thirteen workflows.
@@ -114,6 +165,7 @@ export const saveInteractionSchema = z.object({
       "pricing",
       "service",
       "shortage",
+      "wrong_product",
       "other",
     ])
     .optional(),
@@ -130,6 +182,62 @@ export const saveInteractionSchema = z.object({
   complaintCnAmount: z.coerce.number().int().positive().optional(),
   complaintBillId: z.string().optional(),
   complaintGoodsDescription: z.string().optional(),
+
+  /* ------------------------------------------------- who rang, and why --
+   *
+   * INBOUND'S QUESTIONS. The panel asked one — "what was the outcome?" — and
+   * made it do two jobs: an outcome is how a call ENDED, and these are what
+   * the customer wanted when they picked up the phone. On an inbound call the
+   * two are routinely different, so the first half simply was not recorded.
+   *
+   * All of it is optional in the SCHEMA and conditionally required in the
+   * rules below, because an outbound call and an order that arrived by
+   * WhatsApp legitimately carry none of it — a nullable field and a rule that
+   * knows when it applies, rather than three schemas.
+   */
+  callerRole: z
+    .enum(["owner", "purchase", "accounts", "store", "production", "other"])
+    .optional(),
+  /** A role with nobody's name against it cannot be rung back. */
+  callerName: z.string().optional(),
+  callReason: z.enum(CALL_REASON_CODES_TUPLE).optional(),
+  /**
+   * The answers the chosen reason asked for. Validated against
+   * `reasonFieldsFor` — the SAME function the form draws its boxes from, so a
+   * field that is mandatory on the screen is mandatory in the rule and the two
+   * cannot drift apart.
+   */
+  reasonDetail: z.record(z.string(), z.string()).default({}),
+  /**
+   * The answers the OUTCOME asked for — why no order, why no answer, what we
+   * are waiting for, why not interested, a complaint's priority and what the
+   * customer wants done about it.
+   *
+   * Validated against `outcomeFieldsVisible`/`outcomeFieldRequired`, the same
+   * two functions the form draws its boxes from, so a box that is mandatory on
+   * the screen is mandatory in the rule.
+   */
+  outcomeDetail: z.record(z.string(), z.string()).default({}),
+  /** Codes from `nextActionsFor`, checked against the reason that was given. */
+  nextActions: z.array(z.string()).default([]),
+  nextActionDate: z.string().optional(),
+
+  /**
+   * §Sales opportunity — did this call turn up something worth chasing.
+   *
+   * Absent means nobody was asked, which on an outbound call is the truth.
+   * Present with `yes: false` means somebody WAS asked and said no, and that
+   * is a different fact worth keeping apart from silence.
+   */
+  opportunity: z
+    .object({
+      product: z.string().min(1),
+      estimatedQuantity: z.string().optional(),
+      /** Whole rupees from the form. Stored as paise, like all money here. */
+      estimatedValueRupees: z.coerce.number().int().nonnegative().optional(),
+      expectedOrderDate: z.string().optional(),
+    })
+    .optional(),
 
   /** Order-received only. User-entered, may be in the past, never the future. */
   orderDate: z.string().optional(),
@@ -191,6 +299,8 @@ export type SaveInteractionInput = z.input<typeof saveInteractionSchema>;
 export type SaveInteractionResult = {
   interactionId: string;
   produced: string[];
+  /** Promises the evidence of this call closed. Never fewer than zero. */
+  remindersClosed?: number;
   duplicate: boolean;
   orderId: string | null;
   reminderId: string | null;
@@ -392,11 +502,204 @@ export async function saveInteraction(
     }
   }
 
-  // 4. Inbound payment promises must carry the date they committed to.
+  // 4. Inbound payment promises must carry the date they committed to, and it
+  //    cannot be behind us.
+  //
+  //    THE FLOOR IS THE HALF THAT WAS MISSING. The other two date fields on
+  //    this form both reject the past and this one did not, so a mistyped year
+  //    produced a `payment_promise` reminder already overdue — which puts the
+  //    customer at `reminderOverdue`, the strongest tier in the queue, the next
+  //    morning, for a promise they had just made. `onOrAfterWorkingDay` shifts
+  //    off a Sunday and deliberately never clamps forward, so nothing
+  //    downstream was going to catch it.
   if (input.interactionType === "inbound_call" && input.outcome === "payment_promised") {
     if (!input.paymentPromiseDate) {
       return fieldError("paymentPromiseDate", "Enter the date they committed to.");
     }
+  }
+  if (input.paymentPromiseDate && input.paymentPromiseDate < day) {
+    return fieldError(
+      "paymentPromiseDate",
+      "A payment date cannot be in the past.",
+    );
+  }
+
+  /* ------------------------------------------------ 4b. who rang, and why
+   *
+   * INBOUND ONLY, and required there.
+   *
+   * An outbound call's reason is already recorded — it is whatever the queue
+   * put the customer in front of us for — and asking the telecaller to restate
+   * it would be a second answer that can disagree with the first. An order
+   * that arrived by WhatsApp had no caller at all.
+   *
+   * Enforced HERE and not only on the form, like every other mandatory field
+   * in this file: a server action is a URL, and a rule that lives in a browser
+   * is not a rule.
+   */
+  if (input.interactionType === "inbound_call") {
+    if (!input.callerRole) {
+      return fieldError("callerRole", "Say who rang — it changes what the call is worth.");
+    }
+    if (!input.callReason) {
+      return fieldError("callReason", "Say why they rang.");
+    }
+  } else if (input.callReason || input.callerRole) {
+    // Not a refusal of work somebody did: there is no screen that can send
+    // this, so anything arriving here came from something other than the form.
+    return fieldError(
+      "callReason",
+      "Who rang and why is asked on inbound calls only.",
+    );
+  }
+
+  /*
+   * The detail the chosen reason asks for, checked against the SAME function
+   * the form draws its boxes from. Two lists would be a box that is mandatory
+   * on screen and optional in the rule, or the reverse — and the reverse is
+   * the one that refuses a save nobody can fix.
+   */
+  const reasonDetail: Record<string, string> = {};
+  if (input.callReason) {
+    const fields = reasonFieldsFor(input.callReason);
+    const allowed = new Set(fields.map((f) => f.key));
+    for (const [key, value] of Object.entries(input.reasonDetail ?? {})) {
+      if (!allowed.has(key)) continue; // a field from a reason they changed off
+      const trimmed = value.trim();
+      if (trimmed) reasonDetail[key] = trimmed;
+    }
+    for (const f of fields) {
+      if (f.required && !reasonDetail[f.key]) {
+        return fieldError(
+          `reasonDetail.${f.key}`,
+          `${f.label} is needed for a ${CALL_REASON_LABEL[input.callReason]} call.`,
+        );
+      }
+      if (f.kind === "choice" && reasonDetail[f.key]) {
+        const codes = new Set((f.options ?? []).map((o) => o.code));
+        if (!codes.has(reasonDetail[f.key])) {
+          return fieldError(`reasonDetail.${f.key}`, `Pick a valid ${f.label.toLowerCase()}.`);
+        }
+      }
+      if (f.kind === "date" && reasonDetail[f.key] && !/^\d{4}-\d{2}-\d{2}$/.test(reasonDetail[f.key])) {
+        return fieldError(`reasonDetail.${f.key}`, `${f.label} is not a date.`);
+      }
+    }
+  }
+
+  /* ------------------------------------- what the OUTCOME asked for
+   *
+   * Both directions. `reasonDetail` above is inbound's "why did they ring";
+   * this is "what does this ending need to record", and a No Order is worth the
+   * same answer whoever dialled.
+   *
+   * The visible set is computed from the answers themselves, because two of
+   * the fields are conditional and neither can say so on the field: the
+   * competitor name belongs to one answer of the question above it, and the
+   * recall date to one answer of the question below. Validating against the
+   * full list would demand a recall date from somebody who said there is no
+   * later.
+   */
+  const outcomeDetail: Record<string, string> = {};
+  if (input.outcome) {
+    const answers = Object.fromEntries(
+      Object.entries(input.outcomeDetail ?? {}).map(([k, v]) => [k, v.trim()]),
+    );
+    const visible = outcomeFieldsVisible(input.outcome, answers);
+    const allowed = new Set(visible.map((f) => f.key));
+    for (const [key, value] of Object.entries(answers)) {
+      /* A field belonging to a branch they answered their way out of. Kept, it
+         would store a competitor against a customer who said they have no
+         requirement. */
+      if (allowed.has(key) && value) outcomeDetail[key] = value;
+    }
+    for (const f of visible) {
+      if (outcomeFieldRequired(f, answers) && !outcomeDetail[f.key]) {
+        return fieldError(`outcomeDetail.${f.key}`, `${f.label} is needed.`);
+      }
+      if (f.kind === "choice" && outcomeDetail[f.key]) {
+        const codes = new Set((f.options ?? []).map((o) => o.code));
+        if (!codes.has(outcomeDetail[f.key])) {
+          return fieldError(`outcomeDetail.${f.key}`, `Pick a valid ${f.label.toLowerCase()}.`);
+        }
+      }
+      if (f.kind === "date" && outcomeDetail[f.key]) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(outcomeDetail[f.key])) {
+          return fieldError(`outcomeDetail.${f.key}`, `${f.label} is not a date.`);
+        }
+        if (outcomeDetail[f.key] < day) {
+          return fieldError(`outcomeDetail.${f.key}`, `${f.label} cannot be in the past.`);
+        }
+      }
+    }
+  }
+
+  /*
+   * What somebody undertook to do. A code from this reason's own list — a
+   * picker is not a permission, and "Arrange stock" against a price enquiry is
+   * an answer to a question nobody asked.
+   */
+  const nextActions = [...new Set(input.nextActions ?? [])];
+  /*
+   * AN ORDER TAKEN ANSWERS THIS ON BOTH DIRECTIONS, and it is the one place
+   * the list comes off the OUTCOME rather than the reason.
+   *
+   * Once the call has ended in an order, what happens next is about the order:
+   * somebody who rang to ask a price and ended up ordering needs chasing for
+   * payment or dispatch, not sending a quotation. And an order taken on a call
+   * WE made needs exactly the same four answers as one taken on a call they
+   * made — the goods and the money do not care who dialled — so this is the
+   * one question on the form that an outbound call is also asked.
+   */
+  const offeredActions = nextActionsFor(input.callReason, input.outcome);
+  if (nextActions.length) {
+    if (!offeredActions.length) {
+      return fieldError(
+        "nextActions",
+        "Pick why they rang before saying what happens next.",
+      );
+    }
+    const offered = new Set(offeredActions.map((a) => a.code));
+    const stray = nextActions.find((a) => !offered.has(a));
+    if (stray) {
+      return fieldError("nextActions", "That next action does not belong to this call.");
+    }
+    /*
+     * "Nothing further is needed, and also chase the payment" is not a
+     * sentence. Refused rather than silently resolved one way, because either
+     * resolution stores something nobody said.
+     */
+    if (nextActions.includes(EXCLUSIVE_ACTION) && nextActions.length > 1) {
+      return fieldError(
+        "nextActions",
+        "Either nothing further is needed, or something is — not both.",
+      );
+    }
+  }
+  /*
+   * A DATE IS DEMANDED WHERE THE ACTION MEANS ONE, and refused where it does
+   * not. "Send the quotation" with no day against it is the definition of how
+   * a call gets forgotten; "Payment already made" is a statement about the
+   * past and a date box beside it is a question nobody can answer.
+   */
+  if (wantsDate(nextActions) && !input.nextActionDate) {
+    return fieldError("nextActionDate", "Say which day this is for.");
+  }
+  if (input.nextActionDate) {
+    if (!wantsDate(nextActions)) {
+      return fieldError("nextActionDate", "None of the chosen actions needs a date.");
+    }
+    if (input.nextActionDate < day) {
+      return fieldError("nextActionDate", "The next action cannot be in the past.");
+    }
+  }
+
+  /* An opportunity with a date on it must be a date somebody can still act on. */
+  if (input.opportunity?.expectedOrderDate && input.opportunity.expectedOrderDate < day) {
+    return fieldError(
+      "opportunity.expectedOrderDate",
+      "An expected order date cannot be in the past.",
+    );
   }
 
   // 4. A complaint without a category cannot be routed, without a description
@@ -551,6 +854,8 @@ export async function saveInteraction(
   let complaintId: string | null = null;
   let complaintUpdated = false;
   let orderValue = 0;
+  /** Promises this call settled, counted so the save can say so. */
+  let remindersClosed = 0;
 
   // §6 — which of the three dates each outcome touches.
   // A ringing phone is not contact: No Answer moves last CALL but never last
@@ -671,6 +976,111 @@ export async function saveInteraction(
       produced.push("reminder");
     }
 
+    /* -------------------------------------------- which attempt this was
+     *
+     * Stamped at the moment of the call, from the SAME ladder the queue reads —
+     * one definition, or the screen saying "attempt 3" and the record saying
+     * something else. The count is of the attempts BEFORE this one, so the call
+     * being written is that plus one.
+     *
+     * It has to be a stamp rather than a read: the counter is consecutive no-
+     * answers since the last answered call, so it resets the moment somebody
+     * picks up, and a call logged as attempt 3 would read as attempt 0 a week
+     * later — the one question this outcome exists to answer with no answer
+     * left anywhere.
+     */
+    let callAttempt: number | null = null;
+    if (input.outcome === "no_answer") {
+      const [prior] = await tx.execute<{ n: number }>(
+        sql`select ${consecutiveNoAnswerSql(customer.id)} as n`,
+      );
+      callAttempt = Number(prior?.n ?? 0) + 1;
+    }
+
+    /* ---------------------------------------------- a later they named
+     *
+     * "Possible later" with a date is the only thing standing between a
+     * customer who said no this quarter and a customer nobody ever rings
+     * again. It becomes a reminder, which outranks every cooldown in the
+     * queue, so the call lands on the day rather than whenever the cadence
+     * next gets round to them.
+     */
+    if (outcomeDetail.recallDate) {
+      const recallId = id("rem");
+      await tx.insert(reminders).values({
+        id: recallId,
+        customerId: customer.id,
+        createdByUserId: ctx.user.id,
+        assignedUserId: ctx.user.id,
+        callId: interactionId,
+        dueDate: onOrAfterWorkingDay(outcomeDetail.recallDate, {
+          timezone: config["workingDay.timezone"],
+          dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+          workingDays: config["workingDay.workingDays"],
+        }),
+        note: outcomeDetail.competitorName
+          ? `Not interested for now - buying from ${outcomeDetail.competitorName}. They said to try again.`
+          : "Not interested for now - they said to try again",
+        type: "call_back",
+        systemGenerated: true,
+        createdById: ctx.user.id,
+        updatedById: ctx.user.id,
+      });
+      produced.push("reminder");
+      reminderId = reminderId ?? recallId;
+    }
+
+    /* ------------------------------------------ what we said we would do
+     *
+     * A NEXT ACTION WITH A DATE BECOMES A REMINDER, which is what stops it
+     * being a dropdown nobody acts on. It is the same mechanism a promised
+     * payment already uses rather than a second one beside it, so everything
+     * that already knows how to surface a reminder — the queue (where one
+     * outranks every cooldown), the reminders screen, the next-step
+     * sentence — surfaces this for free.
+     *
+     * `send_information` and `check_stock` have been in `reminderTypeEnum`
+     * since the CRM shipped with nothing ever writing one. These are what they
+     * were for.
+     */
+    if (nextActions.length && input.nextActionDate) {
+      const actionReminderId = id("rem");
+      await tx.insert(reminders).values({
+        id: actionReminderId,
+        customerId: customer.id,
+        createdByUserId: ctx.user.id,
+        assignedUserId: ctx.user.id,
+        callId: interactionId,
+        dueDate: onOrAfterWorkingDay(input.nextActionDate, {
+          timezone: config["workingDay.timezone"],
+          dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+          workingDays: config["workingDay.workingDays"],
+        }),
+        /*
+         * The note says WHAT, because "follow up" tells whoever picks it up
+         * nothing about why they are ringing — the same reasoning the no-order
+         * callback note carries one line down.
+         */
+        note: nextActions
+          .map((a) => NEXT_ACTION_LABEL[a] ?? a)
+          .join(", "),
+        type: reminderTypeFor(nextActions),
+        systemGenerated: true,
+        createdById: ctx.user.id,
+        updatedById: ctx.user.id,
+      });
+      produced.push("reminder");
+      /*
+       * The call row names ONE reminder and a call can legitimately owe two
+       * things on two different days — a payment promised for Friday and a
+       * quotation to send tomorrow. The column keeps whichever the call
+       * produced first, exactly as before; both rows are on the reminders list,
+       * which is where either of them actually gets worked. Overwriting would
+       * silently repoint the promise at the errand.
+       */
+      reminderId = reminderId ?? actionReminderId;
+    }
+
     /* --------------------------------------------------------- complaint */
     if (input.outcome === "complaint") {
       const complaintText =
@@ -723,8 +1133,25 @@ export async function saveInteraction(
         produced.push("complaint-updated");
       } else {
         complaintId = id("cmp");
+        /* The priority a telecaller is told — and the severity it sets — is
+           PR #358's (`complaint-vocabulary`), which gives `severity` a
+           `critical` member of its own and recomputes the SLA from when the
+           complaint was raised. Until that lands this stays the configured
+           default, exactly as it always was. */
         const severity = config["complaints.defaultSeverity"];
         const slaHours = config["complaints.slaHours"][severity];
+        /*
+         * AND WHAT THEY ARE ASKING FOR IS WHAT ROUTES IT.
+         *
+         * `assigned_to` has defaulted to "Operations" on every complaint ever
+         * raised, which is not a routing decision but the absence of one. A
+         * replacement is the godown's, a credit note accounts', a technical
+         * visit technical — so the desk is DERIVED from the action rather than
+         * asked as a second question the telecaller cannot answer. Where no
+         * action was given the old default stands, so nothing that does not ask
+         * changes behaviour.
+         */
+        const desk = deskForAction(outcomeDetail.requiredAction);
         await tx.insert(complaints).values({
           id: complaintId,
           customerId: customer.id,
@@ -733,6 +1160,8 @@ export async function saveInteraction(
           category: input.complaintCategory!,
           description: complaintText,
           severity,
+          requiredAction: outcomeDetail.requiredAction ?? null,
+          ...(desk ? { assignedTo: desk } : {}),
           slaDueAt: new Date(now.getTime() + slaHours * 3_600_000),
           mobileNumber: customer.phone,
           requestCn: input.complaintRequestCn,
@@ -777,6 +1206,19 @@ export async function saveInteraction(
       durationSeconds: input.durationSeconds ?? null,
       notes: input.notes?.trim() || null,
       quickNoteIds: input.quickNoteIds,
+      callerRole: input.callerRole ?? null,
+      callerName: input.callerName?.trim() || null,
+      callReason: input.callReason ?? null,
+      /*
+       * An empty object and null are different answers: null is a reason that
+       * asks nothing (Place an Order, Follow-up on Previous Discussion), and
+       * `{}` would read as a reason that asked and got nothing back.
+       */
+      reasonDetail: Object.keys(reasonDetail).length ? reasonDetail : null,
+      outcomeDetail: Object.keys(outcomeDetail).length ? outcomeDetail : null,
+      callAttempt,
+      nextActions,
+      nextActionDate: input.nextActionDate ?? null,
       sourceModule: input.sourceModule,
       queuePosition: input.queuePosition ?? null,
       orderId,
@@ -786,6 +1228,102 @@ export async function saveInteraction(
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
+
+    /* -------------------------------------------- the opportunity it found
+     *
+     * Written BEFORE the timeline block below, because that block names this
+     * row as its source and a timeline entry pointing at a record that is not
+     * there yet is the whole thing `sourceRecordId` exists to prevent.
+     *
+     * Deliberately NOT a lead: a lead here is an account that has never
+     * ordered, and about thirty readers of `customers.kind` are built on
+     * exactly that — so an opportunity spotted on a call with a customer of
+     * four years cannot be one without making every one of them wrong.
+     */
+    let opportunityId: string | null = null;
+    if (input.opportunity) {
+      opportunityId = id("opp");
+      await tx.insert(callOpportunities).values({
+        id: opportunityId,
+        customerId: customer.id,
+        callId: interactionId,
+        userId: ctx.user.id,
+        product: input.opportunity.product.trim(),
+        estimatedQuantity: input.opportunity.estimatedQuantity?.trim() || null,
+        /*
+         * Rupees in, paise stored — money is paise everywhere here. Null and
+         * zero are different answers: null is nobody having put a figure on
+         * it, and zero would read as an opportunity judged worthless.
+         */
+        estimatedValuePaise:
+          input.opportunity.estimatedValueRupees === undefined
+            ? null
+            : input.opportunity.estimatedValueRupees * 100,
+        expectedOrderDate: input.opportunity.expectedOrderDate || null,
+        createdById: ctx.user.id,
+        updatedById: ctx.user.id,
+      });
+      produced.push("opportunity");
+    }
+
+    /* ------------------------------------- the promises this call settles */
+    /*
+     * A reminder is closed by the evidence that it was kept, and this is the
+     * commonest piece of evidence there is — see
+     * `lib/engines/reminder-closure.ts` for the rule and why the manual
+     * button was not good enough.
+     *
+     * In THIS transaction, for the same reason the timeline entry below is:
+     * a promise closed by a call that rolled back is a promise nobody is
+     * chasing and a conversation that never happened.
+     *
+     * `no_answer` closes nothing. The customer still owes us the
+     * conversation, and a list that can be emptied by dialling and hanging up
+     * is the button we just took away wearing a different hat.
+     *
+     * `reminderId` is excluded because the branches above may have just
+     * written tomorrow's promise from this very call, and an event must never
+     * close the thing it created.
+     *
+     * AND AN ORDER RECEIVED IS NOT A CALL, which this file's own enum says in
+     * as many words: it arrived by WhatsApp or the ERP with nobody speaking to
+     * anybody. "He said he will ring me at three" is not answered by a
+     * WhatsApp order landing, and treating it as one would close promises on
+     * conversations that never happened — the exact failure the manual button
+     * produced. The order itself still closes what an order settles, below.
+     */
+    if (!isOrderReceived) {
+      remindersClosed = await closeRemindersOnEvidence(tx, {
+        customerId: customer.id,
+        event: {
+          kind: "call",
+          on: day,
+          answered: input.outcome !== "no_answer",
+        },
+        sourceId: interactionId,
+        actorId: ctx.user.id,
+        exclude: [reminderId],
+      });
+    }
+
+    /*
+     * AND AN ORDER CLOSES THE PROMISE TO CONFIRM ONE, whatever day it was due.
+     *
+     * Separate from the call above rather than folded into it: the call rule
+     * needs the reminder to be DUE, and this one deliberately does not. An
+     * order confirmation promised for Friday is met by the order arriving on
+     * Tuesday, and holding it open until Friday would put a call on somebody's
+     * list about an order already on the book.
+     */
+    if (orderId) {
+      remindersClosed += await closeRemindersOnEvidence(tx, {
+        customerId: customer.id,
+        event: { kind: "order", on: day },
+        sourceId: orderId,
+        actorId: ctx.user.id,
+        exclude: [reminderId],
+      });
+    }
 
     /* ------------------------------------------------- the shared timeline */
     /*
@@ -813,6 +1351,25 @@ export async function saveInteraction(
           notes: input.notes ?? null,
         }),
       },
+      ...(opportunityId && input.opportunity
+        ? [
+            {
+              customerId: customer.id,
+              eventType: CRM_EVENT.opportunity,
+              sourceApp: "crm" as const,
+              sourceRecordId: opportunityId,
+              occurredAt: now,
+              actorUserId: ctx.user.id,
+              /*
+               * `call_opportunities` has no screen of its own to be worked on
+               * yet. This is what stops it being a record nobody can see — the
+               * opportunity lands on the customer record, where the next
+               * person to read the account finds it.
+               */
+              summary: opportunitySummary(input.opportunity),
+            },
+          ]
+        : []),
       ...(orderId
         ? [
             {
@@ -845,6 +1402,30 @@ export async function saveInteraction(
     let converted = false;
     if (updatesLastCall) set.lastCallDate = day;
     if (updatesLastContact) set.lastContactDate = day;
+
+    /*
+     * "DO NOT CALL US AGAIN" IS A STANDING INSTRUCTION, not an outcome.
+     *
+     * `do_not_contact` outranks every reason the queue can produce — including
+     * a reminder, which outranks everything else — so this is the single most
+     * consequential thing a telecaller can write from this panel, and it is the
+     * one the customer asked for in as many words. It is written here rather
+     * than left to somebody to set afterwards precisely because "somebody will
+     * do it later" is how a customer who asked to be left alone gets rung again
+     * next Tuesday.
+     *
+     * It is set and never CLEARED: the other two answers are this call's
+     * verdict, and a customer who asked to be left alone last year did not
+     * change their mind by being marked "possible later" today. Lifting it is a
+     * deliberate act on the customer record, where somebody can see what they
+     * are undoing.
+     */
+    const askedNotToBeCalled =
+      outcomeDetail.futureOpportunity === NEVER_CALL_AGAIN;
+    if (askedNotToBeCalled && !customer.doNotContact) {
+      set.doNotContact = true;
+      produced.push("do-not-contact");
+    }
 
     if (orderId) {
       // The user-entered order date is the order date. And a backdated order
@@ -925,7 +1506,18 @@ export async function saveInteraction(
       afterState: {
         interactionType: input.interactionType,
         outcome: input.outcome ?? null,
+        /* The two answers with consequences beyond this call: a standing
+           instruction that silences every future one, and the coded reason a
+           report is going to be built on. Both belong in the audit row rather
+           than only on the call, because "who marked this customer do-not-
+           contact, and when" is asked about the customer, not the call. */
+        ...(askedNotToBeCalled ? { doNotContact: true } : {}),
+        ...(Object.keys(outcomeDetail).length ? { outcomeDetail } : {}),
         produced,
+        // Promises this call closed. The reminders themselves point back at
+        // this interaction; this is the same fact from the other end, so
+        // "which promises did that call settle" is answerable without a join.
+        remindersClosed,
       } as never,
     });
   });
@@ -934,7 +1526,10 @@ export async function saveInteraction(
 
   if (orderId) {
     await recomputeBuyingCycle(customer.id);
-    await recomputeInactivity();
+    // THIS CUSTOMER, not the book. An order cannot move anybody else's
+    // inactivity, and the unscoped pass was ~5,900 queries awaited in series
+    // between the telecaller pressing Save and the confirmation appearing.
+    await recomputeInactivity(customer.id);
   }
 
   // A payment promise on either leg is a collections attempt by call. Stage 1
@@ -1018,9 +1613,20 @@ export async function saveInteraction(
       reminderId,
       complaintId,
       complaintUpdated,
+      remindersClosed,
       nextStep: step,
     },
-    complaintUpdated ? "Added to the open complaint" : "Interaction saved",
+    /*
+     * SAID OUT LOUD, because a promise disappearing off a list without a word
+     * is indistinguishable from one that was lost. The telecaller closed it by
+     * making the call, which is the whole point, and being told so is what
+     * teaches them the list keeps itself.
+     */
+    complaintUpdated
+      ? "Added to the open complaint"
+      : remindersClosed
+        ? `Interaction saved - ${remindersClosed} reminder${remindersClosed === 1 ? "" : "s"} closed`
+        : "Interaction saved",
     warnings,
   );
 }

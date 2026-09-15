@@ -145,16 +145,37 @@ export type LeadResult<T> = { ok: true; value: T } | { ok: false; message: strin
  * a lead nobody has promised anything is still a lead, and sorting it off the
  * bottom of the screen is how it stops existing.
  */
-export async function listLeads(filter: LeadFilter = 'All'): Promise<Lead[]> {
+export async function listLeads(filter: LeadFilter = 'All', query = ''): Promise<Lead[]> {
   const order = `ORDER BY nextFollowUpDate IS NULL, nextFollowUpDate ASC, lastActivityDate ASC, name`;
 
+  /*
+   * The search runs in SQLite rather than over the rows already on the screen,
+   * for the reason the customers list gives: eight stage chips are the only
+   * narrowing this screen had, and finding one named shop in a few hundred
+   * leads meant scrolling past all of them. It reaches the shop name, the
+   * person, the number and the town, because that is whichever one he has been
+   * given. The number is matched as typed AND stripped, so a lead stored as
+   * `9822011001` is still found by somebody who types `98220 11001`.
+   */
+  const q = query.trim();
+  const like = `%${q}%`;
+  const digits = normaliseMobile(q);
+  const search = q
+    ? ` AND (name LIKE ? OR company LIKE ? OR city LIKE ? OR mobile LIKE ?${digits.length >= 4 ? ' OR mobile LIKE ?' : ''})`
+    : '';
+  const args = q
+    ? digits.length >= 4
+      ? [like, like, like, like, `%${digits}%`]
+      : [like, like, like, like]
+    : [];
+
   if (filter === 'Archived') {
-    return all<Lead>(`SELECT * FROM leads WHERE archived = 1 ${order}`);
+    return all<Lead>(`SELECT * FROM leads WHERE archived = 1${search} ${order}`, args);
   }
   if (filter === 'All') {
-    return all<Lead>(`SELECT * FROM leads WHERE archived = 0 ${order}`);
+    return all<Lead>(`SELECT * FROM leads WHERE archived = 0${search} ${order}`, args);
   }
-  return all<Lead>(`SELECT * FROM leads WHERE archived = 0 AND stage = ? ${order}`, [filter]);
+  return all<Lead>(`SELECT * FROM leads WHERE archived = 0 AND stage = ?${search} ${order}`, [filter, ...args]);
 }
 
 export async function getLead(id: string): Promise<Lead | null> {

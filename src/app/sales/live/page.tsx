@@ -3,9 +3,9 @@ import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { dwellStops, type DwellStop } from "@/lib/engines/dwell";
 import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
+import { trailMetres } from "@/lib/engines/trail-trips";
 import { nowMs, shortDateWithYear } from "@/lib/format";
-import { metresBetween } from "@/lib/geo";
-import { trailHasGaps } from "@/lib/handset-health";
+import { trailHasGaps, trailIsDead } from "@/lib/handset-health";
 import { today } from "@/lib/recompute";
 import { readSecret } from "@/lib/secrets";
 import {
@@ -39,8 +39,18 @@ export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };
  * somebody with no position appears in the team list saying so and nowhere on
  * the canvas.
  *
- * The trail is a fix every few minutes between the check-in and the check-out;
- * the check-in and each visit leave one apiece regardless, so somebody whose
+ * **The shops around the team are drawn underneath, in the colours
+ * Territory uses.** Everything within `mbos.location.nearbyBookRadiusKm` of
+ * where each man actually is — direct customers, leads and third-party shops
+ * apart by colour — so a trail reads against what it went past rather than
+ * against blank streets. A catchment and not the book: the whole book at
+ * national scale answers nothing, and Territory is the screen for reading
+ * it. Fetched by the map itself, from `/api/sales/book-pins`, and not handed
+ * down from here: this page re-runs every thirty seconds while somebody
+ * watches it, and the shops do not move.
+ *
+ * The trail is a fix every few minutes between the punch-in and the punch-out;
+ * the punch-in and each visit leave one apiece regardless, so somebody whose
  * tracking is off or whose permission was refused still appears. The time shown
  * is the time of the fix and never "now" — somebody who checked in at nine and
  * has had no signal since reads as nine o'clock, which is the honest thing.
@@ -95,11 +105,11 @@ export default async function Page({
   const distanceMetres = new Map<string, number>();
   const dwells = new Map<string, DwellStop[]>();
   for (const [id, points] of tracks) {
-    let metres = 0;
-    for (let i = 1; i < points.length; i++) {
-      metres += metresBetween(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
-    }
-    distanceMetres.set(id, metres);
+    /* ONE DEFINITION, shared with the line the map draws — see `trailMetres`.
+       This loop was written out here and the map drew the TRIPS, so on a day
+       made of long jumps between places somebody stood still the panel said
+       4.1 km beside 71 metres of drawn line. */
+    distanceMetres.set(id, trailMetres(points));
     dwells.set(
       id,
       dwellStops(points, config["mbos.location.dwellRadiusMeters"], config["mbos.location.dwellMinMinutes"]),
@@ -113,6 +123,27 @@ export default async function Page({
      never counted: it means the handset has not reported, which is not the
      same claim as "refused". */
   const noBackgroundTracking = rows.filter((r) => trailHasGaps(r) && !r.onLeave);
+  /* Read once and shared, so the banner and every row beneath it are counting
+     against the same instant — and because the React Compiler rule this
+     codebase runs under forbids the client half reading a clock at all. */
+  const clockMs = nowMs();
+  /* A HANDSET REPORTING PERFECTLY AND PRODUCING NO TRAIL is its own count and
+     its own sentence, because it is nothing like the row above it: those are
+     phones whose trail has holes, and these are phones that have not produced
+     one. It is asked only of TODAY — "checked in 4 hr ago" measured against
+     this afternoon's clock says nothing whatever about a Tuesday in March, and
+     a day left open by a forgotten punch-out would read as a fault for ever. */
+  const deadTrail = isToday
+    ? rows.filter(
+        (r) =>
+          !r.onLeave &&
+          trailIsDead(
+            { ...r, dayOpen: Boolean(r.checkInAt && !r.checkOutAt) },
+            { noTrailMinutes: config["mbos.location.noTrailMinutes"] },
+            clockMs,
+          ),
+      )
+    : [];
 
   return (
     <div className="p-6">
@@ -180,7 +211,7 @@ export default async function Page({
         <Banner
           tone="warn"
           title="Following the route is switched off"
-          body="No handset is reporting its position, so the only fixes here are the ones a check-in and each visit leave behind — a handful a day. Turn it on in the field settings if you want the shape of the day. Either way it runs only between a check-in and a check-out."
+          body="No handset is reporting its position, so the only fixes here are the ones a punch-in and each visit leave behind — a handful a day. Turn it on in the field settings if you want the shape of the day. Either way it runs only between a punch-in and a punch-out."
         />
       ) : noSignal.length ? (
         <Banner
@@ -199,6 +230,14 @@ export default async function Page({
           tone="warn"
           title={`${plural(noBackgroundTracking.length, "salesman", "salesmen")} whose trail will have gaps`}
           body="Their phones stop taking fixes the moment the screen locks, or cannot take them at all — gaps no sampling interval or map styling can close. Each row says which of those it is; the fix is theirs to make, in their phone's own Settings, under MahekOne's Location permission."
+        />
+      ) : null}
+
+      {deadTrail.length ? (
+        <Banner
+          tone="danger"
+          title={`${plural(deadTrail.length, "salesman", "salesmen")} out today with no trail at all`}
+          body="Punched in, the handset reporting, and not one position recorded since — which is the tracking service on the phone rather than a signal problem, however long the row underneath says it has been quiet. Their Location permission is usually correct and worth nothing here: these handsets start the service properly and then kill it, so the fix is to allow MahekOne to autostart and set its battery usage to unrestricted, in the phone's own battery settings, then punch out and back in. Each row says how long the man has been out, and names the permission itself only where that is also wrong."
         />
       ) : null}
 
@@ -222,14 +261,16 @@ export default async function Page({
         olaMapsKey={olaMapsKey}
         handsetThresholds={{
           quietMinutes: config["mbos.location.handsetQuietMinutes"],
+          noTrailMinutes: config["mbos.location.noTrailMinutes"],
           lowBatteryPercent: config["mbos.location.lowBatteryPercent"],
+          queuedPositionsWorthSaying: config["mbos.location.queuedPositionsWorthSaying"],
         }}
-        nowMs={nowMs()}
+        nowMs={clockMs}
       />
 
       <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">
         {tracking
-          ? `A handset reports its position about every ${everyWords} while the day is open, and stops at the check-out. `
+          ? `A handset reports its position about every ${everyWords} while the day is open, and stops at the punch-out. `
           : ""}
         {isToday
           ? out.length
@@ -238,6 +279,10 @@ export default async function Page({
           : ""}
         The streets come from Ola Maps; the pins are drawn here from MahekOne&rsquo;s own data,
         so no position is ever sent to it — only which square of map is being looked at.
+        {" "}The shops and leads within a few kilometres of each salesman are drawn under
+        the day, coloured by what the account is — zoom in for their names, click one for
+        its record, or turn them off in the corner of the map. The whole book is on the
+        Territory screen.
         {!olaMapsKey ? " No key is set for it yet, so no streets are drawn below." : ""}
         {view === "today" && olaMapsKey
           ? " A dashed stretch of a trail is a real gap — two fixes far enough apart that the road actually taken between them is not known, most often a stretch driven rather than walked, or a dropped signal."

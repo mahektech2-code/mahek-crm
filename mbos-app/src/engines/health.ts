@@ -20,6 +20,8 @@
  * this file already turned into day counts by the caller.
  */
 
+import { inrFromPaise } from '../lib/format';
+
 export type HealthComponentKey =
   | 'recency'
   | 'consistency'
@@ -153,8 +155,6 @@ function slide(value: number, good: number, bad: number): number {
   return clamp(100 - t * 100, 0, 100);
 }
 
-const inrRough = (paise: number): string => '₹' + Math.round(paise / 100).toLocaleString('en-IN');
-
 export function healthScore(
   inputs: HealthInputs,
   weights: HealthWeights,
@@ -279,8 +279,8 @@ function valueTrend(
     unknown: false,
     sentence:
       change >= 0
-        ? `Buying ${pct}% more than the period before — ${inrRough(i.recentValuePaise)} against ${inrRough(i.priorValuePaise)}.`
-        : `Buying ${Math.abs(pct)}% less than the period before — ${inrRough(i.recentValuePaise)} against ${inrRough(i.priorValuePaise)}.`,
+        ? `Buying ${pct}% more than the period before — ${inrFromPaise(i.recentValuePaise)} against ${inrFromPaise(i.priorValuePaise)}.`
+        : `Buying ${Math.abs(pct)}% less than the period before — ${inrFromPaise(i.recentValuePaise)} against ${inrFromPaise(i.priorValuePaise)}.`,
   };
 }
 
@@ -325,7 +325,7 @@ function outstanding(
       ...base,
       score: neutral,
       unknown: true,
-      sentence: `${inrRough(i.outstandingPaise)} outstanding, with no credit limit on file to judge it against.`,
+      sentence: `${inrFromPaise(i.outstandingPaise)} outstanding, with no credit limit on file to judge it against.`,
     };
   }
   const utilisation = i.outstandingPaise / i.creditLimitPaise;
@@ -338,7 +338,7 @@ function outstanding(
     ...base,
     score,
     unknown: false,
-    sentence: `${inrRough(i.outstandingPaise)} outstanding — ${Math.round(utilisation * 100)}% of their limit.`,
+    sentence: `${inrFromPaise(i.outstandingPaise)} outstanding — ${Math.round(utilisation * 100)}% of their limit.`,
   };
 }
 

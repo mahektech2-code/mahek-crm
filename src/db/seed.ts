@@ -81,6 +81,7 @@ import {
 import { hashPassword } from "../lib/password";
 import { initialsOf } from "../lib/format";
 import { SETTINGS } from "../lib/config/registry";
+import { storedSettingValue } from "@/lib/config/storage";
 import { eq, inArray } from "drizzle-orm";
 import { seedCatalogue } from "./seed-catalogue";
 
@@ -584,7 +585,7 @@ async function main() {
   await db.insert(appSettings).values(
     SETTINGS.map((s) => ({
       key: s.key,
-      value: s.default as never,
+      value: storedSettingValue(s.default),
       valueType: s.type,
       category: s.category,
       label: s.label,

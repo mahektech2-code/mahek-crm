@@ -9,7 +9,7 @@ import {
 } from "@/lib/access";
 import { Wordmark } from "@/components/shell/wordmark";
 import { Icon } from "@/components/shell/icons";
-import { SignOutButton } from "@/components/shell/sign-out-button";
+import { AccountMenu } from "@/components/shell/account-menu";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { cx } from "@/components/ui/primitives";
 import { clock, longDate, today } from "@/lib/format";
@@ -49,21 +49,10 @@ export default async function LauncherPage() {
       <header className="relative z-2 flex h-14 flex-none items-center gap-4 border-b border-line bg-surface px-8">
         <Wordmark />
         <span className="flex-1" />
-        <span className="flex items-center gap-2.5">
-          <span className="flex h-7.5 w-7.5 items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
-            {user.initials}
-          </span>
-          <span className="leading-[15px]">
-            <span className="block text-[13px] font-medium whitespace-nowrap text-ink">
-              {user.name}
-            </span>
-            <span className="block text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
-              {user.role}
-            </span>
-          </span>
-        </span>
         <FeedbackButton />
-        <SignOutButton />
+        {/* The same menu the apps carry in their sidebar, so "where do I change
+            my password" has one answer wherever somebody is standing. */}
+        <AccountMenu user={user} variant="header" />
       </header>
 
       <div className="relative overflow-hidden bg-brand-deep px-8 py-9">

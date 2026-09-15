@@ -3,7 +3,7 @@ import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, Input, ListCard, PrimaryButton, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
+import { Card, ListCard, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
 import { openPasswordReset, signOut as signOutReal } from '../src/data/session';
 import { pendingCount } from '../src/sync/queue';
 import { plural } from '../src/lib/format';
@@ -18,9 +18,20 @@ import { pushStatus, registerForPush, type PushReadiness } from '../src/native/p
  * Profile — the four things about him the office may have wrong, and three
  * switches about this handset.
  *
- * Cancel reverts because it clears only the draft: nothing is written until
- * Save commits it into `pfSaved`, so an edit abandoned halfway leaves the
- * record exactly as it was rather than half-changed.
+ * **CONTACT IS READ-ONLY, AND IT USED TO BE A FORM THAT SAVED NOTHING.**
+ * Edit → type → Save wrote the four fields into `pfSaved` on the Zustand
+ * store and toasted "Profile updated". The store carries no `persist`
+ * middleware, nothing anywhere reads `pfSaved`, and nothing enqueues it — so
+ * a corrected mobile number and an emergency contact were congratulated and
+ * thrown away, and were gone again the next time the app launched. There is
+ * no profile channel on the wire to enqueue them onto, and inventing one is
+ * not a screen's decision, so the section says who to ask instead. A form
+ * that lies is worse than no form: it is where somebody goes to fix the
+ * problem and it tells them they already have — the same rule the dead
+ * toggles below this list were corrected under.
+ *
+ * An empty field says "Not set" rather than sitting blank, because the office
+ * having no emergency contact for him is the fact worth knowing.
  */
 
 /**
@@ -66,16 +77,12 @@ export default function ProfileScreen() {
   const notify = useStore((s) => s.notify);
   const askConfirm = useStore((s) => s.askConfirm);
   const signOut = useStore((s) => s.signOut);
-  const pfSaved = useStore((s) => s.pfSaved);
   const pfPrefs = useStore((s) => s.pfPrefs);
   const set = useStore((s) => s.set);
 
   const boot = useBoot();
   const me = boot.session?.user ?? null;
 
-  const [editing, setEditing] = React.useState(false);
-  const [draft, setDraft] = React.useState<Record<string, string>>({});
-  const [err, setErr] = React.useState<string | null>(null);
   const [waiting, setWaiting] = React.useState(0);
 
   React.useEffect(() => {
@@ -155,14 +162,16 @@ export default function ProfileScreen() {
     }
   };
 
-  /* Four facts about him, seeded from the session the office issued. The
-     emergency contact and the address are not in the payload, so they start
-     empty rather than showing somebody else's. */
-  const PF_FIELDS: { k: string; label: string; seed: string; hint?: string }[] = [
-    { k: 'mobile', label: 'Mobile', seed: me?.phone ?? '', hint: 'You sign in with this' },
-    { k: 'email', label: 'Email', seed: me?.email ?? '' },
-    { k: 'emg', label: 'Emergency contact', seed: '' },
-    { k: 'addr', label: 'Address', seed: '' },
+  /* Four facts about him, READ from the session the office issued. The
+     emergency contact and the address are not on the wire at all, so they are
+     drawn as "Not set" rather than left blank — the office holding no
+     emergency contact for him is the fact worth knowing, and an empty row
+     says nothing at all. */
+  const PF_FIELDS: { k: string; label: string; value: string; hint?: string }[] = [
+    { k: 'mobile', label: 'Mobile', value: me?.phone ?? '', hint: 'You sign in with this' },
+    { k: 'email', label: 'Email', value: me?.email ?? '' },
+    { k: 'emg', label: 'Emergency contact', value: '' },
+    { k: 'addr', label: 'Address', value: '' },
   ];
 
   const PF_WORK = [
@@ -170,19 +179,6 @@ export default function ProfileScreen() {
     { l: 'Territory', v: me?.territory ?? '' },
     { l: 'Employee code', v: me?.employeeCode ?? '' },
   ].filter((w) => w.v);
-
-  const val = (k: string, seed: string) => (draft[k] != null ? draft[k] : pfSaved[k] != null ? pfSaved[k] : seed);
-
-  const save = () => {
-    const m = val('mobile', me?.phone ?? '').replace(/[^0-9]/g, '');
-    if (m.length < 10) return setErr('mobile');
-    /* Commit the draft, then clear it — Cancel clears only the draft and so reverts. */
-    set({ pfSaved: { ...pfSaved, ...draft } });
-    setEditing(false);
-    setDraft({});
-    setErr(null);
-    notify('Profile updated');
-  };
 
   return (
     <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
@@ -211,28 +207,9 @@ export default function ProfileScreen() {
         </View>
       </Card>
 
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-          marginTop: 20,
-          marginBottom: 8,
-        }}>
-        <T s="label">Contact</T>
-        {!editing ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              setEditing(true);
-              setDraft({});
-              setErr(null);
-            }}
-            style={{ minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'flex-end', paddingHorizontal: 12, marginRight: -12 }}>
-            <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>Edit</T>
-          </Pressable>
-        ) : null}
-      </View>
+      <T s="label" style={{ marginTop: 20, marginBottom: 8 }}>
+        Contact
+      </T>
 
       <ListCard>
         {PF_FIELDS.map((f, i) => (
@@ -240,19 +217,9 @@ export default function ProfileScreen() {
             key={f.k}
             style={{ paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
             <T s="caption">{f.label}</T>
-            {editing ? (
-              <Input
-                value={val(f.k, f.seed)}
-                onChangeText={(v) => {
-                  setDraft((d) => ({ ...d, [f.k]: v }));
-                  setErr(null);
-                }}
-                invalid={err === f.k}
-                style={{ height: 48, minHeight: 48, marginTop: 4, borderRadius: radius.md }}
-              />
-            ) : (
-              <T style={{ fontSize: 16, lineHeight: 22, color: C.ink, marginTop: 2 }}>{val(f.k, f.seed)}</T>
-            )}
+            <T style={{ fontSize: 16, lineHeight: 22, color: f.value ? C.ink : C.muted, marginTop: 2 }}>
+              {f.value || 'Not set'}
+            </T>
             {f.hint ? (
               <T s="caption" style={{ marginTop: 3 }}>
                 {f.hint}
@@ -261,21 +228,10 @@ export default function ProfileScreen() {
           </View>
         ))}
       </ListCard>
-
-      {editing ? (
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-          <SecondaryButton
-            label="Cancel"
-            style={{ flex: 1 }}
-            onPress={() => {
-              setEditing(false);
-              setDraft({});
-              setErr(null);
-            }}
-          />
-          <PrimaryButton label="Save" onPress={save} style={{ flex: 1 }} />
-        </View>
-      ) : null}
+      <T s="caption" style={{ marginTop: 8 }}>
+        This is what the office holds for you. Ask your manager to change any of it — a correction typed
+        here would not reach them.
+      </T>
 
       <T s="label" style={{ marginTop: 20, marginBottom: 8 }}>
         Your posting

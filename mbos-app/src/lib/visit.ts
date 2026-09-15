@@ -156,21 +156,102 @@ export function visitChecks(f: VisitFacts): VisitCheck[] {
   ];
 }
 
-export function visitVerdict(checks: VisitCheck[]) {
+/**
+ * What the screen may say about the visit it is about to save.
+ *
+ * **NOTHING MISSING IS NOT THE SAME AS VERIFIED, and running the two together
+ * made this screen say the opposite of what it then wrote.** The gps check
+ * above reads OK on an overridden check-in — deliberately, so he is not asked
+ * for a second sentence at the save — and with nothing else outstanding that
+ * used to produce "Everything checks out", a green Ready badge and no warning
+ * line, on a visit `saveAndGo` was about to mark unverified and raise a "Visit
+ * saved unverified" bell for. He was told the visit was clean and then told it
+ * was not, on a record his manager would question him about.
+ *
+ * So there are two answers rather than one. `complete` is whether the checklist
+ * is satisfied, which is what keeps the save bar live — the override must not
+ * cost him a second typed reason. `verified` is whether the record that lands
+ * is a clean one, which is what the words and the badge are drawn from.
+ */
+export function visitVerdict(checks: VisitCheck[], f?: { checkInOverridden?: boolean }) {
   const failed = checks.filter((c) => !c.ok);
+  const overridden = !!f?.checkInOverridden;
+  const complete = failed.length === 0;
   return {
     failed,
-    verified: failed.length === 0,
-    title: failed.length ? 'Before you can save this' : 'Everything checks out',
+    /** Nothing the checklist asks for is outstanding: the save may go ahead. */
+    complete,
+    /** …and the visit that lands is a clean one. */
+    verified: complete && !overridden,
+    title: !complete
+      ? 'Before you can save this'
+      : overridden
+        ? 'This will save unverified'
+        : 'Everything checks out',
     blockedLine: plural(failed.length, 'thing') + ' missing before this can be saved',
     firstFailure: failed[0]?.line ?? '',
-    overrideBody:
-      'This visit does not meet ' +
-      plural(failed.length, 'requirement') +
-      '. It will be saved, marked unverified, and sent to your manager to confirm.',
+    /**
+     * The line the save bar carries above the button. It is the first missing
+     * thing where something is missing, and otherwise the reason a complete
+     * visit is still not a verified one — which is the case that used to print
+     * nothing at all.
+     */
+    warning:
+      failed[0]?.line ??
+      (overridden
+        ? 'You said the shop’s pin is wrong — this saves unverified and your manager reads your reason.'
+        : ''),
+    /* "does not meet 0 requirements" is what this said where nothing was
+       outstanding, which is now a state somebody can reach — an overridden
+       check-in leaves the checklist complete and the visit unverified. */
+    overrideBody: complete
+      ? 'This visit will be saved, marked unverified, and sent to your manager to confirm.'
+      : 'This visit does not meet ' +
+        plural(failed.length, 'requirement') +
+        '. It will be saved, marked unverified, and sent to your manager to confirm.',
   };
 }
 
 export function elapsedLabel(seconds: number): string {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+/* ══════════════════════════════════════ arriving, and then going in */
+
+/**
+ * The two decisions behind an arrival, kept PURE and out of `data/arrival.ts`.
+ *
+ * That file imports the database, so nothing in it can be exercised without a
+ * handset — and these two are exactly the kind of rule that is invisible when
+ * it goes wrong. A stale arrival restored on the wrong morning offers to check
+ * somebody into yesterday's last shop, and a second check-in that overwrote
+ * the first would silently shorten every visit it happened on. Neither shows
+ * up as an error anywhere.
+ */
+
+/** What an arrival needs to be judged, and nothing more. */
+export type ArrivalFacts = { arrivedAt: number; checkedInAt: number | null; day: string };
+
+/**
+ * Is this arrival today's?
+ *
+ * An arrival from an earlier day is not restored: he did not go in, the day
+ * has ended, and the journey behind it was closed at the boundary by
+ * `closeStaleLegs`. Offering it back on Wednesday morning would put Tuesday's
+ * last shop on the one bar this app never lets him dismiss.
+ */
+export function arrivalIsCurrent(arrival: ArrivalFacts, today: string): boolean {
+  return arrival.day === today;
+}
+
+/**
+ * Walking in, applied once.
+ *
+ * A second tap is a slip — a slow screen, or Android redrawing it — and
+ * reading it as a second arrival would move the start of the visit forward and
+ * take the difference off the dwell figure. The FIRST instant is the one he
+ * walked in on, so it is the one that stands.
+ */
+export function withCheckIn<T extends ArrivalFacts>(arrival: T, now: number): T {
+  return arrival.checkedInAt != null ? arrival : { ...arrival, checkedInAt: now };
 }

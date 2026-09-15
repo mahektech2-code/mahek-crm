@@ -269,6 +269,12 @@ function parse(
   }
 
   if (s.type === "structured") {
+    /* An emptied box on a nullable setting means "nobody has said", which is a
+       real answer and the one `mbos.attendance.baseLocation` has to be able to
+       get back to. `asText` renders null as an empty box, so without this the
+       value could be read and never written again — the office could set the
+       wrong office and not un-set it. The server checks the same thing. */
+    if (s.nullable && !raw.trim()) return { ok: true, value: null };
     try {
       return { ok: true, value: JSON.parse(raw) };
     } catch {

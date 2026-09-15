@@ -5,7 +5,7 @@ import {
   type OfflinePackStatus,
 } from '@maplibre/maplibre-react-native';
 
-import { all } from '../db';
+import { all, getKv, setKv } from '../db';
 import { getConfig } from './config';
 import {
   bestPackFor,
@@ -428,9 +428,70 @@ export async function watchMap(
   return () => OfflineManager.removeListener(id);
 }
 
-export async function pauseMap(id: string): Promise<void> {
+/* ------------------------------------------------- packs somebody stopped */
+
+/**
+ * THE PACKS THE SALESMAN STOPPED HIMSELF, and why they have to be written down.
+ *
+ * MapLibre reports a download the process was killed part-way through and one
+ * somebody deliberately paused identically: `inactive`, short of 100%. So
+ * `resumeUnfinished` could not tell them apart and restarted the second within
+ * a second of the pause — and the maps screen re-runs it on every visit, so
+ * pressing Pause made the bar stop for about as long as it took to look at it.
+ * The only control that abandons a download draws while it is paused, so
+ * undoing the pause took that away too: several hundred megabytes of his own
+ * data and his own storage, with no reachable way to stop it.
+ *
+ * It is STORED rather than held in memory because the decision has to outlive
+ * the process the same way the download does. A handset reaped on the road and
+ * reopened at the office would otherwise read a deliberate stop as an
+ * interrupted one and carry on spending.
+ *
+ * An automatic pause — the Wi-Fi rule walking out of the office onto mobile
+ * data — is deliberately NOT recorded here. That one is meant to pick up again
+ * the moment there is Wi-Fi, which is exactly what `resumeUnfinished` is for.
+ */
+const PAUSED_KEY = 'maps.pausedPacks';
+
+async function pausedByHand(): Promise<Set<string>> {
+  const raw = await getKv(PAUSED_KEY).catch(() => null);
+  if (!raw) return new Set();
+  try {
+    const ids: unknown = JSON.parse(raw);
+    return new Set(
+      Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : [],
+    );
+  } catch {
+    /* A value that will not parse is one nobody can act on. Read as "nothing
+       was paused" rather than thrown: the worst case is a download resuming,
+       and refusing to read the store at all would break pausing outright. */
+    return new Set();
+  }
+}
+
+async function rememberPaused(ids: Set<string>): Promise<void> {
+  await setKv(PAUSED_KEY, JSON.stringify([...ids])).catch(() => undefined);
+}
+
+/**
+ * Stop a download.
+ *
+ * `by` is what separates the salesman's own decision from the Wi-Fi rule's —
+ * see the note above. It defaults to his, because a pause with nobody named is
+ * a button he pressed.
+ */
+export async function pauseMap(id: string, by: 'salesman' | 'network' = 'salesman'): Promise<void> {
   const pack = await OfflineManager.getPack(id);
   await pack.pause();
+  /* After the pause, never before: a pause that threw is a pack still
+     downloading, and marking it stopped would leave it out of every resume. */
+  if (by === 'salesman') {
+    const ids = await pausedByHand();
+    if (!ids.has(id)) {
+      ids.add(id);
+      await rememberPaused(ids);
+    }
+  }
 }
 
 export async function resumeMap(id: string): Promise<void> {
@@ -438,11 +499,19 @@ export async function resumeMap(id: string): Promise<void> {
   await ensureReady(settings);
   const pack = await OfflineManager.getPack(id);
   await pack.resume();
+  await forgetPaused(id);
 }
 
 /** Gone from the phone. The storage comes back; nothing else is affected. */
 export async function removeMap(id: string): Promise<void> {
   await OfflineManager.deletePack(id);
+  await forgetPaused(id);
+}
+
+async function forgetPaused(id: string): Promise<void> {
+  const ids = await pausedByHand();
+  if (!ids.delete(id)) return;
+  await rememberPaused(ids);
 }
 
 /**
@@ -473,13 +542,30 @@ export async function resumeUnfinished(): Promise<number> {
 
   await ensureReady(settings);
   const packs = await OfflineManager.getPacks().catch(() => [] as OfflinePack[]);
+  /* A pack he stopped stays stopped. Without this the screen restarts it the
+     moment the listing refreshes — which is what pausing itself triggers. */
+  const stopped = await pausedByHand();
 
   let resumed = 0;
   for (const pack of packs) {
+    if (stopped.has(pack.id)) continue;
     const status = await pack.status().catch(() => null);
     if (!status || status.state === 'complete' || status.percentage >= 100) continue;
     await pack.resume().catch(() => undefined);
     resumed++;
   }
+
+  /* Ids of packs that are no longer on the phone — removed, or replaced by a
+     wider save — are dropped, so the list cannot grow for ever. Only where the
+     pack store actually answered: `getPacks` falls back to an empty list on a
+     failure, and reading that as "nothing is saved" would forget every pause
+     the salesman had made and start the downloads again. A few dead ids are
+     the lesser fault. */
+  if (packs.length) {
+    const alive = new Set(packs.map((p) => p.id));
+    const pruned = new Set([...stopped].filter((id) => alive.has(id)));
+    if (pruned.size !== stopped.size) await rememberPaused(pruned);
+  }
+
   return resumed;
 }

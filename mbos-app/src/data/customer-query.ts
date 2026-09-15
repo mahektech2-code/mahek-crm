@@ -184,6 +184,64 @@ export function customerPageQuery(args: {
   };
 }
 
+/* ------------------------------------------------- one customer's timeline */
+
+/**
+ * HOW MANY ENTRIES A TIMELINE READ IS CAPPED AT.
+ *
+ * One constant, so the read, the screen's slice line and anything that counts
+ * them cannot disagree — the same rule `CUSTOMER_PAGE` above is written under.
+ */
+export const TIMELINE_PAGE = 100;
+
+/**
+ * Which stored event types each filter chip asks for.
+ *
+ * `payment_bounced` sits under Payments because that is what the timeline's own
+ * badge already calls it. A filter that hides a row the All tab has just
+ * labelled "Payment" is the same falsehood one step along.
+ */
+export const TIMELINE_KINDS: Record<string, string[]> = {
+  Visits: ['visit'],
+  Orders: ['order'],
+  Payments: ['payment', 'payment_bounced'],
+  Calls: ['call', 'telecaller_call'],
+  Complaints: ['complaint'],
+};
+
+/**
+ * ONE KIND'S NEWEST PAGE, ASKED OF SQL — never a window filtered afterwards.
+ *
+ * This read was `ORDER BY occurredAt DESC LIMIT 100` and the kind was then
+ * applied to those hundred rows in JavaScript, on the screen. So on a shop with
+ * a hundred recent visits — which is an ordinary shop — picking Payments
+ * matched nothing in the window and returned nothing at all, and the screen
+ * stated it as a fact: "this shop has history, but none of it is payments".
+ * A salesman standing at the counter told a customer we had no record of their
+ * payment, on the strength of a cap nothing on the screen mentioned.
+ *
+ * With the kind in the WHERE, the cap is a hundred OF THAT KIND and the page is
+ * that kind's newest. A chip naming no kinds falls through to the whole stream,
+ * which is what All is.
+ *
+ * `id` ends the ordering for the reason it ends every other ordering in this
+ * file: a stream carries ties, and a tie broken by the planner is a row that
+ * moves between reads.
+ */
+export function customerTimelineQuery(customerId: string, filter = 'All'): Query {
+  const kinds = TIMELINE_KINDS[filter] ?? [];
+  const where = kinds.length
+    ? `customerId = ? AND eventType IN (${kinds.map(() => '?').join(',')})`
+    : 'customerId = ?';
+  return {
+    sql: `SELECT * FROM timeline_events
+           WHERE ${where}
+           ORDER BY occurredAt DESC, id DESC
+           LIMIT ${TIMELINE_PAGE}`,
+    params: [customerId, ...kinds],
+  };
+}
+
 /** Degrees of latitude to metres. Good to a few parts in ten thousand. */
 const METRES_PER_DEGREE = 111_320;
 

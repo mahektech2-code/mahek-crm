@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, T } from '../src/components/ui/primitives';
 import { color as C, weight, tabular } from '../src/theme/tokens';
-import { inr, plural } from '../src/lib/format';
+import { inrFromPaise, plural } from '../src/lib/format';
 import { listSalary, type SalaryMonth } from '../src/data/salary';
 
 /**
@@ -54,7 +54,27 @@ export default function SalaryScreen() {
         Read from the office. Raise anything that looks wrong directly with them.
       </T>
 
-      {!months ? null : !hasFigures ? (
+      {/* THREE ANSWERS, NOT TWO. The read being in flight, the table being
+          empty and the account being unmatched used to share one card — the
+          most accusing of the three — so a phone that simply had not pulled
+          since HR published told him to ring the office about an account fault
+          that did not exist, on the screen where a wrong statement is least
+          forgivable. And before the read landed there was nothing on screen at
+          all. */}
+      {!months ? (
+        <Card style={{ paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
+          <T s="small" style={{ color: C.muted, textAlign: 'center' }}>Reading…</T>
+        </Card>
+      ) : months.length === 0 ? (
+        <Card style={{ paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
+            No payslip has reached this phone yet
+          </T>
+          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
+            It arrives on the next sync once the office has published the month.
+          </T>
+        </Card>
+      ) : !hasFigures ? (
         <Card style={{ paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
             Not matched to an employee record yet
@@ -85,13 +105,13 @@ function SalaryCard({ m }: { m: SalaryMonth }) {
       <View style={{ marginTop: 14, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <T s="small" style={{ color: C.muted }}>Net salary</T>
         <T style={[{ fontSize: 22 }, weight(600), tabular]}>
-          {m.netSalaryPaise != null ? inr(m.netSalaryPaise / 100) : '—'}
+          {m.netSalaryPaise != null ? inrFromPaise(m.netSalaryPaise) : '—'}
         </T>
       </View>
 
       <View style={{ marginTop: 10, gap: 6 }}>
-        {m.conveyancePaise != null ? <Row label="Conveyance" value={inr(m.conveyancePaise / 100)} /> : null}
-        {m.otherSalaryPaise != null ? <Row label="Other" value={inr(m.otherSalaryPaise / 100)} /> : null}
+        {m.conveyancePaise != null ? <Row label="Conveyance" value={inrFromPaise(m.conveyancePaise)} /> : null}
+        {m.otherSalaryPaise != null ? <Row label="Other" value={inrFromPaise(m.otherSalaryPaise)} /> : null}
       </View>
 
       <View
@@ -109,7 +129,7 @@ function SalaryCard({ m }: { m: SalaryMonth }) {
         {m.daysOnLeave ? <Row label="Days on leave" value={plural(m.daysOnLeave, 'day')} /> : null}
         {/* Beside the pay, never added to it — money owed back is not earnings. */}
         {m.reimbursedPaise ? (
-          <Row label="Reimbursed separately" value={inr(m.reimbursedPaise / 100)} tone={C.success} />
+          <Row label="Reimbursed separately" value={inrFromPaise(m.reimbursedPaise)} tone={C.success} />
         ) : null}
       </View>
     </Card>

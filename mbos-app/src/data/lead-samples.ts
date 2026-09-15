@@ -20,12 +20,10 @@ import { FEEDBACK_FIELDS, type CodedOption } from '../engines/funnel';
  * The review itself is seven answers rather than a paragraph — see
  * `sample_feedback` in the schema for why.
  *
- * TODO(integration): the dispatch, delivery and review marks travel as
- * `sampleState` on the ordinary `sample` update. Workstream B owns
- * `src/lib/actions/lead-samples.ts`, and its `dispatchSample`,
- * `confirmSampleReceived` and `recordSampleFeedback` are where these land;
- * workstream A owns the dispatcher that has to route them. Until both are in,
- * zod strips the extra fields and the handset's own record stands alone.
+ * The dispatch, the confirmation, the trial dates and the review all travel as
+ * an ordinary `sample` update and are read by `handleSampleUpdate`. What they
+ * must carry is MahekOne's own vocabulary, at the top level of the payload —
+ * see `moveSample`, which is where that went wrong for the whole lifecycle.
  */
 
 export type FunnelSample = {
@@ -49,10 +47,39 @@ export type FunnelSample = {
   deliveredAt: number | null;
   deliveryPhotoId: string | null;
   receivedConfirmedAt: number | null;
+  /**
+   * THE SHOP'S OWN WORD, under the name the office writes it by. The pull fills
+   * this column and nothing else; `receivedConfirmedAt` is what a confirmation
+   * made on THIS handset writes, and the record page read only the second — so
+   * a sample the shop had confirmed to the office showed nothing at all. Both
+   * are the same fact asserted by the same party and either one is the answer.
+   */
+  receivedAt: number | null;
+  /**
+   * STARTED and COMPLETED are two columns, and the gap between them is the
+   * point. A trial opened three weeks ago and never finished is the commonest
+   * way a sample goes quiet, and with only an outcome column it is
+   * indistinguishable from a can nobody has touched. The column has been on
+   * this table and on the pull since the funnel shipped; nothing read it.
+   */
+  trialStartedAt: number | null;
   trialCompletedAt: number | null;
   reviewedAt: number | null;
   cancelledAt: number | null;
   cancelReason: string | null;
+  /**
+   * WHY THE OFFICE REFUSED IT. §K demands the reason precisely so the next
+   * sample does not go out identical, and the one person who would change what
+   * goes out is the salesman — who was the one person never shown it. The
+   * column has been on this table and filled by the pull since the lifecycle
+   * shipped; no type declared it and no screen read it, so a refused sample was
+   * a red badge and nothing else.
+   */
+  rejectionReason: string | null;
+  /** What the shop made of it in their own words, and what else they asked for
+   *  while we had their attention. Written by the office, read here. */
+  satisfaction: string | null;
+  additionalRequirement: string | null;
   trialOutcome: string | null;
   followUpDate: string | null;
   convertedOrderId: string | null;
@@ -76,6 +103,15 @@ export type SampleFeedback = {
 };
 
 export type SampleResult<T> = { ok: true; value: T } | { ok: false; message: string };
+
+/**
+ * What the shop made of the trial — the server's own four, spelled its way.
+ *
+ * `more_testing` is a third real verdict rather than a shrug, which is why it
+ * is not folded into `pending`: pending means nobody has answered, and this
+ * means they answered "again, on something else".
+ */
+export type TrialVerdict = 'pending' | 'approved' | 'rejected' | 'more_testing';
 
 /* ------------------------------------------------------------------ reads */
 
@@ -151,10 +187,20 @@ export function whatIsOwed(s: FunnelSample): string | null {
     case 'Requested': return 'Waiting on the office to approve it';
     case 'Approved': return 'Approved — waiting for it to go out';
     case 'Dispatched': return 'Sent. Check they have it';
-    case 'Awaiting feedback': return 'They have it. Ask how the trial went';
+    /* Started and not finished is a different call from not started at all:
+       one asks how it is going, the other asks whether the can was even
+       opened. Both are chased, and saying which is what makes the chase land. */
+    case 'Awaiting feedback':
+      return s.trialStartedAt
+        ? 'They have started the trial. Ask how it is going'
+        : 'They have it. Ask whether they have tried it yet';
     case 'Tried': return 'They have tried it — write down what they said';
     case 'Rejected': return null;
-    case 'Reviewed': return null;
+    /* A reviewed sample is finished EXCEPT on the third verdict: "they want to
+       try it again on a different substrate" is a live trial with a next step,
+       and filing it as done is how it goes quiet. */
+    case 'Reviewed':
+      return s.trialOutcome === 'more_testing' ? 'They want to try it again — another sample is the next step' : null;
     case 'Converted': return null;
     case 'Cancelled': return null;
     default: return null;
@@ -244,20 +290,25 @@ export async function requestLeadSample(args: {
 /**
  * One step along, locally and on the wire.
  *
- * `customerId` is sent on every one of these and it is not decoration:
- * `handleSample` in `src/lib/actions/mbos.ts` parses an update with the FULL
- * `sampleSchema`, which requires it, so a state mark posted without one is
- * rejected outright and the salesman is told a courier docket was invalid.
- * The insert behind it is `onConflictDoNothing`, so restating it changes
- * nothing that is already there.
+ * THE WIRE WORDS GO AT THE TOP LEVEL, and nesting them was how every one of
+ * these marks was thrown away. `updateAndQueue` posts
+ * `{ id, ...patch, ...payloadExtras }`, and `sampleUpdateSchema` in
+ * `src/lib/actions/mbos.ts` is a plain zod object — so `sampleState: wire`
+ * was stripped whole, and the LOCAL Title-Case word left in the patch was what
+ * reached the enum: `"Dispatched"` against `dispatched`, `"Tried"` against
+ * `trial_done`. `safeParse` failed, `handleSampleUpdate` answered a terminal
+ * `validationRejection`, and the courier docket, the confirmation, the
+ * seven-part review and the cancellation were all dropped while the screen
+ * said "Sent · <docket>" and "Written down". The wire is spread LAST, so its
+ * spelling wins over the patch's own for every column they both name.
  *
- * TODO(integration): `sampleState` is not on `sampleSchema` yet and is
- * stripped, so the office currently learns nothing from these four marks —
- * and each one writes a second "sample handed to X" line on the customer
- * timeline, because that handler has no `item.op === 'update'` branch.
- * Workstream A owns the dispatcher and workstream B owns `dispatchSample`,
- * `confirmSampleReceived` and `recordSampleFeedback`; the shape below is what
- * they should read.
+ * The same schema declares every instant as epoch MILLISECONDS. An ISO string
+ * in one of those fields fails the parse exactly as a Title-Case state does,
+ * which is why nothing here formats a date on the way out.
+ *
+ * `customerId` is sent on every one of these and it is not decoration: it is
+ * what the create branch requires, and a mark that lands on the create path
+ * without one is refused with a message about a docket.
  */
 async function moveSample(
   id: string,
@@ -270,7 +321,7 @@ async function moveSample(
     entityType: 'sample',
     id,
     patch,
-    payloadExtras: { customerId, sampleState: wire },
+    payloadExtras: { customerId, ...wire },
   });
 }
 
@@ -316,10 +367,15 @@ export async function markDispatched(
  * §15 — they have it, and a courier saying so is not the same as them saying
  * so.
  *
- * `receivedConfirmedAt` is deliberately separate from `deliveredAt`: one is
- * what the docket claims and the other is the customer or the salesman
- * confirming it, and a trial chased on the strength of a scan that was wrong
- * is a call that annoys somebody who never got anything.
+ * ONE TAP, ONE ASSERTION. This wrote `deliveredAt` and `receivedConfirmedAt`
+ * from the same `Date.now()`, which manufactured the carrier's word out of the
+ * shop's: two columns exist precisely because they are two parties, and §J
+ * turns entirely on the second — the review clock is dated from it. AGENTS.md
+ * states the rule in as many words, that `received_at` is never defaulted from
+ * `delivered_at`, "because a default would quietly assert something nobody
+ * asked the customer". What this button asserts is that the shop has it, so
+ * that is the only column it writes; `deliveredAt` stays the carrier's and
+ * arrives, or does not, off the pull.
  */
 export async function confirmReceived(id: string, photoId?: string | null): Promise<SampleResult<null>> {
   const at = Date.now();
@@ -328,13 +384,36 @@ export async function confirmReceived(id: string, photoId?: string | null): Prom
     await customerOf(id),
     {
       state: 'Awaiting feedback',
-      deliveredAt: at,
       receivedConfirmedAt: at,
       deliveryPhotoId: photoId ?? null,
     },
-    { state: 'received', receivedAt: new Date(at).toISOString(), deliveryPhotoId: photoId ?? undefined },
+    /* `receivedAt` is the office's name for this same column, and epoch
+       milliseconds is what its schema declares — an ISO string here failed the
+       parse and took the whole confirmation with it. */
+    { state: 'received', receivedAt: at, deliveryPhotoId: photoId ?? undefined },
   );
   if (photoId) await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, photoId]);
+  return { ok: true, value: null };
+}
+
+/**
+ * §K — they have opened the can.
+ *
+ * The STATE does not move: a trial under way is still `Awaiting feedback`,
+ * because what is owed is still the review. What moves is the date, and the
+ * gap between this one and `trialCompletedAt` is the whole reason there are
+ * two columns — a trial started and never finished is the commonest way a
+ * sample goes quiet, and it is invisible where the only mark is an outcome.
+ *
+ * The wire carries the date alone and no `state`, which `sampleUpdateSchema`
+ * allows: there is no state change to assert, and inventing one here would
+ * move the sample forward on the office's record for a mark that is about
+ * timing rather than about progress. Epoch milliseconds, which is what that
+ * schema declares the two trial columns as.
+ */
+export async function markTrialStarted(id: string): Promise<SampleResult<null>> {
+  const at = Date.now();
+  await moveSample(id, await customerOf(id), { trialStartedAt: at }, { trialStartedAt: at });
   return { ok: true, value: null };
 }
 
@@ -343,7 +422,9 @@ export async function markTried(id: string): Promise<SampleResult<null>> {
   const at = Date.now();
   await moveSample(id, await customerOf(id), { state: 'Tried', trialCompletedAt: at }, {
     state: 'trial_done',
-    trialCompletedAt: new Date(at).toISOString(),
+    /* Epoch milliseconds, which is what `sampleUpdateSchema` declares both
+       trial columns as. An ISO string here failed the parse outright. */
+    trialCompletedAt: at,
   });
   return { ok: true, value: null };
 }
@@ -365,7 +446,12 @@ export async function recordFeedback(
   args: {
     customerId: string;
     fields: Partial<Record<(typeof FEEDBACK_FIELDS)[number]['id'], string>>;
-    trialOutcome: 'approved' | 'rejected' | 'pending';
+    /* FOUR verdicts, not three. `more_testing` is a real answer — "they want
+       to try it again on a different substrate" is neither approval nor
+       refusal — and recording it as `pending` loses the fact that a trial
+       happened at all. The office has accepted all four since the module
+       shipped; only the handset offered three. */
+    trialOutcome: TrialVerdict;
     photoId?: string | null;
   },
 ): Promise<SampleResult<null>> {
@@ -421,7 +507,7 @@ export async function recordFeedback(
     { state: 'Reviewed', reviewedAt: at, trialOutcome: args.trialOutcome },
     {
       state: 'reviewed',
-      reviewedAt: new Date(at).toISOString(),
+      reviewedAt: at,
       trialOutcome: args.trialOutcome,
       feedback: {
         quality: row.quality,
@@ -439,7 +525,15 @@ export async function recordFeedback(
   return { ok: true, value: null };
 }
 
-/** A trial that is not going to happen. The row stays, with the reason on it. */
+/**
+ * A trial that is not going to happen. The row stays, with the reason on it.
+ *
+ * `trialOutcome` is deliberately NOT touched. It used to be stamped
+ * `rejected`, which said on the customer's record that they had tried the
+ * product and turned it down — a sentence about the shop, written because the
+ * office withdrew a sample that never left the godown. The state already says
+ * it was cancelled, and `cancelReason` already says why.
+ */
 export async function cancelSample(id: string, reason: string): Promise<SampleResult<null>> {
   const said = reason.trim();
   if (!said) return { ok: false, message: 'Say why it is being cancelled.' };
@@ -447,7 +541,7 @@ export async function cancelSample(id: string, reason: string): Promise<SampleRe
   await moveSample(
     id,
     await customerOf(id),
-    { state: 'Cancelled', cancelledAt: at, cancelReason: said, trialOutcome: 'rejected' },
+    { state: 'Cancelled', cancelledAt: at, cancelReason: said },
     { state: 'cancelled', cancelReason: said },
   );
   return { ok: true, value: null };

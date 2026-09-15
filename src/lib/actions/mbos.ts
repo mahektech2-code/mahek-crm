@@ -2157,10 +2157,11 @@ const complaintSchema = z.object({
     "pricing",
     "service",
     "shortage",
+    "wrong_product",
     "other",
   ]),
   description: z.string().min(1).max(4000),
-  severity: z.enum(["low", "medium", "high"]).nullish(),
+  severity: z.enum(["low", "medium", "high", "critical"]).nullish(),
   mobileNumber: z.string().max(20).nullish(),
   requestCn: z.boolean().nullish(),
   visitId: z.string().nullish(),
@@ -4241,16 +4242,33 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
   const p = parsed.data;
 
   const config = await getConfig();
-  const cap = config["mbos.expenses.categoryCapsPaise"][p.category];
-  if (cap != null && p.amountPaise > cap) {
-    return {
-      kind: "rejected",
-      value: reject(
-        "validation",
-        `${rupees(p.amountPaise)} of ${p.category} is over the ${rupees(cap)} daily cap. Split it, or ask your manager to raise the cap before claiming.`,
-      ),
-    };
-  }
+
+  /*
+   * A CAP DOES NOT REFUSE A CLAIM, and this is where it used to.
+   *
+   * `mbos.expenses.categoryCapsPaise` was read here PER CLAIM, while the
+   * registry called it a daily cap and said in as many words that going over
+   * one "is not refused", and the handset read the same key as a monthly
+   * running total. The rejection was the reading that did damage: a claim
+   * refused at the sync dies in an outbox on a phone, so the money is spent,
+   * the bill is photographed, and the only record of either is on a handset
+   * nobody is looking at.
+   *
+   * `engines/expense-policy.ts` states the principle in its own header — the
+   * engine never refuses anything, because the money is already spent and a
+   * system that refuses to record it has not saved the money, it has only made
+   * sure nobody finds out. What a claim is worth is `computeDay`'s answer,
+   * taken against the policy in force on the day it happened, and the excess
+   * goes up as an exception for a person to decide about. The salesman has
+   * already read that same answer on the phone: `claim-preview.ts` runs this
+   * engine against his own day before he presses send, and says plainly what
+   * needs his manager to agree it.
+   *
+   * The two refusals below stay, and neither is a cap. A missing bill is a
+   * claim that cannot be settled by anybody and is fixed by walking back to
+   * the phone; a date months old is a claim the office has said it will not
+   * take without a person entering it. Both name the way forward.
+   */
 
   if (p.amountPaise >= config["mbos.expenses.billPhotoThresholdPaise"] && !p.billPhotoId) {
     return {
@@ -4435,7 +4453,19 @@ const travelLegSchema = z.object({
   ticketReference: z.string().max(100).nullish(),
   note: z.string().max(2000).nullish(),
   /** `day_log` | `visit`. See `mbosTravelLegs.origin`. */
-  origin: z.enum(["day_log", "visit"]).nullish(),
+  origin: z.enum(["day_log", "visit", "session"]).nullish(),
+  /**
+   * These kilometres are already counted by the session's own meter pair.
+   *
+   * Sent by the handset rather than derived here, because the decision is made
+   * where the facts are: the phone knows which session was open when the leg
+   * was opened, and re-deriving it server-side would mean reconstructing that
+   * from timestamps and getting it wrong on the legs that straddle a lunch
+   * break. The reason travels with it for the same reason it is a column — an
+   * exclusion nobody can read off the record is unanswerable six weeks later.
+   */
+  claimExcluded: z.boolean().nullish(),
+  claimExcludedReason: z.string().nullish(),
 });
 
 /**
@@ -4525,13 +4555,25 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
    * take would mean refusing to record a journey that happened, which is the
    * rule the whole expense module is built on.
    */
-  if (p.origin === "visit" && mode.requiresOdometer) {
+  /*
+   * A SESSION LEG IS HELD TO THE SAME STANDARD, and for the same reason.
+   *
+   * It is opened at the punch-in and closed at the punch-out, so the app is
+   * present at both ends exactly as it is for a visit leg — and it now carries
+   * the WHOLE of an own-vehicle day's distance rather than one ride of it, so
+   * a session accepted without its readings loses far more than a visit leg
+   * ever did. The visit legs on such a day arrive `claimExcluded`, priced by
+   * nothing, and this pair is what they were excluded in favour of.
+   */
+  if ((p.origin === "visit" || p.origin === "session") && mode.requiresOdometer) {
     if (p.odometerStartKm == null || !p.odometerPhotoId) {
       return {
         kind: "rejected",
         value: reject(
           "validation",
-          "A journey on your own vehicle is measured on your own meter, so it needs the reading at the start and the photograph showing it. Nothing was recorded — take the photo and set off again.",
+          p.origin === "session"
+            ? "A day on your own vehicle is measured on your own meter, so punching in needs the reading and the photograph showing it. Nothing was recorded — take the photo and punch in again."
+            : "A journey on your own vehicle is measured on your own meter, so it needs the reading at the start and the photograph showing it. Nothing was recorded — take the photo and set off again.",
         ),
       };
     }
@@ -4542,7 +4584,9 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
         kind: "rejected",
         value: reject(
           "validation",
-          "Arriving on your own vehicle needs the meter read and photographed again — that second reading is the whole of the distance claim.",
+          p.origin === "session"
+            ? "Punching out on your own vehicle needs the meter read and photographed again — that second reading is the whole of the day's distance claim."
+            : "Arriving on your own vehicle needs the meter read and photographed again — that second reading is the whole of the distance claim.",
         ),
       };
     }
@@ -4586,6 +4630,11 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
     ticketReference: p.ticketReference ?? null,
     note: p.note ?? null,
     origin: p.origin ?? "day_log",
+    /* Movement, recorded, and not a second claim — see the column's own note.
+       Defaulted false, so a handset one build behind goes on sending legs that
+       are claimed exactly as they always were. */
+    claimExcluded: p.claimExcluded ?? false,
+    claimExcludedReason: p.claimExcludedReason ?? null,
     updatedAt: new Date(),
     updatedById: principal.user.id,
   };
@@ -4741,6 +4790,25 @@ const attendanceSchema = z.object({
   regularisationRequested: z.boolean().nullish(),
   regularisationReason: z.string().max(1000).nullish(),
   /**
+   * WHAT THE PHONE SAID ABOUT ITSELF AS THE DAY OPENED, and the office's only
+   * answer to "why was he stopped, and did it help".
+   *
+   * `setupReady` is what the handset could actually check; `setupAcknowledgedAt`
+   * is the man saying he did the steps nothing can check, which is a CLAIM and
+   * is stored as one; `setupUnverified` is what was still outstanding when he
+   * said it. All three are optional and all three stay optional — a handset
+   * already in somebody's pocket sends none of them, and a schema that
+   * demanded them would refuse the one write in this product that must never
+   * be refused.
+   *
+   * The list is capped and each entry is short because it is a set of item
+   * keys the setup screen names, not prose: an unbounded list from a client is
+   * a column somebody can grow without limit.
+   */
+  setupReady: z.boolean().nullish(),
+  setupAcknowledgedAt: z.number().nullish(),
+  setupUnverified: z.array(z.string().max(60)).max(20).nullish(),
+  /**
    * Sent by the handset when a checked-out day is started again — a lunch
    * break, or a phone that swapped devices mid-afternoon. It carries no date
    * of its own to write anywhere; it is a signal to REOPEN the row, read only
@@ -4822,6 +4890,9 @@ async function handleAttendance(
       geofenceDistanceM: round(p.geofenceDistanceM),
       regularisationRequested: p.regularisationRequested ?? false,
       regularisationReason: p.regularisationReason ?? null,
+      setupReady: p.setupReady ?? null,
+      setupAcknowledgedAt: p.setupAcknowledgedAt ? new Date(p.setupAcknowledgedAt) : null,
+      setupUnverified: p.setupUnverified ?? null,
       clientCreatedAt: new Date(item.clientCreatedAt),
       createdById: principal.user.id,
       updatedById: principal.user.id,
@@ -4916,6 +4987,23 @@ async function handleAttendance(
         ...(p.regularisationReason != null
           ? { regularisationReason: p.regularisationReason }
           : {}),
+        /*
+         * THE LATEST READING WINS, and an absent one writes nothing.
+         *
+         * A day is opened more than once — he breaks for lunch and comes back
+         * — and the afternoon's check-in is its own reading of the phone: a
+         * handset whose battery manager was switched back on at midday stopped
+         * being able to record at midday, and the row should say so. What must
+         * never happen is the opposite, a re-sent payload from an older build
+         * or a retried create writing null over a claim somebody made; hence
+         * the same `!= null` guard every field above it uses rather than a
+         * plain assignment.
+         */
+        ...(p.setupReady != null ? { setupReady: p.setupReady } : {}),
+        ...(p.setupAcknowledgedAt != null
+          ? { setupAcknowledgedAt: new Date(p.setupAcknowledgedAt) }
+          : {}),
+        ...(p.setupUnverified != null ? { setupUnverified: p.setupUnverified } : {}),
         updatedAt: new Date(),
         updatedById: principal.user.id,
       },

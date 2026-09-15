@@ -128,7 +128,19 @@ function dataExports(): { file: string; name: string }[] {
   return out;
 }
 
-/** Mentions of `name` anywhere in the tree that are not its own definition. */
+/**
+ * Mentions of `name` anywhere in the tree that are not its own definition.
+ *
+ * A name inside QUOTES is not one of them. TypeScript has no way to call a
+ * function by writing its name as a string, so a quoted hit is always some
+ * other vocabulary that happens to share a word — `phone-setup.tsx` carries an
+ * action called `'acknowledge'` and `data/notifications.ts` exports a function
+ * called `acknowledge`, and nothing whatever connects the two. Counted as a
+ * caller it would take a genuinely unreachable function off the allowlist,
+ * which is the one direction this sweep must not fail in: the allowlist is
+ * where somebody reads the reason, and a name silently leaving it is a feature
+ * quietly declared reachable by a coincidence of spelling.
+ */
 function callers(name: string, definedIn: string): number {
   let hits = 0;
   const word = new RegExp(`\\b${name}\\b`, 'g');
@@ -136,6 +148,11 @@ function callers(name: string, definedIn: string): number {
     for (const m of body.matchAll(word)) {
       const before = body.slice(Math.max(0, m.index - 40), m.index);
       if (file === definedIn && /export\s+(async\s+)?function\s*$/.test(before)) continue;
+
+      const quote = body[m.index - 1];
+      const after = body[m.index + name.length];
+      if ((quote === "'" || quote === '"' || quote === '`') && after === quote) continue;
+
       hits++;
     }
   }

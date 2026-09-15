@@ -9,7 +9,7 @@ import { createLead, leadThresholds, listLeads, visitCapThresholds, type Lead } 
 import { takePhoto } from '../src/native/capture';
 import { CUSTOMER_TYPES, LEAD_FILTERS, LEAD_SOURCES, leadAlert, visitCapLabel, visitCapState, type DuplicateMatch, type LeadFilter, type LeadThresholds, type VisitCapThresholds } from '../src/engines/leads';
 import { SALES_TYPES, salesTypeLabel, type LeadSalesType } from '../src/engines/funnel';
-import { dmy, inr, isoDate, plural, pretty } from '../src/lib/format';
+import { dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
 /**
@@ -105,7 +105,20 @@ export default function LeadsScreen() {
 
   useFocusEffect(load);
 
-  const openForm = React.useCallback(() => {
+  /*
+   * WHAT HE TYPED SURVIVES A DISMISSAL, and it did not.
+   *
+   * `BottomSheet` closes on a scrim tap and on Android's back gesture, and the
+   * only way back in is this button — which used to clear all fourteen fields
+   * on the way IN. So one stray tap above the longest form in the app, filled
+   * one-handed in the street, cost the whole shop the moment he pressed "+ Add
+   * lead" again, with nothing asked and nothing said.
+   *
+   * Nothing is cleared now until something has been done with it: a save that
+   * worked, or Cancel, which is somebody deliberately saying to throw it away.
+   * Re-opening shows him exactly what he had.
+   */
+  const clearForm = React.useCallback(() => {
     setName('');
     setCompany('');
     setMobile('');
@@ -123,8 +136,9 @@ export default function LeadsScreen() {
     setShopPhotoId(null);
     setErr(null);
     setDup(null);
-    setFormOpen(true);
   }, []);
+
+  const openForm = React.useCallback(() => setFormOpen(true), []);
 
   /* The + sheet on every screen offers "Add lead", which lands here with the
      form already asked for — the salesman is standing outside the shop. */
@@ -183,6 +197,10 @@ export default function LeadsScreen() {
     }
 
     setFormOpen(false);
+    /* One of the two places anything is thrown away — this one and Cancel. The
+       next "+ Add lead" is a different shop; this one is on the list behind
+       the sheet. */
+    clearForm();
     load();
     notify('Lead added · ' + (company.trim() || name.trim()));
   };
@@ -259,7 +277,7 @@ export default function LeadsScreen() {
 
                 <T style={[{ fontSize: 15, marginTop: 10, color: x.estimatedPotentialPaise ? C.ink : C.muted }, weight(500)]}>
                   {x.estimatedPotentialPaise
-                    ? inr(x.estimatedPotentialPaise / 100) + ' a month, he reckons'
+                    ? inrFromPaise(x.estimatedPotentialPaise) + ' a month, he reckons'
                     : 'Worth not estimated yet'}
                 </T>
 
@@ -476,8 +494,21 @@ export default function LeadsScreen() {
           </View>
         ) : null}
 
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-          <SecondaryButton label="Cancel" onPress={() => setFormOpen(false)} style={{ flex: 1, borderRadius: radius.xl }} />
+        {/* Closing the sheet any other way — the scrim, the back gesture —
+            keeps what he typed and brings it straight back. Cancel is the one
+            gesture that means throw it away, so it is the one that clears. */}
+        <T s="caption" style={{ marginTop: 18 }}>
+          Close this by mistake and what you have typed will still be here. Cancel throws it away.
+        </T>
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+          <SecondaryButton
+            label="Cancel"
+            onPress={() => {
+              setFormOpen(false);
+              clearForm();
+            }}
+            style={{ flex: 1, borderRadius: radius.xl }}
+          />
           <PrimaryButton label="Add lead" onPress={save} style={{ flex: 1, borderRadius: radius.xl }} />
         </View>
       </BottomSheet>

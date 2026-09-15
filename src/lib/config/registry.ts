@@ -47,6 +47,11 @@ export type SettingCategory =
   | "auth"
   /* ---- MBOS, the field sales app. Same rule: no threshold is a constant. ---- */
   | "mbos-location"
+  /**
+   * How a day's stops are put in order. Four numbers that only mean anything
+   * together — publishing one of them is half a control.
+   */
+  | "mbos-route"
   | "mbos-orders"
   | "mbos-credit"
   | "mbos-payments"
@@ -85,6 +90,18 @@ export type SettingDefinition = {
   max?: number;
   /** Allowed values for text settings behaving as an enum. */
   options?: readonly string[];
+  /**
+   * Structured settings only: null is a real answer rather than an empty box.
+   *
+   * The ordinary structured setting is a map of weights or a list of reasons,
+   * and a null one is a value somebody cleared by accident — refusing it is
+   * right. It is wrong where the ABSENCE is the statement:
+   * `mbos.attendance.baseLocation` null means nobody has said where the office
+   * is, which is the shipped state and the state a deployment that typed the
+   * wrong coordinates has to be able to get back to. Without this flag the
+   * only way back from a bad pin would be a database write.
+   */
+  nullable?: boolean;
 };
 
 /**
@@ -1251,17 +1268,19 @@ export const SETTINGS = [
     type: "structured",
     category: "complaints",
     label: "Resolution SLA",
-    description: "Hours to resolution by severity.",
-    default: { low: 120, medium: 48, high: 24 },
+    description:
+      "Hours to resolution by priority - Normal, Urgent and Critical are stored as medium, high and critical. `low` is no longer offered on any form and is kept for complaints that already carry it.",
+    default: { low: 120, medium: 48, high: 24, critical: 8 },
   },
   {
     key: "complaints.defaultSeverity",
     type: "text",
     category: "complaints",
-    label: "Default severity",
-    description: "Severity given to a complaint raised on a call, which sets its SLA.",
+    label: "Default priority",
+    description:
+      "The priority a complaint takes when nobody picks one - on the sheet import, the handset, and any form that does not ask. Normal is `medium`, which is what every complaint raised before the field existed carries.",
     default: "medium",
-    options: ["low", "medium", "high"],
+    options: ["low", "medium", "high", "critical"],
   },
   {
     key: "interactions.maxNotesLength",
@@ -1695,6 +1714,82 @@ export const SETTINGS = [
     max: 300,
   },
   {
+    key: "mbos.location.trailKeepEverySeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "How far apart two points on the trail may be",
+    description:
+      "Seconds. The one above is a CEILING on how often the handset asks the OS for a position; this is the floor on how often one is actually kept, and it is the number that decides what the trail looks like and what it costs to upload. The two are not the same question and must not be collapsed: Android delivers on its own schedule whatever it is asked for, so the app keeps what it wants and discards the rest. It is stated in SECONDS because the thing it is measured against is: in MINUTES the finest it could express was sixty seconds while the ask beside it ran at three, so every value in the gap between them — which is the whole of the useful range — was unreachable, and the densest trail the office could ask for still cut corners through buildings. It defaults to the SAME three seconds as the ask above, which is what makes the trail road-by-road: every fix the handset pays the battery to take is a fix that is kept, and the shape that comes back is the road actually ridden rather than the corners between the places somebody stopped. Raising it discards fixes already taken — it saves upload and storage and NOT battery, because the cost is paid at the ask — so raise it only if a market lane genuinely cannot drain the queue.",
+    default: 3,
+    min: 3,
+    max: 3600,
+  },
+  {
+    key: "mbos.location.trailStalledAfterMisses",
+    type: "integer",
+    category: "mbos-location",
+    label: "Missed fixes before the handset stops believing it is tracking",
+    description:
+      "Android accepts the background tracking task and then, on a vivo, an Oppo or a Xiaomi, the battery manager quietly kills the service behind it — the handset is told it started and is never told otherwise. Silence is the only evidence there is, so this is how many of its own position intervals may pass with nothing recorded before the phone concludes it is not tracking, falls back to taking fixes while the app is open, and tells the office what it is really doing. Too low and a salesman walking through a basement godown is demoted off real background tracking for the rest of the day; too high and a handset that will never deliver a fix spends a morning believing it is.",
+    default: 4,
+    min: 2,
+    max: 60,
+  },
+  {
+    key: "mbos.location.queueRetentionDays",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long a handset keeps a fix it could not send",
+    description:
+      "Days. Every position waits in a queue on the phone until this server confirms it, which is why a lost connection costs nothing — and this is the one boundary past which an unsent fix is finally dropped. It only ever bites a handset the server cannot file fixes against at all, which in practice means a check-in still stuck in the outbox; a phone that simply has no signal keeps everything and sends it when it can. It was a constant in the handset for the life of the module, which made the durability of somebody's working day a number nobody could see or change. Longer is safer and costs storage on the phone; shorter risks throwing away a day that would have arrived.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "mbos.location.queuedPositionsWorthSaying",
+    type: "integer",
+    category: "mbos-location",
+    label: "Unsent fixes before the team list mentions a backlog",
+    description:
+      "A queue is the design working rather than a fault — the connection went, nothing was lost, and it arrives on its own. So the team list says nothing at all until a handset is this far behind, for the same reason a healthy phone says nothing anywhere else on that panel: a row that always has something on it is a row nobody reads. At the three-second cadence a fix is three seconds of somebody's route, so 200 is about ten minutes of work and 1,000 is about an hour.",
+    default: 200,
+    min: 10,
+    max: 100_000,
+  },
+  {
+    key: "mbos.location.trailStalledMinSilenceSeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "Shortest silence that may count as a stopped tracker",
+    description:
+      "Seconds, and it is a FLOOR under the setting above rather than a second opinion about it. That one counts missed intervals, which was the right shape while a fix was kept every five minutes — four of those is twenty minutes, and twenty minutes of silence really does mean a battery manager has killed the service. At the three-second cadence the trail now runs at, the same four misses come to twelve seconds, which a walk indoors or one deferred batch clears without anything being wrong. What it cost is not a note on a screen: concluding the tracker has stopped switches background tracking off for the rest of the app's run, so a dense cadence had the watchdog disabling real tracking on healthy handsets within a minute of check-in. How long silence must last before the OS is disbelieved is a fact about battery managers, not about how often we sample, and the two were only ever the same number by coincidence. Lower it and a basement godown demotes somebody for the day; raise it and a phone that will never deliver a fix spends longer believing it is.",
+    default: 300,
+    min: 30,
+    max: 7200,
+  },
+  {
+    key: "mbos.location.startOfDayGate",
+    type: "text",
+    category: "mbos-location",
+    options: ["block", "warn", "off"],
+    label: "What happens when a handset cannot record the day",
+    description:
+      "A salesman checked in at 04:16 on a vivo and posted not one position all day: every permission on the phone read correct, the tracking service started properly, and the handset's own battery manager killed it within minutes. Nothing looked broken at either end and the day was gone by the time anybody noticed — a trail cannot be reconstructed afterwards. Block means the day does not open until the phone can show it will record, with the steps to fix it on the screen and, where the phone genuinely cannot, a plain dead end rather than a button that leads nowhere. Warn opens the day anyway and still records what was wrong, which is how to turn this on for a team without a morning of nobody being able to mark attendance — the office can count who would have been stopped first. Off is no gate at all. There is no skip a salesman can reach in any of the three: a day that opened on a phone that could not record it, filed beside one that could, is exactly the pair nobody can tell apart a week later.",
+    default: "block",
+  },
+  {
+    key: "mbos.location.nearbyBookRadiusKm",
+    type: "integer",
+    category: "mbos-location",
+    label: "How far around the team the Live map draws the book",
+    description:
+      "Kilometres from each salesman's last known position within which the Live map draws the shops and leads he could be standing next to. It is a catchment and not a territory: the point of drawing the book under a trail is to read the day against what he went past, and the whole book at national scale is a wash of dots that answers nothing. Ten is about a morning's reach on a bike. Raising it puts more on the screen and more on the wire; the Territory screen is where the whole book is read.",
+    default: 10,
+    min: 1,
+    max: 50,
+  },
+  {
     key: "mbos.location.dwellRadiusMeters",
     type: "integer",
     category: "mbos-location",
@@ -1771,6 +1866,17 @@ export const SETTINGS = [
     max: 720,
   },
   {
+    key: "mbos.location.noTrailMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long an open day may run with no trail at all before the Live map says so",
+    description:
+      "Minutes since the check-in. A day four minutes old with no fix yet is a phone still starting its tracking task; one four hours old with not a single position is a handset whose trail is dead, and until this existed nothing on any screen said so — the map simply drew him at his check-in point and the only note he got was that he had gone quiet, which sent managers looking for a signal problem on a phone that was syncing perfectly. It is deliberately not the same number as the silence above: that one asks whether we are hearing from the phone at all, and this one asks whether the phone that IS reporting has produced a trail.",
+    default: 90,
+    min: 10,
+    max: 720,
+  },
+  {
     key: "mbos.location.lowBatteryPercent",
     type: "integer",
     category: "mbos-location",
@@ -1791,6 +1897,65 @@ export const SETTINGS = [
     default: 24,
     min: 1,
     max: 168,
+  },
+
+  /* ------------------------------------------------------- route ordering
+   *
+   * The four arguments `engines/route.ts` takes, and it takes them as
+   * arguments precisely so they can be these. They ran as compiled defaults on
+   * every handset in the field until they were published here — which is the
+   * silent failure `getConfig` is built to make safe and which is invisible
+   * exactly because the numbers it fell back to were the numbers everybody
+   * assumed were in force. Each default below is what has actually been
+   * running, so publishing them changed nobody's route.
+   *
+   * They are one category because they are one control. Two of them bound the
+   * work the phone is allowed to do and two of them price a day in minutes;
+   * on their own, each reads as a knob nobody can predict the effect of.
+   */
+  {
+    key: "mbos.route.averageSpeedKmph",
+    type: "integer",
+    category: "mbos-route",
+    label: "Average speed on the road",
+    description:
+      "Kilometres an hour, used to turn the straight-line distance between two shops into minutes. The honest number differs by a factor of three between a city beat on a two-wheeler and a district tour in a car, which is the whole reason it is a setting. It changes the day's estimated finishing time, never the order the stops are visited in — that is decided by distance alone.",
+    default: 22,
+    min: 5,
+    max: 120,
+  },
+  {
+    key: "mbos.route.minutesPerStop",
+    type: "integer",
+    category: "mbos-route",
+    label: "Minutes budgeted inside a shop",
+    description:
+      "Added to every stop on the day, including the ones with no location on file. Travel time alone under-reads a day badly enough to be useless for planning — a beat of twenty shops is mostly time spent in them. Like the speed above, it moves the estimate and not the order.",
+    default: 20,
+    min: 1,
+    max: 240,
+  },
+  {
+    key: "mbos.route.maxStopsForTwoOpt",
+    type: "integer",
+    category: "mbos-route",
+    label: "Longest list the tidy-up pass will take",
+    description:
+      "Above this many located stops the improvement pass is skipped and the nearest-neighbour order stands. It is a ceiling on work a mid-range Android has to do on the spot, not a judgement about route quality: the pass is O(n²) per sweep, and a pathological list would lock the screen. A day's beat is twenty to thirty shops, so raising it affects almost nobody and lowering it quietly stops the tidy-up happening at all.",
+    default: 40,
+    min: 0,
+    max: 500,
+  },
+  {
+    key: "mbos.route.maxTwoOptPasses",
+    type: "integer",
+    category: "mbos-route",
+    label: "Sweeps of the tidy-up pass",
+    description:
+      "How many times the route may be swept for a pair of legs worth swapping — what removes the long dash back across the territory that nearest-neighbour leaves behind. It is a CEILING and rarely reached: a sweep that improves nothing ends the pass, because every later sweep would improve nothing either. Zero turns the tidy-up off.",
+    default: 4,
+    min: 0,
+    max: 50,
   },
 
   /* ------------------------------------------------------------ ordering */
@@ -1897,15 +2062,40 @@ export const SETTINGS = [
     min: 0,
     max: 100000000,
   },
-  {
-    key: "mbos.expenses.categoryCapsPaise",
-    type: "structured",
-    category: "mbos-expenses",
-    label: "Daily caps by category",
-    description:
-      "Paise per day per category. A claim above a cap is not refused — it goes up as a partial approval decision, which is what the approver's `approvedAmountPaise` is for.",
-    default: { travel: 100000, food: 40000, lodging: 250000, other: 50000 },
-  },
+  /*
+   * `mbos.expenses.categoryCapsPaise` WAS HERE, and it is retired.
+   *
+   * One key, read three contradictory ways: this entry called it a DAILY cap
+   * and said in as many words that a claim above one "is not refused";
+   * `handleExpense` read it PER CLAIM and rejected the sync outright; the
+   * handset read it as a MONTHLY running total and flagged the claim. Three
+   * answers to "what am I allowed", and the salesman met whichever of them the
+   * screen he was standing on happened to hold. It also never carried
+   * `local_transport`, so the one kind a man claims several times a day was
+   * capped by nothing on any path.
+   *
+   * The policy is the single authority now. `expense_policies` carries
+   * `capPerInstancePaise` and `capPerDayPaise`, `computeDay` honours both, and
+   * `claim-preview.ts` runs that same engine on the handset so what he is told
+   * before he spends is what the office pays. 0089 already moved these four
+   * numbers across as daily `actuals` rules on a draft version, so nothing was
+   * lost by retiring them here.
+   *
+   * The rejection went with it, because the engine's own header states the
+   * principle the whole module rests on: it never refuses anything. The money
+   * is already spent, and a system that refuses to record it has not saved the
+   * money — it has only made sure nobody finds out. A sync rejection is the
+   * worst available shape of that, since the claim dies in an outbox on a
+   * phone rather than arriving as something somebody has to decide about.
+   *
+   * A stored `app_settings` row for it needs no migration: `getConfig` layers
+   * a stored value only where `definition(key)` still answers, so a row for a
+   * key the registry has forgotten is already unreadable by every path here,
+   * and `configDrift` walks SETTINGS rather than the table. 0089 deliberately
+   * READ that row and left it — it is the provenance of the draft policy's
+   * figures, and deleting it would destroy that to tidy away something nothing
+   * can see.
+   */
   {
     key: "mbos.expenses.backdatedDaysAllowed",
     type: "integer",
@@ -1925,7 +2115,7 @@ export const SETTINGS = [
     category: "expenses",
     label: "Fall back to the old caps where no policy covers a date",
     description:
-      "On, a day with no published policy is worked out on the mbos.expenses caps above rather than left unpriced. Off, the claims are recorded and the screen says plainly that nothing can be worked out yet — which is the honest answer, and the reason this defaults on is only that it is the behaviour a deployment already had.",
+      "THERE IS NOTHING LEFT TO FALL BACK TO, and this switch does nothing. It was written for `mbos.expenses.categoryCapsPaise`, which is retired — 0089 moved those four figures into a draft policy version, and the policy is the single authority on what a claim is worth. Nothing reads this setting. It is kept only because deleting a key and the thing it named in one change is how a reader a year from now ends up unable to work out what either of them meant; a day with no published policy is recorded and reported as unpriced, which is what the off position always described and is now simply the behaviour.",
     default: true,
   },
   {
@@ -2017,6 +2207,16 @@ export const SETTINGS = [
   },
 
   /* ---------------------------------------------------------- attendance */
+  {
+    key: "mbos.attendance.baseLocation",
+    type: "structured",
+    category: "mbos-attendance",
+    nullable: true,
+    label: "Where the geofence is drawn around",
+    description:
+      'The office\'s own coordinates, as {"lat": 21.1458, "lng": 79.0882}. Read them off a map — right-click the building in Google Maps and the pair is the first line of the menu — or leave the box EMPTY, which means nobody has said, and a check-in is then never measured against anything rather than being measured against a guess. It is a JSON box and not a map to click on because the radius beside it was published without it for the life of the module: a distance with no centre is half a control, and half a control that works today beats a whole one nobody has built. A map picker writes this same key and can arrive without anybody re-entering anything.',
+    default: null,
+  },
   {
     key: "mbos.attendance.geofenceRadiusM",
     type: "integer",
@@ -2222,6 +2422,17 @@ export const SETTINGS = [
     description:
       "Seconds between sync attempts, in order. After the last one the item is `failed` and shown for a person to retry by hand. Jittered on the device, and the schedule resumes rather than restarts across an app restart.",
     default: [2, 8, 30, 120, 600, 1800],
+  },
+  {
+    key: "mbos.sync.statementMonths",
+    type: "integer",
+    category: "mbos-sync",
+    label: "How many months of the ledger a handset carries",
+    description:
+      "A salesman standing in a shop is asked what was billed and what was paid, and the answer has to be on the phone — there is no signal in a paint market. This is how far back the bills and receipts behind that answer are synced. Thirteen covers the widest filter the record screen offers (this financial year) at any point in the year, plus the three months before it. Raising it puts more of the ledger on every handset and more on the wire; lowering it makes the older end of a statement unanswerable in the field rather than merely slow.",
+    default: 13,
+    min: 1,
+    max: 60,
   },
   {
     key: "mbos.sync.maxItemsPerRequest",
@@ -2858,6 +3069,12 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
     }
     case "structured": {
       let value = raw;
+      /* An empty box is how a screen spells null, and `asText` already renders
+         null back into one — so on a nullable setting the round trip has to
+         close here or the value can be read and never written again. */
+      if (def.nullable && (raw === null || (typeof raw === "string" && !raw.trim()))) {
+        return { ok: true, value: null };
+      }
       if (typeof raw === "string") {
         try {
           value = JSON.parse(raw);
@@ -2865,6 +3082,7 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
           return { ok: false, error: `${def.label} must be valid JSON.` };
         }
       }
+      if (def.nullable && value === null) return { ok: true, value: null };
       if (value === null || typeof value !== "object") {
         return { ok: false, error: `${def.label} must be an object or a list.` };
       }
@@ -2895,6 +3113,29 @@ export function checkConsistency(config: Config): string[] {
   if (config["mbos.health.strongAtOrAbove"] <= config["mbos.health.atRiskBelow"]) {
     problems.push(
       `Health: "strong at or above" (${config["mbos.health.strongAtOrAbove"]}) must sit above "watch below" (${config["mbos.health.atRiskBelow"]}), or a score between them is both at once.`,
+    );
+  }
+
+  /*
+   * A TRAIL CANNOT BE KEPT MORE OFTEN THAN IT IS TAKEN.
+   *
+   * The ask is a ceiling on how often the handset requests a position; the
+   * keep is a floor on how often one is written. Set the floor shorter than
+   * the ask and it simply cannot be honoured — there is no fix in between to
+   * keep — so the trail quietly runs at the ask and the number on the screen
+   * describes nothing. Refused rather than clamped, because the pair being
+   * wrong is exactly how this went unnoticed for three days the first time:
+   * a cadence that silently means something other than what it says is worse
+   * than one that will not save.
+   *
+   * Equal is the ordinary setting and the default: every fix taken is kept,
+   * which is what draws the road rather than the corners between stops.
+   */
+  if (
+    config["mbos.location.trailKeepEverySeconds"] < config["mbos.location.trackEverySeconds"]
+  ) {
+    problems.push(
+      `Trail: keeping a fix every ${config["mbos.location.trailKeepEverySeconds"]}s cannot be honoured when one is only taken every ${config["mbos.location.trackEverySeconds"]}s — there is no fix in between to keep. Set the keep interval at or above the take interval.`,
     );
   }
 
@@ -3211,21 +3452,29 @@ export function checkConsistency(config: Config): string[] {
     );
   }
 
-  // Caps for categories the expense form does not offer are rules that can
-  // never fire, and read on the settings screen as though they do.
-  const caps = config["mbos.expenses.categoryCapsPaise"];
-  if (!caps || typeof caps !== "object") {
-    problems.push("Expense caps must be an object of category names to amounts in paise.");
-  } else {
-    const known = ["travel", "food", "lodging", "other"];
-    const unknown = Object.keys(caps).filter((k) => !known.includes(k));
-    if (unknown.length) {
+  /*
+   * A base location nobody can stand at.
+   *
+   * Empty is fine and is the shipped answer — with no base there is nothing to
+   * be outside of, and a check-in is never refused for want of one. What is
+   * not fine is a pair that parses and is not a place: a longitude typed into
+   * the latitude, or the two swapped, puts the office in the sea, and then
+   * EVERY check-in is flagged as off-site with nothing on any screen saying
+   * why. A geofence is the one setting here whose wrongness is invisible at
+   * the moment it is saved and obvious only to the salesman being accused.
+   */
+  const base = config["mbos.attendance.baseLocation"];
+  if (base !== null && base !== undefined) {
+    const lat = (base as { lat?: unknown }).lat;
+    const lng = (base as { lng?: unknown }).lng;
+    if (typeof lat !== "number" || typeof lng !== "number") {
       problems.push(
-        `These expense categories have caps but are not categories anybody can pick: ${unknown.join(", ")}. The categories are ${known.join(", ")}.`,
+        'The base location must be a lat and a lng, as {"lat": 21.1458, "lng": 79.0882}, or left empty for no base at all.',
       );
-    }
-    if (Object.values(caps).some((v) => typeof v !== "number" || v < 0)) {
-      problems.push("Every expense cap must be an amount in paise, none of them negative.");
+    } else if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      problems.push(
+        `The base location ${lat}, ${lng} is not a point on earth — a latitude runs to 90 and a longitude to 180, and the commonest way to get this wrong is to type them the other way round.`,
+      );
     }
   }
 
@@ -3394,11 +3643,16 @@ export type Config = {
   "reminders.rollForwardOnNonWorkingDays": boolean;
   "reminders.rescheduleWarningCount": number;
 
-  "complaints.slaHours": { low: number; medium: number; high: number };
+  "complaints.slaHours": {
+    low: number;
+    medium: number;
+    high: number;
+    critical: number;
+  };
   "complaints.categories": string[];
   "dashboard.reminderOverdueFlagDays": number;
   "dashboard.complaintUnresolvedFlagDays": number;
-  "complaints.defaultSeverity": "low" | "medium" | "high";
+  "complaints.defaultSeverity": "low" | "medium" | "high" | "critical";
   "interactions.maxNotesLength": number;
   "customers.defaultCreditDays": number;
 
@@ -3442,6 +3696,12 @@ export type Config = {
   "mbos.location.unplannedVisitsPerDay": number;
   "mbos.location.trackWhileWorking": boolean;
   "mbos.location.trackEverySeconds": number;
+  "mbos.location.trailKeepEverySeconds": number;
+  "mbos.location.trailStalledAfterMisses": number;
+  "mbos.location.queueRetentionDays": number;
+  "mbos.location.queuedPositionsWorthSaying": number;
+  "mbos.location.trailStalledMinSilenceSeconds": number;
+  "mbos.location.nearbyBookRadiusKm": number;
   "mbos.location.dwellRadiusMeters": number;
   "mbos.location.dwellMinMinutes": number;
   "mbos.location.tripBreakMinutes": number;
@@ -3449,8 +3709,14 @@ export type Config = {
   "mbos.location.logActivityLocation": boolean;
   "mbos.location.activityFixMaxAgeSeconds": number;
   "mbos.location.handsetQuietMinutes": number;
+  "mbos.location.noTrailMinutes": number;
   "mbos.location.lowBatteryPercent": number;
   "mbos.sync.quietHours": number;
+
+  "mbos.route.averageSpeedKmph": number;
+  "mbos.route.minutesPerStop": number;
+  "mbos.route.maxStopsForTwoOpt": number;
+  "mbos.route.maxTwoOptPasses": number;
 
   "mbos.orders.approvalThresholdPaise": number;
   "mbos.orders.secondTierThresholdPaise": number;
@@ -3466,7 +3732,6 @@ export type Config = {
   "mbos.payments.receiptSeriesPrefix": string;
 
   "mbos.expenses.billPhotoThresholdPaise": number;
-  "mbos.expenses.categoryCapsPaise": Record<MbosExpenseCategory, number>;
   "mbos.expenses.backdatedDaysAllowed": number;
   "expenses.policyFallbackToConfig": boolean;
   "expenses.gpsRoadFactorBps": number;
@@ -3478,6 +3743,7 @@ export type Config = {
   "expenses.eodReopenWindowDays": number;
   "expenses.trendMonths": number;
 
+  "mbos.attendance.baseLocation": { lat: number; lng: number } | null;
   "mbos.attendance.geofenceRadiusM": number;
   "mbos.attendance.fullDayHours": number;
   "mbos.attendance.halfDayHours": number;
@@ -3498,6 +3764,7 @@ export type Config = {
   "mbos.sync.imageQualityPercent": number;
   "mbos.sync.offlineLoginValidityDays": number;
   "mbos.sync.retryBackoffSeconds": number[];
+  "mbos.sync.statementMonths": number;
   "mbos.sync.maxItemsPerRequest": number;
   "mbos.sync.accessTokenMinutes": number;
 

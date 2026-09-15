@@ -11,7 +11,7 @@ import { dmy, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
 /**
- * Tasks, in four buckets.
+ * Tasks, in five buckets.
  *
  * A bucket with nothing in it is not shown at all — an empty "Tomorrow"
  * heading is a line of furniture between the salesman and the work that is
@@ -21,9 +21,17 @@ import { useStore } from '../src/state/store';
  * The buckets are DERIVED from the due date on every render rather than stored
  * on the row: a task written "Today" yesterday is overdue this morning, and
  * that is exactly the morning it matters.
+ *
+ * IT MUST NAME EVERY BUCKET `bucketOf` CAN RETURN. It listed four of five, so
+ * anything more than a week out was filed under `Later` and drawn by no branch
+ * at all — and because the list was not empty the empty state was suppressed
+ * too, leaving a salesman holding only far-dated work looking at a "+ New task"
+ * button over blank space. The office's nurture and reorder tasks are routinely
+ * 14 to 30 days out, so that was not an edge case: it was work assigned to him,
+ * counting against him, invisible and impossible to complete.
  */
 
-const BUCKETS = ['Overdue', 'Today', 'Tomorrow', 'This week'] as const;
+const BUCKETS = ['Overdue', 'Today', 'Tomorrow', 'This week', 'Later'] as const;
 const WHENS = ['Today', 'Tomorrow', 'This week'] as const;
 const PRIS = ['Normal', 'High'] as const;
 
@@ -48,22 +56,31 @@ export default function TasksScreen() {
      rows are looked up by id instead, so capping the picker cannot blank
      them. */
   const [customers, setCustomers] = React.useState<Customer[]>([]);
+  const [bookTotal, setBookTotal] = React.useState(0);
   const [names, setNames] = React.useState<Map<string, string>>(new Map());
   const [today] = React.useState(() => isoDate(new Date()));
 
   const [formOpen, setFormOpen] = React.useState(false);
   const [title, setTitle] = React.useState('');
-  const [custId, setCustId] = React.useState<string | null>(null);
+  /* THE SHOP IS PICKED, NEVER PRE-PICKED. The sheet used to open with
+     `customers[0]` already selected — the alphabetically first of a capped
+     fifty — and `Choice` is a radio with no way to deselect, so there was no
+     way to clear it, no way to reach the fifty-first shop of a thousand, and no
+     way to raise a task that belongs to no customer at all. Every task somebody
+     added without scrolling was filed against whichever shop sorts first. The
+     name is held beside the id so a pick survives the search being typed
+     over. */
+  const [picked, setPicked] = React.useState<{ id: string; name: string } | null>(null);
+  const [custQuery, setCustQuery] = React.useState('');
   const [when, setWhen] = React.useState<(typeof WHENS)[number]>('Today');
   const [pri, setPri] = React.useState<(typeof PRIS)[number]>('Normal');
   const [titleErr, setTitleErr] = React.useState(false);
 
   const load = React.useCallback(() => {
     let live = true;
-    void Promise.all([listOpenTasks(), listCustomersPage({ limit: 50 })]).then(async ([t, c]) => {
+    void listOpenTasks().then(async (t) => {
       if (!live) return;
       setTasks(t);
-      setCustomers(c.rows);
       const found = await customerNames(t.map((x) => x.customerId ?? '').filter(Boolean));
       if (live) setNames(found);
     });
@@ -74,11 +91,27 @@ export default function TasksScreen() {
 
   useFocusEffect(load);
 
+  /* The book is read by the SEARCH rather than once on focus, which is what
+     makes a shop past the first page reachable at all. An empty query is the
+     same first page this always showed. */
+  React.useEffect(() => {
+    let live = true;
+    void listCustomersPage({ query: custQuery.trim() || undefined, limit: 50 }).then((page) => {
+      if (!live) return;
+      setCustomers(page.rows);
+      setBookTotal(page.total);
+    });
+    return () => {
+      live = false;
+    };
+  }, [custQuery]);
+
   const nameOf = (id: string | null) => (id ? (names.get(id) ?? '') : '');
 
   const openForm = () => {
     setTitle('');
-    setCustId(customers[0]?.id ?? null);
+    setPicked(null);
+    setCustQuery('');
     setWhen('Today');
     setPri('Normal');
     setTitleErr(false);
@@ -88,7 +121,7 @@ export default function TasksScreen() {
   const save = async () => {
     const t = title.trim();
     if (!t) return setTitleErr(true);
-    await createTask({ title: t, customerId: custId, priority: pri, dueDate: dateFor(when, today) });
+    await createTask({ title: t, customerId: picked?.id ?? null, priority: pri, dueDate: dateFor(when, today) });
     setFormOpen(false);
     load();
     notify('Task added · ' + t);
@@ -213,9 +246,12 @@ export default function TasksScreen() {
                         marginTop: 12,
                       }}>
                       <T style={[{ fontSize: 13, color: g === 'Overdue' ? C.danger : C.muted }, weight(500)]}>
+                        {/* A heading of "Later" says nothing a man planning a
+                            week can use, so anything past tomorrow prints its
+                            own date instead of repeating the bucket's name. */}
                         {g === 'Overdue'
                           ? 'Overdue by ' + plural(daysSince(t.dueDate, today) ?? 0, 'day')
-                          : g === 'This week'
+                          : g === 'This week' || g === 'Later'
                             ? dmy(t.dueDate)
                             : g}
                       </T>
@@ -277,10 +313,43 @@ export default function TasksScreen() {
 
         <View style={{ marginTop: 12 }}>
           <SectionLabel style={{ marginBottom: 6 }}>Which customer</SectionLabel>
-          <View style={{ gap: 8 }}>
+          <Input
+            value={custQuery}
+            onChangeText={setCustQuery}
+            placeholder="Search your book by name, area or phone"
+          />
+          <View style={{ gap: 8, marginTop: 8 }}>
+            {/* A job that belongs to nobody in particular is a real task —
+                "collect the rate cards from the office" — and a radio list with
+                no such row made it unrecordable. It is first because it is also
+                the only way to undo a pick. */}
+            <Choice
+              label="No customer — a general job"
+              selected={picked === null}
+              onPress={() => setPicked(null)}
+            />
+            {/* A pick made before the search was typed stays on screen and
+                stays chosen, even once it has fallen out of the results. */}
+            {picked && !customers.some((c) => c.id === picked.id) ? (
+              <Choice label={picked.name} selected onPress={() => setPicked(null)} />
+            ) : null}
             {customers.map((x) => (
-              <Choice key={x.id} label={x.name} selected={custId === x.id} onPress={() => setCustId(x.id)} />
+              <Choice
+                key={x.id}
+                label={x.name}
+                sub={[x.area, x.city].filter(Boolean).join(' · ') || undefined}
+                selected={picked?.id === x.id}
+                onPress={() => setPicked({ id: x.id, name: x.name })}
+              />
             ))}
+            {custQuery.trim() && customers.length === 0 ? (
+              <T s="caption">No shop in your book matches that.</T>
+            ) : null}
+            {bookTotal > customers.length ? (
+              <T s="caption">
+                {'Showing ' + customers.length + ' of ' + bookTotal + ' — search for the rest.'}
+              </T>
+            ) : null}
           </View>
         </View>
 

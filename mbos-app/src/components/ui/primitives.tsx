@@ -63,14 +63,24 @@ export function T({
   style,
   children,
   numberOfLines,
+  /**
+   * Lets the text be long-pressed and copied.
+   *
+   * Off by default, because selectable body copy fights scrolling. It is on
+   * for the few places holding something somebody has to get OUT of the app —
+   * a mobile number on a screen whose whole purpose is a phone call, where the
+   * alternative is memorising ten digits and retyping them into the dialer.
+   */
+  selectable,
 }: {
   s?: keyof typeof type;
   style?: StyleProp<TextStyle>;
   children: React.ReactNode;
   numberOfLines?: number;
+  selectable?: boolean;
 }) {
   return (
-    <Text style={[s ? type[s] : type.body, style]} numberOfLines={numberOfLines}>
+    <Text style={[s ? type[s] : type.body, style]} numberOfLines={numberOfLines} selectable={selectable}>
       {children}
     </Text>
   );

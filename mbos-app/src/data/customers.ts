@@ -4,6 +4,7 @@ import {
   cityOriginsQuery,
   customerCountQuery,
   customerPageQuery,
+  customerTimelineQuery,
   type BookView,
   type Origin,
 } from './customer-query';
@@ -32,6 +33,23 @@ export { accountLine, accountType, customerStage } from '../lib/account-label';
  */
 export type HealthBandValue = 'active' | 'at-risk' | 'dormant' | 'lost';
 
+/**
+ * WHERE OUTSTANDING TURNS RED — ONE NUMBER, NOT TWO.
+ *
+ * `dues > 300000` was written out as a literal on the list card and again on
+ * the record head, in two files, which is a business number living in a screen
+ * and a second copy of it waiting to disagree. The day one moves, the list and
+ * the record say different things about the same shop one tap apart — the
+ * drift the health thresholds beside it were made configuration to end.
+ *
+ * It is PAISE, like every other money figure on the handset, and it is a
+ * constant here rather than a `getConfig` key because there is no such key in
+ * MahekOne's own registry to read: an `mbos.*` key the server never sends is a
+ * setting a manager can see and cannot change, which is worse than an honest
+ * constant. Adding it there is the fix; this is the half that stops the two
+ * copies drifting in the meantime.
+ */
+export const OUTSTANDING_ALERT_PAISE = 30_000_000;
 
 /**
  * Reading the book.
@@ -214,7 +232,43 @@ export type CustomerBill = {
   overdueDays: number | null;
   disputed: number | null;
   paymentPosition: string | null;
+  /** Settled, part paid or open, as Accounts holds it. */
+  status: string | null;
+  /** What was on it, as the JSON text the wire sent. See `billLines`. */
+  lines: string | null;
+  /** That list's length, so a card can say "4 items" without parsing it. */
+  lineCount: number | null;
 };
+
+/** One line of a bill. The shape the server builds in `billLines`. */
+export type BillLine = { product: string; qty: number; amountPaise: number | null };
+
+/**
+ * What was on a bill, parsed.
+ *
+ * The lines ride on the bill row as JSON text — see the handset migration that
+ * added the column for why that is a column and not a table. Parsed HERE
+ * rather than at the screen, and never trusted: this string came off a wire
+ * and through a SQLite column, and a card that throws while rendering a list
+ * takes the whole customer record down with it. An unreadable one is no lines,
+ * which is what the screen already has a sentence for.
+ */
+export function billLines(bill: { lines: string | null }): BillLine[] {
+  if (!bill.lines) return [];
+  try {
+    const parsed = JSON.parse(bill.lines) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((l): l is BillLine => !!l && typeof (l as BillLine).product === 'string')
+      .map((l) => ({
+        product: l.product,
+        qty: Number(l.qty) || 0,
+        amountPaise: l.amountPaise == null ? null : Number(l.amountPaise),
+      }));
+  } catch {
+    return [];
+  }
+}
 
 /**
  * What the office knows this shop bought and paid.
@@ -252,6 +306,55 @@ export async function customerBills(id: string): Promise<CustomerBill[]> {
     'SELECT * FROM customer_bills WHERE customerId = ? ORDER BY billDate ASC, id ASC',
     [id],
   );
+}
+
+/**
+ * The ones with something still owed on them — what a collection is allocated
+ * against.
+ *
+ * ITS OWN READ, and it did not need to be one until this window arrived. The
+ * channel used to carry open bills and nothing else, so `customerBills` WAS
+ * this list and the payment screen could read it directly. It carries settled
+ * bills now, because the customer record grew a statement — and a settled bill
+ * offered on the payment picker is a bill the salesman names, the server
+ * refuses with `bill_settled`, and the refusal reads as the app being wrong.
+ *
+ * The balance rather than the status, deliberately: `status` is the office's
+ * word for the bill and the balance is the arithmetic, and it is the
+ * arithmetic the server validates the allocation against.
+ */
+export async function openCustomerBills(id: string): Promise<CustomerBill[]> {
+  return all<CustomerBill>(
+    `SELECT * FROM customer_bills
+      WHERE customerId = ? AND coalesce(balancePaise, 0) > 0
+      ORDER BY billDate ASC, id ASC`,
+    [id],
+  );
+}
+
+/**
+ * The oldest day this handset holds a bill or a receipt for.
+ *
+ * Read off the rows themselves rather than from the window the server sent,
+ * and the difference is the point: the office's boundary says what it stopped
+ * SENDING, and this says what is actually here — which on a shop that has
+ * bought from us for three months is three months, not thirteen. A screen
+ * saying "everything since August 2025" over a list that starts in June is a
+ * screen nobody trusts twice.
+ *
+ * Null where there is nothing, which the screen answers with its own sentence
+ * rather than a date.
+ */
+export async function statementReach(id: string): Promise<string | null> {
+  const row = await one<{ from: string | null }>(
+    `SELECT min(d) AS "from" FROM (
+       SELECT billDate AS d FROM customer_bills WHERE customerId = ? AND billDate IS NOT NULL
+       UNION ALL
+       SELECT receivedAt AS d FROM customer_payments WHERE customerId = ? AND receivedAt IS NOT NULL
+     )`,
+    [id, id],
+  );
+  return row?.from ?? null;
 }
 
 /** Whole days since a `YYYY-MM-DD`, or null when there is no date to count from. */
@@ -322,22 +425,17 @@ export type TimelineEvent = {
  * A telecaller's call from yesterday sits in here beside this morning's visit,
  * which is the entire reason the two apps share a table rather than each
  * keeping their own history.
+ *
+ * THE FILTER IS THE DATABASE'S, and `customerTimelineQuery` carries the whole
+ * argument for why. It used to be a window of a hundred rows narrowed in the
+ * screen, which answered "nothing" for a kind that simply was not in the
+ * window — and the screen then said so as a fact. The cap is `TIMELINE_PAGE`
+ * of the kind asked for, newest first, so a full page means there is older
+ * history rather than none of this kind.
  */
 export async function customerTimeline(customerId: string, filter = 'All'): Promise<TimelineEvent[]> {
-  const rows = await all<TimelineEvent>(
-    'SELECT * FROM timeline_events WHERE customerId = ? ORDER BY occurredAt DESC LIMIT 100',
-    [customerId],
-  );
-  if (filter === 'All') return rows;
-  const wanted: Record<string, string[]> = {
-    Visits: ['visit'],
-    Orders: ['order'],
-    Payments: ['payment'],
-    Calls: ['call', 'telecaller_call'],
-    Complaints: ['complaint'],
-  };
-  const kinds = wanted[filter];
-  return kinds ? rows.filter((r) => kinds.includes(r.eventType)) : rows;
+  const q = customerTimelineQuery(customerId, filter);
+  return all<TimelineEvent>(q.sql, q.params);
 }
 
 export async function competitorRecords(customerId: string) {

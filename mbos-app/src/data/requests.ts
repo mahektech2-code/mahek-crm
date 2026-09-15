@@ -1,6 +1,5 @@
 import { all, newId, one, run } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
-import { getConfig } from './config';
 import { leaveDays, overlaps, balanceAfter } from '../engines/leave';
 import { isoDate } from '../lib/format';
 import { wireComplaintCategory } from '../lib/wire';
@@ -64,12 +63,60 @@ export async function raiseApproval(args: {
 
 export type Expense = {
   id: string; spentOn: string; category: string; amountPaise: number;
+  /**
+   * The PRECISE kind the policy prices on, as opposed to the legacy four-value
+   * `category` beside it. The column has been written by `claimExpense` since
+   * the policy module landed and this type never named it, so the one screen
+   * that reopens a claim had to fall back to the category — and `travel` is
+   * the category `local_transport` is stored under, so correcting a rejected
+   * auto fare silently resent it as something else. Null on rows written
+   * before the column existed.
+   */
+  kind: string | null;
   billPhotoId: string | null; remarks: string | null; state: string;
   approvedAmountPaise: number | null; rejectionReason: string | null; syncState: string;
 };
 
-export async function listExpenses(): Promise<Expense[]> {
-  return all<Expense>('SELECT * FROM expenses ORDER BY spentOn DESC');
+/**
+ * What this handset holds, newest first.
+ *
+ * **CAPPED WHERE A SCREEN ASKS FOR A CAP, and the screen says what it is a
+ * slice of.** Every claim ever made was selected and mounted at once inside the
+ * Expenses screen's single ScrollView — at two claims a day that is some seven
+ * hundred rows of five `Text` nodes each after a year, with no paging and no
+ * filter, and the claim somebody is looking for is the newest one anyway.
+ *
+ * The limit is OPTIONAL rather than a default, because `more.tsx` counts the
+ * pending claims off the whole list for a badge and a cap there would quietly
+ * undercount it. A capped caller reads its totals from `expenseTotals` instead,
+ * which is SQL over every row — a figure derived from a slice is a figure that
+ * silently shrinks as the slice ages out.
+ *
+ * `clientCreatedAt` is the tiebreaker: `spentOn` is a DATE, so a day with three
+ * claims on it has three rows the planner may order however it likes, and two
+ * of them can swap places between one read and the next.
+ */
+export async function listExpenses(limit?: number): Promise<Expense[]> {
+  return limit == null
+    ? all<Expense>('SELECT * FROM expenses ORDER BY spentOn DESC, clientCreatedAt DESC')
+    : all<Expense>('SELECT * FROM expenses ORDER BY spentOn DESC, clientCreatedAt DESC LIMIT ?', [limit]);
+}
+
+/**
+ * The two figures a capped list cannot answer for itself.
+ *
+ * "₹4,200 waiting on your manager" is a statement about the whole book, and
+ * reading it off the rows the screen happens to be holding would drop a claim
+ * that has been pending for two months — the one most worth chasing — out of
+ * the total the moment it fell past the window.
+ */
+export async function expenseTotals(): Promise<{ count: number; pendingPaise: number }> {
+  const row = await one<{ n: number; pending: number }>(
+    `SELECT count(*) AS n,
+            COALESCE(SUM(CASE WHEN state = 'Pending' THEN amountPaise ELSE 0 END), 0) AS pending
+       FROM expenses`,
+  );
+  return { count: row?.n ?? 0, pendingPaise: row?.pending ?? 0 };
 }
 
 /**
@@ -111,9 +158,18 @@ export async function expensesOn(spentOn: string): Promise<ClaimedLine[]> {
 }
 
 /**
- * Exceeding a category cap does NOT block the claim — it flags it. The
- * salesman spent the money; refusing to record it does not unspend it, it just
- * means nobody finds out.
+ * The claim is recorded, whatever it is worth. That part never changed: the
+ * salesman spent the money, and refusing to record it does not unspend it, it
+ * just means nobody finds out.
+ *
+ * What this no longer does is work out whether he is over. It used to read
+ * `mbos.expenses.categoryCapsPaise` and sum the CALENDAR MONTH against it — a
+ * third reading of a key the registry called a daily cap and the server read
+ * per claim — and return an `overCap` flag the screen turned into a sentence.
+ * The policy is the one authority on what a claim is worth now, and
+ * `engines/claim-preview.ts` asks it the same question the office will,
+ * against the right DAY and against what is already standing on that day. This
+ * function writes the row; the screen that called it already knows the answer.
  */
 export async function claimExpense(args: {
   userId: string;
@@ -138,7 +194,7 @@ export async function claimExpense(args: {
   billNumber?: string | null;
   /** Requirement 43 — why he is claiming something he knows is over. */
   exceptionReason?: string | null;
-}): Promise<{ expenseId: string; overCap: boolean }> {
+}): Promise<{ expenseId: string }> {
   const base = await stamp('expense');
 
   /* Every claim belongs to a DAY. It is what the meal allowance is worked out
@@ -147,15 +203,6 @@ export async function claimExpense(args: {
      idempotent, so claiming an expense on a day nobody opened opens it. */
   const { openDay } = await import('./travel');
   const expenseDayId = await openDay({ userId: args.userId, day: args.spentOn });
-  const caps = await getConfig<Record<string, number>>('mbos.expenses.categoryCapsPaise', {});
-  const cap = caps[args.category];
-
-  const spent = await one<{ total: number }>(
-    `SELECT COALESCE(SUM(amountPaise), 0) AS total FROM expenses
-      WHERE userId = ? AND category = ? AND substr(spentOn, 1, 7) = ?`,
-    [args.userId, args.category, args.spentOn.slice(0, 7)],
-  );
-  const overCap = cap != null && (spent?.total ?? 0) + args.amountPaise > cap;
 
   const id = await insertAndQueue({
     table: 'expenses',
@@ -180,7 +227,6 @@ export async function claimExpense(args: {
        every claim made in the field was refused for want of a date it was
        carrying all along. PROTOCOL.md §4.1. */
     payloadExtras: {
-      overCap,
       expenseDate: args.spentOn,
       description: args.remarks || undefined,
       kind: args.kind ?? args.category,
@@ -203,7 +249,7 @@ export async function claimExpense(args: {
     deviceId: base.deviceId,
   });
 
-  return { expenseId: id, overCap };
+  return { expenseId: id };
 }
 
 /* ---------------------------------------------------------------- leave */
@@ -377,6 +423,8 @@ export async function logComplaint(args: {
   customerId: string;
   category: string;
   description: string;
+  /** Normal, Urgent or Critical, as the severity the column stores. */
+  priority?: string;
   photoIds?: string[];
   visitId?: string | null;
 }): Promise<string> {
@@ -393,11 +441,21 @@ export async function logComplaint(args: {
       photoIds: args.photoIds ?? [],
       status: 'open',
     },
-    /* The five categories on the buttons are the design's words and MahekOne's
+    /* The categories on the buttons are the design's words and MahekOne's
        column is an enum, so the picker's own string was refused outright —
        a complaint lost at the door is the one record here that had to move
-       fast. PROTOCOL.md §4.1. */
-    payloadExtras: { category: wireComplaintCategory(args.category) },
+       fast. PROTOCOL.md §4.1.
+
+       `severity` rides here rather than as a column because nothing on this
+       phone ever reads it back: the office decides the deadline and the office
+       displays it. The outbox snapshots the payload at enqueue, so it survives
+       every retry without a schema migration. Omitted where nobody picked, so
+       the server applies `complaints.defaultSeverity` exactly as it does for a
+       handset still on the old build. */
+    payloadExtras: {
+      category: wireComplaintCategory(args.category),
+      ...(args.priority ? { severity: args.priority } : {}),
+    },
     dependsOn: args.visitId ? [args.visitId] : [],
   });
 
