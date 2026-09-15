@@ -22,8 +22,17 @@ import {
   STAGE_TONE,
   PRIORITY_TONE,
   ACTIVITY_LABEL,
+  sourceLabel,
+  sourceFormLabel,
+  categoryLabel,
+  ENQUIRY_REMINDER_TYPES,
+  REMINDER_TYPE_LABEL,
+  reminderTypeLabel,
+  reminderStatusLabel,
+  orderStatusLabel,
   type EnquiryStage,
   type EnquiryPriority,
+  type EnquiryReminderType,
 } from "@/lib/enquiry-labels";
 import { phoneDisplay, stamp, money, shortDateWithYear, today } from "@/lib/format";
 import type { EnquirySubmissionFields } from "@/lib/enquiry-submission";
@@ -107,7 +116,7 @@ export function EnquiryDetailScreen({
                 <Link href={`/enquiries/list/${d.id}`} className="text-brand hover:text-brand-hover">
                   {shortDateWithYear(d.receivedAt, today())}
                 </Link>
-                {" · "}{d.source} · {STAGE_LABEL[d.stage]} · {d.assignedToName ?? "Unassigned"}
+                {" · "}{sourceLabel(d.source)} · {STAGE_LABEL[d.stage]} · {d.assignedToName ?? "Unassigned"}
               </li>
             ))}
           </ul>
@@ -214,8 +223,9 @@ function OverviewTab({
       <div>
         <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">Enquiry</div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-          <Field label="Source"><div className="text-ink">{enquiry.source}</div></Field>
-          <Field label="Source form"><div className="text-ink">{enquiry.sourceForm ?? "—"}</div></Field>
+          <Field label="Source"><div className="text-ink">{sourceLabel(enquiry.source)}</div></Field>
+          <Field label="Source form"><div className="text-ink">{sourceFormLabel(enquiry.sourceForm) ?? "—"}</div></Field>
+          <Field label="Category"><div className="text-ink">{categoryLabel(enquiry.category) ?? "—"}</div></Field>
           <Field label="Received"><div className="text-ink">{stamp(enquiry.receivedAt)}</div></Field>
           <Field label="Reference"><div className="text-ink">{enquiry.externalRef ?? "—"}</div></Field>
         </dl>
@@ -267,7 +277,7 @@ function FollowUpTab({
 }) {
   const [dueDate, setDueDate] = React.useState(today());
   const [note, setNote] = React.useState("");
-  const [type, setType] = React.useState("call_back");
+  const [type, setType] = React.useState<EnquiryReminderType>("call_back");
   const [assignee, setAssignee] = React.useState(enquiry.assignedToId ?? "");
   const [busy, setBusy] = React.useState(false);
   const canSchedule = !!enquiry.customerId;
@@ -281,7 +291,7 @@ function FollowUpTab({
           enquiryId: enquiry.id,
           dueDate,
           note,
-          type: type as never,
+          type,
           assignedUserId: assignee,
         }),
       );
@@ -299,11 +309,11 @@ function FollowUpTab({
             <div key={r.id} className="flex items-center justify-between border-b border-divider py-2 text-sm">
               <div>
                 <div className="text-ink">{r.note}</div>
-                <div className="text-xs text-muted">{r.type} · {r.assignedToName ?? "Unassigned"}</div>
+                <div className="text-xs text-muted">{reminderTypeLabel(r.type)} · {r.assignedToName ?? "Unassigned"}</div>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted">{shortDateWithYear(r.dueDate, today())}</span>
-                <Badge tone={r.status === "completed" ? "success" : r.status === "dismissed" ? "muted" : "neutral"}>{r.status}</Badge>
+                <Badge tone={r.status === "completed" ? "success" : r.status === "dismissed" ? "muted" : "neutral"}>{reminderStatusLabel(r.status)}</Badge>
               </div>
             </div>
           ))}
@@ -320,13 +330,10 @@ function FollowUpTab({
             <div className="grid grid-cols-2 gap-3">
               <Field label="Date"><Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
               <Field label="Type">
-                <Select value={type} onChange={(e) => setType(e.target.value)} className="w-full">
-                  <option value="call_back">Call back</option>
-                  <option value="payment_promise">Payment promise</option>
-                  <option value="order_confirmation">Order confirmation</option>
-                  <option value="send_information">Send information</option>
-                  <option value="check_stock">Check stock</option>
-                  <option value="other">Other</option>
+                <Select value={type} onChange={(e) => setType(e.target.value as EnquiryReminderType)} className="w-full">
+                  {ENQUIRY_REMINDER_TYPES.map((t) => (
+                    <option key={t} value={t}>{REMINDER_TYPE_LABEL[t]}</option>
+                  ))}
                 </Select>
               </Field>
               <Field label="Assign to" className="col-span-2">
@@ -389,7 +396,7 @@ function OrdersTab({
                 <div className="text-xs text-muted">{shortDateWithYear(o.orderedAt, today())} · {money(o.totalAmount)}</div>
               </div>
               <div className="flex items-center gap-2">
-                <Badge tone="neutral">{o.status}</Badge>
+                <Badge tone="neutral">{orderStatusLabel(o.status)}</Badge>
                 <button
                   className="cursor-pointer text-xs text-danger hover:underline"
                   onClick={() => onAfter(unlinkOrderAction(enquiry.id, o.orderId))}

@@ -73,11 +73,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!parsed.ok) {
     return reject(parsed.error, 400);
   }
-  const { formType, externalRef, receivedAt, submission } = parsed.data;
+  const { formType, category, externalRef, receivedAt, submission } = parsed.data;
 
   try {
     const result = await createEnquiryFromWebsite({
       sourceForm: formType,
+      category,
       externalRef,
       receivedAt: new Date(receivedAt),
       submission,

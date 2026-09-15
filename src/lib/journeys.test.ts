@@ -1514,6 +1514,30 @@ describe("Journey 6 - a telecaller sees their own book and nothing else", () => 
     );
   });
 
+  test("an ordinary CRM createReminder call (no opts) still refuses an out-of-scope customer — the Enquiries bypass is not reachable from here", async () => {
+    // worklist-services.createReminder gained a second, opts, parameter so
+    // Website Enquiries can skip the CRM's own "mine" scope check for a
+    // customer it has independently verified (Deep Audit Finding #1 /
+    // enquiries.test.ts). This proves the CRM's own call sites are
+    // completely unaffected: calling it exactly as every existing CRM caller
+    // does — with no second argument at all — must still enforce
+    // assertCustomerInScope for an associate with no seat on the account.
+    const outOfScope = await makeCustomer(rakesh.id);
+    const stranger = await makeUser("Stranger CreateReminder", "associate", manager.id);
+    setTestUser(stranger);
+
+    await assert.rejects(
+      () =>
+        createReminder({
+          customerId: outOfScope.id,
+          dueDate: TODAY,
+          note: "Should never be created",
+        }),
+      NotPermittedError,
+      "an ordinary CRM caller must still be refused a customer outside their scope",
+    );
+  });
+
   test("a manager-only action names the role it needs, and is recorded", async () => {
     const customer = await makeCustomer(priya.id);
 

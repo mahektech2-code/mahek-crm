@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, ilike, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, isNull, notInArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -13,22 +13,47 @@ import {
   users,
 } from "@/db/schema";
 
-/** The reminder types this enquiry form offers — the same six the rest of the CRM's reminders already use. */
-type ReminderType =
-  | "call_back"
-  | "payment_promise"
-  | "order_confirmation"
-  | "send_information"
-  | "check_stock"
-  | "other";
 import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
-import { err, ok, okVoid, type Result } from "@/lib/result";
+import type { AppId } from "@/lib/apps";
+import { err, ok, okVoid, type Err, type Result } from "@/lib/result";
 import type { User } from "@/db/schema";
-import { readSubmissionFields, phoneDigits } from "@/lib/enquiry-submission";
-import type { EnquiryPriority, EnquiryStage } from "@/lib/enquiry-labels";
+import { readSubmissionFields, phoneDigits, buildEnquirySearchText } from "@/lib/enquiry-submission";
+import type {
+  EnquiryCursor,
+  EnquiryPriority,
+  EnquiryReminderType,
+  EnquirySource,
+  EnquiryStage,
+} from "@/lib/enquiry-labels";
+import { createReminder as createSharedReminder } from "./worklist-services";
+import { notifyUser } from "@/lib/notify";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
+
+/**
+ * This module's own identity in the shared app registry (`lib/apps.ts`,
+ * `app_id` in schema.ts) — typed against `AppId` rather than left as a bare
+ * string repeated at every call site, so a rename of the app id anywhere in
+ * that registry is a compile error here instead of five literals quietly
+ * drifting from it. It is a fixed identifier, not a client-supplied value:
+ * nothing in `WebsiteEnquiryInput` carries a workspace field for a caller to
+ * override this with, and it never varies by request.
+ */
+const ENQUIRY_WORKSPACE: AppId = "enquiries";
+
+/**
+ * The one source this public endpoint has ever written — typed against the
+ * existing `EnquirySource` vocabulary (`enquiry-labels.ts`) rather than a
+ * second, disconnected literal. Also fixed rather than client-supplied: the
+ * website ingestion payload (`enquiry-ingest-validation.ts`) carries no
+ * `source` field at all, so there is nothing for a caller to send instead of
+ * it. `EnquirySource` already provisions `instagram`/`whatsapp`/`indiamart`/
+ * etc. for whenever a second ingestion path is actually built — this constant
+ * does not need to "become dynamic" to support that; a second path would
+ * define its own constant the same way, from the same shared type.
+ */
+const ENQUIRY_SOURCE_WEBSITE: EnquirySource = "website";
 
 /* ---------------------------------------------------------------------------
  * Website Enquiries is its own app, so its own grant is what authorises
@@ -38,11 +63,11 @@ const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
  * `requireHrms()` uses in `lib/actions/org.ts`.
  * ------------------------------------------------------------------------- */
 async function requireEnquiriesAccess(): Promise<
-  { user: User; error: null } | { user: null; error: Result<never> }
+  { user: User; error: null } | { user: null; error: Err }
 > {
   const user = await requireUser();
   const apps = await listUserApps(user.id);
-  if (!apps.includes("enquiries")) {
+  if (!apps.includes(ENQUIRY_WORKSPACE)) {
     return {
       user: null,
       error: err("Only somebody with Website Enquiries access can do that.", "not_permitted"),
@@ -73,6 +98,13 @@ async function writeActivity(
 export type WebsiteEnquiryInput = {
   /** e.g. "CONTACT", "PRODUCT_ENQUIRY" — the website's own stable form identifier, reused verbatim as `sourceForm`. */
   sourceForm: string;
+  /**
+   * e.g. "GENERAL", "SALES" — the website's own coarse classification,
+   * reused verbatim as `category`. Optional: an older producer, or a
+   * submission that never sent one, passes null/undefined and the column
+   * stays null rather than a guessed value.
+   */
+  category?: string | null;
   /** The website's own enquiry id (a UUID it generated for this submission) — the idempotency key. Not a phone number, not a timestamp. */
   externalRef: string;
   /** When the website's own backend received it, not a browser-supplied time. */
@@ -112,11 +144,13 @@ export async function createEnquiryFromWebsite(
     await db.transaction(async (tx) => {
       await tx.insert(enquiries).values({
         id: enquiryId,
-        workspace: "enquiries",
+        workspace: ENQUIRY_WORKSPACE,
         customerId: null,
-        source: "website",
+        source: ENQUIRY_SOURCE_WEBSITE,
         sourceForm: input.sourceForm,
+        category: input.category ?? null,
         rawSubmission: input.submission,
+        searchText: buildEnquirySearchText(input.submission),
         stage: "new",
         priority: "normal",
         assignedToId: null,
@@ -160,10 +194,13 @@ export type AssignableUser = { id: string; name: string };
  * Admin Console's own candidate lists already follow.
  */
 export async function assignableUsers(): Promise<AssignableUser[]> {
+  const { error } = await requireEnquiriesAccess();
+  if (error) throw new Error(error.error);
+
   return db
     .selectDistinct({ id: users.id, name: users.name })
     .from(users)
-    .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "enquiries")))
+    .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, ENQUIRY_WORKSPACE)))
     .where(eq(users.active, true))
     .orderBy(users.name);
 }
@@ -178,6 +215,9 @@ export type EnquiryDashboardCounts = {
 };
 
 export async function enquiryDashboardCounts(): Promise<EnquiryDashboardCounts> {
+  const { error } = await requireEnquiriesAccess();
+  if (error) throw new Error(error.error);
+
   const [row] = await db.execute<{
     total: number;
     new: number;
@@ -227,6 +267,7 @@ export type EnquiryListItem = {
   company: string | null;
   source: string;
   sourceForm: string | null;
+  category: string | null;
   stage: EnquiryStage;
   priority: EnquiryPriority;
   assignedToId: string | null;
@@ -244,17 +285,30 @@ export type EnquiryFilters = {
   assignedToId?: string | "unassigned";
   linked?: "linked" | "unlinked";
   sort?: "received_desc" | "received_asc";
-  page?: number;
+  /**
+   * A KEYSET, not an offset — the `(receivedAt, id)` of the last row of the
+   * PREVIOUS page. Null/omitted asks for the first page. `customerTimeline`
+   * already proves this shape out for the same reason: an offset re-reads and
+   * re-sorts everything skipped, and shifts under a write — an enquiry
+   * received while somebody reads page two pushes a row they have already
+   * seen onto page three.
+   */
+  cursor?: EnquiryCursor | null;
   pageSize?: number;
 };
 
 export async function listEnquiries(
   filters: EnquiryFilters,
-): Promise<{ items: EnquiryListItem[]; total: number }> {
-  const page = Math.max(1, filters.page ?? 1);
-  const pageSize = Math.min(100, Math.max(1, filters.pageSize ?? 25));
+): Promise<{ items: EnquiryListItem[]; total: number; cursor: EnquiryCursor | null; more: boolean }> {
+  const { error } = await requireEnquiriesAccess();
+  if (error) throw new Error(error.error);
 
-  const conditions = [eq(enquiries.workspace, "enquiries")];
+  const pageSize = Math.min(100, Math.max(1, filters.pageSize ?? 25));
+  // received_at alone cannot break a tie between two enquiries the website
+  // posted in the same millisecond — id, the primary key, always can.
+  const descending = filters.sort !== "received_asc";
+
+  const conditions = [eq(enquiries.workspace, ENQUIRY_WORKSPACE)];
   if (filters.stage) conditions.push(eq(enquiries.stage, filters.stage));
   if (filters.priority) conditions.push(eq(enquiries.priority, filters.priority));
   if (filters.source) conditions.push(eq(enquiries.source, filters.source));
@@ -265,20 +319,44 @@ export async function listEnquiries(
   }
   if (filters.linked === "linked") conditions.push(sql`${enquiries.customerId} is not null`);
   if (filters.linked === "unlinked") conditions.push(sql`${enquiries.customerId} is null`);
-  // A search term matches the raw submission text (name/phone/email/company all live there)
-  // or the customer name once linked — a plain substring match, same spirit as globalSearch's.
+  /*
+   * A search term matches `search_text` — the submitted name/phone/email/
+   * company/message VALUES, joined at write time — or the customer name once
+   * linked. Never `rawSubmission::text`: that cast serialises the whole
+   * JSON object, key names included, so searching "email" or "phone" matched
+   * every enquiry that HAD one rather than none. `search_text` is trigram-
+   * indexed (`enquiries_search_text_trgm_idx`), the same way `customers.name`
+   * already is, so this is no longer a sequential scan of the raw JSON.
+   */
   if (filters.q && filters.q.trim().length >= 2) {
     const like = `%${filters.q.trim()}%`;
     conditions.push(
-      sql`(${enquiries.rawSubmission}::text ilike ${like} or exists (
+      sql`(${enquiries.searchText} ilike ${like} or exists (
         select 1 from customers c where c.id = ${enquiries.customerId} and c.name ilike ${like}
       ))`,
     );
   }
 
+  // Counted against the FILTERS alone, never the cursor — a page break must
+  // not change how many enquiries the header says are in view.
+  const countWhere = and(...conditions);
+
+  /*
+   * `(received_at, id)` compared as a TUPLE, exactly as `customerTimeline`
+   * does for `(at, id)` — a thousand enquiries could in principle share one
+   * `received_at`, so the single-column version leaves their order to the
+   * planner. That is invisible until it is paged, and then it is a row
+   * appearing on two pages while another appears on none.
+   */
+  if (filters.cursor) {
+    const { receivedAt, id: cursorId } = filters.cursor;
+    conditions.push(
+      descending
+        ? sql`(${enquiries.receivedAt}, ${enquiries.id}) < (${receivedAt}::timestamptz, ${cursorId})`
+        : sql`(${enquiries.receivedAt}, ${enquiries.id}) > (${receivedAt}::timestamptz, ${cursorId})`,
+    );
+  }
   const where = and(...conditions);
-  const orderBy =
-    filters.sort === "received_asc" ? enquiries.receivedAt : desc(enquiries.receivedAt);
 
   const [rows, [{ count }]] = await Promise.all([
     db
@@ -287,6 +365,7 @@ export async function listEnquiries(
         rawSubmission: enquiries.rawSubmission,
         source: enquiries.source,
         sourceForm: enquiries.sourceForm,
+        category: enquiries.category,
         stage: enquiries.stage,
         priority: enquiries.priority,
         assignedToId: enquiries.assignedToId,
@@ -299,13 +378,22 @@ export async function listEnquiries(
       .leftJoin(users, eq(users.id, enquiries.assignedToId))
       .leftJoin(customers, eq(customers.id, enquiries.customerId))
       .where(where)
-      .orderBy(orderBy)
-      .limit(pageSize)
-      .offset((page - 1) * pageSize),
-    db.select({ count: sql<number>`count(*)::int` }).from(enquiries).where(where),
+      .orderBy(
+        descending ? desc(enquiries.receivedAt) : enquiries.receivedAt,
+        descending ? desc(enquiries.id) : enquiries.id,
+      )
+      // One more than asked for, purely to know whether there is a next page
+      // — the same trick `customerTimeline` uses, and for the same reason: a
+      // "Next" button that turns out to load nothing is worse than one that
+      // was never enabled.
+      .limit(pageSize + 1),
+    db.select({ count: sql<number>`count(*)::int` }).from(enquiries).where(countWhere),
   ]);
 
-  const items: EnquiryListItem[] = rows.map((r) => {
+  const more = rows.length > pageSize;
+  const pageRows = rows.slice(0, pageSize);
+
+  const items: EnquiryListItem[] = pageRows.map((r) => {
     const fields = readSubmissionFields(r.rawSubmission);
     return {
       id: r.id,
@@ -314,6 +402,7 @@ export async function listEnquiries(
       company: fields.company,
       source: r.source,
       sourceForm: r.sourceForm,
+      category: r.category,
       stage: r.stage as EnquiryStage,
       priority: r.priority as EnquiryPriority,
       assignedToId: r.assignedToId,
@@ -324,7 +413,12 @@ export async function listEnquiries(
     };
   });
 
-  return { items, total: count };
+  const lastItem = items[items.length - 1];
+  const cursor: EnquiryCursor | null = lastItem
+    ? { receivedAt: lastItem.receivedAt, id: lastItem.id }
+    : null;
+
+  return { items, total: count, cursor, more };
 }
 
 /* ------------------------------------------------------------------ detail */
@@ -360,6 +454,7 @@ export type EnquiryDetail = {
   id: string;
   source: string;
   sourceForm: string | null;
+  category: string | null;
   rawSubmission: Record<string, unknown>;
   stage: EnquiryStage;
   priority: EnquiryPriority;
@@ -377,11 +472,15 @@ export type EnquiryDetail = {
 };
 
 export async function getEnquiry(enquiryId: string): Promise<EnquiryDetail | null> {
+  const { error } = await requireEnquiriesAccess();
+  if (error) throw new Error(error.error);
+
   const [row] = await db
     .select({
       id: enquiries.id,
       source: enquiries.source,
       sourceForm: enquiries.sourceForm,
+      category: enquiries.category,
       rawSubmission: enquiries.rawSubmission,
       stage: enquiries.stage,
       priority: enquiries.priority,
@@ -434,7 +533,14 @@ export async function getEnquiry(enquiryId: string): Promise<EnquiryDetail | nul
         linkId: enquiryOrders.id,
         orderId: orders.id,
         orderNo: orders.orderNo,
-        orderedAt: orders.orderedAt,
+        // Converted to the business's own calendar date IN SQL, the same way
+        // `customer-record-service.ts` already does for this exact column —
+        // `orders.ordered_at` is a timestamptz, and serialising it with
+        // `.toISOString()` in JS answers in UTC. For any order placed between
+        // midnight and ~5:30am IST, that reads as the PREVIOUS calendar day
+        // once it reaches `shortDateWithYear`, which only ever looks at a
+        // string's own leading `YYYY-MM-DD`.
+        orderedAt: sql<string>`to_char(${orders.orderedAt} at time zone 'Asia/Kolkata', 'YYYY-MM-DD')`,
         totalAmount: orders.totalAmount,
         status: orders.status,
       })
@@ -448,6 +554,7 @@ export async function getEnquiry(enquiryId: string): Promise<EnquiryDetail | nul
     id: row.id,
     source: row.source,
     sourceForm: row.sourceForm,
+    category: row.category,
     rawSubmission: (row.rawSubmission as Record<string, unknown>) ?? {},
     stage: row.stage as EnquiryStage,
     priority: row.priority as EnquiryPriority,
@@ -479,7 +586,7 @@ export async function getEnquiry(enquiryId: string): Promise<EnquiryDetail | nul
       linkId: o.linkId,
       orderId: o.orderId,
       orderNo: o.orderNo,
-      orderedAt: o.orderedAt.toISOString(),
+      orderedAt: o.orderedAt,
       totalAmount: o.totalAmount,
       status: o.status,
     })),
@@ -492,6 +599,9 @@ export async function getEnquiry(enquiryId: string): Promise<EnquiryDetail | nul
  * why the caller wraps this rather than this wrapping itself.
  */
 export async function markEnquiryViewedIfFirst(enquiryId: string, userId: string): Promise<void> {
+  const { error } = await requireEnquiriesAccess();
+  if (error) throw new Error(error.error);
+
   const [already] = await db
     .select({ id: enquiryActivity.id })
     .from(enquiryActivity)
@@ -520,6 +630,14 @@ export async function assignEnquiry(
   if (assignToId) {
     const [target] = await db.select({ name: users.name }).from(users).where(eq(users.id, assignToId));
     if (!target) return err("That person could not be found.", "not_found");
+    // `assignableUsers()` already offers only people holding this app in the
+    // UI's own dropdown; this is the same defense-in-depth this file already
+    // applies elsewhere (Medium #15) — a direct service call must not be able
+    // to assign an enquiry to somebody who can never open it to see it.
+    const targetApps = await listUserApps(assignToId);
+    if (!targetApps.includes(ENQUIRY_WORKSPACE)) {
+      return err("That person does not have Website Enquiries access.", "rule_violation");
+    }
     assignedName = target.name;
   }
 
@@ -536,6 +654,41 @@ export async function assignEnquiry(
     assignToId ? `Assigned to ${assignedName}.` : "Unassigned.",
     { from: before.assignedToId, to: assignToId },
   );
+
+  /*
+   * Told because work has moved onto (or off) somebody's queue without them
+   * asking — the same reasoning `account-manager.ts`/`sales-manager.ts`
+   * already apply to reassigning an account (Senior finding #21). A no-op
+   * (the same person named again) tells nobody, and the actor is never told
+   * about their own action, matching `order-approval-service.ts`'s
+   * `tellTheAuthor`. Best-effort, on top of the write above: `notifyUser`'s
+   * own insert failing must never undo an assignment that has already
+   * committed, so its failure is swallowed exactly as the two other
+   * `notifyUser(...).catch(() => {})` call sites in this codebase do.
+   */
+  const previousAssigneeId = before.assignedToId;
+  if (assignToId !== previousAssigneeId) {
+    if (assignToId && assignToId !== user.id) {
+      await notifyUser({
+        userId: assignToId,
+        title: "Website enquiry assigned to you",
+        body: `${user.name} assigned you a website enquiry to follow up.`,
+        kind: "info",
+        href: `/enquiries/list/${enquiryId}`,
+      }).catch(() => {});
+    }
+    if (previousAssigneeId && previousAssigneeId !== user.id) {
+      await notifyUser({
+        userId: previousAssigneeId,
+        title: assignToId ? "Website enquiry moved from you" : "Website enquiry unassigned",
+        body: assignToId
+          ? `${user.name} reassigned your enquiry to ${assignedName}.`
+          : `${user.name} unassigned an enquiry that was yours.`,
+        kind: "info",
+        href: `/enquiries/list/${enquiryId}`,
+      }).catch(() => {});
+    }
+  }
 
   return okVoid("Assignment updated.");
 }
@@ -609,13 +762,31 @@ export async function linkCustomer(enquiryId: string, customerId: string): Promi
   const [customer] = await db.select({ id: customers.id, name: customers.name }).from(customers).where(eq(customers.id, customerId));
   if (!customer) return err("That customer could not be found.", "not_found");
 
-  // A confirmed match only ever sets the pointer — nothing about the customer
-  // row itself is read back and written; the enquiry adapts to the customer,
-  // never the other way round.
-  await db
+  /*
+   * SET ONCE, and the WHERE clause is the guard rather than a read
+   * beforehand. Two requests racing to link the same unlinked enquiry both
+   * pass the existence checks above; only one UPDATE can actually match
+   * `customer_id is null` once Postgres has taken the row's lock for it — the
+   * loser's own UPDATE re-evaluates the WHERE clause against the now-
+   * committed value and matches nothing, rather than silently overwriting
+   * the winner. A confirmed match only ever sets the pointer — nothing about
+   * the customer row itself is read back and written; the enquiry adapts to
+   * the customer, never the other way round.
+   */
+  const [linked] = await db
     .update(enquiries)
     .set({ customerId, updatedAt: new Date(), updatedById: user.id })
-    .where(eq(enquiries.id, enquiryId));
+    .where(and(eq(enquiries.id, enquiryId), isNull(enquiries.customerId)))
+    .returning({ id: enquiries.id });
+
+  if (!linked) {
+    // The enquiry was confirmed to exist above, so a zero-row update here
+    // means exactly one thing: it already has a customer, linked either
+    // moments ago by a concurrent request or at any time before this one —
+    // never overwritten, whether the request named the same customer again
+    // or a different one.
+    return err("This enquiry is already linked to a customer.", "conflict");
+  }
 
   await writeActivity(enquiryId, "customer_linked", user.id, `Linked to ${customer.name}.`, { customerId });
   return okVoid("Customer linked.");
@@ -641,13 +812,20 @@ export async function findPossibleDuplicateEnquiries(
   enquiryId: string,
   phone: string | null,
 ): Promise<PossibleDuplicate[]> {
+  const { error } = await requireEnquiriesAccess();
+  if (error) throw new Error(error.error);
+
   const digits = phoneDigits(phone);
   if (!digits) return [];
 
   const rows = await db
     .select({
       id: enquiries.id,
-      receivedAt: enquiries.receivedAt,
+      // The detail screen shows this via `shortDateWithYear`, which reads
+      // only a string's own leading `YYYY-MM-DD` — so, exactly like
+      // `orderedAt` above, this has to be the IST calendar date rather than
+      // a UTC instant serialised with `.toISOString()`.
+      receivedAt: sql<string>`to_char(${enquiries.receivedAt} at time zone 'Asia/Kolkata', 'YYYY-MM-DD')`,
       source: enquiries.source,
       stage: enquiries.stage,
       assignedToName: users.name,
@@ -656,7 +834,7 @@ export async function findPossibleDuplicateEnquiries(
     .leftJoin(users, eq(users.id, enquiries.assignedToId))
     .where(
       and(
-        eq(enquiries.workspace, "enquiries"),
+        eq(enquiries.workspace, ENQUIRY_WORKSPACE),
         sql`${enquiries.id} <> ${enquiryId}`,
         sql`${enquiries.rawSubmission}::text ilike ${"%" + digits + "%"}`,
       ),
@@ -666,7 +844,7 @@ export async function findPossibleDuplicateEnquiries(
 
   return rows.map((r) => ({
     id: r.id,
-    receivedAt: r.receivedAt.toISOString(),
+    receivedAt: r.receivedAt,
     source: r.source,
     stage: r.stage as EnquiryStage,
     assignedToName: r.assignedToName,
@@ -695,7 +873,7 @@ export async function createEnquiryReminder(input: {
   enquiryId: string;
   dueDate: string;
   note: string;
-  type: ReminderType;
+  type: EnquiryReminderType;
   assignedUserId: string;
 }): Promise<Result> {
   const { user, error } = await requireEnquiriesAccess();
@@ -714,23 +892,40 @@ export async function createEnquiryReminder(input: {
 
   const [assignee] = await db.select({ id: users.id }).from(users).where(eq(users.id, input.assignedUserId));
   if (!assignee) return err("That person could not be found.", "not_found");
+  // Same defense-in-depth as assignEnquiry: a direct call must not be able to
+  // hand a follow-up to somebody who cannot open Website Enquiries to see it.
+  const assigneeApps = await listUserApps(input.assignedUserId);
+  if (!assigneeApps.includes(ENQUIRY_WORKSPACE)) {
+    return err("That person does not have Website Enquiries access.", "rule_violation");
+  }
 
-  const reminderId = id("rem");
-  await db.insert(reminders).values({
-    id: reminderId,
-    customerId: enquiry.customerId,
-    enquiryId: input.enquiryId,
-    createdByUserId: user.id,
-    assignedUserId: input.assignedUserId,
-    dueDate: input.dueDate,
-    note: input.note.trim(),
-    type: input.type,
-    createdById: user.id,
-    updatedById: user.id,
-  });
+  /*
+   * The actual write goes through the shared reminder service — the same
+   * Zod validation, working-day roll-forward and insert every other reminder
+   * in the CRM gets, rather than a second, divergent path into the same
+   * table (Senior finding #3). `skipCustomerScope` is the one deliberate
+   * difference: the shared service's `assertCustomerInScope` encodes the
+   * CRM's own "mine/team/all" book, which has no meaning for Website
+   * Enquiries' flat, company-wide app grant (Senior finding #21 audit,
+   * "Finding #1") — the enquiry's own `requireEnquiriesAccess()` check above,
+   * plus the `enquiry.customerId` lookup just above that, are this call's
+   * own, independently-sufficient authorization for exactly this customer.
+   */
+  const created = await createSharedReminder(
+    {
+      customerId: enquiry.customerId,
+      dueDate: input.dueDate,
+      note: input.note,
+      type: input.type,
+      assignedUserId: input.assignedUserId,
+      enquiryId: input.enquiryId,
+    },
+    { skipCustomerScope: true },
+  );
+  if (!created.ok) return created;
 
   await writeActivity(input.enquiryId, "reminder_created", user.id, input.note.trim(), {
-    reminderId,
+    reminderId: created.data.id,
     dueDate: input.dueDate,
   });
   return okVoid("Follow-up scheduled.");
@@ -748,19 +943,31 @@ export type OrderCandidate = {
 
 /** Only the linked customer's own orders — linking somebody else's order to this enquiry would not mean anything. */
 export async function ordersForLinking(enquiryId: string): Promise<OrderCandidate[]> {
+  const { error } = await requireEnquiriesAccess();
+  if (error) throw new Error(error.error);
+
   const [enquiry] = await db.select({ customerId: enquiries.customerId }).from(enquiries).where(eq(enquiries.id, enquiryId));
   if (!enquiry?.customerId) return [];
 
   const alreadyLinked = db.select({ orderId: enquiryOrders.orderId }).from(enquiryOrders).where(eq(enquiryOrders.enquiryId, enquiryId));
 
   const rows = await db
-    .select({ id: orders.id, orderNo: orders.orderNo, orderedAt: orders.orderedAt, totalAmount: orders.totalAmount, status: orders.status })
+    .select({
+      id: orders.id,
+      orderNo: orders.orderNo,
+      // Same fix as getEnquiry's linkedOrders, and for the same reason: this
+      // is a timestamptz, and converting it to a calendar date has to name
+      // the zone rather than let `.toISOString()` answer in UTC.
+      orderedAt: sql<string>`to_char(${orders.orderedAt} at time zone 'Asia/Kolkata', 'YYYY-MM-DD')`,
+      totalAmount: orders.totalAmount,
+      status: orders.status,
+    })
     .from(orders)
     .where(and(eq(orders.customerId, enquiry.customerId), notInArray(orders.id, alreadyLinked)))
     .orderBy(desc(orders.orderedAt))
     .limit(20);
 
-  return rows.map((r) => ({ id: r.id, orderNo: r.orderNo, orderedAt: r.orderedAt.toISOString(), totalAmount: r.totalAmount, status: r.status }));
+  return rows.map((r) => ({ id: r.id, orderNo: r.orderNo, orderedAt: r.orderedAt, totalAmount: r.totalAmount, status: r.status }));
 }
 
 export async function linkOrder(enquiryId: string, orderId: string): Promise<Result> {
@@ -772,7 +979,17 @@ export async function linkOrder(enquiryId: string, orderId: string): Promise<Res
 
   const [order] = await db.select({ id: orders.id, customerId: orders.customerId, orderNo: orders.orderNo }).from(orders).where(eq(orders.id, orderId));
   if (!order) return err("That order could not be found.", "not_found");
-  if (enquiry.customerId && order.customerId !== enquiry.customerId) {
+
+  // An unlinked enquiry has no customer to check an order against — the old
+  // `enquiry.customerId && ...` guard short-circuited to false here and let
+  // ANY order in the company through. `customerId === customerId` is the
+  // only relationship an order-link may ever assert; it never runs the other
+  // way (inferring or assigning a customer from the order), which is what
+  // would have turned this into a back door around product decision #8.
+  if (!enquiry.customerId) {
+    return err("This enquiry must be linked to a customer before an order can be linked.", "rule_violation");
+  }
+  if (order.customerId !== enquiry.customerId) {
     return err("That order belongs to a different customer than this enquiry is linked to.", "rule_violation");
   }
 

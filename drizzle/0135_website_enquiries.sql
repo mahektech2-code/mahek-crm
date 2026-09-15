@@ -13,11 +13,13 @@ create type "public"."enquiry_stage" as enum('new', 'contacted', 'follow_up', 'q
 --> statement-breakpoint
 create table "enquiries" (
 	"id" text primary key not null,
-	"workspace" "app_id" default 'enquiries' not null,
+	"workspace" "app_id" not null,
 	"customer_id" text,
 	"source" text not null,
 	"source_form" text,
+	"category" text,
 	"raw_submission" jsonb not null,
+	"search_text" text default '' not null,
 	"stage" "enquiry_stage" default 'new' not null,
 	"priority" "enquiry_priority" default 'normal' not null,
 	"assigned_to_id" text,
@@ -92,7 +94,15 @@ create index "enquiries_customer_idx" on "enquiries" using btree ("customer_id")
 -- never touches this.
 create index "enquiries_unassigned_idx" on "enquiries" using btree ("workspace","received_at") where assigned_to_id is null;
 --> statement-breakpoint
-create unique index "enquiries_external_ref_key" on "enquiries" using btree ("external_ref");
+create unique index "enquiries_source_external_ref_key" on "enquiries" using btree ("source","external_ref");
+--> statement-breakpoint
+-- The Enquiries search box matches VALUES, never a JSON key name — `search_
+-- text` holds only the name/phone/email/company/message a visitor actually
+-- typed, joined at write time. `ilike '%…%'` cannot use a btree index, so
+-- this needs the trigram operator class the way `products_name_trgm_idx`
+-- (0008) and `customers_name_trgm_idx` (0072) already do; `pg_trgm` itself
+-- was enabled by migration 0008 and does not need creating again here.
+create index "enquiries_search_text_trgm_idx" on "enquiries" using gin ("search_text" gin_trgm_ops);
 --> statement-breakpoint
 create index "enquiry_activity_enquiry_idx" on "enquiry_activity" using btree ("enquiry_id","at" desc);
 --> statement-breakpoint

@@ -14,7 +14,7 @@ import {
   type CustomerMatch,
 } from "@/lib/services/enquiry-service";
 import { fromThrown, type Result } from "@/lib/result";
-import type { EnquiryPriority, EnquiryStage } from "@/lib/enquiry-labels";
+import type { EnquiryPriority, EnquiryReminderType, EnquiryStage } from "@/lib/enquiry-labels";
 
 /**
  * Thin over the service, which owns the access check. Every action here is
@@ -85,7 +85,7 @@ export async function createEnquiryReminderAction(input: {
   enquiryId: string;
   dueDate: string;
   note: string;
-  type: "call_back" | "payment_promise" | "order_confirmation" | "send_information" | "check_stock" | "other";
+  type: EnquiryReminderType;
   assignedUserId: string;
 }): Promise<Result> {
   try {

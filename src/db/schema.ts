@@ -7812,8 +7812,30 @@ export const enquiries = pgTable(
     source: text("source").notNull(),
     /** Which form or page within that source, where it is known. */
     sourceForm: text("source_form"),
+    /**
+     * The website's own coarse classification of the submission — GENERAL,
+     * SALES, DISTRIBUTOR, CAREER, LOGISTICS — a sibling of `sourceForm`
+     * rather than part of it: `sourceForm` names which form was filled in,
+     * this names what the website's own backend filed it under. Free text
+     * like `source`/`sourceForm`, not a Postgres enum: the accepted values
+     * are validated once, at the ingestion boundary
+     * (`enquiry-ingest-validation.ts`'s `ENQUIRY_SOURCE_CATEGORIES`), and a
+     * ninth value there needs no migration here. Optional — an older
+     * producer, or any submission that never sent one, leaves it null.
+     */
+    category: text("category"),
     /** The visitor's own submitted fields, kept exactly as sent regardless of how parsing changes later. */
     rawSubmission: jsonb("raw_submission").$type<Record<string, unknown>>().notNull(),
+    /**
+     * The name/phone/email/company/message VALUES `readSubmissionFields`
+     * already reads off `rawSubmission` — joined into one string, at write
+     * time, so the search box can match what a visitor actually typed
+     * without ever matching a JSON key name. Never re-derived from
+     * `rawSubmission` on read: `rawSubmission` itself is kept exactly as
+     * sent, so this only needs computing once, the same day the row is
+     * written.
+     */
+    searchText: text("search_text").notNull().default(""),
     stage: enquiryStageEnum("stage").notNull().default("new"),
     priority: enquiryPriorityEnum("priority").notNull().default("normal"),
     /** Null means unassigned. Never a sentinel user, and never automatic on receipt. */
@@ -7837,7 +7859,8 @@ export const enquiries = pgTable(
     index("enquiries_unassigned_idx")
       .on(t.workspace, t.receivedAt)
       .where(sql`assigned_to_id is null`),
-    uniqueIndex("enquiries_external_ref_key").on(t.externalRef),
+    /** A retransmission is only the same enquiry if it also names the same source — an externalRef from a future Instagram/WhatsApp/IndiaMART integration is a different id space and must not collide with the website's. */
+    uniqueIndex("enquiries_source_external_ref_key").on(t.source, t.externalRef),
   ],
 );
 

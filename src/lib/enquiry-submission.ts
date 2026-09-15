@@ -61,6 +61,20 @@ export function readSubmissionFields(raw: unknown): EnquirySubmissionFields {
   };
 }
 
+/**
+ * The plain-text VALUES worth searching, joined into one string — never the
+ * JSON's own key names. `enquiries.search_text` is exactly this, computed
+ * once at the moment the row is written, so a term that finds an enquiry on
+ * the list or detail screen (both of which read `readSubmissionFields` too)
+ * is exactly a term that can find it in search.
+ */
+export function buildEnquirySearchText(raw: unknown): string {
+  const fields = readSubmissionFields(raw);
+  return [fields.name, fields.phone, fields.email, fields.company, fields.message]
+    .filter((v): v is string => !!v)
+    .join(" ");
+}
+
 /** Last 10 digits, the same key `customers.phone` matching already uses elsewhere. */
 export function phoneDigits(phone: string | null | undefined): string | null {
   if (!phone) return null;

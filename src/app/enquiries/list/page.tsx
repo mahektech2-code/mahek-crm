@@ -1,5 +1,6 @@
 import { listEnquiries, assignableUsers, type EnquiryFilters } from "@/lib/services/enquiry-service";
 import { EnquiryListScreen } from "@/components/enquiries/enquiry-list-screen";
+import { decodeEnquiryCursors } from "@/lib/enquiry-labels";
 import type { EnquiryPriority, EnquiryStage } from "@/lib/enquiry-labels";
 
 export const metadata = { title: "Enquiries — Website Enquiries" };
@@ -25,7 +26,12 @@ export default async function EnquiriesListPage({
   const assignedParam = one("assigned");
   const linkedParam = one("linked");
   const sortParam = one("sort");
-  const page = Number(one("page") ?? "1") || 1;
+  // A stack of keyset cursors, one per page boundary already crossed — see
+  // `decodeEnquiryCursors`. "Page" is derived from its length rather than
+  // stored separately, so a hand-edited URL cannot name a page number the
+  // cursor chain does not actually reach.
+  const cursors = decodeEnquiryCursors(one("cursors"));
+  const page = cursors.length + 1;
 
   const filters: EnquiryFilters = {
     q: q || undefined,
@@ -35,11 +41,14 @@ export default async function EnquiriesListPage({
     assignedToId: assignedParam === "unassigned" ? "unassigned" : assignedParam || undefined,
     linked: linkedParam === "linked" || linkedParam === "unlinked" ? linkedParam : undefined,
     sort: sortParam === "received_asc" ? "received_asc" : "received_desc",
-    page,
+    cursor: cursors.length ? cursors[cursors.length - 1] : null,
     pageSize: 25,
   };
 
-  const [{ items, total }, team] = await Promise.all([listEnquiries(filters), assignableUsers()]);
+  const [{ items, total, cursor: nextCursor, more }, team] = await Promise.all([
+    listEnquiries(filters),
+    assignableUsers(),
+  ]);
 
   return (
     <EnquiryListScreen
@@ -47,6 +56,9 @@ export default async function EnquiriesListPage({
       total={total}
       page={page}
       pageSize={25}
+      cursors={cursors}
+      nextCursor={nextCursor}
+      more={more}
       team={team}
       filters={{
         q,

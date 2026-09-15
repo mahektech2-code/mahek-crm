@@ -19,13 +19,19 @@ import {
   ENQUIRY_SOURCES,
   STAGE_LABEL,
   PRIORITY_LABEL,
+  SOURCE_LABEL,
   STAGE_TONE,
   PRIORITY_TONE,
+  sourceLabel,
+  sourceFormLabel,
+  categoryLabel,
+  encodeEnquiryCursors,
+  type EnquiryCursor,
   type EnquiryStage,
   type EnquiryPriority,
 } from "@/lib/enquiry-labels";
 import type { EnquiryListItem, AssignableUser } from "@/lib/services/enquiry-service";
-import { phoneDisplay } from "@/lib/format";
+import { phoneDisplay, stamp } from "@/lib/format";
 
 type Filters = {
   q: string;
@@ -42,6 +48,9 @@ export function EnquiryListScreen({
   total,
   page,
   pageSize,
+  cursors,
+  nextCursor,
+  more,
   team,
   filters,
 }: {
@@ -49,14 +58,23 @@ export function EnquiryListScreen({
   total: number;
   page: number;
   pageSize: number;
+  /** The keyset cursor stack that got us to this page — see `decodeEnquiryCursors`. */
+  cursors: EnquiryCursor[];
+  /** The boundary at the end of THIS page, to move one page forward. Null once nothing is left. */
+  nextCursor: EnquiryCursor | null;
+  /** Whether asking for another page would return anything. */
+  more: boolean;
   team: AssignableUser[];
   filters: Filters;
 }) {
   const router = useRouter();
   const [q, setQ] = React.useState(filters.q);
 
-  function push(next: Partial<Filters & { page: number }>) {
-    const merged = { ...filters, page: 1, ...next };
+  function push(next: Partial<Filters & { cursors: EnquiryCursor[] }>) {
+    // Any filter change starts back at page one — the same "cursors: []"
+    // `page: 1` already meant before this, and for the same reason: a
+    // cursor is only valid against the ordering/filters that produced it.
+    const merged = { ...filters, cursors: [] as EnquiryCursor[], ...next };
     const params = new URLSearchParams();
     if (merged.q) params.set("q", merged.q);
     if (merged.stage) params.set("stage", merged.stage);
@@ -65,7 +83,7 @@ export function EnquiryListScreen({
     if (merged.assigned) params.set("assigned", merged.assigned);
     if (merged.linked) params.set("linked", merged.linked);
     if (merged.sort && merged.sort !== "received_desc") params.set("sort", merged.sort);
-    if ("page" in merged && merged.page && merged.page !== 1) params.set("page", String(merged.page));
+    if (merged.cursors.length) params.set("cursors", encodeEnquiryCursors(merged.cursors));
     router.push(`/enquiries/list${params.toString() ? "?" + params.toString() : ""}`);
   }
 
@@ -110,7 +128,7 @@ export function EnquiryListScreen({
         <Select value={filters.source ?? ""} onChange={(e) => push({ source: e.target.value || undefined })}>
           <option value="">All sources</option>
           {ENQUIRY_SOURCES.map((s) => (
-            <option key={s} value={s}>{s}</option>
+            <option key={s} value={s}>{SOURCE_LABEL[s]}</option>
           ))}
         </Select>
         <Select value={filters.assigned} onChange={(e) => push({ assigned: e.target.value })}>
@@ -168,13 +186,14 @@ export function EnquiryListScreen({
                     </div>
                   </Td>
                   <Td>
-                    <div>{e.source}</div>
-                    {e.sourceForm ? <div className="text-xs text-muted">{e.sourceForm}</div> : null}
+                    <div>{sourceLabel(e.source)}</div>
+                    {e.sourceForm ? <div className="text-xs text-muted">{sourceFormLabel(e.sourceForm)}</div> : null}
+                    {e.category ? <div className="text-xs text-muted">{categoryLabel(e.category)}</div> : null}
                   </Td>
                   <Td><Badge tone={STAGE_TONE[e.stage]}>{STAGE_LABEL[e.stage]}</Badge></Td>
                   <Td><Badge tone={PRIORITY_TONE[e.priority]}>{PRIORITY_LABEL[e.priority]}</Badge></Td>
                   <Td>{e.assignedToName ?? <span className="text-muted">Unassigned</span>}</Td>
-                  <Td>{new Date(e.receivedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</Td>
+                  <Td>{stamp(e.receivedAt)}</Td>
                   <Td>
                     {e.customerId ? (
                       <Badge tone="success">Linked</Badge>
@@ -199,10 +218,23 @@ export function EnquiryListScreen({
         <div className="mt-3 flex items-center justify-between">
           <span className="text-[13px] text-muted">Page {page} of {totalPages}</span>
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => push({ page: page - 1 })}>
+            {/* Previous never re-queries "backwards" — it pops the last
+                boundary off the stack and asks for the page it already knows
+                that cursor reaches, the same way it was reached going forward. */}
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={cursors.length === 0}
+              onClick={() => push({ cursors: cursors.slice(0, -1) })}
+            >
               Previous
             </Button>
-            <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => push({ page: page + 1 })}>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!more || !nextCursor}
+              onClick={() => nextCursor && push({ cursors: [...cursors, nextCursor] })}
+            >
               Next
             </Button>
           </div>
