@@ -235,10 +235,34 @@ export const reminderSchema = z.object({
     ])
     .default("call_back"),
   assignedUserId: z.string().optional(),
+  /** Which enquiry this follow-up belongs to, where there is one. Optional — every other caller of this schema has no enquiry to name. */
+  enquiryId: z.string().optional(),
 });
+
+/**
+ * `skipCustomerScope` exists for exactly one caller —
+ * `enquiry-service.ts`'s `createEnquiryReminder` — and nobody else may set
+ * it: it is a plain TypeScript parameter, never part of `reminderSchema`,
+ * so it can never arrive from a request body, form data, a URL, or any
+ * other client-controlled payload.
+ *
+ * Website Enquiries is its own app, authorised by `requireEnquiriesAccess()`
+ * (a flat app grant), not by the CRM's own "mine/team/all" scope — see
+ * `lib/apps.ts`'s own entry for it. `assertCustomerInScope` below encodes
+ * exactly that CRM concept, so applying it to an Enquiries-authorised caller
+ * refuses a customer merely for not being in *that specific employee's* CRM
+ * book, even though Enquiries was deliberately built to need no such thing.
+ * The caller sets this only after it has already, independently, verified
+ * the enquiry exists and that the customer is genuinely the one that
+ * enquiry is linked to — every other rule in this function (the schema,
+ * customer existence, the working-day roll-forward, the insert itself)
+ * still runs unconditionally either way.
+ */
+export type CreateReminderOptions = { skipCustomerScope?: true };
 
 export async function createReminder(
   raw: z.input<typeof reminderSchema>,
+  opts?: CreateReminderOptions,
 ): Promise<Result<{ id: string }>> {
   const parsed = reminderSchema.safeParse(raw);
   if (!parsed.success) {
@@ -256,7 +280,9 @@ export async function createReminder(
     .from(customers)
     .where(eq(customers.id, input.customerId));
   if (!customer) return err("That customer no longer exists.", "not_found");
-  await assertCustomerInScope(customer);
+  if (!opts?.skipCustomerScope) {
+    await assertCustomerInScope(customer);
+  }
 
   const due = config["reminders.rollForwardOnNonWorkingDays"]
     ? onOrAfterWorkingDay(input.dueDate, {
@@ -270,6 +296,7 @@ export async function createReminder(
   await db.insert(reminders).values({
     id: reminderId,
     customerId: input.customerId,
+    enquiryId: input.enquiryId ?? null,
     createdByUserId: ctx.user.id,
     assignedUserId: input.assignedUserId ?? ctx.user.id,
     dueDate: due,

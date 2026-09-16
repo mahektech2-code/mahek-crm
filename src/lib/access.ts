@@ -25,6 +25,7 @@ import { pendingReceiptCount } from "./services/receipt-service";
 import { pendingCreditNoteCount } from "./services/credit-note-service";
 import { activeEmployeeCount } from "./services/employee-service";
 import { pendingApprovalCount, unplannedCount } from "./services/sales-service";
+import { unassignedEnquiryCount } from "./services/enquiry-counts";
 import { addDays } from "./business-date";
 
 /* ---------------------------------------------------------------------------
@@ -229,6 +230,20 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
     // than pretending to a queue.
     if (app.id === "founder") {
       out.push({ ...app, count: 0, status: "Company performance, one screen" });
+      continue;
+    }
+
+    // A worklist like the CRM's, so the badge counts the same thing the
+    // app's own Overview page leads with: enquiries nobody has picked up yet.
+    if (app.id === "enquiries") {
+      const unassigned = await unassignedEnquiryCount(app.id);
+      out.push({
+        ...app,
+        count: unassigned,
+        status: unassigned
+          ? `${unassigned} enquir${unassigned === 1 ? "y" : "ies"} unassigned`
+          : "Nothing waiting",
+      });
       continue;
     }
 
