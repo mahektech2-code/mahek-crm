@@ -9,6 +9,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { reminderTypeEnum, reminderStatusEnum, orderStatusEnum } from "@/db/schema";
+import { buildEnquirySearchText } from "@/lib/enquiry-submission";
 import {
   ENQUIRY_STAGES,
   ENQUIRY_PRIORITIES,
@@ -311,5 +312,72 @@ describe("workspace and source are ONE constant each, not a literal at every cal
     const websiteLiterals = src.match(/"website"/g) ?? [];
     assert.equal(workspaceLiterals.length, 1, "\"enquiries\" must appear exactly once — in the constant's own definition");
     assert.equal(websiteLiterals.length, 1, "\"website\" must appear exactly once — in the constant's own definition");
+  });
+});
+
+/* ------------------------------------------------ review follow-up (PR #343) */
+
+describe("a phone number is searchable however the visitor spelled it", () => {
+  test("search_text carries the bare digits beside what was typed", () => {
+    const text = buildEnquirySearchText({ name: "Ravi", phone: "+91 98200 11001", company: "Ravi Paints" });
+    assert.match(text, /\+91 98200 11001/, "what the visitor typed is kept verbatim");
+    assert.match(text, /9820011001/, "and the ten digits a telecaller types are there too");
+  });
+
+  test("an already-bare number is not stored twice", () => {
+    const text = buildEnquirySearchText({ name: "Ravi", phone: "9820011001" });
+    assert.equal(text.match(/9820011001/g)?.length, 1);
+  });
+
+  test("a number too short to normalise costs nothing", () => {
+    assert.equal(buildEnquirySearchText({ name: "Ravi", phone: "123" }), "Ravi 123");
+  });
+
+  test("no phone at all still builds", () => {
+    assert.equal(buildEnquirySearchText({ name: "Ravi", company: "Ravi Paints" }), "Ravi Ravi Paints");
+  });
+});
+
+describe("the duplicate warning reads search_text, not a cast of the whole submission", () => {
+  test("no query in enquiry-service casts raw_submission to text", () => {
+    const src = readFileSync("src/lib/services/enquiry-service.ts", "utf8");
+    assert.doesNotMatch(
+      src,
+      /rawSubmission\}::text/,
+      "a jsonb-to-text cast is a sequential scan, cannot use the trigram index, and matches digits anywhere in the JSON",
+    );
+  });
+});
+
+describe("the website ingest is idempotent on (source, external_ref), the pair the unique index is on", () => {
+  test("neither externalRef lookup is matched on the ref alone", () => {
+    const src = readFileSync("src/lib/services/enquiry-service.ts", "utf8");
+    const lookups = src.match(/eq\(enquiries\.externalRef, input\.externalRef\)/g) ?? [];
+    assert.equal(lookups.length, 2, "there are two: the fast path and the lost-race recovery");
+    for (const m of src.matchAll(/eq\(enquiries\.externalRef, input\.externalRef\)/g)) {
+      const before = src.slice(Math.max(0, m.index - 220), m.index);
+      assert.match(
+        before,
+        /eq\(enquiries\.source, ENQUIRY_SOURCE_WEBSITE\)/,
+        "an id from a future source is a different id space and must not answer with the website's enquiry",
+      );
+    }
+  });
+});
+
+describe("the launcher badge does not import the access rule that imports it", () => {
+  test("access.ts reads the count module, not the enquiry service", () => {
+    const src = readFileSync("src/lib/access.ts", "utf8");
+    assert.doesNotMatch(src, /services\/enquiry-service/, "that is the import cycle");
+    assert.match(src, /services\/enquiry-counts/);
+  });
+
+  test("the count module imports no access rule of its own", () => {
+    const src = readFileSync("src/lib/services/enquiry-counts.ts", "utf8");
+    // The IMPORTS, not the prose: the file explains the cycle it exists to
+    // break, and naming it in a comment is the point rather than the fault.
+    const imports = src.match(/^import .*$/gm) ?? [];
+    assert.ok(imports.length > 0);
+    assert.ok(!imports.some((line) => /access|enquiry-service/.test(line)), imports.join("\n"));
   });
 });

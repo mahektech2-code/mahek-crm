@@ -13,14 +13,35 @@ import {
   findCustomersByPhone,
   type CustomerMatch,
 } from "@/lib/services/enquiry-service";
-import { fromThrown, type Result } from "@/lib/result";
-import type { EnquiryPriority, EnquiryReminderType, EnquiryStage } from "@/lib/enquiry-labels";
+import { err, fromThrown, type Result } from "@/lib/result";
+import {
+  ENQUIRY_PRIORITIES,
+  ENQUIRY_REMINDER_TYPES,
+  ENQUIRY_STAGES,
+  type EnquiryPriority,
+  type EnquiryReminderType,
+  type EnquiryStage,
+} from "@/lib/enquiry-labels";
 
 /**
  * Thin over the service, which owns the access check. Every action here is
  * verified there, not merely hidden here — a disabled control is a courtesy,
  * not a permission.
+ *
+ * What the service cannot own is the SHAPE of what arrives. A server action is
+ * a URL: `stage`, `priority` and a reminder's `type` are typed here and are all
+ * Postgres enums underneath, so a value no dropdown can produce reaches the
+ * database, which raises `invalid input value for enum …` — and `fromThrown`
+ * puts that driver message in front of a telecaller as a toast. Every other
+ * write path in this codebase checks what it was given before spending it.
  */
+const isStage = (v: unknown): v is EnquiryStage =>
+  typeof v === "string" && (ENQUIRY_STAGES as readonly string[]).includes(v);
+const isPriority = (v: unknown): v is EnquiryPriority =>
+  typeof v === "string" && (ENQUIRY_PRIORITIES as readonly string[]).includes(v);
+const isReminderType = (v: unknown): v is EnquiryReminderType =>
+  typeof v === "string" && (ENQUIRY_REMINDER_TYPES as readonly string[]).includes(v);
+
 function refresh(enquiryId?: string) {
   try {
     revalidatePath("/enquiries");
@@ -42,6 +63,7 @@ export async function assignEnquiryAction(enquiryId: string, assignToId: string 
 }
 
 export async function changeStageAction(enquiryId: string, stage: EnquiryStage): Promise<Result> {
+  if (!isStage(stage)) return err("That is not a stage an enquiry can be in.", "validation");
   try {
     const r = await changeStage(enquiryId, stage);
     refresh(enquiryId);
@@ -52,6 +74,7 @@ export async function changeStageAction(enquiryId: string, stage: EnquiryStage):
 }
 
 export async function changePriorityAction(enquiryId: string, priority: EnquiryPriority): Promise<Result> {
+  if (!isPriority(priority)) return err("That is not a priority an enquiry can carry.", "validation");
   try {
     const r = await changePriority(enquiryId, priority);
     refresh(enquiryId);
@@ -88,6 +111,7 @@ export async function createEnquiryReminderAction(input: {
   type: EnquiryReminderType;
   assignedUserId: string;
 }): Promise<Result> {
+  if (!isReminderType(input.type)) return err("That is not a kind of reminder.", "validation");
   try {
     const r = await createEnquiryReminder(input);
     refresh(input.enquiryId);

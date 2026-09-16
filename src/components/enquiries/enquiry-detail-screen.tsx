@@ -498,14 +498,24 @@ function CustomerMatchCard({
   onAfter: (p: Promise<Result>) => Promise<void>;
 }) {
   const [matches, setMatches] = React.useState<CustomerMatch[] | null>(null);
+  // A search that FAILED and a search that found nobody are different facts,
+  // and only one of them is about the customer. Collapsed into an empty list,
+  // a refused permission, a dropped connection or a database fault all read as
+  // the confident "no existing customer matches this phone number" — and
+  // somebody links nobody, believing there is nobody to link.
+  const [failure, setFailure] = React.useState<string | null>(null);
   const [searching, setSearching] = React.useState(false);
 
   async function search() {
     if (!phone) return;
     setSearching(true);
+    setFailure(null);
     try {
       const r = await findCustomersByPhoneAction(phone);
-      setMatches(r.ok ? r.data : []);
+      if (r.ok) setMatches(r.data);
+      else setFailure(r.error);
+    } catch {
+      setFailure("That search could not be run. Try again.");
     } finally {
       setSearching(false);
     }
@@ -519,9 +529,12 @@ function CustomerMatchCard({
       {!phone ? (
         <p className="mt-2 text-[13px] text-muted">No phone number was submitted, so no match can be searched for.</p>
       ) : matches === null ? (
-        <Button size="sm" className="mt-2" onClick={search} disabled={searching}>
-          {searching ? "Searching…" : "Find matching customers"}
-        </Button>
+        <>
+          <Button size="sm" className="mt-2" onClick={search} disabled={searching}>
+            {searching ? "Searching…" : failure ? "Try again" : "Find matching customers"}
+          </Button>
+          {failure ? <p className="mt-2 text-[13px] text-danger">{failure}</p> : null}
+        </>
       ) : matches.length === 0 ? (
         <div className="mt-2 text-[13px] text-muted">No existing customer matches this phone number.</div>
       ) : (

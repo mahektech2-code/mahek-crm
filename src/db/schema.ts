@@ -7800,7 +7800,18 @@ export const enquiries = pgTable(
   "enquiries",
   {
     id: text("id").primaryKey(),
-    workspace: appIdEnum("workspace").notNull().default("enquiries"),
+    /**
+     * Which app owns the row. NOT defaulted, and the migration that creates
+     * this table does not default it either — a value added to an enum may
+     * not be USED in the transaction that adds it, and drizzle-kit applies
+     * every pending migration in one, so `default 'enquiries'` here would
+     * fail on any database that has not already been through 0134. The two
+     * have to agree: a default declared here and absent there is drift that
+     * type-checks clean and fails at the database, on `mahekone_test` and on
+     * prod, both of which are built from the migrations. Every writer names
+     * it — there is exactly one, and it names `ENQUIRY_WORKSPACE`.
+     */
+    workspace: appIdEnum("workspace").notNull(),
     /**
      * Null until a person is identified behind it. Set once, to an existing
      * customer or a freshly created `kind = 'lead'` row — never merged,

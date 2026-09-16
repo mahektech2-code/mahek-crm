@@ -67,10 +67,19 @@ export function readSubmissionFields(raw: unknown): EnquirySubmissionFields {
  * once at the moment the row is written, so a term that finds an enquiry on
  * the list or detail screen (both of which read `readSubmissionFields` too)
  * is exactly a term that can find it in search.
+ *
+ * The phone goes in TWICE: once as the visitor typed it, and once as bare
+ * digits. A submission is stored exactly as sent, so one visitor's
+ * `+91 98200 11001` and another's `9820011001` are the same number spelled
+ * two ways — and a telecaller typing the ten digits into a box labelled
+ * "Search name, phone, company" would find only the second. Normalising at
+ * WRITE time is what keeps the trigram index doing the work; normalising the
+ * query alone cannot reach a stored value it does not match.
  */
 export function buildEnquirySearchText(raw: unknown): string {
   const fields = readSubmissionFields(raw);
-  return [fields.name, fields.phone, fields.email, fields.company, fields.message]
+  const digits = phoneDigits(fields.phone);
+  return [fields.name, fields.phone, digits === fields.phone ? null : digits, fields.email, fields.company, fields.message]
     .filter((v): v is string => !!v)
     .join(" ");
 }

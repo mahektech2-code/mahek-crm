@@ -124,11 +124,18 @@ export type WebsiteEnquiryResult = { id: string; duplicate: boolean };
  * into a confirmed link, and duplicating that here would be a second,
  * divergent way to reach the same decision.
  *
- * Idempotent on `externalRef`: a genuine retransmission of the same
- * website submission returns the row that already exists rather than
+ * Idempotent on (`source`, `externalRef`): a genuine retransmission of the
+ * same website submission returns the row that already exists rather than
  * creating a second one. This is NOT the same question as "did this
  * customer already enquire" — that one stays a warning, on the Phase 4
  * detail page, and is never enforced here.
+ *
+ * BOTH columns, because that is what the unique index is on. An id from a
+ * future source is a different id space and may legitimately collide with a
+ * website ref — matched on the ref alone, the second source's submission
+ * would be answered with the WEBSITE's enquiry, reported as a duplicate, and
+ * never stored, with the sender receiving a 200 for a row that does not
+ * exist.
  */
 export async function createEnquiryFromWebsite(
   input: WebsiteEnquiryInput,
@@ -136,7 +143,7 @@ export async function createEnquiryFromWebsite(
   const [existing] = await db
     .select({ id: enquiries.id })
     .from(enquiries)
-    .where(eq(enquiries.externalRef, input.externalRef));
+    .where(and(eq(enquiries.source, ENQUIRY_SOURCE_WEBSITE), eq(enquiries.externalRef, input.externalRef)));
   if (existing) return { id: existing.id, duplicate: true };
 
   const enquiryId = id("enq");
@@ -172,10 +179,14 @@ export async function createEnquiryFromWebsite(
     });
   } catch (e) {
     // A concurrent retry that lost the race above hits the unique index on
-    // externalRef here instead — same outcome, resolved the same way: return
-    // the row that won, not an error to a caller that did nothing wrong.
+    // (source, external_ref) here instead — same outcome, resolved the same
+    // way: return the row that won, not an error to a caller that did nothing
+    // wrong.
     if (e && typeof e === "object" && "code" in e && (e as { code: unknown }).code === "23505") {
-      const [row] = await db.select({ id: enquiries.id }).from(enquiries).where(eq(enquiries.externalRef, input.externalRef));
+      const [row] = await db
+        .select({ id: enquiries.id })
+        .from(enquiries)
+        .where(and(eq(enquiries.source, ENQUIRY_SOURCE_WEBSITE), eq(enquiries.externalRef, input.externalRef)));
       if (row) return { id: row.id, duplicate: true };
     }
     throw e;
@@ -625,6 +636,11 @@ export async function assignEnquiry(
     .from(enquiries)
     .where(eq(enquiries.id, enquiryId));
   if (!before) return err("That enquiry no longer exists.", "not_found");
+  // The same no-op guard `changeStage` and `changePriority` keep below: naming
+  // the person who already holds it — or unassigning what nobody holds — is
+  // not a transition, and an activity trail that records one reads as work
+  // having moved when none did.
+  if (before.assignedToId === assignToId) return okVoid();
 
   let assignedName: string | null = null;
   if (assignToId) {
@@ -646,7 +662,10 @@ export async function assignEnquiry(
     .set({ assignedToId: assignToId, updatedAt: new Date(), updatedById: user.id })
     .where(eq(enquiries.id, enquiryId));
 
-  const kind = !before.assignedToId ? "assigned" : assignToId ? "reassigned" : "unassigned";
+  // Read off the transition that actually happened rather than off the BEFORE
+  // alone: with no previous assignee, `!before.assignedToId` called an
+  // unassignment "assigned", and the trail printed "Assigned · Unassigned."
+  const kind = !assignToId ? "unassigned" : before.assignedToId ? "reassigned" : "assigned";
   await writeActivity(
     enquiryId,
     kind,
@@ -803,10 +822,21 @@ export type PossibleDuplicate = {
 };
 
 /**
- * A plain substring match against the stored submission text — there is no
- * phone column to index against, by design (§7 of the design phase), and a
- * customer legitimately raising a second enquiry is the ordinary case, not
- * the error. This is a WARNING, never a block.
+ * A plain substring match against `search_text` — there is no phone column to
+ * index against, by design (§7 of the design phase), and a customer
+ * legitimately raising a second enquiry is the ordinary case, not the error.
+ * This is a WARNING, never a block.
+ *
+ * It matches `search_text` and NOT `raw_submission::text`, for the three
+ * reasons `listEnquiries` already gives above. A cast of every row's jsonb to
+ * text is a sequential scan of the whole table, on a query that runs each time
+ * somebody opens a detail page, and it cannot use the trigram index the search
+ * box was given. It also matches the digits ANYWHERE in the JSON, so a GSTIN,
+ * an order reference or a pincode carrying that run of ten reads as somebody's
+ * phone number. And it is the half that made the warning silently useless: a
+ * submission is stored exactly as sent, so `%9820011001%` never matched a
+ * visitor who typed `+91 98200 11001` — which `buildEnquirySearchText` now
+ * normalises at write time.
  */
 export async function findPossibleDuplicateEnquiries(
   enquiryId: string,
@@ -836,7 +866,7 @@ export async function findPossibleDuplicateEnquiries(
       and(
         eq(enquiries.workspace, ENQUIRY_WORKSPACE),
         sql`${enquiries.id} <> ${enquiryId}`,
-        sql`${enquiries.rawSubmission}::text ilike ${"%" + digits + "%"}`,
+        sql`${enquiries.searchText} ilike ${"%" + digits + "%"}`,
       ),
     )
     .orderBy(desc(enquiries.receivedAt))
