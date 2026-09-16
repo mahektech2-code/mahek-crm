@@ -21,15 +21,16 @@ import {
   mbosPriceList,
   mbosSchemes,
   mbosTasks,
+  mbosTravelLegs,
   mbosVisits,
   notifications,
   users,
 } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
-import { updateSettings } from "@/lib/config/store";
+import { getConfig, updateSettings } from "@/lib/config/store";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
-import { calendarDate } from "@/lib/business-date";
+import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import {
   fieldBook,
   leadsPage,
@@ -50,6 +51,7 @@ import {
   type TerritoryKind,
 } from "@/lib/services/territory-service";
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
+import { repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
 import { notifyUsers } from "../notify";
 
 /** Count, noun and verb agree at every value. */
@@ -2813,5 +2815,364 @@ export async function setLeaveEntitlement(input: {
     );
   } catch (e) {
     return err(e instanceof Error ? e.message : "That did not work.", "not_permitted");
+  }
+}
+
+/* ═══════════════════════════════════════════════ the evidence of a day ═══ */
+
+/**
+ * The shape of a verdict's natural key, parsed rather than trusted.
+ *
+ * A server action is a URL, so the reference that arrives here is a string
+ * somebody can type. Every branch below resolves it back to a real row and
+ * checks whose it is — the screen's list is not a permission.
+ */
+type EvidenceRef =
+  | { kind: "attendance_selfie"; dayId: string; session: number; mark: "in" | "out" }
+  | { kind: "odometer"; legId: string; end: "start" | "end" };
+
+function parseEvidenceRef(ref: string): EvidenceRef | null {
+  const att = /^att:([A-Za-z0-9_-]{1,64}):(\d{1,3}):(in|out)$/.exec(ref);
+  if (att) {
+    return {
+      kind: "attendance_selfie",
+      dayId: att[1],
+      session: Number(att[2]),
+      mark: att[3] as "in" | "out",
+    };
+  }
+  const leg = /^leg:([A-Za-z0-9_-]{1,64}):(start|end)$/.exec(ref);
+  if (leg) return { kind: "odometer", legId: leg[1], end: leg[2] as "start" | "end" };
+  return null;
+}
+
+/**
+ * A manager answering one photograph.
+ *
+ * **THE VERDICT AND THE CORRECTION ARE ONE WRITE.** A declined odometer
+ * reading is almost always a digit — 41,208 typed for a meter reading 41,280 —
+ * and a screen that recorded the disagreement without letting the person
+ * holding the photograph say what it actually reads leaves the wrong figure
+ * standing in the only place the distance is worked out from. So a decline may
+ * carry the reading, the leg is rewritten, the leg is re-measured and the day's
+ * lines are re-priced, in that order.
+ *
+ * **WHAT HE TYPED SURVIVES THE CORRECTION.** `mbos_evidence_reviews.reportedKm`
+ * is written on the FIRST verdict and never again, because the leg's own column
+ * is overwritten and this is the only place the original lives. A second
+ * correction restating it would present the office's first answer as the
+ * salesman's.
+ *
+ * **A DECIDED CLAIM IS NOT RE-PRICED BEHIND SOMEBODY'S SIGNATURE.** Once an
+ * approval step on the day has been answered, the numbers under that answer
+ * stop moving; the refusal names Reopen, which exists, demands a reason and
+ * tells the salesman. The verdict itself is still recordable — noticing that a
+ * reading was wrong after the money was allowed is exactly the thing worth
+ * writing down.
+ *
+ * **A CORRECTION ONLY EVER RIDES ON A DECLINE.** Accepting means the
+ * photograph shows what he typed; accepting while changing the number would be
+ * a record that cannot be read either way.
+ *
+ * **THE SALESMAN IS TOLD, and the remark travels IN the message.** A decision
+ * nobody receives is not a decision — the rule `notify.ts` states and the one
+ * an order decline had to learn. No `mbosHref`: there is no handset screen
+ * that holds this, and `/rejections` renders the outbox, which is records
+ * refused before they were ever stored. A null falls through to
+ * `/notifications`, which carries the words.
+ */
+export async function reviewDayEvidence(input: {
+  ref: string;
+  verdict: "accepted" | "declined";
+  remark?: string | null;
+  /** Kilometres the manager reads off the photograph. Declines only. */
+  correctedKm?: number | null;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const ref = parseEvidenceRef(String(input.ref ?? ""));
+    if (!ref) return err("That is not a photograph this screen knows about.", "validation");
+
+    if (input.verdict !== "accepted" && input.verdict !== "declined") {
+      return err("A verdict is accept or decline.", "validation");
+    }
+
+    const remark = (input.remark ?? "").trim() || null;
+    if (input.verdict === "declined" && !remark) {
+      return err(
+        "A decline has to say why — the salesman is told this, and a refusal with nothing in it teaches him the office is arbitrary rather than what to do differently.",
+        "validation",
+        [{ field: "remark", message: "Say why." }],
+      );
+    }
+
+    const correctedKm =
+      input.correctedKm === null || input.correctedKm === undefined
+        ? null
+        : Math.round(Number(input.correctedKm));
+    if (correctedKm !== null && (!Number.isFinite(correctedKm) || correctedKm < 0)) {
+      return err("A meter reading is a whole number of kilometres.", "validation", [
+        { field: "correctedKm", message: "Read the figure off the photograph." },
+      ]);
+    }
+    if (correctedKm !== null && ref.kind !== "odometer") {
+      return err("There is nothing on a selfie to correct.", "validation");
+    }
+    if (correctedKm !== null && input.verdict !== "declined") {
+      return err(
+        "Accepting says the photograph shows what he typed. Changing the figure is a decline — it is the same act, and recording it as an acceptance would leave a row nobody can read either way.",
+        "validation",
+      );
+    }
+
+    /* ---- whose day is this, and may this manager answer for it ---- */
+
+    let ownerId: string;
+    let day: string;
+    let sourceType: "mbos_attendance_days" | "mbos_travel_legs";
+    let sourceId: string;
+    let reportedKm: number | null = null;
+    let legDayId: string | null = null;
+
+    if (ref.kind === "attendance_selfie") {
+      const [row] = await db.execute<{ userId: string; day: string }>(sql`
+        select d.user_id as "userId", d.day::text as day
+          from mbos_attendance_days d where d.id = ${ref.dayId} limit 1
+      `);
+      if (!row) return err("That day is no longer here.", "not_found");
+      ownerId = row.userId;
+      day = row.day;
+      sourceType = "mbos_attendance_days";
+      sourceId = ref.dayId;
+    } else {
+      const [row] = await db.execute<{
+        userId: string;
+        day: string;
+        expenseDayId: string | null;
+        odometerStartKm: number | null;
+        odometerEndKm: number | null;
+      }>(sql`
+        select l.user_id as "userId",
+               /* The expense day is the authority where there is one; where
+                  there is not, the leg's own clock in Asia/Kolkata. Naming the
+                  zone, because a bare cast reads in the session's and a leg
+                  that started at 1am would land on the previous day. */
+               coalesce(
+                 (select e.day::text from mbos_expense_days e where e.id = l.expense_day_id),
+                 (l.started_at ${sql.raw(`at time zone '${APP_TIMEZONE}'`)})::date::text
+               ) as day,
+               l.expense_day_id as "expenseDayId",
+               l.odometer_start_km as "odometerStartKm",
+               l.odometer_end_km as "odometerEndKm"
+          from mbos_travel_legs l where l.id = ${ref.legId} limit 1
+      `);
+      if (!row) return err("That leg is no longer here.", "not_found");
+      if (!row.day) {
+        return err(
+          "That leg carries no date at all — neither a day of its own nor a time it started — so there is nothing to file a verdict under.",
+          "validation",
+        );
+      }
+      ownerId = row.userId;
+      day = row.day;
+      sourceType = "mbos_travel_legs";
+      sourceId = ref.legId;
+      legDayId = row.expenseDayId;
+      reportedKm = ref.end === "start" ? row.odometerStartKm : row.odometerEndKm;
+    }
+
+    /* The SAME narrowing every list on this dashboard runs. A manager may
+       answer for his own patch and nobody else's, checked here rather than
+       inferred from the fact that the screen drew the row. */
+    const scope = await managerScope();
+    if (scope.salesmanIds !== null && !scope.salesmanIds.includes(ownerId)) {
+      return err("That salesman is not in your team.", "not_permitted");
+    }
+
+    /* WHAT HE TYPED, and not what the office typed last time.
+       The leg's own column has already been overwritten by any earlier
+       correction, so reading the original off it on a SECOND pass would quote
+       the office's first answer back to the salesman as though it had been
+       his — "read as 41,270 rather than the 41,280 you entered", on a leg he
+       entered 41,226 on. The stored review is where the original survives and
+       it wins wherever there is one. */
+    const before = await db.execute<{
+      verdict: string;
+      remark: string | null;
+      reportedKm: number | null;
+      correctedKm: number | null;
+    }>(sql`
+      select r.verdict::text as verdict, r.remark,
+             r.reported_km as "reportedKm", r.corrected_km as "correctedKm"
+        from mbos_evidence_reviews r where r.source_ref = ${input.ref} limit 1
+    `);
+    reportedKm = before[0]?.reportedKm ?? reportedKm;
+
+    /* ---- the correction, where there is one ---- */
+
+    let repriced = false;
+    if (correctedKm !== null && ref.kind === "odometer") {
+      const [claim] = await db.execute<{ id: string; decided: boolean }>(sql`
+        select e.id,
+               exists (select 1 from mbos_approvals ap
+                        where ap.subject_type = 'mbos_expense_days'
+                          and ap.subject_id = e.id
+                          and ap.state <> 'pending') as decided
+          from mbos_expense_days e
+         where e.user_id = ${ownerId} and e.day = ${day}::date
+         limit 1
+      `);
+      if (claim?.decided) {
+        return err(
+          "This day's expense claim has already been decided, so the distance under it cannot be changed here — the figures would move beneath somebody's signature. Reopen the day on the Expenses screen and correct it there; reopening asks for a reason and tells the salesman.",
+          "conflict",
+        );
+      }
+
+      /* Re-read the pair, because a correction to one end has to be checked
+         against the other as it stands rather than as the screen last saw it. */
+      const [leg] = await db.execute<{
+        odometerStartKm: number | null;
+        odometerEndKm: number | null;
+      }>(sql`
+        select l.odometer_start_km as "odometerStartKm",
+               l.odometer_end_km as "odometerEndKm"
+          from mbos_travel_legs l where l.id = ${ref.legId} limit 1
+      `);
+      const startKm = ref.end === "start" ? correctedKm : (leg?.odometerStartKm ?? null);
+      const endKm = ref.end === "end" ? correctedKm : (leg?.odometerEndKm ?? null);
+
+      /* The two checks the handset makes at the meter, made again here. A
+         meter does not run backwards, and a leg longer than the configured
+         ceiling is a digit rather than a long day. They are the salesman's
+         guards and they are the office's too: a corrected figure is still a
+         figure somebody typed. */
+      if (startKm !== null && endKm !== null && endKm < startKm) {
+        return err(
+          `${endKm} km is lower than the ${startKm} km he set off on, and a meter does not run backwards.`,
+          "validation",
+          [{ field: "correctedKm", message: "Check the reading." }],
+        );
+      }
+      const maxKm = (await getConfig())["mbos.travel.maxLegKilometres"];
+      if (startKm !== null && endKm !== null && endKm - startKm > maxKm) {
+        return err(
+          `That makes the journey ${endKm - startKm} km, past the ${maxKm} km a single leg is allowed. It is nearly always a digit read wrong.`,
+          "validation",
+          [{ field: "correctedKm", message: "Check the reading." }],
+        );
+      }
+
+      await db
+        .update(mbosTravelLegs)
+        .set({
+          ...(ref.end === "start" ? { odometerStartKm: correctedKm } : { odometerEndKm: correctedKm }),
+          updatedAt: new Date(),
+          updatedById: user.id,
+        })
+        .where(eq(mbosTravelLegs.id, ref.legId));
+
+      /* Measure, then price. `rescoreLeg` rebuilds the odometer distance and
+         re-reads the trail; `repriceDay` rewrites what the lines are worth and
+         deliberately leaves the submitted totals, the lock and the approval
+         exactly where they were. */
+      await rescoreLeg(ref.legId);
+      if (legDayId) {
+        await repriceDay(ownerId, day);
+        repriced = true;
+      }
+    }
+
+    /* ---- the verdict ---- */
+
+    await db.execute(sql`
+      insert into mbos_evidence_reviews
+        (id, user_id, day, kind, source_ref, source_type, source_id,
+         verdict, remark, reported_km, corrected_km, decided_by_id,
+         decided_at, created_at, updated_at)
+      values
+        (${gen("evr")}, ${ownerId}, ${day}::date, ${ref.kind}::mbos_evidence_kind,
+         ${input.ref}, ${sourceType}, ${sourceId},
+         ${input.verdict}::mbos_evidence_verdict, ${remark}, ${reportedKm}, ${correctedKm},
+         ${user.id}, now(), now(), now())
+      on conflict (source_ref) do update set
+        verdict = excluded.verdict,
+        remark = excluded.remark,
+        /* WRITTEN ONCE. The leg's own column has been overwritten, so this is
+           the only surviving record of what the salesman actually typed, and a
+           second correction must not restate the office's first answer as
+           his. */
+        reported_km = coalesce(mbos_evidence_reviews.reported_km, excluded.reported_km),
+        corrected_km = excluded.corrected_km,
+        decided_by_id = excluded.decided_by_id,
+        decided_at = now(),
+        updated_at = now()
+    `);
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: `mbos.evidence.${input.verdict}`,
+      entityType: sourceType,
+      entityId: sourceId,
+      beforeState: (before[0] ?? null) as never,
+      afterState: {
+        sourceRef: input.ref,
+        verdict: input.verdict,
+        remark,
+        correctedKm,
+        repriced,
+      } as never,
+    });
+
+    /* ---- and he is told ---- */
+
+    if (input.verdict === "declined") {
+      const what =
+        ref.kind === "attendance_selfie"
+          ? "Your attendance photograph was not accepted"
+          : "Your odometer reading was not accepted";
+      const corrected =
+        correctedKm !== null
+          ? ` The office has read the meter as ${correctedKm.toLocaleString("en-IN")} km${
+              reportedKm !== null ? ` rather than the ${reportedKm.toLocaleString("en-IN")} km entered` : ""
+            }, and the distance has been worked out again.`
+          : "";
+      await notifyUsers([
+        {
+          userId: ownerId,
+          /* `warn` and not `warning`: the bell colours `warn` and `danger`,
+             and the several callers spelling it the other way are drawn as
+             ordinary notices. */
+          kind: "warn",
+          title: what,
+          body: `${day} — ${remark}${corrected}`,
+          href: "/apps",
+          mbosHref: null,
+        },
+      ]);
+    }
+
+    refresh();
+    try {
+      revalidatePath("/sales/attendance");
+      revalidatePath("/sales/travel");
+      revalidatePath("/sales/expenses");
+    } catch {
+      /* no request context */
+    }
+
+    return okVoid(
+      input.verdict === "accepted"
+        ? "Accepted."
+        : repriced
+          ? "Declined — the reading was corrected and the day's travel priced again."
+          : correctedKm !== null
+            ? "Declined — the reading was corrected."
+            : "Declined, and he has been told.",
+    );
+  } catch (e) {
+    return fromThrown(e);
   }
 }
