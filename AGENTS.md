@@ -3178,6 +3178,29 @@ as though it were fresh. Reading is cheap when nothing changed, since every
 row carries a content hash — an untouched tab costs a read and no writes,
 which is what makes the cadence affordable.
 
+**THERE IS A THIRD CYCLE, AND FOR A LONG TIME NOTHING CALLED IT.** `runHourly`
+shipped with the MBOS module and no caller was ever written: `sheet-sync.sh`
+knew `cycle` and `nightly`, the crontab knew the same two, and `?mode=hourly`
+was not in the route's own map of modes. So everything this file describes as
+hourly ran nightly at best — the attendance selfie sweep that makes
+`mbos.attendance.selfieRetentionHours` mean 72 rather than "up to a day and a
+half more", the MBOS escalations, the unconfirmed-WhatsApp sweep, the complaint
+SLA, and the salesman score. NOTHING LOOKED BROKEN, which is why it lasted:
+each of those either has a nightly path or fails by simply being late, and a
+late figure is indistinguishable from a correct one unless you know what it
+should say. The handset was where it showed, because that screen reads the
+cache rather than deriving anything — a target published at ten in the morning
+reached the salesman the following day.
+
+**A cache a phone reads is a cache with a deadline.** The score was the half
+missing from `runHourly` itself: the nightly rebuilt both this month and the
+last, and nothing rebuilt anything in between. It is this month ONLY on the
+hour — the previous month's correction can wait for the nightly, and doing it
+twenty-four times over is a pass of the whole order book to move a figure
+nobody is being judged on any more. It needs nothing recomputed before it,
+unlike in the nightly, because every figure it reads comes off the ledger
+rather than off a derived cache.
+
 **A `schedule:` in GitHub Actions is a hope, not a cadence.** It is
 best-effort, and on a private repo belonging to a free account it is the
 lowest priority tier there is: a tick that cannot be served is DROPPED, never
@@ -4076,6 +4099,39 @@ the RESIDUAL, enforced by a partial unique index, and it catches both the
 formulations nobody has classified and every order line whose product name
 matched nothing. Without a residual the shares would not total 100% and every
 percentage on every screen would be wrong by an amount nothing named.
+
+**AND A MIX IS NOW SET ON THE FORMULATION, NOT ON THE CATEGORY ABOVE IT.**
+Universal / PU / Nano is three rows, which is too broad to aim a salesman at —
+the liquid is the thing he actually sells, and nineteen is a list somebody can
+pick three from. So `mixCategories` offers formulations, the picker adds and
+removes them one at a time, and a target carries as many or as few as that
+person's book warrants. `product_formulations.is_residual` is "Other", the same
+partial unique index one level down, because value whose product names no
+formulation still has to be in the denominator. ACTIVE ones only: a formulation
+somebody retired is one nobody should be aimed at next month, while a band
+already set on one goes on scoring, because a target somebody typed is a
+decision and deactivating a liquid mid-month must not silently drop a share out
+of their score.
+
+**NOTHING ALREADY SET IS REINTERPRETED.** `sales_target_categories` and
+`sales_performance_categories` each carry BOTH keys with a check constraint
+demanding exactly one, and a band typed against a category goes on scoring as a
+category — reading "Universal 40%" as a formulation would be inventing which of
+the six liquids under it somebody meant. That is the treatment `activity_target`
+and `collection_target_paise` already get: retired in place, never reread.
+`isFormulation` is taken off the target's own bands and decides which BUCKET of
+actuals is scored, because `scoreMix` totals whatever it is handed and one map
+holding both would halve every share.
+
+**Every reader of that pair has to read both, and the one that did not was the
+WIRE.** The handset's mix rode on an inner join onto `product_categories`, so a
+row keyed on a formulation matched nothing and the phone was sent an empty mix
+for a target that plainly had one — which reads on the phone as nothing having
+been asked of him, not as a payload with a hole in it. Nothing failed: the
+query was valid, the JSON was well formed, and the office screen was right.
+`performance.test.ts` sends a formulation target through `buildBootstrap` and
+asserts the names come back, because a missing row in a correct payload is
+invisible to every other kind of check.
 
 **Unmatched money counts as revenue, contributes no litres, and is REPORTED.**
 Order lines carry a product NAME and several of the sheet's names match

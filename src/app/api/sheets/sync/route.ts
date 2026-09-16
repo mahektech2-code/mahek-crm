@@ -27,6 +27,10 @@ import { SyncAlreadyRunningError } from "@/lib/services/sheet-sync-core";
  *   ?mode=project     turn what has landed into customers, orders and — only
  *                     when asked — bills. Takes &owner=, &leads=1, &bills=1,
  *                     and &reassign=1 to move customers that already exist.
+ *   ?mode=hourly      the hourly cycle: the salesman score for this month,
+ *                     the MBOS sweeps and escalations, the complaint SLA.
+ *                     Read by the handset rather than derived there, so an
+ *                     hour is the most a phone is ever behind the ledger.
  *   ?mode=nightly     rebuilds every derived value. Nothing else does: buying
  *                     cycles, the inactive watch, follow-up stages and slow
  *                     payers are caches, and on a deployment with no cron they
@@ -85,6 +89,22 @@ const JOBS: Record<string, JobName> = {
   // The derived values: buying cycles, the inactive watch, follow-up stages,
   // slow payers, bill statuses, today's queue snapshot.
   nightly: "nightly",
+  /*
+   * THE HOURLY CYCLE, WHICH HAD NO DOOR AND THEREFORE NEVER RAN.
+   *
+   * `runHourly` has existed since the MBOS module shipped and nothing could
+   * reach it: not this map, not `sheet-sync.sh`, not the crontab. Everything
+   * inside it was documented as hourly and was in fact running never — the
+   * attendance selfie sweep that makes `selfieRetentionHours` mean anything,
+   * the MBOS escalations, the unconfirmed-WhatsApp sweep, the complaint SLA,
+   * and the salesman score the handset reads instead of deriving.
+   *
+   * Nothing looked broken, which is why it lasted: every one of those also has
+   * a nightly path or no visible failure mode, so the only symptom was a phone
+   * showing yesterday's figures and a retention window that was a day and a
+   * half rather than three days.
+   */
+  hourly: "hourly",
 };
 
 export async function GET(request: Request) {

@@ -19,9 +19,10 @@
 # schedule lived somewhere else was that there was nowhere else to put it.
 #
 #   bash sheet-sync.sh cycle     the half-hourly read modes, then publish
+#   bash sheet-sync.sh hourly    the salesman score and the MBOS sweeps
 #   bash sheet-sync.sh nightly   the daily full compare, then the recomputes
 #
-# Both are safe to run twice: the route answers 409 when a sync of that source
+# All three are safe to run twice: the route answers 409 when a sync of that source
 # is already running, and this treats that as ordinary rather than as failure.
 
 set -uo pipefail
@@ -88,6 +89,17 @@ case "${1:-cycle}" in
     for m in append taken payments parties; do sync "$m"; done
     sync "project&owner=${OWNER}"
     ;;
+  hourly)
+    # THE ONE CYCLE THAT HAD NO CALLER. `runHourly` shipped with the MBOS
+    # module, the crontab knew about `cycle` and `nightly`, and nothing in
+    # between ever asked for this — so the attendance selfie sweep, the MBOS
+    # escalations and the salesman score ran only as often as somebody
+    # triggered them by hand, which was never.
+    #
+    # It reads nothing the read modes land, so it has no ordering against
+    # them and gets a minute of its own rather than a place in the chain.
+    sync hourly
+    ;;
   nightly)
     # `reconcile` is the only pass that sees an edit to an old row or a
     # deletion; `nightly` is the only thing that rebuilds the derived caches,
@@ -98,7 +110,7 @@ case "${1:-cycle}" in
     sync nightly
     ;;
   *)
-    echo "usage: sheet-sync.sh [cycle|nightly]" >&2
+    echo "usage: sheet-sync.sh [cycle|hourly|nightly]" >&2
     exit 2
     ;;
 esac

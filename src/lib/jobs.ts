@@ -533,6 +533,34 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
     }, triggeredById),
   );
 
+  /*
+   * THE SALESMAN SCORE, THIS MONTH ONLY — and it was missing entirely.
+   *
+   * The handset reads the cache rather than deriving anything, so until this
+   * ran the only thing that moved a figure on a salesman's phone was the
+   * NIGHTLY pass: a target published at ten in the morning, or three orders
+   * taken before lunch, reached him the next day.
+   *
+   * THIS MONTH AND NOT THE PREVIOUS ONE. The nightly rebuilds both, because a
+   * receipt confirmed on the 2nd of September is usually August's collection
+   * and a closed month must not freeze half-finished. Inside a working day
+   * that correction can wait, and doing it twenty-four times over is a pass of
+   * the whole company's order book to move a figure nobody is being judged on
+   * any more.
+   *
+   * It needs nothing recomputed before it, unlike in the nightly: every figure
+   * it reads — orders, receipts, bills, tasks — comes off the ledger itself
+   * rather than off a derived cache, so there is no ordering to get wrong.
+   */
+  results.push(
+    await run("recompute-performance", async () => {
+      const day = await today();
+      const period = day.slice(0, 7);
+      const { people } = await recomputeSalesPerformance(period, day);
+      return { recordsAffected: people, detail: `${people} scored for ${period}` };
+    }, triggeredById),
+  );
+
   return results;
 }
 
