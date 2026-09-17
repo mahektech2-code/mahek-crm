@@ -13,8 +13,8 @@ import { APP_TIMEZONE } from "@/lib/business-date";
 import { reviewDayEvidence } from "@/lib/actions/sales";
 import { Modal } from "@/components/ui/modal";
 import type { DayEvidence, EvidenceItem } from "@/lib/services/day-evidence-service";
-import { Banner, Button, Empty, MetricRow, Pill } from "../../parts";
-import { plural } from "../../words";
+import { Banner, Button, Empty, MetricRow, Pill } from "@/components/console/parts";
+import { plural } from "@/components/console/words";
 
 /**
  * ONE SALESMAN'S DAY, PHOTOGRAPH BY PHOTOGRAPH, and a place to answer each one.

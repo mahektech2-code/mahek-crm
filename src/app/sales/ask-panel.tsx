@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { askTeam } from "@/lib/actions/ask-team";
-import { SalesIcon } from "./icons";
+import { SalesIcon } from "@/components/console/icons";
 
 /* ---------------------------------------------------------------------------
  * "Ask about the team" — the design's right-hand drawer, to its own numbers.

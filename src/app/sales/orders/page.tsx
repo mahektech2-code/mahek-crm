@@ -13,13 +13,13 @@ import {
   ScreenHeader,
   SortHead,
   Table,
-} from "../parts";
+} from "@/components/console/parts";
 import {
   plural,
   waitingWords,
-} from "../words";
-import { CustomerName } from "../customer-name";
-import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
+} from "@/components/console/words";
+import { CustomerName } from "@/components/console/customer-name";
+import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
 
 export const metadata = { title: "Orders — Sales Dashboard — MahekOne" };
 

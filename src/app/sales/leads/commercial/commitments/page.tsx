@@ -1,52 +1,17 @@
-import { requireUser } from "@/lib/auth";
-import { today } from "@/lib/recompute";
-import { canLead, handoverCandidates } from "@/lib/services/lead-console-service";
-import {
-  COMMITMENT_VIEWS,
-  commitments,
-  type CommitmentView,
-} from "@/lib/services/lead-commercial-service";
-import { CommitmentsScreen } from "./commitments-screen";
+/*
+ * A ROUTE, and the screen is somewhere else.
+ *
+ * The Lead Management workspace is mounted by both the Manager Console and the
+ * CRM from one set of files — see `lib/lead-workspace.ts`. What belongs to an
+ * app is which workspace it is, which module key guards it, and what the tab
+ * says; everything else would be a second copy drifting from the first.
+ */
+import { Body } from "@/components/leads/pages/leads-commercial-commitments";
 
 export const metadata = { title: "Commitments & forecast — Sales Dashboard — MahekOne" };
 
-/**
- * 17 — what customers have PROMISED, which is not what they have bought.
- *
- * Four views rather than four routes, because they are one list asked four
- * questions — and a view is a filter, so each carries its own URL and can be
- * sent to somebody.
- *
- * An unrecognised `view` falls back to Open rather than throwing: a stale
- * bookmark is not an error, and a blank screen with a stack trace behind it is
- * a worse answer than the first tab.
- */
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: Promise<{ view?: string }>;
-}) {
-  const { view } = await searchParams;
-  const current: CommitmentView =
-    (COMMITMENT_VIEWS.find((v) => v.key === view)?.key as CommitmentView | undefined) ?? "open";
-
-  const day = await today();
-  const [user, board, people] = await Promise.all([
-    requireUser(),
-    commitments(day, current),
-    handoverCandidates(),
-  ]);
-
-  return (
-    <CommitmentsScreen
-      view={current}
-      rows={board.rows}
-      counts={board.counts}
-      forecastValuePaise={board.forecastValuePaise}
-      unvalued={board.unvalued}
-      day={day}
-      people={people}
-      canWork={await canLead(user, "lead.work")}
-    />
-  );
+export default async function Page(
+  props: Omit<React.ComponentProps<typeof Body>, "workspace">,
+) {
+  return <Body workspace="sales" {...props} />;
 }

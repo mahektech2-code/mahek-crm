@@ -33,7 +33,7 @@ import {
   setBookPinsVisible,
   type BookPinTone,
 } from "../book-pins";
-import { CustomerQuickView } from "../customer-quick-view";
+import { CustomerQuickView } from "@/components/console/customer-quick-view";
 
 /**
  * The map, with streets under it.

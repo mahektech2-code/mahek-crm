@@ -1,6 +1,6 @@
 "use client";
 
-import { SalesIcon, type SalesIconName } from "./icons";
+import { SalesIcon, type SalesIconName } from "@/components/console/icons";
 import { CollapsibleNav } from "@/components/shell/collapsible-nav";
 import { SALES_NAV, SALES_PINNED } from "./nav";
 

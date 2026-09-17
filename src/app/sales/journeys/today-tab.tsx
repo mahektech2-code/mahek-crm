@@ -5,8 +5,8 @@ import {
   MetricRow,
   RowMenu,
   Table,
-} from "../parts";
-import { plural } from "../words";
+} from "@/components/console/parts";
+import { plural } from "@/components/console/words";
 import type { Salesman, JourneyPlan, VisitRow, TrackPoint } from "@/lib/services/sales-service";
 import { formatDistance, metresBetween } from "@/lib/geo";
 

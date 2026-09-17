@@ -1,77 +1,17 @@
-import { requireUser } from "@/lib/auth";
-import { getConfig } from "@/lib/config/store";
-import { today } from "@/lib/recompute";
-import { canLead } from "@/lib/services/lead-console-service";
-import {
-  nextActionOwnerCandidates,
-  nextActionsDue,
-  nextActionsOverdue,
-} from "@/lib/services/lead-actions-service";
-import { LeadTabs } from "../lead-tabs";
-import { DueScreen } from "./due-screen";
+/*
+ * A ROUTE, and the screen is somewhere else.
+ *
+ * The Lead Management workspace is mounted by both the Manager Console and the
+ * CRM from one set of files — see `lib/lead-workspace.ts`. What belongs to an
+ * app is which workspace it is, which module key guards it, and what the tab
+ * says; everything else would be a second copy drifting from the first.
+ */
+import { Body } from "@/components/leads/pages/leads-actions";
 
 export const metadata = { title: "Next actions — Sales Dashboard — MahekOne" };
 
-/**
- * §24 — an active lead may not sit with nothing owed by anybody.
- *
- * This is the front of that rule: what falls TODAY, grouped by the person who
- * owes it. The tab beside it is the same read one day earlier and never
- * answered, and the one after that is the rule failing outright — a lead with
- * nothing owed at all.
- *
- * **The day is read here and passed down.** `today()` applies
- * `workingDay.dayBoundaryHour` in Asia/Kolkata, which is the only date this
- * business recognises; a component reading `new Date()` would be reading the
- * browser's zone during a render, which the React Compiler rules forbid for
- * the second reason and this file forbids for the first.
- *
- * The overdue total is fetched for its BADGE and its banner rather than its
- * rows — `limit: 1` costs one row and buys the count, and a tab strip with no
- * number on it is one people stop opening.
- */
-export default async function Page({
-  searchParams,
-}: {
-  /* The owner filter is a URL parameter, like every other filter in the
-     console: "these eleven, nobody has touched them" is a view somebody sends
-     to somebody else, and component state makes that unsendable. */
-  searchParams: Promise<{ owner?: string }>;
-}) {
-  const [user, params, day, config] = await Promise.all([
-    requireUser(),
-    searchParams,
-    today(),
-    getConfig(),
-  ]);
-
-  const [due, overdue, candidates, canWork] = await Promise.all([
-    nextActionsDue(day, { ownerId: params.owner }),
-    nextActionsOverdue(day, { limit: 1 }),
-    nextActionOwnerCandidates(),
-    canLead(user, "lead.work"),
-  ]);
-
-  return (
-    <div className="p-6">
-      <LeadTabs
-        counts={{
-          "/sales/leads/actions": due.total,
-          "/sales/leads/actions/overdue": overdue.total,
-        }}
-      />
-      <DueScreen
-        day={day}
-        rows={due.rows}
-        total={due.total}
-        incomplete={due.incomplete}
-        owners={due.owners}
-        ownerId={params.owner}
-        overdueTotal={overdue.total}
-        candidates={candidates}
-        canWork={canWork}
-        requireNextAction={config["leads.requireNextAction"]}
-      />
-    </div>
-  );
+export default async function Page(
+  props: Omit<React.ComponentProps<typeof Body>, "workspace">,
+) {
+  return <Body workspace="sales" {...props} />;
 }

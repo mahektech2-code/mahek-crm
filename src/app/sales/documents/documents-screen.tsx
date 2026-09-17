@@ -27,7 +27,7 @@ import {
   Row,
   ScreenHeader,
   Table,
-} from "../parts";
+} from "@/components/console/parts";
 
 /**
  * The library a handset can open, and the door that fills it.

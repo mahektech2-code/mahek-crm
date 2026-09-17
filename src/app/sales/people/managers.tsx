@@ -6,7 +6,7 @@ import { useToast } from "@/components/ui/toast";
 import { Modal } from "@/components/ui/overlays";
 import { setManagerTerritories } from "@/lib/actions/sales";
 import type { ManagerRow } from "@/lib/services/sales-service";
-import { Button, Cell, HeadCell, Pill, Row, Table } from "../parts";
+import { Button, Cell, HeadCell, Pill, Row, Table } from "@/components/console/parts";
 
 /**
  * Who covers what, and the one screen that sets it.

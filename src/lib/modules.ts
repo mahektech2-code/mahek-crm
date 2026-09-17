@@ -190,6 +190,121 @@ export const APP_MODULES: AppModule[] = [
     href: "/crm/status-requests",
     note: "Approving or refusing a request to close a customer account, or to reopen one. Withholding it leaves those requests to another manager — the ask still reaches everybody who can decide.",
   },
+
+  /* ------------------------------- Lead Management, the same ten, in the CRM
+   *
+   * THE FUNNEL IS NOT THE FIELD TEAM'S ALONE, which is why these exist twice.
+   *
+   * The Manager Console built the workspace and the telecallers were left out
+   * of it by an accident of where it was mounted: `/sales` redirects anybody
+   * without the Sales Dashboard, and a telecaller does not hold it. So the
+   * people who ring leads all day had a Call Log and no funnel, while the
+   * funnel had ten screens and no telephone.
+   *
+   * What is duplicated is the GRANT and nothing else. One set of screens, one
+   * set of services, one set of engines and one set of actions — see
+   * `lib/lead-workspace.ts`, which is the single list both sidebars draw and
+   * both route guards match. A second lead system inside the CRM would be
+   * twenty thousand lines of the same rules drifting from these.
+   *
+   * They are separate KEYS because a grant is per app: `app_module_access` is
+   * a row per user per module, and a telecaller given the funnel in the CRM
+   * must not thereby be given the Sales Dashboard's copy of it, which sits in
+   * an app they cannot open at all. It is the same shape as `accounts.targets`
+   * beside `sales.targets` — one feature, two doors, two grants.
+   *
+   * WHAT DIFFERS BETWEEN THE TWO MOUNTS IS SCOPE, and nothing here says so
+   * because nothing here has to. `resolveScope` reads the grant for the app
+   * named on the request, so the same screen narrows to a telecaller's own
+   * book under `/crm` and to a manager's team under `/sales` — and the write
+   * side needed no change at all, because `lead.work` is held by any associate
+   * rather than by an app.
+   *
+   * `crm.samples` is `/crm/samples` rather than a route under `leads/`, which
+   * mirrors the console exactly: a sample is a thing that happens TO a lead and
+   * is worked from its own desk, and the two apps disagreeing about where it
+   * lives would make `lib/lead-workspace.ts` impossible to write as one list.
+   */
+  {
+    key: "crm.leads",
+    app: "crm",
+    label: "All Leads",
+    group: "Lead Management",
+    href: "/crm/leads",
+    exact: true,
+    note:
+      "The book itself — every lead, its rung, what its gate is waiting on, and the record behind each one. Narrowed to this person's own book unless they are a manager.",
+  },
+  {
+    key: "crm.lead-funnel",
+    app: "crm",
+    label: "Funnel & conversion",
+    group: "Lead Management",
+    href: "/crm/leads/funnel",
+    note: "The three ladders drawn as funnels, where business comes from, and what the four reason codes say about what we lose. A reading screen — it writes nothing but a source rename.",
+  },
+  {
+    key: "crm.lead-intake",
+    app: "crm",
+    label: "Intake",
+    group: "Lead Management",
+    href: "/crm/leads/intake",
+    note: "Raising a lead at a desk, in bulk from a file, and the duplicate pairs a book fed by a website form, a handset and a spreadsheet keeps producing. The telecaller's own door into the funnel.",
+  },
+  {
+    key: "crm.lead-qualify",
+    app: "crm",
+    label: "Qualification",
+    group: "Lead Management",
+    href: "/crm/leads/qualify",
+    note: "Everything between a Suspect and a qualified Prospect: the visit cap's decisions, the verification queue, the validation calls behind them, and what each lead's gate is still missing.",
+  },
+  crm(
+    "samples",
+    "Samples & trials",
+    "Lead Management",
+    "Samples out with customers, the desk that approves and dispatches them, the review nobody chased, and the seven answers a trial produces.",
+  ),
+  {
+    key: "crm.lead-commercial",
+    app: "crm",
+    label: "Commercial",
+    group: "Lead Management",
+    href: "/crm/leads/commercial",
+    note: "Negotiation, the commitments that are forecasts rather than sales, and the first order that converts an account. Renders order status and never writes it.",
+  },
+  {
+    key: "crm.lead-appointments",
+    app: "crm",
+    label: "Distributor appointments",
+    group: "Lead Management",
+    href: "/crm/leads/appointments",
+    note: "The two-step chain that appoints a distributor. Deciding needs distributor.approve, which is management's; the queue is readable without it.",
+  },
+  {
+    key: "crm.lead-actions",
+    app: "crm",
+    label: "Next actions & nurture",
+    group: "Lead Management",
+    href: "/crm/leads/actions",
+    note: "What is owed on every active lead, what is overdue, what has nothing scheduled at all, and the fifteen-row nurture sequence behind it.",
+  },
+  {
+    key: "crm.lead-handovers",
+    app: "crm",
+    label: "Handovers",
+    group: "Lead Management",
+    href: "/crm/leads/handovers",
+    note: "Converted accounts still waiting on a relationship owner. Its own key because a handover moves who RUNS an account — sight, never a rupee — and that is held deliberately.",
+  },
+  {
+    key: "crm.lead-oversight",
+    app: "crm",
+    label: "Oversight",
+    group: "Lead Management",
+    href: "/crm/leads/oversight",
+    note: "Every gate somebody passed and what was missing when they did, the funnel's own audit trail, and the thresholds in force. Reading who overrode what is a different job from working the book.",
+  },
   crm("targets", "Monthly Targets", "Targets & reporting", "Whose numbers are whose. Usually a manager's screen."),
   /*
    * A person's OWN score, and not a manager's screen.

@@ -9,7 +9,7 @@ import {
   tracksForDay,
   visitsList,
 } from "@/lib/services/sales-service";
-import { ScreenHeader } from "../parts";
+import { ScreenHeader } from "@/components/console/parts";
 import { JourneysScreen } from "./journeys-screen";
 import { TodayTab } from "./today-tab";
 

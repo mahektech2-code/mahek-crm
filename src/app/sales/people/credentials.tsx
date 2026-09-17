@@ -6,7 +6,7 @@ import { useToast } from "@/components/ui/toast";
 import { endSessionsFor, sendPasswordResetFor } from "@/lib/actions/people";
 import { releaseDevice } from "@/lib/actions/sales";
 import type { Salesman } from "@/lib/services/sales-service";
-import { ReasonModal, RowMenu } from "../parts";
+import { ReasonModal, RowMenu } from "@/components/console/parts";
 
 /**
  * Getting somebody back into the app, from the screen that lists them.

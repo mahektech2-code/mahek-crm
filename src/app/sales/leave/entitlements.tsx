@@ -6,8 +6,8 @@ import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { setLeaveEntitlement } from "@/lib/actions/sales";
 import type { EntitlementRow } from "@/lib/services/sales-service";
-import { Button, Cell, HeadCell, Row, Table } from "../parts";
-import { LEAVE_LABEL, label } from "../words";
+import { Button, Cell, HeadCell, Row, Table } from "@/components/console/parts";
+import { LEAVE_LABEL, label } from "@/components/console/words";
 
 /**
  * How many days of leave each salesman gets, and the one place it can be set.

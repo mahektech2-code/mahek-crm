@@ -12,7 +12,7 @@ import {
   Row,
   ScreenHeader,
   Table,
-} from "../parts";
+} from "@/components/console/parts";
 
 export const metadata = { title: "Expense policy — Sales Dashboard — MahekOne" };
 

@@ -6,7 +6,7 @@ import { useToast } from "@/components/ui/toast";
 import { Modal } from "@/components/ui/overlays";
 import { setSalesmanTerritories } from "@/lib/actions/sales";
 import type { PlaceTree, Salesman, StateNode } from "@/lib/services/sales-service";
-import { Button, Pill } from "../parts";
+import { Button, Pill } from "@/components/console/parts";
 
 /**
  * Where a salesman WORKS, and the dialog that sets it.

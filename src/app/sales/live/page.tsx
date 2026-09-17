@@ -13,8 +13,8 @@ import {
   lastKnownPositions,
   tracksForDay,
 } from "@/lib/services/sales-service";
-import { Banner, ScreenHeader } from "../parts";
-import { plural } from "../words";
+import { Banner, ScreenHeader } from "@/components/console/parts";
+import { plural } from "@/components/console/words";
 import { LivePanel } from "./live-panel";
 
 export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };

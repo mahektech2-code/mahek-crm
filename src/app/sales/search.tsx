@@ -3,8 +3,8 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { phoneDisplay } from "@/lib/format";
-import { SalesIcon } from "./icons";
-import { CustomerQuickView } from "./customer-quick-view";
+import { SalesIcon } from "@/components/console/icons";
+import { CustomerQuickView } from "@/components/console/customer-quick-view";
 
 /* ---------------------------------------------------------------------------
  * THE HEADER SEARCH, WHICH USED TO BE A PICTURE OF ONE.

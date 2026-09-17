@@ -1,57 +1,15 @@
-import { requireUser } from "@/lib/auth";
-import { getConfig } from "@/lib/config/store";
-import { today } from "@/lib/recompute";
-import { canLead, handoverCandidates } from "@/lib/services/lead-console-service";
-import { negotiationDesk } from "@/lib/services/lead-commercial-service";
-import { NegotiationScreen } from "./negotiation-screen";
+/*
+ * A ROUTE, and the screen is somewhere else.
+ *
+ * The Lead Management workspace is mounted by both the Manager Console and the
+ * CRM from one set of files — see `lib/lead-workspace.ts`. What belongs to an
+ * app is which workspace it is, which module key guards it, and what the tab
+ * says; everything else would be a second copy drifting from the first.
+ */
+import { Body } from "@/components/leads/pages/leads-commercial";
 
 export const metadata = { title: "Negotiation desk — Sales Dashboard — MahekOne" };
 
-/**
- * 16 — every lead at `negotiation`, and what is blocking each one.
- *
- * THERE IS NO NEGOTIATION TABLE AND THIS SCREEN DOES NOT ADD ONE. What a
- * negotiation IS, in this product, is a lead standing on a rung with a reason
- * on its newest transition, a credit-days ask against the standard term, and a
- * commitment or the conspicuous absence of one. All four of those already have
- * a home, and a fifth place for them would be the one that drifts.
- *
- * The reason CODES are resolved from configuration rather than from the static
- * lists in `lead-labels.ts`: a manager may reword one, and a stored label stops
- * resolving the moment they do — which is why only the code is ever stored.
- * The map is built here, on the server, because the screen is a client
- * component and `getConfig` is async.
- */
 export default async function Page() {
-  const day = await today();
-  const [user, desk, config, people] = await Promise.all([
-    requireUser(),
-    negotiationDesk(day),
-    getConfig(),
-    handoverCandidates(),
-  ]);
-
-  const reasonLabels: Record<string, string> = {};
-  for (const list of [
-    config["leads.prospectReasons"],
-    config["leads.sampleReasons"],
-    config["leads.lostReasons"],
-    config["leads.overrideReasons"],
-  ]) {
-    for (const option of list ?? []) reasonLabels[option.code] = option.label;
-  }
-
-  return (
-    <NegotiationScreen
-      rows={desk.rows}
-      total={desk.total}
-      stalled={desk.stalled}
-      noCommitment={desk.noCommitment}
-      day={day}
-      standardTermDays={config["bills.defaultCreditDays"]}
-      reasonLabels={reasonLabels}
-      people={people}
-      canWork={await canLead(user, "lead.work")}
-    />
-  );
+  return <Body workspace="sales" />;
 }

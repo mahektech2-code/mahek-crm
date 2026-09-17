@@ -18,8 +18,8 @@ import {
   ScreenHeader,
   SortHead,
   Table,
-} from "../parts";
-import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
+} from "@/components/console/parts";
+import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
 
 export const metadata = { title: "Cost & return — Sales Dashboard — MahekOne" };
 

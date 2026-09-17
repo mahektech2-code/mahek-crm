@@ -3,7 +3,7 @@ import { leaveEntitlements, leaveRequests } from "@/lib/services/sales-service";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { Entitlements } from "./entitlements";
-import { Decide } from "../decide";
+import { Decide } from "@/components/console/decide";
 import {
   Banner,
   Cell,
@@ -17,13 +17,13 @@ import {
   ScreenHeader,
   SortHead,
   Table,
-} from "../parts";
-import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
+} from "@/components/console/parts";
+import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
 import {
   LEAVE_LABEL,
   label,
   plural,
-} from "../words";
+} from "@/components/console/words";
 
 export const metadata = { title: "Leave — Sales Dashboard — MahekOne" };
 

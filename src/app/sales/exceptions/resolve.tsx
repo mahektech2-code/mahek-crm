@@ -3,7 +3,7 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import { resolveException } from "@/lib/actions/expenses";
-import { Button, ReasonModal } from "../parts";
+import { Button, ReasonModal } from "@/components/console/parts";
 
 /**
  * Answering one exception.

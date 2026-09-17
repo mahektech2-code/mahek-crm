@@ -1,69 +1,17 @@
-import { requireUser } from "@/lib/auth";
-import { getConfig } from "@/lib/config/store";
-import { today } from "@/lib/recompute";
-import { canLead } from "@/lib/services/lead-console-service";
-import { overriddenMoves, qualificationDesk } from "@/lib/services/lead-qualify-service";
-import { LeadTabs } from "../../lead-tabs";
-import { ChecklistScreen } from "./checklist-screen";
+/*
+ * A ROUTE, and the screen is somewhere else.
+ *
+ * The Lead Management workspace is mounted by both the Manager Console and the
+ * CRM from one set of files — see `lib/lead-workspace.ts`. What belongs to an
+ * app is which workspace it is, which module key guards it, and what the tab
+ * says; everything else would be a second copy drifting from the first.
+ */
+import { Body } from "@/components/leads/pages/leads-qualify-checklist";
 
 export const metadata = { title: "Qualification checklists — Sales Dashboard — MahekOne" };
 
-/**
- * §28 — the screen a manager has never had.
- *
- * Every lead at Qualification with its checklist state, and on the Blocked view
- * what each one is stuck behind IN WORDS. That list comes from `checklistFor`
- * and `gateForNext`, the same two functions the handset draws its disabled next
- * rung from and the same two `advanceLeadStage` refuses on. A refusal that does
- * not say what it wants teaches a salesman to press the button again rather
- * than to do the work — and a second copy of the conditions typed into a screen
- * would drift inside one release, with the screen the half somebody is reading.
- *
- * FOUR VIEWS, ONE READ. In qualification, Blocked, Ready to advance and
- * Overridden are filters over `qualificationDesk()` — except the last, which is
- * a read over `lead_stage_transitions` rather than over the desk, because an
- * override is most worth seeing on a lead that has since moved on. That is the
- * one nobody would otherwise go back and look at.
- */
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: Promise<{ view?: string }>;
-}) {
-  const { view } = await searchParams;
-  const chosen =
-    view === "blocked" || view === "ready" || view === "overridden" ? view : "all";
-
-  const day = await today();
-  const [user, desk, overrides, config] = await Promise.all([
-    requireUser(),
-    qualificationDesk(day),
-    overriddenMoves(day),
-    getConfig(),
-  ]);
-
-  const [canWork, canOverride] = await Promise.all([
-    canLead(user, "lead.work"),
-    canLead(user, "lead.override"),
-  ]);
-
-  return (
-    <div className="p-6">
-      <LeadTabs />
-      <ChecklistScreen
-        rows={desk.rows}
-        total={desk.total}
-        capped={desk.capped}
-        overrides={overrides.rows}
-        overrideTotal={overrides.total}
-        byCondition={overrides.byCondition}
-        overrideDays={overrides.days}
-        view={chosen}
-        overrideOffered={config["leads.allowManagerOverride"]}
-        overrideReasons={config["leads.overrideReasons"]}
-        canWork={canWork}
-        canOverride={canOverride}
-      />
-    </div>
-  );
+export default async function Page(
+  props: Omit<React.ComponentProps<typeof Body>, "workspace">,
+) {
+  return <Body workspace="sales" {...props} />;
 }

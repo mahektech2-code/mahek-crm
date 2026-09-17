@@ -6,7 +6,7 @@ import { money, shortDate, stamp } from "@/lib/format";
 import type { PerformanceRow, SalesmanRecord } from "@/lib/services/sales-service";
 import type { DayEvidence as DayEvidenceType } from "@/lib/services/day-evidence-service";
 import { DayCheck } from "./day-check";
-import { CustomerName } from "../../customer-name";
+import { CustomerName } from "@/components/console/customer-name";
 import {
   Cell,
   Empty,
@@ -21,7 +21,7 @@ import {
   VISIT_OUTCOME_LABEL,
   label,
   plural,
-} from "../../parts";
+} from "@/components/console/parts";
 
 /**
  * Everything MBOS has recorded for one person.

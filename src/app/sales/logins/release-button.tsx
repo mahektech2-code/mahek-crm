@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { releaseDevice } from "@/lib/actions/sales";
-import { Button } from "../parts";
+import { Button } from "@/components/console/parts";
 
 /**
  * The other half of one handset per person.

@@ -1,4 +1,4 @@
-import type { SalesIconName } from "./icons";
+import type { SalesIconName } from "@/components/console/icons";
 
 /* ---------------------------------------------------------------------------
  * The Manager Console's navigation.
