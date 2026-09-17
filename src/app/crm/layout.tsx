@@ -3,6 +3,7 @@ import { isManager, requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { navForModules } from "@/components/shell/nav";
 import { webApps } from "@/lib/apps";
+import { hatForHeader } from "@/lib/hat-for-header";
 import { getScope } from "@/lib/scope";
 import { crmBadgeCounts, customerStatusRequestCount, listNotifications } from "@/lib/queries";
 import { AppShell } from "@/components/shell/app-shell";
@@ -31,11 +32,16 @@ export default async function AppLayout({
   // half — each module's own layout runs `requireModule`, because a link that
   // is not drawn is still a URL somebody can type.
   const modules = await listUserModules(user.id, "crm");
+  /* The level for THIS app. `users.role` is the widest held anywhere, which is
+     the right answer to what somebody may DO and the wrong one to who they are
+     HERE. */
+  const hat = await hatForHeader(user, "crm");
   if (modules.length === 0) redirect("/apps");
 
   return (
     <AppShell
       user={user}
+      hat={hat}
       isManager={isManager(user)}
       scope={scope}
       notifications={notifications}

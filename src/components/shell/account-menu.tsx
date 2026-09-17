@@ -32,6 +32,7 @@ import { ChangePasswordDialog } from "./change-password-dialog";
 export function AccountMenu({
   user,
   variant,
+  hat,
   collapsed = false,
 }: {
   user: {
@@ -50,6 +51,18 @@ export function AccountMenu({
     initials: string;
     role: string;
   };
+  /**
+   * WHO THIS PERSON IS IN THE APP THEY ARE STANDING IN.
+   *
+   * REQUIRED, and that is the point of the change. It used to print
+   * `user.role`, the widest level held anywhere — so an admin who is
+   * deliberately an `associate` on Accounts was greeted there as an admin, on
+   * the one screen where standing decides what the buttons do. Every call site
+   * now has to answer "which app is this", and the launcher, which genuinely
+   * has no app context, answers the account's own level and says so in the
+   * hover rather than quietly implying an app.
+   */
+  hat: { label: string; sentence: string };
   variant: "sidebar" | "header";
   collapsed?: boolean;
 }) {
@@ -92,8 +105,14 @@ export function AccountMenu({
       <span className="block truncate text-[13px] leading-4 font-medium text-ink">
         {user.name}
       </span>
-      <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-        {user.role}
+      {/* The LEVEL, not the job. The job is what the level amounts to here,
+          and it is on the hover: the header is 44px and the level is the part
+          that has to be readable at a glance. */}
+      <span
+        title={hat.sentence}
+        className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase"
+      >
+        {hat.label}
       </span>
     </span>
   );

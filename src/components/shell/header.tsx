@@ -26,6 +26,7 @@ const SHORTCUTS = [
 
 export function Header({
   user,
+  hat,
   isManager,
   scope,
   notifications,
@@ -33,6 +34,8 @@ export function Header({
   onToggleSidebar,
 }: {
   user: User;
+  /** Who this person is in THIS app — see `lib/hat-labels.ts`. */
+  hat: { label: string; sentence: string };
   isManager: boolean;
   scope: "mine" | "team";
   notifications: Notification[];
@@ -231,7 +234,7 @@ export function Header({
           differently is worse than either arrangement on its own. Both were a
           name with a sign-out icon welded to the side of it.
         */}
-        <AccountMenu user={user} variant="header" />
+        <AccountMenu user={user} hat={hat} variant="header" />
       </div>
 
       <Modal
