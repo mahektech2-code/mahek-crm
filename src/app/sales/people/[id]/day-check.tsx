@@ -3,6 +3,12 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+/* Date arithmetic from here rather than a local helper. §11 greps `src/` for
+   a UTC day sliced off an ISO instant — a bare `::date` in different clothes,
+   however carefully the Date behind it was built — and the repo already has
+   one answer to this. `format.ts` is the client-safe half of it, which is why
+   `salesman-screen.tsx` next door reads the same file. */
+import { addDays } from "@/lib/format";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { reviewDayEvidence } from "@/lib/actions/sales";
 import { Modal } from "@/components/ui/modal";
@@ -564,14 +570,6 @@ function retentionWords(hours: number): string {
     return days === 1 ? "24 hours" : `${days} days`;
   }
   return `${hours} hours`;
-}
-
-/** Pure date arithmetic on the ISO string. No clock is read during render. */
-function addDays(iso: string, days: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  const at = new Date(Date.UTC(y, m - 1, d));
-  at.setUTCDate(at.getUTCDate() + days);
-  return at.toISOString().slice(0, 10);
 }
 
 /** Named, because a server render is not in Asia/Kolkata. */
