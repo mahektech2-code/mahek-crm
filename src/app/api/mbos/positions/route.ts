@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
 import { and, eq, gte, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { db } from "@/db";
 import { mbosAttendanceDays, mbosDevices, mbosPositions } from "@/db/schema";
@@ -43,6 +42,42 @@ import { readDeviceState } from "@/lib/mbos/device-state";
  * win a race by thirty seconds. `no-session-yet` is the one answer that tells
  * it to hold on to them.
  *
+ * **AND THAT WAS TRUE OF EXACTLY ONE OF THE TWO WAYS A BATCH CANNOT BE
+ * FILED.** The sentence above was enforced only where the sessions QUERY came
+ * back empty. Where sessions existed and nothing in the batch fell inside one,
+ * this answered `{ ok: true, stored: 0, dropped: N }` with no `tracking` at
+ * all — and the handset treats any `ok` that is neither `off` nor
+ * `no-session-yet` as delivered and runs `DELETE FROM positions` over
+ * everything it sent. Those fixes were destroyed, permanently, by the one
+ * party that had them.
+ *
+ * It is self-reinforcing, which is what made it expensive rather than merely
+ * wrong. `markMissedCheckouts` closes a forgotten day at the last fix it can
+ * SEE, so a handset that lost signal at two and kept working until six had its
+ * day closed at two — and the two-to-six fixes then fell outside the window
+ * and were destroyed on arrival. The missing fixes caused the early close and
+ * the early close destroyed the missing fixes, with every request answering
+ * 200 and every screen looking healthy.
+ *
+ * **So the rule is now about the WHOLE batch: what cannot be filed is never
+ * acknowledged as stored.** A MIXED batch — some fixes inside a session, some
+ * not — is stored in part and still answered `no-session-yet`, so the handset
+ * keeps all of it. That costs a re-send of the part that landed, which costs
+ * nothing: the id is derived from the reading and `mbos_positions_fix_key`
+ * catches it even from a build that mints its own, so the second arrival is a
+ * no-op. Telling the truth by id would be better still and is not available:
+ * an APK cannot be recalled, and the two values above are the whole vocabulary
+ * every handset already in a pocket understands. The server has to speak the
+ * conservative one until nothing in the field can mistake a new one for
+ * "delivered".
+ *
+ * The consequence is worth naming rather than discovering: a fix outside a
+ * session is now RETRIED rather than destroyed, and where the day was closed
+ * early it goes on being refused until somebody regularises that day. It ages
+ * off the phone on the handset's own retention sweep, so it cannot become a
+ * queue that only grows — and until then the unsent count is on the Sync
+ * screen, which is a signal where silence was not.
+ *
  * **Nothing is confirmed row by row.** The handset deletes what it sent once
  * this answers, so the answer says how many landed and nothing more. A
  * duplicate is dropped on the unique index rather than reported — the id is
@@ -68,6 +103,21 @@ const MAX_BATCH = 500;
  * somebody's evening.
  */
 const EDGE_GRACE_MS = 2 * 60_000;
+
+/**
+ * The id a fix would have if the handset had minted one.
+ *
+ * Mirrors `fixId` in `mbos-app/src/sync/trail.ts` deliberately, down to the
+ * rounding: a position IS its reading, and an id derived from anything else is
+ * a duplicate generator. The fallback used to be `randomUUID()`, which gave
+ * `onConflictDoNothing` nothing to conflict ON for any build or any path that
+ * does not send an id — the exact failure that put 33,000 rows in the table
+ * for 4,000 real fixes. `mbos_positions_fix_key` would catch it a second time
+ * even so; this is the half that does not depend on an index being there.
+ */
+function fixId(at: number, lat: number, lng: number): string {
+  return `mbos_pos_${at}_${Math.round(lat * 1e6)}_${Math.round(lng * 1e6)}`;
+}
 
 export async function POST(request: Request) {
   const auth = await authenticate(request);
@@ -121,7 +171,7 @@ export async function POST(request: Request) {
 
     return [
       {
-        id: typeof p.id === "string" && p.id ? p.id : `mbos_pos_${randomUUID()}`,
+        id: typeof p.id === "string" && p.id ? p.id : fixId(at, lat, lng),
         userId: auth.principal.user.id,
         at: new Date(at),
         lat,
@@ -176,6 +226,22 @@ export async function POST(request: Request) {
     await db.insert(mbosPositions).values(inside).onConflictDoNothing();
   }
 
+  /* What could not be filed is never reported as delivered — see the header.
+     Counted AFTER the insert rather than instead of it, because the fixes that
+     did belong to a session are real and there is no reason to make the
+     handset send them twice before they land. */
+  const unfiled = values.length - inside.length;
+
+  if (!inside.length) {
+    /* Not one fix in this batch belongs to a day this server knows about. That
+     * is the same answer as no sessions at all, and for the handset it is the
+     * same instruction: hold on to them. The battery reading is deliberately
+     * NOT taken here — a handset reporting from outside every working day it
+     * has is precisely the beacon on somebody's evening that the placement
+     * below exists to refuse. */
+    return NextResponse.json({ ok: true, stored: 0, tracking: "no-session-yet" });
+  }
+
   /*
    * WHAT THE PHONE IS ITSELF DOING, on the one channel already open.
    *
@@ -197,12 +263,36 @@ export async function POST(request: Request) {
    * time somebody typed their password — a handset syncing perfectly for a
    * week read as untouched since Monday. A position batch IS a sync, so this
    * is the column finally meaning what those screens already say it does.
+   *
+   * IT CANNOT FAIL THE WRITE IT RIDES ON. The fixes are committed by the time
+   * this runs, and the handset decides whether to keep them from the ANSWER —
+   * so a 500 raised by a courtesy would have the phone retry a batch that is
+   * already in the table, for ever, on the strength of a battery column. It is
+   * the same discipline the next-step sentence and the order-decision
+   * notification already keep: a courtesy on top of a completed write.
    */
   const state = readDeviceState(body);
-  await db
-    .update(mbosDevices)
-    .set({ ...state, lastSeenAt: new Date() })
-    .where(eq(mbosDevices.deviceId, auth.principal.deviceId));
+  try {
+    await db
+      .update(mbosDevices)
+      .set({ ...state, lastSeenAt: new Date() })
+      .where(eq(mbosDevices.deviceId, auth.principal.deviceId));
+  } catch (error) {
+    console.error("mbos positions: device state not recorded", error);
+  }
+
+  if (unfiled) {
+    /* A MIXED batch. What landed has landed; what did not is kept on the phone
+       rather than destroyed, so the whole batch comes again and the stored
+       half deduplicates on arrival. `stored` is still the truth about this
+       call — it is `tracking` the handset acts on. */
+    return NextResponse.json({
+      ok: true,
+      stored: inside.length,
+      dropped: rows.length - inside.length,
+      tracking: "no-session-yet",
+    });
+  }
 
   return NextResponse.json({
     ok: true,
