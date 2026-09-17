@@ -26,8 +26,10 @@ import {
 } from "../engines/eod";
 import { today } from "../recompute";
 import {
+  endOfMonth,
   monthKey,
   rangeBoundaryWindow,
+  startOfMonth,
   type BusinessDate,
   type DateRange,
 } from "../business-date";
@@ -77,6 +79,26 @@ export async function eodMetricsForRange(
   const day = range.to;
   const period = monthKey(range.to);
   const [year, month] = period.split("-").map(Number);
+  /*
+   * THE MONTH AS A WINDOW, not as two `extract()` calls.
+   *
+   * `target_achieved` asked `extract(year from o.ordered_at) = $y and
+   * extract(month …) = $m`, which is wrong twice over. It cannot use
+   * `orders_ordered_idx`, so every call sequentially scanned the whole orders
+   * table — and the team dashboard calls this once per person, so a team of
+   * twelve scanned it twenty-four times for one page.
+   *
+   * It was also the bare-cast hazard in a different spelling: `extract` off a
+   * `timestamptz` is evaluated in the SESSION's zone, so an order taken at
+   * 00:30 IST on the 1st counts against the previous month on a database
+   * running in GMT and against this one on a database running in
+   * Asia/Kolkata. The half-open window carries `+05:30` like every other day
+   * window in this file, so it answers the same on both.
+   */
+  const mw = await windowFor({
+    from: startOfMonth(range.to),
+    to: endOfMonth(period),
+  });
 
   const [row] = await db.execute<Record<string, string>>(sql`
     select
@@ -160,8 +182,8 @@ export async function eodMetricsForRange(
         join customers cu on cu.id = o.customer_id
         where cu.owner_id = ${userId}
           and o.status in ('captured','confirmed','dispatched')
-          and extract(year from o.ordered_at) = ${year}
-          and extract(month from o.ordered_at) = ${month}) as target_achieved
+          and o.ordered_at >= ${mw.start}::timestamptz
+          and o.ordered_at <  ${mw.end}::timestamptz) as target_achieved
   `);
 
   const n = (k: string) => Number(row?.[k] ?? 0);
