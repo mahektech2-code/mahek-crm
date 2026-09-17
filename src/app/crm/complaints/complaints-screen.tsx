@@ -185,22 +185,53 @@ export function ComplaintsScreen({
   const [reassigning, setReassigning] = React.useState(false);
   const [logging, setLogging] = React.useState(false);
 
-  const buckets = {
-    open: rows.filter((r) => r.status === "open"),
-    progress: rows.filter(
-      (r) => r.status === "in_progress" || r.status === "awaiting_customer",
-    ),
-    resolved: rows.filter((r) => CLOSED.includes(r.status)),
-    all: rows,
-  };
+  /*
+   * THE BUCKETS AND THE AGE STRIP, IN ONE PASS, MEMOISED ON THE ROWS.
+   *
+   * Three filters built the buckets, three more counted the age strip over a
+   * concatenation of two of them, and one more counted "customer told" — seven
+   * walks of the list on every render, and this screen re-renders on every
+   * dialog open and every keystroke inside one. Only `rows` can change any of
+   * it.
+   *
+   * `visible` is one of these arrays, so the identity matters as much as the
+   * arithmetic: a fresh array on every render is a new prop for the table
+   * below it.
+   */
+  const buckets = React.useMemo(() => {
+    const open: Row[] = [];
+    const progress: Row[] = [];
+    const resolved: Row[] = [];
+    for (const r of rows) {
+      if (r.status === "open") open.push(r);
+      else if (r.status === "in_progress" || r.status === "awaiting_customer") {
+        progress.push(r);
+      }
+      if (CLOSED.includes(r.status)) resolved.push(r);
+    }
+    return { open, progress, resolved, all: rows };
+  }, [rows]);
   const visible = buckets[tab];
 
-  const stillOpen = [...buckets.open, ...buckets.progress];
-  const ageBuckets = [
-    { label: "under 3 days", n: stillOpen.filter((r) => r.ageDays < 3).length, tone: "success" as const },
-    { label: "3 to 7 days", n: stillOpen.filter((r) => r.ageDays >= 3 && r.ageDays <= 7).length, tone: "warn" as const },
-    { label: "over 7 days", n: stillOpen.filter((r) => r.ageDays > 7).length, tone: "danger" as const },
-  ];
+  const { stillOpen, ageBuckets } = React.useMemo(() => {
+    const open = [...buckets.open, ...buckets.progress];
+    let under3 = 0;
+    let three7 = 0;
+    let over7 = 0;
+    for (const r of open) {
+      if (r.ageDays < 3) under3++;
+      else if (r.ageDays <= 7) three7++;
+      else over7++;
+    }
+    return {
+      stillOpen: open,
+      ageBuckets: [
+        { label: "under 3 days", n: under3, tone: "success" as const },
+        { label: "3 to 7 days", n: three7, tone: "warn" as const },
+        { label: "over 7 days", n: over7, tone: "danger" as const },
+      ],
+    };
+  }, [buckets]);
   const oldest = stillOpen.reduce<Row | null>(
     (a, r) => (!a || r.ageDays > a.ageDays ? r : a),
     null,

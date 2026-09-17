@@ -219,6 +219,48 @@ export function QueueScreen({
   }, [rows, filter]);
 
   const visible = visibleRef;
+
+  /*
+   * THE SEVEN COUNTS, IN ONE PASS, MEMOISED.
+   *
+   * They were seven `rows.filter(...).length` calls written inline in the pill
+   * list, so they ran on EVERY render — and this screen re-renders constantly:
+   * j and k move the selection, opening the call panel sets state, every
+   * keystroke inside it sets more. Each pass walks the whole queue and each
+   * `hasAny` walks that row's reasons, so a manager's list of several hundred
+   * was doing thousands of array scans per keypress to produce numbers that
+   * had not changed.
+   *
+   * The counts only change when `rows` does, which is when the server hands
+   * down a new queue. One pass, one dependency, and the pills cost nothing on
+   * the keyboard path the whole screen is built around.
+   */
+  const counts = React.useMemo(() => {
+    const n = {
+      all: rows.length,
+      reminders: 0,
+      retry: 0,
+      orders: 0,
+      checkins: 0,
+      leads: 0,
+      inactive: 0,
+      complaints: 0,
+    };
+    for (const r of rows) {
+      /* One walk of this row's reasons rather than five — `hasAny` re-reads
+         them per kind list, and a row with eight reasons was being walked
+         forty times. */
+      const kinds = new Set(r.reasons.map((x) => x.kind));
+      if (REMINDER_KINDS.some((k) => kinds.has(k))) n.reminders++;
+      if (RETRY_KINDS.some((k) => kinds.has(k))) n.retry++;
+      if (ORDER_KINDS.some((k) => kinds.has(k))) n.orders++;
+      if (CHECKIN_KINDS.some((k) => kinds.has(k))) n.checkins++;
+      if (r.kind === "lead") n.leads++;
+      if (r.status === "inactive") n.inactive++;
+      if (r.hasComplaint) n.complaints++;
+    }
+    return n;
+  }, [rows]);
   const selected = Math.min(selectedRaw, Math.max(0, visible.length - 1));
 
   // j / k / Enter — the whole queue can be worked without touching the mouse.
@@ -366,41 +408,41 @@ export function QueueScreen({
           value={filter}
           onChange={setFilter}
           options={[
-            { key: "all", label: "To work", count: rows.length },
+            { key: "all", label: "To work", count: counts.all },
             {
               key: "reminders",
               label: "Reminder due",
-              count: rows.filter((r) => hasAny(r, REMINDER_KINDS)).length,
+              count: counts.reminders,
             },
             {
               key: "retry",
               label: "No answer",
-              count: rows.filter((r) => hasAny(r, RETRY_KINDS)).length,
+              count: counts.retry,
             },
             {
               key: "orders",
               label: "Due to reorder",
-              count: rows.filter((r) => hasAny(r, ORDER_KINDS)).length,
+              count: counts.orders,
             },
             {
               key: "checkins",
               label: "Check-in due",
-              count: rows.filter((r) => hasAny(r, CHECKIN_KINDS)).length,
+              count: counts.checkins,
             },
             {
               key: "leads",
               label: "Leads",
-              count: rows.filter((r) => r.kind === "lead").length,
+              count: counts.leads,
             },
             {
               key: "inactive",
               label: "Inactive",
-              count: rows.filter((r) => r.status === "inactive").length,
+              count: counts.inactive,
             },
             {
               key: "complaints",
               label: "Has complaint",
-              count: rows.filter((r) => r.hasComplaint).length,
+              count: counts.complaints,
             },
           ]}
         />
