@@ -57,8 +57,8 @@ export function ExportButton({
       disabled={disabled}
       title={
         total === 0
-          ? "Nothing to export — the table is empty."
-          : `${total} rows, exactly as filtered`
+          ? "Nothing to download — nothing matches this filter."
+          : `A spreadsheet of all ${total.toLocaleString("en-IN")} rows this filter reaches — not just the page below.`
       }
       onClick={() => {
         // A fetched export is a round trip, so the button has to say it is
@@ -67,9 +67,21 @@ export function ExportButton({
         setBusy(true);
         run().finally(() => setBusy(false));
       }}
-      className="rounded-[4px] border border-line bg-surface px-2.5 py-1 text-[12px] text-body hover:bg-canvas disabled:opacity-50"
+      className="inline-flex h-9 cursor-pointer items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body hover:bg-canvas disabled:cursor-default disabled:opacity-50"
     >
-      {busy ? "Exporting…" : `Export (${total})`}
+      {/*
+        "EXPORT" IS A WORD THAT MEANS FOUR THINGS IN AN OFFICE, and the number
+        beside it used to be the length of an array the browser happened to be
+        holding. Now that the file is fetched from the server over the whole
+        filtered set, the count is the honest one — and saying "Download" and
+        "spreadsheet" tells somebody what the click does and what they will get,
+        which is the entire job of a button's label.
+      */}
+      {busy
+        ? "Preparing…"
+        : total === 0
+          ? "Download as a spreadsheet"
+          : `Download ${total.toLocaleString("en-IN")} as a spreadsheet`}
     </button>
   );
 }

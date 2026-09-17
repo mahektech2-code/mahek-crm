@@ -31,7 +31,11 @@ import { db } from "@/db";
 import { appAccess, customers, mbosUserTerritories, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
-import { leadFilterOptions, leadsPage } from "@/lib/services/sales-service";
+import {
+  leadFilterOptions,
+  LEADS_PER_PAGE,
+  leadsPage,
+} from "@/lib/services/sales-service";
 import { BUCKET_LISTS, UNASSIGNED, type LeadFilters } from "@/lib/lead-filters";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -143,17 +147,35 @@ describe("a lead nobody owns", () => {
   });
 });
 
+/*
+ * THE PAGE SIZE IS READ, NOT TYPED.
+ *
+ * These pinned a literal ten, which is a number that has already moved twice —
+ * four hundred to ten when the paging landed, and ten to fifteen when the
+ * screen turned out to leave half a panel empty under its own filter bar. A
+ * test that fails on that is a test asserting a product decision it does not
+ * own, and the failure says nothing about whether paging works.
+ *
+ * What these DO own is the behaviour: every lead appears exactly once across
+ * the pages, a page past the end clamps rather than showing an empty table,
+ * and the totals describe the filtered set rather than the page. The seed is
+ * sized off the constant so there are always three pages with a partial last
+ * one, whatever the constant says.
+ */
 describe("paging", () => {
+  /** Two full pages and a partial third, at any page size. */
+  const SEEDED = LEADS_PER_PAGE * 2 + 5;
+
   beforeEach(async () => {
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < SEEDED; i++) {
       await makeLead({ name: `Lead ${String(i).padStart(2, "0")}`, ownerId: salesman.id });
     }
   });
 
-  test("ten by default, and every lead appears exactly once across the pages", async () => {
+  test("a page holds what the screen asked for, and every lead appears exactly once", async () => {
     const first = await leadsPage(TODAY);
-    assert.equal(first.rows.length, 10, "ten, which is what the screen asked for");
-    assert.equal(first.total, 25);
+    assert.equal(first.rows.length, LEADS_PER_PAGE, "a full first page");
+    assert.equal(first.total, SEEDED);
     assert.equal(first.pageCount, 3);
 
     const seen = new Set<string>();
@@ -164,20 +186,113 @@ describe("paging", () => {
         seen.add(r.id);
       }
     }
-    assert.equal(seen.size, 25, "and none fell between two pages");
+    assert.equal(seen.size, SEEDED, "and none fell between two pages");
   });
 
   test("a page past the end lands on the last one rather than on an empty table", async () => {
     const page = await leadsPage(TODAY, { page: 99 });
     assert.equal(page.page, 3);
-    assert.equal(page.rows.length, 5);
+    assert.equal(page.rows.length, 5, "the partial last page");
   });
 
   test("the totals describe the FILTERED set and the list, never the page", async () => {
     await makeLead({ name: "Indiamart one", ownerId: salesman.id, leadSource: "indiamart" });
     const page = await leadsPage(TODAY, { filters: { source: "indiamart" } });
     assert.equal(page.total, 1, "what the filter found");
-    assert.equal(page.listTotal, 26, "and what there is to find");
+    assert.equal(page.listTotal, SEEDED + 1, "and what there is to find");
+  });
+});
+
+/*
+ * THE SEARCH BOX, which is the one question seven dropdowns cannot put.
+ */
+describe("the search", () => {
+  test("it matches the shop, and every word has to appear somewhere", async () => {
+    await makeLead({ name: "Orange City Chemicals", ownerId: salesman.id, city: "Nagpur" });
+    await makeLead({ name: "Sagar Coatings", ownerId: salesman.id, city: "Nashik" });
+
+    assert.equal((await leadsPage(TODAY, { filters: { search: "orange" } })).total, 1);
+    assert.equal(
+      (await leadsPage(TODAY, { filters: { search: "nashik coatings" } })).total,
+      1,
+      "two words are two facts about one shop, and both have to land",
+    );
+    assert.equal(
+      (await leadsPage(TODAY, { filters: { search: "nagpur coatings" } })).total,
+      0,
+      "the two words are AND rather than OR",
+    );
+  });
+
+  test("IT REACHES THE OWNER'S NAME, which is the half nobody would guess at", async () => {
+    await makeLead({ name: "Om Sai Paints", ownerId: salesman.id });
+    await makeLead({ name: "Om Sai Paints Two", ownerId: null });
+
+    const mine = await leadsPage(TODAY, { filters: { search: "field salesman" } });
+    assert.equal(mine.total, 1, "everything Field Salesman has");
+    assert.equal(mine.rows[0]?.name, "Om Sai Paints");
+  });
+
+  test("a wildcard typed into the box is a character, not a wildcard", async () => {
+    await makeLead({ name: "50 litre drum", ownerId: salesman.id });
+    await makeLead({ name: "50_litre drum", ownerId: salesman.id });
+
+    assert.equal(
+      (await leadsPage(TODAY, { filters: { search: "50_litre" } })).total,
+      1,
+      "an underscore matches an underscore, never any character",
+    );
+    assert.equal(
+      (await leadsPage(TODAY, { filters: { search: "%" } })).total,
+      0,
+      "and a percent matches nothing rather than everything",
+    );
+  });
+
+  test("it narrows the same set the totals and the stale strip describe", async () => {
+    await makeLead({ name: "Findable", ownerId: salesman.id });
+    await makeLead({ name: "Other", ownerId: salesman.id });
+
+    const page = await leadsPage(TODAY, { filters: { search: "findable" } });
+    assert.equal(page.total, 1, "what the search found");
+    assert.equal(page.listTotal, 2, "and what there was to find");
+  });
+});
+
+/*
+ * A LEAD NOBODY HAS EVER TOUCHED IS THE QUIETEST THERE IS.
+ *
+ * `lead_last_activity_date` is nullable, and `coalesce(day - it, 0)` answered
+ * NOUGHT for one — which is never at or past the stale threshold. So the one
+ * list somebody opens to find abandoned leads was the list hiding the most
+ * abandoned ones.
+ */
+describe("how long a lead has been quiet", () => {
+  test("with no activity ever, it is counted from the day it was raised", async () => {
+    await makeLead({
+      name: "Never worked",
+      ownerId: salesman.id,
+      leadLastActivityDate: null,
+      createdAt: new Date("2026-06-13T04:00:00Z"),
+    });
+
+    const page = await leadsPage(TODAY);
+    assert.equal(page.rows[0]?.quietDays, 92, "three months, not nought");
+    assert.equal(page.stale.count, 1, "and the strip counts it");
+    assert.deepEqual(page.stale.names, ["Never worked"], "and names it");
+  });
+
+  test("with activity, it is counted from that", async () => {
+    await makeLead({
+      name: "Worked last week",
+      ownerId: salesman.id,
+      leadLastActivityDate: "2026-09-06",
+      createdAt: new Date("2026-01-01T04:00:00Z"),
+    });
+
+    const page = await leadsPage(TODAY);
+    assert.equal(page.rows[0]?.quietDays, 7, "the activity wins over the age");
+    assert.equal(page.stale.count, 0, "and a week is not stale");
   });
 });
 

@@ -33,6 +33,9 @@ import { bindAttachments, createAttachment } from "@/lib/services/attachment-ser
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import {
   fieldBook,
+  LEAD_BULK_CAP,
+  leadIdsMatching,
+  leadsInScope,
   leadsPage,
   managerScope,
   onlyMine,
@@ -1883,6 +1886,363 @@ export async function restoreLead(input: { leadId: string }): Promise<Result> {
 
     refresh();
     return okVoid(`${leadLabel(lead)} restored.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ────────────────────────────────────────────── the same four, in a batch */
+
+/**
+ * WHY BULK IS ITS OWN SET OF ACTIONS RATHER THAN A LOOP IN THE SCREEN.
+ *
+ * A browser looping a server action once per row is a hundred round trips, a
+ * hundred audit writes, a hundred revalidations and a hundred notifications —
+ * and, worse, a partial result nobody can read: the toast says "done" while
+ * eleven of them failed silently somewhere in the middle. These do the
+ * permission check and the lookups ONCE, write in one statement where the
+ * write is one statement, and answer with what actually happened to each —
+ * how many moved, and the ones that did not, named, with the reason.
+ *
+ * Notifications are grouped PER PERSON and never per lead, the rule a customer
+ * reassignment already follows: a salesman handed forty leads gets one message
+ * saying forty, not forty messages.
+ *
+ * WHAT MAY BE TOUCHED IS ASKED OF THE DATABASE, never taken from the payload.
+ * `requireSales` answers "do you hold the Sales Dashboard", which every
+ * regional manager does — it is not the same question as "may you move this
+ * lead". `leadsInScope` runs `leadsVisible`, the same narrowing the list that
+ * offered the selection ran, so a batch can only reach what the screen could
+ * show. Ids outside it are simply absent, and every caller reports them rather
+ * than succeeding quietly.
+ */
+
+/** Every bulk answer has the same shape, so every screen reads it the same way. */
+export type BulkOutcome = {
+  done: number;
+  /**
+   * Named AND identified — the name is what a manager reads, the id is what
+   * keeps exactly the refused leads ticked afterwards. A batch that clears the
+   * selection on a partial success leaves somebody to find the eleven refused
+   * leads again by hand, which is the work the batch was supposed to save.
+   */
+  failed: Array<{ id: string; name: string; why: string }>;
+};
+
+type ScopedLead = Awaited<ReturnType<typeof leadsInScope>>[number];
+
+/** The ids a batch will act on: de-duplicated, capped, and nothing else. */
+function bulkIds(ids: string[]): string[] {
+  return Array.from(new Set(ids.filter(Boolean))).slice(0, LEAD_BULK_CAP);
+}
+
+/**
+ * Read them once, and say plainly which ids answered nothing.
+ *
+ * An id that is not a lead, has been deleted, or belongs to a book this person
+ * cannot see all come back the same way — unreachable, and deliberately not
+ * told apart. Distinguishing them here would answer "does this id exist" to
+ * somebody who may not look at it.
+ */
+async function bulkLeads(
+  ids: string[],
+): Promise<{ leads: ScopedLead[]; missing: BulkOutcome["failed"] }> {
+  const wanted = bulkIds(ids);
+  if (!wanted.length) return { leads: [], missing: [] };
+  const leads = await leadsInScope(wanted);
+  const found = new Set(leads.map((l) => l.id));
+  return {
+    leads,
+    missing: wanted
+      .filter((id) => !found.has(id))
+      .map((id) => ({ id, name: "A lead", why: "no longer here, or not yours to change" })),
+  };
+}
+
+function bulkMessage(outcome: BulkOutcome, verb: string): string {
+  if (!outcome.failed.length) return `${plural(outcome.done, "lead")} ${verb}.`;
+  const named = outcome.failed
+    .slice(0, 3)
+    .map((f) => `${f.name} — ${f.why}`)
+    .join("; ");
+  const more = outcome.failed.length > 3 ? ` and ${outcome.failed.length - 3} more` : "";
+  return `${plural(outcome.done, "lead")} ${verb}. ${plural(outcome.failed.length, "was", "were")} not: ${named}${more}`;
+}
+
+/**
+ * The ids behind "select all NNN matching", capped at what a batch accepts.
+ *
+ * A read wearing an action's clothes, which is worth naming because everything
+ * else in this file writes. It is here rather than in the service because the
+ * screen is a client component and cannot call a `server-only` module, and the
+ * selection it feeds is what the four writes below take — so the cap is theirs
+ * rather than a number chosen here.
+ */
+export async function leadIdsForSelection(input: {
+  archived?: boolean;
+  filters?: LeadFilters;
+}): Promise<Result<{ ids: string[]; capped: boolean }>> {
+  try {
+    await requireSales();
+    const day = await today();
+    return ok(
+      await leadIdsMatching(day, { archived: input.archived, filters: input.filters }),
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Moving a selection of leads to one salesman.
+ *
+ * The same rules {@link reassignLead} keeps — the new owner must hold the
+ * handset, an archived lead is refused rather than quietly moved, and both
+ * sides are told — asked once for the person and once per lead for the lead.
+ */
+export async function bulkReassignLeads(input: {
+  leadIds: string[];
+  salesmanId: string;
+}): Promise<Result<BulkOutcome>> {
+  try {
+    const user = await requireSales();
+
+    const [salesman] = await db
+      .select({ id: users.id, name: users.name, active: users.active })
+      .from(users)
+      .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "field")))
+      .where(eq(users.id, input.salesmanId))
+      .limit(1);
+    if (!salesman) {
+      return err(
+        "That person does not hold the Salesman App, so leads cannot be put on their handset.",
+        "validation",
+      );
+    }
+    if (!salesman.active) return err(`${salesman.name}'s account is closed.`, "validation");
+
+    const { leads, missing } = await bulkLeads(input.leadIds);
+    if (!leads.length && !missing.length) return err("Nothing selected.", "validation");
+
+    const failed = [...missing];
+    const moving = leads.filter((l) => {
+      if (l.leadArchived) {
+        failed.push({ id: l.id, name: leadLabel(l), why: "archived — restore it first" });
+        return false;
+      }
+      if (l.ownerId === input.salesmanId) {
+        failed.push({ id: l.id, name: leadLabel(l), why: "already theirs" });
+        return false;
+      }
+      return true;
+    });
+
+    if (moving.length) {
+      await db
+        .update(customers)
+        .set({ ownerId: input.salesmanId, updatedAt: new Date() })
+        .where(inArray(customers.id, moving.map((l) => l.id)));
+
+      await db.insert(auditLog).values(
+        moving.map((l) => ({
+          id: gen("aud"),
+          actorId: user.id,
+          action: "mbos.lead.reassign",
+          entityType: "mbos_lead",
+          entityId: l.id,
+          beforeState: { assignedToUserId: l.ownerId ?? null } as never,
+          afterState: { assignedToUserId: input.salesmanId } as never,
+        })),
+      );
+
+      await tell(
+        input.salesmanId,
+        `${plural(moving.length, "lead")} ${moving.length === 1 ? "is" : "are"} now yours`,
+        `${user.name} assigned them to you. They are on your handset at the next sync.`,
+      );
+
+      /* One message per person who lost work, not one per lead. */
+      const lost = new Map<string, number>();
+      for (const l of moving) {
+        if (l.ownerId) lost.set(l.ownerId, (lost.get(l.ownerId) ?? 0) + 1);
+      }
+      for (const [ownerId, n] of lost) {
+        await tell(
+          ownerId,
+          `${plural(n, "lead")} moved`,
+          `${user.name} reassigned ${n === 1 ? "it" : "them"} to ${salesman.name}.`,
+        );
+      }
+    }
+
+    refresh();
+    const outcome = { done: moving.length, failed };
+    return ok(outcome, bulkMessage(outcome, `moved to ${salesman.name}`));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Filing a selection away, with the one reason that covers all of them. */
+export async function bulkArchiveLeads(input: {
+  leadIds: string[];
+  reason: string;
+}): Promise<Result<BulkOutcome>> {
+  try {
+    const user = await requireSales();
+
+    const reason = input.reason.trim();
+    if (!reason) return err("Say why — this is what a manager reads later.", "validation");
+
+    const { leads, missing } = await bulkLeads(input.leadIds);
+    if (!leads.length && !missing.length) return err("Nothing selected.", "validation");
+
+    const failed = [...missing];
+    const filing = leads.filter((l) => {
+      if (l.leadArchived) {
+        failed.push({ id: l.id, name: leadLabel(l), why: "already archived" });
+        return false;
+      }
+      return true;
+    });
+
+    if (filing.length) {
+      await db
+        .update(customers)
+        .set({ leadArchived: true, leadArchivedAt: new Date(), updatedAt: new Date() })
+        .where(inArray(customers.id, filing.map((l) => l.id)));
+
+      await db.insert(auditLog).values(
+        filing.map((l) => ({
+          id: gen("aud"),
+          actorId: user.id,
+          action: "mbos.lead.archive",
+          entityType: "mbos_lead",
+          entityId: l.id,
+          beforeState: { archived: false } as never,
+          afterState: { archived: true, reason } as never,
+        })),
+      );
+
+      /* A lead vanishing off a working list with no explanation is the failure
+         this whole app is built to avoid, so the owner gets the sentence and
+         not just the fact. */
+      const byOwner = new Map<string, number>();
+      for (const l of filing) {
+        if (l.ownerId) byOwner.set(l.ownerId, (byOwner.get(l.ownerId) ?? 0) + 1);
+      }
+      for (const [ownerId, n] of byOwner) {
+        await tell(
+          ownerId,
+          `${plural(n, "lead")} archived`,
+          `${user.name} filed ${n === 1 ? "it" : "them"} away — ${reason}`,
+        );
+      }
+    }
+
+    refresh();
+    const outcome = { done: filing.length, failed };
+    return ok(outcome, bulkMessage(outcome, "archived"));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** And the way back for a selection. */
+export async function bulkRestoreLeads(input: {
+  leadIds: string[];
+}): Promise<Result<BulkOutcome>> {
+  try {
+    const user = await requireSales();
+
+    const { leads, missing } = await bulkLeads(input.leadIds);
+    if (!leads.length && !missing.length) return err("Nothing selected.", "validation");
+
+    const failed = [...missing];
+    const restoring = leads.filter((l) => {
+      if (!l.leadArchived) {
+        failed.push({ id: l.id, name: leadLabel(l), why: "was not archived" });
+        return false;
+      }
+      return true;
+    });
+
+    if (restoring.length) {
+      await db
+        .update(customers)
+        .set({ leadArchived: false, leadArchivedAt: null, updatedAt: new Date() })
+        .where(inArray(customers.id, restoring.map((l) => l.id)));
+
+      await db.insert(auditLog).values(
+        restoring.map((l) => ({
+          id: gen("aud"),
+          actorId: user.id,
+          action: "mbos.lead.restore",
+          entityType: "mbos_lead",
+          entityId: l.id,
+          beforeState: { archived: true } as never,
+          afterState: { archived: false } as never,
+        })),
+      );
+    }
+
+    refresh();
+    const outcome = { done: restoring.length, failed };
+    return ok(outcome, bulkMessage(outcome, "restored"));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Nudging everybody who owns something in the selection.
+ *
+ * One message per owner naming how many, for the reason at the top of this
+ * section: forty separate nudges is a notification list somebody stops
+ * reading, which defeats the only thing a chase is for.
+ */
+export async function bulkChaseLeadOwners(input: {
+  leadIds: string[];
+  note?: string;
+}): Promise<Result<BulkOutcome>> {
+  try {
+    const user = await requireSales();
+
+    const { leads, missing } = await bulkLeads(input.leadIds);
+    if (!leads.length && !missing.length) return err("Nothing selected.", "validation");
+
+    const failed = [...missing];
+    const byOwner = new Map<string, ScopedLead[]>();
+    for (const l of leads) {
+      if (l.leadArchived) {
+        failed.push({ id: l.id, name: leadLabel(l), why: "archived — nobody is working it" });
+        continue;
+      }
+      if (!l.ownerId) {
+        failed.push({ id: l.id, name: leadLabel(l), why: "nobody owns it — reassign it first" });
+        continue;
+      }
+      const held = byOwner.get(l.ownerId) ?? [];
+      held.push(l);
+      byOwner.set(l.ownerId, held);
+    }
+
+    const note = input.note?.trim();
+    let done = 0;
+    for (const [ownerId, held] of byOwner) {
+      const names = held.slice(0, 5).map(leadLabel).join(", ");
+      const more = held.length > 5 ? ` and ${held.length - 5} more` : "";
+      await tell(
+        ownerId,
+        `Chase — ${plural(held.length, "lead")}`,
+        note || `${user.name} asked you to follow up on ${names}${more}.`,
+      );
+      done += held.length;
+    }
+
+    refresh();
+    const outcome = { done, failed };
+    return ok(outcome, bulkMessage(outcome, "chased"));
   } catch (e) {
     return fromThrown(e);
   }

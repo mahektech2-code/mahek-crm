@@ -188,6 +188,18 @@ const STAGE_TEXT: Record<LeadStage, { short: string; long: string }> = {
   },
 };
 
+/**
+ * Every rung there is, in ladder order, for a control that has to OFFER one.
+ *
+ * Derived from the same record the labels come from rather than typed out
+ * beside it — a second list is a list that loses the twenty-fourth rung the day
+ * somebody adds it, and the half that drifts is the half a screen renders.
+ * Nothing here says a rung is REACHABLE: `ladderFor` answers which ladder a
+ * lead is on and `lead-gates` answers whether it may move, and both are asked
+ * after somebody has picked, never instead of offering the pick.
+ */
+export const ALL_LEAD_STAGES = Object.keys(STAGE_TEXT) as LeadStage[];
+
 export function stageLabel(stage: LeadStage): string {
   return STAGE_TEXT[stage]?.short ?? stage;
 }

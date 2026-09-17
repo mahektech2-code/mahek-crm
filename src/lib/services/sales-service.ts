@@ -48,6 +48,33 @@ import {
 /** A day boundary in the business zone, for use inside a raw query. */
 const IST_DAY = sql.raw(`at time zone '${APP_TIMEZONE}'`);
 
+/**
+ * HOW LONG A LEAD HAS BEEN QUIET, AND A LEAD NOBODY HAS EVER TOUCHED IS THE
+ * QUIETEST THERE IS.
+ *
+ * `lead_last_activity_date` is nullable, and this read `coalesce(day - it, 0)`
+ * — so a lead raised four months ago that nobody has ever logged anything
+ * against came back as nought days quiet. Nought is never at or past
+ * `mbos.leads.staleDays`, so the row printed "0 days", the stale strip did not
+ * count it, and its name was not among the four that strip prints: the one
+ * place somebody looks for abandoned leads was the place hiding the most
+ * abandoned ones.
+ *
+ * The honest fallback is the lead's own AGE — nothing has happened since it was
+ * raised, so that is exactly how long it has been quiet. The day boundary is
+ * named on the way, because `created_at` is a timestamp and a bare cast would
+ * date a 1am lead to the day before.
+ *
+ * ONE definition, read by both row selects and by the stale count and the
+ * names beside it. Four spellings of one rule is three that can drift.
+ */
+const QUIET_DAYS_SQL = (day: string) => sql`
+  coalesce(
+    ${day}::date - c.lead_last_activity_date,
+    ${day}::date - (c.created_at ${IST_DAY})::date,
+    0
+  )`;
+
 /* ═══════════════════════════════════════════════════════════════════ scope */
 
 export type ManagerScope = {
@@ -1312,7 +1339,7 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
   const scope = await managerScope();
   return withHealthBand(day, await db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
-           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
+           ${QUIET_DAYS_SQL(day)}::int as "quietDays",
            (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
       from customers c
       left join users u on u.id = c.owner_id
@@ -1362,6 +1389,34 @@ export function leadFilterClause(
     if (!clauses.length) return;
     parts.push(sql`and (${sql.join(clauses, sql` or `)})`);
   };
+
+  /*
+   * FREE TEXT, AND IT REACHES THE OWNER'S NAME.
+   *
+   * Every word has to appear somewhere rather than the whole string appearing
+   * as one: "rakesh nagpur" is two facts about one shop, and a single ILIKE
+   * over the joined haystack would find neither. Six is the cap — past that it
+   * is not a search, and an unbounded loop here is an unbounded query.
+   *
+   * The owner is a CORRELATED SUBQUERY and not a join, because this clause is
+   * spliced into three statements and only one of them joins `users`: the
+   * count and the stale summary select from `customers` alone, so a bare
+   * `u.name` here would take them down. "Everything Rakesh has" is the
+   * commonest thing anybody types into a box above a list of leads, and a
+   * search that answers nothing to it reads as a broken search box rather than
+   * as a field it does not cover.
+   *
+   * Escaped before it is bound: `%` and `_` are wildcards to ILIKE and
+   * ordinary characters to whoever typed them, so a search for "50_litre"
+   * must not quietly match "50 litre".
+   */
+  for (const word of (filters.search ?? "").trim().split(/\s+/).filter(Boolean).slice(0, 6)) {
+    const like = `%${word.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
+    parts.push(sql`and concat_ws(' ', c.name, c.company_name, c.phone, c.city, c.area,
+                                 c.lead_notes,
+                                 (select u2.name from users u2 where u2.id = c.owner_id))
+                   ilike ${like}`);
+  }
 
   const owners = splitFilter(filters.owner);
   if (owners.length) {
@@ -1470,8 +1525,17 @@ export type LeadsPage = {
   stale: { count: number; names: string[] };
 };
 
-/** Ten, because the screen this replaced drew four hundred rows in one go. */
-export const LEADS_PER_PAGE = 10;
+/**
+ * FIFTEEN, which is what a manager reads without scrolling.
+ *
+ * It was ten, itself a correction of the four hundred this screen used to draw
+ * in one go. Ten leaves half the panel empty under a filter bar that is most of
+ * a screen on its own, so the answer to "who is on this list" arrives as a
+ * pager rather than as a list. Fifteen fills it without costing anything the
+ * database notices; the Pager offers 50 and 100 for a filter somebody has
+ * already narrowed down.
+ */
+export const LEADS_PER_PAGE = 15;
 const LEADS_PER_PAGE_MAX = 200;
 
 /**
@@ -1532,12 +1596,12 @@ export async function leadsPage(
     select count(*)::int as total,
            count(*) filter (
              where c.lead_stage::text not in ('won', 'lost')
-               and coalesce(${day}::date - c.lead_last_activity_date, 0) >= ${staleDays}
+               and ${QUIET_DAYS_SQL(day)} >= ${staleDays}::int
            )::int as "staleCount",
            (array_agg(c.name order by c.lead_last_activity_date asc nulls first)
               filter (
                 where c.lead_stage::text not in ('won', 'lost')
-                  and coalesce(${day}::date - c.lead_last_activity_date, 0) >= ${staleDays}
+                  and ${QUIET_DAYS_SQL(day)} >= ${staleDays}::int
               ))[1:4] as "staleNames"
       from customers c
       ${where}
@@ -1556,7 +1620,7 @@ export async function leadsPage(
 
   const rows = await db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
-           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
+           ${QUIET_DAYS_SQL(day)}::int as "quietDays",
            (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
       from customers c
       left join users u on u.id = c.owner_id
@@ -1582,6 +1646,95 @@ export async function leadsPage(
       names: counts?.staleNames ?? [],
     },
   };
+}
+
+/**
+ * HOW MANY LEADS ONE BATCH TOUCHES, AND IT IS ONE NUMBER.
+ *
+ * It lives here, beside the filter that produces the selection, because both
+ * ends have to agree: a cap the screen tells somebody and a cap the server
+ * applies that differ by a hundred means "Select all 200" is followed by a
+ * confirm button reading "Apply to 200" and a server that moves half of them —
+ * with the rest neither moved nor refused, because a lead nobody attempted is
+ * not a refusal either, and the answer comes back a clean success.
+ */
+export const LEAD_BULK_CAP = 200;
+
+/**
+ * EVERY LEAD THE FILTER REACHES, AS IDS, FOR A SELECTION THAT CROSSES PAGES.
+ *
+ * "Everything Rakesh has" is a hundred and forty leads over ten pages, and a
+ * multi-select that can only reach the fifteen in front of somebody is one they
+ * work around by setting the page size to two hundred — which is the slow page
+ * the paging exists to prevent.
+ *
+ * It runs the SAME clause and the SAME order the table ran, so "the first 200"
+ * names the two hundred somebody is actually looking at rather than an
+ * arbitrary two hundred. The cap is the bulk actions' own: a selection larger
+ * than they accept must not be offered, or the refusal arrives after the
+ * review.
+ */
+export async function leadIdsMatching(
+  day: string,
+  options: { archived?: boolean; filters?: LeadFilters; cap?: number } = {},
+): Promise<{ ids: string[]; capped: boolean }> {
+  const scope = await managerScope();
+  const { getConfig } = await import("../config/store");
+  const config = await getConfig();
+  const archived = options.archived ?? false;
+  const cap = options.cap ?? LEAD_BULK_CAP;
+
+  const rows = await db.execute<{ id: string }>(sql`
+    select c.id
+      from customers c
+     where c.lead_stage is not null
+       and c.lead_archived = ${archived}
+       ${leadsVisible(scope)}
+       ${leadFilterClause(options.filters ?? {}, day, {
+         atRiskBelow: config["mbos.health.atRiskBelow"],
+         strongAtOrAbove: config["mbos.health.strongAtOrAbove"],
+       })}
+     ${archived
+       ? sql`order by c.lead_archived_at desc nulls last, c.id desc`
+       : sql`order by c.lead_next_follow_up_date asc nulls last,
+                     c.lead_last_activity_date asc nulls last, c.id desc`}
+     limit ${cap + 1}
+  `);
+  return { ids: rows.slice(0, cap).map((r) => r.id), capped: rows.length > cap };
+}
+
+/**
+ * The leads a bulk action may actually TOUCH, narrowed the same way.
+ *
+ * Asked by the writes rather than trusted from the payload: a server action is
+ * a URL, and the ids arrive in a body somebody can write by hand. Holding the
+ * Sales Dashboard is not the same question as being allowed to move this
+ * particular lead, and without this one posted request moves two hundred of
+ * another manager's leads onto your own salesman's handset, notifies both real
+ * owners, and writes two hundred audit rows saying it was legitimate.
+ *
+ * `leadsVisible` rather than a second narrowing, so what a batch may change is
+ * exactly what the screen that offered it may show — including the leads
+ * nobody owns, which that helper deliberately lets through.
+ */
+export async function leadsInScope(ids: string[]) {
+  if (!ids.length) return [];
+  const scope = await managerScope();
+  return db.execute<{
+    id: string;
+    name: string;
+    companyName: string | null;
+    city: string | null;
+    ownerId: string | null;
+    leadArchived: boolean;
+  }>(sql`
+    select c.id, c.name, c.company_name as "companyName", c.city,
+           c.owner_id as "ownerId", c.lead_archived as "leadArchived"
+      from customers c
+     where c.lead_stage is not null
+       and c.id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+       ${leadsVisible(scope)}
+  `);
 }
 
 /**

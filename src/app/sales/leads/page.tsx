@@ -84,6 +84,10 @@ export default async function Page({
   const showArchived = params.view === "archived";
 
   const filters: LeadFilters = {
+    /* Capped on the way in. A search box is a text field on a URL anybody can
+       write, and six words is already more than a search; the clause caps the
+       words and this caps the string. */
+    search: params.q?.slice(0, 200),
     owner: params.owner,
     source: params.source,
     stage: params.stage,
