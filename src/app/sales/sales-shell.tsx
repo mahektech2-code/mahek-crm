@@ -50,7 +50,7 @@ type Item = {
  * a link that is not drawn is a statement to the browser and the browser is not
  * where authority lives.
  */
-const NAV: Array<{ label: string; items: Item[] }> = [
+const NAV: Array<{ label: string; items: Item[]; collapsible?: boolean }> = [
   {
     label: "Overview",
     items: [
@@ -68,7 +68,37 @@ const NAV: Array<{ label: string; items: Item[] }> = [
       { href: "/sales/journeys", label: "Journey planning", icon: "route" },
       { href: "/sales/visits", label: "Visits", icon: "visit" },
       { href: "/sales/activity-history", label: "Activity history", icon: "clock" },
-      { href: "/sales/leads", label: "Leads", icon: "spark" },
+    ],
+  },
+  /*
+   * THE ONE COLLAPSIBLE GROUP, and the only one that needed to be.
+   *
+   * Every other group here is four to six rows and is read at a glance. Lead
+   * Management is ten, which is more than the rest of the sidebar's longest
+   * group and would push Commercial, People and Enablement below the fold for
+   * anybody who does not work the funnel — which is most of this app's
+   * audience. So it collapses, it remembers whether it was open, and it opens
+   * itself whenever the current route is inside it: a group that hid the
+   * screen you were standing on would be furniture rather than navigation.
+   *
+   * TEN and not twenty-three. The rest of the funnel's surface is tabs inside
+   * these ten — see the note in `lib/modules.ts` for why that line was drawn
+   * where it was, and what it costs.
+   */
+  {
+    label: "Lead Management",
+    collapsible: true,
+    items: [
+      { href: "/sales/leads", label: "All Leads", icon: "spark", exact: true },
+      { href: "/sales/leads/funnel", label: "Funnel & conversion", icon: "chart" },
+      { href: "/sales/leads/intake", label: "Intake", icon: "doc" },
+      { href: "/sales/leads/qualify", label: "Qualification", icon: "tick" },
+      { href: "/sales/samples", label: "Samples & trials", icon: "sample" },
+      { href: "/sales/leads/commercial", label: "Commercial", icon: "order" },
+      { href: "/sales/leads/appointments", label: "Distributor appointments", icon: "people" },
+      { href: "/sales/leads/actions", label: "Next actions & nurture", icon: "task" },
+      { href: "/sales/leads/handovers", label: "Handovers", icon: "route" },
+      { href: "/sales/leads/oversight", label: "Oversight", icon: "shield" },
     ],
   },
   {
@@ -77,7 +107,6 @@ const NAV: Array<{ label: string; items: Item[] }> = [
       { href: "/sales/orders", label: "Orders", icon: "order" },
       { href: "/sales/payments", label: "Payments", icon: "money" },
       { href: "/sales/invoices", label: "Invoices", icon: "doc" },
-      { href: "/sales/samples", label: "Samples", icon: "sample" },
       { href: "/sales/catalogue", label: "Catalogue & rates", icon: "grid" },
     ],
   },
@@ -110,6 +139,48 @@ const NAV: Array<{ label: string; items: Item[] }> = [
     ],
   },
 ];
+
+/* ---------------------------------------------------------------------------
+ * The collapsed-groups store.
+ *
+ * Module scope rather than component state, because `useSyncExternalStore`
+ * needs a `subscribe` that outlives a render and a `getSnapshot` that is a
+ * plain function of the outside world. The listeners set is what makes a
+ * change in one mounted shell reach another — and what makes the sidebar
+ * redraw at all when a heading is clicked, since nothing here is React state.
+ * ------------------------------------------------------------------------- */
+
+const COLLAPSED_KEY = "sales.nav.collapsed";
+const collapsedListeners = new Set<() => void>();
+
+function subscribeToCollapsed(onChange: () => void): () => void {
+  collapsedListeners.add(onChange);
+  return () => {
+    collapsedListeners.delete(onChange);
+  };
+}
+
+function readCollapsed(): string {
+  try {
+    return window.localStorage.getItem(COLLAPSED_KEY) ?? "";
+  } catch {
+    /* Blocked or cleared site data. Nothing remembered means nothing shut. */
+    return "";
+  }
+}
+
+function writeCollapsed(next: Record<string, boolean>): void {
+  try {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next));
+  } catch {
+    /*
+     * Not remembering is worse than not collapsing, and neither is fatal — but
+     * the listeners still fire, so the group opens or shuts for this session
+     * even where nothing can be written down.
+     */
+  }
+  for (const listener of collapsedListeners) listener();
+}
 
 export type SalesCounts = Partial<Record<string, number>>;
 
@@ -147,6 +218,65 @@ export function SalesShell({
     ...g,
     items: g.items.filter((i) => permitted.has(i.href)),
   })).filter((g) => g.items.length > 0);
+
+  /*
+   * WHICH GROUPS ARE SHUT, remembered in this browser and nowhere else.
+   *
+   * `useSyncExternalStore` rather than an effect that calls `setState`, and the
+   * React Compiler lint is right to insist: reading storage into state on mount
+   * is a second render every single navigation, and this component draws the
+   * whole sidebar. It is also genuinely an EXTERNAL store — another tab can
+   * change it, and this is the hook built for exactly that shape.
+   *
+   * A lazy `useState` initialiser would have been the obvious alternative and
+   * is wrong for a different reason: the server renders this component too, and
+   * a first render that reads `localStorage` is a first render the server
+   * cannot produce. `getServerSnapshot` returns the empty string, so the server
+   * and the client's first paint agree that nothing is collapsed.
+   *
+   * The snapshot is the RAW STRING, not the parsed object. `getSnapshot` must
+   * return something stable under `Object.is` or React re-renders for ever, and
+   * a fresh `JSON.parse` is a new object every call. Two identical strings are
+   * equal; two identical objects are not.
+   *
+   * Every access is wrapped, because site data can be blocked, cleared or
+   * unavailable in a private window and the accessor itself can throw — the
+   * sidebar has to draw correctly with none of it.
+   */
+  const collapsedRaw = React.useSyncExternalStore(
+    subscribeToCollapsed,
+    readCollapsed,
+    () => "",
+  );
+
+  const collapsed = React.useMemo<Record<string, boolean>>(() => {
+    if (!collapsedRaw) return {};
+    try {
+      return JSON.parse(collapsedRaw) as Record<string, boolean>;
+    } catch {
+      /* Somebody else's key, or a half-written value. Start open. */
+      return {};
+    }
+  }, [collapsedRaw]);
+
+  const setOpenGroup = React.useCallback(
+    (label: string, open: boolean) => {
+      writeCollapsed({ ...collapsed, [label]: !open });
+    },
+    [collapsed],
+  );
+
+  /*
+   * A group holding the current route is open WHATEVER was remembered. A
+   * collapsed group that hid the screen somebody is standing on would read as
+   * the sidebar having lost it.
+   */
+  const isGroupOpen = (group: { label: string; items: Item[] }) => {
+    const inside = group.items.some(
+      (i) => pathname === i.href || pathname.startsWith(i.href + "/"),
+    );
+    return inside || !collapsed[group.label];
+  };
 
   return (
     <div className="flex h-screen min-w-[1100px] flex-col overflow-hidden bg-canvas">
@@ -294,10 +424,44 @@ export function SalesShell({
           >
             {groups.map((group) => (
               <div key={group.label}>
-                <div className="px-3 pt-3.5 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                  {group.label}
-                </div>
-                {group.items.map((item) => {
+                {group.collapsible ? (
+                  <button
+                    type="button"
+                    onClick={() => setOpenGroup(group.label, !isGroupOpen(group))}
+                    aria-expanded={isGroupOpen(group)}
+                    className="flex w-full items-center gap-1.5 px-3 pt-3.5 pb-1.5 text-left text-[11px] font-medium tracking-[0.04em] text-muted uppercase hover:text-body"
+                  >
+                    {/* There is no chevron in `SalesIcon` and adding one to the
+                        console's icon set for a single disclosure would be a
+                        shared file changed for a local need. */}
+                    <svg
+                      viewBox="0 0 24 24"
+                      width={11}
+                      height={11}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={3}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={cx(
+                        "flex-none transition-transform",
+                        isGroupOpen(group) ? "rotate-90" : "",
+                      )}
+                      aria-hidden
+                    >
+                      <path d="M9 6l6 6-6 6" />
+                    </svg>
+                    <span className="flex-1">{group.label}</span>
+                    <span className="flex-none tabular-nums opacity-60">
+                      {group.items.length}
+                    </span>
+                  </button>
+                ) : (
+                  <div className="px-3 pt-3.5 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                    {group.label}
+                  </div>
+                )}
+                {(group.collapsible && !isGroupOpen(group) ? [] : group.items).map((item) => {
                   const active = item.exact
                     ? pathname === item.href
                     : pathname === item.href || pathname.startsWith(item.href + "/");

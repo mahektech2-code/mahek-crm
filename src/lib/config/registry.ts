@@ -2810,6 +2810,17 @@ export const SETTINGS = [
     max: 10,
   },
   {
+    key: "leads.duplicateNameSimilarity",
+    type: "decimal",
+    category: "mbos-leads",
+    label: "How alike two shop names must be to be called a possible duplicate",
+    description:
+      "The Duplicates screen matches a phone and a GSTIN exactly, and it cannot match a name exactly - two records of one shop are two spellings of it. So a name is compared by trigram similarity within the same town, and this is the line. pg_trgm's own default of 0.3 is far too loose here: at 0.3 every second paint shop in a town matches every other on the word \"Paints\", and a list nobody believes is a list nobody opens. Raise it and the screen shows fewer, surer pairs; lower it and somebody has more to read. It decides how much work lands on a person's screen, which is exactly the kind of number a manager wants to turn down after a week of using it.",
+    default: 0.55,
+    min: 0.1,
+    max: 1,
+  },
+  {
     key: "leads.requireNextAction",
     type: "boolean",
     category: "mbos-leads",
@@ -3801,6 +3812,7 @@ export type Config = {
   "mbos.maps.refreshAfterDays": number;
 
   "leads.suspectMaxVisits": number;
+  "leads.duplicateNameSimilarity": number;
   "leads.requireNextAction": boolean;
   "leads.allowManagerOverride": boolean;
   "leads.prospectReasons": { code: string; label: string }[];
