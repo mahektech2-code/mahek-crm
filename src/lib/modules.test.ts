@@ -9,7 +9,7 @@ import {
 } from "./modules";
 import { grantableApps } from "./modules";
 import { NAV } from "@/components/shell/nav";
-import { NOT_IN_SIDEBAR, SALES_NAV } from "@/app/sales/nav";
+import { NOT_IN_SIDEBAR, SALES_NAV, SALES_PINNED, navHrefs } from "@/app/sales/nav";
 
 /* ---------------------------------------------------------------------------
  * The module registry, which is what an access grant points at.
@@ -91,15 +91,16 @@ describe("the registry and the navigation agree", () => {
    */
   it("every Sales Dashboard sidebar link is a module that can be withheld", () => {
     const hrefs = new Set(modulesForApp("sales").map((m) => m.href));
-    for (const group of SALES_NAV) {
-      for (const item of group.items) {
-        assert.ok(hrefs.has(item.href), `${item.href} is in the sidebar and has no module`);
-      }
+    for (const href of navHrefs()) {
+      assert.ok(hrefs.has(href), `${href} is in the sidebar and has no module`);
     }
   });
 
   it("every Sales Dashboard module is reachable from the sidebar", () => {
-    const drawn = new Set(SALES_NAV.flatMap((g) => g.items.map((i) => i.href)));
+    // Both halves, through `navHrefs`: Today is pinned above the groups, so a
+    // check reading the groups alone would call the console's own home
+    // unreachable.
+    const drawn = new Set(navHrefs());
     for (const m of modulesForApp("sales")) {
       if (NOT_IN_SIDEBAR.includes(m.href)) continue;
       assert.ok(
@@ -115,6 +116,32 @@ describe("the registry and the navigation agree", () => {
     const hrefs = new Set(modulesForApp("sales").map((m) => m.href));
     for (const href of NOT_IN_SIDEBAR) {
       assert.ok(hrefs.has(href), `${href} is excused from the sidebar and is not a module`);
+    }
+  });
+
+  /**
+   * A pinned item that is also in a group is drawn twice — once at the top and
+   * once inside the group — and the second copy is the one nobody expects to
+   * find. It is the failure `SALES_PINNED` could have arrived with: Today moved
+   * out of Overview, and leaving it in both lists would have been invisible
+   * until somebody counted the rows.
+   */
+  it("nothing is both pinned and inside a group", () => {
+    const grouped = new Set(SALES_NAV.flatMap((g) => g.items.map((i) => i.href)));
+    for (const item of SALES_PINNED) {
+      assert.equal(grouped.has(item.href), false, `${item.href} is pinned and in a group`);
+    }
+    assert.deepEqual(navHrefs(), [...new Set(navHrefs())], "the sidebar draws an href twice");
+  });
+
+  /**
+   * Collapsed, a group IS its glyph and its word. The type demands one, so what
+   * this guards is a group arriving with a name the icon set does not carry —
+   * which renders as a gap rather than as an error.
+   */
+  it("every group has a glyph the icon set carries", () => {
+    for (const group of SALES_NAV) {
+      assert.ok(group.icon, `${group.label} has no icon`);
     }
   });
 
