@@ -6,7 +6,7 @@ import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { bulkAssignTask, createTask, previewTaskTargets } from "@/lib/actions/sales";
 import type { Salesman } from "@/lib/services/sales-service";
-import { Button } from "../parts";
+import { Button } from "@/components/console/parts";
 
 /* ---------------------------------------------------------------------------
  * Assigning a task — to one person, or to everyone a filter matches.

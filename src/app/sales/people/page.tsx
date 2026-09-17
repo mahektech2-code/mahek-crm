@@ -16,9 +16,9 @@ import {
   ScreenHeader,
   SortHead,
   Table,
-} from "../parts";
-import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
-import { plural } from "../words";
+} from "@/components/console/parts";
+import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
+import { plural } from "@/components/console/words";
 
 export const metadata = { title: "The team — Sales Dashboard — MahekOne" };
 

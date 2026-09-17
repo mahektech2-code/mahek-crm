@@ -1,6 +1,6 @@
 import { stamp } from "@/lib/format";
 import { FIELD_AUDIT_LIMIT, fieldAudit, fieldAuditCount } from "@/lib/services/sales-service";
-import { Cell, Empty, HeadCell, Row, ScreenHeader, Table } from "../parts";
+import { Cell, Empty, HeadCell, Row, ScreenHeader, Table } from "@/components/console/parts";
 
 export const metadata = { title: "Audit trail — Sales Dashboard — MahekOne" };
 

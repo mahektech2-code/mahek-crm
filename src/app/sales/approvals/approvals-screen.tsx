@@ -8,7 +8,7 @@ import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { decideApproval, type ApprovalDecision } from "@/lib/actions/sales";
 import type { DecidedApproval, PendingApproval } from "@/lib/services/sales-service";
-import { SalesIcon } from "../icons";
+import { SalesIcon } from "@/components/console/icons";
 import {
   APPROVAL_LABEL,
   Banner,
@@ -25,7 +25,7 @@ import {
   label,
   plural,
   waitingWords,
-} from "../parts";
+} from "@/components/console/parts";
 
 /**
  * Everything waiting on an answer.

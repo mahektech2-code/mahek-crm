@@ -18,9 +18,9 @@ const BAND_TITLE: Record<string, string> = {
   dormant: `${HEALTH_BAND_LABELS.dormant} — well past it`,
   lost: `${HEALTH_BAND_LABELS.lost} — no order for a long time`,
 };
-import { SalesIcon } from "../icons";
-import { Banner, Button, Empty, Pill } from "../parts";
-import { plural } from "../words";
+import { SalesIcon } from "@/components/console/icons";
+import { Banner, Button, Empty, Pill } from "@/components/console/parts";
+import { plural } from "@/components/console/words";
 
 /**
  * Where somebody works, agreed rather than issued.

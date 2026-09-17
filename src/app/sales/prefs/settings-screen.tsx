@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { saveFieldSettings } from "@/lib/actions/sales";
 import type { FieldSetting } from "@/lib/services/sales-service";
-import { Banner, Button, Pill, ScreenHeader, plural } from "../parts";
+import { Banner, Button, Pill, ScreenHeader, plural } from "@/components/console/parts";
 
 type Group = { category: string; label: string; blurb: string; settings: FieldSetting[] };
 

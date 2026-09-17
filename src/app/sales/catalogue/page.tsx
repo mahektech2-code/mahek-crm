@@ -17,10 +17,10 @@ import {
   Row,
   ScreenHeader,
   Table,
-} from "../parts";
+} from "@/components/console/parts";
 import {
   plural,
-} from "../words";
+} from "@/components/console/words";
 
 export const metadata = { title: "Catalogue & rates — Sales Dashboard — MahekOne" };
 

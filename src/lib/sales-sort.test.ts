@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { readSort, sortHref, sortRows, type SortColumns } from "@/app/sales/sort";
+import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
 
 /* ---------------------------------------------------------------------------
  * Sorting a Manager Console table.

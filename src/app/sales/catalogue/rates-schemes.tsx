@@ -6,8 +6,8 @@ import { useToast } from "@/components/ui/toast";
 import { addScheme, endPriceListRate, setPriceListRate, withdrawScheme } from "@/lib/actions/sales";
 import type { PriceListRow, SchemeRow } from "@/lib/services/sales-service";
 import { money } from "@/lib/format";
-import { SalesIcon } from "../icons";
-import { Banner, Button, Cell, Empty, HeadCell, Pill, Row, Table } from "../parts";
+import { SalesIcon } from "@/components/console/icons";
+import { Banner, Button, Cell, Empty, HeadCell, Pill, Row, Table } from "@/components/console/parts";
 
 type ProductOption = { id: string; name: string };
 

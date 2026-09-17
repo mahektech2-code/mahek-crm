@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { addHoliday, removeHoliday } from "@/lib/actions/sales";
 import type { HolidayRow } from "@/lib/services/sales-service";
-import { SalesIcon } from "../icons";
-import { Banner, Button, Cell, Empty, HeadCell, Row, ScreenHeader, Table } from "../parts";
+import { SalesIcon } from "@/components/console/icons";
+import { Banner, Button, Cell, Empty, HeadCell, Row, ScreenHeader, Table } from "@/components/console/parts";
 
 /**
  * The days nobody is expected to work.

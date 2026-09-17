@@ -21,10 +21,10 @@ import {
   ScreenHeader,
   SortHead,
   Table,
-} from "../parts";
-import { CustomerName } from "../customer-name";
-import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
-import { VISIT_OUTCOME_LABEL, label } from "../words";
+} from "@/components/console/parts";
+import { CustomerName } from "@/components/console/customer-name";
+import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
+import { VISIT_OUTCOME_LABEL, label } from "@/components/console/words";
 
 /**
  * The interactive half of Visits — the table itself is server-rendered data,

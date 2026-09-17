@@ -10,8 +10,8 @@ import { Pager } from "@/components/ui/pager";
 import { downloadCsv, toCsv } from "@/lib/csv";
 import { money, shortDate } from "@/lib/format";
 import type { FieldInvoice } from "@/lib/services/sales-service";
-import { Cell, Empty, HeadCell, MetricRow, Pill, Row, ScreenHeader, Table } from "../parts";
-import { plural } from "../words";
+import { Cell, Empty, HeadCell, MetricRow, Pill, Row, ScreenHeader, Table } from "@/components/console/parts";
+import { plural } from "@/components/console/words";
 
 /* ---------------------------------------------------------------------------
  * Every bill raised against the field's book.

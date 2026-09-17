@@ -21,8 +21,8 @@ import {
   Row,
   ScreenHeader,
   Table,
-} from "../parts";
-import { plural } from "../words";
+} from "@/components/console/parts";
+import { plural } from "@/components/console/words";
 
 /**
  * Training a salesman is expected to have done, and the door that publishes it.

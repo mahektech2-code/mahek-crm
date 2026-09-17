@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { signOut } from "@/lib/actions/auth";
-import { SalesIcon } from "./icons";
+import { SalesIcon } from "@/components/console/icons";
 import { SalesSidebarNav, type SalesCounts } from "./sidebar-nav";
 import { SalesSearch } from "./search";
 import { AskPanel } from "./ask-panel";

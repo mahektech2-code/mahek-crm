@@ -10,8 +10,8 @@ import {
 } from "@/lib/services/sales-service";
 import { today } from "@/lib/recompute";
 import { readSecret } from "@/lib/secrets";
-import { Banner, MetricRow, Pill, ScreenHeader } from "../parts";
-import { plural } from "../words";
+import { Banner, MetricRow, Pill, ScreenHeader } from "@/components/console/parts";
+import { plural } from "@/components/console/words";
 import { ShopMap } from "./shop-map";
 
 export const metadata = { title: "Territory — Sales Dashboard — MahekOne" };

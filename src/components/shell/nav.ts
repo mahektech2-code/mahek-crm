@@ -3,6 +3,12 @@ export type NavItem = {
   label: string;
   icon: string;
   /**
+   * Only where the route is a prefix of every other route beneath it. All
+   * Leads is `/crm/leads`, which every other lead screen sits inside — without
+   * this the row would read as active on all ten of them.
+   */
+  exact?: boolean;
+  /**
    * Which count to draw beside the label. An internal discriminator — never
    * stored, never rendered — so unlike a module key it is free to be renamed,
    * and it was worth renaming: it read `deactivations` on a screen that also
@@ -155,6 +161,31 @@ export const NAV: NavGroup[] = [
         // in front of the telecallers whose own requests it answers.
         managerOnly: true,
       },
+    ],
+  },
+  /*
+   * THE FUNNEL, in the app whose whole job is ringing people.
+   *
+   * Ten rows, which is why the sidebar had to collapse before this could land:
+   * flat, the CRM would have been thirty-one rows. It is the same ten the
+   * Manager Console draws, from the same list in `lib/lead-workspace.ts`, and
+   * the screens behind them are the same files — what differs is the grant and
+   * therefore the scope.
+   */
+  {
+    label: "Lead Management",
+    icon: "target",
+    items: [
+      { href: at("/leads"), label: "All Leads", icon: "target", exact: true },
+      { href: at("/leads/funnel"), label: "Funnel & conversion", icon: "chart" },
+      { href: at("/leads/intake"), label: "Intake", icon: "plus" },
+      { href: at("/leads/qualify"), label: "Qualification", icon: "check" },
+      { href: at("/samples"), label: "Samples & trials", icon: "doc" },
+      { href: at("/leads/commercial"), label: "Commercial", icon: "rupee" },
+      { href: at("/leads/appointments"), label: "Distributor appointments", icon: "people" },
+      { href: at("/leads/actions"), label: "Next actions & nurture", icon: "clipboard" },
+      { href: at("/leads/handovers"), label: "Handovers", icon: "arrowRight" },
+      { href: at("/leads/oversight"), label: "Oversight", icon: "lock" },
     ],
   },
   {

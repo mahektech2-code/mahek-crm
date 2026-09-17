@@ -15,9 +15,9 @@ import {
   ScreenHeader,
   SortHead,
   Table,
-} from "../parts";
-import { plural } from "../words";
-import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
+} from "@/components/console/parts";
+import { plural } from "@/components/console/words";
+import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
 
 export const metadata = { title: "Salary — Sales Dashboard — MahekOne" };
 

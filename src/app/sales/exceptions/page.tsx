@@ -12,7 +12,7 @@ import {
   Row,
   ScreenHeader,
   Table,
-} from "../parts";
+} from "@/components/console/parts";
 import { ResolveException } from "./resolve";
 
 export const metadata = { title: "Expense exceptions — Sales Dashboard — MahekOne" };

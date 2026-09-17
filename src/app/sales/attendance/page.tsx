@@ -16,11 +16,11 @@ import {
   ScreenHeader,
   SortHead,
   Table,
-} from "../parts";
+} from "@/components/console/parts";
 import {
   plural,
-} from "../words";
-import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
+} from "@/components/console/words";
+import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
 import { Selfies } from "./selfies";
 import { DayCheckDialog } from "./day-check";
 

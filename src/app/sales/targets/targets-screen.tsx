@@ -22,7 +22,7 @@ import {
   Row,
   ScreenHeader,
   Table,
-} from "../parts";
+} from "@/components/console/parts";
 
 /** A row for somebody added by hand, before they have ever been saved. */
 function blankRow(person: Person): TargetRow {

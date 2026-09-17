@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { sendFieldNotification } from "@/lib/actions/sales";
-import { Banner, Button, ScreenHeader } from "../parts";
+import { Banner, Button, ScreenHeader } from "@/components/console/parts";
 
 type Person = { id: string; name: string; hasPush: boolean };
 type Readiness = { ok: boolean; why: string; reachable: number };

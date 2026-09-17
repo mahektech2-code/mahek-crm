@@ -1,58 +1,17 @@
-import { requireUser } from "@/lib/auth";
-import { today } from "@/lib/recompute";
-import {
-  canLead,
-  leadOrders,
-  leadReceipts,
-  type LeadOrderRow,
-  type LeadReceiptRow,
-} from "@/lib/services/lead-console-service";
-import { firstOrderDesk } from "@/lib/services/lead-commercial-service";
-import { FirstOrdersScreen } from "./first-orders-screen";
+/*
+ * A ROUTE, and the screen is somewhere else.
+ *
+ * The Lead Management workspace is mounted by both the Manager Console and the
+ * CRM from one set of files — see `lib/lead-workspace.ts`. What belongs to an
+ * app is which workspace it is, which module key guards it, and what the tab
+ * says; everything else would be a second copy drifting from the first.
+ */
+import { Body } from "@/components/leads/pages/leads-commercial-first-orders";
 
 export const metadata = { title: "First order & conversion — Sales Dashboard — MahekOne" };
 
-/**
- * 18 — the order that converts an account, and the three rungs after it.
- *
- * The detail is fetched for ONE account rather than carried on every row.
- * `leadOrders` and `leadReceipts` each read fifty rows with a bill joined, and
- * two hundred of those to draw a table nobody has clicked into is a query the
- * screen pays for and never reads — the same argument the customer quick view
- * makes for fetching on click.
- *
- * An `open` id that is not on the desk answers with nothing to show rather
- * than an error: a bookmark outlives a rung, and a lead that has since been
- * promoted off this list is absent to the reader, never a crash.
- */
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: Promise<{ open?: string }>;
-}) {
-  const { open } = await searchParams;
-
-  const day = await today();
-  const [user, desk] = await Promise.all([requireUser(), firstOrderDesk(day)]);
-
-  const selected = open && desk.rows.some((r) => r.customerId === open) ? open : null;
-  let orders: LeadOrderRow[] = [];
-  let receipts: LeadReceiptRow[] = [];
-  if (selected) {
-    [orders, receipts] = await Promise.all([leadOrders(selected), leadReceipts(selected)]);
-  }
-
-  return (
-    <FirstOrdersScreen
-      rows={desk.rows}
-      total={desk.total}
-      byStage={desk.byStage}
-      awaitingTheOrder={desk.awaitingTheOrder}
-      awaitingApproval={desk.awaitingApproval}
-      selectedId={selected}
-      orders={orders}
-      receipts={receipts}
-      canWork={await canLead(user, "lead.work")}
-    />
-  );
+export default async function Page(
+  props: Omit<React.ComponentProps<typeof Body>, "workspace">,
+) {
+  return <Body workspace="sales" {...props} />;
 }

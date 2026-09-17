@@ -5,8 +5,8 @@ import { addDays } from "@/lib/business-date";
 import { money } from "@/lib/format";
 import { cx } from "@/components/ui/primitives";
 import type { TeamDay } from "@/lib/services/sales-service";
-import { SalesIcon } from "./icons";
-import { Cell, HeadCell, Pill, Row, Table } from "./parts";
+import { SalesIcon } from "@/components/console/icons";
+import { Cell, HeadCell, Pill, Row, Table } from "@/components/console/parts";
 
 /* ---------------------------------------------------------------------------
  * Today, from `MBOS Manager Console.dc.html`.

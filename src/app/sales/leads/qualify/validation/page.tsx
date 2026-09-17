@@ -1,57 +1,17 @@
-import { getConfig } from "@/lib/config/store";
-import { today } from "@/lib/recompute";
-import { validationCalls } from "@/lib/services/lead-qualify-service";
-import { LeadTabs } from "../../lead-tabs";
-import { ValidationScreen } from "./validation-screen";
+/*
+ * A ROUTE, and the screen is somewhere else.
+ *
+ * The Lead Management workspace is mounted by both the Manager Console and the
+ * CRM from one set of files — see `lib/lead-workspace.ts`. What belongs to an
+ * app is which workspace it is, which module key guards it, and what the tab
+ * says; everything else would be a second copy drifting from the first.
+ */
+import { Body } from "@/components/leads/pages/leads-qualify-validation";
 
 export const metadata = { title: "Validation calls — Sales Dashboard — MahekOne" };
 
-/** The windows offered, in days. "Everything" is ten years rather than a
- *  special case in the query — a branch for "no window" is a branch nothing
- *  exercises, and a book that reaches back further than this has other
- *  problems. */
-const WINDOWS: Record<string, number> = { "30": 30, "90": 90, "365": 365, all: 3650 };
-
-/**
- * §8 — the record of the calls that were made.
- *
- * Not the queue: that is the Verification tab one along, and it answers "who
- * has nobody rung". This answers what the calls SAID, which is a question about
- * a book rather than about a lead — and the disagreements are only visible from
- * here. One salesman whose reports the shop contradicts on every third call is
- * invisible one record at a time.
- *
- * **This screen writes nothing, and there is no capability checked on it.** A
- * validation record is append-only by nature — a second call is a second row,
- * and the first is usually the one that matters — so there is nothing here that
- * could honestly be edited. What guards it is the module layout above, and the
- * scope the service resolves for itself.
- */
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: Promise<{ window?: string; show?: string }>;
-}) {
-  const { window, show } = await searchParams;
-  const key = window && window in WINDOWS ? window : "90";
-
-  const day = await today();
-  const [calls, config] = await Promise.all([
-    validationCalls(day, { days: WINDOWS[key] }),
-    getConfig(),
-  ]);
-
-  return (
-    <div className="p-6">
-      <LeadTabs />
-      <ValidationScreen
-        rows={calls.rows}
-        total={calls.total}
-        withDisagreement={calls.withDisagreement}
-        windowKey={key}
-        show={show === "disagreements" || show === "undecided" ? show : "all"}
-        script={config["mbos.leads.validationScript"]}
-      />
-    </div>
-  );
+export default async function Page(
+  props: Omit<React.ComponentProps<typeof Body>, "workspace">,
+) {
+  return <Body workspace="sales" {...props} />;
 }

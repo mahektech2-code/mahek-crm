@@ -4,7 +4,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { decideExpenseDay, reopenExpenseDay } from "@/lib/actions/expenses";
 import { Modal } from "@/components/ui/overlays";
-import { Button } from "../parts";
+import { Button } from "@/components/console/parts";
 
 /**
  * Deciding one submitted day.
