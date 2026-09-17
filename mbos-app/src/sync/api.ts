@@ -544,7 +544,28 @@ export async function markPulled(at = Date.now()): Promise<void> {
  */
 export async function postPositions(
   positions: { id: string; at: number; lat: number; lng: number; accuracyM: number | null }[],
-): Promise<{ ok: boolean; stored: number; tracking?: string }> {
+): Promise<{
+  ok: boolean;
+  stored: number;
+  /**
+   * How many of the batch the server could NOT file. Informational: `tracking`
+   * is the only field anything branches on, so a count that disagrees with the
+   * word cannot change what the handset does with the rows.
+   */
+  dropped?: number;
+  /** `'off' | 'no-session-yet' | 'partial'`, or absent for a clean delivery. */
+  tracking?: string;
+  /**
+   * On `partial` only: the ids THIS CALL IS FINISHED WITH.
+   *
+   * Not "the ids now in the table" — it deliberately includes rows that can
+   * never be stored, a coordinate that is not a number among them, because
+   * holding those back would have the handset re-read the same oldest five
+   * hundred for ever. The shape is ids-that-landed rather than ids-to-keep so
+   * that a server forgetting to name one costs a round trip instead of a fix.
+   */
+  filed?: string[];
+}> {
   /*
    * THE BATTERY RIDES THIS REQUEST, because this request is already going.
    *

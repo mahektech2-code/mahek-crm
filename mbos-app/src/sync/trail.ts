@@ -6,6 +6,7 @@ import { getFix, fixOf, rememberFix } from '../native/location';
 import { shouldKeepFix } from '../engines/cadence';
 import { trailVerdict } from '../engines/trail-watchdog';
 import { mayRetryBackground, type Demotion } from '../engines/trail-retry';
+import { decideFlush } from '../engines/flush-answer';
 import { isoDate } from '../lib/format';
 import { postPositions, reportLocationPermission } from './api';
 
@@ -890,6 +891,35 @@ export async function queueDepth(): Promise<number> {
   return typeof n === 'number' && Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * How many ids one `IN (…)` may carry.
+ *
+ * SQLite binds each one as its own variable and `SQLITE_MAX_VARIABLE_NUMBER`
+ * is 999 on the older builds this app still runs on. A batch is five hundred,
+ * so today's largest delete fits — but `filed` is a list the SERVER composes,
+ * and a rule that happens to be safe because of a constant in a different file
+ * is one deploy away from not being. Chunked at a number well under the floor,
+ * which costs nothing and cannot be got wrong later.
+ */
+const DELETE_CHUNK = 400;
+
+/**
+ * Let go of exactly these rows, and nothing else.
+ *
+ * An empty list does NOT mean "everything" — it means the server named nothing
+ * it was finished with, which is a real answer on a partial. A bare
+ * `DELETE ... WHERE id IN ()` is a syntax error in SQLite anyway, and the
+ * version of this bug where an empty list is read as "all" is the one that
+ * would quietly empty somebody's queue.
+ */
+async function removeIds(ids: readonly string[]): Promise<void> {
+  for (let i = 0; i < ids.length; i += DELETE_CHUNK) {
+    const chunk = ids.slice(i, i + DELETE_CHUNK);
+    const marks = chunk.map(() => '?').join(',');
+    await run(`DELETE FROM positions WHERE id IN (${marks})`, [...chunk]);
+  }
+}
+
 let flushing = false;
 
 /**
@@ -925,9 +955,15 @@ export async function flush(): Promise<number> {
       }
       if (!answer?.ok) return sent;
 
+      /* WHAT THE ANSWER MEANS is decided in `engines/flush-answer.ts`, which
+         is pure and tested — two production data-loss bugs have now been in
+         this loop, and nothing in this file can be exercised without a device.
+         What is left here is the doing. */
+      const decision = decideFlush(answer, rows.map((r) => r.id));
+
       /* The office turned it off. Stop taking fixes and drop what is held —
          keeping them would be storing something nobody asked for. */
-      if (answer.tracking === 'off') {
+      if (decision.effect === 'stop-tracking') {
         await stopTicking();
         await run('DELETE FROM positions');
         return sent;
@@ -939,14 +975,23 @@ export async function flush(): Promise<number> {
          race by thirty seconds is the worse trade. Anything old enough that no
          check-in is ever coming goes, so this cannot become a queue that only
          grows. */
-      if (answer.tracking === 'no-session-yet') {
+      if (decision.effect === 'age-out') {
         await run('DELETE FROM positions WHERE at < ?', [Date.now() - (await retentionMs())]);
         return sent;
       }
 
-      const marks = rows.map(() => '?').join(',');
-      await run(`DELETE FROM positions WHERE id IN (${marks})`, rows.map((r) => r.id));
-      sent += rows.length;
+      await removeIds(decision.remove);
+      sent += decision.sent;
+
+      /*
+       * A PARTIAL ANSWER LEAVES ROWS BEHIND AND STILL GOES ROUND, which is the
+       * whole reason the word exists: the rows the server could not file are
+       * kept, and the queue behind them is not held hostage to them. It is
+       * `decision.carryOn` rather than the length test below, because on a
+       * partial the batch was full and the loop must still be allowed to end
+       * where nothing moved.
+       */
+      if (!decision.carryOn) return sent;
 
       /* A short read is the last of them. Asking again would cost a round trip
          to be told the same thing. */
