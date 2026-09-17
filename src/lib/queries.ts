@@ -827,11 +827,34 @@ export function resolveSort<T extends string>(
   columns: Record<T, SQL | Column>,
   sort: string | undefined,
   fallback: T,
-): SQL {
+  /**
+   * THE TIEBREAKER, AND IT IS REQUIRED RATHER THAN OPTIONAL.
+   *
+   * Both callers page with OFFSET over a sort that ties constantly — city,
+   * outstanding and the three seat names on the customers list; target,
+   * achieved and gap on the monthly targets, where most customers share a
+   * target of zero and an achieved of zero, so the ties are the ordinary case
+   * rather than the edge. With one sort term the order WITHIN a tie is left to
+   * the planner, and it is free to choose differently for `offset 25` than it
+   * did for `offset 0`: a customer appears on page two and again on page
+   * three, while another appears on neither, and nothing on the screen says
+   * so. It is the same rule the customer timeline already states — a paged
+   * read needs a tiebreaker in its sort — arriving at the two screens that
+   * page in SQL.
+   *
+   * Required, because an optional one is a parameter the next paged list will
+   * omit without noticing. A caller that genuinely has a unique sort column
+   * passes it here and loses nothing.
+   */
+  tiebreak: SQL | Column,
+): SQL[] {
   const [rawColumn, rawDirection] = (sort ?? "").split(":");
   const column = (rawColumn && rawColumn in columns ? rawColumn : fallback) as T;
   const direction = rawDirection === "desc" ? "desc" : "asc";
-  return direction === "desc" ? desc(columns[column]) : asc(columns[column]);
+  return [
+    direction === "desc" ? desc(columns[column]) : asc(columns[column]),
+    desc(tiebreak),
+  ];
 }
 
 /**
@@ -1008,7 +1031,7 @@ export async function listCustomersPage(
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
     .where(clause)
-    .orderBy(resolveSort(CUSTOMER_SORT_COLUMNS, filters.sort, "name"))
+    .orderBy(...resolveSort(CUSTOMER_SORT_COLUMNS, filters.sort, "name", customers.id))
     .limit(perPage)
     .offset((page - 1) * perPage);
 
