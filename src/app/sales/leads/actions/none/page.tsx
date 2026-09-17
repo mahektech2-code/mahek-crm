@@ -13,8 +13,9 @@ import {
   Row,
   ScreenHeader,
   Table,
-} from "../../parts";
-import { plural } from "../../words";
+} from "../../../parts";
+import { plural } from "../../../words";
+import { LeadTabs } from "../../lead-tabs";
 
 export const metadata = { title: "Leads with no next action — Sales Dashboard — MahekOne" };
 
@@ -42,6 +43,7 @@ export default async function Page() {
 
   return (
     <div className="p-6">
+      <LeadTabs />
       <ScreenHeader
         title="Nobody is working these"
         subtitle="An active lead may not sit with nothing owed by anybody. Every row here has either no plan at all, or a plan whose day has gone past with no outcome recorded — which is the same thing a fortnight later."

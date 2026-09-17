@@ -3,6 +3,7 @@ import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { canLead, verificationQueue } from "@/lib/services/lead-console-service";
 import { VerificationQueueScreen } from "./verification-queue-screen";
+import { LeadTabs } from "../../lead-tabs";
 
 export const metadata = { title: "Verification queue — Sales Dashboard — MahekOne" };
 
@@ -31,13 +32,18 @@ export default async function Page({
   ]);
 
   return (
-    <VerificationQueueScreen
-      rows={queue.rows}
-      total={queue.total}
-      mineCount={queue.mine}
-      mineOnly={mineOnly}
-      dueDays={config["leads.verificationDueDays"]}
-      canVerify={await canLead(user, "lead.verify")}
-    />
+    <>
+      <div className="px-6 pt-6">
+        <LeadTabs />
+      </div>
+      <VerificationQueueScreen
+        rows={queue.rows}
+        total={queue.total}
+        mineCount={queue.mine}
+        mineOnly={mineOnly}
+        dueDays={config["leads.verificationDueDays"]}
+        canVerify={await canLead(user, "lead.verify")}
+      />
+    </>
   );
 }
