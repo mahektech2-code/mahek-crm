@@ -14,9 +14,9 @@ import {
   today,
 } from "@/lib/queries";
 import { APP_TIMEZONE } from "@/lib/business-date";
-import { getQueue } from "@/lib/services/queue-service";
+import { queueProgress } from "@/lib/services/queue-service";
 import { getFollowUpWorklist } from "@/lib/services/payment-service";
-import { listInactiveWatch, listTargets } from "@/lib/services/worklist-services";
+import { listInactiveWatch, targetTotals } from "@/lib/services/worklist-services";
 import { getConfig } from "@/lib/config/store";
 import {
   addDays,
@@ -197,10 +197,22 @@ async function DashboardFigures({
       // a single day that is the last WORKING day, so Monday compares against
       // Saturday rather than against a Sunday of zeroes.
       rangeActivity(teamView ? null : user.id, comparison),
-      getQueue(),
+      /*
+       * THE FOUR INTEGERS, not the list.
+       *
+       * This page draws "12 / 40", a percentage and "28 still to work", and
+       * that was every use it made of `getQueue()` — the whole ranked list,
+       * the call-panel detail for every row on it and the carried-over count,
+       * all built and thrown away. `queueProgress` runs the same pipeline and
+       * settles the day identically, so the figure here and the figure on the
+       * Call Log cannot differ; what it skips is the work only that screen
+       * needs.
+       */
+      queueProgress(),
       getFollowUpWorklist(),
       listInactiveWatch(),
-      listTargets(period),
+      // Two sums, not the whole book to reduce to two sums. See `targetTotals`.
+      targetTotals(period),
       dashboardCounts(teamView ? null : user.id, day, {
         reminders: config["dashboard.reminderOverdueFlagDays"],
         complaints: config["dashboard.complaintUnresolvedFlagDays"],
@@ -220,8 +232,8 @@ async function DashboardFigures({
   const { overdueReminders } = counts;
   const { dueReminders, openComplaints } = badgeCounts;
 
-  const targetTotal = targets.reduce((a, t) => a + t.target, 0);
-  const achieved = targets.reduce((a, t) => a + t.achieved, 0);
+  const targetTotal = targets.target;
+  const achieved = targets.achieved;
   const targetPct = pct(achieved, targetTotal);
 
 
@@ -264,7 +276,7 @@ async function DashboardFigures({
       href: "/crm/call-log",
       title: "Queue still to work",
       sub: "Worked top to bottom, most urgent first",
-      count: queue.entries.length,
+      count: queue.stillToWork,
       tone: "brand",
     },
   ] as const;
@@ -273,8 +285,8 @@ async function DashboardFigures({
     <>
 
       <DayStages
-        worked={queue.progress.worked}
-        total={queue.progress.total}
+        worked={queue.worked}
+        total={queue.total}
         dueReminders={dueReminders}
         followUps={followUps.length}
         complaints={openComplaints}
@@ -311,14 +323,14 @@ async function DashboardFigures({
             <StatCard
               href="/crm/call-log"
               label="Calling progress"
-              value={`${queue.progress.worked}`}
-              suffix={`/${queue.progress.total}`}
-              foot={`${queue.entries.length} still to work`}
-              progress={queue.progress.percent}
+              value={`${queue.worked}`}
+              suffix={`/${queue.total}`}
+              foot={`${queue.stillToWork} still to work`}
+              progress={queue.percent}
               delta={
                 span === "today" ? (
                   <Delta
-                    today={queue.progress.worked}
+                    today={queue.worked}
                     yesterday={yesterday.queueWorked}
                     suffix={`ahead of ${deltaSuffix}`}
                   />

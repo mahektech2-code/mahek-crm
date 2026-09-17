@@ -37,6 +37,7 @@ const testUrl = dev.replace(/\/[^/?]+(\?|$)/, "/mahekone_test$1");
 const files = [
   "src/lib/journeys.test.ts",
   "src/lib/accounts.test.ts",
+  "src/lib/bill-paging.test.ts",
   "src/lib/feedback.test.ts",
   "src/lib/activity-location.test.ts",
   "src/lib/field-book.test.ts",
@@ -57,6 +58,13 @@ const files = [
   "src/lib/relationship-handover.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
+  // The dashboard reads its four figures from `queueProgress`, which must stay
+  // exactly equal to what `getQueue` would have said. That equivalence is only
+  // checkable against a real book, so it lives here rather than in the pure set.
+  "src/lib/queue-progress.test.ts",
+  // The queue ranks calls by a cached median now. If the cache and the
+  // subquery it replaced ever disagree, the calling list silently reorders.
+  "src/lib/typical-order-cache.test.ts",
 ];
 
 let failed = 0;

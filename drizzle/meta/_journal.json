@@ -960,6 +960,20 @@
       "when": 1789114145703,
       "tag": "0137_lead_management_modules",
       "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1789114745703,
+      "tag": "0138_stop_scanning_the_book",
+      "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "7",
+      "when": 1789679295402,
+      "tag": "0139_what_a_call_is_worth",
+      "breakpoints": true
     }
   ]
 }

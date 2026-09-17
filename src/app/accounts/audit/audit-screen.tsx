@@ -39,12 +39,32 @@ const KIND_TONE: Record<AuditRow["kind"], "success" | "danger" | "warn" | "brand
   hold: "warn",
 };
 
-export function AuditScreen({ rows }: { rows: AuditRow[] }) {
+export function AuditScreen({
+  rows,
+  total,
+  limit,
+}: {
+  rows: AuditRow[];
+  /** From a `count(*)`, never from `rows.length` — see the note below. */
+  total: number;
+  limit: number;
+}) {
   const { push } = useToast();
   const [page, setPage] = React.useState(1);
   const [perPage, setPerPage] = React.useState(25);
 
   const shown = rows.slice((page - 1) * perPage, page * perPage);
+
+  /*
+   * THE PAGER PAGES OVER WHAT IS LOADED, AND THE SENTENCE SAYS WHAT THAT IS.
+   *
+   * Handing `total` to the pager would be the same lie from the other end: it
+   * would offer two thousand pages of a five-hundred-row read and go blank on
+   * page twenty-one. Paging is arithmetic over rows this screen actually holds,
+   * so it keeps `rows.length`; what the reader is owed is a sentence naming the
+   * whole, and that comes from SQL.
+   */
+  const capped = total > rows.length;
 
   return (
     <div className="px-6 pt-6 pb-12">
@@ -68,7 +88,11 @@ export function AuditScreen({ rows }: { rows: AuditRow[] }) {
                     ]),
                   ),
                 );
-                push(`Exported ${plural(rows.length, "row")}`);
+                push(
+                  capped
+                    ? `Exported the newest ${plural(rows.length, "row")} of ${total.toLocaleString("en-IN")}`
+                    : `Exported ${plural(rows.length, "row")}`,
+                );
               }}
               className="h-9 cursor-pointer rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body hover:bg-canvas"
             >
@@ -76,6 +100,14 @@ export function AuditScreen({ rows }: { rows: AuditRow[] }) {
             </button>
           }
         />
+
+        {capped ? (
+          <p className="mb-2 text-[13px] text-muted">
+            The newest {plural(rows.length, "decision")} of{" "}
+            {total.toLocaleString("en-IN")}. This screen reads the newest {limit} and pages within
+            them — anything older is in the log and not on this page.
+          </p>
+        ) : null}
 
         {rows.length === 0 ? (
           <Empty

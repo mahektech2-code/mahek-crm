@@ -36,8 +36,27 @@ export async function GET(request: Request) {
     return new NextResponse("Not your app", { status: 403 });
   }
 
-  const fy = new URL(request.url).searchParams.get("fy") ?? undefined;
-  const rows = await listBills(fy ? { financialYear: fy } : undefined);
+  /*
+   * THE CRM'S LEDGER EXPORTS THROUGH HERE TOO, and deliberately not through a
+   * route of its own. The two screens differ in what surrounds the table —
+   * where a customer's name leads, whose reminder is one click away — and not
+   * at all in what a bill IS. Two routes would be two answers to "the bill
+   * ledger as a file", and the one that drifts is the one somebody opens in a
+   * meeting.
+   *
+   * So it takes the same filters the screens put in their URL. The aging
+   * bucket is the exception: it is `agingBucket(effectiveDueDate(...))`, which
+   * no query can see, so it is applied to the rows on the way past — which
+   * costs nothing here, because an export reads the whole filtered set anyway.
+   */
+  const params = new URL(request.url).searchParams;
+  const fy = params.get("fy") ?? undefined;
+  const customerId = params.get("customer") ?? undefined;
+  const status = params.get("status") ?? undefined;
+  const bucket = params.get("bucket");
+
+  const all = await listBills({ financialYear: fy, customerId, status });
+  const rows = bucket ? all.filter((r) => r.balance > 0 && r.bucket === bucket) : all;
 
   const csv = toCsv(
     [
@@ -49,6 +68,10 @@ export async function GET(request: Request) {
       "Received (₹)",
       "Open (₹)",
       "Days overdue",
+      /* The band the row sits in. It was on the CRM's own export and not on
+         this one, which is exactly the kind of difference that made two
+         exports feel necessary. */
+      "Aging bucket",
       "Status",
     ],
     rows.map((r) => [
@@ -60,6 +83,7 @@ export async function GET(request: Request) {
       String(Math.round(r.paid / 100)),
       String(Math.round(r.balance / 100)),
       r.overdueDays ? String(r.overdueDays) : "",
+      r.balance > 0 ? r.bucket : "",
       statusWord(r),
     ]),
   );

@@ -170,6 +170,9 @@ export function WhatsappScreen(props: {
   customers: Customer[];
   templates: Template[];
   messages: Message[];
+  /** From a `count(*)`. `messages` is capped, so its length is the cap. */
+  messageTotal: number;
+  messageLimit: number;
   replies: Reply[];
   run: Run | null;
   runElapsedMinutes: number;
@@ -187,6 +190,8 @@ export function WhatsappScreen(props: {
     customers,
     templates,
     messages,
+    messageTotal,
+    messageLimit,
     replies,
     run,
     runElapsedMinutes,
@@ -301,7 +306,14 @@ export function WhatsappScreen(props: {
           },
           { label: "Replies to action", value: String(replies.length), tone: replies.length ? "danger" : "ink" },
           { label: "Templates live", value: String(templates.filter((t) => !t.archived).length) },
-          { label: "Messages logged", value: String(messages.length) },
+          {
+            label: "Messages logged",
+            value: messageTotal.toLocaleString("en-IN"),
+            sub:
+              messageTotal > messages.length
+                ? `newest ${messages.length} shown in the log`
+                : undefined,
+          },
         ]}
       />
 
@@ -313,7 +325,7 @@ export function WhatsappScreen(props: {
           { key: "send", label: "Send a message" },
           { key: "run", label: "Send run", count: run ? run.recipients.length : undefined },
           { key: "templates", label: "Templates", count: templates.length },
-          { key: "log", label: "Log", count: messages.length },
+          { key: "log", label: "Log", count: messageTotal },
         ]}
       />
 
@@ -389,7 +401,14 @@ export function WhatsappScreen(props: {
         </Card>
       ) : null}
 
-      {tab === "log" ? <LogTab messages={messages} isManager={isManager} /> : null}
+      {tab === "log" ? (
+        <LogTab
+          messages={messages}
+          total={messageTotal}
+          limit={messageLimit}
+          isManager={isManager}
+        />
+      ) : null}
 
       <ConnectionModal
         open={connOpen}
@@ -1422,9 +1441,14 @@ function RunTab({
 
 function LogTab({
   messages,
+  total,
+  limit,
   isManager,
 }: {
   messages: Message[];
+  /** Every message in scope, from SQL — not the length of what arrived. */
+  total: number;
+  limit: number;
   isManager: boolean;
 }) {
   const { push } = useToast();
@@ -1524,7 +1548,11 @@ function LogTab({
               ),
               [statusFilter === "All statuses" ? null : statusFilter, query || null],
             );
-            push(`Exported ${filtered.length} rows`);
+            push(
+              total > messages.length
+                ? `Exported ${filtered.length} rows from the newest ${messages.length} of ${total.toLocaleString("en-IN")}`
+                : `Exported ${filtered.length} rows`,
+            );
           }}
         >
           Export
@@ -1595,9 +1623,23 @@ function LogTab({
             body="Clear the filters to see the full log."
           />
         ) : null}
+        {/*
+          * THREE NUMBERS, AND THE SENTENCE HAS TO KEEP THEM APART.
+          *
+          * What the filters left, what the server sent, and what there is. It
+          * said the first and called it the log, so a book of four thousand
+          * messages read as three hundred — and the filters are applied here,
+          * in the browser, over a slice, which means "no messages match" can
+          * mean "none in the newest 300". Saying all three is the only honest
+          * version of a client-side filter over a capped read.
+          */}
         <div className="bg-canvas px-4 py-2.5 text-[13px] text-muted">
-          Showing {filtered.length} messages · every one also appears in Call history and
-          on the customer timeline
+          Showing {filtered.length} of the newest {messages.length} messages
+          {total > messages.length
+            ? ` · ${total.toLocaleString("en-IN")} in all, and the filters here reach` +
+              ` only the newest ${limit}`
+            : null}
+          {" · "}every one also appears in Call history and on the customer timeline
         </div>
       </Card>
     </div>

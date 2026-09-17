@@ -48,6 +48,7 @@ export function HistoryScreen({
   isManager,
   team,
   rows,
+  capped,
   openCommitments,
   activity,
   nowMs,
@@ -57,6 +58,8 @@ export function HistoryScreen({
   isManager: boolean;
   team: string[];
   rows: Row[];
+  /** The server read was cut off at its limit — these are the newest, not all. */
+  capped: boolean;
   openCommitments: Commitment[];
   nowMs: number;
   /** The working day, from the server — the clock is not read in render. */
@@ -179,7 +182,11 @@ export function HistoryScreen({
                   query || null,
                 ],
               );
-              push(`Exported ${filtered.length} rows`);
+              push(
+                capped
+                  ? `Exported ${filtered.length} rows from the newest ${rows.length} calls`
+                  : `Exported ${filtered.length} rows`,
+              );
             }}
           >
             Export
@@ -193,7 +200,11 @@ export function HistoryScreen({
           { label: "Connected", value: String(activity.connected), sub: `${activity.connectRate}% rate` },
           { label: "Missed", value: String(activity.missed), tone: activity.missed > 5 ? "danger" : "ink" },
           { label: "Messages sent today", value: String(activity.messagesSent) },
-          { label: "Interactions in view", value: String(filtered.length) },
+          {
+            label: "Interactions in view",
+            value: String(filtered.length),
+            sub: capped ? `filtered from the newest ${rows.length}` : undefined,
+          },
         ]}
       />
 
@@ -304,8 +315,28 @@ export function HistoryScreen({
           ))}
         </Select>
         <span className="flex-1" />
-        <span className="text-[13px] text-muted">{filtered.length} interactions</span>
+        {/*
+          * WHAT THE FILTERS LEFT, OUT OF WHAT WAS LOADED.
+          *
+          * It said the first figure alone and called them interactions, which
+          * on a capped read is the cap presenting itself as the history. The
+          * filtering happens here in the browser over the newest few hundred
+          * calls, so "All time" reaches as far back as those go and no further
+          * — and that is the half somebody would never guess from the word.
+          */}
+        <span className="text-[13px] text-muted">
+          {capped
+            ? `${filtered.length} of the newest ${rows.length} calls`
+            : `${filtered.length} interactions`}
+        </span>
       </Card>
+
+      {capped ? (
+        <p className="mb-3 text-[13px] text-muted">
+          The newest {rows.length} calls are loaded — the filters above, &ldquo;All time&rdquo;
+          included, reach back as far as those go and no further.
+        </p>
+      ) : null}
 
       <Card className="max-h-[calc(100vh-280px)] overflow-auto rounded-t-none">
         {filtered.length ? (

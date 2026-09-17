@@ -1857,14 +1857,27 @@ function LedgerPanel({
 function NurturePanel({ nurture, total }: { nurture: NurtureSchedule; total: number }) {
   const rows = [...nurture.overdue, ...nurture.today, ...nurture.ahead];
   const shown = rows.slice(0, 12);
+  /*
+   * TWO POPULATIONS, AND THE SENTENCE MAY NOT MIX THEM.
+   *
+   * `total` is every task ever raised on the account, done ones included; this
+   * list is the OUTSTANDING ones and nothing else. "12 of 40" over that pairing
+   * reads as twenty-eight open tasks hidden below the fold, which is a worse
+   * lie than no sentence — so the cap is measured against the count of the
+   * thing actually on the screen. Both figures are `count(*)`s: `nurture.counts`
+   * for the open ones, `counts.tasks` for the account.
+   */
+  const open = nurture.counts.overdue + nurture.counts.today + nurture.counts.ahead;
   return (
     <Panel
       title="Nurture"
       hint="What the sequence has raised against this lead. The owner matters: the salesman and the lead manager are chased for different things about one shop, and a single list would read as one person being nagged twice."
       slice={
-        total > shown.length
-          ? `${shown.length} of ${total} tasks ever raised on this account.`
-          : undefined
+        open > shown.length
+          ? `${shown.length} of ${plural(open, "outstanding task")}, overdue first — ${plural(total, "task")} raised on this account in all.`
+          : total > open
+            ? `${plural(open, "outstanding task")} of ${plural(total, "task")} raised on this account.`
+            : undefined
       }
       action={
         <Link

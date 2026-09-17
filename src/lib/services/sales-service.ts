@@ -3463,19 +3463,47 @@ export type AuditRow = {
   afterState: unknown;
 };
 
+/**
+ * How many rows one read of the field audit may carry.
+ *
+ * Named so the screen can say what it is a slice of. The trail drew two hundred
+ * rows with no count and no sentence anywhere on it, which on a console a year
+ * old is a log that silently stops at whatever the cap happens to be — and an
+ * audit trail that quietly ends is the one kind of screen where being wrong
+ * costs the most.
+ */
+export const FIELD_AUDIT_LIMIT = 200;
+
+/** Which rows this log is made of, said once, for the list and the count. */
+const FIELD_AUDIT_WHERE = sql`l.action like 'mbos.%'
+        or l.entity_type in ('mbos_approval', 'mbos_journey_plan')`;
+
 /** Every decision made in this console, with a name against it. */
-export async function fieldAudit(limit = 200): Promise<AuditRow[]> {
+export async function fieldAudit(limit = FIELD_AUDIT_LIMIT): Promise<AuditRow[]> {
   return db.execute<AuditRow>(sql`
     select l.id, l.at, u.name as "actorName",
            l.action, l.entity_type as "entityType", l.entity_id as "entityId",
            l.after_state as "afterState"
       from audit_log l
       left join users u on u.id = l.actor_id
-     where l.action like 'mbos.%'
-        or l.entity_type in ('mbos_approval', 'mbos_journey_plan')
+     where ${FIELD_AUDIT_WHERE}
      order by l.at desc
      limit ${limit}
   `) as unknown as AuditRow[];
+}
+
+/**
+ * How many decisions there are, from SQL rather than from what arrived.
+ *
+ * `rows.length` can only ever report the cap back to itself, which is the whole
+ * reason this is a second read: the sentence on the screen has to be able to
+ * say two hundred of nine thousand, and a length cannot.
+ */
+export async function fieldAuditCount(): Promise<number> {
+  const [row] = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n from audit_log l where ${FIELD_AUDIT_WHERE}
+  `);
+  return Number(row?.n ?? 0);
 }
 
 /* ═════════════════════════════════════════════════════════════ enablement */

@@ -476,11 +476,49 @@ export async function sendAutomatic(messageId: string): Promise<Result> {
 
 /* ------------------------------------------------------------------- lists */
 
-export async function listMessages(filters?: {
-  status?: string;
-  mode?: string;
-  customerId?: string;
-}) {
+/**
+ * How many messages one read of the log may carry.
+ *
+ * Named, because the screen has to say what it is showing part of and a number
+ * typed into a screen beside a number typed into a query is two answers to one
+ * question.
+ */
+export const WA_MESSAGE_LIMIT = 300;
+
+type MessageFilters = { status?: string; mode?: string; customerId?: string };
+
+/** The scope and the filters, once, so the list and the count cannot disagree. */
+function messageWhere(ids: string[] | null, filters?: MessageFilters) {
+  return and(
+    ids ? inArray(waMessages.userId, ids) : undefined,
+    filters?.status ? eq(waMessages.status, filters.status as never) : undefined,
+    filters?.mode ? eq(waMessages.mode, filters.mode as never) : undefined,
+    filters?.customerId ? eq(waMessages.customerId, filters.customerId) : undefined,
+  );
+}
+
+/**
+ * How many there are, as against how many we fetched.
+ *
+ * `count(*)` over the same scope and the same filters the list runs. The log
+ * printed "Showing 300 messages" on a book with several thousand, which is a
+ * capped read presenting itself as a total — the thing the customer record was
+ * rebuilt to stop doing. A count that came from `rows.length` would only ever
+ * be able to report the cap back to itself.
+ */
+export async function messageCount(filters?: MessageFilters): Promise<number> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(waMessages)
+    .where(messageWhere(ids, filters));
+
+  return Number(row?.n ?? 0);
+}
+
+export async function listMessages(filters?: MessageFilters) {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
 
@@ -492,16 +530,9 @@ export async function listMessages(filters?: {
     })
     .from(waMessages)
     .innerJoin(customers, eq(customers.id, waMessages.customerId))
-    .where(
-      and(
-        ids ? inArray(waMessages.userId, ids) : undefined,
-        filters?.status ? eq(waMessages.status, filters.status as never) : undefined,
-        filters?.mode ? eq(waMessages.mode, filters.mode as never) : undefined,
-        filters?.customerId ? eq(waMessages.customerId, filters.customerId) : undefined,
-      ),
-    )
+    .where(messageWhere(ids, filters))
     .orderBy(desc(waMessages.preparedAt))
-    .limit(300);
+    .limit(WA_MESSAGE_LIMIT);
 
   return rows.map(({ message, customerName, userName }) => ({
     ...message,
