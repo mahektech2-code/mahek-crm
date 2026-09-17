@@ -118,21 +118,42 @@ services:
       - -c
       - shared_buffers=128MB
       - -c
-      - effective_cache_size=512MB
+      - effective_cache_size=384MB    # honest: the app holds a 320MB heap beside this
       - -c
-      - work_mem=4MB
+      - work_mem=8MB                  # was 4MB; 1,901 sorts spilled 9.4GB to disk
       - -c
       - maintenance_work_mem=64MB
       - -c
-      - max_connections=30
+      - max_connections=20            # was 30; the app pool is 10, and this pays for work_mem
       - -c
       - random_page_cost=1.1          # NVMe, not a spinning disk
+      - -c
+      - effective_io_concurrency=200  # NVMe; was the single-spindle default of 1
+      - -c
+      # MEASURED ON THIS BOX, same query and same data: 198.9ms with JIT off,
+      # 866.2ms with it forced on, compiling 40 functions. The planner reaches
+      # the threshold because a dozen correlated subqueries inflate the
+      # ESTIMATED cost, not because there is real work to amortise a compile
+      # against — and on one vCPU there is no spare core to compile on.
+      - jit=off
       - -c
       - checkpoint_completion_target=0.9
       - -c
       - wal_compression=on
       - -c
-      - log_min_duration_statement=2000  # anything over 2s, so slow queries surface
+      - track_io_timing=on            # lets EXPLAIN separate CPU from I/O
+      - -c
+      # Without this there is no per-statement attribution in production at
+      # all, which is why a 219ms queue scan and a 164ms triple-DISTINCT went
+      # unmeasured for so long. Needs `CREATE EXTENSION pg_stat_statements`
+      # once, after the restart that preloads it.
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.max=2000
+      - -c
+      - pg_stat_statements.track=top
+      - -c
+      - log_min_duration_statement=500   # 2000 hid a 219ms queue scan and a 164ms triple-DISTINCT
     networks: [mahek]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mahek -d mahekone"]
