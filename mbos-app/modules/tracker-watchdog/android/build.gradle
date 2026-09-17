@@ -1,0 +1,49 @@
+// The whole build file, and it is short for the reason `phone-setup`'s is:
+// `expo-module-gradle-plugin` already applies com.android.library,
+// kotlin-android and maven-publish, adds expo-modules-core as a compileOnly
+// dependency, and sets compileSdk/minSdk/targetSdk from the root project, so
+// the module cannot drift from the app it is compiled into.
+//
+// THE KOTLIN PACKAGE IS `expo.modules.trackerwatchdog` AND NOT `in.mahek.*`,
+// for the reason recorded next door: `in` is a reserved word in Kotlin, so
+// `package in.mahek.mbos.trackerwatchdog` does not parse. `expo.modules.<name>`
+// is create-expo-module's own convention for a local module.
+
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.trackerwatchdog'
+version = '1.0.0'
+
+android {
+  namespace 'expo.modules.trackerwatchdog'
+}
+
+dependencies {
+  // THE ONE DEPENDENCY, AND IT IS ALREADY IN THE APP'S GRAPH.
+  //
+  // `expo-background-task` pulls `androidx.work:work-runtime-ktx:2.9.1` in, so
+  // this adds no artefact to the APK — it is here so this module compiles
+  // against the class it uses rather than relying on another package's
+  // transitive dependency, which is the kind of coupling that breaks on a
+  // library bump nobody connected to this file.
+  //
+  // The version matches what expo-background-task 1.0.10 asks for. A version
+  // is stated rather than left open because Gradle cannot resolve a bare
+  // coordinate and there is no BOM in this build — and because the two
+  // declarations cannot silently diverge: Gradle resolves ONE WorkManager for
+  // the whole app, taking the higher of the two, so an expo bump wins here
+  // without this file being touched and a bump here would apply to expo's own
+  // scheduling as well. If they ever need to differ, they cannot, and that is
+  // the right answer for a scheduler.
+  implementation 'androidx.work:work-runtime-ktx:2.9.1'
+}
+
+// NOT PUBLISHED, for the reason `phone-setup` gives: the plugin would create a
+// maven publication for a directory inside this app that nothing will ever
+// resolve from a repository.
+expoModule {
+  canBePublished false
+}

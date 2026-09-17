@@ -92,10 +92,32 @@ export type HandsetFacts = {
   backgroundSyncLastRunAt: Date | string | null;
   /** When the handset's own watchdog last caught the tracker accepted and silent. */
   trackerStalledAt: Date | string | null;
+  /**
+   * THE WATCHDOG THAT OUTLIVES THE APP, and what it has had to do today.
+   *
+   * `backgroundSyncLastRunAt` above is the expo-background-task job, which runs
+   * by booting the whole JavaScript bundle; this is a native WorkManager worker
+   * that touches no bundle. That is why they are two facts rather than one: the
+   * first going quiet has a dozen causes, and the second going quiet has one —
+   * the manufacturer has stopped honouring WorkManager for this app.
+   *
+   * `trackerRestartsToday` null is a handset too old to say and NEVER zero,
+   * which is a phone reporting that it has needed no reviving at all.
+   */
+  trackerWatchdogLastRunAt: Date | string | null;
+  trackerRestartsToday: number | null;
 };
 
 export type HandsetThresholds = {
   quietMinutes: number;
+  /**
+   * The native watchdog's own period, `mbos.location.watchdogEveryMinutes`.
+   *
+   * It is here so that "has the watchdog itself gone quiet" can be asked
+   * without inventing a second number: silence only means anything once a whole
+   * period has passed, and one skipped run on a phone in a lift is not a fault.
+   */
+  watchdogEveryMinutes: number;
   noTrailMinutes: number;
   lowBatteryPercent: number;
   /** Unsent fixes worth saying out loud. See the note where it is read. */
@@ -248,11 +270,61 @@ export function handsetNotes(
    */
   const stalled = ms(f.trackerStalledAt);
   if (stalled !== null && f.dayOpen) {
+    /*
+     * HOW OFTEN IT HAPPENED TODAY RIDES ON THIS LINE RATHER THAN ON ONE OF ITS
+     * OWN, because it is the same fault and not a second one.
+     *
+     * A count on a separate row would need a threshold nobody has agreed —
+     * "say it above how many?" — and would put two notes about one phone on a
+     * panel whose whole discipline is that a row says as little as it can. What
+     * the number adds is the thing the timestamp cannot say: once is a phone
+     * having a moment, six times is a phone that will go on doing this all
+     * week, and those are different conversations to have with the salesman.
+     *
+     * Null is a handset too old to report it, and then the sentence is exactly
+     * what it always was. ZERO IS NOT DRAWN EITHER: a stall mark with a count
+     * of none is an older stall that has not been cleared, and "0 times today"
+     * under "his phone stopped the tracker" reads as a contradiction.
+     */
+    const revivals = f.trackerRestartsToday;
+    const times =
+      revivals !== null && revivals > 0
+        ? `${revivals === 1 ? "once" : `${revivals} times`} today, last `
+        : "";
     notes.push({
       tone: "bad",
-      text: `His phone stopped the tracker — ${ageWords(stalled, nowMs)} ago`,
+      text: `His phone stopped the tracker — ${times}${ageWords(stalled, nowMs)} ago`,
       detail:
-        "Every permission is granted and the OS accepted the task; the handset's battery manager killed it anyway, which no API reports. He fixes it once on Sync → Keep tracking on, and until he does the route records only while the app is open.",
+        "Every permission is granted and the OS accepted the task; the handset's battery manager killed it anyway, which no API reports. The app starts it again by itself now, so the route comes back in pieces with a gap at each break rather than stopping for the day — but the cure is still one screen: Sync → Keep tracking on.",
+    });
+  }
+
+  /*
+   * ITS OWN WATCHDOG HAS GONE QUIET, which is the worst of the three and the
+   * one nothing could say before.
+   *
+   * This is not the background sync job below — that one runs by booting the
+   * whole JavaScript bundle and can be quiet for a dozen reasons. This is a
+   * native wake-up that touches no bundle, so if the OS has stopped delivering
+   * it there is nothing left on the phone that will ever notice a dead tracker.
+   * `null` is a handset too old to report it and is deliberately NOT drawn:
+   * accusing every phone in the field of a fault the day the column arrives is
+   * how a panel stops being read.
+   */
+  const watchdog = ms(f.trackerWatchdogLastRunAt);
+  /* TWO CONFIGURED NUMBERS AND NO INVENTED THIRD. `quietMinutes` is the
+     office's own definition of a handset having gone quiet, which is the same
+     question asked of the same phone; the period is the floor under it, because
+     silence shorter than one whole period is not silence at all and a phone in
+     a lift must not be reported as broken. */
+  const watchdogQuietMs =
+    Math.max(t.quietMinutes, t.watchdogEveryMinutes) * 60_000;
+  if (watchdog !== null && f.dayOpen && nowMs - watchdog > watchdogQuietMs) {
+    notes.push({
+      tone: "bad",
+      text: `Nothing has checked his tracking for ${ageWords(watchdog, nowMs)}`,
+      detail:
+        "The phone's own background check has stopped running, which only its manufacturer's battery settings can cause — so if the tracker dies now, nothing on the handset will restart it until he opens the app. Sync → Keep tracking on is the fix; if it keeps happening the handset is too restricted and he should be given another.",
     });
   }
 

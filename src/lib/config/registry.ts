@@ -1769,6 +1769,48 @@ export const SETTINGS = [
     max: 7200,
   },
   {
+    key: "mbos.location.trackerRestartMinIntervalSeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long before a stopped tracker is started again",
+    description:
+      "Seconds. The setting above decides when the handset stops believing it is tracking; this decides what it does next, and until now the answer was to give up for the rest of the app's run and record fixes only while the app was on screen — which on a phone in a pocket is no fixes at all. Production handsets show the real shape of the fault: fifty-one separate silences inside one working day losing 523 minutes between them, many short gaps and then a burst, which is the OS killing the app and it only coming back when somebody opens it. A killed process is not a phone that has refused, so the tracker is simply started again — and this is the rate. Too short and every attempt hands a dead task a fresh silence window and spends the GPS chip getting nowhere; too long and a salesman loses that many more minutes of his route each time the phone kills him. Roughly the same as how long silence must last before the tracker is disbelieved is the sensible pairing.",
+    default: 900,
+    min: 60,
+    max: 7200,
+  },
+  {
+    key: "mbos.location.trackerRestartsPerDay",
+    type: "integer",
+    category: "mbos-location",
+    label: "How many times a day a stopped tracker is started again",
+    description:
+      "A ceiling, and it is a different control from the interval beside it. That one bounds the cost of retrying; this is what stops a handset the OS will never let track from spending a whole field day waking its GPS chip in order to be killed again — on the phone that is already the reason somebody is worried about battery. Past it the app stops asking and the office is told how many times it tried, which is a support call somebody can answer rather than a loop nobody can see. Zero means no ceiling at all: keep trying for as long as the day is open.",
+    default: 24,
+    min: 0,
+    max: 200,
+  },
+  {
+    key: "mbos.location.watchdogEveryMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often the phone checks that it is still tracking with the app shut",
+    description:
+      "Minutes between runs of the handset's own native watchdog — the one piece of this that survives the app being killed, because Android's WorkManager schedules it rather than the app scheduling itself. Every other mechanism here is a JavaScript timer, and a JavaScript timer stops the moment the app leaves the screen, which is exactly the moment the tracker needs watching. FIFTEEN IS ANDROID'S OWN FLOOR and cannot be beaten: a shorter period is silently rounded up by the OS, so setting one would be a number on a screen that meant something else on the phone. Raising it saves a negligible amount of battery and costs that many more minutes before a dead trail is noticed.",
+    default: 15,
+    min: 15,
+    max: 360,
+  },
+  {
+    key: "mbos.location.watchdogNudge",
+    type: "boolean",
+    category: "mbos-location",
+    label: "Tell the salesman when his phone has stopped recording his route",
+    description:
+      "A stopped trail already comes back when somebody opens the app — that is what the burst of fixes after a long silence IS, and one handset produced fifty-one of those silences in a single day. Opening the app is the only thing that puts the dense trail back, because Android will not let the recording service start again while nothing of MahekOne is on screen. This turns that recovery from an accident into a notification: one line, replaced rather than stacked, and never twice inside the restart interval above. Off means the phone revives what it can in the background and says nothing, which is quieter and loses the part of the day between the phone killing the tracker and him next picking it up for his own reasons.",
+    default: true,
+  },
+  {
     key: "mbos.location.startOfDayGate",
     type: "text",
     category: "mbos-location",
@@ -3712,6 +3754,10 @@ export type Config = {
   "mbos.location.queueRetentionDays": number;
   "mbos.location.queuedPositionsWorthSaying": number;
   "mbos.location.trailStalledMinSilenceSeconds": number;
+  "mbos.location.trackerRestartMinIntervalSeconds": number;
+  "mbos.location.trackerRestartsPerDay": number;
+  "mbos.location.watchdogEveryMinutes": number;
+  "mbos.location.watchdogNudge": boolean;
   "mbos.location.nearbyBookRadiusKm": number;
   "mbos.location.dwellRadiusMeters": number;
   "mbos.location.dwellMinMinutes": number;

@@ -52,6 +52,31 @@ export type DeviceStateReport = {
   backgroundSyncLastRunAgoSeconds?: number | null;
   trackerStalledAgoSeconds?: number | null;
   /**
+   * WHEN THE ONE MECHANISM THAT OUTLIVES THIS APP LAST RAN.
+   *
+   * `backgroundSyncLastRunAgoSeconds` above says the same thing about the
+   * expo-background-task job, and the two are not the same fact: that one runs
+   * by booting the whole JavaScript bundle, so its silence can mean the bundle
+   * would not start. This is a native WorkManager worker that touches no
+   * bundle, so its silence means only one thing — the OEM has stopped honouring
+   * WorkManager for this app at all, which is a support call of its own and one
+   * nothing could previously make.
+   *
+   * `null` clears the column and absent leaves it alone, the same distinction
+   * the two above keep.
+   */
+  trackerWatchdogLastRunAgoSeconds?: number | null;
+  /**
+   * How many times the tracker has had to be revived today.
+   *
+   * The handset's own restarts plus the native watchdog's, added together,
+   * because a manager is asking one question and which of our two mechanisms
+   * did it is a fact about our code. ZERO IS A REAL ANSWER and the healthy one
+   * — so, like `queuedPositions` and unlike the marks above, absence here means
+   * only that this build cannot say.
+   */
+  trackerRestartsToday?: number;
+  /**
    * Unsent fixes still on this phone. ZERO IS A REAL ANSWER and the common one
    * — the handset is clear — so unlike the two marks above, absence here means
    * only that this build cannot say, and is never read as nothing waiting.
@@ -139,10 +164,12 @@ async function batteryState(): Promise<Partial<DeviceStateReport>> {
  */
 async function backgroundState(): Promise<Partial<DeviceStateReport>> {
   try {
-    const [{ backgroundSyncState }, { stalledAt }] = await Promise.all([
-      import('./background-sync-task'),
-      import('./trail'),
-    ]);
+    const [{ backgroundSyncState }, { stalledAt, restartsTodayCount }, { watchdogState }] =
+      await Promise.all([
+        import('./background-sync-task'),
+        import('./trail'),
+        import('../native/tracker-watchdog'),
+      ]);
     const [bg, stalled] = await Promise.all([backgroundSyncState(), stalledAt()]);
     const out: Partial<DeviceStateReport> = {};
     if (bg.registered !== null) out.backgroundSyncRegistered = bg.registered;
@@ -195,6 +222,41 @@ async function backgroundState(): Promise<Partial<DeviceStateReport>> {
        */
       out.trackerStalledAgoSeconds = null;
     }
+
+    /*
+     * WHAT HAPPENED WHILE THIS RUNTIME WAS NOT RUNNING.
+     *
+     * Read through the native bridge, which never throws and answers `null`
+     * where it cannot say — an iOS build, an APK from before the module, or an
+     * OEM that refused to schedule the work. That last one is the reading worth
+     * having, and it arrives as silence rather than as an error, exactly as a
+     * handset with no signal does: the mark simply stops moving.
+     *
+     * `-1` never leaves `native/tracker-watchdog.ts`, so nothing here has to
+     * know that a negative was ever a word. The server refuses a negative
+     * duration rather than clamping it, correctly, and it should never be asked
+     * to see one.
+     */
+    try {
+      const watchdog = await watchdogState();
+      if (watchdog.lastRunAgoSeconds !== null) {
+        out.trackerWatchdogLastRunAgoSeconds = watchdog.lastRunAgoSeconds;
+      } else {
+        /* EXPLICIT NULL for the same reason `trackerStalledAgoSeconds` sends
+           one: a handset that was reinstalled, or whose watchdog was
+           deliberately unscheduled at sign-out, has to be able to say the mark
+           is gone. An omitted key leaves a stale timestamp on the office's
+           screen for ever, which on this panel reads as a fault that has been
+           fixed and never cleared. */
+        out.trackerWatchdogLastRunAgoSeconds = null;
+      }
+      const revivals = await restartsTodayCount();
+      if (revivals !== null) out.trackerRestartsToday = revivals;
+    } catch {
+      /* Both left absent, which the office reads as "this build did not say"
+         rather than as a healthy phone. */
+    }
+
     return out;
   } catch {
     return {};

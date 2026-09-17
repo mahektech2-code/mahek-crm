@@ -2999,6 +2999,17 @@ export type LastKnown = {
   backgroundSyncLastRunAt: Date | null;
   trackerStalledAt: Date | null;
   /**
+   * The native watchdog's own liveness, and how much reviving the phone has
+   * needed today. A separate fact from the two above: that job boots the
+   * JavaScript bundle, this one does not, so this one's silence means the
+   * manufacturer has stopped honouring WorkManager for this app at all.
+   *
+   * `trackerRestartsToday` null is a build that cannot say and NEVER zero,
+   * which is a phone reporting it has needed none.
+   */
+  trackerWatchdogLastRunAt: Date | null;
+  trackerRestartsToday: number | null;
+  /**
    * Unsent fixes still on the phone, and when that was true. Null means this
    * build does not say — never zero, which is a handset reporting itself clear.
    */
@@ -3077,7 +3088,9 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
            d.setup_unverified as "setupUnverified",
            dev.background_sync_registered as "backgroundSyncRegistered",
            dev.background_sync_last_run_at as "backgroundSyncLastRunAt",
-           dev.tracker_stalled_at as "trackerStalledAt"
+           dev.tracker_stalled_at as "trackerStalledAt",
+           dev.tracker_watchdog_last_run_at as "trackerWatchdogLastRunAt",
+           dev.tracker_restarts_today as "trackerRestartsToday"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date

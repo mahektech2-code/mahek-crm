@@ -6,7 +6,7 @@ import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/pr
 import { Icon } from '../src/components/ui/Icon';
 import type { UpdateVerdict } from '../src/engines/app-update';
 import { checkForUpdate, openDownload } from '../src/native/update-check';
-import { stalledAt as trackerStalledAt } from '../src/sync/trail';
+import { restartsTodayCount, stalledAt as trackerStalledAt } from '../src/sync/trail';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import { isoDate, plural, pretty } from '../src/lib/format';
 import { conflictCount, listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
@@ -126,6 +126,11 @@ export default function SyncScreen() {
      merely never set up — see `stalledAt`. The two read very differently and
      only one of them is urgent. */
   const [stalled, setStalled] = React.useState<number | null>(null);
+  /* How many times the phone has had to put the tracker back TODAY. Zero is a
+     real answer and the healthy one, so it is drawn only when it is not zero —
+     the same discipline the office's own panel keeps. Null is a build that
+     cannot say, which on this screen is an iOS or a very old one. */
+  const [revivals, setRevivals] = React.useState<number | null>(null);
   /* Whether a newer APK has been published. Sideloading has no auto-update,
      so being told is the only way a handset ever finds out — see
      `engines/app-update.ts`. */
@@ -147,7 +152,8 @@ export default function SyncScreen() {
       conflictCount(),
       queueDepth(),
       trackerStalledAt(),
-    ]).then(([q, c, m, k, d, s]) => {
+      restartsTodayCount(),
+    ]).then(([q, c, m, k, d, s, r]) => {
       if (!live) return;
       setRows(q);
       setCounts(c);
@@ -155,6 +161,7 @@ export default function SyncScreen() {
       setConflicts(k);
       setDepth(d);
       setStalled(s);
+      setRevivals(r);
     });
     return () => {
       live = false;
@@ -427,9 +434,21 @@ export default function SyncScreen() {
         </T>
         <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>
           {stalled
-            ? 'Your route stopped being recorded while the app was in your pocket. Two settings stop it happening again.'
+            ? 'Your route stopped being recorded while the app was in your pocket. MahekOne started it again by itself, but two settings stop it happening at all.'
             : 'If your route has holes in it, your phone is stopping MahekOne to save battery. Two settings fix it.'}
         </T>
+        {/* HOW OFTEN, because "it happened" and "it has happened six times
+            since breakfast" are two different things to be told and only the
+            second one makes a man walk into Settings. It is drawn only above
+            zero: a healthy phone says nothing here, exactly as a healthy phone
+            says nothing on the office's own panel. */}
+        {revivals !== null && revivals > 0 ? (
+          <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>
+            {revivals === 1
+              ? 'Started again once today.'
+              : `Started again ${revivals} times today.`}
+          </T>
+        ) : null}
       </Pressable>
 
       {/* A refusal is not a queue item to retry blindly — it goes to the screen

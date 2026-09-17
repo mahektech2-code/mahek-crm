@@ -1,0 +1,33 @@
+<!--
+  Deliberately empty, and it is worth saying what is NOT here.
+
+  THERE IS NO `BOOT_COMPLETED` RECEIVER, because there are already two and a
+  third would be a third answer to one question. `androidx.work`'s own
+  `RescheduleReceiver` re-enqueues this module's periodic work after a reboot,
+  and `expo-task-manager`'s `TaskBroadcastReceiver` reconstructs `TaskService`,
+  which restores the persisted location task. Both are in the merged manifest
+  already.
+
+  THERE IS NO `RECEIVE_BOOT_COMPLETED` EITHER, and that one surprised us.
+  `androidx.work:work-runtime` declares it in its own manifest, and
+  `expo-background-task` has depended on WorkManager since it was added — so
+  the permission has been merged into this app since long before this module
+  existed, and expo-task-manager's boot receiver has been firing all along.
+  Declaring it here would be a second declaration of something already true
+  and would read, to the next person, as the thing that made boot work.
+
+  What that receiver does on boot is restore the location task WITHOUT its
+  foreground service — `LocationTaskConsumer.maybeStartForegroundService`
+  refuses while no Activity is foregrounded — so a rebooted handset resumes
+  throttled background delivery rather than the dense trail. That is the whole
+  reason `TrackerWatchdogWorker` also nudges the salesman to open the app: only
+  the foreground start puts the real tracker back.
+
+  The one permission this module would otherwise want,
+  `android.permission.POST_NOTIFICATIONS`, is requested by `expo-notifications`
+  and declared through `app.json`, which keeps every permission this app asks a
+  salesman for in ONE file somebody can read — the same decision recorded in
+  `phone-setup`'s own manifest.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+</manifest>

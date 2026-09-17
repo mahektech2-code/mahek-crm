@@ -96,13 +96,22 @@ export function trailVerdict(args: {
    * to defer. A 24-second gap was measured on a handset whose trail was
    * otherwise perfect.
    *
-   * The cost was not a spurious note on a screen. `fallBackToFloor()` abandons
-   * the real background task for the rest of the process, so the watchdog was
-   * switching off background tracking on healthy phones within a minute of
-   * check-in, and the office then read "his phone stopped the tracker" — which
-   * was true, and it was this function that stopped it. This file's own header
-   * warned that "a wrong one would take a working handset OFF the real
-   * background task", and that is exactly what it did.
+   * The cost was not a spurious note on a screen. What stood at the other end
+   * of this verdict was `fallBackToFloor()`, which abandoned the real
+   * background task for the rest of the process — so the watchdog was switching
+   * off background tracking on healthy phones within a minute of check-in, and
+   * the office then read "his phone stopped the tracker", which was true and
+   * was this function's own doing. This file's own header warned that "a wrong
+   * one would take a working handset OFF the real background task", and that is
+   * exactly what it did.
+   *
+   * THE PENALTY IS SMALLER NOW AND THE FLOOR STILL EARNS ITS PLACE. The caller
+   * is `reviveOrSalvage`, which restarts the tracker instead of giving up on
+   * it, so a false stall costs one registration and one silence window rather
+   * than a day. What it still costs is a place in a rate limit that a genuinely
+   * dying handset needs — `engines/tracker-restart.ts` caps the attempts a day
+   * may make — so a window too tight still spends a real phone's budget on
+   * nothing.
    *
    * So the multiplier is kept and no longer alone. What this window measures is
    * HOW LONG SILENCE MUST LAST before the OS is disbelieved, and that is a fact

@@ -261,6 +261,7 @@ export default async function Page({
         olaMapsKey={olaMapsKey}
         handsetThresholds={{
           quietMinutes: config["mbos.location.handsetQuietMinutes"],
+          watchdogEveryMinutes: config["mbos.location.watchdogEveryMinutes"],
           noTrailMinutes: config["mbos.location.noTrailMinutes"],
           lowBatteryPercent: config["mbos.location.lowBatteryPercent"],
           queuedPositionsWorthSaying: config["mbos.location.queuedPositionsWorthSaying"],

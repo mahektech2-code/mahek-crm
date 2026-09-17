@@ -50,6 +50,9 @@ export type DeviceState = {
    */
   backgroundSyncLastRunAt?: Date | null;
   trackerStalledAt?: Date | null;
+  trackerWatchdogLastRunAt?: Date | null;
+  /** Zero is a real answer; absent is "this build cannot say". */
+  trackerRestartsToday?: number;
   /** Unsent fixes still on the phone. Zero is a real answer; absent is not. */
   queuedPositions?: number;
   queuedPositionsAt?: Date;
@@ -190,6 +193,49 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
   if (stalledAgo) state.trackerStalledAt = stalledAgo;
   else if (isPresentNull(body, "trackerStalledAgoSeconds")) {
     state.trackerStalledAt = null;
+  }
+
+  /*
+   * THE NATIVE WATCHDOG'S OWN LIVENESS, read exactly like the two above it.
+   *
+   * It is a separate fact from `backgroundSyncLastRunAt` and not a spare copy
+   * of it: that job runs by booting the JavaScript bundle, so its silence has a
+   * dozen possible causes, and this one is a WorkManager worker that touches no
+   * bundle — so its silence means the manufacturer has stopped honouring
+   * WorkManager for this app, which is a support call nothing here could
+   * previously make.
+   *
+   * An explicit null clears it, because a handset that was reinstalled or
+   * signed out of has to be able to say the mark is gone; an absent key still
+   * leaves the column alone, so an older APK reporting only what it knows
+   * cannot wipe a newer one's answers.
+   */
+  const watchdogAgo = instantFromAgo(body.trackerWatchdogLastRunAgoSeconds);
+  if (watchdogAgo) state.trackerWatchdogLastRunAt = watchdogAgo;
+  else if (isPresentNull(body, "trackerWatchdogLastRunAgoSeconds")) {
+    state.trackerWatchdogLastRunAt = null;
+  }
+
+  /*
+   * HOW MANY TIMES THE PHONE HAS HAD TO REVIVE ITS OWN TRACKER TODAY.
+   *
+   * Counted and rolled over on the handset, against its own local calendar day,
+   * because a phone offline all afternoon still has to be able to answer for
+   * its own morning. Read here like `queuedPositions` rather than like the
+   * marks above: zero is a real answer and the healthy one, so it is stored
+   * whenever it arrives and absence — never zero — is what means "this build
+   * cannot say".
+   *
+   * A negative or a fraction is dropped rather than rounded into something
+   * plausible, for the reason every other reading here is: a figure a screen
+   * will draw has to have come from somewhere.
+   */
+  if (
+    typeof body.trackerRestartsToday === "number" &&
+    Number.isFinite(body.trackerRestartsToday)
+  ) {
+    const restarts = Math.round(body.trackerRestartsToday);
+    if (restarts >= 0) state.trackerRestartsToday = restarts;
   }
 
   /*

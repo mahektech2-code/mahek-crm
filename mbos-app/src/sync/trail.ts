@@ -5,6 +5,15 @@ import { getConfig } from '../data/config';
 import { getFix, fixOf, rememberFix } from '../native/location';
 import { shouldKeepFix } from '../engines/cadence';
 import { trailVerdict } from '../engines/trail-watchdog';
+import {
+  mayRestartTracker,
+  recordRestart,
+  restartsToday,
+  NO_RESTARTS,
+  type RestartRecord,
+} from '../engines/tracker-restart';
+import { setTrackingWanted, startWatchdog, watchdogState } from '../native/tracker-watchdog';
+import { isoDate } from '../lib/format';
 import { postPositions, reportLocationPermission } from './api';
 
 /**
@@ -121,6 +130,34 @@ const LAST_KEPT = 'trailLastKeptAt';
 const STALLED_AT = 'keepalive.stalledAt';
 
 /**
+ * WHAT THIS HANDSET HAS TRIED TODAY, and why it is persisted where the mark
+ * above it is.
+ *
+ * `backgroundStartedAt` beside it is in memory because it describes a
+ * registration THIS process made, and a fresh process must not inherit a
+ * verdict about it. This is the opposite kind of fact: how many times the
+ * tracker has had to be revived today is about the HANDSET, and the whole
+ * reason there is a number to report is that the process keeps being killed —
+ * a counter that died with the process would answer zero every time, on the
+ * phones that need answering most.
+ *
+ * Stored as JSON because it is three fields that must move together. A count
+ * without its day is a count that never rolls over, and a day without its last
+ * attempt is a rate limit with nothing to rate-limit against.
+ */
+const RESTARTS = 'keepalive.restarts';
+
+/**
+ * The period the native watchdog was last scheduled with.
+ *
+ * Kept here rather than asked of WorkManager, which can only answer through an
+ * async query whose result would arrive after the decision was needed. See
+ * `armWatchdog` for what a wrong answer costs: a periodic job re-enqueued on
+ * every app open never fires at all.
+ */
+const WATCHDOG_PERIOD = 'keepalive.watchdogEveryMinutes';
+
+/**
  * Milliseconds between kept fixes, from configuration.
  *
  * SECONDS, because the thing this is measured against is. It was minutes, and
@@ -218,7 +255,6 @@ let mode: 'background' | 'foreground' | null = null;
  * registration it no longer knows the fate of.
  */
 let backgroundStartedAt = 0;
-let backgroundProvedSilent = false;
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
@@ -438,8 +474,10 @@ async function watch(): Promise<void> {
     const misses = await getConfig<number>('mbos.location.trailStalledAfterMisses', 4);
     /* The floor on the window, and the reason it exists is in the engine: four
        misses of a three-second cadence is twelve seconds, which any walk
-       indoors clears — and the penalty for clearing it is that background
-       tracking is switched off for the rest of the process. */
+       indoors clears — and clearing it spends a place in the day's restart
+       budget and hands a healthy task a needless re-registration. It used to
+       cost far more: background tracking was switched off for the rest of the
+       process. See `reviveOrSalvage`. */
     const minSilence = await getConfig<number>('mbos.location.trailStalledMinSilenceSeconds', 300);
     const raw = await getKv(LAST_KEPT);
 
@@ -458,17 +496,42 @@ async function watch(): Promise<void> {
       backgroundStartedAt = Date.now();
       return;
     }
+    /*
+     * IT CAME BACK, so stop paying for the floor twice over.
+     *
+     * A salvage leaves the foreground timer running beside the background task
+     * — deliberately, because while the tracker is down the floor is the only
+     * thing recording for certain. Two mechanisms asking the radio at the same
+     * cadence is double the battery for the same trail. They never doubled the
+     * DATA, because `keep()` gates both and a position's id is its own reading;
+     * what they doubled is the cost.
+     *
+     * **A KEPT FIX SINCE THE REGISTRATION IS THE PROOF, and `'believable'` on
+     * its own is not.** That verdict also means "not silent for long enough to
+     * judge", which is exactly what the tick after a restart says — so reading
+     * it as recovery would switch the floor off in the first seconds of every
+     * salvage, on the strength of the restart we had only just asked for.
+     * `LAST_KEPT` is written by the background task and by nothing else, so a
+     * mark later than `backgroundStartedAt` is a fix the OS actually delivered
+     * since we asked, which is the only evidence worth having here.
+     *
+     * The stall MARK is deliberately not cleared. One fix arriving does not
+     * mean the battery manager has changed its mind, and a mark that cleared on
+     * the first good reading would flicker off every time the salesman opened
+     * the app — which is the one moment tracking always works. See `stalledAt`.
+     */
+    const keptAt = raw ? Number(raw) : 0;
+    if (verdict === 'believable' && foregroundTimer && keptAt > backgroundStartedAt) stopFloor();
     if (verdict === 'stalled') {
       /* MARKED, not just worked around.
-      
+
          Falling back to the foreground floor keeps SOME of the day and hides
          the cause: the phone is killing the tracker, and the only cure is two
          switches nobody has been asked to touch. The mark is what lets the
          Sync screen say so and what rides up to the office on the device
          report, so a handset going quiet is a support call somebody can
          answer rather than a fortnight of silence. */
-      await setKv(STALLED_AT, String(Date.now()));
-      await fallBackToFloor();
+      await reviveOrSalvage();
     }
   } catch {
     /* A watchdog is not allowed to cost a fix or break a day. Whatever could
@@ -477,45 +540,266 @@ async function watch(): Promise<void> {
 }
 
 /**
- * The task was accepted and is delivering nothing. Take what we can while the
- * app is open, and tell the office what is really happening.
+ * The task was accepted and is delivering nothing. START IT AGAIN, and salvage
+ * what the app can see in the meantime.
  *
- * THE BACKGROUND TASK IS LEFT REGISTERED, which looks like the wrong half of
- * the decision and is not. Stopping it would buy nothing — it is already
- * delivering nothing — and would throw away the one good outcome still
- * available: a battery manager that relents, or a salesman who plugs the phone
- * in, and fixes start arriving again. `keep()` gates whatever does arrive at
- * the same cadence the floor is keeping, and the id of a position is its own
- * reading, so the two mechanisms cannot double anything between them.
+ * **THIS USED TO GIVE UP, AND GIVING UP WAS THE BUG.** What stood here was
+ * `fallBackToFloor`, which set a module-level `backgroundProvedSilent` that
+ * nothing ever cleared. So the FIRST stall in a process was its last word: the
+ * check-in's `start()`, every foreground resume's, the afternoon session's, all
+ * fell through to a `setInterval`. A `setInterval` only advances while the app
+ * is the thing on screen, so a phone that went back into a pocket recorded
+ * nothing at all for the rest of the day. It was meant to salvage part of a day
+ * and on a pocketed handset it salvaged none.
  *
- * It does not try the upgrade again either, for the rest of this process.
- * `start()` retrying on every resume would clear the floor's timer each time,
- * hand the dead task another whole window to prove itself, and leave the day
- * full of holes exactly the size of the window — the retry is right where the
- * answer might have changed (a permission granted in Settings) and wrong where
- * the OS has already said yes and meant nothing by it. A fresh process starts
- * the judgement over, which is what a phone reaped and reopened is.
+ * The reasoning behind it was that retrying on every resume clears the floor's
+ * timer, hands a dead task another whole silence window to prove itself, and
+ * punches the day full of holes the size of that window. Every word of that is
+ * still true — it is an argument against retrying WITHOUT A RATE, which is what
+ * `engines/tracker-restart.ts` now supplies. Bounded at one attempt per
+ * configured interval and capped per day, the cost is one window per interval
+ * and the upside is a trail that comes back on its own.
  *
- * `false` is the honest thing to report. The column means "is a real background
- * trail running", and it is not — while `locationPermission`, riding the same
- * request, still reads `always`, so the office can tell this apart from a
- * salesman who refused the prompt. Those are two different conversations to
- * have with him, and only one of them is about the phone.
+ * And the field says it does come back. Production handsets record fifty-one
+ * separate silences inside one working day, 523 minutes between them, in the
+ * shape of many short gaps and then a burst — the burst being somebody opening
+ * the app. A task that revives when an Activity comes forward is not a phone
+ * that has refused us anything; it is a process that was killed, and the thing
+ * that was killed can be started again.
+ *
+ * **THE RESTART IS A STOP AND A START, in that order.** `startLocationUpdatesAsync`
+ * on a task that is still registered reaches `setOptions` rather than
+ * `didRegister`, which restarts location updates and re-evaluates the
+ * foreground service — probably enough, and "probably" is not a word to build
+ * this on when the symptom is invisible. Unregistering first means the next
+ * call takes the same path a first-ever start takes, which is the one path this
+ * app has evidence works.
+ *
+ * **THE FLOOR RUNS BESIDE IT, NOT INSTEAD OF IT.** While the app is open the
+ * floor is the only thing recording for certain, and the two cannot double
+ * anything between them: `keep()` gates both at one cadence, and a position's
+ * id is its own reading. It is stopped again the moment a background fix proves
+ * the tracker is back — see `watch()` — rather than left running all day
+ * spending the radio twice.
+ *
+ * **AND `mode` STAYS `'background'`**, which is what keeps the watchdog ticking
+ * and is the half the old code got wrong twice over: it set `mode` to
+ * `'foreground'` and stopped watching, so nothing was left to notice either the
+ * recovery or the next failure.
+ *
+ * `false` is still the honest thing to report while the tracker is down. The
+ * column means "is a real background trail running", and it is not — while
+ * `locationPermission`, riding the same request, still reads `always`, so the
+ * office can tell this apart from a salesman who refused the prompt. Those are
+ * two different conversations and only one of them is about the phone.
  */
-async function fallBackToFloor(): Promise<void> {
-  backgroundProvedSilent = true;
-  stopWatching();
-  mode = 'foreground';
+async function reviveOrSalvage(): Promise<void> {
+  /* SALVAGE FIRST, because it is the part that cannot fail. Whatever the
+     restart does or does not achieve, a fix now is a fix, and the alternative
+     is a gap that starts at the moment we noticed. */
+  const alreadySalvaging = foregroundTimer !== null;
+  await startFloor();
 
-  /* One fix straight away, for the same reason the first start takes one: the
-     alternative is a gap that starts the moment we noticed. */
+  /*
+   * TOLD ONCE PER EPISODE, NOT ONCE PER TICK.
+   *
+   * `watch()` runs at the keep cadence — three seconds on this book — and it
+   * goes on returning `'stalled'` for as long as the tracker is down. The old
+   * code got away with reporting from here because it stopped the watchdog in
+   * the same breath; this one deliberately keeps watching, so an unguarded
+   * report would be a network request every three seconds for the rest of a
+   * dead afternoon, from the handset least able to afford one.
+   *
+   * The floor's own timer is the marker for "we are already in a salvage",
+   * which is exactly the question being asked and needs no second flag to
+   * answer. It is cleared when a background fix proves the tracker is back, so
+   * the next real stall reports again.
+   */
+  if (!alreadySalvaging) {
+    /* MARKED, not just worked around. Falling back to what the app can see
+       keeps SOME of the day and hides the cause: the phone is killing the
+       tracker, and the cure is two switches nobody has been asked to touch.
+       This mark is what lets the Sync screen say so and what rides to the
+       office on the device report, so a handset going quiet is a support call
+       somebody can answer rather than a fortnight of silence.
+
+       Stamped at the START of an episode and not refreshed while it lasts. It
+       means "when the tracker was caught silent", which is what every reader of
+       it prints — refreshed every tick it would read as zero minutes ago all
+       afternoon, and it would be a database write every three seconds to say
+       so. */
+    await setKv(STALLED_AT, String(Date.now()));
+    void reportLocationPermission(false).catch(() => {});
+  }
+
+  const [intervalSeconds, perDay] = await Promise.all([
+    getConfig<number>('mbos.location.trackerRestartMinIntervalSeconds', 900),
+    getConfig<number>('mbos.location.trackerRestartsPerDay', 24),
+  ]);
+
+  const now = Date.now();
+  const today = isoDate(new Date(now));
+  const record = await readRestarts();
+
+  if (
+    !mayRestartTracker({
+      record,
+      now,
+      today,
+      minIntervalMs: Math.max(0, intervalSeconds) * 1_000,
+      maxPerDay: perDay,
+    })
+  ) {
+    return;
+  }
+
+  /* COUNTED ON THE ATTEMPT, before it is made. `startLocationUpdatesAsync`
+     answering yes is exactly the claim this subsystem has learned not to
+     believe, so counting outcomes would count nothing — and what the interval
+     is bounding is how often we ASK. Written before the call so a throw cannot
+     leave the rate limit uncharged and the next tick trying again. */
+  await writeRestarts(recordRestart(record, now, today));
+
+  const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 3);
+  const every = Math.max(3, seconds) * 1_000;
+
+  try {
+    if (await Location.hasStartedLocationUpdatesAsync(TASK_NAME)) {
+      await Location.stopLocationUpdatesAsync(TASK_NAME);
+    }
+  } catch {
+    /* Already gone, which is the commonest reason a restart is needed at all. */
+  }
+
+  if (await startBackground(every)) {
+    /* The window starts again from here. Without this the watchdog would
+       measure the new registration against the old silence and declare it
+       stalled on its very next tick, which would spend the whole day's budget
+       of attempts in a couple of minutes. */
+    backgroundStartedAt = Date.now();
+  }
+}
+
+/**
+ * SCHEDULE THE ONE WATCHDOG THAT SURVIVES THIS PROCESS, and tell it whether a
+ * day is open.
+ *
+ * Both halves in one call because they must never be done separately: armed
+ * without the flag, the first wake-up reads the handset as checked out and
+ * stands down; the flag set without the work scheduled is a fact nobody will
+ * ever read. They are one act — "this phone should be being watched, or should
+ * not" — and splitting them is how one of the two gets forgotten on a path
+ * somebody adds later.
+ *
+ * **THE PERIOD ONLY MOVES WHEN THE OFFICE MOVES IT.** WorkManager resets a
+ * periodic job's clock when the work is replaced, so re-enqueueing with
+ * `UPDATE` on every `start()` — which is every check-in and every foreground
+ * resume — would push the next run out for ever and the watchdog would never
+ * once fire. That is a `setInterval` cleared on every resume, arriving inside
+ * the scheduler chosen precisely because it is immune to that. So the number
+ * last used is remembered here and `periodChanged` is true on the one call that
+ * differs.
+ *
+ * Never throws and never blocks the day: `native/tracker-watchdog.ts` swallows
+ * everything, because a watchdog may not cost a check-in.
+ */
+async function armWatchdog(wanted: boolean): Promise<void> {
+  try {
+    const [everyMinutes, nudge, quietSeconds] = await Promise.all([
+      getConfig<number>('mbos.location.watchdogEveryMinutes', 15),
+      getConfig<boolean>('mbos.location.watchdogNudge', true),
+      /* THE SAME WINDOW THE RESTART RATE LIMIT USES, deliberately, and not a
+         fourth number. Telling a salesman twice inside one restart interval is
+         exactly the noise the rate limit exists to prevent, one mechanism over
+         — and a notification somebody learns to dismiss is one he dismisses on
+         the day it mattered. */
+      getConfig<number>('mbos.location.trackerRestartMinIntervalSeconds', 900),
+    ]);
+
+    const period = Math.max(15, Math.round(everyMinutes));
+    const previous = Number(await getKv(WATCHDOG_PERIOD));
+    const periodChanged = !Number.isFinite(previous) || previous !== period;
+
+    await startWatchdog(period, periodChanged);
+    if (periodChanged) await setKv(WATCHDOG_PERIOD, String(period));
+    await setTrackingWanted(wanted, nudge, quietSeconds);
+  } catch {
+    /* The day still opens and still records. What is lost is the backstop, and
+       the office finds out the same way it finds out about everything else on
+       this panel: the watchdog's own last-run mark stops moving. */
+  }
+}
+
+/**
+ * Take a fix now and keep taking them while the app is open.
+ *
+ * Pulled out of the two places that needed it — the first start with no
+ * background task, and a salvage after a stall — because they had drifted into
+ * two copies with one difference: only one of them took the immediate fix, and
+ * it was not the one that ran after a stall.
+ */
+async function startFloor(): Promise<void> {
   void takeForeground();
   if (!foregroundTimer) {
     const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 3);
     foregroundTimer = setInterval(() => void takeForeground(), Math.max(3, seconds) * 1_000);
   }
+}
 
-  void reportLocationPermission(false).catch(() => {});
+function stopFloor(): void {
+  if (foregroundTimer) {
+    clearInterval(foregroundTimer);
+    foregroundTimer = null;
+  }
+}
+
+/** What this handset has tried today. A missing or unreadable mark is nothing tried. */
+async function readRestarts(): Promise<RestartRecord> {
+  try {
+    const raw = await getKv(RESTARTS);
+    if (!raw) return NO_RESTARTS;
+    const parsed = JSON.parse(raw) as Partial<RestartRecord>;
+    return {
+      at: typeof parsed.at === 'number' ? parsed.at : 0,
+      day: typeof parsed.day === 'string' ? parsed.day : '',
+      attempts: typeof parsed.attempts === 'number' ? parsed.attempts : 0,
+    };
+  } catch {
+    /* A mark written by a build that stored something else. Read as nothing
+       tried, which retries — the safe direction, since the cost is one extra
+       registration and the cost of the other is a dead trail nobody revives. */
+    return NO_RESTARTS;
+  }
+}
+
+async function writeRestarts(record: RestartRecord): Promise<void> {
+  await setKv(RESTARTS, JSON.stringify(record));
+}
+
+/**
+ * How many times the tracker has had to be revived today, as the office should
+ * read it.
+ *
+ * The handset's own restarts plus the native watchdog's revivals, added
+ * together, because a manager is asking ONE question: how much reviving has
+ * this phone needed today. Which mechanism did it is a fact about our code and
+ * not about his salesman.
+ *
+ * `null` where neither can say. Zero is a real answer and the healthy one, so
+ * the two must never collapse into each other — the same distinction the wire
+ * keeps for every other field on the device report.
+ */
+export async function restartsTodayCount(): Promise<number | null> {
+  const today = isoDate(new Date());
+  let total: number | null = null;
+  try {
+    total = restartsToday(await readRestarts(), today);
+  } catch {
+    /* The kv store could not be read. The native half may still answer. */
+  }
+  const native = (await watchdogState()).revivalsToday;
+  if (native === null) return total;
+  return (total ?? 0) + native;
 }
 
 function startWatching(everyMs: number): void {
@@ -562,21 +846,42 @@ export async function start(): Promise<void> {
   if (mode === 'background') return;
 
   const on = await getConfig<boolean>('mbos.location.trackWhileWorking', true);
-  if (!on) return;
+  if (!on) {
+    /* THE OFFICE HAS TURNED IT OFF, and the native watchdog has to be told —
+       it is the one mechanism that goes on running after this process is gone,
+       so a flag left standing from yesterday would have it reviving a tracker
+       on a deployment that has switched tracking off entirely. The setting is
+       checked here AND in the route that receives positions, for the reason
+       every other switch in this app is checked twice: a hidden control is not
+       a disabled feature. */
+    await armWatchdog(false);
+    return;
+  }
 
   const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 3);
   const every = Math.max(3, seconds) * 1_000;
 
-  /* Caught delivering nothing once already in this process. See
-     `fallBackToFloor` for why that answer stands until the process does not. */
-  const backgroundStarted = backgroundProvedSilent ? false : await startBackground(every);
+  /* THE WATCHDOG THAT OUTLIVES THIS PROCESS, armed at the same moment tracking
+     starts and by the same call, so there is no path on which a day opens and
+     nothing is watching it. Everything else in this file is a JS timer and a JS
+     timer dies with the app; this is WorkManager, and it is the only thing that
+     will still be here if the battery manager reaps us in ten minutes. Awaited
+     rather than fired and forgotten, because it is two SharedPreferences writes
+     and the day flag has to be true BEFORE the first wake-up could arrive —
+     armed with the flag still false, the first run would read the handset as
+     checked out and do nothing. */
+  await armWatchdog(true);
+
+  /* NO ONE-WAY SWITCH ANY MORE. A stall used to set `backgroundProvedSilent`,
+     which nothing cleared, so every later call landed here and fell through to
+     a `setInterval` that only advances while the app is on screen. See
+     `reviveOrSalvage`: the rate limit is what replaced it, and a `start()` on a
+     resume or a check-in is now allowed to try the real thing again. */
+  const backgroundStarted = await startBackground(every);
   if (backgroundStarted) {
     /* Upgrading off the floor — its timer is now redundant, and running
        both would double the very sampling this exists to fix. */
-    if (foregroundTimer) {
-      clearInterval(foregroundTimer);
-      foregroundTimer = null;
-    }
+    stopFloor();
     mode = 'background';
     /* From here the OS's word is on probation. The window is measured from
        this moment, and it is ticked at the cadence because a watchdog that
@@ -588,9 +893,9 @@ export async function start(): Promise<void> {
     /* First start, floor only: one fix straight away, so a check-in puts a
        point on the map rather than a gap at the start of every day. A retry
        that is STILL not upgradeable leaves the existing timer running
-       rather than starting a second one beside it. */
-    void takeForeground();
-    foregroundTimer = setInterval(() => void takeForeground(), every);
+       rather than starting a second one beside it — which is `startFloor`'s
+       own guard, and the reason both callers share it. */
+    await startFloor();
     mode = 'foreground';
   }
 
@@ -615,10 +920,14 @@ async function stopTicking(): Promise<void> {
      task judged on the silence of the one before it. */
   stopWatching();
   backgroundStartedAt = 0;
-  if (foregroundTimer) {
-    clearInterval(foregroundTimer);
-    foregroundTimer = null;
-  }
+  stopFloor();
+  /* AND THE NATIVE WATCHDOG IS TOLD THE DAY IS SHUT, which is the whole of how
+     "not one second either side" survives the app being killed. The work stays
+     SCHEDULED — see the Kotlin — and each run now reads the flag and does
+     nothing; cancelling it here would mean the one mechanism that outlives
+     process death depended on a clean check-out having happened, and a phone
+     switched off mid-afternoon is precisely the case it exists for. */
+  await armWatchdog(false);
   try {
     if (await Location.hasStartedLocationUpdatesAsync(TASK_NAME)) {
       await Location.stopLocationUpdatesAsync(TASK_NAME);

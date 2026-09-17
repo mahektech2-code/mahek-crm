@@ -14,6 +14,7 @@ const T = {
   noTrailMinutes: 90,
   lowBatteryPercent: 20,
   queuedPositionsWorthSaying: 200,
+  watchdogEveryMinutes: 15,
 };
 
 const facts = (over: Partial<HandsetFacts> = {}): HandsetFacts => ({
@@ -49,6 +50,12 @@ const facts = (over: Partial<HandsetFacts> = {}): HandsetFacts => ({
      from a handset it is not asking about — a backlog has to be stated. */
   queuedPositions: null,
   queuedPositionsAt: null,
+  /* A healthy handset's own watchdog: woken a moment ago and having had to
+     revive nothing today. Zero rather than null on the count, because zero is
+     the answer a working phone gives and null would make every test above this
+     one a test of a build that cannot say. */
+  trackerWatchdogLastRunAt: new Date(NOW - 5 * 60_000),
+  trackerRestartsToday: 0,
   ...over,
 });
 
@@ -480,5 +487,67 @@ describe("how far behind a handset is", () => {
         /still on his phone/.test(n.text),
       ),
     );
+  });
+});
+
+describe("the watchdog that outlives the app", () => {
+  test("a phone whose own watchdog has gone quiet is a fault of its own", () => {
+    /* Not the same note as the background sync job going quiet: that one runs
+       by booting the whole JavaScript bundle and can be silent for a dozen
+       reasons. This one touches no bundle, so its silence means the
+       manufacturer has stopped honouring WorkManager — and from then on
+       NOTHING on the handset will restart a dead tracker. */
+    const f = facts({ trackerWatchdogLastRunAt: new Date(NOW - 5 * 3_600_000) });
+    assert.ok(texts(f).some((t) => t.startsWith("Nothing has checked his tracking")));
+  });
+
+  test("silence shorter than the office's own quiet window says nothing", () => {
+    const f = facts({ trackerWatchdogLastRunAt: new Date(NOW - 20 * 60_000) });
+    assert.deepEqual(handsetNotes(f, T, NOW), []);
+  });
+
+  test("one skipped run is never a fault, whatever the quiet window says", () => {
+    /* The floor under the threshold. With a quiet window set tighter than the
+       watchdog's own period, a phone in a lift for one cycle would otherwise be
+       reported as broken every time. */
+    const tight = { ...T, quietMinutes: 5 };
+    const f = facts({ trackerWatchdogLastRunAt: new Date(NOW - 14 * 60_000) });
+    assert.deepEqual(handsetNotes(f, tight, NOW), []);
+  });
+
+  test("a handset too old to report it is not accused of anything", () => {
+    /* Null is every phone in the field until the next APK. Drawing a fault on
+       the day the column arrives is how a panel stops being read. */
+    const f = facts({ trackerWatchdogLastRunAt: null });
+    assert.deepEqual(handsetNotes(f, T, NOW), []);
+  });
+
+  test("how often it happened rides on the stall line, not a line of its own", () => {
+    const f = facts({
+      trackerStalledAt: new Date(NOW - 12 * 60_000),
+      trackerRestartsToday: 6,
+    });
+    const said = texts(f);
+    assert.equal(
+      said.filter((t) => t.includes("stopped the tracker")).length,
+      1,
+      "one fault, one sentence — a count on a row of its own is two notes about one phone",
+    );
+    assert.ok(said.some((t) => t.includes("6 times today")));
+  });
+
+  test("once reads as once, and a count of none is not drawn at all", () => {
+    const one = facts({ trackerStalledAt: new Date(NOW - 60_000), trackerRestartsToday: 1 });
+    assert.ok(texts(one).some((t) => t.includes("once today")));
+
+    /* A stall mark with a count of zero is an older stall nothing has cleared,
+       and "0 times today" under "his phone stopped the tracker" reads as a
+       contradiction. */
+    const none = facts({ trackerStalledAt: new Date(NOW - 60_000), trackerRestartsToday: 0 });
+    assert.ok(!texts(none).some((t) => t.includes("today")));
+
+    /* And a build that cannot say leaves the sentence exactly as it was. */
+    const old = facts({ trackerStalledAt: new Date(NOW - 60_000), trackerRestartsToday: null });
+    assert.ok(!texts(old).some((t) => t.includes("today")));
   });
 });

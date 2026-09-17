@@ -40,11 +40,14 @@ const verdict = (over: Partial<Parameters<typeof trailVerdict>[0]>) =>
  * coincidence: five minutes times four is twenty, and twenty minutes of
  * silence is a killed service. Correcting the cadence to three seconds — the
  * change that made the trail road-by-road — turned the same multiplication
- * into TWELVE SECONDS, and the penalty for crossing it is that
- * `fallBackToFloor()` abandons real background tracking for the rest of the
+ * into TWELVE SECONDS, and the penalty for crossing it was that
+ * `fallBackToFloor()` abandoned real background tracking for the rest of the
  * process. So the watchdog switched tracking off on healthy handsets about a
  * minute after check-in, and the office read "his phone stopped the tracker",
- * which was true and was this rule's own doing.
+ * which was true and was this rule's own doing. The caller restarts the
+ * tracker now rather than giving up on it, so the penalty is one wasted
+ * registration and one place in the day's restart budget — smaller, and still
+ * not free.
  * ------------------------------------------------------------------------- */
 
 test('a dense cadence does not shrink the window to nothing', () => {

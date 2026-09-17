@@ -150,3 +150,64 @@ describe("how far behind the phone is", () => {
     }
   });
 });
+
+describe("the watchdog that outlives the app", () => {
+  /* Its silence is a DIFFERENT fault from the background sync job's, which is
+     why it is a column of its own: that one runs by booting the JavaScript
+     bundle and can be quiet for a dozen reasons, and this one is a native
+     WorkManager worker, so its quiet means the manufacturer has stopped
+     honouring WorkManager for this app. */
+
+  test("a duration becomes an instant on our clock", () => {
+    const state = readDeviceState({ trackerWatchdogLastRunAgoSeconds: 900 });
+    assert.ok(state.trackerWatchdogLastRunAt instanceof Date);
+    assert.ok(Date.now() - state.trackerWatchdogLastRunAt.getTime() >= 900_000 - 5_000);
+  });
+
+  test("an explicit null clears it and an absent key does not", () => {
+    const cleared = readDeviceState({ trackerWatchdogLastRunAgoSeconds: null });
+    assert.ok("trackerWatchdogLastRunAt" in cleared);
+    assert.equal(cleared.trackerWatchdogLastRunAt, null);
+
+    /* A handset on the old APK sends nothing for this, and must not wipe what a
+       newer build already said about the same phone. */
+    const untouched = readDeviceState({ batteryPercent: 50 });
+    assert.ok(!("trackerWatchdogLastRunAt" in untouched));
+  });
+
+  test("a negative is dropped rather than stamped as now", () => {
+    /* It means the handset measured a gap ending in its own future, which is a
+       clock that moved under it — and `-1` is also the native side's word for
+       "never", which the bridge is supposed to have turned into null before it
+       ever got here. Either way it is not evidence. */
+    const state = readDeviceState({ trackerWatchdogLastRunAgoSeconds: -1 });
+    assert.ok(!("trackerWatchdogLastRunAt" in state));
+  });
+});
+
+describe("how much reviving this phone has needed today", () => {
+  test("zero is a real answer and is stored", () => {
+    /* It is the HEALTHY answer — the tracker has not had to be revived — so it
+       is read like the queue depth and not like a mark: absence, never zero, is
+       what means "this build cannot say". */
+    const state = readDeviceState({ trackerRestartsToday: 0 });
+    assert.equal(state.trackerRestartsToday, 0);
+  });
+
+  test("a real count survives, rounded", () => {
+    assert.equal(readDeviceState({ trackerRestartsToday: 6 }).trackerRestartsToday, 6);
+    assert.equal(readDeviceState({ trackerRestartsToday: 6.4 }).trackerRestartsToday, 6);
+  });
+
+  test("an absent count is not a phone that needed none", () => {
+    const state = readDeviceState({ batteryPercent: 50 });
+    assert.ok(!("trackerRestartsToday" in state));
+  });
+
+  test("nonsense is dropped", () => {
+    for (const v of ["six", -2, Number.NaN, null]) {
+      const state = readDeviceState({ trackerRestartsToday: v });
+      assert.ok(!("trackerRestartsToday" in state), `${String(v)} must not reach the column`);
+    }
+  });
+});

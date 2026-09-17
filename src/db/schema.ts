@@ -5092,6 +5092,47 @@ export const mbosDevices = pgTable(
      */
     trackerStalledAt: timestamp("tracker_stalled_at", { withTimezone: true }),
     /**
+     * WHEN THE ONE MECHANISM THAT OUTLIVES THE APP LAST RAN.
+     *
+     * Everything else that watches the trail is a JavaScript timer, and a
+     * JavaScript timer stops the moment the app leaves the screen — which is
+     * exactly the moment the tracker needs watching. When an OEM battery
+     * manager reaps the process there is no timer, no bundle and no runtime
+     * left, and nothing in the app could notice, because noticing required
+     * being alive. This is a native WorkManager worker, which is the only
+     * scheduler Android guarantees across process death.
+     *
+     * DELIBERATELY NOT THE SAME COLUMN AS `background_sync_last_run_at`. That
+     * one is the expo-background-task job, which runs by booting the whole
+     * JavaScript bundle, so its silence can mean the bundle would not start.
+     * This one touches no bundle, so its silence means one thing only: the
+     * manufacturer has stopped honouring WorkManager for this app at all.
+     *
+     * Stamped from a DURATION the handset sends, never an instant it claims —
+     * the same reasoning as the two marks above it.
+     */
+    trackerWatchdogLastRunAt: timestamp("tracker_watchdog_last_run_at", { withTimezone: true }),
+    /**
+     * HOW MANY TIMES THE TRACKER HAS HAD TO BE REVIVED TODAY.
+     *
+     * The handset's own restarts plus the native watchdog's, added together by
+     * the phone, because a manager is asking one question — how much reviving
+     * has this phone needed — and which of our two mechanisms did it is a fact
+     * about our code rather than about his salesman.
+     *
+     * ZERO IS A REAL ANSWER and it is the healthy one: the tracker has not had
+     * to be revived. Null is a build that cannot say, which is every handset in
+     * the field until the next APK. Drawing the second as the first would put
+     * the most reassuring mark on this row on the phones that have earned it
+     * least — the same rule `queued_positions` keeps one field along.
+     *
+     * The day it counts is the HANDSET's local calendar day, rolled over there
+     * rather than here, because the count and the roll-over have to happen in
+     * the same place the restarts do — a phone that is offline all afternoon
+     * still has to be able to answer for its own morning.
+     */
+    trackerRestartsToday: integer("tracker_restarts_today"),
+    /**
      * HOW MANY FIXES THE PHONE IS STILL HOLDING.
      *
      * Every position waits in a local queue until the server confirms it, which

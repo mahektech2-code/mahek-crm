@@ -85,6 +85,23 @@ const DEFAULTS: Record<string, unknown> = {
      there is something worth a manager's attention. */
   'mbos.location.queuedPositionsWorthSaying': 200,
   'mbos.location.trailStalledMinSilenceSeconds': 300,
+  /* WHAT HAPPENS AFTER THE HANDSET STOPS BELIEVING IT IS TRACKING, which for
+     the life of the module was "give up for the rest of the process" — and what
+     it gave up FOR only records while the app is on screen, so a phone in a
+     pocket recorded nothing at all. These two are the rate at which it now
+     tries again instead: one attempt per interval, capped per day. See
+     `engines/tracker-restart.ts`. */
+  'mbos.location.trackerRestartMinIntervalSeconds': 900,
+  'mbos.location.trackerRestartsPerDay': 24,
+  /* And the native watchdog's own period. FIFTEEN IS ANDROID'S FLOOR — a
+     shorter one is silently rounded up, which is exactly the shape of the
+     `timeInterval` bug and is why the number is refused rather than accepted at
+     both ends. */
+  'mbos.location.watchdogEveryMinutes': 15,
+  /* Whether the phone tells its owner it has stopped recording. Opening the app
+     is the only thing that puts the dense trail back, so this turns a recovery
+     that was already happening by accident into one somebody is asked for. */
+  'mbos.location.watchdogNudge': true,
   /* Whether a day may open on a phone that cannot show it will record one.
      `block` matches the registry's default, because a handset that has never
      bootstrapped must behave as the office would have told it to — and because

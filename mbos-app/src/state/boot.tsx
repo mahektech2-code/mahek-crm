@@ -5,6 +5,7 @@ import { recoverInterrupted } from '../sync/queue';
 import { startBackgroundSync, stopBackgroundSync } from '../sync/engine';
 import { registerBackgroundSync, unregisterBackgroundSync } from '../sync/background-sync-task';
 import * as trail from '../sync/trail';
+import { stopWatchdog } from '../native/tracker-watchdog';
 import { currentSession, type Session } from '../data/session';
 import { autoCloseMissedCheckouts, dayState } from '../data/attendance';
 import { closeOpenVisits } from '../data/visits';
@@ -112,6 +113,13 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
         } else {
           stopBackgroundSync();
           void unregisterBackgroundSync();
+          /* AND THE TRACKER WATCHDOG, which a check-out deliberately does not
+             touch — see `armWatchdog`. Signing out is the one event that means
+             this handset is no longer anybody's: leaving a WorkManager job
+             waking a released phone every fifteen minutes to revive a tracker
+             for somebody who has gone is the same mistake as a session row left
+             good for thirty days, one layer down. */
+          void stopWatchdog();
         }
       },
     }),
