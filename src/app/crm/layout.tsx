@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { isManager, requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
-import { navForModules } from "@/components/shell/nav";
+import { navForModules, pinnedForModules } from "@/components/shell/nav";
 import { webApps } from "@/lib/apps";
 import { getScope } from "@/lib/scope";
 import { crmBadgeCounts, customerStatusRequestCount, listNotifications } from "@/lib/queries";
@@ -45,6 +45,7 @@ export default async function AppLayout({
       // an ungranted module is a HELD module, so role is the only thing that
       // keeps an approval queue away from the people it answers.
       nav={navForModules(modules.map((m) => m.href), isManager(user))}
+      pinnedNav={pinnedForModules(modules.map((m) => m.href))}
     >
       {children}
     </AppShell>

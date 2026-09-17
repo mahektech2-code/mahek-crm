@@ -8,7 +8,7 @@ import {
   modulesForApp,
 } from "./modules";
 import { grantableApps } from "./modules";
-import { NAV } from "@/components/shell/nav";
+import { NAV, PINNED, navHrefs as crmNavHrefs } from "@/components/shell/nav";
 import { NOT_IN_SIDEBAR, SALES_NAV, SALES_PINNED, navHrefs } from "@/app/sales/nav";
 
 /* ---------------------------------------------------------------------------
@@ -66,11 +66,11 @@ describe("the registry and the navigation agree", () => {
     // A link with no module behind it is a screen nobody can be stopped from
     // opening, and it would silently disappear from the sidebar, since the
     // sidebar filters itself through this list.
+    // Both halves: Dashboard is pinned above the groups, so a check reading
+    // the groups alone would stop looking at the app's own home.
     const keys = new Set(modulesForApp("crm").map((m) => m.href));
-    for (const group of NAV) {
-      for (const item of group.items) {
-        assert.ok(keys.has(item.href), `${item.href} has no module`);
-      }
+    for (const href of crmNavHrefs()) {
+      assert.ok(keys.has(href), `${href} has no module`);
     }
   });
 
@@ -141,6 +141,20 @@ describe("the registry and the navigation agree", () => {
    */
   it("every group has a glyph the icon set carries", () => {
     for (const group of SALES_NAV) {
+      assert.ok(group.icon, `${group.label} has no icon`);
+    }
+  });
+
+  it("the CRM draws nothing twice, pinned or grouped", () => {
+    const grouped = new Set(NAV.flatMap((g) => g.items.map((i) => i.href)));
+    for (const item of PINNED) {
+      assert.equal(grouped.has(item.href), false, `${item.href} is pinned and in a group`);
+    }
+    assert.deepEqual(crmNavHrefs(), [...new Set(crmNavHrefs())], "the sidebar draws an href twice");
+  });
+
+  it("every CRM group has a glyph the icon set carries", () => {
+    for (const group of NAV) {
       assert.ok(group.icon, `${group.label} has no icon`);
     }
   });
