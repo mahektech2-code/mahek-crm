@@ -264,8 +264,14 @@ export async function listAssignableUsers(): Promise<
  * never written to one — the action resolves it back to a name. `customers
  * .backOfficeName` already exists for exactly this: the sheet has always
  * named people who have no account.
+ *
+ * Memoised for the request. The customers list asks for it twice on one
+ * render — once for the picker, and once inside `salesManagerSuggestions`,
+ * which needs the same ids to key its answer on — so without this the two
+ * reads of `users` and the employee master happen twice for one screen, and
+ * the two lists could in principle be built a moment apart.
  */
-export async function listBackOfficeCandidates(): Promise<
+export const listBackOfficeCandidates = cache(async function listBackOfficeCandidates(): Promise<
   Array<{ id: string; name: string; role: string }>
 > {
   const [accounts, staff] = await Promise.all([
@@ -298,7 +304,7 @@ export async function listBackOfficeCandidates(): Promise<
       .filter((e) => !takenNames.has(e.name.trim().toLowerCase()))
       .map((e) => ({ id: `emp:${e.id}`, name: e.name, role: "employee" })),
   ];
-}
+});
 
 /**
  * Who a Salesman or Lead owner's OWN manager suggests as the Sales manager,
@@ -639,7 +645,52 @@ export async function listCityFilterOptions(): Promise<
   }));
 }
 
-export async function listAmFilterOptions(): Promise<{
+/**
+ * `btrim` with its default character set, in JavaScript — SPACES only.
+ *
+ * Deliberately not `String.prototype.trim`, which also eats tabs, newlines
+ * and every other Unicode space. The options list has to offer exactly the
+ * values `inListOrUnassigned` can match, and that comparison runs Postgres's
+ * `btrim`: a name stored with a trailing tab is one value to `btrim` and a
+ * different one to `trim`, so trimming harder here would put an option in the
+ * dropdown that the WHERE it feeds can never find.
+ */
+function btrimSpaces(value: string): string {
+  return value.replace(/^ +/, "").replace(/ +$/, "");
+}
+
+/**
+ * The three seat filters' option lists, in ONE pass over the book.
+ *
+ * It was three, one per seat, and each one was a `select distinct` over an
+ * expression carrying correlated `(select name from users …)` subqueries — so
+ * Postgres probed the thirteen-row `users` table once per customer per seat.
+ * Measured on production that was 7,219 sequential scans of `users` and 164ms
+ * to answer with about nine names, on four pages, on every load.
+ *
+ * What is read instead is the INPUTS: the ids and the stored name columns the
+ * three expressions are built from, deduplicated as a tuple, which on the real
+ * book is a few dozen rows rather than 2,587. `users` is read once, whole, and
+ * the ids are resolved against it in JavaScript.
+ *
+ * The three chains below are transcriptions of `SALES_AM_NAME_SQL`,
+ * `SALES_MANAGER_NAME_SQL` and `BACK_OFFICE_AM_NAME_SQL` and must stay
+ * transcriptions — the comments above each of those carry the reasoning for
+ * why the fallbacks are ordered as they are, and a filter offering a name the
+ * column does not render is a filter somebody tries once. The stored name
+ * columns are still read FIRST or SECOND exactly as each expression reads
+ * them, because those people may have no MahekOne login at all.
+ *
+ * The `users` read is deliberately unfiltered: the subqueries it replaces never
+ * checked `active`, and dropping a leaver here would silently remove
+ * their name from a filter over accounts that still carry it.
+ *
+ * Memoised for the request, like `crmBadgeCounts` and `listTeam` above it.
+ * These names move on a nightly projection rather than per request, and four
+ * pages ask for them — the CRM and Accounts customer lists and both target
+ * screens — some of them beside a second read of the same book.
+ */
+export const listAmFilterOptions = cache(async function listAmFilterOptions(): Promise<{
   sales: string[];
   salesManager: string[];
   backOffice: string[];
@@ -648,39 +699,68 @@ export async function listAmFilterOptions(): Promise<{
   const ids = scopedUserIds(ctx.scope);
   const scoped = scopedToUsers(ids);
 
-  /*
-   * Deduplicated in Postgres, which is where a distinct list comes from.
-   *
-   * This used to read a row per CUSTOMER — the whole book, each row carrying
-   * two correlated subqueries against `users` — and reduce it to about fifteen
-   * names with a JavaScript Set. The answer was always tiny; it was the
-   * question that was the size of the book.
-   *
-   * The trim goes into the expression rather than being applied afterwards,
-   * or " Vikram" and "Vikram" arrive as two distinct rows and dedupe back to
-   * one only after crossing the wire.
-   */
-  const distinctNames = async (expr: SQL<string | null>) => {
-    const trimmed = sql<string>`nullif(btrim(${expr}), '')`;
-    const rows = await db
-      .selectDistinct({ name: trimmed })
+  const [userRows, rows] = await Promise.all([
+    db.select({ id: users.id, name: users.name }).from(users),
+    db
+      .selectDistinct({
+        kind: customers.kind,
+        decided: sql<boolean>`customers.am_decided_at is not null`,
+        salesPersonName: customers.salesPersonName,
+        salesAmId: customers.salesAmId,
+        ownerId: customers.ownerId,
+        salesManagerId: customers.salesManagerId,
+        salesManagerPersonName: customers.salesManagerPersonName,
+        backOfficeAmId: customers.backOfficeAmId,
+        backOfficeName: customers.backOfficeName,
+      })
       .from(customers)
-      .where(and(scoped, sql`${trimmed} is not null`));
-    return rows
-      .map((r) => r.name)
-      // Sorted here rather than in SQL deliberately: `localeCompare` is what
-      // ordered this list before, and Postgres's collation is not the same
-      // comparison. Fifteen strings.
-      .sort((a, b) => a.localeCompare(b));
+      .where(scoped),
+  ]);
+
+  const nameById = new Map(userRows.map((u) => [u.id, u.name]));
+  const nameOf = (id: string | null) => (id ? nameById.get(id) ?? null : null);
+  // `coalesce`: the first argument that is not null. An empty string is a
+  // value and survives it, which is why the trimming below is a separate step
+  // rather than folded into the chain.
+  const coalesce = (...values: Array<string | null>) =>
+    values.find((v) => v !== null) ?? null;
+
+  const sales = new Set<string>();
+  const salesManager = new Set<string>();
+  const backOffice = new Set<string>();
+
+  const keep = (into: Set<string>, value: string | null) => {
+    if (value === null) return;
+    const trimmed = btrimSpaces(value);
+    // `nullif(btrim(…), '')` — a seat holding nothing but spaces is a seat
+    // nobody has answered, and offering it as a filter option would draw a
+    // blank row in the dropdown.
+    if (trimmed) into.add(trimmed);
   };
 
-  const [sales, salesManager, backOffice] = await Promise.all([
-    distinctNames(SALES_AM_NAME_SQL),
-    distinctNames(SALES_MANAGER_NAME_SQL),
-    distinctNames(BACK_OFFICE_AM_NAME_SQL),
-  ]);
-  return { sales, salesManager, backOffice };
-}
+  for (const r of rows) {
+    keep(
+      sales,
+      r.kind === "lead"
+        ? nameOf(r.ownerId)
+        : r.decided
+          ? coalesce(r.salesPersonName, nameOf(r.salesAmId))
+          : coalesce(r.salesPersonName, nameOf(r.salesAmId), nameOf(r.ownerId)),
+    );
+    keep(salesManager, coalesce(nameOf(r.salesManagerId), r.salesManagerPersonName));
+    keep(backOffice, coalesce(nameOf(r.backOfficeAmId), r.backOfficeName));
+  }
+
+  // Sorted here rather than in SQL deliberately: `localeCompare` is what
+  // ordered this list before, and Postgres's collation is not the same
+  // comparison. Fifteen strings.
+  const sorted = (set: Set<string>) => [...set].sort((a, b) => a.localeCompare(b));
+  return {
+    sales: sorted(sales),
+    salesManager: sorted(salesManager),
+    backOffice: sorted(backOffice),
+  };
+});
 
 /**
  * What a set of filters MEANS, as one clause, scope included.
