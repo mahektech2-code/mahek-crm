@@ -112,25 +112,46 @@ export function RemindersScreen({
 
   // displayStatus is derived on the server against the business day. Deriving
   // it again here from a browser clock is how the two end up disagreeing.
-  const buckets = {
-    /**
-     * Everything that needs doing today — overdue first, because a promise
-     * already broken is worse than one due in an hour.
-     *
-     * This is the count the sidebar badge carries, and it exists so that the
-     * two agree: a badge reading 6 that opened a list of 4 left a telecaller
-     * hunting for the other two.
-     */
-    due: [
-      ...rows.filter((r) => r.displayStatus === "overdue"),
-      ...rows.filter((r) => r.displayStatus === "due_today"),
-    ],
-    today: rows.filter((r) => r.displayStatus === "due_today"),
-    overdue: rows.filter((r) => r.displayStatus === "overdue"),
-    upcoming: rows.filter((r) => r.displayStatus === "upcoming"),
-    done: rows.filter((r) => r.status !== "pending"),
-    all: rows,
-  };
+  /*
+   * SIX BUCKETS IN ONE PASS, and memoised on the rows they come from.
+   *
+   * It was six `rows.filter(...)` calls in an object literal, so every render
+   * rebuilt all six — and this screen re-renders on every dialog open, every
+   * tab change and every keystroke inside the reschedule form. Only `rows`
+   * can change what is in a bucket, and that arrives from the server.
+   *
+   * It matters beyond the arithmetic: `visible` is one of these arrays, so a
+   * fresh array identity on every render is a new prop for everything below it
+   * — the work is in what re-renders, not in the filtering.
+   */
+  const buckets = React.useMemo(() => {
+    const overdue: Row[] = [];
+    const today: Row[] = [];
+    const upcoming: Row[] = [];
+    const done: Row[] = [];
+    for (const r of rows) {
+      if (r.status !== "pending") done.push(r);
+      if (r.displayStatus === "overdue") overdue.push(r);
+      else if (r.displayStatus === "due_today") today.push(r);
+      else if (r.displayStatus === "upcoming") upcoming.push(r);
+    }
+    return {
+      /**
+       * Everything that needs doing today — overdue first, because a promise
+       * already broken is worse than one due in an hour.
+       *
+       * This is the count the sidebar badge carries, and it exists so that the
+       * two agree: a badge reading 6 that opened a list of 4 left a telecaller
+       * hunting for the other two.
+       */
+      due: [...overdue, ...today],
+      today,
+      overdue,
+      upcoming,
+      done,
+      all: rows,
+    };
+  }, [rows]);
   const visible = buckets[tab];
 
   const oldest = buckets.overdue.reduce(
