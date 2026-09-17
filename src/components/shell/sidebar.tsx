@@ -1,12 +1,27 @@
 "use client";
 
-import { usePathname } from "next/navigation";
-import { NavLink } from "./nav-link";
-import { NAV, type NavGroup } from "./nav";
 import { Icon } from "./icons";
-import { cx } from "@/components/ui/primitives";
+import { CollapsibleNav, type NavRowItem } from "./collapsible-nav";
+import { NAV, PINNED, type NavGroup, type NavItem } from "./nav";
 import { AccountMenu } from "./account-menu";
+import { cx } from "@/components/ui/primitives";
 import type { User } from "@/db/schema";
+
+/* ---------------------------------------------------------------------------
+ * The CRM's sidebar, which is now the Manager Console's sidebar.
+ *
+ * The accordion, the pinned row, the badge roll-up and the open-group store
+ * all live in `./collapsible-nav.tsx` — one implementation for both apps, for
+ * the reason given in its own header. What is left here is the two things that
+ * are genuinely the CRM's: which icon set to draw, and where a badge's number
+ * comes from.
+ *
+ * THE RAIL IS KEPT, and it is the one place the accordion is not drawn. A 56px
+ * column has no room for a group's word, and a heading somebody cannot read is
+ * a button that cannot say what it opens — so railed, every item is drawn flat
+ * with the group dividers left in. It is the same list with its labels taken
+ * away rather than a different one.
+ * ------------------------------------------------------------------------- */
 
 export function Sidebar({
   collapsed,
@@ -15,6 +30,7 @@ export function Sidebar({
   badges,
   /** What this person may open. The layout resolved it; undefined means all. */
   groups = NAV,
+  pinned = PINNED,
 }: {
   collapsed: boolean;
   user: User;
@@ -22,8 +38,21 @@ export function Sidebar({
   hat: { label: string; sentence: string };
   badges: { reminders: number; complaints: number; statusRequests: number };
   groups?: NavGroup[];
+  pinned?: NavItem[];
 }) {
-  const pathname = usePathname();
+  /*
+   * The CRM names its badges rather than keying them by href, because the
+   * three numbers are read once in the layout and handed down — see the note
+   * on `NavItem.badge`, which is an internal discriminator and free to be
+   * renamed. `countFor` is where that shape meets the shared component's.
+   */
+  const countFor = (item: NavRowItem) => {
+    const badge = (item as NavItem).badge;
+    if (badge === "reminders") return badges.reminders;
+    if (badge === "complaints") return badges.complaints;
+    if (badge === "statusRequests") return badges.statusRequests;
+    return 0;
+  };
 
   return (
     <aside
@@ -32,69 +61,25 @@ export function Sidebar({
         collapsed ? "w-14" : "w-[216px]",
       )}
     >
-      <nav className="flex-1 overflow-y-auto px-1.5 pt-2 pb-4">
-        {groups.map((group) => (
-          <div key={group.label}>
-            {!collapsed ? (
-              <div className="px-2.5 pt-3.5 pb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                {group.label}
-              </div>
-            ) : (
-              <div className="my-2 border-t border-divider" />
-            )}
-            {group.items.map((item) => {
-              const active =
-                pathname === item.href || pathname.startsWith(item.href + "/");
-              const count =
-                item.badge === "reminders"
-                  ? badges.reminders
-                  : item.badge === "complaints"
-                    ? badges.complaints
-                    : item.badge === "statusRequests"
-                      ? badges.statusRequests
-                      : 0;
-
-              return (
-                <NavLink
-                  key={item.href}
-                  href={item.href}
-                  // Prefetched on hover rather than on sight, and only now
-                  // that `crm/loading.tsx` exists — see nav-link.tsx for why
-                  // both halves of that sentence are load bearing.
-                  title={collapsed ? item.label : undefined}
-                  className={cx(
-                    "mb-0.5 flex h-9 items-center gap-2.5 rounded-[4px] px-2.5 text-sm no-underline hover:no-underline",
-                    active
-                      ? "bg-brand-soft font-medium text-[#5223E0]"
-                      : "text-body hover:bg-canvas hover:text-ink",
-                    collapsed && "justify-center px-0",
-                  )}
-                >
-                  <Icon name={item.icon} size={20} className="flex-none" />
-                  {!collapsed ? (
-                    <>
-                      <span className="truncate">{item.label}</span>
-                      <span className="flex-1" />
-                      {count > 0 ? (
-                        <span
-                          className={cx(
-                            "inline-flex h-5 min-w-5 items-center justify-center rounded-[3px] px-1 text-[11px] font-medium",
-                            item.badge === "complaints"
-                              ? "bg-danger-soft text-danger"
-                              : "bg-warn-soft text-warn-ink",
-                          )}
-                        >
-                          {count}
-                        </span>
-                      ) : null}
-                    </>
-                  ) : null}
-                </NavLink>
-              );
-            })}
-          </div>
-        ))}
-      </nav>
+      <CollapsibleNav
+        storageKey="crm.nav.open"
+        ariaLabel="CRM sections"
+        pinned={pinned}
+        groups={groups}
+        countFor={countFor}
+        railed={collapsed}
+        renderIcon={(name, size) => <Icon name={name} size={size} className="flex-none" />}
+        /*
+         * The CRM's own rule about WHICH queue rather than about how big a
+         * number is: a complaint is red at one, because one unanswered
+         * complaint is not a lighter version of five. Everything else is amber
+         * whatever it counts. Rolled up onto a shut heading the shared
+         * component uses amber, which is right — a group is not one queue.
+         */
+        badgeToneFor={(item) =>
+          (item as NavItem).badge === "complaints" ? "danger" : "warn"
+        }
+      />
 
       {/*
         The chip is the account menu now, not a label with a sign-out icon
