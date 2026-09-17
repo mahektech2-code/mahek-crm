@@ -29,7 +29,7 @@ import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { popularProducts } from "@/lib/services/product-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
-import { listTargets } from "@/lib/services/worklist-services";
+import { targetFor } from "@/lib/services/worklist-services";
 import { customerStatusLabel, daysBetween } from "@/lib/format";
 import { categoryLabel, categoryValue } from "@/lib/complaint-labels";
 // How much of the timeline the page arrives with — see `TIMELINE_PAGE`. The
@@ -81,14 +81,16 @@ export default async function CustomerRecordPage({
   const day = await today();
   const period = await currentPeriod();
 
-  const [config, timeline, timelineCounts, messages, targets, followUp, stats] =
+  const [config, timeline, timelineCounts, messages, target, followUp, stats] =
     await Promise.all([
     getConfig(),
     // The FIRST PAGE of it, not the history. See `customerTimeline`.
     customerTimeline(id, { limit: TIMELINE_PAGE }),
     customerTimelineCounts(id),
     customerMessages(id),
-    listTargets(period),
+    // This account's own figure and the share of the book it is — not the
+    // whole targets list read to `.find` one row out of it. See `targetFor`.
+    targetFor(id, period),
     getFollowUpDetail(id),
     // Order count, month-to-date value and how long they actually take to pay,
     // in one round trip.
@@ -179,9 +181,6 @@ export default async function CustomerRecordPage({
   // join onto the customer read: these are six independent lists and one of
   // them being slow should not hold the others up.
   const detail = await customerRecordDetail(id, day);
-
-  const target = targets.find((t) => t.customerId === id);
-  const totalTarget = targets.reduce((a, t) => a + t.target, 0);
 
   /*
    * The open complaint the banner shouts about, read from the COMPLAINTS
@@ -309,13 +308,10 @@ export default async function CustomerRecordPage({
          * which. Coalescing to 0 here would put "of ₹0" and a 0% bar on a
          * delivery shop with a month of real orders behind it.
          */
-        amount: target?.target ?? null,
+        amount: target?.amount ?? null,
         achieved: Number(stats?.thisMonth ?? 0),
         isDefault: target?.isDefault ?? true,
-        shareOfBook:
-          target && totalTarget
-            ? Math.round((target.target / totalTarget) * 100)
-            : null,
+        shareOfBook: target?.shareOfBookPercent ?? null,
       }}
       openComplaint={
         openComplaint

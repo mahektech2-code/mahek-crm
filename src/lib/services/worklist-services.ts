@@ -1070,6 +1070,160 @@ function targetVisibilityClause(ctx: RequestScope) {
   );
 }
 
+/**
+ * WHICH ACCOUNTS THE MONTH IS MEASURED OVER, as one clause — and the join
+ * that hangs the month's target row off each of them.
+ *
+ * Factored out of `listTargets` so the aggregate and the single-row reads
+ * below answer from exactly the same population. It is deliberately NOT
+ * `targetFilterClause`, which carries `scopedToUsers`: this screen's
+ * visibility is `targetVisibilityClause`, wider by the sales manager seat, and
+ * a total computed over the narrower one would quietly disagree with the list
+ * sitting under it.
+ */
+async function targetListClause(period: string | undefined, filters: TargetListFilters) {
+  const ctx = await resolveScope();
+  const visibility = targetVisibilityClause(ctx);
+  const customerClause = customerFiltersOnly({
+    query: filters.query,
+    status: filters.status,
+    salesAm: filters.salesAm,
+    salesManager: filters.salesManager,
+    backOfficeAm: filters.backOfficeAm,
+  });
+  const day = await today();
+  const key = period ?? monthKey(day);
+  const [year, month] = key.split("-").map(Number);
+
+  return {
+    key,
+    year,
+    month,
+    joinTarget: and(
+      eq(monthlyTargets.customerId, customers.id),
+      eq(monthlyTargets.year, year),
+      eq(monthlyTargets.month, month),
+    ),
+    where: and(
+      // A customer who has gone quiet still carries a target — that is the
+      // gap the month has to explain. Only deactivation removes them.
+      ne(customers.status, "deactivated"),
+      /*
+       * A TARGET IS SET ON AN ACCOUNT WE INVOICE, AND ON NOTHING ELSE.
+       * `DIRECT_CUSTOMER_SQL` — the same definition the Customers list's own
+       * type filter reads, so the two screens cannot disagree about what a
+       * direct customer is.
+       *
+       * A lead has never bought from us: a monthly figure against one is a
+       * target nobody could have met, and it dragged the whole list's
+       * achievement down with it. A third-party shop never buys from us
+       * directly either — its goods are billed to its distributor, so the
+       * rupees already count towards THAT account's month and counting them
+       * again here would be the same money twice.
+       *
+       * Neither is being hidden from the month for good: both become direct
+       * customers by buying. A lead's `kind` flips on its first order, and a
+       * third-party shop that starts buying from us has its mark lifted by a
+       * person — and either then arrives on this list carrying the default
+       * like any other customer. That is why nothing here has to carry a
+       * target for them in the meantime.
+       */
+      DIRECT_CUSTOMER_SQL,
+      visibility,
+      // Undefined where nothing is filtered, which `and` drops — so the
+      // unfiltered read is the query it always was, byte for byte.
+      customerClause,
+    ),
+  };
+}
+
+/**
+ * THE MONTH'S TWO SCALARS, WITHOUT THE BOOK BEHIND THEM.
+ *
+ * The CRM dashboard prints one percentage out of this screen's figures and
+ * read the WHOLE list to reduce it to two sums — every direct customer in
+ * scope, each row carrying four correlated name subqueries and an entire
+ * `customers` row, to say "63% of target". Same population, same join, one row
+ * back.
+ *
+ * `coalesce(target_amount, 0)` is the sum, and that is NOT the approximation
+ * `listTargetsPage`'s own aggregate documents: on the list's missing-row path
+ * `resolveTarget` is handed `trailingAchievement: []`, so its base is 0 and
+ * every later multiplication is a multiplication of 0. The default a customer
+ * with no row resolves to IS zero, so summing the stored figures and summing
+ * the resolved ones are the same number by construction — which is what lets
+ * the dashboard's figure stay the figure it was.
+ */
+export async function targetTotals(
+  period?: string,
+  filters: TargetListFilters = {},
+): Promise<{ customers: number; target: number; achieved: number }> {
+  const { where, joinTarget, year, month } = await targetListClause(period, filters);
+
+  const [row] = await db
+    .select({
+      customers: sql<number>`count(*)::int`,
+      target: sql<number>`coalesce(sum(coalesce(${monthlyTargets.targetAmount}, 0)), 0)::bigint`,
+      achieved: sql<number>`coalesce(sum(${targetAchievedSql(year, month)}), 0)::bigint`,
+    })
+    .from(customers)
+    .leftJoin(monthlyTargets, joinTarget)
+    .where(where);
+
+  return {
+    customers: Number(row?.customers ?? 0),
+    target: Number(row?.target ?? 0),
+    achieved: Number(row?.achieved ?? 0),
+  };
+}
+
+/**
+ * ONE CUSTOMER'S TARGET, and the share of the book it is.
+ *
+ * The customer record is the most-opened page in the CRM, and it read the
+ * entire targets list to pull one row out of it with `.find` and sum the rest
+ * — so opening one account scanned every direct customer in scope.
+ *
+ * NULL WHERE THE ACCOUNT IS NOT ON THIS SCREEN AT ALL, which is what the card
+ * is built on: a lead has never bought from us and a third-party shop is
+ * billed by its distributor, so an account absent from the population has no
+ * target rather than a target of nothing. That is why this runs the same
+ * clause — reading `monthly_targets` directly would answer "no row, therefore
+ * zero" and put "of ₹0" on a delivery shop with a month of real orders behind
+ * it.
+ */
+export async function targetFor(
+  customerId: string,
+  period?: string,
+): Promise<{ amount: number; isDefault: boolean; shareOfBookPercent: number | null } | null> {
+  const { where, joinTarget } = await targetListClause(period, {});
+
+  const [row] = await db
+    .select({
+      // The same pair every list row resolves to: the stored figure, or the
+      // default, which on this path is always 0. See `targetTotals`.
+      amount: sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)::bigint`,
+      isDefault: sql<boolean>`coalesce(${monthlyTargets.isDefault}, true)`,
+    })
+    .from(customers)
+    .leftJoin(monthlyTargets, joinTarget)
+    .where(and(where, eq(customers.id, customerId)))
+    .limit(1);
+
+  if (!row) return null;
+
+  // Asked for only once the account is known to be on the screen. The share is
+  // of the book THIS reader can see, which is exactly what the list's own
+  // reduce over every visible row was.
+  const { target: bookTarget } = await targetTotals(period);
+  const amount = Number(row.amount ?? 0);
+  return {
+    amount,
+    isDefault: Boolean(row.isDefault),
+    shareOfBookPercent: bookTarget ? Math.round((amount / bookTarget) * 100) : null,
+  };
+}
+
 export async function listTargets(
   period?: string,
   /*
@@ -1104,19 +1258,10 @@ export async function listTargets(
    */
   filters: TargetListFilters = {},
 ) {
-  const ctx = await resolveScope();
-  const visibility = targetVisibilityClause(ctx);
-  const customerClause = customerFiltersOnly({
-    query: filters.query,
-    status: filters.status,
-    salesAm: filters.salesAm,
-    salesManager: filters.salesManager,
-    backOfficeAm: filters.backOfficeAm,
-  });
   const config = await getConfig();
-  const day = await today();
-  const key = period ?? monthKey(day);
-  const [year, month] = key.split("-").map(Number);
+  // The population, the join and the month, built once in `targetListClause`
+  // so the aggregate and the single-row reads above measure the same book.
+  const { where, joinTarget, year, month, key } = await targetListClause(period, filters);
 
   const rows = await db
     .select({
@@ -1149,46 +1294,8 @@ export async function listTargets(
       )`,
     })
     .from(customers)
-    .leftJoin(
-      monthlyTargets,
-      and(
-        eq(monthlyTargets.customerId, customers.id),
-        eq(monthlyTargets.year, year),
-        eq(monthlyTargets.month, month),
-      ),
-    )
-    .where(
-      and(
-        // A customer who has gone quiet still carries a target — that is the
-        // gap the month has to explain. Only deactivation removes them.
-        ne(customers.status, "deactivated"),
-        /*
-         * A TARGET IS SET ON AN ACCOUNT WE INVOICE, AND ON NOTHING ELSE.
-         * `DIRECT_CUSTOMER_SQL` — the same definition the Customers list's
-         * own type filter reads, so the two screens cannot disagree about
-         * what a direct customer is.
-         *
-         * A lead has never bought from us: a monthly figure against one is a
-         * target nobody could have met, and it dragged the whole list's
-         * achievement down with it. A third-party shop never buys from us
-         * directly either — its goods are billed to its distributor, so the
-         * rupees already count towards THAT account's month and counting them
-         * again here would be the same money twice.
-         *
-         * Neither is being hidden from the month for good: both become direct
-         * customers by buying. A lead's `kind` flips on its first order, and a
-         * third-party shop that starts buying from us has its mark lifted by
-         * a person — and either then arrives on this list carrying the default
-         * like any other customer. That is why nothing here has to carry a
-         * target for them in the meantime.
-         */
-        DIRECT_CUSTOMER_SQL,
-        visibility,
-        // Undefined where nothing is filtered, which `and` drops — so the
-        // unfiltered read is the query it always was, byte for byte.
-        customerClause,
-      ),
-    )
+    .leftJoin(monthlyTargets, joinTarget)
+    .where(where)
     .orderBy(asc(customers.name));
 
   return rows.map((r) => {
@@ -1643,22 +1750,55 @@ export async function setTargetsBulk(
   return ok({ updated }, `Targets set for ${updated} customers`);
 }
 
-/** The view a manager opens before a coaching conversation. */
+/**
+ * The view a manager opens before a coaching conversation.
+ *
+ * It is a worklist rather than a table, so it is narrowed by the same filters
+ * and then read WHOLE — see `listTargetsPage`. What it does not need is the
+ * four seat names every list row carries, each of them a correlated subquery
+ * against `users` on every customer in scope, because `classifyShortfall` asks
+ * only about a customer's own contacts against their own cycle. So this reads
+ * the six columns it classifies on and nothing else, off the SAME clause the
+ * list runs — the population has to be identical or a manager would be
+ * coaching against a different book to the one on the screen above it.
+ */
 export async function shortfallAnalysis(
   period?: string,
   filters: TargetListFilters = {},
 ) {
   await requireCapability("target.shortfall");
   const day = await today();
-  const rows = await listTargets(period, filters);
+  const { where, joinTarget, year, month } = await targetListClause(period, filters);
+
+  const rows = await db
+    .select({
+      customerId: customers.id,
+      name: customers.name,
+      cycleDays: customers.cycleDays,
+      // The stored figure, or the default — which on the missing-row path is
+      // always 0. See `targetTotals` for why that is an identity rather than
+      // an approximation.
+      target: sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)::bigint`,
+      achieved: targetAchievedSql(year, month),
+      contactsThisMonth: sql<number>`(
+        select count(*)::int from calls c
+         where c.customer_id = customers.id
+           and extract(year from c.started_at) = ${year}
+           and extract(month from c.started_at) = ${month}
+      )`,
+    })
+    .from(customers)
+    .leftJoin(monthlyTargets, joinTarget)
+    .where(where)
+    .orderBy(asc(customers.name));
 
   return classifyShortfall(
     rows.map((r) => ({
       customerId: r.customerId,
-      name: r.customerName,
-      target: r.target,
-      achieved: r.achieved,
-      contactsThisMonth: r.contactsThisMonth,
+      name: r.name,
+      target: Number(r.target ?? 0),
+      achieved: Number(r.achieved ?? 0),
+      contactsThisMonth: Number(r.contactsThisMonth ?? 0),
       cycleDays: r.cycleDays,
     })),
     day,

@@ -16,7 +16,7 @@ import {
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { queueProgress } from "@/lib/services/queue-service";
 import { getFollowUpWorklist } from "@/lib/services/payment-service";
-import { listInactiveWatch, listTargets } from "@/lib/services/worklist-services";
+import { listInactiveWatch, targetTotals } from "@/lib/services/worklist-services";
 import { getConfig } from "@/lib/config/store";
 import {
   addDays,
@@ -211,7 +211,8 @@ async function DashboardFigures({
       queueProgress(),
       getFollowUpWorklist(),
       listInactiveWatch(),
-      listTargets(period),
+      // Two sums, not the whole book to reduce to two sums. See `targetTotals`.
+      targetTotals(period),
       dashboardCounts(teamView ? null : user.id, day, {
         reminders: config["dashboard.reminderOverdueFlagDays"],
         complaints: config["dashboard.complaintUnresolvedFlagDays"],
@@ -231,8 +232,8 @@ async function DashboardFigures({
   const { overdueReminders } = counts;
   const { dueReminders, openComplaints } = badgeCounts;
 
-  const targetTotal = targets.reduce((a, t) => a + t.target, 0);
-  const achieved = targets.reduce((a, t) => a + t.achieved, 0);
+  const targetTotal = targets.target;
+  const achieved = targets.achieved;
   const targetPct = pct(achieved, targetTotal);
 
 
