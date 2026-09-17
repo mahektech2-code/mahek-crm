@@ -1,8 +1,20 @@
-import Link from "next/link";
 import { nowMs, stamp } from "@/lib/format";
 import { getConfig } from "@/lib/config/store";
 import { syncHealth } from "@/lib/services/sales-service";
-import { Banner, Cell, Empty, HeadCell, MetricRow, Pill, Row, ScreenHeader, Table } from "../parts";
+import {
+  Banner,
+  Cell,
+  Empty,
+  EntityLink,
+  HeadCell,
+  MetricRow,
+  Pill,
+  Row,
+  ScreenHeader,
+  SortHead,
+  Table,
+} from "../parts";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 
 export const metadata = { title: "Sync health — Sales Dashboard — MahekOne" };
 
@@ -19,7 +31,12 @@ export const metadata = { title: "Sync health — Sales Dashboard — MahekOne" 
  * and just as real: when each handset last spoke at all, and what the office
  * has actually refused from it in the last week.
  */
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ sort?: string; dir?: string }>;
+}) {
+  const params = await searchParams;
   const [rows, config] = await Promise.all([syncHealth(), getConfig()]);
   const quietHours = config["mbos.sync.quietHours"];
 
@@ -28,6 +45,27 @@ export default async function Page() {
   const quiet = rows.filter((r) => !r.lastSeenAt || now - r.lastSeenAt.getTime() > quietMs);
   const refused = rows.filter((r) => r.rejected7d > 0 || r.unresolvedConflicts > 0);
   const totalRejected = rows.reduce((sum, r) => sum + r.rejected7d, 0);
+
+  /* Sorting is DISPLAY ONLY. The three figures above the table are counted
+     over every handset the scope allows and never over the sorted copy —
+     re-ordering a list changes where a row sits, not whether it is in the set,
+     and a "quiet handsets" count that moved when somebody clicked a column
+     would be the screen disagreeing with itself. The quiet and refused sets
+     are the same rows by reference, so `includes` below is unaffected by the
+     copy `sortRows` returns. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(rows, sort, COLUMNS);
+  const head = (key: string, label: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/sync-health", sort, key)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {label}
+    </SortHead>
+  );
 
   return (
     <div className="p-6">
@@ -69,33 +107,33 @@ export default async function Page() {
           minWidth={1180}
           head={
             <>
-              <HeadCell width={200}>Salesman</HeadCell>
+              {head("name", "Salesman", 200)}
+              {/* The handset column is the model string as the phone reported
+                  it, and one manufacturer spells its own devices three ways —
+                  so an alphabetical pass over it groups nothing anybody asked
+                  about. The state column is the other two together, drawn as
+                  pills; sorting by them is sorting by "quiet, then refused,
+                  then healthy", which is exactly what the two numeric columns
+                  beside it already answer with a figure. */}
               <HeadCell width={220}>Handset</HeadCell>
-              <HeadCell width={190}>Last spoke</HeadCell>
-              <HeadCell width={140} align="right">
-                Rejected, 7d
-              </HeadCell>
-              <HeadCell width={160} align="right">
-                Conflicts, 7d
-              </HeadCell>
-              <HeadCell width={170} align="right">
-                Unresolved
-              </HeadCell>
+              {head("spoke", "Last spoke", 190)}
+              {head("rejected", "Rejected, 7d", 140, "right")}
+              {head("conflicted", "Conflicts, 7d", 160, "right")}
+              {head("unresolved", "Unresolved", 170, "right")}
               <HeadCell>State</HeadCell>
             </>
           }
         >
-          {rows.map((r, i) => {
+          {sorted.map((r, i) => {
             const isQuiet = quiet.includes(r);
             return (
               <Row key={r.salesmanId} striped={i % 2 === 1}>
                 <Cell truncate={200}>
-                  <Link
+                  <EntityLink
                     href={`/sales/people/${r.salesmanId}`}
-                    className="font-medium text-ink no-underline hover:underline"
                   >
                     {r.salesmanName}
-                  </Link>
+                  </EntityLink>
                 </Cell>
                 <Cell truncate={220}>
                   {r.model ?? r.platform ?? <span className="text-muted">No handset bound</span>}
@@ -141,3 +179,27 @@ export default async function Page() {
     </div>
   );
 }
+
+/**
+ * What each sortable column is worth.
+ *
+ * "Last spoke" is the reason this screen wanted sorting at all — the query
+ * orders by it already, and the question underneath it is asked both ways: who
+ * has been silent longest, and who is still reporting. A handset that has
+ * never spoken has no date and sorts LAST in either direction, which is right
+ * here: it is a person who has never signed in on a phone rather than one who
+ * has gone quiet, and the metric above the table is where that is said.
+ */
+const COLUMNS: SortColumns<{
+  salesmanName: string;
+  lastSeenAt: Date | string | null;
+  rejected7d: number;
+  conflicted7d: number;
+  unresolvedConflicts: number;
+}> = {
+  name: (r) => r.salesmanName,
+  spoke: (r) => (r.lastSeenAt ? new Date(r.lastSeenAt).getTime() : null),
+  rejected: (r) => r.rejected7d,
+  conflicted: (r) => r.conflicted7d,
+  unresolved: (r) => r.unresolvedConflicts,
+};

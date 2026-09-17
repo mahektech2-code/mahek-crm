@@ -7,13 +7,15 @@ import {
   Cell,
   Empty,
   FilterChips,
-  HeadCell,
   MetricRow,
   Pill,
   Row,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
+import { CustomerName } from "../customer-name";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 import {
   plural,
 } from "../words";
@@ -36,7 +38,7 @@ export const metadata = { title: "Tasks — Sales Dashboard — MahekOne" };
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ show?: string }>;
+  searchParams: Promise<{ show?: string; sort?: string; dir?: string }>;
 }) {
   const params = await searchParams;
   const day = await today();
@@ -54,6 +56,28 @@ export default async function Page({
     show === "all" ? all : show === "overdue" ? overdue : show === "done" ? done : open;
 
   const oldest = overdue.reduce((n, t) => Math.max(n, t.overdueDays), 0);
+
+  /* Sorting is display-only. Every figure above the table — open, overdue, the
+     oldest one, and how many are on nobody — is counted over the chip's whole
+     set and never over the sorted copy, because re-ordering a list changes the
+     order of what is in it and not what is in it. A count that moved when
+     somebody clicked a column would be the screen disagreeing with itself.
+
+     The chip goes into the href as the params to PRESERVE: a sort that dropped
+     `show` would answer the click by silently widening "Overdue" back to
+     "Open", which reads as the sort having rearranged the wrong list. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(rows, sort, COLUMNS);
+  const head = (key: string, label: string, width?: number) => (
+    <SortHead
+      width={width}
+      href={sortHref("/sales/tasks", sort, key, `show=${show}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {label}
+    </SortHead>
+  );
 
   return (
     <div className="p-6">
@@ -105,17 +129,17 @@ export default async function Page({
           minWidth={1120}
           head={
             <>
-              <HeadCell>Task</HeadCell>
-              <HeadCell width={180}>Salesman</HeadCell>
-              <HeadCell width={200}>Customer</HeadCell>
-              <HeadCell width={160}>Due</HeadCell>
-              <HeadCell width={110}>Priority</HeadCell>
-              <HeadCell width={120}>State</HeadCell>
-              <HeadCell width={170}>Raised by</HeadCell>
+              {head("task", "Task")}
+              {head("salesman", "Salesman", 180)}
+              {head("customer", "Customer", 200)}
+              {head("due", "Due", 160)}
+              {head("priority", "Priority", 110)}
+              {head("state", "State", 120)}
+              {head("raised", "Raised by", 170)}
             </>
           }
         >
-          {rows.map((t, i) => (
+          {sorted.map((t, i) => (
             <Row key={t.id} striped={i % 2 === 1}>
               <Cell truncate={360} title={t.description ?? undefined}>
                 <span className="font-medium text-ink">{t.title}</span>
@@ -134,7 +158,11 @@ export default async function Page({
                 </Link>
               </Cell>
               <Cell truncate={200}>
-                {t.customerName ?? <span className="text-muted">—</span>}
+                <CustomerName
+                  id={t.customerId}
+                  name={t.customerName}
+                  muted={<span className="text-muted">—</span>}
+                />
               </Cell>
               <Cell>
                 {t.dueDate ? shortDate(t.dueDate) : <span className="text-muted">No date</span>}
@@ -176,3 +204,37 @@ export default async function Page({
     </div>
   );
 }
+
+const COLUMNS: SortColumns<{
+  title: string;
+  salesmanName: string;
+  customerName: string | null;
+  dueDate: string | null;
+  priority: string;
+  status: string;
+  raisedBy: string | null;
+}> = {
+  task: (t) => t.title,
+  salesman: (t) => t.salesmanName,
+  /* A task raised against nobody sorts last rather than first, which is where
+     it belongs: the metric above already counts them, and a descending sort on
+     the shop is somebody looking for a shop. */
+  customer: (t) => t.customerName,
+  /* Compared as the ISO day it is stored as, and NOT turned into an instant.
+     A zero-padded `YYYY-MM-DD` orders identically either way, and reading one
+     through `new Date` would invent a midnight in whatever zone the server
+     happens to be in to answer a question that never needed one. A task with
+     no date sorts last under both directions — it is not the soonest thing due
+     and it is not the latest, it is a task nobody put a day on. */
+  due: (t) => t.dueDate,
+  priority: (t) => t.priority,
+  /* The stored status rather than the word in the cell. What is drawn there
+     folds `overdueDays` into the state, so sorting on it would interleave two
+     different facts under one heading — how late a task is has its own column,
+     and the Overdue chip is the honest way to ask that question. */
+  state: (t) => t.status,
+  /* Null is MahekOne itself, drawn as "The app". It sorts last rather than
+     under T, because the rows a manager is looking for here are the ones a
+     person put on somebody. */
+  raised: (t) => t.raisedBy,
+};

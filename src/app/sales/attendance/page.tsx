@@ -8,17 +8,21 @@ import {
   Banner,
   Cell,
   Empty,
+  EntityLink,
   HeadCell,
   MetricRow,
   Pill,
   Row,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
 import {
   plural,
 } from "../words";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 import { Selfies } from "./selfies";
+import { DayCheckDialog } from "./day-check";
 
 export const metadata = { title: "Attendance — Sales Dashboard — MahekOne" };
 
@@ -41,7 +45,7 @@ export const metadata = { title: "Attendance — Sales Dashboard — MahekOne" }
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ day?: string }>;
+  searchParams: Promise<{ day?: string; sort?: string; dir?: string }>;
 }) {
   const params = await searchParams;
   const now = await today();
@@ -55,6 +59,31 @@ export default async function Page({
     unreviewedCounts(day),
     getSetting("mbos.attendance.selfieRetentionHours"),
   ]);
+
+  /* The sort is read off the URL and the DAY is carried through it, because the
+     two are independent questions about this screen and the day is the one
+     somebody has already answered. A sort link that dropped it would step the
+     reader silently back to today, which is the worst way to lose a page: the
+     table redraws, nothing says it moved, and the row he was about to open is
+     a different person's.
+
+     The figures in the MetricRow below are counted over `rows`, the WHOLE
+     roll-call, and go on being — sorting reorders a list, it does not change
+     what is in it, and a metric that moved when somebody clicked a column
+     would be the screen disagreeing with itself. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(rows, sort, COLUMNS);
+  const head = (key: string, label: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/attendance", sort, key, `day=${day}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {label}
+    </SortHead>
+  );
 
   const inToday = rows.filter((r) => r.checkInAt);
   const missing = rows.filter((r) => !r.checkInAt);
@@ -139,36 +168,35 @@ export default async function Page({
           minWidth={1530}
           head={
             <>
-              <HeadCell width={200}>Salesman</HeadCell>
-              <HeadCell width={130}>In</HeadCell>
-              <HeadCell width={130}>Out</HeadCell>
-              <HeadCell width={130}>Worked</HeadCell>
-              <HeadCell align="right" width={100}>Visits</HeadCell>
-              <HeadCell width={150}>Verdict</HeadCell>
+              {head("name", "Salesman", 200)}
+              {head("in", "In", 130)}
+              {head("out", "Out", 130)}
+              {head("worked", "Worked", 130)}
+              {head("visits", "Visits", 100, "right")}
+              {head("verdict", "Verdict", 150)}
               {/* Deliberately beside the times rather than at the end: the
                   photograph is what the two times either side of it are worth,
                   and a column somebody has to scroll to is one they stop
                   checking by the second week. */}
               <HeadCell width={230}>Photographs</HeadCell>
-              {/* The way INTO the verification, not a second copy of it. The
-                  detail — every mark, every meter, accept or decline with the
-                  reason — is one screen on the person's own page, and a second
-                  rendering of it here would be a second set of controls to keep
-                  in step with the first. */}
+              {/* THE VERIFICATION ITSELF, over the list it was asked from —
+                  and it is the SAME component the person's record draws, not a
+                  second copy of it, so there is still only one set of controls
+                  to keep in step. Photographs, Notes and this one are not
+                  sortable: none of the three is a value a row can be ranked by,
+                  and a header that invites a click and then reorders nothing
+                  teaches people the whole row of them is decorative. */}
               <HeadCell width={140}>Day check</HeadCell>
               <HeadCell>Notes</HeadCell>
             </>
           }
         >
-          {rows.map((r, i) => (
+          {sorted.map((r, i) => (
             <Row key={r.id} striped={i % 2 === 1}>
               <Cell truncate={200}>
-                <Link
-                  href={`/sales/people/${r.salesmanId}`}
-                  className="font-medium text-ink no-underline"
-                >
+                <EntityLink href={`/sales/people/${r.salesmanId}`}>
                   {r.salesmanName}
-                </Link>
+                </EntityLink>
               </Cell>
               <Cell>
                 {r.checkInAt ? (
@@ -224,22 +252,24 @@ export default async function Page({
               <Cell>
                 <Selfies row={r} />
               </Cell>
+              {/* The day is CHECKED HERE, over the list it was asked from. It
+                  used to be a link into a nine-tab record of a MONTH, to answer
+                  a question about one person on one day, with the browser's own
+                  Back button as the way home — so checking three people cost
+                  three navigations out and three back, which is how the check
+                  quietly stops being done. The dialog draws its own trigger and
+                  its own "not looked at yet" line, so neither is repeated
+                  here. */}
               <Cell>
-                <Link
-                  href={`/sales/people/${r.salesmanId}?day=${day}`}
-                  className="text-[13px] font-medium text-[#5223E0] no-underline hover:underline"
-                >
-                  {outstanding.get(r.salesmanId)
-                    ? `Check ${outstanding.get(r.salesmanId)}`
-                    : "Open"}
-                </Link>
-                {/* Silence where there is nothing outstanding, rather than a
-                    green "all checked" on every row. A line that appears on
-                    eleven rows out of eleven is furniture, and the one row
-                    that wants attention has to stand out from it. */}
-                {outstanding.get(r.salesmanId) ? (
-                  <span className="block text-[12px] text-warn-ink">not looked at yet</span>
-                ) : null}
+                <DayCheckDialog
+                  salesmanId={r.salesmanId}
+                  salesmanName={r.salesmanName}
+                  day={day}
+                  longDay={longDay(day)}
+                  today={now}
+                  retentionHours={retentionHours}
+                  outstanding={outstanding.get(r.salesmanId) ?? 0}
+                />
               </Cell>
               <Cell truncate={340} title={r.regularisationReason ?? undefined}>
                 {r.withinGeofence === false ? (
@@ -316,3 +346,33 @@ function clock(at: Date | string): string {
     hour12: false,
   }).format(new Date(at));
 }
+
+/**
+ * What each sortable column is worth.
+ *
+ * `null` sorts last in both directions, which is the point on this screen: a
+ * salesman who never punched in has no time, no duration and no visits, and
+ * floating him to the top of "latest in" would put the row that answers the
+ * question least where the eye goes first. His absence is said in the banner
+ * above the table, which is where it belongs.
+ *
+ * The times are compared as INSTANTS rather than as the strings the clock
+ * prints. Those are wall-clock in Asia/Kolkata and would sort a punch-in at
+ * 23:50 above one at 00:10 the same night, which reads as the list being
+ * wrong rather than as a day boundary.
+ */
+const COLUMNS: SortColumns<{
+  salesmanName: string;
+  checkInAt: Date | string | null;
+  checkOutAt: Date | string | null;
+  workedSeconds: number | null;
+  visits: number;
+  status: string;
+}> = {
+  name: (r) => r.salesmanName,
+  in: (r) => (r.checkInAt ? new Date(r.checkInAt).getTime() : null),
+  out: (r) => (r.checkOutAt ? new Date(r.checkOutAt).getTime() : null),
+  worked: (r) => r.workedSeconds,
+  visits: (r) => r.visits,
+  verdict: (r) => r.status,
+};

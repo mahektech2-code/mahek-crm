@@ -6,6 +6,7 @@ import { money } from "@/lib/format";
 import { cx } from "@/components/ui/primitives";
 import type { TeamDay } from "@/lib/services/sales-service";
 import { SalesIcon } from "./icons";
+import { Cell, HeadCell, Pill, Row, Table } from "./parts";
 
 /* ---------------------------------------------------------------------------
  * Today, from `MBOS Manager Console.dc.html`.
@@ -147,8 +148,21 @@ export function TodayScreen({
       <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4">
         <div className="min-w-0 space-y-4">
           {/* ------------------------------------------- where the team is */}
-          <section className="overflow-hidden rounded-[6px] border border-line bg-surface">
-            <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-3">
+          <section>
+            {/*
+              THE HEADING SITS ABOVE THE TABLE RATHER THAN IN A CARD WITH IT,
+              which is the one structural change this conversion costs.
+
+              `Table` IS the card — it draws the border, the rounding and the
+              surface itself — so left inside the bordered `<section>` this used
+              to be, it would draw a second border a pixel inside the first, and
+              the console's front door would be the only screen in the app
+              wearing a double rule. Every other screen here states its title in
+              plain text above the table and lets the table be the box; this now
+              does the same, so Today looks like the eight screens it links to
+              rather than like a fork of them.
+            */}
+            <header className="mb-1.5 flex items-start justify-between gap-4">
               <div>
                 <div className="text-[15px] font-semibold text-ink">
                   Where the team is right now
@@ -169,139 +183,164 @@ export function TodayScreen({
             </header>
 
             {people.length === 0 ? (
-              <p className="px-5 py-12 text-center text-[15px] text-muted">
+              /* The empty state keeps a box of its own: it stands where the
+                 table would have stood, and a sentence floating on the canvas
+                 reads as a section that failed to render rather than as one
+                 with nothing in it. */
+              <p className="rounded-[6px] border border-line bg-surface px-5 py-12 text-center text-[15px] text-muted">
                 Nobody holds the Salesman App yet. The field team is whoever has been granted it —
                 that is what MBOS sign-in checks, so this list and the handsets always agree.
               </p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse" style={{ minWidth: 940 }}>
-                  <thead>
-                    <tr>
-                      {["Salesman", "Punched in", "Where", "Visits", "Orders", "Collected", "Route"].map(
-                        (h, i) => (
-                          <th
-                            key={h}
+              /*
+                The console's own table, not a second one.
+
+                This screen hand-rolled its `<table>` and every `<th>`/`<td>`
+                class, which is how it came to be the one table in the app at
+                14px horizontal padding while the other twenty-odd sat at 16 —
+                a drift nobody introduced deliberately and nobody could see
+                without two screens open side by side. The widths below sum to
+                the 940 this table has always asked for, and every column states
+                one because `Table` is `table-fixed`: a column with no width is
+                a column the browser guesses at, and a guessed-narrow one now
+                CLIPS rather than overflowing, so the guess is silent.
+
+                They are sized to the widest thing each column really holds
+                rather than to its heading: 130 on the second is the `NOT
+                STARTED` pill, which is half again the width of the `08:42` it
+                replaces, and 190 on Where is `Finished 18:30` with the `off
+                site` mark beside it. Visits, Orders and Route are each at their
+                own heading's width, which is what bounds them.
+              */
+              <Table
+                minWidth={940}
+                head={
+                  <>
+                    <HeadCell width={230}>Salesman</HeadCell>
+                    <HeadCell width={130}>Punched in</HeadCell>
+                    <HeadCell width={190}>Where</HeadCell>
+                    <HeadCell align="right" width={85}>
+                      Visits
+                    </HeadCell>
+                    <HeadCell align="right" width={80}>
+                      Orders
+                    </HeadCell>
+                    <HeadCell align="right" width={115}>
+                      Collected
+                    </HeadCell>
+                    <HeadCell width={110}>Route</HeadCell>
+                  </>
+                }
+              >
+                {people.map((p, i) => {
+                  const missing = p.active && !p.checkInAt;
+                  return (
+                    <Row key={p.id} striped={i % 2 === 1}>
+                      {/*
+                        THE RED EDGE ON A ROW THAT HAS NOT STARTED, which is the
+                        one thing here the primitives cannot say for themselves.
+                        `Row` colours its left border for `selected` and for
+                        nothing else, and `selected` means brand — a different
+                        statement altogether, and the wrong one about a salesman
+                        who is not out. So the border is set on the FIRST CELL
+                        instead, which lands in exactly the same place: the table
+                        is `border-collapse`, so the row's own 3px transparent
+                        left border and this one collapse into a single edge, and
+                        the cell's colour wins that contest. Widening `Row` to
+                        take a tone would have been the other answer, and it is
+                        not this file's to make.
+
+                        `h-13` is kept for the reason it was there before: the
+                        two-line name makes the row that tall anyway, so it only
+                        does anything on a row where the second line is short,
+                        and a list of people whose rows change height is one that
+                        reads as broken rather than as sparse.
+                      */}
+                      <Cell className={cx("h-13", missing ? "border-l-[3px] border-l-danger" : "")}>
+                        <Link
+                          href={`/sales/people/${p.id}`}
+                          className="flex items-center gap-2.5 no-underline hover:no-underline"
+                        >
+                          <span
                             className={cx(
-                              "h-8.5 border-b border-line bg-canvas px-3.5 text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase",
-                              i >= 3 && i <= 5 ? "text-right" : "text-left",
+                              "flex h-7 w-7 flex-none items-center justify-center rounded-full text-[11px] font-semibold",
+                              p.checkInAt ? "bg-brand-soft text-[#5223E0]" : "bg-divider text-muted",
                             )}
                           >
-                            {h}
-                          </th>
-                        ),
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {people.map((p, i) => {
-                      const missing = p.active && !p.checkInAt;
-                      return (
-                        <tr
-                          key={p.id}
-                          className={cx(
-                            "border-b border-divider border-l-[3px] last:border-b-0",
-                            i % 2 ? "bg-canvas" : "bg-surface",
-                            missing ? "border-l-danger" : "border-l-transparent",
-                          )}
-                        >
-                          <td className="h-13 px-3.5">
-                            <Link
-                              href={`/sales/people/${p.id}`}
-                              className="flex items-center gap-2.5 no-underline hover:no-underline"
-                            >
-                              <span
-                                className={cx(
-                                  "flex h-7 w-7 flex-none items-center justify-center rounded-full text-[11px] font-semibold",
-                                  p.checkInAt
-                                    ? "bg-brand-soft text-[#5223E0]"
-                                    : "bg-divider text-muted",
-                                )}
-                              >
-                                {p.initials}
-                              </span>
-                              <span className="min-w-0">
-                                <span className="block truncate text-sm font-medium text-ink">
-                                  {p.name}
-                                </span>
-                                <span className="block truncate text-[12px] text-muted">
-                                  {p.active ? "Field sales" : "Account closed"}
-                                </span>
-                              </span>
-                            </Link>
-                          </td>
-                          <td className="px-3.5 text-sm whitespace-nowrap">
-                            <span
-                              className={cx(
-                                "inline-flex items-center rounded-[9px] px-2 py-[3px] text-[11px] leading-[14px] font-medium tracking-[0.03em] uppercase",
-                                p.checkInAt
-                                  ? "bg-success-soft text-success"
-                                  : "bg-danger-soft text-danger",
-                              )}
-                            >
-                              {p.checkInAt ? clock(p.checkInAt) : "Not started"}
+                            {p.initials}
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-medium text-ink">
+                              {p.name}
                             </span>
-                          </td>
-                          <td className="px-3.5 text-sm text-body">
-                            {p.checkInAt ? (
-                              p.checkOutAt ? (
-                                `Finished ${clock(p.checkOutAt)}`
-                              ) : (
-                                "Out now"
-                              )
-                            ) : (
-                              <span className="text-muted">—</span>
-                            )}
-                            {p.withinGeofence === false ? (
-                              <span
-                                className="ml-1.5 text-[12px] text-warn-ink"
-                                title="Punched in outside the permitted radius. Flagged, never blocked — a salesman who cannot mark attendance cannot work."
-                              >
-                                off site
-                              </span>
-                            ) : null}
-                          </td>
-                          <td className="px-3.5 text-right text-sm tabular-nums">
-                            {p.visits}
-                            {Number(p.unverifiedVisits) > 0 ? (
-                              <span
-                                className="ml-1 text-warn-ink"
-                                title="Saved with the location checklist unsatisfied. The salesman gave a reason — a visit can always be saved."
-                              >
-                                ({p.unverifiedVisits})
-                              </span>
-                            ) : null}
-                          </td>
-                          <td className="px-3.5 text-right text-sm tabular-nums">
-                            {p.orders || <span className="text-muted">—</span>}
-                          </td>
-                          <td className="px-3.5 text-right text-sm tabular-nums">
-                            {Number(p.collectedPaise) ? (
-                              money(p.collectedPaise)
-                            ) : (
-                              <span className="text-muted">—</span>
-                            )}
-                          </td>
-                          <td className="px-3.5 text-sm whitespace-nowrap">
-                            {p.plannedStops ? (
-                              <span className="tabular-nums">
-                                {p.walkedStops}/{p.plannedStops}
-                              </span>
-                            ) : (
-                              <Link
-                                href={`/sales/journeys?salesman=${p.id}`}
-                                className="text-[13px]"
-                              >
-                                Plan a route
-                              </Link>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                            <span className="block truncate text-[12px] text-muted">
+                              {p.active ? "Field sales" : "Account closed"}
+                            </span>
+                          </span>
+                        </Link>
+                      </Cell>
+                      <Cell>
+                        {/* The hand-written span here was `Pill` spelled out by
+                            hand, down to the 9px radius — the same copy the
+                            shared control exists to stop being made a
+                            thirteenth time. */}
+                        <Pill tone={p.checkInAt ? "success" : "danger"}>
+                          {p.checkInAt ? clock(p.checkInAt) : "Not started"}
+                        </Pill>
+                      </Cell>
+                      <Cell>
+                        {p.checkInAt ? (
+                          p.checkOutAt ? (
+                            `Finished ${clock(p.checkOutAt)}`
+                          ) : (
+                            "Out now"
+                          )
+                        ) : (
+                          <span className="text-muted">—</span>
+                        )}
+                        {p.withinGeofence === false ? (
+                          <span
+                            className="ml-1.5 text-[12px] text-warn-ink"
+                            title="Punched in outside the permitted radius. Flagged, never blocked — a salesman who cannot mark attendance cannot work."
+                          >
+                            off site
+                          </span>
+                        ) : null}
+                      </Cell>
+                      <Cell align="right">
+                        {p.visits}
+                        {Number(p.unverifiedVisits) > 0 ? (
+                          <span
+                            className="ml-1 text-warn-ink"
+                            title="Saved with the location checklist unsatisfied. The salesman gave a reason — a visit can always be saved."
+                          >
+                            ({p.unverifiedVisits})
+                          </span>
+                        ) : null}
+                      </Cell>
+                      <Cell align="right">{p.orders || <span className="text-muted">—</span>}</Cell>
+                      <Cell align="right">
+                        {Number(p.collectedPaise) ? (
+                          money(p.collectedPaise)
+                        ) : (
+                          <span className="text-muted">—</span>
+                        )}
+                      </Cell>
+                      <Cell>
+                        {p.plannedStops ? (
+                          <span className="tabular-nums">
+                            {p.walkedStops}/{p.plannedStops}
+                          </span>
+                        ) : (
+                          <Link href={`/sales/journeys?salesman=${p.id}`} className="text-[13px]">
+                            Plan a route
+                          </Link>
+                        )}
+                      </Cell>
+                    </Row>
+                  );
+                })}
+              </Table>
             )}
           </section>
 

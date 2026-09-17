@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
-import { fieldOrders } from "@/lib/services/sales-service";
+import { fieldOrders, fieldOrderSummary } from "@/lib/services/sales-service";
 import {
   Banner,
   Cell,
@@ -11,12 +11,15 @@ import {
   Pill,
   Row,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
 import {
   plural,
   waitingWords,
 } from "../words";
+import { CustomerName } from "../customer-name";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 
 export const metadata = { title: "Orders — Sales Dashboard — MahekOne" };
 
@@ -37,26 +40,50 @@ export const metadata = { title: "Orders — Sales Dashboard — MahekOne" };
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ show?: string }>;
+  searchParams: Promise<{ show?: string; sort?: string; dir?: string }>;
 }) {
   const params = await searchParams;
-  const all = await fieldOrders();
 
-  const show = ["all", "waiting", "overlimit"].includes(params.show ?? "")
-    ? params.show!
-    : "waiting";
+  const show = (
+    ["all", "waiting", "overlimit"].includes(params.show ?? "") ? params.show! : "waiting"
+  ) as "all" | "waiting" | "overlimit";
 
-  const waiting = all.filter((o) => o.status === "pending_approval");
-  const overLimit = waiting.filter(
-    (o) =>
-      o.creditBlocked ||
-      (o.creditLimitPaise != null &&
-        Number(o.outstandingPaise) + Number(o.totalAmountPaise) > Number(o.creditLimitPaise)),
+  /* THE FIGURES COME FROM SQL AND THE TABLE IS A PAGE.
+     They were one read: the whole screen was derived from the newest 300
+     orders, so "Taken in the field · all time" printed 300 for ever and an
+     order stuck in approval longer than 300 orders ago was missing from the
+     waiting count as well as from the queue. A queue that loses its oldest
+     item is the worst possible direction for that. */
+  const [result, summary] = await Promise.all([fieldOrders(show), fieldOrderSummary()]);
+  const rows = result.rows;
+
+  const waiting = summary.waiting;
+  const overLimit = summary.overLimit;
+  const oldest = summary.oldestWaitingHours;
+  const value = Number(summary.waitingValuePaise);
+
+  /* Sorting is DISPLAY ONLY, over the page this screen already holds. The
+     four metrics and the chip counts above come from `fieldOrderSummary`,
+     which counts in SQL over every order ever taken in the field — so
+     re-ordering the table cannot move any of them, which is the point.
+     Sorting in SQL instead would have been the obvious alternative and is
+     worse here: the read is capped, so a sort pushed into the query would
+     silently change WHICH orders are on the page as well as their order, and
+     the sentence above the table promising "the newest N" would stop being
+     true. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(rows, sort, COLUMNS);
+  const head = (key: string, labelText: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/orders", sort, key, `show=${show}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {labelText}
+    </SortHead>
   );
-  const rows = show === "all" ? all : show === "overlimit" ? overLimit : waiting;
-
-  const oldest = waiting.reduce((n, o) => Math.max(n, o.waitingHours), 0);
-  const value = waiting.reduce((n, o) => n + Number(o.totalAmountPaise), 0);
 
   return (
     <div className="p-6">
@@ -65,10 +92,10 @@ export default async function Page({
         subtitle="Nothing above a customer's credit limit dispatches until somebody decides. Declining sends the salesman back to the customer with the reason, so it is never left unsaid."
       />
 
-      {waiting.length ? (
+      {waiting ? (
         <Banner
           tone={oldest >= 24 ? "danger" : "warn"}
-          title={`${plural(waiting.length, "order")} waiting, worth ${money(value)}`}
+          title={`${plural(waiting, "order")} waiting, worth ${money(value)}`}
           body={
             <>
               The oldest has been waiting {waitingWords(oldest)}. Approving is accounts&rsquo; and
@@ -82,24 +109,24 @@ export default async function Page({
 
       <MetricRow
         metrics={[
-          { label: "Waiting", value: String(waiting.length), tone: waiting.length ? "warn" : undefined },
+          { label: "Waiting", value: String(waiting), tone: waiting ? "warn" : undefined },
           { label: "Value waiting", value: money(value) },
           {
             label: "Over the limit",
-            value: String(overLimit.length),
-            sub: overLimit.length ? "these are the hard ones" : undefined,
-            tone: overLimit.length ? "danger" : undefined,
+            value: String(overLimit),
+            sub: overLimit ? "these are the hard ones" : undefined,
+            tone: overLimit ? "danger" : undefined,
           },
-          { label: "Taken in the field", value: String(all.length), sub: "all time" },
+          { label: "Taken in the field", value: String(summary.total), sub: "all time" },
         ]}
       />
 
       <FilterChips
         current={show}
                 options={[
-          { key: "waiting", href: `/sales/orders?show=waiting`, label: "Waiting", count: waiting.length },
-          { key: "overlimit", href: `/sales/orders?show=overlimit`, label: "Over the limit", count: overLimit.length },
-          { key: "all", href: `/sales/orders?show=all`, label: "Everything", count: all.length },
+          { key: "waiting", href: `/sales/orders?show=waiting`, label: "Waiting", count: waiting },
+          { key: "overlimit", href: `/sales/orders?show=overlimit`, label: "Over the limit", count: overLimit },
+          { key: "all", href: `/sales/orders?show=all`, label: "Everything", count: summary.total },
         ]}
       />
 
@@ -113,22 +140,35 @@ export default async function Page({
           }
         />
       ) : (
+        <>
+          {/* The chips count the whole book and this table is a page of one
+              view of it. Both are true; only saying one of them was not. */}
+          {result.capped ? (
+            <p className="mb-2 text-[13px] text-muted">
+              The newest {rows.length} of {result.total}
+              {show === "all" ? " orders" : " in this view"}.
+            </p>
+          ) : null}
         <Table
           minWidth={1240}
           head={
             <>
-              <HeadCell width={170}>Order</HeadCell>
-              <HeadCell width={160}>Salesman</HeadCell>
-              <HeadCell width={210}>Customer</HeadCell>
-              <HeadCell align="right" width={140}>Value</HeadCell>
-              <HeadCell align="right" width={150}>Their limit</HeadCell>
-              <HeadCell align="right" width={100}>Cans</HeadCell>
+              {head("order", "Order", 170)}
+              {head("salesman", "Salesman", 160)}
+              {head("customer", "Customer", 210)}
+              {head("value", "Value", 140, "right")}
+              {head("limit", "Their limit", 150, "right")}
+              {head("cans", "Cans", 100, "right")}
+              {/* Terms is not sortable: it is the customer's standing payment
+                  term restated on the order, so ordering by it groups rows by
+                  a fact about the shop rather than answering anything about
+                  the queue. */}
               <HeadCell width={110}>Terms</HeadCell>
-              <HeadCell>State</HeadCell>
+              {head("state", "State")}
             </>
           }
         >
-          {rows.map((o, i) => {
+          {sorted.map((o, i) => {
             const room =
               o.creditLimitPaise == null
                 ? null
@@ -157,7 +197,9 @@ export default async function Page({
                     <span className="text-muted">—</span>
                   )}
                 </Cell>
-                <Cell truncate={210}>{o.customerName}</Cell>
+                <Cell truncate={210}>
+                  <CustomerName id={o.customerId} name={o.customerName} />
+                </Cell>
                 <Cell align="right">{money(o.totalAmountPaise)}</Cell>
                 <Cell align="right">
                   {o.creditLimitPaise != null ? (
@@ -201,7 +243,46 @@ export default async function Page({
             );
           })}
         </Table>
+        </>
       )}
     </div>
   );
 }
+
+/**
+ * What each sortable column is worth.
+ *
+ * Value and the credit limit are compared as NUMBERS rather than as the money
+ * strings the cells print: `money()` renders lakhs and crores in words, so
+ * sorting the rendered text would put ₹9 lakh above ₹9 crore and nothing on
+ * the screen would say why.
+ *
+ * "Their limit" sorts on the limit itself and not on the room left under it.
+ * The two are different questions and the column heading asks the first one; a
+ * sort that quietly answered the second would disagree with the figure printed
+ * beneath it. An account with no limit set has none to sort on, so it is null
+ * and falls to the bottom either way — which is honest, since "no limit" is
+ * not a large limit.
+ *
+ * State sorts on the raw status and not on the pill's wording, so
+ * `pending_approval` groups together whether the pill reads Waiting, Above
+ * limit or Credit blocked — those three are one state of the order with three
+ * readings of the customer behind it.
+ */
+const COLUMNS: SortColumns<{
+  orderNo: string | null;
+  salesmanName: string | null;
+  customerName: string;
+  totalAmountPaise: number;
+  creditLimitPaise: number | null;
+  cans: number;
+  status: string;
+}> = {
+  order: (o) => o.orderNo,
+  salesman: (o) => o.salesmanName,
+  customer: (o) => o.customerName,
+  value: (o) => Number(o.totalAmountPaise),
+  limit: (o) => (o.creditLimitPaise == null ? null : Number(o.creditLimitPaise)),
+  cans: (o) => o.cans,
+  state: (o) => o.status,
+};

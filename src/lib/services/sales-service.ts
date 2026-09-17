@@ -846,6 +846,8 @@ export type TaskRow = {
   salesmanId: string;
   salesmanName: string;
   initials: string;
+  /** Null where the task names no shop — several kinds legitimately do not. */
+  customerId: string | null;
   customerName: string | null;
   dueDate: string | null;
   priority: string;
@@ -896,6 +898,15 @@ export type VisitRow = {
   salesmanId: string;
   salesmanName: string;
   initials: string;
+  /**
+   * The account behind the name, so a list can open it.
+   *
+   * Every list in the console named a customer and none of them could open
+   * one — the shop was plain text while the salesman beside it was a link.
+   * Carried here rather than looked up on a click: the join is already made
+   * to get the name.
+   */
+  customerId: string;
   customerName: string;
   checkInAt: Date | null;
   durationSeconds: number | null;
@@ -1722,10 +1733,100 @@ export type FieldOrder = {
  * beside the value. The decision itself is accounts', deliberately: the person
  * chasing the target does not sign off the orders that hit it.
  */
-export async function fieldOrders(pending?: boolean): Promise<FieldOrder[]> {
-  const only = pending ? sql`and o.status = 'pending_approval'` : sql``;
+/**
+ * WHAT MAKES AN ORDER ONE SOMEBODY HAS TO ARGUE ABOUT, in SQL rather than in
+ * the screen.
+ *
+ * It was a predicate in `orders/page.tsx`, run over whatever rows happened to
+ * come back — which meant the "over the limit" count was a count of the capped
+ * page and not of the book. Written once here, the summary and the filtered
+ * list cannot disagree about which orders those are.
+ */
+const OVER_LIMIT = sql`(
+  c.credit_blocked
+  or (c.credit_limit_paise is not null
+      and coalesce(c.outstanding, 0) + o.total_amount > c.credit_limit_paise)
+)`;
+
+/** How many field orders exist at all, and what is waiting inside them. */
+export type FieldOrderSummary = {
+  /** Every pending order in scope, not a count of one page of them. */
+  waiting: number;
+  waitingValuePaise: number;
+  overLimit: number;
+  /** Hours the oldest pending one has been waiting. Zero where none is. */
+  oldestWaitingHours: number;
+  total: number;
+};
+
+/**
+ * THE FIGURES, OVER THE WHOLE BOOK.
+ *
+ * The screen used to derive all of these from `fieldOrders()`, which is capped
+ * at 300 and ordered newest-first — so "Taken in the field: 300 · all time" was
+ * a constant wearing a label, and an order stuck in approval longer than 300
+ * orders ago was absent from the count as well as from the queue. A queue that
+ * silently loses its oldest item is the worst direction for that bug.
+ */
+export async function fieldOrderSummary(): Promise<FieldOrderSummary> {
   const scope = await managerScope();
-  return db.execute<FieldOrder>(sql`
+  const [row] = await db.execute<FieldOrderSummary>(sql`
+    select
+      count(*) filter (where o.status = 'pending_approval')::int as "waiting",
+      coalesce(sum(o.total_amount) filter (where o.status = 'pending_approval'), 0)::bigint
+        as "waitingValuePaise",
+      count(*) filter (where o.status = 'pending_approval' and ${OVER_LIMIT})::int
+        as "overLimit",
+      coalesce(max(floor(extract(epoch from (now() - o.created_at)) / 3600))
+                 filter (where o.status = 'pending_approval'), 0)::int
+        as "oldestWaitingHours",
+      count(*)::int as "total"
+      from orders o
+      join customers c on c.id = o.customer_id
+     where o.source = 'mbos' ${onlyMine(scope, "o.created_by_id")}
+  `);
+  return (
+    row ?? {
+      waiting: 0,
+      waitingValuePaise: 0,
+      overLimit: 0,
+      oldestWaitingHours: 0,
+      total: 0,
+    }
+  );
+}
+
+const FIELD_ORDER_LIMIT = 300;
+
+/**
+ * One view of the order book, narrowed in SQL and capped with the count beside
+ * it.
+ *
+ * The narrowing is deliberately NOT a filter over a fetched page: "waiting" and
+ * "over the limit" are the two views somebody opens this screen to work, and
+ * both are rare inside a long tail of settled orders. Filtering the newest 300
+ * answered a question about the newest 300.
+ */
+export async function fieldOrders(
+  show: "all" | "waiting" | "overlimit" = "all",
+): Promise<{ rows: FieldOrder[]; total: number; capped: boolean }> {
+  const only =
+    show === "waiting"
+      ? sql`and o.status = 'pending_approval'`
+      : show === "overlimit"
+        ? sql`and o.status = 'pending_approval' and ${OVER_LIMIT}`
+        : sql``;
+  const scope = await managerScope();
+
+  const [counted] = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n
+      from orders o
+      join customers c on c.id = o.customer_id
+     where o.source = 'mbos' ${only} ${onlyMine(scope, "o.created_by_id")}
+  `);
+  const total = counted?.n ?? 0;
+
+  const rows = (await db.execute<FieldOrder>(sql`
     select o.id, o.order_no as "orderNo",
            o.created_by_id as "salesmanId", u.name as "salesmanName",
            o.customer_id as "customerId", c.name as "customerName",
@@ -1746,8 +1847,10 @@ export async function fieldOrders(pending?: boolean): Promise<FieldOrder[]> {
       left join users u on u.id = o.created_by_id
      where o.source = 'mbos' ${only} ${onlyMine(scope, "o.created_by_id")}
      order by o.ordered_at desc
-     limit 300
-  `) as unknown as FieldOrder[];
+     limit ${FIELD_ORDER_LIMIT}
+  `)) as unknown as FieldOrder[];
+
+  return { rows, total, capped: total > FIELD_ORDER_LIMIT };
 }
 
 export type FieldReceipt = {
@@ -1755,6 +1858,15 @@ export type FieldReceipt = {
   receiptNo: string | null;
   salesmanId: string | null;
   salesmanName: string | null;
+  /**
+   * The account behind the name, so a list can open it.
+   *
+   * Every list in the console named a customer and none of them could open
+   * one — the shop was plain text while the salesman beside it was a link.
+   * Carried here rather than looked up on a click: the join is already made
+   * to get the name.
+   */
+  customerId: string;
   customerName: string;
   amountPaise: number;
   mode: string;
@@ -1776,12 +1888,37 @@ export type FieldReceipt = {
  * bank and a cheque is banked by the office — so only cash is counted against
  * the deposit window.
  */
-export async function fieldReceipts(): Promise<FieldReceipt[]> {
-  const scope = await managerScope();
-  return db.execute<FieldReceipt>(sql`
+const FIELD_RECEIPT_LIMIT = 300;
+
+/**
+ * CASH IS ITS OWN QUESTION AND IT IS NEVER CAPPED, said in SQL.
+ *
+ * `payment_receipts` is a log and the table below it can honestly be a page of
+ * one — but "who is holding company cash" is not a page of anything, it is a
+ * complete answer with a person's name on it. The screen used to derive it by
+ * filtering the newest 300 receipts, which is the one cap that could not be
+ * afforded: the list is ordered newest-first, so the OLDEST undeposited cash —
+ * the money the screen exists to chase — was the first thing dropped.
+ *
+ * The predicate is the screen's own, unchanged: cash, not yet banked, and not
+ * rejected. A `reversed` receipt stays in, because the note was physically
+ * held whatever became of it afterwards.
+ */
+const CASH_IN_HAND = sql`
+  lower(r.mode) = 'cash'
+  and r.deposited_at is null
+  and r.status <> 'rejected'
+`;
+
+/**
+ * The SELECT both reads share, so the log and the cash list cannot come back
+ * shaped differently — they land in the same `FieldReceipt` and are drawn by
+ * the same row.
+ */
+const RECEIPT_COLUMNS = sql`
     select r.id, r.receipt_no as "receiptNo",
            r.reported_by_id as "salesmanId", u.name as "salesmanName",
-           c.name as "customerName",
+           c.id as "customerId", c.name as "customerName",
            r.amount as "amountPaise", r.mode, r.reference,
            r.received_at::text as "receivedAt",
            r.status::text as status,
@@ -1791,10 +1928,58 @@ export async function fieldReceipts(): Promise<FieldReceipt[]> {
       from payment_receipts r
       join customers c on c.id = r.customer_id
       left join users u on u.id = r.reported_by_id
+`;
+
+export type FieldReceipts = {
+  /** The log: newest first, capped, with the count beside it. */
+  rows: FieldReceipt[];
+  total: number;
+  capped: boolean;
+  /** Every unbanked cash note in scope, oldest first. Uncapped, deliberately. */
+  cash: FieldReceipt[];
+  /** Counted over the whole log rather than over `rows`. */
+  reported: number;
+  confirmed: number;
+};
+
+export async function fieldReceipts(): Promise<FieldReceipts> {
+  const scope = await managerScope();
+
+  const [counted] = await db.execute<{
+    total: number;
+    reported: number;
+    confirmed: number;
+  }>(sql`
+    select count(*)::int as "total",
+           count(*) filter (where r.status = 'reported')::int as "reported",
+           count(*) filter (where r.status = 'confirmed')::int as "confirmed"
+      from payment_receipts r
+     where r.source = 'mbos' ${onlyMine(scope, "r.reported_by_id")}
+  `);
+
+  const cash = (await db.execute<FieldReceipt>(sql`
+    ${RECEIPT_COLUMNS}
+     where r.source = 'mbos' and ${CASH_IN_HAND}
+       ${onlyMine(scope, "r.reported_by_id")}
+     order by r.received_at asc, r.created_at asc
+  `)) as unknown as FieldReceipt[];
+
+  const rows = (await db.execute<FieldReceipt>(sql`
+    ${RECEIPT_COLUMNS}
      where r.source = 'mbos' ${onlyMine(scope, "r.reported_by_id")}
      order by r.received_at desc, r.created_at desc
-     limit 300
-  `) as unknown as FieldReceipt[];
+     limit ${FIELD_RECEIPT_LIMIT}
+  `)) as unknown as FieldReceipt[];
+
+  const total = counted?.total ?? 0;
+  return {
+    rows,
+    total,
+    capped: total > FIELD_RECEIPT_LIMIT,
+    cash,
+    reported: counted?.reported ?? 0,
+    confirmed: counted?.confirmed ?? 0,
+  };
 }
 
 export type FieldInvoice = {
@@ -2010,6 +2195,15 @@ export async function fieldInvoiceAges(): Promise<
 
 export type FieldSample = {
   id: string;
+  /**
+   * The account behind the name, so a list can open it.
+   *
+   * Every list in the console named a customer and none of them could open
+   * one — the shop was plain text while the salesman beside it was a link.
+   * Carried here rather than looked up on a click: the join is already made
+   * to get the name.
+   */
+  customerId: string;
   customerName: string;
   salesmanId: string;
   salesmanName: string;
@@ -2027,10 +2221,48 @@ export type FieldSample = {
 };
 
 /** Stock given away on trial, and the feedback nobody chased. */
-export async function fieldSamples(): Promise<FieldSample[]> {
+const FIELD_SAMPLE_LIMIT = 300;
+
+export type FieldSamples = {
+  rows: FieldSample[];
+  total: number;
+  capped: boolean;
+  awaiting: number;
+  late: number;
+  converted: number;
+};
+
+/**
+ * Stock given away on trial, and the feedback nobody chased.
+ *
+ * **THE ORDER IS WHAT IS OWED, not what is newest.** It was `requested_date
+ * desc`, which put the samples this screen exists to find — the ones sent
+ * months ago that nobody ever went back to — at the very bottom, under the
+ * cap. The screen then counted "past the date" by filtering what came back,
+ * so the older the neglect the less likely it was to be counted. Pending
+ * first, latest first inside that, and the counts come from SQL over the
+ * whole book either way.
+ */
+export async function fieldSamples(): Promise<FieldSamples> {
   const scope = await managerScope();
-  return db.execute<FieldSample>(sql`
-    select s.id, c.name as "customerName",
+
+  const [counted] = await db.execute<{
+    total: number;
+    awaiting: number;
+    late: number;
+    converted: number;
+  }>(sql`
+    select count(*)::int as "total",
+           count(*) filter (where s.trial_outcome = 'pending')::int as "awaiting",
+           count(*) filter (where s.trial_outcome = 'pending'
+                              and current_date > s.follow_up_date)::int as "late",
+           count(*) filter (where s.trial_outcome = 'converted')::int as "converted"
+      from mbos_samples s
+     where true ${onlyMine(scope, "s.salesman_id")}
+  `);
+
+  const rows = (await db.execute<FieldSample>(sql`
+    select s.id, c.id as "customerId", c.name as "customerName",
            s.salesman_id as "salesmanId", u.name as "salesmanName",
            p.name as "productName", s.quantity_cans as "quantityCans",
            s.requested_date::text as "requestedDate",
@@ -2050,9 +2282,22 @@ export async function fieldSamples(): Promise<FieldSample[]> {
       join users u on u.id = s.salesman_id
       left join products p on p.id = s.product_id
      where true ${onlyMine(scope, "s.salesman_id")}
-     order by s.requested_date desc nulls last
-     limit 300
-  `) as unknown as FieldSample[];
+     order by
+       case when s.trial_outcome = 'pending' then 0 else 1 end,
+       greatest(0, current_date - s.follow_up_date) desc,
+       s.requested_date desc nulls last
+     limit ${FIELD_SAMPLE_LIMIT}
+  `)) as unknown as FieldSample[];
+
+  const total = counted?.total ?? 0;
+  return {
+    rows,
+    total,
+    capped: total > FIELD_SAMPLE_LIMIT,
+    awaiting: counted?.awaiting ?? 0,
+    late: counted?.late ?? 0,
+    converted: counted?.converted ?? 0,
+  };
 }
 
 export type CatalogueRow = {
@@ -2300,9 +2545,41 @@ export type LeaveRow = {
  * because it is a question about the state of the calendar at the moment
  * somebody looks.
  */
-export async function leaveRequests(): Promise<LeaveRow[]> {
+const LEAVE_LIMIT = 300;
+
+export type LeaveRequests = {
+  /** Pending first, so the queue is never the part the cap drops. */
+  rows: LeaveRow[];
+  total: number;
+  capped: boolean;
+  waiting: number;
+  approved: number;
+};
+
+export async function leaveRequests(): Promise<LeaveRequests> {
   const scope = await managerScope();
-  return db.execute<LeaveRow>(sql`
+
+  /* Counted over every request rather than over the page. The queue is safe
+     either way — the list is ordered pending-first, so what is waiting can
+     never be the part a cap drops — but "Approved" was a count of however many
+     approved requests happened to fit under 300 after the pending ones. */
+  const [counted] = await db.execute<{
+    total: number;
+    waiting: number;
+    approved: number;
+  }>(sql`
+    select count(*)::int as "total",
+           count(*) filter (where l.cancelled_at is null
+                              and (ap.state is null or ap.state = 'pending'))::int as "waiting",
+           count(*) filter (where l.cancelled_at is null and ap.state = 'approved')::int
+             as "approved"
+      from mbos_leave_requests l
+      left join mbos_approvals ap
+             on ap.subject_id = l.id and ap.type = 'leave'
+     where true ${onlyMine(scope, "l.user_id")}
+  `);
+
+  const rows = (await db.execute<LeaveRow>(sql`
     select l.id, l.user_id as "salesmanId", u.name as "salesmanName", u.initials,
            l.leave_type::text as "leaveType",
            l.from_date::text as "fromDate", l.to_date::text as "toDate",
@@ -2342,8 +2619,17 @@ export async function leaveRequests(): Promise<LeaveRow[]> {
      order by
        case when ap.state = 'pending' then 0 else 1 end,
        l.from_date desc
-     limit 300
-  `) as unknown as LeaveRow[];
+     limit ${LEAVE_LIMIT}
+  `)) as unknown as LeaveRow[];
+
+  const total = counted?.total ?? 0;
+  return {
+    rows,
+    total,
+    capped: total > LEAVE_LIMIT,
+    waiting: counted?.waiting ?? 0,
+    approved: counted?.approved ?? 0,
+  };
 }
 
 export type ExpenseRow = {
@@ -2372,9 +2658,44 @@ export type ExpenseRow = {
  * month against a ₹6,000 cap. The cap itself is configuration and lives with
  * the settings; this supplies the number to compare it against.
  */
-export async function expenseClaims(): Promise<ExpenseRow[]> {
+const EXPENSE_CLAIM_LIMIT = 300;
+
+export type ExpenseClaims = {
+  /** Pending first, so the queue is never the part the cap drops. */
+  rows: ExpenseRow[];
+  total: number;
+  waiting: number;
+};
+
+/**
+ * What the field spent, and what is still waiting on somebody.
+ *
+ * **THE SCREEN DOES NOT READ THIS.** `/sales/expenses` reads `claimDays`,
+ * which is scoped to a month and bounded by it; this is the whole book, and
+ * its one caller is the team brief — prose a manager quotes. So the count has
+ * to be counted rather than measured off the page, for the reason the orders
+ * and samples reads beside it already carry: `mbos_expenses` is one row per
+ * expense LINE and not per day, so three hundred is a few months of an active
+ * team rather than a ceiling nobody reaches.
+ *
+ * The ordering means the queue itself is safe either way — what is pending
+ * leads the list — but "N waiting" was a count of however many pending claims
+ * happened to fit, and a brief that understates what is waiting on somebody
+ * reads exactly like a brief that is up to date.
+ */
+export async function expenseClaims(): Promise<ExpenseClaims> {
   const scope = await managerScope();
-  return db.execute<ExpenseRow>(sql`
+
+  const [counted] = await db.execute<{ total: number; waiting: number }>(sql`
+    select count(*)::int as "total",
+           count(*) filter (where ap.state is null or ap.state = 'pending')::int as "waiting"
+      from mbos_expenses e
+      left join mbos_approvals ap
+             on ap.subject_id = e.id and ap.type = 'expense_claim'
+     where true ${onlyMine(scope, "e.user_id")}
+  `);
+
+  const rows = (await db.execute<ExpenseRow>(sql`
     select e.id, e.user_id as "salesmanId", u.name as "salesmanName", u.initials,
            e.category::text as category,
            e.amount_paise as "amountPaise",
@@ -2397,8 +2718,14 @@ export async function expenseClaims(): Promise<ExpenseRow[]> {
      order by
        case when ap.state = 'pending' then 0 else 1 end,
        e.expense_date desc
-     limit 300
-  `) as unknown as ExpenseRow[];
+     limit ${EXPENSE_CLAIM_LIMIT}
+  `)) as unknown as ExpenseRow[];
+
+  return {
+    rows,
+    total: counted?.total ?? 0,
+    waiting: counted?.waiting ?? 0,
+  };
 }
 
 /* ═════════════════════════════════════════════════════ overview and admin */
@@ -4179,6 +4506,10 @@ export type SalesmanRecord = {
   salesman: Salesman;
   visits: Array<{
     id: string;
+    /* The account behind the name, so the tab can open it. Carried rather
+       than looked up on a click: the join that produces the name is already
+       being made. */
+    customerId: string;
     customerName: string;
     checkInAt: Date | null;
     durationSeconds: number | null;
@@ -4192,6 +4523,7 @@ export type SalesmanRecord = {
   orders: Array<{
     id: string;
     orderNo: string | null;
+    customerId: string;
     customerName: string;
     orderedAt: Date;
     totalAmountPaise: number;
@@ -4200,6 +4532,7 @@ export type SalesmanRecord = {
   receipts: Array<{
     id: string;
     receiptNo: string | null;
+    customerId: string;
     customerName: string;
     receivedAt: string;
     amountPaise: number;
@@ -4236,6 +4569,7 @@ export type SalesmanRecord = {
   }>;
   samples: Array<{
     id: string;
+    customerId: string;
     customerName: string;
     productName: string | null;
     quantityCans: number | null;
@@ -4259,6 +4593,8 @@ export type SalesmanRecord = {
     priority: string;
     dueDate: string | null;
     status: string;
+    /* Left-joined, so a task that names no shop carries neither. */
+    customerId: string | null;
     customerName: string | null;
   }>;
 };
@@ -4285,7 +4621,7 @@ export async function salesmanRecord(
   const [visits, orders, receipts, attendance, leave, expenses, samples, leads, tasks] =
     await Promise.all([
       db.execute(sql`
-        select v.id, c.name as "customerName", v.check_in_at as "checkInAt",
+        select v.id, c.id as "customerId", c.name as "customerName", v.check_in_at as "checkInAt",
                v.duration_seconds as "durationSeconds", v.outcome::text as outcome,
                v.notes, v.transcript,
                v.verified, v.location_mismatch as "locationMismatch",
@@ -4295,7 +4631,7 @@ export async function salesmanRecord(
          order by v.check_in_at desc nulls last limit ${limit}
       `),
       db.execute(sql`
-        select o.id, o.order_no as "orderNo", c.name as "customerName",
+        select o.id, o.order_no as "orderNo", c.id as "customerId", c.name as "customerName",
                o.ordered_at as "orderedAt", o.total_amount as "totalAmountPaise",
                o.status::text as status
           from orders o join customers c on c.id = o.customer_id
@@ -4303,7 +4639,7 @@ export async function salesmanRecord(
          order by o.ordered_at desc limit ${limit}
       `),
       db.execute(sql`
-        select r.id, r.receipt_no as "receiptNo", c.name as "customerName",
+        select r.id, r.receipt_no as "receiptNo", c.id as "customerId", c.name as "customerName",
                r.received_at::text as "receivedAt", r.amount as "amountPaise",
                r.mode, r.status::text as status, r.deposited_at as "depositedAt"
           from payment_receipts r join customers c on c.id = r.customer_id
@@ -4341,7 +4677,7 @@ export async function salesmanRecord(
          order by e.expense_date desc limit ${limit}
       `),
       db.execute(sql`
-        select s.id, c.name as "customerName", p.name as "productName",
+        select s.id, c.id as "customerId", c.name as "customerName", p.name as "productName",
                s.quantity_cans as "quantityCans",
                s.requested_date::text as "requestedDate",
                s.follow_up_date::text as "followUpDate",
@@ -4367,7 +4703,7 @@ export async function salesmanRecord(
       db.execute(sql`
         select t.id, t.title, t.priority::text as priority,
                t.due_date::text as "dueDate", t.status::text as status,
-               c.name as "customerName"
+               c.id as "customerId", c.name as "customerName"
           from mbos_tasks t
           left join customers c on c.id = t.customer_id
          where t.assigned_to_user_id = ${userId}

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { money, shortDate } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { endOfMonth } from "@/lib/business-date";
@@ -9,19 +8,34 @@ import {
   Banner,
   Cell,
   Empty,
+  EntityLink,
+  FilterChips,
   HeadCell,
   MetricRow,
   Pill,
   Row,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
 import { plural } from "../words";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 
 export const metadata = { title: "Travel ledger — Sales Dashboard — MahekOne" };
 
 const km = (metres: number | null) =>
   metres === null ? null : `${(metres / 1000).toFixed(1)} km`;
+
+/**
+ * The disagreement threshold, named once.
+ *
+ * It was a bare `2500` written out at both the banner and the row, which is
+ * two statements of one fact waiting to drift — and now that a filter chip
+ * counts the same set, it would have been three. It is not configuration:
+ * nothing is priced, refused or paid on it, and what it decides is which legs
+ * a manager is invited to look at rather than what anybody is owed.
+ */
+const DISAGREEMENT_BPS = 2500;
 
 /**
  * Requirement 25 — every movement, and how far it was.
@@ -40,7 +54,7 @@ const km = (metres: number | null) =>
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string; who?: string }>;
+  searchParams: Promise<{ month?: string; who?: string; show?: string; sort?: string; dir?: string }>;
 }) {
   const params = await searchParams;
   const now = await today();
@@ -56,8 +70,74 @@ export default async function Page({
   const fixEverySeconds = config["mbos.location.trackEverySeconds"];
   const totalMetres = rows.reduce((n, r) => n + (r.chosenMetres ?? 0), 0);
   const totalPaise = rows.reduce((n, r) => n + Number(r.eligiblePaise ?? 0), 0);
-  const disagreeing = rows.filter((r) => r.varianceBps !== null && r.varianceBps > 2500);
+  const disagreeing = rows.filter(
+    (r) => r.varianceBps !== null && r.varianceBps > DISAGREEMENT_BPS,
+  );
   const unmeasured = rows.filter((r) => r.chosenMetres === null);
+  /*
+   * "No photograph" MEANS A CLAIMED READING WITH NOTHING BEHIND IT, and not
+   * simply an empty column.
+   *
+   * A leg typed up on `/travel` once the journey is over has no photograph and
+   * never will — the meter has moved, and refusing to record a journey for
+   * want of a picture nobody can now take is the worse answer, which is why
+   * `origin` exists on the row at all. So a chip counting every photograph-less
+   * leg would put those honest rows in front of a manager as though somebody
+   * had withheld something. What is worth a second look is a leg that names a
+   * DISTANCE off the dial with no image of the dial: a number that cannot be
+   * checked by anybody who was not standing there.
+   */
+  const unphotographed = rows.filter((r) => r.odometerMetres !== null && !r.odometerPhotoId);
+
+  /*
+   * THE LEDGER OPENS WHOLE, and the exception is one click away.
+   *
+   * The obvious default is "Disagreeing", since that is what the screen was
+   * built to surface — and it is the wrong one here, for a reason the word
+   * "ledger" gives away. This is the RECORD of a month's movement, read to
+   * answer "what did the field do and what did it cost" as often as "who
+   * should I doubt", and a record that opens showing four of four hundred legs
+   * has hidden the book from whoever came to read it. It would also make the
+   * empty state lie: "No travel recorded this month" under a filter is a
+   * sentence about the filter wearing the clothes of a sentence about the
+   * month. The disagreements already reach the manager twice before he touches
+   * a chip — the banner names them and the metric counts them — so the cost of
+   * defaulting wide is one click and the cost of defaulting narrow is a
+   * ledger nobody can see.
+   */
+  const show = params.show === "disagreeing" || params.show === "nophoto" ? params.show : "all";
+  const visible =
+    show === "disagreeing" ? disagreeing : show === "nophoto" ? unphotographed : rows;
+
+  /* The month and the salesman narrowing survive a chip and a sort alike:
+     getting this wrong silently drops the filter somebody is standing in and
+     answers a different question under the same heading. */
+  const scoped = `month=${month}${params.who ? `&who=${encodeURIComponent(params.who)}` : ""}`;
+
+  /* Sorting is DISPLAY ONLY. The figures above the table and the counts on the
+     chips are both taken over the whole month's legs, never over the sorted or
+     filtered copy — a metric that moved when somebody re-ordered a column would
+     be the screen disagreeing with itself. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(visible, sort, COLUMNS);
+  const head = (key: string, label: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/travel", sort, key, `${scoped}&show=${show}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {label}
+    </SortHead>
+  );
+
+  /* A chip carries the sort with it. Changing WHICH legs are listed is not a
+     statement about what order to list them in, and dropping the column
+     somebody chose on the way into a narrower view is a small betrayal they
+     have to notice and undo. */
+  const held = sort.key ? `&sort=${encodeURIComponent(sort.key)}&dir=${sort.dir}` : "";
+  const chip = (key: string) => `/sales/travel?${scoped}&show=${key}${held}`;
 
   return (
     <div className="p-6">
@@ -96,39 +176,80 @@ export default async function Page({
         ]}
       />
 
+      {rows.length ? (
+        <FilterChips
+          current={show}
+          options={[
+            {
+              key: "disagreeing",
+              href: chip("disagreeing"),
+              label: "Disagreeing",
+              count: disagreeing.length,
+            },
+            {
+              key: "nophoto",
+              href: chip("nophoto"),
+              label: "No photograph",
+              count: unphotographed.length,
+            },
+            { key: "all", href: chip("all"), label: "Everything", count: rows.length },
+          ]}
+        />
+      ) : null}
+
       {rows.length === 0 ? (
         <Empty
           title="No travel recorded this month"
           body={`Legs are recorded on the handset as the salesman moves. A position is taken every ${fixEverySeconds} seconds while somebody is checked in, and the distance is worked out when the day is submitted.`}
+        />
+      ) : visible.length === 0 ? (
+        /* A view that is empty because it was ASKED to be, said as exactly
+           that. The sentence above it is about the month and would be false
+           here, and a manager who reads "no travel recorded" under a chip he
+           picked concludes the ledger is broken rather than that the month was
+           clean. */
+        <Empty
+          title={show === "disagreeing" ? "Nothing disagrees this month" : "Every claimed reading is photographed"}
+          body={
+            show === "disagreeing"
+              ? `All ${plural(rows.length, "leg")} this month read within 25% between the odometer and the day's track. Everything is on the Everything chip.`
+              : `Every leg this month that names a distance off the dial has a photograph of it. Everything is on the Everything chip.`
+          }
         />
       ) : (
         <Table
           minWidth={1500}
           head={
             <>
-              <HeadCell width={110}>Day</HeadCell>
-              <HeadCell width={150}>Salesman</HeadCell>
+              {head("day", "Day", 110)}
+              {head("salesman", "Salesman", 150)}
+              {/* Mode, the two ends, the purpose and the customer are left
+                  unsorted deliberately. Each is a label rather than a
+                  quantity, and ordering a month of legs alphabetically by
+                  "Bus" or by "Nagpur → Wardha" groups rows that have nothing
+                  to say to each other — the questions this screen is opened
+                  with are all "how far", "how much" and "when". */}
               <HeadCell width={130}>Mode</HeadCell>
               <HeadCell width={230}>From → to</HeadCell>
               <HeadCell width={130}>Purpose</HeadCell>
               <HeadCell width={170}>Customer</HeadCell>
-              <HeadCell align="right" width={130}>Odometer</HeadCell>
-              <HeadCell align="right" width={170}>GPS track</HeadCell>
-              <HeadCell align="right" width={110}>By hand</HeadCell>
-              <HeadCell align="right" width={150}>Paid on</HeadCell>
-              <HeadCell align="right" width={120}>Eligible</HeadCell>
+              {head("odometer", "Odometer", 130, "right")}
+              {head("gps", "GPS track", 170, "right")}
+              {head("manual", "By hand", 110, "right")}
+              {head("paid", "Paid on", 150, "right")}
+              {head("eligible", "Eligible", 120, "right")}
             </>
           }
         >
-          {rows.map((r, i) => {
-            const disagrees = r.varianceBps !== null && r.varianceBps > 2500;
+          {sorted.map((r, i) => {
+            const disagrees = r.varianceBps !== null && r.varianceBps > DISAGREEMENT_BPS;
             return (
               <Row key={r.id} striped={i % 2 === 1}>
                 <Cell>{r.day ? shortDate(r.day) : <span className="text-muted">—</span>}</Cell>
                 <Cell truncate={150}>
-                  <Link href={`/sales/people/${r.userId}`} className="font-medium text-ink no-underline">
+                  <EntityLink href={`/sales/people/${r.userId}`}>
                     {r.userName}
-                  </Link>
+                  </EntityLink>
                 </Cell>
                 <Cell>{r.modeLabel ?? r.modeKey.replace(/_/g, " ")}</Cell>
                 <Cell truncate={230}>
@@ -199,3 +320,35 @@ export default async function Page({
     </div>
   );
 }
+
+/**
+ * What each sortable column is worth.
+ *
+ * Every distance is kept in METRES rather than sorted on the rendered "4.1 km"
+ * — the string sort would read 10 km as smaller than 9 km, and the one number
+ * on this screen nobody may be wrong about is a distance.
+ *
+ * `null` sorts last in both directions, which is what the legs with nothing
+ * measured need: a leg worth nothing is already named in its own banner, and
+ * floating it to the top of "furthest first" would put the rows that answer
+ * the question least where the eye goes first.
+ */
+const COLUMNS: SortColumns<{
+  day: string | null;
+  userName: string;
+  odometerMetres: number | null;
+  gpsMetres: number | null;
+  manualMetres: number | null;
+  chosenMetres: number | null;
+  eligiblePaise: number | string | null;
+}> = {
+  day: (r) => r.day,
+  salesman: (r) => r.userName,
+  odometer: (r) => r.odometerMetres,
+  gps: (r) => r.gpsMetres,
+  manual: (r) => r.manualMetres,
+  paid: (r) => r.chosenMetres,
+  /* A day nobody has submitted has no figure at all, and that is not zero —
+     the cell says "Not yet" for the same reason. */
+  eligible: (r) => (r.eligiblePaise === null ? null : Number(r.eligiblePaise)),
+};
