@@ -57,6 +57,10 @@ const files = [
   "src/lib/relationship-handover.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
+  // The dashboard reads its four figures from `queueProgress`, which must stay
+  // exactly equal to what `getQueue` would have said. That equivalence is only
+  // checkable against a real book, so it lives here rather than in the pure set.
+  "src/lib/queue-progress.test.ts",
 ];
 
 let failed = 0;
