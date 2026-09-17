@@ -6,6 +6,7 @@ import { AppSwitcher } from "@/components/shell/app-switcher";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 import { initialsOf } from "@/lib/format";
+import { hatForHeader } from "@/lib/hat-for-header";
 import { FounderShell } from "./founder-shell";
 
 /**
@@ -28,10 +29,17 @@ export default async function FounderLayout({
   const modules = await listUserModules(user.id, "founder");
   if (modules.length === 0) redirect("/apps");
 
+  const hat = await hatForHeader(user, "founder");
+
   return (
     <ToastProvider>
       <FounderShell
-        user={{ name: user.name, initials: initialsOf(user.name) }}
+        user={{
+          name: user.name,
+          role: hat.label,
+          roleSentence: hat.sentence,
+          initials: initialsOf(user.name),
+        }}
         allowed={modules.map((m) => m.href)}
         switcher={
           apps.length > 1 ? (

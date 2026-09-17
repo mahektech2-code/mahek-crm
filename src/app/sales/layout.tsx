@@ -6,6 +6,7 @@ import { AppSwitcher } from "@/components/shell/app-switcher";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 import { initialsOf } from "@/lib/format";
+import { hatForHeader } from "@/lib/hat-for-header";
 import { addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { consoleCounts } from "@/lib/services/sales-service";
@@ -40,16 +41,26 @@ export default async function SalesLayout({
 
   const day = await today();
   const counts = await consoleCounts(day, addDays(day, 1));
+  const hat = await hatForHeader(user, "sales");
 
   return (
     <ToastProvider>
       <SalesShell
         user={{
           name: user.name,
-          /* From the SCOPE, not the role. A regional manager labelled
-           * "National sales manager" is the header lying about the one thing
-           * it is drawn to say. */
-          title: counts.title,
+          /*
+           * THE LEVEL HELD ON THIS APP, not a rank derived from the scope.
+           *
+           * This read `counts.title` — "National sales manager", worked out
+           * from how many regions somebody covers. It is not a level, it is
+           * stored nowhere, and it is a job title the company does not issue,
+           * so an ASSOCIATE granted the Sales Dashboard was greeted as a
+           * national manager. The scope it came from is not lost: the team
+           * line beside the wordmark says "11 salesmen · All India · 7
+           * regions", which is the same fact without the invented rank.
+           */
+          title: hat.label,
+          titleSentence: hat.sentence,
           initials: initialsOf(user.name),
         }}
         teamLine={counts.teamLine}

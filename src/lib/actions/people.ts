@@ -130,6 +130,9 @@ export async function setUserApps(
   return ok({ apps: wanted }, [granted, revoked].filter(Boolean).join("; "));
 }
 
+/** The three there are. Read by the guard below — see `lib/hat-labels.ts`. */
+const LEVELS = ["associate", "manager", "admin"] as const;
+
 export async function setUserRole(
   userId: string,
   role: "associate" | "manager" | "admin",
@@ -139,6 +142,22 @@ export async function setUserRole(
     actor = await manager();
   } catch (e) {
     return fail(e instanceof Error ? e.message : "Not allowed.");
+  }
+
+  /*
+   * CHECKED HERE, because a typed parameter is not a check.
+   *
+   * The console's own drawer offered "Telecaller" and "Accounts" for years
+   * after both stopped being roles, lowercased whatever was picked and cast it
+   * to this signature — so the value arriving could be any string, and the
+   * first thing that noticed was Postgres refusing the enum. That surfaces as
+   * "The role did not change" with nothing saying what was wrong. A server
+   * action is a URL as well, so the dropdown was never the only caller.
+   */
+  if (!LEVELS.includes(role)) {
+    return fail(
+      `There is no level called "${role}". A level is associate, manager or admin — the APP is the job.`,
+    );
   }
 
   const [before] = await db

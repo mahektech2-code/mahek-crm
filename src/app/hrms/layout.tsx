@@ -6,6 +6,7 @@ import { getApp, webApps } from "@/lib/apps";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import { Wordmark } from "@/components/shell/wordmark";
 import { AccountMenu } from "@/components/shell/account-menu";
+import { hatForHeader } from "@/lib/hat-for-header";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 
@@ -43,6 +44,7 @@ export default async function HrmsLayout({
   if (modules.length === 0) redirect("/apps");
 
   const app = getApp("hrms")!;
+  const hat = await hatForHeader(user, "hrms");
 
   return (
     <ToastProvider>
@@ -71,7 +73,7 @@ export default async function HrmsLayout({
           {/* HRMS is the app somebody can hold on its own, so it lands them
               straight in and they never see the launcher. Without the menu
               here, an HRMS-only account has no door to its own password. */}
-          <AccountMenu user={user} variant="header" />
+          <AccountMenu user={user} hat={hat} variant="header" />
         </header>
 
         <div className="flex-1">{children}</div>

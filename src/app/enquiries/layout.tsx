@@ -6,6 +6,7 @@ import { getApp, webApps } from "@/lib/apps";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import { Wordmark } from "@/components/shell/wordmark";
 import { SignOutButton } from "@/components/shell/sign-out-button";
+import { hatForHeader } from "@/lib/hat-for-header";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 
@@ -37,6 +38,8 @@ export default async function EnquiriesLayout({
   const modules = await listUserModules(user.id, "enquiries");
   if (modules.length === 0) redirect("/apps");
 
+  const hat = await hatForHeader(user, "enquiries");
+
   const app = getApp("enquiries")!;
 
   return (
@@ -60,7 +63,7 @@ export default async function EnquiriesLayout({
           </nav>
           <span className="flex-1" />
           <span className="text-[13px] text-muted">
-            {user.name} · {user.role}
+            {user.name} · {hat.label}
           </span>
           <FeedbackButton compact />
           <SignOutButton />

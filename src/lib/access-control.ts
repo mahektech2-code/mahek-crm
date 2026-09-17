@@ -128,6 +128,42 @@ export async function requestAppId(): Promise<string | null> {
  * matters; narrowing them here would only change what an unreachable screen
  * would have shown.
  */
+/**
+ * THE LEVEL SOMEBODY HOLDS IN ONE NAMED APP.
+ *
+ * `hatInForce` answers the same question from the REQUEST — the app header the
+ * proxy writes — which is right for a capability check that does not know where
+ * it is being called from. A layout does know: it is the app. So it says so,
+ * rather than trusting a header it could have gone and read for itself, and the
+ * designation cannot be wrong because a request arrived without one.
+ *
+ * NULL ON THE GRANT MEANS THE ACCOUNT'S OWN LEVEL, which is what every row
+ * meant before the column existed and what `npm run app:grant` still writes —
+ * a terminal that knows nothing about levels has to go on granting an app that
+ * works. NO GRANT AT ALL answers null, and the caller says so in words: a
+ * person standing in an app they were never given is a redirect away from here
+ * on every one of these screens, and drawing a level for them would be the
+ * header inventing standing out of nothing.
+ */
+export async function levelInApp(
+  user: { id: string; role: string },
+  app: AppId,
+): Promise<Role | null> {
+  const [grant] = await db
+    .select({ role: appAccess.role })
+    .from(appAccess)
+    .where(
+      and(
+        eq(appAccess.userId, user.id),
+        eq(appAccess.app, app as (typeof appIdEnum.enumValues)[number]),
+      ),
+    )
+    .limit(1);
+
+  if (!grant) return null;
+  return (grant.role ?? user.role) as Role;
+}
+
 export async function requestHat(user: {
   id: string;
   role: string;

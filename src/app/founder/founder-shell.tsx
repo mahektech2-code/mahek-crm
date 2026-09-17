@@ -36,7 +36,16 @@ export function FounderShell({
   allowed: readonly string[];
   switcher: React.ReactNode;
   feedback: React.ReactNode;
-  user: { name: string; initials: string };
+  /**
+   * The name AND the level held on this app.
+   *
+   * This header drew initials in a circle and nothing else — which at least
+   * had the merit of not being wrong, unlike the headers that printed the
+   * widest level held anywhere. On a shared machine the initials are not an
+   * answer to "is this me", and the level is what says what the screen will
+   * let you do. See `lib/hat-labels.ts`.
+   */
+  user: { name: string; role: string; roleSentence: string; initials: string };
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -58,11 +67,23 @@ export function FounderShell({
           <div className="flex items-center gap-2.5">
             {feedback}
             <span
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-divider text-[11px] font-medium text-body"
+              className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-divider text-[11px] font-medium text-body"
               title={user.name}
             >
               {user.initials}
             </span>
+            <span className="leading-[14px]">
+              <span className="block truncate text-[13px] font-medium text-ink">
+                {user.name}
+              </span>
+              <span
+                title={user.roleSentence}
+                className="block truncate text-[11px] font-medium tracking-[0.04em] text-muted uppercase"
+              >
+                {user.role}
+              </span>
+            </span>
+
           </div>
         </div>
 

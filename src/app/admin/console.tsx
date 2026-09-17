@@ -441,6 +441,10 @@ function ConsoleShell({
           <span className="leading-[14px]">
             <span className="block text-[13px] font-medium whitespace-nowrap text-ink">{me.name}</span>
             <span className="block text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+              {/* The level held on the Admin Console, not the widest held anywhere.
+                  "Platform admin" is a real distinction and stays — it is a
+                  capability rather than a level — but everybody else reads
+                  what they actually are here. */}
               {isPlatformAdmin ? "Platform admin" : me.role}
             </span>
           </span>
