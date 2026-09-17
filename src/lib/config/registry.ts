@@ -1769,6 +1769,17 @@ export const SETTINGS = [
     max: 7200,
   },
   {
+    key: "mbos.location.trackerRetryAfterMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long a stopped tracker is left alone before trying again",
+    description:
+      "Minutes. When the watchdog above catches the tracker accepted and silent it drops to a foreground timer — which only advances while the app is the thing on screen, so a phone that goes back in a pocket records nothing at all. That verdict used to stand for the life of the app's run: the first stall of the morning was the last word on the subject, and every later attempt — the afternoon check-in, every time he opened the app — was skipped without asking. Trying again on every one of those is the other extreme and is what the permanent verdict was avoiding: each attempt clears the timer and hands a dead task another whole silent window to prove itself, so the day comes back punched full of holes exactly that size. This is the rate in between, and the cost of being wrong is bounded by it. A new calendar day and a check-in both re-open the question for free, whatever this says — overnight is when somebody is told to go into Settings, and a check-in is a man who has just been walked to the switch. Lower it on a fleet whose phones sometimes relent; raise it where they never do.",
+    default: 30,
+    min: 0,
+    max: 1440,
+  },
+  {
     key: "mbos.location.startOfDayGate",
     type: "text",
     category: "mbos-location",
