@@ -18,6 +18,8 @@
     "jobs:prod": "tsx --conditions=react-server --env-file=.env.prod.local scripts/run-job.ts",
     "jobs:prod:sheets": "tsx --conditions=react-server --env-file=.env.local --env-file=.env.prod.local scripts/run-job.ts",
     "app:grant": "tsx --conditions=react-server --env-file=.env.local scripts/grant-app.ts",
+    "user:password": "tsx --conditions=react-server --env-file=.env.local scripts/set-password.ts",
+    "user:password:prod": "tsx --conditions=react-server --env-file=.env.prod.local scripts/set-password.ts",
     "user:role": "tsx --conditions=react-server --env-file=.env.local scripts/set-role.ts",
     "salesman:link": "tsx --conditions=react-server --env-file=.env.local scripts/link-salesman-name.ts",
     "salesman:link:prod": "tsx --conditions=react-server --env-file=.env.prod.local scripts/link-salesman-name.ts",
