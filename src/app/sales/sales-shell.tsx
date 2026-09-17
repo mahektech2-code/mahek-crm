@@ -56,7 +56,17 @@ export function SalesShell({
   feedback,
   children,
 }: {
-  user: { name: string; title: string; initials: string };
+  /**
+   * `title` is the LEVEL held on this app — see `lib/hat-labels.ts`.
+   *
+   * It used to be a sentence derived from the SCOPE: "National sales manager",
+   * or "Maharashtra sales manager". That is not a level, is stored nowhere, and
+   * is a job title the company does not issue — an associate granted this app
+   * was greeted as a national manager. The scope has not been lost: the team
+   * line beside the wordmark has said "11 salesmen · All India · 7 regions"
+   * all along, which is the same fact without the invented rank.
+   */
+  user: { name: string; title: string; titleSentence: string; initials: string };
   /** "11 salesmen · All India · 7 states" — the scope, not just the name. */
   teamLine: string;
   /** The patch in full, for `teamLine`'s hover — it prints a count past two. */
@@ -178,7 +188,7 @@ export function SalesShell({
           </span>
           <span
             className="min-w-0 flex-initial max-w-[180px] leading-[14px]"
-            title={`${user.name} — ${user.title}`}
+            title={`${user.name} — ${user.titleSentence}`}
           >
             <span className="block truncate text-[13px] font-medium text-ink">
               {user.name}

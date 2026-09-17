@@ -151,6 +151,8 @@ export function HistoryScreen({
                   [
                     "Timestamp",
                     "Customer",
+                    /* A CSV column heading naming who made the call, not a
+                       role this row is compared against. role-name-ok */
                     "Telecaller",
                     "Channel",
                     "Status",

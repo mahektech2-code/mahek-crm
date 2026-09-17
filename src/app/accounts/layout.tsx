@@ -7,6 +7,7 @@ import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 import { getConfig } from "@/lib/config/store";
 import { initialsOf } from "@/lib/format";
+import { hatForHeader } from "@/lib/hat-for-header";
 import { pendingOrderCount } from "@/lib/services/order-approval-service";
 import { pendingReceiptCount } from "@/lib/services/receipt-service";
 import { pendingCreditNoteCount } from "@/lib/services/credit-note-service";
@@ -47,13 +48,19 @@ export default async function OrdersLayout({
     getConfig(),
   ]);
   const staleHours = config["payments.confirmationAgeWarningHours"];
+  const hat = await hatForHeader(user, "accounts");
 
   return (
     <ToastProvider>
       <AccountsShell
         user={{
           name: user.name,
-          role: user.role,
+          /* The level for THIS app, not the widest held anywhere. Vikram is
+             an admin on the account and an ASSOCIATE here, deliberately — the
+             ledger desk's decisions are the Accounts manager's — and this
+             header used to greet him as an admin. */
+          role: hat.label,
+          roleSentence: hat.sentence,
           initials: initialsOf(user.name),
         }}
         counts={{

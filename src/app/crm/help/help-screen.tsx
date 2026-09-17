@@ -27,7 +27,8 @@ export function HelpScreen({
     /* An associate opening the Help centre is a telecaller HERE — this screen
        is the CRM's, and the articles are tagged by the job rather than by the
        level. It read `role === "telecaller"`, which is permanently false since
-       roles became levels, so everybody landed on "All roles". */
+       roles became levels, so everybody landed on "All roles".
+       role-name-ok — the article AUDIENCE, tagged by the job. */
     role === "associate" ? "Telecaller" : "All roles",
   );
   const [category, setCategory] = React.useState("All");
@@ -87,6 +88,7 @@ export function HelpScreen({
           onChange={(e) => setRoleFilter(e.target.value)}
           className="h-10"
         >
+          {/* role-name-ok — who an ARTICLE is for, not what a person is. */}
           {["All roles", "Telecaller", "Manager"].map((r) => (
             <option key={r}>{r}</option>
           ))}

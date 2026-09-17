@@ -13,7 +13,6 @@ import {
 import { splitFilter, type LeadFilters } from "@/lib/lead-filters";
 import {
   appointmentQueue,
-  leadFunnel,
   leadsWithoutNextAction,
   verificationQueue,
 } from "@/lib/services/lead-console-service";
@@ -35,17 +34,17 @@ import { LeadsScreen } from "@/components/leads/leads-screen";
  * see `leads-screen.tsx` for the row actions and `lib/actions/sales.ts` for
  * what each one writes.
  *
- * **The funnel is counted in SQL and banded by the engine, per sales type.**
- * It used to be four counts taken over whatever rows the table happened to
- * hold, across one ladder — which was right while there was one ladder and
- * stopped being right the moment a distributor appointment could sit in it.
- * "Negotiation" then means "talking about quantity" for a shop and "management
- * has appointed them" for a distributor, and one bar cannot say which. The
- * mapping is `bandOf` and is never restated here.
+ * **THE FUNNEL IS NOT DRAWN HERE ANY MORE.** It has its own screen —
+ * leadHref(workspace, `leads/funnel`), three ladders, cohort conversion, a window to read
+ * them over and every band linking into the pre-filtered book. A smaller copy
+ * above this list was two answers to one question, and the one on this page
+ * was the worse of them; what it cost was the worklist starting below the
+ * fold on the screen somebody opens to work a list.
  *
- * The three desk counts across the top are the reason this screen is a way IN
- * rather than the whole feature: the work the funnel added is a queue, and a
- * queue with no count on the screen somebody starts from is one nobody opens.
+ * The three desk counts stay, as one line of links rather than four tiles: the
+ * work the funnel added is a queue, and a queue with no count on the screen
+ * somebody starts from is one nobody opens. What a queue needs there is a
+ * count and a way in, which is a link with a number on it.
  */
 export async function Body({
   workspace,
@@ -72,7 +71,7 @@ export async function Body({
    * THE GUARD IS HERE RATHER THAN IN THE FOLDER'S LAYOUT, and that is not the
    * pattern slipping.
    *
-   * `leads/layout.tsx` used to carry it, back when everything beneath
+   * leadHref(workspace, `leads/layout.tsx`) used to carry it, back when everything beneath
    * this path was one module. It is now nine separately-grantable ones, so a
    * guard up there would refuse somebody holding Qualification on the strength
    * of a module they were deliberately not given. The book itself is still
@@ -100,7 +99,7 @@ export async function Body({
   };
 
   const day = await today();
-  const [page, config, team, archivedCount, funnel, verification, exceptions, appointments, options] =
+  const [page, config, team, archivedCount, verification, exceptions, appointments, options] =
     await Promise.all([
       leadsPage(day, {
         archived: showArchived,
@@ -111,7 +110,6 @@ export async function Body({
       getConfig(),
       fieldTeam(),
       archivedLeadsCount(),
-      leadFunnel(),
       verificationQueue(day, { limit: 1 }),
       leadsWithoutNextAction(day, { limit: 1 }),
       appointmentQueue(),
@@ -145,7 +143,6 @@ export async function Body({
       healthAtRiskBelow={config["mbos.health.atRiskBelow"]}
       healthStrongAtOrAbove={config["mbos.health.strongAtOrAbove"]}
       team={team.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name }))}
-      funnel={funnel}
       desks={{
         verification: verification.total,
         verificationMine: verification.mine,

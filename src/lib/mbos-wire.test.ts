@@ -909,7 +909,23 @@ test("no source file still names a role that no longer exists", () => {
        * code is one whose reason is read; a list in this file is one nobody
        * revisits. */
       if (/role-name-ok/.test(src.split("\n")[i - 1] ?? "")) continue;
-      if (/["']telecaller["']/.test(code) || /\brole\s*=\s*'accounts'/.test(code)) {
+      /*
+       * CASE-INSENSITIVE, and that is not tidiness.
+       *
+       * It matched lower case only, so the Admin Console's own user drawer
+       * carried `select: ["Telecaller", "Manager", "Accounts", "Admin"]` —
+       * the whole dead vocabulary, capitalised — long after the roles went.
+       * Picking either dead option lowercased it and handed it to
+       * `setUserRole`, which writes straight to a Postgres enum: a refused
+       * write surfacing as "The role did not change", with nothing saying
+       * why. Two of the four options on that form could not work, and the
+       * guard written to catch exactly this could not see them.
+       *
+       * `accounts` stays case-sensitive and anchored to a role comparison:
+       * "Accounts" is a live app NAME, and matching it loosely would fire on
+       * every honest mention of the app.
+       */
+      if (/["']telecaller["']/i.test(code) || /\brole\s*=\s*'accounts'/.test(code)) {
         offenders.push(`${file}:${i + 1} ${line.trim().slice(0, 90)}`);
       }
     }

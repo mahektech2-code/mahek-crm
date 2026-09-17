@@ -26,6 +26,7 @@ import type { User } from "@/db/schema";
 export function Sidebar({
   collapsed,
   user,
+  hat,
   badges,
   /** What this person may open. The layout resolved it; undefined means all. */
   groups = NAV,
@@ -33,6 +34,8 @@ export function Sidebar({
 }: {
   collapsed: boolean;
   user: User;
+  /** Who this person is in THIS app — see `lib/hat-labels.ts`. */
+  hat: { label: string; sentence: string };
   badges: { reminders: number; complaints: number; statusRequests: number };
   groups?: NavGroup[];
   pinned?: NavItem[];
@@ -85,7 +88,7 @@ export function Sidebar({
         collapsed sidebar had no way to sign out at all.
       */}
       <div className="flex flex-none items-center border-t border-divider px-2 py-2">
-        <AccountMenu user={user} variant="sidebar" collapsed={collapsed} />
+        <AccountMenu user={user} hat={hat} variant="sidebar" collapsed={collapsed} />
       </div>
     </aside>
   );

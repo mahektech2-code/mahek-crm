@@ -153,7 +153,10 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
       },
       { key: "type", label: "Type", value: v("type", record0?.type ?? "SOP"), half: true, select: ["SOP", "Call script", "System guide", "Policy"] },
       {
+        /* Who an SOP is VISIBLE TO, tagged by the job the article is written
+           for. Not a level, and never stored on a user. */
         key: "roles", label: "Visible to", value: v("roles", record0?.roles ?? "Telecaller, Manager"),
+        // role-name-ok — the audience list, not the role list.
         select: ["Telecaller", "Manager", "Telecaller, Manager"],
       },
       {
@@ -224,8 +227,30 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
           help: "Also a sign-in — telecallers know their number, not their email.",
         },
         {
-          key: "userRole", label: "Role", value: v("userRole", user?.designation ?? "Telecaller"), half: true,
-          select: ["Telecaller", "Manager", "Accounts", "Admin"],
+          /*
+           * THE THREE LEVELS THERE ARE, and this offered four.
+           *
+           * "Telecaller" and "Accounts" were roles once, and AGENTS.md records
+           * why they went: they were two job titles borrowed from two
+           * particular apps, sitting in a list beside two levels of seniority,
+           * so a grant for any third app had no honest word for "ordinary
+           * worker". They have not existed since; a level is `associate`,
+           * `manager` or `admin` and the APP is the job.
+           *
+           * Leaving them here was not merely stale wording. The save
+           * lowercases whatever is picked and hands it to `setUserRole`, which
+           * writes it to a Postgres enum — so choosing either of the two dead
+           * options was a write the database refused, surfacing as "The role
+           * did not change" with nothing saying why. Two of the four options
+           * could not work.
+           *
+           * And the default was "Telecaller", which is the dummy this whole
+           * change is about: a person whose level could not be read was shown
+           * a job title nobody had given them.
+           */
+          key: "userRole", label: "Level", value: v("userRole", user?.designation ?? ""), half: true,
+          select: ["Associate", "Manager", "Admin"],
+          help: "What they are on the account. Each app can hold a lower one.",
         },
       );
     }
@@ -236,8 +261,13 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
           help: "Also a sign-in — telecallers know their number, not their email.",
         },
         {
-          key: "userRole", label: "Role", value: v("userRole", "Telecaller"), half: true,
-          select: ["Telecaller", "Manager", "Accounts", "Admin"],
+          /* The same three levels the edit drawer offers, and for the same
+             reason — see the note there. Creating somebody as a "Telecaller"
+             sent `telecaller` to `createUser` and the enum refused it, so the
+             default option on this form could not create an account. */
+          key: "userRole", label: "Level", value: v("userRole", "Associate"), half: true,
+          select: ["Associate", "Manager", "Admin"],
+          help: "What they are on the account. Each app can hold a lower one.",
         },
         {
           key: "password", label: "First password", value: v("password", ""),
@@ -484,10 +514,9 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
                 name: v("name", ""),
                 email: v("contact", ""),
                 phone: v("mobile", "") || null,
-                role: v("userRole", "Telecaller").toLowerCase() as
+                role: v("userRole", "Associate").toLowerCase() as
                   | "associate"
                   | "manager"
-                  
                   | "admin",
                 password: v("password", ""),
                 apps: [v("apps", "crm")],

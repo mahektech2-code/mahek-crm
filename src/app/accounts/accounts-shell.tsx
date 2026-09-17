@@ -61,7 +61,9 @@ export function AccountsShell({
   feedback,
   children,
 }: {
-  user: { name: string; role: string; initials: string };
+  /** `role` is the level for THIS app — see `lib/hat-labels.ts` — and
+      `roleSentence` is what it amounts to here, for the hover. */
+  user: { name: string; role: string; roleSentence: string; initials: string };
   counts: NavCounts;
   /**
    * The routes this person may open, resolved in the layout. The sidebar draws
@@ -223,7 +225,7 @@ export function AccountsShell({
           <span className="mx-1 h-6 w-px flex-none bg-divider" />
           <div className="flex flex-none items-center gap-2">
             <span
-              title={`${user.name} · ${user.role}`}
+              title={`${user.name} — ${user.roleSentence}`}
               className="flex h-7 w-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]"
             >
               {user.initials}

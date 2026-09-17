@@ -44,6 +44,8 @@ export const REGISTRY: RegistryEntry[] = [
     schemaEndpoint: "/api/crm/config/schema",
     writeEndpoint: "/api/crm/config",
     summaryEndpoint: "/api/crm/summary",
+    /* The audiences this app's SOPs are written for, shown on the app's own
+       card. Not a level, and never compared against one. role-name-ok */
     roles: ["Telecaller", "Manager"],
     managerRole: "Manager",
     reportsTo: true,
@@ -288,7 +290,9 @@ export const ENTITIES: Record<EntityKind, EntityRow[]> = {
   ],
   help: [
     { id: "h1", name: "The three escalation stages", cat: "Collections SOP", type: "SOP", roles: "Telecaller, Manager", active: true, body: "Stage 1 — WhatsApp only…" },
+    /* role-name-ok — who the article is for. */
     { id: "h2", name: "Capturing an order during a call", cat: "Order capture", type: "SOP", roles: "Telecaller", active: true, body: "Capture the order inside the call panel…" },
+    /* role-name-ok — who the article is for. */
     { id: "h3", name: "Repeat order call", cat: "Call scripts", type: "Call script", roles: "Telecaller", active: true, body: "Namaste [Name] ji…" },
   ],
   holidays: [],
