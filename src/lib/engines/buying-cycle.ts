@@ -136,3 +136,43 @@ export function median(values: number[]): number {
 export function mean(values: number[]): number {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
+
+/**
+ * WHAT A TYPICAL ORDER FROM THIS CUSTOMER IS WORTH, over a window.
+ *
+ * The figure `callValuePaise` ranks a sales call by. It was a correlated
+ * `percentile_cont(0.5)` per candidate inside the queue's candidate scan —
+ * one pass over that customer's order history, for every customer in scope,
+ * every time the Call Log or the dashboard was opened. It is a cache now, and
+ * this is the rule the cache is rebuilt from.
+ *
+ * A MEDIAN, not a mean, and the distinction is the whole point: one unusual
+ * order repeated should not decide where a shop sits on the calling list for a
+ * year. `median` above averages the two middle values on an even count, which
+ * is what `percentile_cont(0.5)` does, so the cached figure equals the one the
+ * subquery produced rather than merely resembling it.
+ *
+ * ZERO where there is no history in the window — the same answer the
+ * subquery's `coalesce` gave. That is not "worthless": a customer with no
+ * orders at all is a prospect, and prospects are ranked by their reason rather
+ * than by a figure nobody has.
+ *
+ * The window is a parameter rather than a constant because it is
+ * configuration — `queue.orderValueLookbackDays` — and a book that is tuned to
+ * a different one has to be rebuilt on ITS window, not on the default.
+ */
+export function typicalOrderValue(
+  orders: Array<{ orderedAt: Date; totalAmount: number }>,
+  lookbackDays: number,
+  now: Date,
+): number {
+  const cutoff = now.getTime() - lookbackDays * 24 * 60 * 60 * 1000;
+  const inWindow = orders
+    .filter((o) => o.orderedAt.getTime() >= cutoff)
+    .map((o) => o.totalAmount);
+  if (!inWindow.length) return 0;
+  // Rounded, because the column is paise and `percentile_cont` interpolates to
+  // a fraction of one on an even count. Order amounts are positive, so
+  // `Math.round` and Postgres's `::bigint` agree on the half-way case.
+  return Math.round(median(inWindow));
+}

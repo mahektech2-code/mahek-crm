@@ -19,7 +19,6 @@ import {
   type QueueResult,
   callValuePaise,
 } from "../engines/queue";
-import { orderCountsSql } from "../order-status";
 import { nextStep, type NextStep } from "../engines/next-step";
 import { today } from "../recompute";
 import { getPaymentFollowUpPlan, paymentCadenceFor } from "./payment-service";
@@ -213,27 +212,30 @@ async function queueInputs(
       salesPersonName: customers.salesPersonName,
       assignedToId: sql<string | null>`${ASSIGNED_TO_SQL}`,
       /*
-       * What this customer's order is usually worth, in paise.
+       * What this customer's order is usually worth, in paise — READ OFF THE
+       * ROW, not derived per candidate.
        *
        * The MEDIAN, not the average: one drum bought for a job that never
-       * repeated should not decide where a shop sits on the calling list for
-       * a year, and an average is exactly how it would.
+       * repeated should not decide where a shop sits on the calling list for a
+       * year, and an average is exactly how it would. Approved orders only,
+       * because `orderCountsSql` is the single definition of "did the business
+       * sell anything" and a declined order was never a sale; zero where there
+       * is no history in the window, which is a prospect, and they are ranked
+       * by their reason rather than by a figure nobody has.
        *
-       * Approved orders only — `orderCountsSql` is the single definition of
-       * "did the business sell anything", and a declined order was never a
-       * sale. Null where there is no history at all, which is a prospect, and
-       * they are ranked by the reason rather than by a figure we do not have.
+       * It was a correlated `percentile_cont(0.5)` here, run
+       * once per customer in scope on every load of this screen and of the
+       * dashboard — 19,414 of this statement's 30,510 shared buffers on the
+       * real book, the largest single part of the most expensive query in the
+       * app. `customers.typical_order_paise` is the same figure, cached by
+       * `writeCycle` in `lib/recompute.ts` from the rows it already reads for
+       * the cycle and the average, on the same cadence as both.
        *
-       * `customers.id` spelled out for the reason the comment above says: a
-       * bare `id` inside a correlated subquery binds to the inner table.
+       * The median is over `queue.orderValueLookbackDays`, so changing that
+       * setting means re-running the cycle recompute — exactly as changing
+       * `escalation.slowPayerGraceDays` means re-running the slow-payer pass.
        */
-      typicalOrderPaise: sql<number>`coalesce((
-        select percentile_cont(0.5) within group (order by o.total_amount)
-          from ${orders} o
-         where o.customer_id = customers.id
-           and ${orderCountsSql("o")}
-           and o.ordered_at >= now() - make_interval(days => ${config["queue.orderValueLookbackDays"]})
-      ), 0)::bigint`,
+      typicalOrderPaise: customers.typicalOrderPaise,
       /*
        * The last call that was ANSWERED, and what came of it. What it buys is
        * configuration — "no order" a week, "not interested" a month — so the

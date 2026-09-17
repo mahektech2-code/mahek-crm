@@ -1584,6 +1584,25 @@ export const customers = pgTable(
     activeInOrderSystem: boolean("active_in_order_system").notNull().default(false),
     outstanding: bigint("outstanding", { mode: "number" }).notNull().default(0),
     avgOrderValue: bigint("avg_order_value", { mode: "number" }).notNull().default(0),
+    /*
+     * The MEDIAN order over `queue.orderValueLookbackDays`, which is what a
+     * sales call is ranked by — not the mean above it, because one unusual
+     * order repeated should not decide where a shop sits on the calling list
+     * for a year.
+     *
+     * A cache, derived and never hand-edited, written by `writeCycle` in
+     * `lib/recompute.ts` from the same rows it already reads for the cycle and
+     * the average beside it. It was a correlated `percentile_cont` per
+     * candidate inside the queue's candidate scan — measured at 19,414 of that
+     * statement's 30,510 shared buffers, the largest single component of the
+     * most expensive query in the app.
+     *
+     * Zero means no orders in the window, which is the answer the subquery's
+     * own `coalesce` gave, and is why the column is `notNull`.
+     */
+    typicalOrderPaise: bigint("typical_order_paise", { mode: "number" })
+      .notNull()
+      .default(0),
     slowPayer: boolean("slow_payer").notNull().default(false),
 
     /* flags */

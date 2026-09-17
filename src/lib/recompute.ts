@@ -24,7 +24,7 @@ import {
 import { getConfig } from "./config/store";
 import { managerNameByEmployeeName } from "./services/org-service";
 import type { Config } from "./config/registry";
-import { buyingCycle } from "./engines/buying-cycle";
+import { buyingCycle, typicalOrderValue } from "./engines/buying-cycle";
 import {
   escalationStage,
   effectiveDueDate,
@@ -161,6 +161,27 @@ async function writeCycle(
   const avg = rows.length
     ? Math.round(rows.reduce((sum, r) => sum + r.totalAmount, 0) / rows.length)
     : 0;
+  /*
+   * WHAT A CALL TO THIS CUSTOMER IS WORTH, written here because the rows are
+   * already in hand.
+   *
+   * This was a correlated `percentile_cont(0.5)` inside the queue's candidate
+   * scan, run once per customer in scope on every Call Log and dashboard load
+   * — the largest single component of the most expensive statement in the app.
+   * Every input it needs is in `rows`, which this function already has for the
+   * cycle and the average, so caching it costs one more assignment and no
+   * extra read.
+   *
+   * It follows the cycle's own cadence deliberately: both are rebuilt by this
+   * function, per customer when an order is captured or decided, and over the
+   * whole book nightly. A median over a year does not move on one order, so a
+   * figure that is a few hours old is the same figure.
+   */
+  const typical = typicalOrderValue(
+    rows,
+    config["queue.orderValueLookbackDays"],
+    new Date(),
+  );
 
   await db
     .update(customers)
@@ -171,6 +192,7 @@ async function writeCycle(
       // The latest order PLACED, which may be newer than the latest approved.
       lastOrderDate: placedOn ?? dates.at(-1) ?? null,
       avgOrderValue: avg,
+      typicalOrderPaise: typical,
       updatedAt: new Date(),
     })
     .where(eq(customers.id, customerId));
