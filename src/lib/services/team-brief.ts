@@ -240,7 +240,7 @@ export async function teamBrief(): Promise<TeamBrief> {
      print under it. The list is ordered pending-first, so the ones a manager is
      being asked to act on are never the part the cap drops. */
   const pendingLeave = leave.rows.filter((l) => l.approvalState === "pending");
-  const pendingExpenses = expenses.filter((e) => e.approvalState === "pending");
+  const pendingExpenses = expenses.rows.filter((e) => e.approvalState === "pending");
 
   lines.push(
     "",
@@ -355,7 +355,7 @@ export async function teamBrief(): Promise<TeamBrief> {
 
   lines.push(
     "",
-    `EXPENSE CLAIMS WAITING (${pendingExpenses.length}):`,
+    `EXPENSE CLAIMS WAITING (${expenses.waiting}):`,
     ...(pendingExpenses.length
       ? capped(
           pendingExpenses,
@@ -396,7 +396,7 @@ export async function teamBrief(): Promise<TeamBrief> {
     leads.length === 0 &&
     invoiceTotals.open === 0 &&
     leave.waiting === 0 &&
-    pendingExpenses.length === 0 &&
+    expenses.waiting === 0 &&
     samples.late === 0;
 
   return {

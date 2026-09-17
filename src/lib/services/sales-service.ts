@@ -2658,9 +2658,44 @@ export type ExpenseRow = {
  * month against a ₹6,000 cap. The cap itself is configuration and lives with
  * the settings; this supplies the number to compare it against.
  */
-export async function expenseClaims(): Promise<ExpenseRow[]> {
+const EXPENSE_CLAIM_LIMIT = 300;
+
+export type ExpenseClaims = {
+  /** Pending first, so the queue is never the part the cap drops. */
+  rows: ExpenseRow[];
+  total: number;
+  waiting: number;
+};
+
+/**
+ * What the field spent, and what is still waiting on somebody.
+ *
+ * **THE SCREEN DOES NOT READ THIS.** `/sales/expenses` reads `claimDays`,
+ * which is scoped to a month and bounded by it; this is the whole book, and
+ * its one caller is the team brief — prose a manager quotes. So the count has
+ * to be counted rather than measured off the page, for the reason the orders
+ * and samples reads beside it already carry: `mbos_expenses` is one row per
+ * expense LINE and not per day, so three hundred is a few months of an active
+ * team rather than a ceiling nobody reaches.
+ *
+ * The ordering means the queue itself is safe either way — what is pending
+ * leads the list — but "N waiting" was a count of however many pending claims
+ * happened to fit, and a brief that understates what is waiting on somebody
+ * reads exactly like a brief that is up to date.
+ */
+export async function expenseClaims(): Promise<ExpenseClaims> {
   const scope = await managerScope();
-  return db.execute<ExpenseRow>(sql`
+
+  const [counted] = await db.execute<{ total: number; waiting: number }>(sql`
+    select count(*)::int as "total",
+           count(*) filter (where ap.state is null or ap.state = 'pending')::int as "waiting"
+      from mbos_expenses e
+      left join mbos_approvals ap
+             on ap.subject_id = e.id and ap.type = 'expense_claim'
+     where true ${onlyMine(scope, "e.user_id")}
+  `);
+
+  const rows = (await db.execute<ExpenseRow>(sql`
     select e.id, e.user_id as "salesmanId", u.name as "salesmanName", u.initials,
            e.category::text as category,
            e.amount_paise as "amountPaise",
@@ -2683,8 +2718,14 @@ export async function expenseClaims(): Promise<ExpenseRow[]> {
      order by
        case when ap.state = 'pending' then 0 else 1 end,
        e.expense_date desc
-     limit 300
-  `) as unknown as ExpenseRow[];
+     limit ${EXPENSE_CLAIM_LIMIT}
+  `)) as unknown as ExpenseRow[];
+
+  return {
+    rows,
+    total: counted?.total ?? 0,
+    waiting: counted?.waiting ?? 0,
+  };
 }
 
 /* ═════════════════════════════════════════════════════ overview and admin */
