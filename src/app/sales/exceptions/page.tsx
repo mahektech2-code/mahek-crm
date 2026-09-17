@@ -1,10 +1,10 @@
-import Link from "next/link";
 import { stamp } from "@/lib/format";
 import { listExceptions } from "@/lib/services/expense-service";
 import {
   Banner,
   Cell,
   Empty,
+  EntityLink,
   FilterChips,
   HeadCell,
   MetricRow,
@@ -104,9 +104,9 @@ export default async function Page({
           {rows.map((r, i) => (
             <Row key={r.id} striped={i % 2 === 1}>
               <Cell truncate={150}>
-                <Link href={`/sales/people/${r.userId}`} className="font-medium text-ink no-underline">
+                <EntityLink href={`/sales/people/${r.userId}`}>
                   {r.userName}
-                </Link>
+                </EntityLink>
               </Cell>
               <Cell>{r.day ?? <span className="text-muted">—</span>}</Cell>
               <Cell className="capitalize">{r.kind.replace(/_/g, " ")}</Cell>

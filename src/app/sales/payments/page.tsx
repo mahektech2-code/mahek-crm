@@ -6,16 +6,20 @@ import {
   Banner,
   Cell,
   Empty,
+  FilterChips,
   HeadCell,
   MetricRow,
   Pill,
   Row,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
 import {
   plural,
 } from "../words";
+import { CustomerName } from "../customer-name";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 
 export const metadata = { title: "Payments — Sales Dashboard — MahekOne" };
 
@@ -32,20 +36,78 @@ export const metadata = { title: "Payments — Sales Dashboard — MahekOne" };
  * confirming it against the statement is the other, and only that half counts
  * as money the business has seen.
  */
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ show?: string; sort?: string; dir?: string }>;
+}) {
+  const params = await searchParams;
   const [receipts, config] = await Promise.all([fieldReceipts(), getConfig()]);
 
   const slaDays = Math.max(1, Math.round(config["mbos.payments.cashDepositSlaHours"] / 24));
 
-  const cash = receipts.filter(
-    (r) => r.mode.toLowerCase() === "cash" && !r.depositedAt && r.status !== "rejected",
-  );
+  /* `cash` is EVERY unbanked note in scope and the table below is a capped
+     page of the log. They were one list once, and deriving the cash figure by
+     filtering the page meant the oldest money — which is the whole subject of
+     this screen — fell off the bottom of it first. */
+  const { rows: receiptRows, cash, reported, confirmed } = receipts;
   const late = cash.filter((r) => r.heldDays > slaDays);
-  const reported = receipts.filter((r) => r.status === "reported");
-  const confirmed = receipts.filter((r) => r.status === "confirmed");
 
   const held = cash.reduce((n, r) => n + Number(r.amountPaise), 0);
   const lateHeld = late.reduce((n, r) => n + Number(r.amountPaise), 0);
+
+  /*
+   * CASH IN HAND IS THE DEFAULT VIEW, because it is the half of this screen
+   * with somebody's name on it. The log answers "what did the team collect",
+   * which is a question anybody can ask at leisure; the cash answers "who is
+   * carrying company money tonight", which is a conversation with a person and
+   * the only thing here that gets worse the longer it is left.
+   */
+  const show = (
+    ["cash", "reported", "confirmed", "all"].includes(params.show ?? "") ? params.show! : "cash"
+  ) as "cash" | "reported" | "confirmed" | "all";
+
+  /*
+   * The cash view is the uncapped list itself rather than the log filtered
+   * down to it. Filtering the page would reintroduce exactly the bug the two
+   * separate reads exist to prevent: the log is newest-first, so the oldest
+   * unbanked note — the one the deposit window is about — is the first row the
+   * cap drops.
+   */
+  const visible =
+    show === "cash"
+      ? cash
+      : show === "all"
+        ? receiptRows
+        : receiptRows.filter((r) => r.status === show);
+
+  /*
+   * THE CHIP COUNTS ARE SQL'S AND THE TABLE IS A PAGE OF ONE VIEW.
+   *
+   * Every figure on a chip comes from the counted read over the whole book —
+   * `cash.length` is the complete unbanked list, the other three are `count(*)
+   * filter (…)`. Counting the rows this page happens to hold instead would be
+   * cheaper and would be wrong in the one direction nobody notices: a chip
+   * reading "Reported 41" on a book with 380 reported receipts looks like an
+   * answer rather than like a page, and the number it gives is the number of
+   * reported receipts among the newest 300. The cap is disclosed under the
+   * chips instead, which says both true things rather than one of them.
+   */
+  const counts = { cash: cash.length, reported, confirmed, all: receipts.total };
+
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(visible, sort, COLUMNS);
+  const head = (key: string, label: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/payments", sort, key, `show=${show}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {label}
+    </SortHead>
+  );
 
   /* Who is holding what, because cash is answered for by a person. */
   const byPerson = new Map<string, { name: string; id: string | null; amount: number; oldest: number }>();
@@ -86,6 +148,11 @@ export default async function Page() {
         />
       ) : null}
 
+      {/* The figures are counted over the whole book and do NOT move when a
+          chip is picked. A metric that changed with the filter under it would
+          be the screen disagreeing with itself — and the disagreement would
+          look like an answer, because nothing on the row says which set it was
+          taken over. */}
       <MetricRow
         metrics={[
           {
@@ -101,10 +168,10 @@ export default async function Page() {
           },
           {
             label: "Reported",
-            value: String(reported.length),
+            value: String(reported),
             sub: "not yet found in the bank",
           },
-          { label: "Confirmed", value: String(confirmed.length), tone: "success" },
+          { label: "Confirmed", value: String(confirmed), tone: "success" },
         ]}
       />
 
@@ -134,27 +201,69 @@ export default async function Page() {
         </section>
       ) : null}
 
-      {receipts.length === 0 ? (
+      {receipts.total === 0 ? (
         <Empty
           title="Nothing collected"
           body="No receipt has been recorded on a handset. Money a salesman reports is not money the business has seen — it counts against a bill when accounts confirm it against the bank."
         />
       ) : (
+        <>
+          <FilterChips
+            current={show}
+            options={[
+              { key: "cash", href: "/sales/payments?show=cash", label: "Cash in hand", count: counts.cash },
+              { key: "reported", href: "/sales/payments?show=reported", label: "Reported", count: counts.reported },
+              { key: "confirmed", href: "/sales/payments?show=confirmed", label: "Confirmed", count: counts.confirmed },
+              { key: "all", href: "/sales/payments?show=all", label: "Everything", count: counts.all },
+            ]}
+          />
+
+          {/* WHAT THIS TABLE IS A SLICE OF, said rather than left to be worked
+              out. The figures above it are counted in SQL over the whole book,
+              so a capped page underneath them is honest — a capped page with
+              totals derived FROM it was not.
+
+              The cash view is exempt because it is not a page: that read is
+              deliberately uncapped, so what is drawn there IS the complete
+              answer and a sentence implying otherwise would send somebody
+              looking for money that is already on the screen. */}
+          {show !== "cash" && receipts.capped ? (
+            <p className="mb-2 text-[13px] text-muted">
+              The newest {receiptRows.length} of {receipts.total} receipts
+              {show === "all" ? "" : `, of which ${sorted.length} are ${show}`}. The chip counts
+              above are taken over every receipt, so they can be larger than what this page holds.
+              Every unbanked cash note is counted whatever page it falls on.
+            </p>
+          ) : null}
+
+          {sorted.length === 0 ? (
+            <Empty
+              title={show === "cash" ? "No cash is being held" : `Nothing ${show}`}
+              body={
+                show === "cash"
+                  ? "Every note the team has collected has been paid in. Cash is a personal liability until it is banked, so an empty list here is the state to be in."
+                  : "No receipt on this page is in that state. The count on the chip is taken over the whole book, so there may be older ones behind the cap."
+              }
+            />
+          ) : (
         <Table
           minWidth={1180}
           head={
             <>
-              <HeadCell width={160}>Salesman</HeadCell>
-              <HeadCell width={210}>Customer</HeadCell>
-              <HeadCell align="right" width={140}>Amount</HeadCell>
-              <HeadCell width={130}>How</HeadCell>
+              {head("salesman", "Salesman", 160)}
+              {head("customer", "Customer", 210)}
+              {head("amount", "Amount", 140, "right")}
+              {head("mode", "How", 130)}
+              {/* A reference is a bank's string, not an ordering anybody wants
+                  a table in — sorting by it would group UTRs by which bank
+                  issued them, which answers nothing. */}
               <HeadCell width={180}>Reference</HeadCell>
-              <HeadCell width={130}>On</HeadCell>
-              <HeadCell>State</HeadCell>
+              {head("on", "On", 130)}
+              {head("state", "State")}
             </>
           }
         >
-          {receipts.map((r, i) => {
+          {sorted.map((r, i) => {
             const isCash = r.mode.toLowerCase() === "cash";
             const overdue = isCash && !r.depositedAt && r.heldDays > slaDays;
             return (
@@ -171,7 +280,9 @@ export default async function Page() {
                     <span className="text-muted">—</span>
                   )}
                 </Cell>
-                <Cell truncate={210}>{r.customerName}</Cell>
+                <Cell truncate={210}>
+                  <CustomerName id={r.customerId} name={r.customerName} />
+                </Cell>
                 <Cell align="right">{money(r.amountPaise)}</Cell>
                 <Cell>{r.mode}</Cell>
                 <Cell truncate={180} title={r.note ?? undefined}>
@@ -212,6 +323,8 @@ export default async function Page() {
             );
           })}
         </Table>
+          )}
+        </>
       )}
 
       <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">
@@ -223,3 +336,30 @@ export default async function Page() {
     </div>
   );
 }
+
+/**
+ * What each sortable column is worth.
+ *
+ * `null` sorts last in both directions, which is what a receipt with nobody
+ * named against it deserves: it is a row somebody has to go and account for,
+ * not the answer to "who collected the most".
+ *
+ * `receivedAt` is a date string off the query rather than an instant, so it is
+ * compared as a number of milliseconds rather than as text — a string compare
+ * is right for ISO and silently wrong the moment the column's format changes.
+ */
+const COLUMNS: SortColumns<{
+  salesmanName: string | null;
+  customerName: string;
+  amountPaise: number;
+  mode: string;
+  receivedAt: string;
+  status: string;
+}> = {
+  salesman: (r) => r.salesmanName,
+  customer: (r) => r.customerName,
+  amount: (r) => Number(r.amountPaise),
+  mode: (r) => r.mode,
+  on: (r) => new Date(r.receivedAt).getTime(),
+  state: (r) => r.status,
+};

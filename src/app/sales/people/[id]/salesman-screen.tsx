@@ -6,9 +6,11 @@ import { money, shortDate, stamp } from "@/lib/format";
 import type { PerformanceRow, SalesmanRecord } from "@/lib/services/sales-service";
 import type { DayEvidence as DayEvidenceType } from "@/lib/services/day-evidence-service";
 import { DayCheck } from "./day-check";
+import { CustomerName } from "../../customer-name";
 import {
   Cell,
   Empty,
+  EntityLink,
   HeadCell,
   LEAVE_LABEL,
   Pill,
@@ -231,7 +233,23 @@ export function SalesmanScreen({
             {record.visits.map((v, i) => (
               <Row key={v.id} striped={i % 2 === 1}>
                 <Cell>{v.checkInAt ? stamp(v.checkInAt) : <span className="text-muted">—</span>}</Cell>
-                <Cell truncate={220}>{v.customerName}</Cell>
+                {/*
+                  THE SHOP OPENS, on this tab and on the four below it.
+
+                  Six of these nine tabs name a customer and on every one of
+                  them the name was plain text, while the salesman beside it was
+                  a link to his own record — so a manager reading a visit could
+                  ask everything about the man and nothing about the shop he
+                  stood in. `CustomerName` is the console's one answer to that,
+                  shared with the Territory and Live maps so a shop cannot read
+                  two ways depending on where it was found. It opens a DRAWER
+                  rather than navigating, because there is no customer record
+                  page in this app at all: that page lives in the CRM, which a
+                  sales manager may not hold.
+                */}
+                <Cell truncate={220}>
+                  <CustomerName id={v.customerId} name={v.customerName} />
+                </Cell>
                 <Cell>{label(VISIT_OUTCOME_LABEL, v.outcome)}</Cell>
                 <Cell>
                   {v.durationSeconds != null ? (
@@ -280,7 +298,9 @@ export function SalesmanScreen({
               <Row key={o.id} striped={i % 2 === 1}>
                 <Cell>{shortDate(o.orderedAt)}</Cell>
                 <Cell>{o.orderNo ?? <span className="text-muted">Not yet numbered</span>}</Cell>
-                <Cell truncate={320}>{o.customerName}</Cell>
+                <Cell truncate={320}>
+                  <CustomerName id={o.customerId} name={o.customerName} />
+                </Cell>
                 <Cell align="right">{money(o.totalAmountPaise)}</Cell>
                 <Cell>
                   <Pill
@@ -323,7 +343,9 @@ export function SalesmanScreen({
                 <Row key={r.id} striped={i % 2 === 1}>
                   <Cell>{shortDate(r.receivedAt)}</Cell>
                   <Cell>{r.receiptNo ?? <span className="text-muted">Not yet numbered</span>}</Cell>
-                  <Cell truncate={300}>{r.customerName}</Cell>
+                  <Cell truncate={300}>
+                    <CustomerName id={r.customerId} name={r.customerName} />
+                  </Cell>
                   <Cell align="right">{money(r.amountPaise)}</Cell>
                   <Cell>{r.mode}</Cell>
                   <Cell>
@@ -526,7 +548,9 @@ export function SalesmanScreen({
             {record.samples.map((sm, i) => (
               <Row key={sm.id} striped={i % 2 === 1}>
                 <Cell>{sm.requestedDate ? shortDate(sm.requestedDate) : "—"}</Cell>
-                <Cell truncate={240}>{sm.customerName}</Cell>
+                <Cell truncate={240}>
+                  <CustomerName id={sm.customerId} name={sm.customerName} />
+                </Cell>
                 <Cell truncate={240}>
                   {sm.productName ?? <span className="text-muted">Not named</span>}
                 </Cell>
@@ -575,7 +599,16 @@ export function SalesmanScreen({
           >
             {record.leads.map((l, i) => (
               <Row key={l.id} striped={i % 2 === 1}>
-                <Cell truncate={220}>{l.name}</Cell>
+                {/* A LEAD OPENS ITS LADDER, not the shop's quick view. These
+                    rows are customer rows — the query selects them straight out
+                    of `customers` — so `CustomerName` would work here, and
+                    would be the wrong control: the quick view answers what a
+                    shop buys and what it owes, and a lead has never bought
+                    anything. What somebody opening one wants is the rung it is
+                    on and what is holding it there, which is `/sales/leads`. */}
+                <Cell truncate={220}>
+                  <EntityLink href={`/sales/leads/${l.id}`}>{l.name}</EntityLink>
+                </Cell>
                 <Cell truncate={220}>
                   {l.companyName ?? <span className="text-muted">—</span>}
                 </Cell>
@@ -624,8 +657,16 @@ export function SalesmanScreen({
             {record.tasks.map((t, i) => (
               <Row key={t.id} striped={i % 2 === 1}>
                 <Cell truncate={380}>{t.title}</Cell>
+                {/* A task legitimately names no shop — this one is a left
+                    join where the four above are not — and the control already
+                    draws exactly the em dash the ternary here used to, so it is
+                    handed over rather than kept beside it. */}
                 <Cell truncate={220}>
-                  {t.customerName ?? <span className="text-muted">—</span>}
+                  <CustomerName
+                    id={t.customerId}
+                    name={t.customerName}
+                    muted={<span className="text-muted">—</span>}
+                  />
                 </Cell>
                 <Cell>
                   <Pill tone={t.priority === "high" ? "danger" : "neutral"}>{t.priority}</Pill>

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { money } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { endOfMonth } from "@/lib/business-date";
@@ -13,12 +12,14 @@ import {
   Banner,
   Cell,
   Empty,
-  HeadCell,
+  EntityLink,
   MetricRow,
   Row,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 
 export const metadata = { title: "Cost & return — Sales Dashboard — MahekOne" };
 
@@ -44,7 +45,7 @@ const pct = (bps: number | null) => (bps === null ? "—" : `${(bps / 100).toFix
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string }>;
+  searchParams: Promise<{ month?: string; sort?: string; dir?: string }>;
 }) {
   const params = await searchParams;
   const now = await today();
@@ -62,6 +63,32 @@ export default async function Page({
   const revenue = people.reduce((n, p) => n + Number(p.revenuePaise), 0);
   const cost = people.reduce((n, p) => n + p.cost.totalPaise, 0);
   const noSalary = people.filter((p) => p.cost.salaryMissing);
+
+  /* Sorting is DISPLAY ONLY. Every figure in the three metric rows above is
+     counted over the whole team and never over the sorted copy — re-ordering a
+     list changes nothing about what is in it, and a cost-of-acquisition that
+     moved when somebody clicked a column would be the screen disagreeing with
+     itself on the one screen where a wrong number is least forgivable.
+
+     "Best sales per km" is the tile this matters most for: it is the top of
+     `topAndBottom` over `people`, which is the unsorted set, so it goes on
+     naming the same person whatever order the table happens to be in. That is
+     the point — a headline that agreed with whatever the reader had just
+     clicked would be telling them what they asked for rather than what is
+     true. */
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(people, sort, COLUMNS);
+  const head = (key: string, label: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/roi", sort, key, `month=${month}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {label}
+    </SortHead>
+  );
 
   return (
     <div className="p-6">
@@ -161,25 +188,25 @@ export default async function Page({
           minWidth={1400}
           head={
             <>
-              <HeadCell width={170}>Salesman</HeadCell>
-              <HeadCell align="right" width={130}>Revenue</HeadCell>
-              <HeadCell align="right" width={110}>Distance</HeadCell>
-              <HeadCell align="right" width={90}>Visits</HeadCell>
-              <HeadCell align="right" width={120}>New customers</HeadCell>
-              <HeadCell align="right" width={130}>Sales per km</HeadCell>
-              <HeadCell align="right" width={130}>Sales per visit</HeadCell>
-              <HeadCell align="right" width={130}>Travel to sales</HeadCell>
-              <HeadCell align="right" width={140}>Total cost</HeadCell>
-              <HeadCell align="right" width={140}>Revenue to cost</HeadCell>
+              {head("name", "Salesman", 170)}
+              {head("revenue", "Revenue", 130, "right")}
+              {head("distance", "Distance", 110, "right")}
+              {head("visits", "Visits", 90, "right")}
+              {head("new", "New customers", 120, "right")}
+              {head("perKm", "Sales per km", 130, "right")}
+              {head("perVisit", "Sales per visit", 130, "right")}
+              {head("expenseRatio", "Travel to sales", 130, "right")}
+              {head("cost", "Total cost", 140, "right")}
+              {head("multiple", "Revenue to cost", 140, "right")}
             </>
           }
         >
-          {people.map((p, i) => (
+          {sorted.map((p, i) => (
             <Row key={p.userId} striped={i % 2 === 1}>
               <Cell truncate={170}>
-                <Link href={`/sales/people/${p.userId}`} className="font-medium text-ink no-underline">
+                <EntityLink href={`/sales/people/${p.userId}`}>
                   {p.name}
-                </Link>
+                </EntityLink>
               </Cell>
               <Cell align="right">{money(p.revenuePaise)}</Cell>
               <Cell align="right">{p.metres > 0 ? km(p.metres) : <span className="text-muted">none</span>}</Cell>
@@ -229,3 +256,48 @@ export default async function Page({
     </div>
   );
 }
+
+/**
+ * What each sortable column is worth.
+ *
+ * Every column on this table is a quantity and every one of them is the
+ * subject of a real question — "who costs most", "who covers the most ground
+ * for the least return", "who is winning customers" — so all ten sort. There
+ * is nothing here to leave out: the screen carries no labels, no pills and no
+ * free text, which is what a comparison table is.
+ *
+ * A RATIO NOBODY COULD WORK OUT IS NULL RATHER THAN ZERO, and that is the same
+ * decision the engine already made: sales per kilometre on a man who recorded
+ * no travel is a question with no denominator, not ₹0. Nulls sort last in both
+ * directions, so "worst sales per km" lands on somebody who actually travelled
+ * rather than on everybody the figure could not be computed for — which is the
+ * accusation-out-of-missing-data this whole screen is written against.
+ *
+ * Distance sorts on METRES and cost on PAISE, never on what the cell prints.
+ * "9 km" beside "10 km" and "₹1,20,000" beside "₹99,000" both sort backwards
+ * as strings, and a comparison screen that ranks people wrongly is worse than
+ * one that does not rank them at all.
+ */
+const COLUMNS: SortColumns<{
+  name: string;
+  revenuePaise: number | string;
+  metres: number;
+  visitCount: number;
+  newCustomerCount: number;
+  perKm: { value: number | null };
+  perVisit: { value: number | null };
+  expenseRatioBps: { value: number | null };
+  cost: { totalPaise: number };
+  ret: { multiple: number | null };
+}> = {
+  name: (p) => p.name,
+  revenue: (p) => Number(p.revenuePaise),
+  distance: (p) => p.metres,
+  visits: (p) => p.visitCount,
+  new: (p) => p.newCustomerCount,
+  perKm: (p) => p.perKm.value,
+  perVisit: (p) => p.perVisit.value,
+  expenseRatio: (p) => p.expenseRatioBps.value,
+  cost: (p) => p.cost.totalPaise,
+  multiple: (p) => p.ret.multiple,
+};

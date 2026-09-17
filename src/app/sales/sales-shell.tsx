@@ -6,17 +6,23 @@ import { NavLink } from "@/components/shell/nav-link";
 import { usePathname } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { signOut } from "@/lib/actions/auth";
-import { SalesIcon, type SalesIconName } from "./icons";
+import { SalesIcon } from "./icons";
+import { SALES_NAV, type NavItem } from "./nav";
+import { SalesSearch } from "./search";
 import { AskPanel } from "./ask-panel";
 
 /* ---------------------------------------------------------------------------
  * The Manager Console's shell, from `MBOS Manager Console.dc.html`.
  *
- * Twenty-four destinations in six groups. That is a lot of sidebar, and the
- * design earns it by grouping on what somebody came here to DO rather than on
- * which table the data sits in: Overview is the morning, Field work is the
- * people, Commercial is the money, and the rest is administration you visit
+ * Thirty destinations in six groups. That is a lot of sidebar, and the design
+ * earns it by grouping on what somebody came here to DO rather than on which
+ * table the data sits in: Overview is the morning, Field work is the people,
+ * Commercial is the money, and the rest is administration you visit
  * occasionally.
+ *
+ * The list itself is `./nav.ts`, which says why it is data rather than written
+ * out here: it is a second copy of the module registry, and it had drifted by
+ * four screens.
  *
  * Three things the design does that are worth naming, because each is easy to
  * lose in a port:
@@ -33,112 +39,6 @@ import { AskPanel } from "./ask-panel";
  * a field manager wants without navigating, and the pulsing dot is the only
  * animation in the whole console.
  * ------------------------------------------------------------------------- */
-
-type Item = {
-  href: string;
-  label: string;
-  icon: SalesIconName;
-  exact?: boolean;
-  count?: number;
-};
-
-/**
- * The navigation, in the design's own order and words.
- *
- * Drawn from this list and filtered through `app_module_access`, so a module
- * somebody does not hold is not drawn — and its route redirects anyway, since
- * a link that is not drawn is a statement to the browser and the browser is not
- * where authority lives.
- */
-const NAV: Array<{ label: string; items: Item[]; collapsible?: boolean }> = [
-  {
-    label: "Overview",
-    items: [
-      { href: "/sales", label: "Today", icon: "home", exact: true },
-      { href: "/sales/live", label: "Live map", icon: "pin" },
-      { href: "/sales/territory", label: "Territory", icon: "grid" },
-      { href: "/sales/performance", label: "Performance", icon: "chart" },
-      { href: "/sales/targets", label: "Sales Targets", icon: "target" },
-    ],
-  },
-  {
-    label: "Field work",
-    items: [
-      { href: "/sales/tasks", label: "Tasks", icon: "task" },
-      { href: "/sales/journeys", label: "Journey planning", icon: "route" },
-      { href: "/sales/visits", label: "Visits", icon: "visit" },
-      { href: "/sales/activity-history", label: "Activity history", icon: "clock" },
-    ],
-  },
-  /*
-   * THE ONE COLLAPSIBLE GROUP, and the only one that needed to be.
-   *
-   * Every other group here is four to six rows and is read at a glance. Lead
-   * Management is ten, which is more than the rest of the sidebar's longest
-   * group and would push Commercial, People and Enablement below the fold for
-   * anybody who does not work the funnel — which is most of this app's
-   * audience. So it collapses, it remembers whether it was open, and it opens
-   * itself whenever the current route is inside it: a group that hid the
-   * screen you were standing on would be furniture rather than navigation.
-   *
-   * TEN and not twenty-three. The rest of the funnel's surface is tabs inside
-   * these ten — see the note in `lib/modules.ts` for why that line was drawn
-   * where it was, and what it costs.
-   */
-  {
-    label: "Lead Management",
-    collapsible: true,
-    items: [
-      { href: "/sales/leads", label: "All Leads", icon: "spark", exact: true },
-      { href: "/sales/leads/funnel", label: "Funnel & conversion", icon: "chart" },
-      { href: "/sales/leads/intake", label: "Intake", icon: "doc" },
-      { href: "/sales/leads/qualify", label: "Qualification", icon: "tick" },
-      { href: "/sales/samples", label: "Samples & trials", icon: "sample" },
-      { href: "/sales/leads/commercial", label: "Commercial", icon: "order" },
-      { href: "/sales/leads/appointments", label: "Distributor appointments", icon: "people" },
-      { href: "/sales/leads/actions", label: "Next actions & nurture", icon: "task" },
-      { href: "/sales/leads/handovers", label: "Handovers", icon: "route" },
-      { href: "/sales/leads/oversight", label: "Oversight", icon: "shield" },
-    ],
-  },
-  {
-    label: "Commercial",
-    items: [
-      { href: "/sales/orders", label: "Orders", icon: "order" },
-      { href: "/sales/payments", label: "Payments", icon: "money" },
-      { href: "/sales/invoices", label: "Invoices", icon: "doc" },
-      { href: "/sales/catalogue", label: "Catalogue & rates", icon: "grid" },
-    ],
-  },
-  {
-    label: "People",
-    items: [
-      { href: "/sales/attendance", label: "Attendance", icon: "clock" },
-      { href: "/sales/leave", label: "Leave", icon: "cal" },
-      { href: "/sales/holidays", label: "Holidays", icon: "cal" },
-      { href: "/sales/salary", label: "Salary", icon: "money" },
-      { href: "/sales/expenses", label: "Expenses & claims", icon: "receipt" },
-    ],
-  },
-  {
-    label: "Enablement",
-    items: [
-      { href: "/sales/documents", label: "Documents", icon: "doc" },
-      { href: "/sales/knowledge", label: "Knowledge", icon: "book" },
-    ],
-  },
-  {
-    label: "Administration",
-    items: [
-      { href: "/sales/people", label: "Salesmen", icon: "people" },
-      { href: "/sales/prefs", label: "App preferences", icon: "sliders" },
-      { href: "/sales/logins", label: "Login history", icon: "shield" },
-      { href: "/sales/sync-health", label: "Sync health", icon: "bell" },
-      { href: "/sales/notify", label: "Send a notification", icon: "bell" },
-      { href: "/sales/audit", label: "Audit trail", icon: "list" },
-    ],
-  },
-];
 
 /* ---------------------------------------------------------------------------
  * The collapsed-groups store.
@@ -214,7 +114,7 @@ export function SalesShell({
   const pathname = usePathname();
   const permitted = new Set(allowed);
 
-  const groups = NAV.map((g) => ({
+  const groups = SALES_NAV.map((g) => ({
     ...g,
     items: g.items.filter((i) => permitted.has(i.href)),
   })).filter((g) => g.items.length > 0);
@@ -271,7 +171,7 @@ export function SalesShell({
    * collapsed group that hid the screen somebody is standing on would read as
    * the sidebar having lost it.
    */
-  const isGroupOpen = (group: { label: string; items: Item[] }) => {
+  const isGroupOpen = (group: { label: string; items: NavItem[] }) => {
     const inside = group.items.some(
       (i) => pathname === i.href || pathname.startsWith(i.href + "/"),
     );
@@ -337,15 +237,7 @@ export function SalesShell({
           {teamLine}
         </span>
 
-        <span className="relative min-w-[180px] max-w-[380px] flex-[1_1_320px]">
-          <span className="pointer-events-none absolute top-[9px] left-2.5 flex text-muted">
-            <SalesIcon name="search" size={16} />
-          </span>
-          <input
-            placeholder="Search a salesman, customer, order or bill"
-            className="h-8.5 w-full rounded-[4px] border border-line bg-canvas pr-3 pl-8 text-sm text-ink outline-none focus:border-brand focus:bg-surface"
-          />
-        </span>
+        <SalesSearch />
 
         <span className="flex-1" />
 

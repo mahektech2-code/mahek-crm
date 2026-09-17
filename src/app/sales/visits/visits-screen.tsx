@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { money } from "@/lib/format";
 import { APP_TIMEZONE, addDays } from "@/lib/business-date";
 import { useToast } from "@/components/ui/toast";
@@ -19,8 +19,11 @@ import {
   Row,
   RowMenu,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
+import { CustomerName } from "../customer-name";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 import { VISIT_OUTCOME_LABEL, label } from "../words";
 
 /**
@@ -57,6 +60,48 @@ export function VisitsScreen({
   const rows = show === "unverified" ? unverified : show === "offplan" ? offPlan : all;
 
   const minutes = all.reduce((n, v) => n + (v.durationSeconds ?? 0), 0) / 60;
+
+  /*
+   * THE SORT IS A URL HERE, THOUGH THIS IS A CLIENT COMPONENT.
+   *
+   * `sort.ts` argues for a link rather than component state so a manager who
+   * has sorted to what is worst can send that to somebody, and the argument
+   * does not stop applying because the screen also holds a modal. The day and
+   * the filter chips on this screen are ALREADY search params — the chips are
+   * plain links and the page re-reads `day` on the server — so holding the
+   * sort in React state instead would give one table two kinds of memory: two
+   * of its three controls survive a reload and the third does not.
+   *
+   * It is read with `useSearchParams` rather than taken as a prop because the
+   * page component hands this screen `day` and `show` and nothing else, and a
+   * sort that is display-only has no business making the server re-run
+   * `visitsList` to answer for it.
+   *
+   * Sorting is display-only, which is the half worth stating: the four figures
+   * above — the count, the unverified, the off-plan and the time in shops —
+   * are all counted over `all` and never over the sorted copy, so none of them
+   * moves when a column is clicked.
+   */
+  const search = useSearchParams();
+  const sort = readSort(
+    { sort: search.get("sort") ?? undefined, dir: search.get("dir") ?? undefined },
+    COLUMNS,
+  );
+  const sorted = sortRows(rows, sort, COLUMNS);
+  /* `text` rather than `label`, which is the name of the outcome resolver this
+     file already imports — one shadowing the other would compile and read as a
+     mistake to whoever came next. */
+  const head = (key: string, text: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/visits", sort, key, `day=${day}&show=${show}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {text}
+    </SortHead>
+  );
 
   async function accept(v: VisitRow) {
     const result = await acceptVisit({ visitId: v.id });
@@ -180,20 +225,20 @@ export function VisitsScreen({
           minWidth={1360}
           head={
             <>
-              <HeadCell width={170}>Salesman</HeadCell>
-              <HeadCell width={200}>Customer</HeadCell>
-              <HeadCell width={80}>At</HeadCell>
-              <HeadCell align="right" width={80}>Inside</HeadCell>
-              <HeadCell align="right" width={110}>From shop</HeadCell>
-              <HeadCell width={150}>Outcome</HeadCell>
+              {head("salesman", "Salesman", 170)}
+              {head("customer", "Customer", 200)}
+              {head("in", "At", 80)}
+              {head("duration", "Inside", 80, "right")}
+              {head("distance", "From shop", 110, "right")}
+              {head("outcome", "Outcome", 150)}
               <HeadCell align="right" width={80}>Photos</HeadCell>
-              <HeadCell align="right" width={130}>Value</HeadCell>
+              {head("value", "Value", 130, "right")}
               <HeadCell>State</HeadCell>
               <HeadCell width={44} />
             </>
           }
         >
-          {rows.map((v, i) => (
+          {sorted.map((v, i) => (
             <Row key={v.id} striped={i % 2 === 1}>
               <Cell truncate={170}>
                 <Link
@@ -203,7 +248,9 @@ export function VisitsScreen({
                   {v.salesmanName}
                 </Link>
               </Cell>
-              <Cell truncate={200}>{v.customerName}</Cell>
+              <Cell truncate={200}>
+                <CustomerName id={v.customerId} name={v.customerName} />
+              </Cell>
               <Cell>{v.checkInAt ? clock(v.checkInAt) : <span className="text-muted">—</span>}</Cell>
               <Cell align="right">
                 {v.durationSeconds != null ? (
@@ -403,6 +450,35 @@ export function VisitsScreen({
     </div>
   );
 }
+
+const COLUMNS: SortColumns<VisitRow> = {
+  salesman: (v) => v.salesmanName,
+  customer: (v) => v.customerName,
+  /* `visitsList` runs raw SQL through `db.execute`, which hands back a STRING
+     where the type says Date — the same reading the pin-correction pill makes
+     two hundred lines up. `new Date` takes either, and a full ISO instant
+     carries its own zone, so nothing here has to name one. */
+  in: (v) => (v.checkInAt ? new Date(v.checkInAt).getTime() : null),
+  /* A visit that never closed has no duration, and it sorts LAST under both
+     directions rather than reading as the longest one. He walked out of signal
+     or forgot to check out; neither is a long visit, and floating those rows to
+     the top of "longest first" would answer the question with the only rows
+     that cannot answer it. The open ones are worth finding, and the Unverified
+     chip is where that is asked. */
+  duration: (v) => v.durationSeconds,
+  /* Null is a visit there was nothing to measure against — a shop with no pin,
+     or a check-in with no fix — and it is not a distance of zero. Zero would
+     read as having stood exactly on the doorway, which is the most reassuring
+     answer on the column and the one row nobody established. */
+  distance: (v) => v.distanceFromShopM,
+  /* The words on the screen rather than the stored code, so an alphabetical
+     sort puts the rows in the order somebody reading the column sees. */
+  outcome: (v) => label(VISIT_OUTCOME_LABEL, v.outcome),
+  /* Zero is a real answer here, unlike a missing duration: a visit with no
+     order is a visit where nothing was bought, which is a fact and not an
+     absence. It is drawn as a dash and it sorts as the nothing it is. */
+  value: (v) => Number(v.orderValuePaise),
+};
 
 /** Named, because this renders on a server that is not in Asia/Kolkata. */
 function clock(at: Date | string): string {

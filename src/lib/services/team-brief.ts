@@ -54,6 +54,17 @@ import { readingsForPeriod, type PerformanceReading } from "@/lib/services/perfo
  * text says how many more there are rather than pretending the top few are
  * the whole answer, because a capped list that does not say so is a list
  * somebody can be quietly misled by.
+ *
+ * AND A HEADLINE FIGURE IS COUNTED IN SQL, NEVER SUMMED OVER THE ROWS. This
+ * brief is written to be QUOTED — a manager reads "the team is holding
+ * ₹4,20,000 in cash" out of the panel and rings somebody about it. Summing a
+ * capped read told them what the newest three hundred receipts came to, which
+ * is a real number about the wrong set and reads exactly like the right one.
+ * So every count and total in a heading below comes from a figure the service
+ * counted over the whole book, and the rows printed under it are a sample by
+ * construction — `capped(...)` is what says so, and the ranking a sample
+ * supports ("who is holding the most") survives being a sample in a way a
+ * total never does.
  * ------------------------------------------------------------------------- */
 
 export type TeamBrief = {
@@ -177,7 +188,7 @@ export async function teamBrief(): Promise<TeamBrief> {
     }),
     pendingApprovals(),
     fieldReceipts(),
-    fieldOrders(true),
+    fieldOrders("waiting"),
     leadsList(day),
     /*
      * THE FIGURES FROM AN AGGREGATE, THE LIST FROM A PAGE.
@@ -225,8 +236,11 @@ export async function teamBrief(): Promise<TeamBrief> {
       : ["- nobody has a published target for this month"]),
   );
 
-  const pendingLeave = leave.filter((l) => l.approvalState === "pending");
-  const pendingExpenses = expenses.filter((e) => e.approvalState === "pending");
+  /* `leave.waiting` is the count over every request; these are the examples to
+     print under it. The list is ordered pending-first, so the ones a manager is
+     being asked to act on are never the part the cap drops. */
+  const pendingLeave = leave.rows.filter((l) => l.approvalState === "pending");
+  const pendingExpenses = expenses.rows.filter((e) => e.approvalState === "pending");
 
   lines.push(
     "",
@@ -243,14 +257,32 @@ export async function teamBrief(): Promise<TeamBrief> {
       : ["- nothing waiting"]),
   );
 
-  const cashHeld = receipts.filter(
-    (r) => r.mode === "Cash" && !r.depositedAt && r.status !== "rejected" && r.status !== "reversed",
-  );
+  /*
+   * THE CASH TOTAL COMES FROM THE SHARED LIST, NOT FROM A FILTER OVER THE LOG.
+   *
+   * This read its own `mode === "Cash" && !depositedAt` filter over `rows`,
+   * which is the newest few hundred receipts — so on a book of any size the
+   * money a manager was told his team was carrying was whatever those rows
+   * happened to contain. `receipts.cash` is every unbanked note in scope,
+   * uncapped, and it is the SAME list the Payments screen totals, so the panel
+   * and the screen can no longer quote one manager two different figures for
+   * one team's cash. That is the reason to take it, rather than the saving.
+   *
+   * IT IS A SMALL BEHAVIOUR CHANGE AND IT IS DELIBERATE. The old filter also
+   * excluded `reversed` receipts and the shared definition does not: a note
+   * that was physically handed over is a note the salesman is holding, whatever
+   * became of the receipt afterwards, and a reversal is a fact about the ledger
+   * rather than about what is in somebody's bag. The figure can therefore read
+   * a little higher than it used to on a team with reversals in it. Rejected
+   * receipts are excluded at source in both readings.
+   */
+  const cashHeld = receipts.cash;
   const cashByPerson = new Map<string, number>();
   for (const r of cashHeld) {
     const name = r.salesmanName ?? "Unassigned";
     cashByPerson.set(name, (cashByPerson.get(name) ?? 0) + r.amountPaise);
   }
+  // Safe to sum, and only because the list above is the whole of it.
   const cashTotal = cashHeld.reduce((sum, r) => sum + r.amountPaise, 0);
 
   lines.push(
@@ -265,10 +297,12 @@ export async function teamBrief(): Promise<TeamBrief> {
 
   lines.push(
     "",
-    `ORDERS WAITING ON ACCOUNTS' APPROVAL (${pendingOrders.length}, longest-waiting first):`,
-    ...(pendingOrders.length
+    /* The count is every pending order in scope; the lines under it are the
+       page of them this read returned, sorted by how long each has waited. */
+    `ORDERS WAITING ON ACCOUNTS' APPROVAL (${pendingOrders.total}, longest-waiting first):`,
+    ...(pendingOrders.rows.length
       ? capped(
-          [...pendingOrders].sort((a, b) => b.waitingHours - a.waitingHours),
+          [...pendingOrders.rows].sort((a, b) => b.waitingHours - a.waitingHours),
           (o) =>
             `- ${o.customerName} via ${o.salesmanName ?? "unassigned"}: ${rupees(o.totalAmountPaise)}, waiting ${o.waitingHours}h${o.creditBlocked ? " — CREDIT BLOCKED" : ""}`,
           "orders",
@@ -308,7 +342,7 @@ export async function teamBrief(): Promise<TeamBrief> {
 
   lines.push(
     "",
-    `LEAVE REQUESTS WAITING (${pendingLeave.length}):`,
+    `LEAVE REQUESTS WAITING (${leave.waiting}):`,
     ...(pendingLeave.length
       ? capped(
           pendingLeave,
@@ -321,7 +355,7 @@ export async function teamBrief(): Promise<TeamBrief> {
 
   lines.push(
     "",
-    `EXPENSE CLAIMS WAITING (${pendingExpenses.length}):`,
+    `EXPENSE CLAIMS WAITING (${expenses.waiting}):`,
     ...(pendingExpenses.length
       ? capped(
           pendingExpenses,
@@ -331,11 +365,14 @@ export async function teamBrief(): Promise<TeamBrief> {
       : ["- none"]),
   );
 
-  const lateSamples = samples.filter((s) => s.lateDays > 0);
-  if (lateSamples.length) {
+  /* `samples.late` is counted over every sample in scope; these are the ones to
+     name. The list is ordered pending-first and then most-overdue-first, so the
+     late ones lead it and the cap can only ever drop the least late. */
+  const lateSamples = samples.rows.filter((s) => s.lateDays > 0);
+  if (samples.late) {
     lines.push(
       "",
-      `SAMPLES WITH FEEDBACK OVERDUE (${lateSamples.length}):`,
+      `SAMPLES WITH FEEDBACK OVERDUE (${samples.late}):`,
       ...capped(
         lateSamples,
         (s) => `- ${s.customerName} via ${s.salesmanName}: ${s.productName ?? "product"}, ${s.lateDays} days late`,
@@ -351,12 +388,16 @@ export async function teamBrief(): Promise<TeamBrief> {
     readings.length === 0 &&
     approvals.length === 0 &&
     cashHeld.length === 0 &&
-    pendingOrders.length === 0 &&
+    // Counts, not row lengths: a page that came back empty because everything
+    // in it was filtered out is not the same as a book with nothing in it, and
+    // the panel would otherwise say there is nothing to answer from while the
+    // headings above it were quoting real figures.
+    pendingOrders.total === 0 &&
     leads.length === 0 &&
     invoiceTotals.open === 0 &&
-    pendingLeave.length === 0 &&
-    pendingExpenses.length === 0 &&
-    lateSamples.length === 0;
+    leave.waiting === 0 &&
+    expenses.waiting === 0 &&
+    samples.late === 0;
 
   return {
     text: lines.join("\n"),
