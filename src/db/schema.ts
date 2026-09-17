@@ -1734,6 +1734,35 @@ export const customers = pgTable(
     /** The field team's two lists: a beat to walk, and a code to search by. */
     index("customers_beat_idx").on(t.beat),
     index("customers_dealer_code_idx").on(t.dealerCode),
+    /*
+     * THE OTHER THREE SEATS scopedToUsers ORs TOGETHER, and they have to be
+     * indexed as a SET rather than one at a time: one unindexable arm of an OR
+     * sends the whole clause to a sequential scan, so three of four buys
+     * nothing at all.
+     *
+     * customers_lead_manager_idx above LOOKS like the lead manager's index and
+     * is not. It carries lead_stage and is partial on it, for the lead
+     * worklist, and asking for lead_manager_id alone does not imply lead_stage
+     * is not null. So the seat gets its own, partial on the seat being filled.
+     * relationship_owner_id already has one, unconditional, a few lines up.
+     *
+     * The FIRST arm, ASSIGNED_TO_SQL, is an expression index and Drizzle cannot
+     * express one: it lives in drizzle/0138_stop_scanning_the_book.sql as
+     * customers_assigned_to_idx, and src/lib/assigned-to-index.test.ts is what
+     * keeps it agreeing with the constant it copies.
+     */
+    index("customers_back_office_idx")
+      .on(t.backOfficeAmId)
+      .where(sql`back_office_am_id is not null`),
+    index("customers_lead_manager_seat_idx")
+      .on(t.leadManagerId)
+      .where(sql`lead_manager_id is not null`),
+    /*
+     * Also in 0138 and also inexpressible here, for the reason drizzle/0008 and
+     * drizzle/0013 already give -- Drizzle has no way to name an operator
+     * class: customers_city_trgm_idx and customers_contact_person_trgm_idx, the
+     * two arms of global search's four-way OR that had nothing to use.
+     */
   ],
 );
 
@@ -1907,6 +1936,13 @@ export const calls = pgTable(
   (t) => [
     index("calls_customer_idx").on(t.customerId),
     index("calls_user_started_idx").on(t.userId, t.startedAt),
+    /*
+     * The customer record's call branch. The trailing id is not decoration: it
+     * is the keyset cursor's tiebreaker, and without it in the index the sort
+     * is left to the planner -- which is a row on two pages and another on
+     * none.
+     */
+    index("calls_customer_started_idx").on(t.customerId, t.startedAt.desc(), t.id.desc()),
     index("calls_started_idx").on(t.startedAt),
     uniqueIndex("calls_idempotency_key").on(t.idempotencyKey),
   ],
@@ -2424,6 +2460,21 @@ export const orders = pgTable(
   (t) => [
     index("orders_customer_idx").on(t.customerId),
     index("orders_ordered_idx").on(t.orderedAt),
+    /*
+     * Whose order it was, newest first -- EOD and the performance actuals.
+     * PARTIAL because an order the SHEET wrote names nobody in MahekOne, and
+     * nobody is never the answer to "whose".
+     */
+    index("orders_user_ordered_idx")
+      .on(t.userId, t.orderedAt.desc())
+      .where(sql`user_id is not null`),
+    /*
+     * orders_customer_status_ordered_idx -- (customer_id, status, ordered_at
+     * desc) INCLUDE (total_amount, user_id) -- is in
+     * drizzle/0138_stop_scanning_the_book.sql instead. Drizzle cannot express
+     * INCLUDE, and the covered columns are the whole point: they are what makes
+     * the queue's median-order subplan stop going back to the heap.
+     */
     uniqueIndex("orders_external_ref_key").on(t.externalRef),
     uniqueIndex("orders_order_no_key").on(t.orderNo),
   ],
@@ -2502,6 +2553,25 @@ export const bills = pgTable(
     index("bills_customer_idx").on(t.customerId),
     index("bills_due_idx").on(t.dueDate),
     index("bills_order_idx").on(t.orderId),
+    /** The ledger's own sort. Added by drizzle/0133, never mirrored here. */
+    index("bills_bill_date_idx").on(t.billDate.desc()),
+    /** One timeline branch of the customer record, tiebreaker included. */
+    index("bills_customer_date_idx").on(t.customerId, t.billDate.desc(), t.id.desc()),
+    /*
+     * WHO OWES US. The predicate compares two COLUMNS, which no ordinary index
+     * can answer -- so Outstanding read the whole ledger to find the four
+     * hundred open bills in it. A partial index can, because the predicate is
+     * evaluated at write time rather than at read time, and a bill leaves the
+     * index by being settled.
+     */
+    index("bills_open_customer_idx")
+      .on(t.customerId)
+      .where(sql`amount > paid_amount`),
+    /*
+     * bills_bill_no_trgm_idx is in drizzle/0138: global search matched a bill
+     * number with a leading wildcard against no index at all, and a leading
+     * wildcard is something a b-tree cannot answer even if one existed.
+     */
   ],
 );
 
@@ -2606,6 +2676,12 @@ export const paymentReceipts = pgTable(
     uniqueIndex("payment_receipts_receipt_no_key").on(t.receiptNo),
     index("payment_receipts_customer_idx").on(t.customerId),
     index("payment_receipts_status_idx").on(t.status),
+    /** The record's receipts branch, paged by the same keyset cursor. */
+    index("payment_receipts_customer_received_idx").on(
+      t.customerId,
+      t.receivedAt.desc(),
+      t.id.desc(),
+    ),
     index("payment_receipts_received_idx").on(t.receivedAt),
   ],
 );
@@ -2645,6 +2721,14 @@ export const payments = pgTable(
   (t) => [
     index("payments_customer_idx").on(t.customerId),
     index("payments_paid_idx").on(t.paidAt),
+    /*
+     * Who recorded the money, for EOD and the collection actuals. PARTIAL for
+     * the same reason the orders one is: an allocation line the sheet import
+     * wrote names nobody.
+     */
+    index("payments_recorded_by_idx")
+      .on(t.recordedById, t.paidAt.desc())
+      .where(sql`recorded_by_id is not null`),
     index("payments_receipt_idx").on(t.receiptId),
     index("payments_bill_idx").on(t.billId),
   ],
@@ -2712,6 +2796,8 @@ export const followUpAttempts = pgTable(
   },
   (t) => [
     index("follow_up_attempts_customer_idx").on(t.customerId),
+    /** Whose collections call it was -- the other half of every EOD figure. */
+    index("follow_up_attempts_user_idx").on(t.userId, t.attemptedAt.desc()),
     uniqueIndex("follow_up_attempts_idempotency_key").on(t.idempotencyKey),
   ],
 );
@@ -3017,6 +3103,12 @@ export const waMessages = pgTable(
   (t) => [
     index("wa_messages_customer_idx").on(t.customerId),
     index("wa_messages_status_idx").on(t.status),
+    /** The record's message branch, paged by the same keyset cursor. */
+    index("wa_messages_customer_prepared_idx").on(
+      t.customerId,
+      t.preparedAt.desc(),
+      t.id.desc(),
+    ),
     index("wa_messages_run_idx").on(t.runId),
     uniqueIndex("wa_messages_idempotency_key").on(t.idempotencyKey),
   ],
@@ -3167,6 +3259,16 @@ export const auditLog = pgTable(
     index("audit_entity_idx").on(t.entityType, t.entityId),
     index("audit_actor_idx").on(t.actorId),
     index("audit_at_idx").on(t.at),
+    /*
+     * Both of these were added by drizzle/0133 and never mirrored here, which
+     * is how a rebuild or a fresh mahekone_test quietly loses the only thing
+     * keeping the Accounts audit screen and the queue's skip lookup off a full
+     * scan. The skip one is partial because 23 rows of 11,877 are skips.
+     */
+    index("audit_log_action_at_idx").on(t.action, t.at.desc()),
+    index("audit_log_queue_skip_idx")
+      .on(t.entityId, t.at.desc())
+      .where(sql`action = 'queue.skip'`),
   ],
 );
 
