@@ -59,24 +59,45 @@ import { readDeviceState } from "@/lib/mbos/device-state";
  * the early close destroyed the missing fixes, with every request answering
  * 200 and every screen looking healthy.
  *
- * **So the rule is now about the WHOLE batch: what cannot be filed is never
- * acknowledged as stored.** A MIXED batch — some fixes inside a session, some
- * not — is stored in part and still answered `no-session-yet`, so the handset
- * keeps all of it. That costs a re-send of the part that landed, which costs
- * nothing: the id is derived from the reading and `mbos_positions_fix_key`
- * catches it even from a build that mints its own, so the second arrival is a
- * no-op. Telling the truth by id would be better still and is not available:
- * an APK cannot be recalled, and the two values above are the whole vocabulary
- * every handset already in a pocket understands. The server has to speak the
- * conservative one until nothing in the field can mistake a new one for
- * "delivered".
+ * **So the answer names what it filed, and a MIXED batch is its own word.**
+ * `partial` carries `filed`: the ids this call has finished with. A handset
+ * that understands it deletes exactly those and keeps the rest, so the queue
+ * advances past an unfileable tail on the very next pass and nothing is
+ * destroyed.
  *
- * The consequence is worth naming rather than discovering: a fix outside a
- * session is now RETRIED rather than destroyed, and where the day was closed
- * early it goes on being refused until somebody regularises that day. It ages
- * off the phone on the handset's own retention sweep, so it cannot become a
- * queue that only grows — and until then the unsent count is on the Sync
- * screen, which is a signal where silence was not.
+ * **AN OLD APK IS THE REASON IT IS A NEW WORD RATHER THAN A REUSED ONE, and
+ * that property is the whole design.** `flush()` treats any `ok` that is not
+ * `off` or `no-session-yet` as delivered and deletes what it sent — so a build
+ * already in a pocket meets `partial` and behaves EXACTLY as it does today.
+ * No new blocking, no regression, on the one thing that cannot be recalled.
+ * The first draft of this fix answered `no-session-yet` to a mixed batch
+ * instead, reusing a word every build already knew, and that is precisely what
+ * made it wrong: `flush()` reads the OLDEST 500 rows every pass and returns
+ * without advancing on that word, so ONE permanently-unfileable fix among them
+ * pins the whole queue until `mbos.location.queueRetentionDays` — seven days —
+ * ages it off. Live tracking would have stopped dead on exactly the handsets
+ * this exists to rescue, because a day closed early is what gives them an
+ * unfileable tail in the first place. Preserving a morning is not worth
+ * stopping the trail for a week.
+ *
+ * `no-session-yet` therefore keeps its narrow meaning: NOTHING in this batch
+ * could be filed. That case is genuinely transient — a check-in still in the
+ * outbox — and holding is right there because there is nothing newer stuck
+ * behind it.
+ *
+ * **`filed` is the ids that LANDED and never the ids to keep, and the
+ * direction is deliberate.** An id the server forgets to mention is one the
+ * handset holds on to and sends again, which costs a round trip; the opposite
+ * shape would have a forgotten id deleted, which costs the fix. A count or a
+ * high-water mark cannot express it at all: a batch straddling two sessions
+ * leaves holes, so what landed is not a prefix of what was sent. It also
+ * carries the rows that can NEVER land — a fix with no coordinates is not a
+ * fix, and a handset holding one for ever is the head-of-line bug arriving by
+ * the back door.
+ *
+ * When the handset half lands, `mbos-wire.test.ts` is where the three words
+ * belong: it is the only thing that can read both projects as text, and a
+ * vocabulary joined by nothing but a spelling is what it exists for.
  *
  * **Nothing is confirmed row by row.** The handset deletes what it sent once
  * this answers, so the answer says how many landed and nothing more. A
@@ -158,20 +179,38 @@ export async function POST(request: Request) {
     );
   }
 
+  /* Rows that can never be stored, by id. They are as finished with as a stored
+     one — a handset that held them back would be holding its own queue open
+     over a fix that is not a fix. */
+  const unstoreable: string[] = [];
+  /* The ids the HANDSET chose, so `filed` names only rows it can recognise. */
+  const sentIds = new Set<string>();
+
   const values = rows.flatMap((raw) => {
     const p = raw as Record<string, unknown>;
     const lat = Number(p.lat);
     const lng = Number(p.lng);
     const at = Number(p.at);
+    const sent = typeof p.id === "string" && p.id ? p.id : null;
     /* A fix with no coordinates is not a fix. Dropped rather than refused: one
      * bad row in a batch of two hundred must not cost the other hundred and
      * ninety-nine, and there is nobody to tell about it anyway. */
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(at)) return [];
-    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return [];
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(at)) {
+      if (sent) unstoreable.push(sent);
+      return [];
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      if (sent) unstoreable.push(sent);
+      return [];
+    }
+    if (sent) sentIds.add(sent);
 
     return [
       {
-        id: typeof p.id === "string" && p.id ? p.id : fixId(at, lat, lng),
+        /* The id the handset sent. A row that arrived without one gets the id
+           it would have minted, and is left out of `filed`: the handset has
+           nothing to match it against, and keeping is the safe direction. */
+        id: sent ?? fixId(at, lat, lng),
         userId: auth.principal.user.id,
         at: new Date(at),
         lat,
@@ -282,15 +321,16 @@ export async function POST(request: Request) {
   }
 
   if (unfiled) {
-    /* A MIXED batch. What landed has landed; what did not is kept on the phone
-       rather than destroyed, so the whole batch comes again and the stored
-       half deduplicates on arrival. `stored` is still the truth about this
-       call — it is `tracking` the handset acts on. */
+    /* A MIXED batch. What landed has landed and is named; what did not is kept
+       on the phone rather than destroyed, and a handset that understands the
+       word goes on to the next batch rather than re-reading this one for a
+       week. An older one deletes the lot, exactly as it does today. */
     return NextResponse.json({
       ok: true,
       stored: inside.length,
       dropped: rows.length - inside.length,
-      tracking: "no-session-yet",
+      tracking: "partial",
+      filed: [...inside.filter((v) => sentIds.has(v.id)).map((v) => v.id), ...unstoreable],
     });
   }
 

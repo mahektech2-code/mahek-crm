@@ -36,6 +36,14 @@
  *   it and the rest fall outside — so the batch was answered as delivered and
  *   the outside part was deleted from the only device that had it. The count in
  *   the answer was the only trace.
+ *
+ * WHAT A STRADDLE MUST ANSWER IS `partial`, AND IT MUST NAME WHAT LANDED.
+ * Answering `no-session-yet` there would be safe and would stop the trail:
+ * `flush()` re-reads the oldest batch on that word without advancing, so one
+ * unfileable fix among five hundred pins the queue for a week. The word has to
+ * be one an old build reads as "delivered" — which is any word it does not
+ * know — so a phone that cannot be recalled behaves exactly as it does today,
+ * and a new one deletes precisely `filed`.
  */
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -89,6 +97,17 @@ function at(hourIst: number, minute = 0): Date {
   );
 }
 
+/**
+ * The id the handset would mint for a fix here.
+ *
+ * Mirrors `fixId` in `mbos-app/src/sync/trail.ts`, which the route mirrors
+ * too — a position IS its reading, and what `filed` names has to be the string
+ * the phone is holding, not one the server invented.
+ */
+function fixIdOf(when: Date, lat = HERE.lat, lng = HERE.lng): string {
+  return `mbos_pos_${when.getTime()}_${Math.round(lat * 1e6)}_${Math.round(lng * 1e6)}`;
+}
+
 function post(fixes: { at: Date; lat?: number; lng?: number }[]) {
   return POST(
     new Request("http://localhost/api/mbos/positions", {
@@ -102,9 +121,7 @@ function post(fixes: { at: Date; lat?: number; lng?: number }[]) {
           /* Derived from the reading exactly as the handset derives it — an id
              minted any other way is a duplicate generator, which is the whole
              reason `mbos_positions_fix_key` exists. */
-          id: `mbos_pos_${f.at.getTime()}_${Math.round((f.lat ?? HERE.lat) * 1e6)}_${Math.round(
-            (f.lng ?? HERE.lng) * 1e6,
-          )}`,
+          id: fixIdOf(f.at, f.lat ?? HERE.lat, f.lng ?? HERE.lng),
           at: f.at.getTime(),
           lat: f.lat ?? HERE.lat,
           lng: f.lng ?? HERE.lng,
@@ -265,10 +282,15 @@ describe("A batch the server cannot file is never acknowledged as stored", () =>
     assert.equal(body.ok, true);
     assert.equal(
       body.tracking,
-      "no-session-yet",
+      "partial",
       "the server acknowledged a batch it could file only part of — the handset deletes on that answer and yesterday's four hours are gone for good",
     );
     assert.equal(body.stored, 1, "only this morning's fix belongs to a session that exists");
+    assert.deepEqual(
+      body.filed,
+      [fixIdOf(todayFix)],
+      "the one fix that landed was not named, so a handset honouring `filed` would send it again for ever",
+    );
     assert.equal(
       await storedCount(),
       2,
@@ -329,10 +351,57 @@ describe("A batch the server cannot file is never acknowledged as stored", () =>
     assert.equal(body.stored, 2, JSON.stringify(body));
     assert.equal(
       body.tracking,
-      "no-session-yet",
+      "partial",
       "a mixed batch was acknowledged whole, so the two fixes past the stale check-out were deleted from the only device that had them",
     );
+    assert.deepEqual(
+      body.filed,
+      [fixIdOf(at(12)), fixIdOf(at(13))],
+      "`filed` must be exactly what landed — anything else is either a fix deleted that never arrived, or a queue that never advances",
+    );
     assert.equal(await storedCount(), 3, "the 2pm fix plus the two inside the window");
+  });
+
+  test("a batch the queue can never drain is finished with, not held for a week", async () => {
+    /*
+     * THE HEAD-OF-LINE CASE, which is why `partial` exists rather than a
+     * second use of `no-session-yet`. A fix with no coordinates is not a fix
+     * and will never be storable, so a handset told to keep it would re-read
+     * the same oldest five hundred rows on every pass until retention — seven
+     * days — aged it off, and the trail would stop dead in the meantime.
+     * It is named in `filed` along with what landed, because "finished with"
+     * is the question the handset is asking.
+     */
+    await openDay();
+
+    const answer = await POST(
+      new Request("http://localhost/api/mbos/positions", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          positions: [
+            /* Not a number at all. `null` would NOT do: `Number(null)` is 0,
+               which is a perfectly valid coordinate in the Gulf of Guinea. */
+            { id: "junk-1", at: at(10).getTime(), lat: "somewhere", lng: "over there" },
+            { id: fixIdOf(at(11)), at: at(11).getTime(), ...HERE, accuracyM: 12 },
+            { id: "junk-2", at: at(12).getTime(), lat: 999, lng: 999 },
+            /* BEFORE the check-in, so outside the day — an open day runs to
+               now, so nothing after it can be outside. This is the real
+               straddle and the only row that may still be held. */
+            { id: fixIdOf(at(6)), at: at(6).getTime(), ...HERE, accuracyM: 12 },
+          ],
+        }),
+      }),
+    );
+    const body = (await answer.json()) as Record<string, unknown>;
+
+    assert.equal(body.tracking, "partial", JSON.stringify(body));
+    assert.equal(body.stored, 1);
+    assert.deepEqual(
+      (body.filed as string[]).slice().sort(),
+      [fixIdOf(at(11)), "junk-1", "junk-2"].sort(),
+      "a row that can never be stored was not named, so it would pin the queue for a week",
+    );
   });
 
   test("no attendance row at all is still the answer it always was", async () => {
