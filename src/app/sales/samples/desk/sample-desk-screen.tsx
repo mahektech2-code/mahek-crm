@@ -78,7 +78,19 @@ export function SampleDeskScreen({
   const [docket, setDocket] = React.useState("");
   const [expected, setExpected] = React.useState("");
   const [fields, setFields] = React.useState<Record<string, string>>({});
-  const [outcome, setOutcome] = React.useState<"approved" | "rejected">("approved");
+  /*
+   * THREE VERDICTS, because "more testing" is a real answer and not a shrug.
+   *
+   * The desk offered two. The enum, `recordSampleFeedback`'s own schema and the
+   * record screen all carry a third — and "they want to try it again on a
+   * different substrate" is neither approval nor rejection. Recorded as
+   * pending it loses the fact that a trial happened at all; recorded as
+   * rejected it writes off a live opportunity. Either way the §16 chase stops
+   * counting, which is the part that costs something.
+   */
+  const [outcome, setOutcome] = React.useState<"approved" | "rejected" | "more_testing">(
+    "approved",
+  );
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -536,10 +548,20 @@ export function SampleDeskScreen({
                 >
                   They did not
                 </Button>
+                <Button
+                  size="sm"
+                  tone={outcome === "more_testing" ? "primary" : "default"}
+                  onClick={() => setOutcome("more_testing")}
+                  title="Neither yes nor no — they want to try it again. The lead stays where it is and the chase keeps counting."
+                >
+                  They want to try again
+                </Button>
               </div>
               <p className="mt-1.5 text-[12px] text-muted">
                 Negotiation does not open until the trial is approved — and a rejected trial with
                 the seven answers behind it is worth far more than a lead quietly going cold.
+                &ldquo;They want to try again&rdquo; keeps the lead where it is and the review chase
+                counting, which is the honest answer when a customer has not said either thing.
               </p>
             </div>
 

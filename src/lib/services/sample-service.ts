@@ -95,6 +95,14 @@ const deskColumns = {
   trackingNumber: mbosSamples.trackingNumber,
   expectedDeliveryDate: mbosSamples.expectedDeliveryDate,
   receivedAt: sql<string | null>`${mbosSamples.receivedAt}`,
+  /*
+   * The same mark as a DAY, in the business's zone, because a caller that
+   * truncates the instant above is truncating it in whatever zone the
+   * connection happened to be in. Asked here so there is one answer.
+   */
+  receivedOn: sql<
+    string | null
+  >`to_char(${mbosSamples.receivedAt} AT TIME ZONE ${APP_TIMEZONE}, 'YYYY-MM-DD')`,
   reviewChaseCount: mbosSamples.reviewChaseCount,
   lastReviewChaseAt: sql<string | null>`${mbosSamples.lastReviewChaseAt}`,
 };
@@ -252,11 +260,26 @@ export async function samplesAwaitingReview(limit = 100): Promise<SampleAwaiting
 
   return rows.map((r) => {
     const base = asRow(r, r.waitingDays);
-    /* The stored mark is an instant, and the day it fell on is the business's
-       own — the column comes back from the driver already rendered in that
-       zone by the select above, so the date part is the day and nothing here
-       truncates an instant of its own. */
-    const receivedOn = r.receivedAt ? String(r.receivedAt).slice(0, 10) : null;
+    /*
+     * THE DAY IS ASKED OF THE DATABASE, NAMING THE ZONE.
+     *
+     * This read `String(r.receivedAt).slice(0, 10)` and a comment above it
+     * claimed the select had already rendered the column in the business's
+     * zone. Nothing in that select named a zone. `received_at` is a
+     * `timestamptz` selected through a raw fragment, so what comes back is
+     * Postgres's own text rendering of it — IN THE SESSION'S ZONE, and the
+     * session's zone is a property of whichever pooled connection served the
+     * query rather than of the row. AGENTS.md has the same failure written up
+     * against the timeline cursor: one connection left in Asia/Kolkata by an
+     * earlier query returned a row as 18:30Z while the rest returned it as
+     * 00:00Z, in one process.
+     *
+     * The cost here is not cosmetic. This day is what `chaseOffset` counts
+     * from, so a sample received late in the evening could be chased a day
+     * early or a day late depending on which connection answered — and §16's
+     * whole point is that the last interval repeats until somebody answers.
+     */
+    const receivedOn = r.receivedOn ?? null;
     const offset = chaseOffset(ladder, base.reviewChaseCount + 1);
     const nextChaseOn = receivedOn ? addDays(receivedOn, offset) : null;
     return {

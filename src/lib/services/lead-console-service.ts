@@ -1016,7 +1016,47 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
               join customers dc on dc.id = cd.distributor_customer_id
              where cd.customer_id = c.id) as "distributorNames",
 
-           to_jsonb(dp.*) as "distributorProfile",
+           /*
+            * THE KEYS HAVE TO BE camelCase, AND to_jsonb(dp.*) GIVES THEM
+            * PHYSICAL COLUMN NAMES.
+            *
+            * lead-gates.ts reads this object directly — p.gstVerified,
+            * p.monthlyPotentialPaise, p.creditLimitRequiredPaise, thirty of
+            * them — and to_jsonb keyed it gst_verified,
+            * monthly_potential_paise, credit_limit_required_paise. Every
+            * lookup was undefined, has() reads undefined as "nobody has
+            * answered", and so EVERY DISTRIBUTOR LEAD WAS REFUSED ON ALL THIRTY
+            * CONDITIONS however complete its profile. approvalRouteReason read
+            * the same object for the discount and the credit limit, so nothing
+            * ever routed to management either — §12's second step could not be
+            * reached.
+            *
+            * It type-checks and it lints, because the query is a string and the
+            * object it produces is typed as a bag. Nothing between here and the
+            * gate has an opinion about the spelling.
+            *
+            * The keys are CONVERTED rather than listed. A hand-written
+            * jsonb_build_object of forty-three aliases would be a third list
+            * beside the table and the engine, and a drift between two lists is
+            * precisely the bug being fixed — the thirty-first condition would
+            * arrive, the column would be added, and the alias would be
+            * forgotten. This mirrors Drizzle's own snake_case-to-camelCase
+            * convention, so it is right for every column that exists today and
+            * every one added tomorrow.
+            */
+           (
+             select jsonb_object_agg(camel.key, kv.value)
+               from jsonb_each(to_jsonb(dp.*)) as kv(key, value)
+               cross join lateral (
+                 select string_agg(
+                          case when ord = 1 then part else initcap(part) end,
+                          ''
+                          order by ord
+                        ) as key
+                   from unnest(string_to_array(kv.key, '_'))
+                        with ordinality as parts(part, ord)
+               ) camel
+           ) as "distributorProfile",
            exists (
              select 1 from mbos_approvals a
               where a.subject_id = c.id and a.type = 'distributor_appointment'
@@ -1046,7 +1086,20 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
                 from mbos_samples s
                 left join products sp on sp.id = s.product_id
                where s.customer_id = c.id and s.state <> 'cancelled'
-               order by s.created_at desc, s.id desc
+               /*
+                * mbos_samples HAS NO created_at. It is an MBOS table, so it
+                * takes mbosColumns(), which gives client_created_at — what
+                * the phone said, and its owner can set it — and
+                * server_created_at, which is when we heard about it. There is
+                * no third column, and s.created_at threw at the database
+                * every time this record was opened on a lead carrying a sample.
+                *
+                * The server's clock is preferred for the same reason anything
+                * anybody is paid on reads it, and the handset's is the fallback
+                * for rows written before the server stamped one — ordering by a
+                * null would put the oldest sample on top.
+                */
+               order by coalesce(s.server_created_at, s.client_created_at) desc, s.id desc
                limit 1
             ) x) as sample,
 
