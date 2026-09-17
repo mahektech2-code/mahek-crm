@@ -5,7 +5,7 @@ import { dwellStops, type DwellStop } from "@/lib/engines/dwell";
 import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
 import { trailMetres } from "@/lib/engines/trail-trips";
 import { nowMs, shortDateWithYear } from "@/lib/format";
-import { trailHasGaps, trailIsDead } from "@/lib/handset-health";
+import { trackerStalled, trailHasGaps, trailIsDead } from "@/lib/handset-health";
 import { today } from "@/lib/recompute";
 import { readSecret } from "@/lib/secrets";
 import {
@@ -145,6 +145,20 @@ export default async function Page({
       )
     : [];
 
+  /* THE PHONE ITSELF SAYING ITS TRACKER IS STOPPED, counted as its own thing.
+     It is not the row above: `deadTrail` is inferred here from an absence of
+     positions, and this is the handset's own watchdog reporting the tracker
+     accepted and delivering nothing — a fact the phone established and sent,
+     which no amount of reading the positions table could establish as
+     confidently. In production all three live handsets carried it for three
+     days with nothing on any screen counting them, which is how a banner comes
+     to be the thing that was missing rather than the row note underneath it.
+     Today only, for the same reason `deadTrail` is: a stall reported this
+     afternoon says nothing whatever about a Tuesday in March. */
+  const stalled = isToday
+    ? rows.filter((r) => !r.onLeave && trackerStalled({ ...r, dayOpen: Boolean(r.checkInAt && !r.checkOutAt) }))
+    : [];
+
   return (
     <div className="p-6">
       <ScreenHeader
@@ -233,6 +247,14 @@ export default async function Page({
         />
       ) : null}
 
+      {stalled.length ? (
+        <Banner
+          tone="danger"
+          title={`${plural(stalled.length, "handset")} reporting the tracker stopped`}
+          body="Not a guess from missing positions — these phones granted every permission, had the tracking task accepted, and their own watchdog then caught it delivering nothing. The route records only while the app is open until it is fixed, and the fix is on the handset: Sync → Keep tracking on, which walks through the autostart and battery settings the phone is killing it with. Each row says how long it has been stopped."
+        />
+      ) : null}
+
       {deadTrail.length ? (
         <Banner
           tone="danger"
@@ -264,6 +286,9 @@ export default async function Page({
           noTrailMinutes: config["mbos.location.noTrailMinutes"],
           lowBatteryPercent: config["mbos.location.lowBatteryPercent"],
           queuedPositionsWorthSaying: config["mbos.location.queuedPositionsWorthSaying"],
+          /* Blank is "nobody has said", and `buildIsBehind` answers null to
+             that rather than calling every phone current — see its own note. */
+          currentAppVersion: config["mbos.sync.currentAppVersion"] || null,
         }}
         nowMs={clockMs}
       />

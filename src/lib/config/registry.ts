@@ -1888,6 +1888,15 @@ export const SETTINGS = [
     max: 50,
   },
   {
+    key: "mbos.sync.currentAppVersion",
+    type: "text",
+    category: "mbos-sync",
+    label: "The handset build currently published",
+    description:
+      "The version of the MBOS app the office has released — 1.8.0, say. Anybody whose phone reports an older one is said so on the Live map's team list, and nothing at all is said while this is blank, which is the honest reading of nobody having stated a release. It is typed rather than worked out: the server cannot read an APK, and taking the newest version any handset happens to report would call a fleet where nobody has updated entirely up to date. Set it when you publish a build — see DEPLOY.md, \"Releasing the handset app\". An old build still records a full day; what it loses is the newest of what a phone can report about itself, which is why a stale handset's row on that screen is quieter than it deserves.",
+    default: "",
+  },
+  {
     key: "mbos.sync.quietHours",
     type: "integer",
     category: "mbos-sync",
@@ -3711,6 +3720,7 @@ export type Config = {
   "mbos.location.handsetQuietMinutes": number;
   "mbos.location.noTrailMinutes": number;
   "mbos.location.lowBatteryPercent": number;
+  "mbos.sync.currentAppVersion": string;
   "mbos.sync.quietHours": number;
 
   "mbos.route.averageSpeedKmph": number;
