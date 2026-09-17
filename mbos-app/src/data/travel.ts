@@ -215,7 +215,10 @@ export async function openDay(args: {
       userId: args.userId,
       day: args.day,
       departedAt: args.departedAt ?? null,
-      departedFromHometown: args.departedFromHometown === false ? 0 : 1,
+      /* A real boolean, not 0/1. `toColumns` converts it for SQLite, while the
+         WIRE carries the row as it is authored here — so hand-converting it
+         wrote the right column and sent a number the server refused. */
+      departedFromHometown: args.departedFromHometown !== false,
       destinationCity: args.destinationCity ?? null,
     },
     payloadExtras: { day: args.day },
@@ -393,7 +396,7 @@ export async function addLeg(args: {
       ticketReference: args.ticketReference ?? null,
       note: args.note ?? null,
       origin: args.origin ?? 'day_log',
-      claimExcluded: args.claimExcluded ? 1 : 0,
+      claimExcluded: args.claimExcluded === true,
       claimExcludedReason: args.claimExcludedReason ?? null,
     },
     /* The day is a dependency: a leg that reached the office before the day it

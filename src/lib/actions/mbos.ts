@@ -857,6 +857,39 @@ async function scopedCustomer(
   return { ok: true, customer: customer as ScopedCustomer };
 }
 
+/* ------------------------------------------------------- what a phone can say */
+
+/**
+ * A boolean as a HANDSET can express one.
+ *
+ * SQLite has no boolean type, so every flag on the phone is an `INTEGER NOT
+ * NULL DEFAULT 0`. `insertAndQueue` enqueues the row object the caller
+ * authored rather than the columns SQLite stored, so a caller that passes a
+ * real `boolean` is converted for the database and sends `true` on the wire —
+ * and a caller that hand-converts to `1` itself sends the number. Both write
+ * the same row; only one of them validates. `z.boolean()` then refused the
+ * whole payload with "expected boolean, received number", and because an
+ * expense day is the DEPENDENCY of every travel leg, the leg was refused
+ * behind it and the visit that needed the leg was never reachable at all.
+ *
+ * The handset callers are corrected alongside this, but correcting them is not
+ * enough and never can be: an APK cannot be recalled, so phones already in the
+ * field go on sending `0` and `1` for as long as they are in somebody's
+ * pocket. The server is the half that can move, which is the same trade
+ * `upsert` makes in the other direction when it drops a column a build does
+ * not know about — tolerate what the far end can say, rather than refuse the
+ * record.
+ *
+ * It is deliberately NOT `z.coerce.boolean()`, which is JavaScript
+ * truthiness: that would read `"false"`, `"0"` and `{}` as true and silently
+ * record the opposite of what a salesman answered. Only the two numbers
+ * SQLite can actually hold are accepted; anything else is still a rejection
+ * somebody can read.
+ */
+const wireBoolean = z
+  .union([z.boolean(), z.literal(0), z.literal(1)])
+  .transform((v) => v === true || v === 1);
+
 /* ------------------------------------------------------------------ visits */
 
 const visitSchema = z.object({
@@ -875,12 +908,12 @@ const visitSchema = z.object({
     .default("visited"),
   notes: z.string().max(4000).nullish(),
   transcript: z.string().max(20000).nullish(),
-  transcriptIsAi: z.boolean().nullish(),
+  transcriptIsAi: wireBoolean.nullish(),
   shopPhotoId: z.string().nullish(),
   custPhotoId: z.string().nullish(),
   voiceNoteId: z.string().nullish(),
   journeyPlanStopId: z.string().nullish(),
-  wasPlanned: z.boolean().nullish(),
+  wasPlanned: wireBoolean.nullish(),
   deviationReason: z.string().max(500).nullish(),
   nextFollowUpDate: z.string().nullish(),
   /*
@@ -897,7 +930,7 @@ const visitSchema = z.object({
    * row, from the check-in fix already stored on it.
    */
   checkInOverrideReason: z.string().max(500).nullish(),
-  pinCorrectionRequested: z.boolean().nullish(),
+  pinCorrectionRequested: wireBoolean.nullish(),
   /*
    * THE SUSPECT DECISION, answered on the visit that demanded it.
    *
@@ -1874,11 +1907,11 @@ const paymentSchema = z.object({
 
 const paymentUpdateSchema = z.object({
   /** Cash paid into the bank, with the slip photographed. */
-  deposited: z.boolean().nullish(),
+  deposited: wireBoolean.nullish(),
   depositedAt: z.number().nullish(),
   depositProofId: z.string().nullish(),
   /** The cheque came back. */
-  bounced: z.boolean().nullish(),
+  bounced: wireBoolean.nullish(),
   bouncedAt: z.number().nullish(),
 });
 
@@ -2163,7 +2196,7 @@ const complaintSchema = z.object({
   description: z.string().min(1).max(4000),
   severity: z.enum(["low", "medium", "high", "critical"]).nullish(),
   mobileNumber: z.string().max(20).nullish(),
-  requestCn: z.boolean().nullish(),
+  requestCn: wireBoolean.nullish(),
   visitId: z.string().nullish(),
 });
 
@@ -3026,7 +3059,7 @@ const leadSchema = z.object({
    * saying who delivers to it, which is the one place the answer is actually
    * known.
    */
-  thirdParty: z.boolean().nullish(),
+  thirdParty: wireBoolean.nullish(),
   distributorCustomerId: z.string().nullish(),
   distributorSalesmanId: z.string().nullish(),
   /*
@@ -3097,7 +3130,7 @@ const leadSchema = z.object({
      lead the salesman is keeping as a Suspect past the decision visit. */
   holdReason: z.string().max(500).nullish(),
   /** Out of the way, not gone — a filter on every read, never a delete. */
-  archived: z.boolean().nullish(),
+  archived: wireBoolean.nullish(),
   /** The shop this lead became, so the two records stay joined up. */
   convertedCustomerId: z.string().nullish(),
 });
@@ -3857,7 +3890,7 @@ const leadValidationSchema = z.object({
   customerId: z.string(),
   calledAt: z.number().nullish(),
   /** A call nobody answered is still a call that was made. */
-  reached: z.boolean().nullish(),
+  reached: wireBoolean.nullish(),
   productFeedback: z.string().max(2000).nullish(),
   qualityFeedback: z.string().max(2000).nullish(),
   dispatchFeedback: z.string().max(2000).nullish(),
@@ -4329,11 +4362,11 @@ const expenseDaySchema = z.object({
   day: z.string(),
   departedAt: z.number().nullish(),
   returnedAt: z.number().nullish(),
-  departedFromHometown: z.boolean().nullish(),
+  departedFromHometown: wireBoolean.nullish(),
   destinationCity: z.string().max(200).nullish(),
   arrivedAtDestinationAt: z.number().nullish(),
-  overnight: z.boolean().nullish(),
-  stayedInHotel: z.boolean().nullish(),
+  overnight: wireBoolean.nullish(),
+  stayedInHotel: wireBoolean.nullish(),
   openingOdometerKm: z.number().int().nullish(),
   closingOdometerKm: z.number().int().nullish(),
   tourId: z.string().nullish(),
@@ -4464,7 +4497,7 @@ const travelLegSchema = z.object({
    * break. The reason travels with it for the same reason it is a column — an
    * exclusion nobody can read off the record is unanswerable six weeks later.
    */
-  claimExcluded: z.boolean().nullish(),
+  claimExcluded: wireBoolean.nullish(),
   claimExcludedReason: z.string().nullish(),
 });
 
@@ -4784,10 +4817,10 @@ const attendanceSchema = z.object({
     .nullish(),
   notes: z.string().max(1000).nullish(),
   /** Whether the check-in was inside the permitted radius, where one is set. */
-  withinGeofence: z.boolean().nullish(),
+  withinGeofence: wireBoolean.nullish(),
   geofenceDistanceM: z.number().nullish(),
   /** A correction asked for. The DECISION lives in `mbos_approvals`. */
-  regularisationRequested: z.boolean().nullish(),
+  regularisationRequested: wireBoolean.nullish(),
   regularisationReason: z.string().max(1000).nullish(),
   /**
    * WHAT THE PHONE SAID ABOUT ITSELF AS THE DAY OPENED, and the office's only
@@ -4805,7 +4838,7 @@ const attendanceSchema = z.object({
    * keys the setup screen names, not prose: an unbounded list from a client is
    * a column somebody can grow without limit.
    */
-  setupReady: z.boolean().nullish(),
+  setupReady: wireBoolean.nullish(),
   setupAcknowledgedAt: z.number().nullish(),
   setupUnverified: z.array(z.string().max(60)).max(20).nullish(),
   /**
@@ -5942,7 +5975,7 @@ const customerCreateSchema = z.object({
    * either abandons the order or files it as though the distributor received
    * the goods, and where the lorry actually went is lost.
    */
-  thirdParty: z.boolean().nullish(),
+  thirdParty: wireBoolean.nullish(),
   /**
    * Who invoices it. Required WITH `thirdParty`, because a shop marked as one
    * we do not bill, with nobody recorded as billing it, is precisely the row

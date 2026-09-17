@@ -1137,3 +1137,86 @@ test("nothing lingers on the outstanding list after it has been published", () =
       "stops meaning anything: " + published.join(", "),
   );
 });
+
+/* ---------------------------------------------------------------------------
+ * A NUMBER IS NOT A BOOLEAN, and SQLite cannot tell you which it meant.
+ *
+ * Every flag on the handset is an `INTEGER NOT NULL DEFAULT 0`, because SQLite
+ * has no boolean type. `insertAndQueue` writes the row through `toColumns`,
+ * which converts a real boolean to 0/1 for the database — and enqueues the row
+ * OBJECT, unconverted, as the wire payload. So the two halves agree only while
+ * the caller passes a genuine boolean. A caller that hand-converts to `1`
+ * itself stores an identical row and sends a number, and `z.boolean()` refused
+ * the payload with "expected boolean, received number".
+ *
+ * That is not a theoretical drift. `openDay` did exactly this, so every
+ * expense day a handset opened was refused; an expense day is the DEPENDENCY
+ * of every travel leg, so each leg was refused behind it; and a visit is only
+ * reachable through an open leg. One hand-converted flag took the whole field
+ * workflow down, and the only trace was six rejection rows nobody was reading.
+ *
+ * Neither half of this can be checked by a compiler. `insertAndQueue` takes
+ * `Record<string, unknown>`, so a number is as type-correct as a boolean; and
+ * the server's schema lives in a different project. So it is checked here, as
+ * text, on both sides — the server must ACCEPT what a phone can say, and the
+ * phone must not say it in the first place.
+ * ------------------------------------------------------------------------- */
+
+const SYNC_ACTIONS = "src/lib/actions/mbos.ts";
+const HANDSET_DATA = "mbos-app/src/data";
+
+test("the sync schemas accept a boolean as a handset can express one", () => {
+  const src = readFileSync(SYNC_ACTIONS, "utf8");
+  const offenders = src
+    .split("\n")
+    .map((line, i) => ({ line: line.trim(), n: i + 1 }))
+    /* `z.union([z.boolean(), …])` is a deliberate mixed field and is left
+       alone; what must not appear is a bare boolean standing on its own as a
+       payload field, which is the shape a phone cannot satisfy. */
+    .filter(({ line }) => /z\.boolean\(\)\s*\.(nullish|optional|nullable)\(\)/.test(line));
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `${SYNC_ACTIONS} has ${offenders.length} payload field(s) demanding a strict boolean. ` +
+      "SQLite holds 0/1, so use `wireBoolean` — see its own note for why this is " +
+      "the server's job rather than the handset's: " +
+      offenders.map((o) => `${o.n}: ${o.line}`).join(" | "),
+  );
+});
+
+test("no queued row hand-converts a boolean to 0/1", () => {
+  const offenders: string[] = [];
+
+  for (const file of readdirSync(HANDSET_DATA)) {
+    if (!file.endsWith(".ts") || file.includes(".test.")) continue;
+    const src = readFileSync(`${HANDSET_DATA}/${file}`, "utf8");
+
+    /* Only the QUEUED writers matter. A raw `INSERT INTO … VALUES (?)` builds
+       its payload separately and is free to pass 0/1 to SQLite, which is what
+       SQLite wants; it is the row object that doubles as the wire payload
+       where the two meanings collide. */
+    for (const call of ["insertAndQueue({", "updateAndQueue({"]) {
+      let at = src.indexOf(call);
+      while (at !== -1) {
+        const end = src.indexOf("\n  });", at);
+        const block = src.slice(at, end === -1 ? src.length : end);
+        for (const [i, line] of block.split("\n").entries()) {
+          if (!/\?\s*1\s*:\s*0|\?\s*0\s*:\s*1/.test(line)) continue;
+          const n = src.slice(0, at).split("\n").length + i;
+          offenders.push(`${file}:${n}: ${line.trim()}`);
+        }
+        at = src.indexOf(call, at + 1);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `${offenders.length} queued row(s) convert a boolean to 0/1 by hand. The row ` +
+      "object IS the wire payload — pass a real boolean and let `toColumns` " +
+      "convert it for SQLite: " +
+      offenders.join(" | "),
+  );
+});
