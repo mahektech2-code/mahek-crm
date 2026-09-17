@@ -82,7 +82,39 @@ const KIND: Record<string, AuditRow["kind"]> = {
   "payment.reallocate": "record",
 };
 
-export async function accountsAudit(limit = 500): Promise<AuditRow[]> {
+/**
+ * How many rows one read of this log may carry.
+ *
+ * Named rather than typed into the signature because the SCREEN has to say
+ * what it is a slice of, and a screen that spelled the number out again would
+ * be a second answer to "how much did we load" — the half that drifts is
+ * always the half somebody reads.
+ */
+export const ACCOUNTS_AUDIT_LIMIT = 500;
+
+/** The one spelling of "the actions this desk is answerable for", in SQL. */
+const ACTIONS_SQL = sql.raw(`(${ACCOUNTS_ACTIONS.map((x) => `'${x}'`).join(",")})`);
+
+/**
+ * How many rows there are, as opposed to how many we fetched.
+ *
+ * `count(*)` over the same filter the list runs, because a cap presented as a
+ * total is worse than a cap: on a log of fifty thousand decisions the pager was
+ * saying "of 500" with a straight face, on the one screen whose entire value is
+ * being complete. It is the same discipline `customerTimelineCounts` keeps for
+ * the customer record — the count comes from SQL, never from `rows.length`.
+ */
+export async function accountsAuditCount(): Promise<number> {
+  await requireCapability("payment.record");
+
+  const [row] = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n from audit_log a where a.action in ${ACTIONS_SQL}
+  `);
+
+  return Number(row?.n ?? 0);
+}
+
+export async function accountsAudit(limit = ACCOUNTS_AUDIT_LIMIT): Promise<AuditRow[]> {
   await requireCapability("payment.record");
 
   const rows = await db.execute<{
@@ -108,7 +140,7 @@ export async function accountsAudit(limit = 500): Promise<AuditRow[]> {
       left join customers cc on cc.id = cm.customer_id
       left join bills b on a.entity_type = 'bill' and b.id = a.entity_id
       left join customers bc on bc.id = b.customer_id
-     where a.action in ${sql.raw(`(${ACCOUNTS_ACTIONS.map((x) => `'${x}'`).join(",")})`)}
+     where a.action in ${ACTIONS_SQL}
      order by a.at desc
      limit ${limit}
   `);

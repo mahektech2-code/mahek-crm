@@ -4,8 +4,10 @@ import { dayActivity, listCustomers, today } from "@/lib/queries";
 import { getConfig } from "@/lib/config/store";
 import { getFollowUpWorklist, listBills } from "@/lib/services/payment-service";
 import {
+  WA_MESSAGE_LIMIT,
   findResumableRun,
   listMessages,
+  messageCount,
   listReplies,
   listTemplates,
   listUnconfirmedCopies,
@@ -43,6 +45,7 @@ export default async function WhatsappPage({
     followUps,
     bills,
     unconfirmed,
+    messageTotal,
   ] = await Promise.all([
     getConfig(),
     listCustomers(),
@@ -61,6 +64,13 @@ export default async function WhatsappPage({
      */
     listBills({ openOnly: true }),
     isManager(user) ? listUnconfirmedCopies() : Promise.resolve([]),
+    /*
+     * The log read is capped at 300 and this is not. Two questions: what the
+     * screen can draw, and what that is a slice of. The Log tab used to count
+     * what it happened to hold and print it as the total, which on a busy book
+     * reads as a message log that stopped growing months ago.
+     */
+    messageCount(),
   ]);
 
   // Every STATED open bill per customer, oldest first — feeds {{bill_no}},
@@ -131,6 +141,8 @@ export default async function WhatsappPage({
         archived: !t.active,
         updatedAt: t.updatedAt.toISOString(),
       }))}
+      messageTotal={messageTotal}
+      messageLimit={WA_MESSAGE_LIMIT}
       messages={messages.map((m) => ({
         id: m.id,
         customerId: m.customerId,

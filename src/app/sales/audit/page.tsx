@@ -1,5 +1,5 @@
 import { stamp } from "@/lib/format";
-import { fieldAudit } from "@/lib/services/sales-service";
+import { FIELD_AUDIT_LIMIT, fieldAudit, fieldAuditCount } from "@/lib/services/sales-service";
 import { Cell, Empty, HeadCell, Row, ScreenHeader, Table } from "../parts";
 
 export const metadata = { title: "Audit trail — Sales Dashboard — MahekOne" };
@@ -25,9 +25,16 @@ const ACTIONS: Record<string, string> = {
  * What it shows is what was actually recorded. A decision writes its before and
  * after state, so a refusal carries the reason that was given and a plan
  * carries how many days it covered.
+ *
+ * **What it shows is also only the newest of it, and it says so.** The read is
+ * capped and the count is not, because they are two questions: what this page
+ * can draw, and what that is a slice of. Drawn without the second, a log that
+ * ends two hundred rows back reads as a console where nothing has happened
+ * since — and the count has to come from `count(*)`, since the length of a
+ * capped read can only ever report the cap.
  */
 export default async function Page() {
-  const rows = await fieldAudit();
+  const [rows, total] = await Promise.all([fieldAudit(), fieldAuditCount()]);
 
   return (
     <div className="p-6">
@@ -35,6 +42,13 @@ export default async function Page() {
         title="Audit trail"
         subtitle="Every decision made in this console. It is the same audit log the rest of MahekOne writes to, filtered to the field — a second table would be a second answer to who did what."
       />
+
+      {total > rows.length ? (
+        <p className="mb-3 text-[13px] text-muted">
+          The newest {rows.length} decisions of {total.toLocaleString("en-IN")}. This screen reads
+          the newest {FIELD_AUDIT_LIMIT} — anything older is in the log and not on this page.
+        </p>
+      ) : null}
 
       {rows.length === 0 ? (
         <Empty
