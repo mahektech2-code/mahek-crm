@@ -335,16 +335,26 @@ export function PaymentsScreen({
                 : undefined,
             deltaTone: "success",
           },
+          /*
+           * THE DAY'S PLAN, NOT THE FILTERED SET.
+           *
+           * These two sit in a strip beside figures that describe the whole
+           * book — promised, kept, collected — so reading them off the tab
+           * counts made them follow the search box while their neighbours did
+           * not, with nothing on the screen saying which was which. What they
+           * mean is "how many calls are due today", and that is the engine's
+           * answer regardless of what anybody has typed.
+           */
           {
             label: "To call today",
-            value: String(counts.calls),
-            tone: counts.calls ? "danger" : "ink",
-            sub: counts.calls ? "past the quiet window" : "nobody is due",
+            value: String(plan.calls.length),
+            tone: plan.calls.length ? "danger" : "ink",
+            sub: plan.calls.length ? "past the quiet window" : "nobody is due",
           },
           {
             label: "To message today",
-            value: String(counts.messages),
-            sub: counts.messages ? "payment reminders" : undefined,
+            value: String(plan.messages.length),
+            sub: plan.messages.length ? "payment reminders" : undefined,
           },
           {
             label: "Held (disputed)",
