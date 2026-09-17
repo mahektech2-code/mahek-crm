@@ -1,7 +1,7 @@
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
 import {
-  getFollowUpWorklist,
+  followUpWorklistPage,
   getPaymentFollowUpPlan,
   collectionsMetrics,
   listBills,
@@ -14,13 +14,45 @@ import {
   offeredPayOutcomes,
   stageOneBatch,
 } from "@/lib/services/payment-followup-service";
+import { WORKLIST_TABS, type WorklistTab } from "@/lib/services/payment-service";
 import { PaymentsScreen } from "./payments-screen";
 
 export const metadata = { title: "Payment follow-up - MahekOne CRM" };
 
-export default async function PaymentsPage() {
+export default async function PaymentsPage({
+  searchParams,
+}: {
+  /*
+   * EVERY FILTER IS A URL PARAMETER, like the customers list and the leads
+   * book. A filtered view of a collections list is exactly the thing one
+   * telecaller sends another — "these four, nobody has chased them" — and
+   * holding it in component state makes that unsendable and the back button a
+   * lie. It is also what lets the filtering, the counting and the paging
+   * happen in the database rather than in a browser that has been handed the
+   * whole worklist.
+   */
+  searchParams: Promise<{
+    tab?: string;
+    q?: string;
+    slow?: string;
+    sort?: string;
+    page?: string;
+    per?: string;
+  }>;
+}) {
   const user = await requireUser();
   const scope = await getScope(user);
+  const params = await searchParams;
+
+  /* Opens on the calling list: it is the one list with work on it today. */
+  const tab: WorklistTab = WORKLIST_TABS.includes(params.tab as WorklistTab)
+    ? (params.tab as WorklistTab)
+    : "calls";
+  /* Capped on the way in. A search box is a text field on a URL anybody can
+     write, and six words is already more than a search. */
+  const q = params.q?.slice(0, 200) ?? "";
+  const slowOnly = params.slow === "1";
+  const monthEnd = params.sort === "value";
 
   // Open bills only. This screen reads the ledger for one reason — to hand
   // each row the bills a payment could be booked against — and then discarded
@@ -29,12 +61,30 @@ export default async function PaymentsPage() {
   // the wire to be dropped. Not cut by financial year: an open bill from two
   // years ago is the oldest debt on the account and the first thing anybody
   // chases.
-  const [rows, bills, config, day, plan, metrics, batch] = await Promise.all([
-    getFollowUpWorklist(),
+  /*
+   * THE PLAN COMES FIRST, because two of the seven tabs are its answer.
+   *
+   * Who is due a call or a message today is an ENGINE's verdict rather than a
+   * column, so those tabs are filtered by the ids it produces. Everything else
+   * the database can answer for itself. It is `cache`d, so asking for it here
+   * costs nothing the screen was not already paying.
+   */
+  const plan = await getPaymentFollowUpPlan();
+
+  const [worklist, bills, config, day, metrics, batch] = await Promise.all([
+    followUpWorklistPage({
+      tab,
+      q,
+      slowOnly,
+      monthEnd,
+      page: Number(params.page) || 1,
+      perPage: Number(params.per) || undefined,
+      callIds: plan.calls.map((c) => c.customerId),
+      messageIds: plan.messages.map((m) => m.customerId),
+    }),
     listBills({ openOnly: true }),
     getConfig(),
     today(),
-    getPaymentFollowUpPlan(),
     collectionsMetrics(),
     stageOneBatch(),
   ]);
@@ -92,7 +142,18 @@ export default async function PaymentsPage() {
       outcomes={offeredPayOutcomes()}
       metrics={metrics}
       batchCount={batch.templateId ? batch.customerIds.length : 0}
-      rows={rows.map((r) => ({
+      filters={{ tab, query: q, slowOnly, monthEnd }}
+      pageInfo={{
+        page: worklist.page,
+        pageCount: worklist.pageCount,
+        perPage: worklist.perPage,
+        total: worklist.total,
+        listTotal: worklist.listTotal,
+      }}
+      counts={worklist.counts}
+      held={worklist.held}
+      filteredOverdue={worklist.filteredOverdue}
+      rows={worklist.rows.map((r) => ({
         ...r,
         openBills: openBillsByCustomer.get(r.customerId) ?? [],
       }))}
