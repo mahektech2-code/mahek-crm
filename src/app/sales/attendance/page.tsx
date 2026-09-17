@@ -2,6 +2,7 @@ import Link from "next/link";
 import { APP_TIMEZONE, addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { attendanceForDay } from "@/lib/services/sales-service";
+import { unreviewedCounts } from "@/lib/services/day-evidence-service";
 import { getSetting } from "@/lib/config/store";
 import {
   Banner,
@@ -46,14 +47,21 @@ export default async function Page({
   const now = await today();
   const day = /^\d{4}-\d{2}-\d{2}$/.test(params.day ?? "") ? params.day! : now;
 
-  const rows = await attendanceForDay(day);
-  const retentionHours = await getSetting("mbos.attendance.selfieRetentionHours");
+  const [rows, outstanding, retentionHours] = await Promise.all([
+    attendanceForDay(day),
+    /* What each person's day still has unanswered, so the roll-call can carry
+       the work rather than making somebody open eleven people to find the two
+       who need him. */
+    unreviewedCounts(day),
+    getSetting("mbos.attendance.selfieRetentionHours"),
+  ]);
 
   const inToday = rows.filter((r) => r.checkInAt);
   const missing = rows.filter((r) => !r.checkInAt);
   const offSite = rows.filter((r) => r.withinGeofence === false);
   const corrections = rows.filter((r) => r.regularisationRequested);
   const openDays = rows.filter((r) => r.checkInAt && !r.checkOutAt);
+  const toCheck = rows.filter((r) => (outstanding.get(r.salesmanId) ?? 0) > 0);
 
   return (
     <div className="p-6">
@@ -110,6 +118,14 @@ export default async function Page({
             value: String(corrections.length),
             tone: corrections.length ? "warn" : undefined,
           },
+          {
+            label: "Photographs to check",
+            value: String([...outstanding.values()].reduce((n, v) => n + v, 0)),
+            tone: toCheck.length ? "warn" : undefined,
+            sub: toCheck.length
+              ? `across ${toCheck.length === 1 ? "one day" : `${toCheck.length} days`}`
+              : "every one is answered",
+          },
         ]}
       />
 
@@ -120,7 +136,7 @@ export default async function Page({
         />
       ) : (
         <Table
-          minWidth={1390}
+          minWidth={1530}
           head={
             <>
               <HeadCell width={200}>Salesman</HeadCell>
@@ -134,6 +150,12 @@ export default async function Page({
                   and a column somebody has to scroll to is one they stop
                   checking by the second week. */}
               <HeadCell width={230}>Photographs</HeadCell>
+              {/* The way INTO the verification, not a second copy of it. The
+                  detail — every mark, every meter, accept or decline with the
+                  reason — is one screen on the person's own page, and a second
+                  rendering of it here would be a second set of controls to keep
+                  in step with the first. */}
+              <HeadCell width={140}>Day check</HeadCell>
               <HeadCell>Notes</HeadCell>
             </>
           }
@@ -201,6 +223,23 @@ export default async function Page({
               </Cell>
               <Cell>
                 <Selfies row={r} />
+              </Cell>
+              <Cell>
+                <Link
+                  href={`/sales/people/${r.salesmanId}?day=${day}`}
+                  className="text-[13px] font-medium text-[#5223E0] no-underline hover:underline"
+                >
+                  {outstanding.get(r.salesmanId)
+                    ? `Check ${outstanding.get(r.salesmanId)}`
+                    : "Open"}
+                </Link>
+                {/* Silence where there is nothing outstanding, rather than a
+                    green "all checked" on every row. A line that appears on
+                    eleven rows out of eleven is furniture, and the one row
+                    that wants attention has to stand out from it. */}
+                {outstanding.get(r.salesmanId) ? (
+                  <span className="block text-[12px] text-warn-ink">not looked at yet</span>
+                ) : null}
               </Cell>
               <Cell truncate={340} title={r.regularisationReason ?? undefined}>
                 {r.withinGeofence === false ? (

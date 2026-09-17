@@ -1,14 +1,29 @@
 import { notFound } from "next/navigation";
 import { performance, salesmanRecord } from "@/lib/services/sales-service";
+import { dayEvidence } from "@/lib/services/day-evidence-service";
 import { endOfMonth } from "@/lib/business-date";
+import { getSetting } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { SalesmanScreen } from "./salesman-screen";
 
 export const metadata = { title: "Salesman — Sales Dashboard — MahekOne" };
 
-export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+export default async function Page({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ day?: string }>;
+}) {
   const { id } = await params;
+  const query = await searchParams;
   const now = await today();
+
+  /* A day in the URL opens the Day check tab on it. Validated rather than
+     trusted: it is spliced into a date cast, and an unparseable one would
+     throw where the honest answer is today. */
+  const asked = /^\d{4}-\d{2}-\d{2}$/.test(query.day ?? "") ? query.day! : null;
+  const day = asked ?? now;
 
   /* This month and the one before it, from the SAME function the team's
      Performance screen reads. Not a query of its own: a figure on a person's
@@ -22,10 +37,12 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   lastMonth.setUTCMonth(lastMonth.getUTCMonth() - 1);
   const previous = lastMonth.toISOString().slice(0, 7);
 
-  const [record, current, before] = await Promise.all([
+  const [record, current, before, evidence, retentionHours] = await Promise.all([
     salesmanRecord(id),
     performance(`${thisMonth}-01`, endOfMonth(thisMonth)),
     performance(`${previous}-01`, endOfMonth(previous)),
+    dayEvidence(id, day),
+    getSetting("mbos.attendance.selfieRetentionHours"),
   ]);
 
   /* `salesmanRecord` answers null for anybody who does not hold the field app,
@@ -40,6 +57,24 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       month={thisMonth}
       thisMonth={current.find((r) => r.salesmanId === id) ?? null}
       lastMonth={before.find((r) => r.salesmanId === id) ?? null}
+      day={day}
+      longDay={longDay(day)}
+      today={now}
+      dayEvidence={evidence}
+      selfieRetentionHours={retentionHours}
+      openDayCheck={asked !== null}
     />
   );
+}
+
+/** Rendered as a UTC calendar date, which is what an ISO day already is. */
+function longDay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
 }
