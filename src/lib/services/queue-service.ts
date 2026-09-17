@@ -144,6 +144,22 @@ async function queueInputs(
        * this object, so a column that is read and not selected does not
        * compile. It cannot silently come back undefined the way a hand-rolled
        * handler's column list can.
+       *
+       * AND WHAT ONLY THE SHOWN ROWS NEED IS NOT ASKED OF THE WHOLE BOOK.
+       * The open complaint and the last note are read by nothing in the
+       * engine — no reason turns on either, and neither appears in
+       * `QueueCandidate` at all. They are printed on the card and in the call
+       * panel, which is at most `queue.maxSizePerUser` rows. Asked here they
+       * were two correlated index scans on every candidate: 10,286 of them per
+       * page load on a manager's book, to fill in sixty. `callPanelDetail`
+       * below asks them once, of the ids that actually survived the ranking,
+       * which is the same answer for those rows and no answer at all for the
+       * five thousand nobody is going to read.
+       *
+       * `lastNoOrder` went with them and has no second pass, because nothing
+       * reads it anywhere: it was selected, carried through the detail map and
+       * never once looked at. The no-order cooldown is decided from
+       * `lastAnsweredOutcome`/`lastAnsweredDate`, which is a different pair.
        */
       customer: {
         id: customers.id,
@@ -218,12 +234,6 @@ async function queueInputs(
            and ${orderCountsSql("o")}
            and o.ordered_at >= now() - make_interval(days => ${config["queue.orderValueLookbackDays"]})
       ), 0)::bigint`,
-      openComplaint: sql<string | null>`(
-        select c.description from complaints c
-         where c.customer_id = customers.id
-           and c.status in ('open','in_progress','awaiting_customer')
-         order by c.created_at desc limit 1
-      )`,
       /*
        * The last call that was ANSWERED, and what came of it. What it buys is
        * configuration — "no order" a week, "not interested" a month — so the
@@ -269,16 +279,6 @@ async function queueInputs(
          where o.customer_id = customers.id
            and o.status in ('pending_approval','captured','confirmed')
          order by o.ordered_at desc limit 1
-      )`,
-      lastNoOrder: sql<string | null>`(
-        select (c.started_at at time zone 'Asia/Kolkata')::date::text from ${calls} c
-         where c.customer_id = customers.id and c.outcome = 'no_order'
-         order by c.started_at desc limit 1
-      )`,
-      lastNote: sql<string | null>`(
-        select c.notes from ${calls} c
-         where c.customer_id = customers.id and c.notes is not null
-         order by c.started_at desc limit 1
       )`,
       targetGap: sql<number>`coalesce((
         select greatest(0, t.target_amount - coalesce((
@@ -462,6 +462,171 @@ async function queueInputs(
   );
 
   return { config, rows, detail, candidates };
+}
+
+/**
+ * The two fields that are read off a queue row and nowhere else — the open
+ * complaint and the last note somebody wrote.
+ *
+ * THE SECOND PASS, and it is asked of the survivors rather than of the book.
+ * Neither field decides anything: the engine never sees them, so they cannot
+ * move a customer onto the list, off it, or up it. They are printed on the
+ * card and in the call panel, which is the ranked entries and nothing else.
+ * Asking them in the candidate scan meant two correlated index scans per
+ * customer to fill in the sixty rows a telecaller can see.
+ *
+ * It is exactly equivalent by construction: the SQL is the same text against
+ * the same rows, and the ids handed in are the ids the answer is attached to.
+ * An id with no row back — a customer deleted between the two reads — answers
+ * null for both, which is what an empty subquery answered before.
+ */
+async function callPanelDetail(customerIds: string[]) {
+  const detail = new Map<
+    string,
+    { openComplaint: string | null; lastNote: string | null }
+  >();
+  if (!customerIds.length) return detail;
+
+  const rows = await db
+    .select({
+      id: customers.id,
+      /* `customers.id` spelled out inside both subqueries for the reason the
+         rest of this file keeps repeating: Drizzle renders `${customers.id}`
+         as a bare `"id"`, which binds to the INNER table and matches
+         everything. */
+      openComplaint: sql<string | null>`(
+        select c.description from complaints c
+         where c.customer_id = customers.id
+           and c.status in ('open','in_progress','awaiting_customer')
+         order by c.created_at desc limit 1
+      )`,
+      lastNote: sql<string | null>`(
+        select c.notes from ${calls} c
+         where c.customer_id = customers.id and c.notes is not null
+         order by c.started_at desc limit 1
+      )`,
+    })
+    .from(customers)
+    .where(inArray(customers.id, customerIds));
+
+  for (const r of rows) {
+    detail.set(r.id, { openComplaint: r.openComplaint, lastNote: r.lastNote });
+  }
+  return detail;
+}
+
+/**
+ * The day's list for whoever is asking, settled, with the progress figures.
+ *
+ * ONE PIPELINE, TWO CALLERS. `getQueue` decorates what comes out of here for
+ * the screen; `queueProgress` reads the four integers off it and stops. They
+ * were two code paths for a while and that is the shape this codebase is most
+ * insistent about avoiding — "twelve of forty worked" computed one way on the
+ * Call Log and another way on the dashboard is two answers to a question a
+ * telecaller reads as one, and nothing on either screen would say which.
+ */
+async function settledQueueForRequest() {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const day = await today();
+  const { config, detail, candidates } = await queueInputs(ids, day);
+
+  /*
+   * The collections engine's own conclusion, folded in — NOT re-derived.
+   *
+   * It owns the cadence: a quiet window measured from the due date, a message
+   * every few days through it, calls opening on day 16 and the customer
+   * resting between them. Working any of that out again here would be a
+   * second copy of a rule that has already been got right once.
+   *
+   * What this does is show the answer on the calling list, so a telecaller
+   * works one list rather than two — the customers this engine says are due a
+   * payment call arrive at the top, with the money and the days on the row.
+   */
+  if (config["queue.includePaymentDue"]) {
+    const plan = await getPaymentFollowUpPlan();
+    const dueToday = new Map(
+      plan.calls.map((c) => [
+        c.customerId,
+        { totalOverdue: c.totalOverdue, daysOverdue: c.daysOverdue },
+      ]),
+    );
+    for (const c of candidates) {
+      c.paymentCallDue = dueToday.get(c.customerId) ?? null;
+    }
+  }
+
+  /*
+   * THE DAY'S LIST, settled once.
+   *
+   * The list used to be worked out afresh on every load, which meant it could
+   * reshuffle under a telecaller mid-morning because a colleague logged a call
+   * or a bill fell due. It is built once per business day now and read from
+   * storage after that, so the day is something a person can plan and "twelve
+   * of forty worked" is a real figure rather than a fraction of a moving
+   * denominator.
+   *
+   * NO CRON REQUIRED. The first read of the day builds it. A scheduled job can
+   * warm it before anybody signs in — `npm run jobs -- build-queues` — but
+   * nothing depends on that job having run, which matters on a deployment
+   * where the scheduler is somebody else's to switch on.
+   */
+  const live = buildQueue(candidates, day, config, Date.now());
+  const result = await settleDayList(ctx.user.id, day, live, candidates, config);
+
+  // "Worked" is how many of today's candidates have already been called —
+  // derived from the calls table, not from a stored queue row.
+  const worked = candidates.filter((c) => c.calledToday).length;
+  const total = result.totalQualified + worked;
+
+  return {
+    ctx,
+    ids,
+    day,
+    config,
+    detail,
+    candidates,
+    result,
+    progress: {
+      worked,
+      total,
+      percent: total ? Math.round((worked / total) * 100) : 0,
+    },
+  };
+}
+
+/**
+ * The four integers the dashboard draws, and nothing else.
+ *
+ * The dashboard builds the queue to print "12 / 40, 28 still to work" and a
+ * percentage. It was calling `getQueue`, which on a manager's book meant the
+ * whole candidate scan, the ranking, the call-panel detail for sixty rows and
+ * a second snapshot read for the carried-over count — all of it discarded
+ * except four numbers.
+ *
+ * What this DOES NOT do is answer them some cheaper way. It runs the same
+ * pipeline and reads the same fields off it, because the alternative was a
+ * second derivation of "how many are still to work" and that is the number
+ * this codebase can least afford to have two answers to. What it saves is
+ * everything downstream of the answer: the second pass for the call panel,
+ * the per-row decoration of sixty entries, and the previous working day's
+ * snapshot read, which only the Call Log's carried-over line ever looks at.
+ *
+ * It settles the day exactly as `getQueue` does, deliberately. Whichever
+ * screen a telecaller opens first is the one that fixes the composition of
+ * their day, and a dashboard that read the list without settling it would
+ * leave the first Call Log load of the morning building a list against a
+ * book that had already moved.
+ */
+export async function queueProgress(): Promise<{
+  /** How many rows are still to work — `getQueue().entries.length`. */
+  stillToWork: number;
+  worked: number;
+  total: number;
+  percent: number;
+}> {
+  const { result, progress } = await settledQueueForRequest();
+  return { stillToWork: result.entries.length, ...progress };
 }
 
 /**
@@ -710,60 +875,40 @@ async function settleDayList(
 }
 
 export async function getQueue(): Promise<QueueView> {
+  const { ctx, ids, day, config, detail, result, candidates, progress } =
+    await settledQueueForRequest();
 
-
-  const ctx = await resolveScope();
-  const ids = scopedUserIds(ctx.scope);
-  const day = await today();
-  const { config, detail, candidates } = await queueInputs(ids, day);
-
-  /*
-   * The collections engine's own conclusion, folded in — NOT re-derived.
-   *
-   * It owns the cadence: a quiet window measured from the due date, a message
-   * every few days through it, calls opening on day 16 and the customer
-   * resting between them. Working any of that out again here would be a
-   * second copy of a rule that has already been got right once.
-   *
-   * What this does is show the answer on the calling list, so a telecaller
-   * works one list rather than two — the customers this engine says are due a
-   * payment call arrive at the top, with the money and the days on the row.
-   */
-  if (config["queue.includePaymentDue"]) {
-    const plan = await getPaymentFollowUpPlan();
-    const dueToday = new Map(
-      plan.calls.map((c) => [
-        c.customerId,
-        { totalOverdue: c.totalOverdue, daysOverdue: c.daysOverdue },
-      ]),
-    );
-    for (const c of candidates) {
-      c.paymentCallDue = dueToday.get(c.customerId) ?? null;
-    }
-  }
+  // Carried over: on today's list and on the previous working day's too. Not
+  // "was due yesterday and ignored" — a row can legitimately reappear — but
+  // the plain fact that it has been waiting more than one day.
+  const previous = previousWorkingDay(day, {
+    timezone: config["workingDay.timezone"],
+    dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+    workingDays: config["workingDay.workingDays"],
+  });
 
   /*
-   * THE DAY'S LIST, settled once.
+   * The two screen-only fields and yesterday's list, in one wave.
    *
-   * The list used to be worked out afresh on every load, which meant it could
-   * reshuffle under a telecaller mid-morning because a colleague logged a call
-   * or a bill fell due. It is built once per business day now and read from
-   * storage after that, so the day is something a person can plan and "twelve
-   * of forty worked" is a real figure rather than a fraction of a moving
-   * denominator.
-   *
-   * NO CRON REQUIRED. The first read of the day builds it. A scheduled job can
-   * warm it before anybody signs in — `npm run jobs -- build-queues` — but
-   * nothing depends on that job having run, which matters on a deployment
-   * where the scheduler is somebody else's to switch on.
+   * Neither read depends on the other, and both are known the moment the
+   * ranking is — so awaiting them one after the next would pay two round
+   * trips for the slower of the two. The same "one wave, not three" the
+   * candidate scan above already does.
    */
-  const live = buildQueue(candidates, day, config, Date.now());
-  const result = await settleDayList(ctx.user.id, day, live, candidates, config);
-
-  // "Worked" is how many of today's candidates have already been called —
-  // derived from the calls table, not from a stored queue row.
-  const worked = candidates.filter((c) => c.calledToday).length;
-  const total = result.totalQualified + worked;
+  const [panel, snapshotRows] = await Promise.all([
+    callPanelDetail(result.entries.map((e) => e.customerId)),
+    db
+      .select({ customerId: queueSnapshots.customerId })
+      .from(queueSnapshots)
+      .where(
+        ids
+          ? and(
+              eq(queueSnapshots.day, previous),
+              inArray(queueSnapshots.userId, ids),
+            )
+          : eq(queueSnapshots.day, previous),
+      ),
+  ]);
 
   // Re-attach the customer detail the screen and call panel need. The scan
   // already read these rows, so this costs nothing extra.
@@ -794,31 +939,12 @@ export async function getQueue(): Promise<QueueView> {
       lastOrderDate: c.lastOrderDate,
       lastOrderValue: c.lastOrderValue,
       creditTermDays: c.creditTermDays,
-      openComplaint: row.openComplaint,
+      openComplaint: panel.get(e.customerId)?.openComplaint ?? null,
       noAnswerCount: candidateById.get(e.customerId)?.noAnswerCount ?? 0,
-      lastNote: row.lastNote,
+      lastNote: panel.get(e.customerId)?.lastNote ?? null,
     };
   });
 
-  // Carried over: on today's list and on the previous working day's too. Not
-  // "was due yesterday and ignored" — a row can legitimately reappear — but
-  // the plain fact that it has been waiting more than one day.
-  const previous = previousWorkingDay(day, {
-    timezone: config["workingDay.timezone"],
-    dayBoundaryHour: config["workingDay.dayBoundaryHour"],
-    workingDays: config["workingDay.workingDays"],
-  });
-  const snapshotRows = await db
-    .select({ customerId: queueSnapshots.customerId })
-    .from(queueSnapshots)
-    .where(
-      ids
-        ? and(
-            eq(queueSnapshots.day, previous),
-            inArray(queueSnapshots.userId, ids),
-          )
-        : eq(queueSnapshots.day, previous),
-    );
   const yesterdaysList = new Set(snapshotRows.map((r) => r.customerId));
 
   return {
@@ -828,11 +954,7 @@ export async function getQueue(): Promise<QueueView> {
       ? entries.filter((e) => yesterdaysList.has(e.customerId)).length
       : null,
     snapshotHour: config["queue.snapshotHour"],
-    progress: {
-      worked,
-      total,
-      percent: total ? Math.round((worked / total) * 100) : 0,
-    },
+    progress,
     scopeLabel:
       ctx.scope.kind === "own" ? `${ctx.user.name}'s book` : "Whole team",
   };
