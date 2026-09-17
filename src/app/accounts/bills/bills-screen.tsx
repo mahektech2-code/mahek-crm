@@ -59,6 +59,7 @@ export function BillsScreen({
   perPage,
   totals,
   buckets,
+  openBills,
   years,
   financialYear,
 }: {
@@ -69,6 +70,8 @@ export function BillsScreen({
   perPage: number;
   totals: { billed: number; received: number; open: number; count: number };
   buckets: Bucket[];
+  /** How many bills are still open in this year — the strip's own row count. */
+  openBills: number;
   years: string[];
   financialYear: string;
 }) {
@@ -162,7 +165,11 @@ export function BillsScreen({
             {
               label: "Still open",
               value: money(openTotal),
-              sub: plural(open.length, "bill"),
+              /* `open` here used to be the global `window.open`, whose
+                 `length` is 3 — so this said "3 bills" on every ledger in the
+                 app, and read as a figure rather than as a mistake. It is the
+                 count of bills with something still on them, from SQL. */
+              sub: plural(openBills, "bill"),
               tone: openTotal > 0 ? "danger" : undefined,
             },
           ]}

@@ -37,6 +37,7 @@ const testUrl = dev.replace(/\/[^/?]+(\?|$)/, "/mahekone_test$1");
 const files = [
   "src/lib/journeys.test.ts",
   "src/lib/accounts.test.ts",
+  "src/lib/bill-paging.test.ts",
   "src/lib/feedback.test.ts",
   "src/lib/activity-location.test.ts",
   "src/lib/field-book.test.ts",

@@ -25,7 +25,6 @@ import { useToast } from "@/components/ui/toast";
 import { financialYearLabel } from "@/lib/financial-year";
 import { BillDetailPanel } from "@/components/bills/bill-detail-panel";
 import { recordPayment } from "@/lib/actions/crm";
-import { toCsv, downloadCsv } from "@/lib/csv";
 import {
   ageLabel,
   money,
@@ -33,6 +32,20 @@ import {
   today,
 } from "@/lib/format";
 import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
+
+/* ---------------------------------------------------------------------------
+ * The Sales Bills ledger.
+ *
+ * ONE PAGE OF A YEAR, cut in Postgres. The filters, the sort and the page are
+ * in the URL and the query applies them — this screen used to be handed every
+ * bill of the financial year and filter, sort and slice it in the browser,
+ * which made page one of seventy-two cost all seventy-two.
+ *
+ * What did NOT change is the rule that made it that way: the totals row, the
+ * aging strip and the export describe the whole filtered year, and only the
+ * table is paged. They are separate reads now rather than sums of an array
+ * that happened to be lying around.
+ * ------------------------------------------------------------------------- */
 
 type Row = {
   id: string;
@@ -69,9 +82,6 @@ type SortKey =
   | "balance"
   | "overdueDays";
 
-/** Rows per page. A ledger is read a screenful at a time, not scrolled. */
-const PER_PAGE = 50;
-
 /** Columns that read as dates, which sort newest-first when first clicked. */
 const DATE_KEYS: SortKey[] = ["billDate", "dueDate"];
 
@@ -86,6 +96,8 @@ const COLUMNS: Array<{ key: SortKey; label: string; align?: "right" }> = [
   { key: "overdueDays", label: "Overdue", align: "right" },
 ];
 
+type Totals = { billed: number; received: number; open: number; count: number };
+
 export function BillsScreen({
   modes,
   datedModes,
@@ -93,7 +105,16 @@ export function BillsScreen({
   scopeLabel,
   isManager,
   rows,
-  aging,
+  total,
+  page,
+  perPage,
+  sort,
+  status,
+  bucket,
+  buckets,
+  overdueBills,
+  filteredTotals,
+  yearTotals,
   customerFilter,
   financialYear,
   financialYears,
@@ -106,8 +127,24 @@ export function BillsScreen({
   today: string;
   scopeLabel: string;
   isManager: boolean;
+  /** ONE PAGE. The figures around it describe far more than this. */
   rows: Row[];
-  aging: { total: number; buckets: Array<{ label: string; amount: number }> };
+  /** Every bill the filters match, from a count in Postgres. */
+  total: number;
+  page: number;
+  perPage: number;
+  sort: { key: SortKey; dir: "asc" | "desc" };
+  status: string | null;
+  bucket: string | null;
+  /** Every band of the year's open bills, in order, drawn whether or not
+      anything fell in it — a strip with bands missing reads as a strip that
+      lost them. */
+  buckets: Array<{ label: string; amount: number }>;
+  overdueBills: number;
+  /** What the filters match, for the row under the table. */
+  filteredTotals: Totals;
+  /** The whole year, for the strip above it. */
+  yearTotals: Totals;
   customerFilter: { id: string; name: string } | null;
   /** The year on screen, and every year that has bills in it. */
   financialYear: string;
@@ -116,80 +153,69 @@ export function BillsScreen({
   const router = useRouter();
   const { run, push } = useToast();
 
-  // Newest bill first. The ledger was opening on the oldest due date, so
-  // page one of FY 26-27 was last April and this week's billing sat twenty
-  // pages in — the wrong end of ten thousand rows for anybody checking what
-  // has just gone out.
-  const [sort, setSort] = React.useState<{ key: SortKey; dir: 1 | -1 }>({
-    key: "billDate",
-    dir: -1,
-  });
-  const [status, setStatus] = React.useState("All");
-  const [bucket, setBucket] = React.useState("All");
   const [paying, setPaying] = React.useState<Row | null>(null);
-  const [page, setPage] = React.useState(1);
   // One bill open at a time. A ledger with six rows expanded is a ledger you
   // have to scroll to compare two figures in.
   const [openBillId, setOpenBillId] = React.useState<string | null>(null);
 
-  const scoped = customerFilter
-    ? rows.filter((r) => r.customerId === customerFilter.id)
-    : rows;
-
-  const filtered = React.useMemo(() => {
-    let list = scoped;
-    if (status !== "All") list = list.filter((r) => r.status === status);
-    if (bucket !== "All") list = list.filter((r) => r.bucket === bucket);
-    return [...list].sort((a, b) => {
-      const av = a[sort.key];
-      const bv = b[sort.key];
-      if (typeof av === "number" && typeof bv === "number") return (av - bv) * sort.dir;
-      return String(av).localeCompare(String(bv)) * sort.dir;
-    });
-  }, [scoped, status, bucket, sort]);
-
-  // Paging is over what is filtered IN, not over what the server sent: the
-  // totals row, the aging strip and the export all describe the whole year,
-  // and only the table is cut into pages. A page that changed the totals under
-  // it would be a different figure every time somebody clicked next.
-  const pages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
-  const current = Math.min(page, pages);
-  const visible = filtered.slice((current - 1) * PER_PAGE, current * PER_PAGE);
-
-  // Narrowing the list returns to the first page — filtering down to twelve
-  // rows while sitting on page seven would otherwise show nothing. Done in the
-  // handlers rather than an effect: setState inside one cascades renders, and
-  // the React Compiler rules refuse it.
-  function narrow(change: () => void) {
-    change();
-    setPage(1);
+  /*
+   * EVERY CONTROL ON THIS SCREEN WRITES THE URL, because the server is what
+   * answers them now. It is also what makes a filtered ledger a thing somebody
+   * can send to a colleague, which it never was while the filters lived in
+   * React state.
+   */
+  function go(next: Record<string, string | number | null>) {
+    const params = new URLSearchParams();
+    const base: Record<string, string | number | null> = {
+      customer: customerFilter?.id ?? null,
+      fy: financialYear,
+      status,
+      bucket,
+      sort: sort.key,
+      dir: sort.dir,
+      page,
+      per: perPage,
+      ...next,
+    };
+    for (const [k, v] of Object.entries(base)) {
+      if (v !== null && v !== "" && v !== undefined) params.set(k, String(v));
+    }
+    router.push(`/crm/bills?${params.toString()}`);
   }
 
-  const outstanding = scoped.reduce((a, r) => a + r.balance, 0);
-  // Bucket labels come from configuration via the server; the screen only
-  // re-totals them for whatever is currently filtered in.
-  const buckets = aging.buckets.map(({ label }) => ({
-    label,
-    amount: scoped
-      .filter((r) => r.balance > 0 && r.bucket === label)
-      .reduce((a, r) => a + r.balance, 0),
-  }));
-  const bucketTotal = buckets.reduce((a, b) => a + b.amount, 0);
-
-  const overdueCount = scoped.filter((r) => r.overdueDays > 0).length;
+  /* Narrowing returns to the first page — filtering down to twelve rows while
+     sitting on page seven would otherwise show an empty table. */
+  const narrow = (next: Record<string, string | number | null>) =>
+    go({ ...next, page: 1 });
 
   function toggleSort(key: SortKey) {
-    setSort((s) =>
-      s.key === key
-        ? { key, dir: (s.dir * -1) as 1 | -1 }
+    const dir =
+      sort.key === key
+        ? sort.dir === "asc"
+          ? "desc"
+          : "asc"
         : // A date column opens on the newest, everything else on the lowest.
           // Clicking "Date" and being shown 2024 is not what anybody meant.
-          { key, dir: DATE_KEYS.includes(key) ? -1 : 1 },
-    );
+          DATE_KEYS.includes(key)
+          ? "desc"
+          : "asc";
     // Re-sorting reorders the whole year, so page seven now holds different
     // rows entirely. Going back to the first page is the honest answer.
-    setPage(1);
+    narrow({ sort: key, dir });
   }
+
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  const bucketTotal = buckets.reduce((a, b) => a + b.amount, 0);
+  /* The export link carries exactly what the table is showing, which is the
+     whole point of the filters being in the URL: one address, and the file and
+     the screen cannot describe two different sets of bills. */
+  const exportHref = (() => {
+    const params = new URLSearchParams({ fy: financialYear });
+    if (customerFilter) params.set("customer", customerFilter.id);
+    if (status) params.set("status", status);
+    if (bucket) params.set("bucket", bucket);
+    return `/accounts/bills/export?${params.toString()}`;
+  })();
 
   return (
     <div className="px-6 pt-6 pb-10">
@@ -197,47 +223,47 @@ export function BillsScreen({
         title="Sales bills"
         subtitle={`${scopeLabel} · Every bill with its aging bucket and payment status. Open a bill number to see what was ordered.`}
         actions={
-          <Button
-            variant="secondary"
-            disabled={!isManager}
-            title={isManager ? "Download as CSV" : "Export is a manager action"}
-            onClick={() => {
-              downloadCsv(
-                "mahek-bills",
-                toCsv(
-                  ["Bill no", "Date", "Due", "Customer", "Amount (₹)", "Paid (₹)", "Balance (₹)", "Overdue days", "Bucket", "Status"],
-                  filtered.map((r) => [
-                    r.billNo,
-                    r.billDate,
-                    r.dueDate,
-                    r.customerName,
-                    Math.round(r.amount / 100),
-                    Math.round(r.paid / 100),
-                    Math.round(r.balance / 100),
-                    r.overdueDays,
-                    r.bucket,
-                    STATUS_LABEL[r.status],
-                  ]),
-                ),
-                [
-                  status === "All" ? null : STATUS_LABEL[status as Row["status"]],
-                  bucket === "All" ? null : bucket,
-                  customerFilter?.name ?? null,
-                ],
-              );
-              push(`Exported ${filtered.length} rows`);
-            }}
-          >
-            Export
-          </Button>
+          isManager ? (
+            /*
+             * THE WHOLE FILTERED YEAR, BUILT ON THE SERVER.
+             *
+             * This assembled the CSV from the array React was paging, which was
+             * a whole year only because the whole year was in the browser. With
+             * a page in hand that would have written out fifty bills under a
+             * filename saying 26-27 — a file somebody opens, reads as the year,
+             * and acts on. It is the Accounts app's own export route, not a
+             * second one: the columns are the same columns and a second
+             * definition of "the bill ledger as a file" is one that drifts.
+             */
+            <a
+              href={exportHref}
+              onClick={() => push("Building the file — the whole filtered year, not this page")}
+              title="Download as CSV"
+              className="inline-flex h-9 cursor-pointer items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas"
+            >
+              Export
+            </a>
+          ) : (
+            <Button variant="secondary" disabled title="Export is a manager action">
+              Export
+            </Button>
+          )
         }
       />
 
       <MetricStrip
         metrics={[
-          { label: "Bills", value: String(scoped.length) },
-          { label: "Outstanding", value: money(outstanding), tone: outstanding ? "danger" : "ink" },
-          { label: "Overdue bills", value: String(overdueCount), tone: overdueCount ? "danger" : "ink" },
+          { label: "Bills", value: String(yearTotals.count) },
+          {
+            label: "Outstanding",
+            value: money(yearTotals.open),
+            tone: yearTotals.open ? "danger" : "ink",
+          },
+          {
+            label: "Overdue bills",
+            value: String(overdueBills),
+            tone: overdueBills ? "danger" : "ink",
+          },
           {
             // The oldest band names itself — "30+ days" already says "over",
             // and prefixing it gave "Over 30+ days".
@@ -245,11 +271,7 @@ export function BillsScreen({
             value: money(buckets.at(-1)?.amount ?? 0),
             tone: buckets.at(-1)?.amount ? "danger" : "ink",
           },
-          {
-            label: "Collected",
-            value: money(scoped.reduce((a, r) => a + r.paid, 0)),
-            tone: "success",
-          },
+          { label: "Collected", value: money(yearTotals.received), tone: "success" },
         ]}
       />
 
@@ -267,7 +289,7 @@ export function BillsScreen({
       <Card className="mb-4 px-5 py-4">
         <div className="mb-2.5 flex items-baseline justify-between">
           <SectionLabel>Aging of outstanding balance</SectionLabel>
-          <span className="text-lg font-semibold text-ink">{money(outstanding)}</span>
+          <span className="text-lg font-semibold text-ink">{money(yearTotals.open)}</span>
         </div>
         <div className="flex h-2.5 w-full overflow-hidden rounded-[2px] bg-divider">
           {buckets.map((b, i) => (
@@ -285,7 +307,7 @@ export function BillsScreen({
           {buckets.map((b, i) => (
             <button
               key={b.label}
-              onClick={() => narrow(() => setBucket(bucket === b.label ? "All" : b.label))}
+              onClick={() => narrow({ bucket: bucket === b.label ? null : b.label })}
               className={cx(
                 "flex cursor-pointer items-center gap-1.5 text-[13px]",
                 bucket === b.label ? "font-medium text-ink" : "text-body",
@@ -304,9 +326,10 @@ export function BillsScreen({
 
       <Card className="flex items-center gap-2.5 rounded-b-none border-b-0 px-4 py-2.5">
         <Select
-          value={status}
-          onChange={(e) => narrow(() => setStatus(e.target.value))}
+          value={status ?? "All"}
+          onChange={(e) => narrow({ status: e.target.value === "All" ? null : e.target.value })}
           className="h-8"
+          aria-label="Payment status"
         >
           <option value="All">All</option>
           {(Object.keys(STATUS_LABEL) as Array<Row["status"]>).map((s) => (
@@ -316,22 +339,23 @@ export function BillsScreen({
           ))}
         </Select>
         <Select
-          value={bucket}
-          onChange={(e) => narrow(() => setBucket(e.target.value))}
+          value={bucket ?? "All"}
+          onChange={(e) => narrow({ bucket: e.target.value === "All" ? null : e.target.value })}
           className="h-8"
+          aria-label="Aging bucket"
         >
-          <option>All</option>
+          <option value="All">All</option>
           {buckets.map((b) => (
-            <option key={b.label}>{b.label}</option>
+            <option key={b.label} value={b.label}>
+              {b.label}
+            </option>
           ))}
         </Select>
         <Select
           value={financialYear}
-          onChange={(e) => {
-            const next = new URLSearchParams(window.location.search);
-            next.set("fy", e.target.value);
-            router.push(`/crm/bills?${next.toString()}`);
-          }}
+          /* A different year starts at its first page — carrying page seven
+             across would land on an empty table in a year that has six. */
+          onChange={(e) => narrow({ fy: e.target.value })}
           className="h-8"
           aria-label="Financial year"
         >
@@ -341,14 +365,9 @@ export function BillsScreen({
             </option>
           ))}
         </Select>
-        {status !== "All" || bucket !== "All" ? (
+        {status || bucket ? (
           <button
-            onClick={() => {
-              narrow(() => {
-                setStatus("All");
-                setBucket("All");
-              });
-            }}
+            onClick={() => narrow({ status: null, bucket: null })}
             className="h-8 cursor-pointer px-2.5 text-sm text-brand"
           >
             Clear all
@@ -356,12 +375,13 @@ export function BillsScreen({
         ) : null}
         <span className="flex-1" />
         <span className="text-[13px] text-muted">
-          {filtered.length} of {scoped.length} bills · {financialYearLabel(financialYear)}
+          {total.toLocaleString("en-IN")} of {yearTotals.count.toLocaleString("en-IN")} bills ·{" "}
+          {financialYearLabel(financialYear)}
         </span>
       </Card>
 
       <Card className="max-h-[calc(100vh-380px)] overflow-auto rounded-t-none">
-        {filtered.length ? (
+        {rows.length ? (
           <table>
             <thead>
               <tr>
@@ -373,7 +393,7 @@ export function BillsScreen({
                     className="cursor-pointer select-none hover:text-body"
                   >
                     {c.label}
-                    {sort.key === c.key ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
+                    {sort.key === c.key ? (sort.dir === "asc" ? " ↑" : " ↓") : ""}
                   </Th>
                 ))}
                 <Th>Bucket</Th>
@@ -382,7 +402,7 @@ export function BillsScreen({
               </tr>
             </thead>
             <tbody>
-              {visible.map((r) => (
+              {rows.map((r) => (
                 <React.Fragment key={r.id}>
                 <Tr className="hover:bg-canvas">
                   <Td className="font-medium text-ink">
@@ -496,18 +516,20 @@ export function BillsScreen({
                 ) : null}
                 </React.Fragment>
               ))}
+              {/* Everything the filters match, not this page — said in the row
+                  itself so nobody reads it as a page subtotal. */}
               <tr className="border-t border-line bg-canvas">
                 <Td colSpan={4} className="font-semibold text-ink">
-                  Total · {filtered.length} bills
+                  Total · {filteredTotals.count.toLocaleString("en-IN")} bills
                 </Td>
                 <Td align="right" className="font-semibold text-ink">
-                  {money(filtered.reduce((a, r) => a + r.amount, 0))}
+                  {money(filteredTotals.billed)}
                 </Td>
                 <Td align="right" className="font-semibold text-ink">
-                  {money(filtered.reduce((a, r) => a + r.paid, 0))}
+                  {money(filteredTotals.received)}
                 </Td>
                 <Td align="right" className="font-semibold text-ink">
-                  {money(filtered.reduce((a, r) => a + r.balance, 0))}
+                  {money(filteredTotals.open)}
                 </Td>
                 <Td colSpan={4} />
               </tr>
@@ -523,20 +545,21 @@ export function BillsScreen({
 
       {pages > 1 ? (
         <div className="mt-3 flex items-center gap-3">
-          <Button
-            variant="secondary"
-            disabled={current === 1}
-            onClick={() => setPage(current - 1)}
-          >
+          <Button variant="secondary" disabled={page === 1} onClick={() => go({ page: page - 1 })}>
             Previous
           </Button>
+          {/* The honest sentence. `total` is a count(*) over the filtered year,
+              so it stays true now that the browser holds twenty-five rows of
+              it — before, both halves came from the same array and it could
+              only ever have agreed with itself. */}
           <span className="text-[13px] text-muted">
-            Page {current} of {pages} · showing {visible.length} of {filtered.length}
+            Page {page} of {pages} · showing {rows.length} of{" "}
+            {total.toLocaleString("en-IN")}
           </span>
           <Button
             variant="secondary"
-            disabled={current === pages}
-            onClick={() => setPage(current + 1)}
+            disabled={page === pages}
+            onClick={() => go({ page: page + 1 })}
           >
             Next
           </Button>

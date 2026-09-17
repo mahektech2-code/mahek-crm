@@ -79,6 +79,7 @@ export default async function Page({
       perPage={perPage}
       totals={totals}
       buckets={aging.buckets}
+      openBills={ages.length}
       years={years}
       financialYear={financialYear}
     />

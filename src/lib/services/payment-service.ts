@@ -601,7 +601,27 @@ export async function recordPayment(
 
 export type BillFilters = {
   customerId?: string;
+  /**
+   * `unpaid`, `partially_paid` or `paid` — the stored column, not a derived
+   * word. It sat here unread for as long as it has existed: the Bills ledger
+   * declared it and then filtered on it in the browser, over an array it had
+   * already been sent. A filter that decides a `count(*)` has to be in the
+   * query the count comes from.
+   */
   status?: string;
+  /**
+   * An explicit set of bills, for the one filter SQL cannot express.
+   *
+   * The aging bucket is `agingBucket(effectiveDueDate(...))` — two pure
+   * functions and the whole reason the figures on these screens agree. Rather
+   * than write a third spelling of them into a `where` clause, the caller
+   * buckets the OPEN bills it is already reading for the aging strip (a few
+   * hundred rows, never the ledger) and names the ones it wants.
+   *
+   * An EMPTY array means no bills, never every bill — the same rule
+   * `customerIds` above states, for the same reason.
+   */
+  billIds?: string[];
   /** "26-27". Absent means every year, which the export uses. */
   financialYear?: string;
   /**
@@ -708,6 +728,12 @@ function billsWhere(ids: string[] | null, filters?: BillFilters) {
         : sql`false`
       : undefined,
     financialYearWhere(filters?.financialYear),
+    filters?.status ? eq(bills.status, filters.status as "unpaid") : undefined,
+    filters?.billIds
+      ? filters.billIds.length
+        ? inArray(bills.id, filters.billIds)
+        : sql`false`
+      : undefined,
     filters?.openOnly ? sql`${bills.amount} > ${bills.paidAmount}` : undefined,
     /* Both arrived on main while this helper was being extracted. They belong
        here rather than at one call site, or the paged read and the whole-set
@@ -805,36 +831,133 @@ function toBillRow(
 
 export type BillRow = Awaited<ReturnType<typeof listBills>>[number];
 
+
+/* ------------------------------------------- the due date, spelled in SQL */
+
+/**
+ * `effectiveDueDate` AND `agingBucket`'s input, in SQL — used only to decide
+ * ORDER and MEMBERSHIP, never to produce a figure anybody reads.
+ *
+ * `billLedgerPage`'s own note says that not one business rule moved into SQL,
+ * and that stands for every NUMBER on these screens: the due date on a row,
+ * the days overdue beside it and the aging bucket are all still
+ * `effectiveDueDate` and `agingBucket` in JavaScript, from the one definition
+ * this codebase has of them.
+ *
+ * What SQL cannot avoid knowing is which rows come first and which rows are in
+ * the set at all. A ledger sorted by due date and paged in Postgres has to sort
+ * by a due date Postgres can see, and "who is past a due date" is a filter that
+ * decides a `count(*)`. Shipping ten thousand rows to answer either is the
+ * thing this whole change exists to stop.
+ *
+ * So the duplication is real and it is BOUNDED, in the one direction that
+ * fails visibly: if this fragment ever drifts from the engine, rows come back
+ * in the wrong order — they do not come back carrying a wrong figure. And it
+ * is not left to a promise: `bill-paging.test.ts` puts a book of bills through
+ * both spellings and asserts they agree on every one.
+ *
+ * `coalesce(credit days, default)::int` rather than a bare parameter, for the
+ * reason AGENTS.md records about `plan_date >= now() - $days`: an untyped
+ * parameter beside a date lets Postgres resolve the arithmetic as `date - date`
+ * and the query throws.
+ */
+function effectiveDueDateSql(defaultCreditDays: number) {
+  /* Every column written out in full, the way `billCreditDaysSql` beside it
+     is and for the same reason: Drizzle renders a column reference BARE
+     inside a sql template, and a bare name is what binds to the wrong table
+     the moment this fragment is used in a join or a subquery. */
+  return sql`coalesce(
+    bills.due_date,
+    bills.bill_date + coalesce(${billCreditDaysSql}, ${defaultCreditDays}::int)::int
+  )`;
+}
+
+/**
+ * How many days past its due date a bill is, as the row reads it.
+ *
+ * A settled bill is never overdue — `toBillRow` has always said so with
+ * `balance > 0 ? daysBetween(...) : 0` — and that branch is here too, or
+ * sorting by "Overdue" would rank a bill paid in March above one that is a
+ * fortnight late.
+ */
+function overdueDaysSql(day: BusinessDate, defaultCreditDays: number) {
+  return sql`case
+    when bills.amount > bills.paid_amount
+    then greatest(0, ${day}::date - (${effectiveDueDateSql(defaultCreditDays)})::date)
+    else 0
+  end`;
+}
+
+export type BillSortKey =
+  | "billNo"
+  | "billDate"
+  | "dueDate"
+  | "customerName"
+  | "amount"
+  | "paid"
+  | "balance"
+  | "overdueDays";
+
+export type BillSort = { key: BillSortKey; dir: "asc" | "desc" };
+
+/** Every column the ledger's head offers, as the expression Postgres sorts on. */
+function billSortSql(key: BillSortKey, day: BusinessDate, defaultCreditDays: number) {
+  switch (key) {
+    case "billNo":
+      return sql`bills.bill_no`;
+    case "billDate":
+      return sql`bills.bill_date`;
+    case "dueDate":
+      return effectiveDueDateSql(defaultCreditDays);
+    case "customerName":
+      return sql`customers.name`;
+    case "amount":
+      return sql`bills.amount`;
+    case "paid":
+      return sql`bills.paid_amount`;
+    case "balance":
+      return sql`bills.amount - bills.paid_amount`;
+    case "overdueDays":
+      return overdueDaysSql(day, defaultCreditDays);
+  }
+}
+
 /**
  * THE LEDGER, WITHOUT SENDING THE WHOLE LEDGER.
  *
- * `listBills` returns every row that matches, and the Bills screen then sliced
- * 25 out of it in the browser. The pager worked; it was paging a set the
- * server had already fetched, parsed into ten thousand JavaScript objects and
- * serialised into the page. Clicking page 2 was free because page 1 had
- * already paid for all of it.
+ * `listBills` returns every row that matches, and the Bills screens then
+ * filtered, sorted and sliced it in the browser. The pager worked; it was
+ * paging a set the server had already fetched, parsed into ten thousand
+ * JavaScript objects and serialised into the page — 2.4 MB of HTML on this
+ * book, so that fifty rows could be shown. Clicking page 2 was free because
+ * page 1 had already paid for all of it.
  *
  * It was built that way to keep a real rule: the totals and the aging strip
  * describe the WHOLE filtered set, not the page, because a total that changed
  * as you paged would be a different figure on every click. That rule stands.
- * What changes is how it is honoured — three reads shaped to their questions
- * instead of one read shaped to none:
+ * What changes is how it is honoured — reads shaped to their questions instead
+ * of one read shaped to none:
  *
- *   1. the page itself, LIMIT/OFFSET, wide — 25 rows
+ *   1. the page itself, LIMIT/OFFSET, wide — twenty-five or fifty rows
  *   2. the totals, one aggregate row out of Postgres
  *   3. the aging, narrow and OPEN BILLS ONLY
  *
- * **AND NOT ONE BUSINESS RULE MOVED INTO SQL.** The temptation was to compute
- * the due date and the aging bucket in the query, which would have made
- * `effectiveDueDate` and `agingBucket` each have two definitions — the thing
- * this codebase is most careful about. It is unnecessary: the totals are sums
- * of columns and need no due date at all, and a bucket only ever applies to a
- * bill with a balance, so the aging read is a few hundred rows of six small
- * values that the SAME pure functions bucket in JavaScript.
+ * **AND ALMOST NO BUSINESS RULE MOVED INTO SQL.** Every FIGURE on the screen is
+ * still `effectiveDueDate` and `agingBucket` in JavaScript, from the one
+ * definition this codebase has of each: the totals are sums of columns and need
+ * no due date at all, and a bucket only ever applies to a bill with a balance,
+ * so the aging read is a few hundred rows that the SAME pure functions bucket.
+ * The aging FILTER does not go into the clause either — the caller names the
+ * bills in the band by id.
+ *
+ * The one exception is `effectiveDueDateSql`, and its own note says what it is
+ * for and what keeps it honest: sorting a paged ledger by due date, and the
+ * aging strip's "past due" question, are things Postgres has to be able to
+ * decide for itself. It decides ORDER and MEMBERSHIP and never a number.
  */
 export async function billLedgerPage(
   filters: BillFilters | undefined,
-  paging: { page: number; perPage: number },
+  paging: { page: number; perPage: number; sort?: BillSort },
 ): Promise<{ rows: BillRow[]; total: number }> {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
@@ -843,6 +966,13 @@ export async function billLedgerPage(
 
   const perPage = Math.min(Math.max(paging.perPage, 1), 200);
   const page = Math.max(paging.page, 1);
+  /* Newest bill first, which is what somebody checking what has just gone out
+     opens the ledger for. The screen may ask for another column; it may not
+     ask for one that is not here, so a hand-typed `?sort=` cannot reach the
+     query. */
+  const sort: BillSort = paging.sort ?? { key: "billDate", dir: "desc" };
+  const order = billSortSql(sort.key, day, config["bills.defaultCreditDays"]);
+  const direction = sort.dir === "asc" ? sql`asc` : sql`desc`;
 
   const [rows, [counted]] = await Promise.all([
     db
@@ -855,11 +985,13 @@ export async function billLedgerPage(
       .from(bills)
       .innerJoin(customers, eq(customers.id, bills.customerId))
       .where(billsWhere(ids, filters))
-      /* `bill_date desc, id desc` — a thousand bills share a handful of dates,
-         so the date alone leaves their order to the planner, which is a row
-         appearing on two pages while another appears on none. The same
-         tiebreaker rule the customer timeline already follows. */
-      .orderBy(desc(bills.billDate), desc(bills.id))
+      /* THE TIEBREAKER IS NOT OPTIONAL. A thousand bills share a handful of
+         dates — and on a column like Status or Paid, ten thousand share four
+         values — so the chosen column alone leaves the rest of the order to
+         the planner. Invisible until it is paged, and then it is a row
+         appearing on two pages while another appears on none. `id desc` is the
+         same answer the customer timeline's cursor already gives. */
+      .orderBy(sql`${order} ${direction}`, desc(bills.id))
       .limit(perPage)
       .offset((page - 1) * perPage),
     db
@@ -909,14 +1041,20 @@ export async function billLedgerTotals(
  * aging question lives in the few hundred rows that still owe something.
  * Six small columns instead of the whole ledger.
  *
- * It returns exactly what `bucketise` takes and does no bucketing of its own:
- * the bands, their order and their labels are that function's, and a second
- * implementation here would be a second answer to "how old is this money" on
- * the one screen whose subject is that question.
+ * It returns what `bucketise` takes and does no banding of its own for the
+ * strip: the bands, their order and their labels are that function's, and a
+ * second implementation here would be a second answer to "how old is this
+ * money" on the one screen whose subject is that question.
+ *
+ * It DOES carry the bill's id and `agingBucket`'s own word, because the ledger
+ * lets somebody click a band to filter by it and the query behind that page
+ * cannot see a bucket — see `BillFilters.billIds`. Same rows, same pure
+ * function, one read: the strip and the filter it offers cannot disagree about
+ * which bills are in a band.
  */
 export async function openBillAges(
   filters?: BillFilters,
-): Promise<Array<{ overdueDays: number; balance: number }>> {
+): Promise<Array<{ id: string; overdueDays: number; balance: number; bucket: string }>> {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
   const config = await getConfig();
@@ -951,9 +1089,12 @@ export async function openBillAges(
       },
       config,
     );
+    const overdueDays = Math.max(0, daysBetween(due, day));
     return {
-      overdueDays: Math.max(0, daysBetween(due, day)),
+      id: b.id,
+      overdueDays,
       balance: b.amount - b.paid,
+      bucket: agingBucket(overdueDays, config),
     };
   });
 }
@@ -975,6 +1116,219 @@ export async function listOutstandingByCustomer(): Promise<OutstandingCustomer[]
   // first thing anybody chases.
   const rows = await listBills({ openOnly: true });
   return groupOutstanding(rows);
+}
+
+
+/* ------------------------------------------------------- outstanding, paged */
+
+export type OutstandingSort = "owed" | "oldest" | "name";
+
+export type OutstandingFilters = {
+  /** A name to find. The screen's search box, moved off the browser's array. */
+  query?: string;
+  /** Only customers with something past its due date. */
+  overdueOnly?: boolean;
+  sort?: OutstandingSort;
+  page?: number;
+  perPage?: number;
+};
+
+export type OutstandingPage = {
+  /** ONE PAGE of customers, each with its own open bills. */
+  rows: OutstandingCustomer[];
+  /** Every customer the filters match, from a count in Postgres. */
+  total: number;
+  page: number;
+  perPage: number;
+  /** The figures above the table. They describe all of `total`, not the page. */
+  totals: {
+    customers: number;
+    outstanding: number;
+    bills: number;
+    overdueCustomers: number;
+    overdue: number;
+    unstatedCustomers: number;
+    unstatedAmount: number;
+  };
+};
+
+/**
+ * WHO OWES US, A PAGE AT A TIME.
+ *
+ * `listOutstandingByCustomer` reads every open bill in the book and groups
+ * them, which is the right answer to the question and the wrong amount of it
+ * to send anywhere: on this book it was 3.3 MB of HTML — every open bill,
+ * plus a nested list of them under every customer — so that a browser could
+ * show twenty-five names.
+ *
+ * It is deliberately still NOT cut by financial year. The oldest debt on an
+ * account is usually last year's and that is the first row anybody works.
+ * What changes is the amount of it that travels: the grouping happens in
+ * Postgres to decide WHO is on the page and what the figures above it are, and
+ * only those customers' bills are then read and handed to `groupOutstanding`.
+ *
+ * So the engine stays pure and stays the authority on every number a person
+ * reads — the outstanding on a row, the worst bucket, the bills behind it, and
+ * the rule that an `unstated` bill is counted apart and never added in. It is
+ * simply fed twenty-five customers instead of seven thousand.
+ *
+ * The aggregate is written once and asked twice, as a CTE: a second copy of
+ * "what does this customer owe" is how a total and the rows under it come to
+ * disagree, which is the exact failure this screen exists to avoid.
+ */
+export async function outstandingPage(
+  filters: OutstandingFilters = {},
+): Promise<OutstandingPage> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const config = await getConfig();
+  const day = await today();
+
+  const perPage = Math.min(Math.max(filters.perPage ?? 25, 1), 200);
+  const sort: OutstandingSort = filters.sort ?? "owed";
+  const query = filters.query?.trim() ?? "";
+
+  const overdue = overdueDaysSql(day, config["bills.defaultCreditDays"]);
+  /* `stated` is a stored column, so this one is not a rule being respelled:
+     it is the same enum the engine reads, asked of Postgres. */
+  const stated = sql`bills.payment_position = 'stated'`;
+  const balance = sql`bills.amount - bills.paid_amount`;
+
+  const where =
+    and(
+      scopedToUsers(ids),
+      sql`bills.amount > bills.paid_amount`,
+      /* Escaped, because this used to be `String.includes` in a browser and a
+         customer named "A_1" must not start matching "AB1" merely because the
+         search moved into SQL. */
+      query
+        ? sql`customers.name ilike ${
+            "%" + query.replace(/([\\%_])/g, "\\$1") + "%"
+          } escape '\\'`
+        : undefined,
+    ) ?? sql`true`;
+
+  /* Past due means a STATED bill past its date. An unstated bill is not debt,
+     so it cannot make somebody overdue — the same rule the engine follows when
+     it leaves one out of `oldestOverdueDays`. */
+  const having = filters.overdueOnly
+    ? sql`having coalesce(max(${overdue}) filter (where ${stated}), 0) > 0`
+    : sql``;
+
+  const grouped = sql`
+    select customers.id   as customer_id,
+           coalesce(sum(${balance}) filter (where ${stated}), 0)            as outstanding,
+           count(*) filter (where ${stated})::int                           as open_bills,
+           coalesce(sum(${balance}) filter (where not ${stated}), 0)        as unstated_amount,
+           count(*) filter (where not ${stated})::int                       as unstated_bills,
+           coalesce(max(${overdue}) filter (where ${stated}), 0)::int       as oldest_overdue_days,
+           coalesce(sum(${balance}) filter (where ${stated} and ${overdue} > 0), 0) as overdue_amount,
+           customers.name as customer_name
+      from bills
+      join customers on customers.id = bills.customer_id
+     where ${where}
+     group by customers.id, customers.name
+     ${having}
+  `;
+
+  /*
+   * THE ORDER, WITH A TIEBREAKER ON EVERY ONE OF THEM.
+   *
+   * Thousands of customers owe nothing stated and sort as a block of zeroes;
+   * on "oldest" a whole beat shares one overdue day. A single column is the
+   * planner's choice after that, which is a customer on two pages and another
+   * on none. The customer id closes it, exactly as the bill ledger's does.
+   *
+   * "owed" is the engine's own order, restated: what is owed, then what is
+   * merely unspoken for, then the name. Somebody who owes nothing stated is
+   * work of a different kind rather than work of no kind, so they sort below
+   * everybody who does and not out of the list.
+   */
+  const order =
+    sort === "name"
+      ? sql`customer_name asc, customer_id asc`
+      : sort === "oldest"
+        ? sql`oldest_overdue_days desc, outstanding desc, customer_id asc`
+        : sql`outstanding desc, unstated_amount desc, customer_name asc, customer_id asc`;
+
+  /*
+   * THE COUNT FIRST, then the page — the shape `listCustomersPage` already
+   * uses, and not an optimisation waiting to be undone. The page number has to
+   * be clamped to a page that exists before an OFFSET is spent on it, or
+   * somebody who filters down from page seven is served an empty table rather
+   * than the last page of what they asked for.
+   */
+  const totalsRows = await db.execute<{
+    customers: number;
+    matched: number;
+    outstanding: string;
+    bills: number;
+    overdue_customers: number;
+    overdue: string;
+    unstated_customers: number;
+    unstated_amount: string;
+  }>(sql`
+    with per_customer as (${grouped})
+    select count(*) filter (where outstanding > 0)::int          as customers,
+           count(*)::int                                        as matched,
+           coalesce(sum(outstanding), 0)                        as outstanding,
+           coalesce(sum(open_bills), 0)::int                    as bills,
+           count(*) filter (where oldest_overdue_days > 0)::int as overdue_customers,
+           coalesce(sum(overdue_amount), 0)                     as overdue,
+           count(*) filter (where unstated_bills > 0)::int      as unstated_customers,
+           coalesce(sum(unstated_amount), 0)                    as unstated_amount
+      from per_customer
+  `);
+
+  const agg = totalsRows[0];
+  const total = Number(agg?.matched ?? 0);
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  const page = Math.min(Math.max(filters.page ?? 1, 1), pageCount);
+
+  const totals = {
+    customers: Number(agg?.customers ?? 0),
+    outstanding: Number(agg?.outstanding ?? 0),
+    bills: Number(agg?.bills ?? 0),
+    overdueCustomers: Number(agg?.overdue_customers ?? 0),
+    overdue: Number(agg?.overdue ?? 0),
+    unstatedCustomers: Number(agg?.unstated_customers ?? 0),
+    unstatedAmount: Number(agg?.unstated_amount ?? 0),
+  };
+
+  if (!total) return { rows: [], total, page, perPage, totals };
+
+  const picked = await db.execute<{ customer_id: string }>(sql`
+    with per_customer as (${grouped})
+    select customer_id from per_customer
+     order by ${order}
+     limit ${perPage}::int offset ${(page - 1) * perPage}::int
+  `);
+  const pageIds = picked.map((r) => r.customer_id);
+
+  /*
+   * And now the engine, on twenty-five customers' bills.
+   *
+   * Through `listBills` rather than a query of its own, for the reason that
+   * function's own note gives: the due date resolved from the term, the aging
+   * bucket and the payment position are worked out in ONE place, so this
+   * screen and the ledger cannot be looking at two different answers about one
+   * bill. `customerIds` is what it is for.
+   */
+  const rows = groupOutstanding(
+    await listBills({ openOnly: true, customerIds: pageIds }),
+  );
+
+  /* Back into the order Postgres chose. `groupOutstanding` sorts by what is
+     owed — which is right when it IS the list, and wrong when the list has
+     already been ordered by a name or by an age and cut at twenty-five. */
+  const byId = new Map(rows.map((r) => [r.customerId, r]));
+  return {
+    rows: pageIds.map((cid) => byId.get(cid)).filter((r) => r !== undefined),
+    total,
+    page,
+    perPage,
+    totals,
+  };
 }
 
 /**
