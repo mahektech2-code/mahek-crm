@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { downloadCsv, toCsv } from "@/lib/csv";
 import { longDate, money } from "@/lib/format";
 import type { OutstandingCustomer } from "@/lib/engines/outstanding";
 import {
@@ -44,9 +44,21 @@ const SORTS: Array<{ key: Sort; label: string }> = [
 
 export function OutstandingScreen({
   rows,
+  total,
+  page,
+  perPage,
   totals,
+  query,
+  sort,
+  overdueOnly,
 }: {
+  /** ONE PAGE of customers, each with its own open bills. */
   rows: OutstandingCustomer[];
+  /** Every customer the filters match, from a count in Postgres. */
+  total: number;
+  page: number;
+  perPage: number;
+  /** The figures above the table, over all of `total` rather than the page. */
   totals: {
     customers: number;
     outstanding: number;
@@ -56,48 +68,47 @@ export function OutstandingScreen({
     unstatedCustomers: number;
     unstatedAmount: number;
   };
+  query: string;
+  sort: Sort;
+  overdueOnly: boolean;
 }) {
+  const router = useRouter();
   const { push } = useToast();
-  const [query, setQuery] = React.useState("");
-  const [sort, setSort] = React.useState<Sort>("owed");
-  const [overdueOnly, setOverdueOnly] = React.useState(false);
-  const [page, setPage] = React.useState(1);
-  const [perPage, setPerPage] = React.useState(25);
   /*
    * Several rows may be open at once, unlike the bill ledger's one-at-a-time
-   * panel. Nothing is fetched when a row opens — the bills came down with the
-   * page — and comparing two customers' bills side by side is most of what
-   * this screen is for.
+   * panel. Nothing is fetched when a row opens — the bills of the customers on
+   * THIS PAGE came down with it — and comparing two customers' bills side by
+   * side is most of what this screen is for.
    */
   const [open, setOpen] = React.useState<ReadonlySet<string>>(new Set());
 
-  const filtered = React.useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let list = rows;
-    if (q) list = list.filter((r) => r.customerName.toLowerCase().includes(q));
-    if (overdueOnly) list = list.filter((r) => r.oldestOverdueDays > 0);
-    const sorted = [...list];
-    if (sort === "oldest") {
-      sorted.sort(
-        (a, b) => b.oldestOverdueDays - a.oldestOverdueDays || b.outstanding - a.outstanding,
-      );
-    } else if (sort === "name") {
-      sorted.sort((a, b) => a.customerName.localeCompare(b.customerName));
+  /*
+   * EVERY CONTROL WRITES THE URL. The search, the sort, the past-due filter and
+   * the page used to be React state over an array of every open bill in the
+   * book, nested under every customer — 3.3 MB of page to show twenty-five
+   * names. It is also what makes a filtered list something somebody can send to
+   * a colleague, which it never was.
+   */
+  function go(next: Record<string, string | number | null>) {
+    const params = new URLSearchParams();
+    const base: Record<string, string | number | null> = {
+      q: query || null,
+      sort: sort === "owed" ? null : sort,
+      overdue: overdueOnly ? "1" : null,
+      page,
+      per: perPage,
+      ...next,
+    };
+    for (const [k, v] of Object.entries(base)) {
+      if (v !== null && v !== "" && v !== undefined) params.set(k, String(v));
     }
-    // "owed" is the order the service already returns, which is the order the
-    // list is meant to be worked in.
-    return sorted;
-  }, [rows, query, overdueOnly, sort]);
+    router.push(`/accounts/outstanding?${params.toString()}`);
+  }
 
-  // The figures describe what is FILTERED IN, so the strip and the table can
-  // never describe two different sets. Narrowing to one customer and reading a
-  // company-wide total above them is how a wrong figure gets quoted on a call.
-  const shownTotal = filtered.reduce((a, r) => a + r.outstanding, 0);
-  const shownUnstated = filtered.reduce((a, r) => a + r.unstatedAmount, 0);
-  const narrowed = query.trim() !== "" || overdueOnly;
+  const narrow = (next: Record<string, string | number | null>) =>
+    go({ ...next, page: 1 });
 
-  const page1 = Math.min(page, Math.max(1, Math.ceil(filtered.length / perPage)));
-  const shown = filtered.slice((page1 - 1) * perPage, page1 * perPage);
+  const narrowed = query !== "" || overdueOnly;
 
   return (
     <div className="px-6 pt-6 pb-12">
@@ -106,46 +117,22 @@ export function OutstandingScreen({
           title="Outstanding"
           subtitle="What every customer still owes, with the bills behind it one click away. Open bills across every financial year — the oldest debt on an account is usually last year's."
           actions={
-            <button
-              onClick={() => {
-                downloadCsv(
-                  "mahek-outstanding",
-                  toCsv(
-                    [
-                      "Customer",
-                      "Bill",
-                      "Billed",
-                      "Due",
-                      "Amount (₹)",
-                      "Received (₹)",
-                      "Open (₹)",
-                      "Days overdue",
-                      "Status",
-                    ],
-                    // Bill by bill, because that is what somebody does with an
-                    // export of this: takes it into a call or a meeting and
-                    // goes down the bills one at a time.
-                    filtered.flatMap((r) =>
-                      r.bills.map((b) => [
-                        r.customerName,
-                        b.billNo,
-                        b.billDate,
-                        b.dueDate,
-                        String(Math.round(b.amount / 100)),
-                        String(Math.round(b.paid / 100)),
-                        String(Math.round(b.balance / 100)),
-                        b.overdueDays ? String(b.overdueDays) : "",
-                        billWord(b),
-                      ]),
-                    ),
-                  ),
-                );
-                push(`Exported ${plural(filtered.length, "customer")}, bill by bill`);
-              }}
-              className="h-9 cursor-pointer rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body hover:bg-canvas"
+            /*
+             * EVERYBODY THE FILTERS MATCH, BUILT ON THE SERVER, bill by bill.
+             * Assembled from what is on screen it would write out twenty-five
+             * customers under a filename saying outstanding — a file somebody
+             * opens, reads as the book, and chases from.
+             */
+            <a
+              href={`/accounts/outstanding/export?${new URLSearchParams({
+                ...(query ? { q: query } : {}),
+                ...(overdueOnly ? { overdue: "1" } : {}),
+              }).toString()}`}
+              onClick={() => push("Building the file — everybody shown, not this page")}
+              className="inline-flex h-9 cursor-pointer items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas"
             >
               Export
-            </button>
+            </a>
           }
         />
 
@@ -153,11 +140,11 @@ export function OutstandingScreen({
           metrics={[
             {
               label: "Outstanding",
-              value: money(shownTotal),
+              value: money(totals.outstanding),
               sub: narrowed
-                ? `${plural(filtered.length, "customer")} shown`
+                ? `${plural(totals.customers, "customer")} shown`
                 : `${plural(totals.customers, "customer")} · ${plural(totals.bills, "bill")}`,
-              tone: shownTotal > 0 ? "danger" : undefined,
+              tone: totals.outstanding > 0 ? "danger" : undefined,
             },
             {
               label: "Past due",
@@ -167,7 +154,7 @@ export function OutstandingScreen({
             },
             {
               label: "Not stated",
-              value: money(narrowed ? shownUnstated : totals.unstatedAmount),
+              value: money(totals.unstatedAmount),
               // Said in words every time it is shown: this is not debt, and a
               // figure this size sitting unlabelled beside one that IS debt
               // would be read as more of the same.
@@ -177,24 +164,31 @@ export function OutstandingScreen({
         />
 
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-[6px] border border-line bg-surface px-4 py-3">
-          <input
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setPage(1);
+          {/* Uncontrolled and keyed on the committed value: a round trip per
+              letter would stutter under somebody's fingers, and resetting the
+              box in an effect when the server answers is what the React
+              Compiler rules refuse. Enter is what commits it. */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const typed = String(new FormData(e.currentTarget).get("q") ?? "").trim();
+              narrow({ q: typed || null });
             }}
-            placeholder="Find a customer"
-            aria-label="Find a customer"
-            className="h-8.5 w-[260px] rounded-[4px] border border-line bg-surface px-3 text-sm text-body outline-none placeholder:text-muted focus:border-brand"
-          />
+          >
+            <input
+              key={query}
+              name="q"
+              defaultValue={query}
+              placeholder="Find a customer"
+              aria-label="Find a customer"
+              className="h-8.5 w-[260px] rounded-[4px] border border-line bg-surface px-3 text-sm text-body outline-none placeholder:text-muted focus:border-brand"
+            />
+          </form>
           <span className="ml-2 text-[13px] text-muted">Sort</span>
           {SORTS.map((s) => (
             <button
               key={s.key}
-              onClick={() => {
-                setSort(s.key);
-                setPage(1);
-              }}
+              onClick={() => narrow({ sort: s.key })}
               className={cx(
                 "h-7.5 cursor-pointer rounded-[4px] border px-3 text-[13px]",
                 s.key === sort
@@ -206,10 +200,7 @@ export function OutstandingScreen({
             </button>
           ))}
           <button
-            onClick={() => {
-              setOverdueOnly((v) => !v);
-              setPage(1);
-            }}
+            onClick={() => narrow({ overdue: overdueOnly ? null : "1" })}
             className={cx(
               "h-7.5 cursor-pointer rounded-[4px] border px-3 text-[13px]",
               overdueOnly
@@ -220,11 +211,11 @@ export function OutstandingScreen({
             Past due only
           </button>
           <span className="flex-1" />
-          {shown.length ? (
+          {rows.length ? (
             <button
               onClick={() =>
                 setOpen((s) =>
-                  s.size ? new Set() : new Set(shown.map((r) => r.customerId)),
+                  s.size ? new Set() : new Set(rows.map((r) => r.customerId)),
                 )
               }
               className="h-7.5 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body hover:bg-canvas"
@@ -234,11 +225,11 @@ export function OutstandingScreen({
           ) : null}
         </div>
 
-        {filtered.length === 0 ? (
+        {rows.length === 0 ? (
           <Empty
-            title={rows.length ? "Nobody matches that" : "Nothing is outstanding"}
+            title={narrowed ? "Nobody matches that" : "Nothing is outstanding"}
             body={
-              rows.length
+              narrowed
                 ? "Clear the search or the past-due filter. Only customers with an open bill appear here at all."
                 : "Every bill in your book is either settled or has nothing recorded against it either way. Bills nobody has spoken for are counted separately rather than shown as debt."
             }
@@ -258,7 +249,7 @@ export function OutstandingScreen({
                 </>
               }
             >
-              {shown.map((r, i) => {
+              {rows.map((r, i) => {
                 const isOpen = open.has(r.customerId);
                 return (
                   <React.Fragment key={r.customerId}>
@@ -344,28 +335,26 @@ export function OutstandingScreen({
               })}
 
               <tr className="border-t border-line bg-canvas">
+                {/* Everybody the filters match, not this page. */}
                 <td colSpan={4} className="px-4 py-2.5 text-sm font-semibold text-ink">
                   {narrowed ? "These customers" : "Everybody"}
                 </td>
                 <td className="px-4 py-2.5 text-right text-sm font-semibold tabular-nums text-muted">
-                  {shownUnstated ? money(shownUnstated) : "—"}
+                  {totals.unstatedAmount ? money(totals.unstatedAmount) : "—"}
                 </td>
                 <td className="px-4 py-2.5 text-right text-sm font-semibold tabular-nums text-ink">
-                  {money(shownTotal)}
+                  {money(totals.outstanding)}
                 </td>
               </tr>
             </Table>
 
             <Pager
-              total={filtered.length}
-              page={page1}
+              total={total}
+              page={page}
               perPage={perPage}
               note="The totals above describe every customer shown, not this page"
-              onPage={setPage}
-              onPerPage={(n) => {
-                setPerPage(n);
-                setPage(1);
-              }}
+              onPage={(p) => go({ page: p })}
+              onPerPage={(n) => go({ page: 1, per: n })}
             />
           </div>
         )}
