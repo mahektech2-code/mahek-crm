@@ -22,6 +22,7 @@
 -- one unusual order repeated should not decide where a shop sits on the calling
 -- list for a year, and an average is exactly how it would.
 alter table "customers" add column if not exists "typical_order_paise" bigint not null default 0;
+--> statement-breakpoint
 
 -- BACKFILLED HERE, not left at the default, so no figure moves on deploy.
 --
@@ -38,7 +39,17 @@ update "customers" c
          select percentile_cont(0.5) within group (order by o.total_amount)
            from "orders" o
           where o.customer_id = c.id
-            and o.status in ('captured', 'confirmed', 'dispatched', 'in_transit', 'delivered')
+            -- `::text` IS LOAD BEARING, and leaving it off fails only from
+            -- scratch. drizzle-kit applies every pending migration in ONE
+            -- transaction, and Postgres refuses to USE an enum value added in
+            -- that same transaction — `in_transit` and `delivered` were added
+            -- to `order_status` by an earlier migration, so naming them as
+            -- enum literals here is exactly the trap AGENTS.md records for
+            -- app ids. It passes against any database that already has the
+            -- enum committed, which is every developer's, and fails in CI and
+            -- on a fresh clone. Comparing as text needs no enum member: a
+            -- status the enum does not yet carry cannot be on any row anyway.
+            and o.status::text in ('captured', 'confirmed', 'dispatched', 'in_transit', 'delivered')
             and o.ordered_at >= now() - make_interval(days => coalesce(
                   (select (value #>> '{}')::int from "app_settings"
                     where key = 'queue.orderValueLookbackDays'), 365))
