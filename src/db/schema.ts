@@ -6458,6 +6458,87 @@ export const mbosAttendanceDays = pgTable(
   ],
 );
 
+/* ------------------------------------------------- the evidence of a day */
+
+/** A selfie at a mark, or a meter at one end of a leg. */
+export const mbosEvidenceKindEnum = pgEnum("mbos_evidence_kind", [
+  "attendance_selfie",
+  "odometer",
+]);
+
+export const mbosEvidenceVerdictEnum = pgEnum("mbos_evidence_verdict", [
+  "accepted",
+  "declined",
+]);
+
+/**
+ * WHAT A MANAGER MADE OF THE PHOTOGRAPHS A DAY PRODUCED.
+ *
+ * Every check-in and every check-out is photographed and every leg opened from
+ * "Start visit" photographs the meter at both ends with the reading typed
+ * against it. All of that has reached the office since those modules shipped
+ * and none of it could ever be ANSWERED: the attendance screen drew the
+ * selfies, the travel ledger drew a "Photo" pill, and neither had anywhere to
+ * put the one thing a person looking at a photograph produces. So a photograph
+ * nobody had accepted and a photograph nobody had opened were the same row —
+ * on the two records a payslip and a mileage claim are read against.
+ *
+ * **ONE TABLE FOR TWO KINDS, because it is one act.** A face and a meter are
+ * different evidence and the question put to both is the same one: is this
+ * what it says it is. Two tables would be two actions, two screens and two
+ * answers to "has this day been checked".
+ *
+ * **THE KEY IS THE MARK, NOT THE ROW.** A day carries six selfies and a leg
+ * carries two meters, so keying on the row id alone would collapse them onto
+ * one verdict and the first written would win — the same failure
+ * `timeline_events` avoids by putting the stage in the source id, spelled the
+ * same way here: `att:<dayId>:<session>:in|out` and `leg:<legId>:start|end`.
+ *
+ * **`reportedKm` IS WRITTEN ONCE AND NEVER AGAIN.** Correcting a reading
+ * overwrites what the salesman typed on the leg itself — which is the point,
+ * since the leg is what the distance is worked out from — and this column is
+ * the only place his original figure survives. Restating it on a second
+ * correction would quietly present the office's own first answer as his.
+ *
+ * **It is NOT a decision about money.** `mbos_approvals` decides the claim and
+ * remains the only thing that does. This says whether the evidence under it
+ * stood up, which is the question somebody answers BEFORE deciding and which
+ * was on no screen in the product.
+ */
+export const mbosEvidenceReviews = pgTable(
+  "mbos_evidence_reviews",
+  {
+    id: text("id").primaryKey(),
+    /** The salesman the evidence belongs to — never the manager deciding. */
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The business day in Asia/Kolkata, so one screen is one query. */
+    day: date("day").notNull(),
+    kind: mbosEvidenceKindEnum("kind").notNull(),
+    /** The natural key. See the note above; unique across the table. */
+    sourceRef: text("source_ref").notNull(),
+    /** `mbos_attendance_days` | `mbos_travel_legs`. */
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    verdict: mbosEvidenceVerdictEnum("verdict").notNull(),
+    /** Required on a decline, by a check constraint and not only by a form. */
+    remark: text("remark"),
+    /** Odometer only: what the salesman typed, kept for ever. */
+    reportedKm: integer("reported_km"),
+    /** Odometer only: what the manager read off the photograph. */
+    correctedKm: integer("corrected_km"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("mbos_evidence_reviews_ref_key").on(t.sourceRef),
+    index("mbos_evidence_reviews_day_idx").on(t.userId, t.day),
+  ],
+);
+
 /* ----------------------------------------------------------------- leave */
 
 export const mbosLeaveTypeEnum = pgEnum("mbos_leave_type", [
@@ -8171,6 +8252,7 @@ export type SampleFeedback = typeof sampleFeedback.$inferSelect;
 export type MbosExpense = typeof mbosExpenses.$inferSelect;
 export type MbosExpenseClaim = typeof mbosExpenseClaims.$inferSelect;
 export type MbosAttendanceDay = typeof mbosAttendanceDays.$inferSelect;
+export type MbosEvidenceReview = typeof mbosEvidenceReviews.$inferSelect;
 export type MbosLeaveRequest = typeof mbosLeaveRequests.$inferSelect;
 export type MbosLeaveBalance = typeof mbosLeaveBalances.$inferSelect;
 export type MbosTour = typeof mbosTours.$inferSelect;

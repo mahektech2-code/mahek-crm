@@ -4,6 +4,8 @@ import * as React from "react";
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
 import type { PerformanceRow, SalesmanRecord } from "@/lib/services/sales-service";
+import type { DayEvidence as DayEvidenceType } from "@/lib/services/day-evidence-service";
+import { DayCheck } from "./day-check";
 import {
   Cell,
   Empty,
@@ -36,6 +38,15 @@ const TABS = [
   "Orders",
   "Money",
   "Attendance",
+  /* A DAY AT A TIME, beside the record that is a month at a time.
+     Everything else under these tabs is a list to read THROUGH — sixty visits,
+     sixty orders — and answers "what has he been doing". This one answers a
+     different question, "do I believe what he sent me on Tuesday", and it is
+     asked of one day with the photographs in front of you. Folding it into
+     Attendance would have put a date picker inside a tab that is already a
+     list of thirty days, with two date controls on one screen meaning
+     different things. */
+  "Day check",
   "Leave",
   "Expenses",
   "Samples",
@@ -50,14 +61,33 @@ export function SalesmanScreen({
   month,
   thisMonth,
   lastMonth,
+  day,
+  longDay,
+  today,
+  dayEvidence,
+  selfieRetentionHours,
+  openDayCheck,
 }: {
   record: SalesmanRecord;
   month: string;
   /** Null where he did nothing at all in the month, which is a real answer. */
   thisMonth: PerformanceRow | null;
   lastMonth: PerformanceRow | null;
+  /** The day the Day check tab is showing. Defaults to today. */
+  day: string;
+  longDay: string;
+  today: string;
+  dayEvidence: DayEvidenceType | null;
+  selfieRetentionHours: number;
+  /**
+   * Whether the URL asked for a day, which is what makes an arrival from the
+   * Attendance screen land where it said it would. The tab is React state and
+   * the date changer is a set of links, so without this a step to yesterday
+   * would navigate and drop the reader back on Visits.
+   */
+  openDayCheck: boolean;
 }) {
-  const [tab, setTab] = React.useState<Tab>("Visits");
+  const [tab, setTab] = React.useState<Tab>(openDayCheck ? "Day check" : "Visits");
   const { salesman: s } = record;
 
   const counts: Record<Tab, number> = {
@@ -65,6 +95,11 @@ export function SalesmanScreen({
     Orders: record.orders.length,
     Money: record.receipts.length,
     Attendance: record.attendance.length,
+    /* What is still UNANSWERED on the day being shown, not how many
+       photographs there are. The badge is there to say whether this tab wants
+       something from you, and a count that stayed at six after you had checked
+       all six would say the opposite. */
+    "Day check": (dayEvidence?.items ?? []).filter((i) => i.review === null).length,
     Leave: record.leave.length,
     Expenses: record.expenses.length,
     Samples: record.samples.length,
@@ -320,6 +355,17 @@ export function SalesmanScreen({
             </p>
           </>
         )
+      ) : null}
+
+      {tab === "Day check" ? (
+        <DayCheck
+          salesmanId={s.id}
+          day={day}
+          longDay={longDay}
+          today={today}
+          evidence={dayEvidence}
+          retentionHours={selfieRetentionHours}
+        />
       ) : null}
 
       {tab === "Attendance" ? (
