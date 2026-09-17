@@ -51,6 +51,7 @@ import type { Config } from "@/lib/config/registry";
 import { today } from "@/lib/queries";
 import { expensePolicyData } from "../expense-policy-data";
 import { AdminConsole } from "../console";
+import { hatForHeader } from "@/lib/hat-for-header";
 
 export const metadata = { title: "Admin Console · MahekOne" };
 
@@ -77,6 +78,7 @@ export default async function Page({
   const { path } = await params;
   const [section, tab] = path ?? [];
   const user = await requireUser();
+  const hat = await hatForHeader(user, "admin");
   const apps = await listUserApps(user.id);
 
   const isPlatformAdmin = apps.includes("admin");
@@ -201,7 +203,7 @@ export default async function Page({
       initial={{ section, tab }}
       people={people}
       access={access}
-      me={{ name: user.name, initials: user.initials, role: user.role }}
+      me={{ name: user.name, initials: user.initials, role: hat.label }}
       platform={{
         attention,
         health,

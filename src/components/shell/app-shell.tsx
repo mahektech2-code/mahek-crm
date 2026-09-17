@@ -10,6 +10,7 @@ import type { NavGroup, NavItem } from "./nav";
 
 export function AppShell({
   user,
+  hat,
   isManager,
   scope,
   notifications,
@@ -20,6 +21,8 @@ export function AppShell({
   children,
 }: {
   user: User;
+  /** Who this person is in THIS app — resolved by the layout, which knows. */
+  hat: { label: string; sentence: string };
   isManager: boolean;
   scope: "mine" | "team";
   notifications: Notification[];
@@ -40,6 +43,7 @@ export function AppShell({
       <div className="flex h-screen min-w-[1000px] flex-col overflow-hidden bg-canvas">
         <Header
           user={user}
+          hat={hat}
           isManager={isManager}
           scope={scope}
           notifications={notifications}
@@ -50,6 +54,7 @@ export function AppShell({
           <Sidebar
             collapsed={collapsed}
             user={user}
+            hat={hat}
             badges={badges}
             groups={nav}
             pinned={pinnedNav}

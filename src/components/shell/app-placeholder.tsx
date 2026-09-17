@@ -7,6 +7,7 @@ import { Wordmark } from "./wordmark";
 import { AppSwitcher } from "./app-switcher";
 import { SignOutButton } from "./sign-out-button";
 import { AccountMenu } from "./account-menu";
+import { hatForHeader } from "@/lib/hat-for-header";
 
 /**
  * The shell every MahekOne app sits in, standing in for the ones not built yet.
@@ -21,6 +22,7 @@ export async function AppPlaceholder({ app: appId }: { app: AppId }) {
   if (!apps.includes(appId)) redirect("/apps");
 
   const app = getApp(appId)!;
+  const hat = await hatForHeader(user, appId);
   const multi = apps.length > 1;
 
   return (
@@ -34,7 +36,7 @@ export async function AppPlaceholder({ app: appId }: { app: AppId }) {
         ) : null}
         <Wordmark label={wordmark(app)} />
         <span className="flex-1" />
-        <AccountMenu user={user} variant="header" />
+        <AccountMenu user={user} hat={hat} variant="header" />
       </header>
 
       <div className="flex flex-1 items-center justify-center p-6">

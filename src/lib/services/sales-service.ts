@@ -533,8 +533,6 @@ export type ConsoleCounts = {
   teamLine: string;
   /** The full patch, for the header's hover — see `patch` below. */
   scopeDetail: string;
-  /** "National sales manager", or "South sales manager". From the scope. */
-  title: string;
   /** "6 of 11 in the field" */
   liveLine: string;
   tasks: number;
@@ -662,11 +660,18 @@ export async function consoleCounts(
       : `${scope.regions.length} states`;
 
   return {
-    title: scope.national
-      ? "National sales manager"
-      : scope.regions.length === 1
-        ? `${scope.regions[0]} sales manager`
-        : "Regional sales manager",
+    /*
+     * NO `title` HERE ANY MORE.
+     *
+     * It answered "National sales manager" / "<State> sales manager" from the
+     * SCOPE, and the header drew it as the person's designation — so an
+     * associate granted this app was greeted as a national manager, in a rank
+     * the company does not issue and nothing stores. The header reads the
+     * LEVEL held on this app now (`lib/hat-labels.ts`), and the scope this was
+     * derived from is still said plainly in `teamLine` and `scopeDetail`
+     * below: "11 salesmen · All India · 7 regions" is the same fact without
+     * the invented title.
+     */
     /* The full patch, for the hover. A count is quick to read and it is not an
        answer, so the answer has to be one gesture away. */
     scopeDetail: scope.national

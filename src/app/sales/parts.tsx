@@ -173,13 +173,30 @@ export function Table({
   minWidth,
   head,
   children,
+  chrome = true,
 }: {
   minWidth: number;
   head: React.ReactNode;
   children: React.ReactNode;
+  /**
+   * Whether the table draws its own box.
+   *
+   * Off where the table sits INSIDE one — a filter bar above it and a pager
+   * below it belong to the same panel, and a table carrying its own border
+   * there draws a second line through the middle of one card. It is a prop
+   * rather than a second component because everything else about the two is
+   * identical, and two table components is how two screens come to have two
+   * row heights.
+   */
+  chrome?: boolean;
 }) {
   return (
-    <div className="min-w-0 overflow-auto rounded-[6px] border border-line bg-surface">
+    <div
+      className={cx(
+        "min-w-0 overflow-auto",
+        chrome ? "rounded-[6px] border border-line bg-surface" : "bg-surface",
+      )}
+    >
       <table style={{ minWidth }} className="w-full table-fixed border-collapse">
         <thead>
           <tr>{head}</tr>

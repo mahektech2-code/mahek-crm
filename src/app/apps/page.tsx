@@ -10,6 +10,7 @@ import {
 import { Wordmark } from "@/components/shell/wordmark";
 import { Icon } from "@/components/shell/icons";
 import { AccountMenu } from "@/components/shell/account-menu";
+import { levelLabel } from "@/lib/hat-labels";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { cx } from "@/components/ui/primitives";
 import { clock, longDate, today } from "@/lib/format";
@@ -52,7 +53,22 @@ export default async function LauncherPage() {
         <FeedbackButton />
         {/* The same menu the apps carry in their sidebar, so "where do I change
             my password" has one answer wherever somebody is standing. */}
-        <AccountMenu user={user} variant="header" />
+        {/*
+          THE ONE PLACE THE ACCOUNT'S OWN LEVEL IS THE RIGHT ANSWER.
+          Everywhere else the designation is the level for the app somebody is
+          standing in; the launcher is not an app, so there is no hat to
+          resolve and the widest level held anywhere is exactly what this
+          screen is about. The hover says so rather than letting a reader carry
+          "Admin" into an app where they are an associate.
+        */}
+        <AccountMenu
+          user={user}
+          hat={{
+            label: levelLabel(user.role),
+            sentence: `${levelLabel(user.role)} on your account — the widest level you hold. Inside an app it may be lower.`,
+          }}
+          variant="header"
+        />
       </header>
 
       <div className="relative overflow-hidden bg-brand-deep px-8 py-9">
