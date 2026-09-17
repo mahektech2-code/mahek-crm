@@ -95,8 +95,21 @@ export const BUCKET_LISTS = {
 
 export type BucketColumn = keyof typeof BUCKET_LISTS;
 
-/** The filters the URL can carry, all of them optional and all `,`-separated. */
+/**
+ * The filters the URL can carry. All optional, and all `,`-separated EXCEPT
+ * `search`.
+ *
+ * Free text is the one filter that is not a set of ticked values, which is why
+ * it does not go through `splitFilter`: a comma is a character somebody types
+ * into a search box ("MAHADEV TOWERS, LBS MARG"), and splitting on it would
+ * turn one search into two that must both match. The seven dropdowns answer
+ * "which of these known values"; this one answers "I am looking for a
+ * particular shop and I know part of its name" — the question the whole
+ * screen exists for and the only one seven dropdowns cannot put.
+ */
 export type LeadFilters = {
+  /** Matched across the name, the shop, the phone, the town and the owner. */
+  search?: string;
   owner?: string;
   source?: string;
   stage?: string;
@@ -108,5 +121,10 @@ export type LeadFilters = {
 
 /** Is anything actually narrowed? Decides whether "Clear filters" is drawn. */
 export function anyFilterSet(f: LeadFilters): boolean {
-  return Object.values(f).some((v) => splitFilter(v).length > 0);
+  const { search, ...ticked } = f;
+  /* `splitFilter` would answer 1 for any non-empty string, which happens to be
+     right here — but only by accident, and it stops being right the day a
+     search is trimmed to nothing. Asked directly, it cannot drift. */
+  if (search?.trim()) return true;
+  return Object.values(ticked).some((v) => splitFilter(v).length > 0);
 }

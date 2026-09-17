@@ -9,11 +9,17 @@ import { useToast } from "@/components/ui/toast";
 import { ExportButton } from "@/app/reports/export-button";
 import {
   archiveLead,
+  bulkArchiveLeads,
+  bulkChaseLeadOwners,
+  bulkReassignLeads,
+  bulkRestoreLeads,
   chaseLeadOwner,
   exportLeadRows,
+  leadIdsForSelection,
   reassignLead,
   restoreLead,
 } from "@/lib/actions/sales";
+import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
 import { healthView } from "@/lib/customer-health";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
@@ -26,7 +32,12 @@ import {
 } from "@/lib/lead-filters";
 import type { LeadRow } from "@/lib/services/sales-service";
 import type { FunnelByType } from "@/lib/services/lead-console-service";
-import { salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
+import {
+  ALL_LEAD_STAGES,
+  salesTypeLabel,
+  stageLabel,
+  type LeadStage,
+} from "@/lib/lead-labels";
 import {
   Button,
   Cell,
@@ -83,6 +94,9 @@ type Acting =
   | { kind: "reassign"; lead: LeadRow }
   | { kind: "archive"; lead: LeadRow }
   | { kind: "restore"; lead: LeadRow };
+
+/** The five things a selection can be put through. */
+type Bulk = "reassign" | "stage" | "archive" | "restore" | "chase";
 
 /**
  * The interactive half of the Leads screen: the funnel and the table are
@@ -175,9 +189,55 @@ export function LeadsScreen({
     [router, search],
   );
 
-  const anyFilter = FILTER_COLUMNS.some((c) => filters[c].length > 0);
-  const clearFilters = () =>
-    navigate(Object.fromEntries(FILTER_COLUMNS.map((c) => [c, undefined])));
+  /*
+   * THE SEARCH BOX IS LOCAL AND THE URL IS WHERE IT LANDS.
+   *
+   * Typed here, debounced, then navigated — a parameter per keystroke is a
+   * server round trip per keystroke, and this table is thousands of rows behind
+   * a database.
+   *
+   * The effect depends on everything the timer READS, not just on the text.
+   * With `[typed]` alone the cleanup only fires when the text changes, so a
+   * navigation landing while a timer is in flight does not cancel it — press
+   * Clear filters and a third of a second later the timer rebuilds the URL from
+   * the render it was started in and puts the filters back. It reads as a
+   * button that does not work.
+   *
+   * And the box is resynced when `q` changes UNDER it — adjusted during render
+   * rather than in an effect, guarded on what we last pushed. The guard is the
+   * point: the one thing a search box must never do is overwrite characters
+   * somebody has typed since with a value we sent ourselves. What it fixes is
+   * the back button, and "Clear filters", which drops `q` without remounting.
+   */
+  const urlQ = search.get("q") ?? "";
+  const [typed, setTyped] = React.useState(urlQ);
+  const [seenQ, setSeenQ] = React.useState(urlQ);
+  const [pushedQ, setPushedQ] = React.useState(urlQ);
+
+  if (seenQ !== urlQ) {
+    setSeenQ(urlQ);
+    if (urlQ !== pushedQ) setTyped(urlQ);
+  }
+
+  React.useEffect(() => {
+    if (typed === urlQ) return;
+    const t = setTimeout(() => {
+      setPushedQ(typed);
+      navigate({ q: typed || undefined });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [typed, urlQ, navigate]);
+
+
+  /* The search is a filter, so it counts towards "is anything narrowed" and is
+     cleared by the same button. A "Clear filters" that leaves a search term in
+     the box is one people press twice and then stop trusting. */
+  const anyFilter = FILTER_COLUMNS.some((c) => filters[c].length > 0) || Boolean(urlQ);
+  const clearFilters = () => {
+    setTyped("");
+    setPushedQ("");
+    navigate({ ...Object.fromEntries(FILTER_COLUMNS.map((c) => [c, undefined])), q: undefined });
+  };
 
   /* The count goes on the label rather than the value: "Pritesh Bipin Doshi
      (511)" is what tells a manager which name is worth ticking, and it is the
@@ -194,10 +254,14 @@ export function LeadsScreen({
   const [funnelType, setFunnelType] = React.useState<string>("all");
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
   const [acting, setActing] = React.useState<Acting | null>(null);
+  const [bulk, setBulk] = React.useState<Bulk | null>(null);
+  const [picked, setPicked] = React.useState<Set<string>>(new Set());
   const [salesmanId, setSalesmanId] = React.useState("");
+  const [stage, setStage] = React.useState<LeadStage>("contacted");
   const [reason, setReason] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
 
   function toggleExpanded(id: string) {
     setExpanded((prev) => {
@@ -207,6 +271,95 @@ export function LeadsScreen({
       return next;
     });
   }
+
+  /* ------------------------------------------------------------ selection */
+
+  const pageIds = leads.map((l) => l.id);
+  const allOnPage = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
+  const someOnPage = pageIds.some((id) => picked.has(id));
+
+  function toggleOne(id: string) {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function togglePage() {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (allOnPage) for (const id of pageIds) next.delete(id);
+      else for (const id of pageIds) next.add(id);
+      return next;
+    });
+  }
+
+  async function selectEverything() {
+    const result = await leadIdsForSelection({
+      archived: showArchived,
+      filters: {
+        ...Object.fromEntries(FILTER_COLUMNS.map((c) => [c, filters[c].join(",") || undefined])),
+        search: urlQ || undefined,
+      },
+    });
+    if (!result.ok) {
+      toast.push(result.error, "error");
+      return;
+    }
+    setPicked(new Set(result.data.ids));
+    if (result.data.capped) {
+      toast.push(
+        `Selected the first ${result.data.ids.length} — a batch is capped there. Narrow the filter to reach the rest.`,
+      );
+    }
+  }
+
+  function beginBulk(kind: Bulk) {
+    setBulk(kind);
+    setSalesmanId(team[0]?.id ?? "");
+    setStage("contacted");
+    setReason("");
+    setError(null);
+  }
+
+  async function submitBulk() {
+    if (!bulk) return;
+    const leadIds = Array.from(picked);
+    setBusy(true);
+    setError(null);
+    try {
+      const result =
+        bulk === "reassign"
+          ? await bulkReassignLeads({ leadIds, salesmanId })
+          : bulk === "stage"
+            ? await bulkAdvanceLeadStage({ customerIds: leadIds, to: stage })
+            : bulk === "archive"
+              ? await bulkArchiveLeads({ leadIds, reason })
+              : bulk === "restore"
+                ? await bulkRestoreLeads({ leadIds })
+                : await bulkChaseLeadOwners({ leadIds });
+
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setBulk(null);
+      /* EXACTLY WHAT WAS REFUSED STAYS TICKED. Clearing the selection on a
+         partial success leaves somebody to find the eleven refused leads again
+         by hand, which is the work the batch was supposed to save; keeping the
+         whole selection invites them to press the same button on the ones that
+         already moved. */
+      setPicked(new Set(result.data?.failed.map((f) => f.id) ?? []));
+      toast.push(result.message ?? "Done.");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /* -------------------------------------------------------------- one lead */
 
   function begin(lead: LeadRow, kind: Acting["kind"]) {
     setActing({ lead, kind } as Acting);
@@ -289,9 +442,15 @@ export function LeadsScreen({
                 fetchRows={async () => {
                   const res = await exportLeadRows({
                     archived: showArchived,
-                    filters: Object.fromEntries(
-                      FILTER_COLUMNS.map((c) => [c, filters[c].join(",") || undefined]),
-                    ),
+                    filters: {
+                      ...Object.fromEntries(
+                        FILTER_COLUMNS.map((c) => [c, filters[c].join(",") || undefined]),
+                      ),
+                      /* The search is a filter like any other, and a file that
+                         quietly ignored it would hold a different set to the
+                         table it was downloaded from. */
+                      search: urlQ || undefined,
+                    },
                   });
                   if (!res.ok) {
                     toast.push(res.error, "error");
@@ -437,10 +596,24 @@ export function LeadsScreen({
             onClear={clearFilters}
             total={pageInfo.total}
             listTotal={pageInfo.listTotal}
+            search={typed}
+            onSearch={setTyped}
           />
 
+          {picked.size ? (
+            <BulkBar
+              count={picked.size}
+              total={pageInfo.total}
+              pageCount={leads.length}
+              showArchived={showArchived}
+              onClear={() => setPicked(new Set())}
+              onSelectEverything={() => void selectEverything()}
+              onAct={beginBulk}
+            />
+          ) : null}
+
           <Table
-            minWidth={1302}
+            minWidth={1336}
             head={
               <>
                 {/* PINNED. The row's name and its actions are the two cells
@@ -448,8 +621,34 @@ export function LeadsScreen({
                     the argument: scroll the name off and every remaining cell
                     is an orphaned value, scroll the menu off and whether you
                     can act on a row depends on where the table is scrolled. */}
-                <HeadCell width={230} className={pinnedHead("left")}>
-                  Lead
+                <HeadCell width={264} className={pinnedHead("left")}>
+                  {/* THE TICK RIDES IN THE PINNED CELL rather than in a column
+                      of its own. `pinnedCell` is `left-0`, so a column in front
+                      of it would sit under the name on any sideways scroll —
+                      and the tick belongs beside the thing it identifies
+                      anyway. */}
+                  <span className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={allOnPage}
+                      /* SOME of them is not NONE of them. Unchecked at three of
+                         fifteen, the box says "nothing here is selected" and a
+                         click then ticks the other twelve — the opposite of
+                         what an empty box promises. */
+                      ref={(el) => {
+                        if (el) el.indeterminate = someOnPage && !allOnPage;
+                      }}
+                      onChange={togglePage}
+                      aria-label="Select every lead on this page"
+                      title={
+                        allOnPage
+                          ? "Clear the leads on this page"
+                          : "Select every lead on this page"
+                      }
+                      className="cursor-pointer accent-[#5223E0]"
+                    />
+                    Lead
+                  </span>
                 </HeadCell>
                 <HeadCell width={160}>Owner</HeadCell>
                 <HeadCell width={140}>Source</HeadCell>
@@ -473,23 +672,42 @@ export function LeadsScreen({
               const hasDetail = Boolean(l.notes) || l.hasGps || Boolean(l.convertedCustomerId);
               return (
                 <React.Fragment key={l.id}>
-                  <Row striped={i % 2 === 1} onClick={() => toggleExpanded(l.id)}>
-                    <Cell truncate={230} className={pinnedCell("left", i)}>
-                      {/* The name is the door to the record. The row itself
-                          still expands, so the one-line summary is a click and
-                          the whole climb is a click — the two questions a
-                          manager asks of a list are "which of these" and "what
-                          is this one waiting on", and they deserve different
-                          gestures. */}
-                      <Link
-                        href={`/sales/leads/${l.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="font-medium no-underline"
-                      >
-                        {l.name}
-                      </Link>
-                      <span className="block truncate text-[12px] text-muted">
-                        {[l.companyName, l.city].filter(Boolean).join(" · ") || l.mobile || "—"}
+                  <Row
+                    striped={i % 2 === 1}
+                    /* A ticked row was distinguishable only by a 13px box, and
+                       the selection crosses pages — which is exactly where
+                       somebody needs to see what is still held. */
+                    selected={picked.has(l.id)}
+                    onClick={() => toggleExpanded(l.id)}
+                  >
+                    <Cell truncate={264} className={pinnedCell("left", i, picked.has(l.id))}>
+                      <span className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={picked.has(l.id)}
+                          onChange={() => toggleOne(l.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Select ${l.name}`}
+                          className="mt-0.5 cursor-pointer accent-[#5223E0]"
+                        />
+                        <span className="min-w-0 flex-1">
+                          {/* The name is the door to the record. The row itself
+                              still expands, so the one-line summary is a click
+                              and the whole climb is a click — the two questions
+                              a manager asks of a list are "which of these" and
+                              "what is this one waiting on", and they deserve
+                              different gestures. */}
+                          <Link
+                            href={`/sales/leads/${l.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-medium no-underline"
+                          >
+                            {l.name}
+                          </Link>
+                          <span className="block truncate text-[12px] text-muted">
+                            {[l.companyName, l.city].filter(Boolean).join(" · ") || l.mobile || "—"}
+                          </span>
+                        </span>
                       </span>
                     </Cell>
                     <Cell truncate={160}>
@@ -594,6 +812,119 @@ export function LeadsScreen({
           ) : null}
         </>
       )}
+
+      {/* ------------------------------------------------------ the selection */}
+
+      <Modal
+        open={bulk !== null}
+        onClose={() => setBulk(null)}
+        title={
+          bulk === "reassign"
+            ? "Change the owner"
+            : bulk === "stage"
+              ? "Move the stage"
+              : bulk === "archive"
+                ? "Archive these leads"
+                : bulk === "restore"
+                  ? "Restore these leads"
+                  : "Chase the owners"
+        }
+        width={480}
+      >
+        <div className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[13px] text-body">
+          <span className="font-medium text-ink">{plural(picked.size, "lead")}</span> selected.
+        </div>
+
+        {bulk === "reassign" ? (
+          <label className="block">
+            <span className="mb-1 block text-[13px] font-medium text-ink">Move them all to</span>
+            <select
+              value={salesmanId}
+              onChange={(e) => setSalesmanId(e.target.value)}
+              className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+            >
+              {team.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-[12px] text-muted">
+              One message each, naming how many — not one per lead. Anything already theirs, and
+              anything archived, is left alone and named back to you.
+            </span>
+          </label>
+        ) : null}
+
+        {bulk === "stage" ? (
+          <label className="block">
+            <span className="mb-1 block text-[13px] font-medium text-ink">Move them all to</span>
+            <select
+              value={stage}
+              onChange={(e) => setStage(e.target.value as LeadStage)}
+              className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+            >
+              {ALL_LEAD_STAGES.map((v) => (
+                <option key={v} value={v}>
+                  {stageLabel(v)}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-[12px] text-muted">
+              Each one goes through the same gate the record screen asks. A lead missing a condition
+              for that rung, or not on a ladder that has it, does not move — and comes back named,
+              with what it is waiting on.
+            </span>
+          </label>
+        ) : null}
+
+        {bulk === "archive" ? (
+          <label className="block">
+            <span className="mb-1 block text-[13px] font-medium text-ink">Why · required</span>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand"
+            />
+            <span className="mt-1 block text-[12px] text-muted">
+              The same sentence goes to every owner losing a lead here — a lead vanishing off
+              somebody&rsquo;s list with no explanation is the failure this whole app exists to
+              avoid.
+            </span>
+          </label>
+        ) : null}
+
+        {bulk === "restore" ? (
+          <p className="text-[13px] text-body">
+            They go back to their owners&rsquo; working lists.
+          </p>
+        ) : null}
+
+        {bulk === "chase" ? (
+          <p className="text-[13px] text-body">
+            One nudge per owner, naming how many leads and the first few of them. Anything nobody
+            owns is named back to you instead — there is nobody to chase.
+          </p>
+        ) : null}
+
+        {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <Button tone="quiet" onClick={() => setBulk(null)}>
+            Cancel
+          </Button>
+          <Button
+            tone={bulk === "archive" ? "danger" : "primary"}
+            disabled={
+              busy || (bulk === "reassign" && !salesmanId) || (bulk === "archive" && !reason.trim())
+            }
+            onClick={() => void submitBulk()}
+          >
+            {busy ? "Working…" : `Apply to ${picked.size}`}
+          </Button>
+        </div>
+      </Modal>
 
       <ReasonModal
         open={acting?.kind === "archive"}
@@ -955,6 +1286,8 @@ function FilterBar({
   onClear,
   total,
   listTotal,
+  search,
+  onSearch,
 }: {
   filters: Record<FilterColumn, string[]>;
   options: {
@@ -968,12 +1301,24 @@ function FilterBar({
   onClear: () => void;
   total: number;
   listTotal: number;
+  /** What is typed NOW, which is not always what the URL carries — see below. */
+  search: string;
+  onSearch: (v: string) => void;
 }) {
   const pick = (column: FilterColumn) => (next: string[]) =>
     navigate({ [column]: next.join(",") || undefined });
 
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
+      {/*
+        FIRST, BECAUSE IT IS WHAT SOMEBODY REACHES FOR.
+        Seven dropdowns answer "which of these known values"; none of them
+        answers "I am looking for Orange City and I know part of the name",
+        which is the question a list of three thousand leads is opened with.
+        Without it the only way to find one lead was the browser's own find,
+        over whatever page happened to be loaded.
+      */}
+      <SearchBox value={search} onChange={onSearch} />
       <MultiSelect
         label="Owner"
         placeholder="All owners"
@@ -1046,6 +1391,139 @@ function FilterBar({
           ? `${total.toLocaleString("en-IN")} of ${listTotal.toLocaleString("en-IN")}`
           : `${listTotal.toLocaleString("en-IN")} ${listTotal === 1 ? "lead" : "leads"}`}
       </span>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════ the batch */
+
+/**
+ * WHAT IS SELECTED, AND WHAT CAN BE DONE TO IT.
+ *
+ * It appears only when something is selected, and it sits between the filters
+ * and the rows — which is where the selection itself is. A bar pinned to the
+ * bottom of the window is the usual answer and it puts the consequence of a
+ * tick a screen away from the tick.
+ *
+ * "Select all NNN" is offered as soon as the page is fully ticked, because that
+ * is the moment somebody means the filter rather than the page. It names the
+ * number it will actually reach, so nobody finds out at the review that half
+ * their selection was never in it.
+ */
+function BulkBar({
+  count,
+  total,
+  pageCount,
+  showArchived,
+  onClear,
+  onSelectEverything,
+  onAct,
+}: {
+  count: number;
+  total: number;
+  pageCount: number;
+  showArchived: boolean;
+  onClear: () => void;
+  onSelectEverything: () => void;
+  onAct: (kind: Bulk) => void;
+}) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-[4px] border border-brand bg-brand-soft px-3 py-2">
+      <span className="text-[13px] font-medium text-ink">{plural(count, "lead")} selected</span>
+      {count >= pageCount && count < total ? (
+        <button
+          type="button"
+          onClick={onSelectEverything}
+          className="cursor-pointer text-[13px] text-[#5223E0] underline"
+        >
+          Select all {total.toLocaleString("en-IN")} this filter reaches
+        </button>
+      ) : null}
+      <button
+        type="button"
+        onClick={onClear}
+        className="cursor-pointer text-[13px] text-muted underline hover:text-ink"
+      >
+        Clear
+      </button>
+
+      <span className="min-w-2 flex-1" />
+
+      {showArchived ? (
+        <BulkButton onClick={() => onAct("restore")}>Restore them</BulkButton>
+      ) : (
+        <>
+          <BulkButton onClick={() => onAct("reassign")}>Change owner</BulkButton>
+          <BulkButton onClick={() => onAct("stage")}>Change stage</BulkButton>
+          <BulkButton onClick={() => onAct("chase")}>Chase owners</BulkButton>
+          <BulkButton onClick={() => onAct("archive")} danger>
+            Archive
+          </BulkButton>
+        </>
+      )}
+    </div>
+  );
+}
+
+function BulkButton({
+  onClick,
+  danger,
+  children,
+}: {
+  onClick: () => void;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        danger
+          ? "h-8 cursor-pointer rounded-[4px] border border-danger bg-surface px-3 text-[13px] font-medium text-danger hover:bg-danger-soft"
+          : "h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body hover:bg-canvas"
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * The search box.
+ *
+ * It sits in the filter bar and behaves like the seven dropdowns beside it —
+ * the value lands in the URL, so a search is a thing somebody sends to
+ * somebody else and the narrowing happens in the database rather than in a
+ * browser holding one page. What is different is the DEBOUNCE: a dropdown is
+ * one click and one navigation, and a search box is one navigation per
+ * keystroke unless something stops it.
+ *
+ * The placeholder names the fields rather than saying "Search", because what
+ * it reaches is not guessable: the owner's name is in there, which is the
+ * single most useful thing to be able to type and the last thing anybody would
+ * assume a box above a table of shops would match.
+ */
+function SearchBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="relative">
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="Search leads"
+        placeholder="Search a shop, a town, a phone number, an owner…"
+        title="Every word has to appear somewhere: the shop, the company, the phone, the town, the area, the notes or the owner's name."
+        className="h-8.5 w-[280px] rounded-[4px] border border-line bg-surface px-2.5 pr-14 text-[13px] text-ink outline-none placeholder:text-muted focus:border-brand"
+      />
+      {value ? (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          className="absolute top-1/2 right-1.5 -translate-y-1/2 cursor-pointer rounded-[3px] px-1.5 py-0.5 text-[12px] text-muted hover:bg-canvas hover:text-ink"
+        >
+          Clear
+        </button>
+      ) : null}
     </div>
   );
 }
