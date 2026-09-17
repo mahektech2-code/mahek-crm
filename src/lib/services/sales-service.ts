@@ -1340,7 +1340,16 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
  * Empty means "all", matching `MultiSelect`'s own contract — an unticked
  * dropdown adds no clause rather than matching nothing.
  */
-function leadFilterClause(
+/*
+ * EXPORTED, because the board asks the same question of the same book.
+ *
+ * `/sales/leads` and `/sales/leads/board` are one population drawn two ways,
+ * and they share a filter bar down to the seven column names. A second copy of
+ * this clause is two answers to "which leads am I looking at" — and the half
+ * that drifts is invisible, because both screens look right on their own and
+ * only disagree about a count nobody is comparing.
+ */
+export function leadFilterClause(
   filters: LeadFilters,
   day: string,
   health: { atRiskBelow: number; strongAtOrAbove: number },

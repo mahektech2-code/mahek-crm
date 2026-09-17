@@ -96,6 +96,35 @@ const nextConfig: NextConfig = {
       { source: "/orders/:path*", destination: "/accounts/:path*", permanent: true },
 
       /*
+       * The same lesson again, three screens at once.
+       *
+       * The funnel's nine screens all sat directly under /sales/leads while it
+       * was one module. Lead Management is ten now, and three moved into the
+       * module whose job they actually are: the verification queue is
+       * Qualification's, the nurture schedule and the list of leads with
+       * nothing scheduled are Next actions'.
+       *
+       * A route is a bookmark, and `no-next-action` is the one most likely to
+       * be linked from a message rather than reached from a sidebar — it is
+       * §24 made visible, so it is what a manager sends somebody.
+       */
+      {
+        source: "/sales/leads/verification",
+        destination: "/sales/leads/qualify/verification",
+        permanent: true,
+      },
+      {
+        source: "/sales/leads/nurture",
+        destination: "/sales/leads/actions/nurture",
+        permanent: true,
+      },
+      {
+        source: "/sales/leads/no-next-action",
+        destination: "/sales/leads/actions/none",
+        permanent: true,
+      },
+
+      /*
        * The same lesson at a smaller scale. This screen shipped at
        * /crm/deactivations and answers requests in BOTH directions — close an
        * account, reopen a closed one — so the name described half of it and the

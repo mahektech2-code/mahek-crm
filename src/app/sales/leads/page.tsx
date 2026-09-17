@@ -1,3 +1,5 @@
+import { requireUser } from "@/lib/auth";
+import { requireModule } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import {
@@ -64,6 +66,20 @@ export default async function Page({
     } & Record<string, string | undefined>
   >;
 }) {
+  /*
+   * THE GUARD IS HERE RATHER THAN IN THE FOLDER'S LAYOUT, and that is not the
+   * pattern slipping.
+   *
+   * `/sales/leads/layout.tsx` used to carry it, back when everything beneath
+   * this path was one module. It is now nine separately-grantable ones, so a
+   * guard up there would refuse somebody holding Qualification on the strength
+   * of a module they were deliberately not given. The book itself is still
+   * `sales.leads`, and this is the only place left to say so — `[id]` and
+   * `board` are folders and keep theirs in a layout, as usual.
+   */
+  const user = await requireUser();
+  await requireModule(user.id, "sales.leads");
+
   const params = await searchParams;
   const showArchived = params.view === "archived";
 

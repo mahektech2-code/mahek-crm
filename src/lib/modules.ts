@@ -299,13 +299,126 @@ export const APP_MODULES: AppModule[] = [
     "Field work",
     "Field salesman visits and calls from before this app existed, imported from a prior system's own log — including the shop names that still need matching to a real account.",
   ),
-  sales("leads", "Leads", "Field work", "Shops that are not on the book yet."),
-
   sales("orders", "Orders", "Commercial", "Orders taken in the field, and the ones over a credit limit."),
   sales("payments", "Payments", "Commercial", "Money collected, and cash still in somebody's pocket."),
   sales("invoices", "Invoices", "Commercial", "What has been billed and what is overdue."),
-  sales("samples", "Samples", "Commercial", "Samples out with customers, and the feedback nobody chased."),
   sales("catalogue", "Catalogue & rates", "Commercial", "What is sold and at what price."),
+
+  /* ------------------------------------------------- Lead Management, the ten
+   *
+   * The funnel's engines, services and actions have existed since the lead
+   * funnel landed; what did not exist was anywhere to work in them. Nine
+   * screens sat behind two keys — `sales.leads` and `sales.samples` — inside a
+   * sidebar built for the field team, and a person whose whole job is the
+   * funnel had no front door.
+   *
+   * TEN destinations, not the twenty-three the surface actually has. The ones
+   * left out are not missing, they are TABS, and the difference is the rule
+   * this file already states: a module is a destination in an app's
+   * NAVIGATION. "Suspect decisions" and "Verification queue" are one question
+   * asked of two populations, so they are two tabs of Qualification and one
+   * grant; splitting them would put four near-identical rows in front of
+   * somebody scanning for one, and would make "can she work the funnel" a
+   * twenty-three-part answer nobody could hold in their head at the access
+   * screen.
+   *
+   * What that costs is worth naming rather than discovering: a tab cannot be
+   * withheld on its own, so somebody given Qualification is given all four of
+   * its tabs. The ten were chosen so that is never the wrong answer — each is
+   * a job somebody holds whole — and the two that genuinely are separately
+   * sensitive are their own keys for exactly that reason rather than folded
+   * into a neighbour: Handovers moves who RUNS an account, and Oversight is
+   * the override log and the audit trail, which is a different job from
+   * working the book.
+   *
+   * `sales.leads` and `sales.samples` keep their KEYS and change only their
+   * group and their label. A key is a join and renaming one silently revokes
+   * it from everybody holding it; a group is cosmetic. The other eight are
+   * new, and `0136_lead_management_modules.sql` grants them to every grant
+   * already narrowed to `sales.leads` — three routes guarded by that key today
+   * move to new ones, and would otherwise vanish on deploy day for exactly the
+   * people already using them.
+   */
+  {
+    key: "sales.leads",
+    app: "sales",
+    label: "All Leads",
+    group: "Lead Management",
+    href: "/sales/leads",
+    exact: true,
+    note:
+      "The book itself — every lead, its rung, what its gate is waiting on, and the record behind each one. Without it there is no funnel to work.",
+  },
+  {
+    key: "sales.lead-funnel",
+    app: "sales",
+    label: "Funnel & conversion",
+    group: "Lead Management",
+    href: "/sales/leads/funnel",
+    note: "The three ladders drawn as funnels, where business comes from, and what the four reason codes say about what we lose. A reading screen — it writes nothing but a source rename.",
+  },
+  {
+    key: "sales.lead-intake",
+    app: "sales",
+    label: "Intake",
+    group: "Lead Management",
+    href: "/sales/leads/intake",
+    note: "Raising a lead at a desk, in bulk from a file, and the duplicate pairs a book fed by a website form, a handset and a spreadsheet keeps producing.",
+  },
+  {
+    key: "sales.lead-qualify",
+    app: "sales",
+    label: "Qualification",
+    group: "Lead Management",
+    href: "/sales/leads/qualify",
+    note: "Everything between a Suspect and a qualified Prospect: the visit cap's decisions, the verification queue, the validation calls behind them, and what each lead's gate is still missing.",
+  },
+  sales(
+    "samples",
+    "Samples & trials",
+    "Lead Management",
+    "Samples out with customers, the desk that approves and dispatches them, the review nobody chased, and the seven answers a trial produces.",
+  ),
+  {
+    key: "sales.lead-commercial",
+    app: "sales",
+    label: "Commercial",
+    group: "Lead Management",
+    href: "/sales/leads/commercial",
+    note: "Negotiation, the commitments that are forecasts rather than sales, and the first order that converts an account. Renders order status and never writes it.",
+  },
+  {
+    key: "sales.lead-appointments",
+    app: "sales",
+    label: "Distributor appointments",
+    group: "Lead Management",
+    href: "/sales/leads/appointments",
+    note: "The two-step chain that appoints a distributor. Deciding needs distributor.approve, which is management's; the queue is readable without it.",
+  },
+  {
+    key: "sales.lead-actions",
+    app: "sales",
+    label: "Next actions & nurture",
+    group: "Lead Management",
+    href: "/sales/leads/actions",
+    note: "What is owed on every active lead, what is overdue, what has nothing scheduled at all, and the fifteen-row nurture sequence behind it.",
+  },
+  {
+    key: "sales.lead-handovers",
+    app: "sales",
+    label: "Handovers",
+    group: "Lead Management",
+    href: "/sales/leads/handovers",
+    note: "Converted accounts still waiting on a relationship owner. Its own key because a handover moves who RUNS an account — sight, never a rupee — and that is held deliberately.",
+  },
+  {
+    key: "sales.lead-oversight",
+    app: "sales",
+    label: "Oversight",
+    group: "Lead Management",
+    href: "/sales/leads/oversight",
+    note: "Every gate somebody passed and what was missing when they did, the funnel's own audit trail, and the thresholds in force. Reading who overrode what is a different job from working the book.",
+  },
 
   sales("attendance", "Attendance", "People", "Who started the day, when, and from where."),
   sales("leave", "Leave", "People", "Requests waiting on a decision, and the policy behind them."),

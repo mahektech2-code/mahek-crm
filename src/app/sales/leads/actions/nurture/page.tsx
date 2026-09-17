@@ -13,8 +13,9 @@ import {
   Row,
   ScreenHeader,
   Table,
-} from "../../parts";
-import { plural } from "../../words";
+} from "../../../parts";
+import { plural } from "../../../words";
+import { LeadTabs } from "../../lead-tabs";
 
 export const metadata = { title: "Nurture schedule — Sales Dashboard — MahekOne" };
 
@@ -40,6 +41,7 @@ export default async function Page() {
 
   return (
     <div className="p-6">
+      <LeadTabs />
       <ScreenHeader
         title="Nurture schedule"
         subtitle="What the sequence has raised, what is late, and what fired. Fifteen rules produce these; the rules are printed at the bottom so a missing task can be traced to the trigger that never happened."

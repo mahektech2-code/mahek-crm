@@ -17,9 +17,9 @@ import {
   Row,
   ScreenHeader,
   Table,
-} from "../../parts";
-import { plural } from "../../words";
-import { VerificationForm } from "../verification-form";
+} from "../../../parts";
+import { plural } from "../../../words";
+import { VerificationForm } from "../../verification-form";
 
 /**
  * My verification queue.

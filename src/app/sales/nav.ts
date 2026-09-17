@@ -39,7 +39,11 @@ export type NavItem = {
  */
 export const NOT_IN_SIDEBAR = ["/sales/approvals"];
 
-export const SALES_NAV: Array<{ label: string; items: NavItem[] }> = [
+export const SALES_NAV: Array<{
+  label: string;
+  items: NavItem[];
+  collapsible?: boolean;
+}> = [
   {
     label: "Overview",
     items: [
@@ -59,7 +63,37 @@ export const SALES_NAV: Array<{ label: string; items: NavItem[] }> = [
       { href: "/sales/visits", label: "Visits", icon: "visit" },
       { href: "/sales/travel", label: "Travel ledger", icon: "route" },
       { href: "/sales/activity-history", label: "Activity history", icon: "clock" },
-      { href: "/sales/leads", label: "Leads", icon: "spark" },
+    ],
+  },
+  /*
+   * THE ONE COLLAPSIBLE GROUP, and the only one that needed to be.
+   *
+   * Every other group here is four to seven rows and is read at a glance. Lead
+   * Management is ten, which is more than the rest of the sidebar's longest
+   * group and would push Commercial, People and Enablement below the fold for
+   * anybody who does not work the funnel — which is most of this app's
+   * audience. So it collapses, it remembers whether it was open, and it opens
+   * itself whenever the current route is inside it: a group that hid the
+   * screen you were standing on would be furniture rather than navigation.
+   *
+   * TEN and not twenty-three. The rest of the funnel's surface is tabs inside
+   * these ten — see the note in `lib/modules.ts` for why that line was drawn
+   * where it was, and what it costs.
+   */
+  {
+    label: "Lead Management",
+    collapsible: true,
+    items: [
+      { href: "/sales/leads", label: "All Leads", icon: "spark", exact: true },
+      { href: "/sales/leads/funnel", label: "Funnel & conversion", icon: "chart" },
+      { href: "/sales/leads/intake", label: "Intake", icon: "doc" },
+      { href: "/sales/leads/qualify", label: "Qualification", icon: "tick" },
+      { href: "/sales/samples", label: "Samples & trials", icon: "sample" },
+      { href: "/sales/leads/commercial", label: "Commercial", icon: "order" },
+      { href: "/sales/leads/appointments", label: "Distributor appointments", icon: "people" },
+      { href: "/sales/leads/actions", label: "Next actions & nurture", icon: "task" },
+      { href: "/sales/leads/handovers", label: "Handovers", icon: "route" },
+      { href: "/sales/leads/oversight", label: "Oversight", icon: "shield" },
     ],
   },
   {
@@ -68,7 +102,6 @@ export const SALES_NAV: Array<{ label: string; items: NavItem[] }> = [
       { href: "/sales/orders", label: "Orders", icon: "order" },
       { href: "/sales/payments", label: "Payments", icon: "money" },
       { href: "/sales/invoices", label: "Invoices", icon: "doc" },
-      { href: "/sales/samples", label: "Samples", icon: "sample" },
       { href: "/sales/catalogue", label: "Catalogue & rates", icon: "grid" },
     ],
   },

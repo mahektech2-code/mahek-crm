@@ -418,11 +418,36 @@ function StepTable({
           return (
             <Row key={r.approvalId} striped={i % 2 === 1}>
               <Cell truncate={230}>
-                <Link href={`/sales/leads/${r.customerId}`} className="no-underline">
+                {/*
+                  THE NAME OPENS THE APPOINTMENT, not the lead record.
+
+                  A candidate on this queue is being read as an APPOINTMENT —
+                  the profile, the requested terms, the named escalation
+                  reason and both approval steps — and that is a different
+                  page from the lead record, which answers where the shop is
+                  in the funnel. The row used to open the second, so the
+                  screen that exists to decide an appointment was reachable
+                  from nowhere at all.
+
+                  The lead record keeps a link of its own beside it, because
+                  the two questions are genuinely both asked here.
+                */}
+                <Link
+                  href={`/sales/leads/appointments/${r.customerId}`}
+                  className="no-underline"
+                >
                   {r.name}
                 </Link>
                 <span className="block truncate text-[12px] text-muted">
                   {[r.companyName, r.city].filter(Boolean).join(" · ") || "—"}
+                  {" · "}
+                  <Link
+                    href={`/sales/leads/${r.customerId}`}
+                    className="no-underline"
+                    title="Where this shop stands in the funnel, rather than the appointment itself"
+                  >
+                    Lead
+                  </Link>
                 </span>
               </Cell>
               <Cell truncate={180}>

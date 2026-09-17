@@ -621,6 +621,101 @@ export async function decideSuspect(
   }
 }
 
+/**
+ * §4's third answer: it is still a Suspect, and here is why.
+ *
+ * The cap ASKS rather than refuses — that is the whole shape of §4 — so there
+ * have always been three answers to it: Prospect, Not a Prospect, and "not yet,
+ * because …". `decideSuspect` carries the first two, both of which are moves,
+ * and the third was reachable only from a handset: the sole writer of
+ * `lead_hold_reason` was the visit path in `actions/mbos.ts`. A manager working
+ * the Suspect-decisions queue at a desk could read that a lead was past its cap
+ * and could not record the one answer that is usually true.
+ *
+ * It deliberately does NOT move the stage. A lead nobody has decided about is
+ * still a Suspect; parking it at `on_hold` would take it off the queue that
+ * exists to keep asking, which is the opposite of what the cap is for.
+ * `lead_hold_reason` is the same column that answers "why is this parked",
+ * because it is the same question asked at two different rungs.
+ *
+ * FREE TEXT, not a code, and that is not an oversight. The four coded lists
+ * exist so somebody can count an answer later — "how many did we lose on credit
+ * terms" — and there is nothing to count here: the useful content is "owner is
+ * abroad until Diwali", which is a sentence and a date. It is also what the
+ * handset already writes into this column, and two spellings of one column is
+ * how a report comes to disagree with itself.
+ */
+export async function keepAsSuspect(
+  customerId: string,
+  reason: string,
+): Promise<Result<null>> {
+  try {
+    const ctx = await requireCapability("lead.work");
+    const found = await reachableLead(customerId);
+    if (!found.ok) return found.refusal;
+    const lead = found.lead;
+
+    const parsed = z.string().trim().min(3).max(2000).safeParse(reason);
+    if (!parsed.success) return zodErr(parsed.error);
+
+    /*
+     * Only the two rungs the cap applies to. A qualified prospect visited a
+     * fourth time is a negotiation rather than a stall and must never be asked
+     * to justify itself — and a lead already past qualification carrying a
+     * "still a suspect" note would read on its record as somebody having gone
+     * backwards.
+     */
+    if (lead.leadStage !== "suspect" && lead.leadStage !== "contacted") {
+      return err(
+        "This lead is past the Suspect rungs, so there is nothing to keep it at. " +
+          "Parking a lead that is genuinely stuck is the On hold move on its record.",
+      );
+    }
+
+    const day = await today();
+
+    /*
+     * The previous reason, for the audit's before-state. `reachableLead` does
+     * not carry this column, and an audit row that recorded only the new value
+     * would not answer the question it exists for: whether somebody replaced a
+     * reason, and what it used to say.
+     */
+    const [previous] = await db
+      .select({ holdReason: customers.leadHoldReason })
+      .from(customers)
+      .where(eq(customers.id, customerId))
+      .limit(1);
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(customers)
+        .set({
+          leadHoldReason: parsed.data,
+          leadLastActivityDate: day,
+          updatedAt: new Date(),
+        })
+        .where(eq(customers.id, customerId));
+
+      await tx.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: ctx.user.id,
+        action: "lead.suspect.kept",
+        entityType: "customer",
+        entityId: customerId,
+        actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
+        beforeState: { leadHoldReason: previous?.holdReason ?? null },
+        afterState: { leadHoldReason: parsed.data },
+      });
+    });
+
+    refresh(customerId);
+    return ok(null, "Kept as a Suspect, with the reason recorded.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 /* ══════════════════════════════════════════════════ §7 the lead manager */
 
 /**
@@ -958,7 +1053,25 @@ export async function recordCommunication(
       );
     }
 
-    const eventId = gen("lcm");
+    /*
+     * THE CODE RIDES IN THE SOURCE ID, so the log can be counted and filtered.
+     *
+     * This wrote a bare `lcm_…` and put the action code only into the audit
+     * row. The timeline carried the SENTENCE, and `timeline_events.summary`
+     * says in its own schema comment that it is never parsed — so the two rows
+     * were written in one transaction and shared no key, and "how many
+     * brochures went out this month" was a question the log could not answer
+     * about its own contents. The Communication screen had to say so in words.
+     *
+     * The natural key is (app, kind, source row) and this id is generated
+     * fresh per event, so a suffix costs nothing and collides with nothing.
+     * It is the same shape AGENTS.md already describes for a sample, where one
+     * record produces several events and the STAGE goes in the source id.
+     *
+     * Rows written before this carry no suffix, which reads as an unknown code
+     * rather than as a wrong one — the screen already draws that bucket.
+     */
+    const eventId = `${gen("lcm")}:${action.code}`;
 
     await db.transaction(async (tx) => {
       await writeTimelineEvent(tx, {
