@@ -50,6 +50,8 @@ export function DayCheck({
   today,
   evidence,
   retentionHours,
+  showDateNav = true,
+  onChanged,
 }: {
   salesmanId: string;
   day: string;
@@ -57,6 +59,22 @@ export function DayCheck({
   today: string;
   evidence: DayEvidence | null;
   retentionHours: number;
+  /**
+   * Whether to draw the day stepper.
+   *
+   * False where the CALLER is already standing on a date — the Attendance
+   * roll-call opens this over a list it has already dated, and two date
+   * controls on one screen meaning the same thing is how somebody steps one of
+   * them and cannot work out why the other did not move.
+   */
+  showDateNav?: boolean;
+  /**
+   * Told when a verdict lands, for a caller holding its own copy of the
+   * evidence. `router.refresh()` rebuilds the SERVER components on the page —
+   * which is what updates the roll-call's outstanding count — and can say
+   * nothing to a list this component was handed over a fetch.
+   */
+  onChanged?: () => void;
 }) {
   const items = evidence?.items ?? [];
   const accepted = items.filter((i) => i.review?.verdict === "accepted").length;
@@ -68,6 +86,7 @@ export function DayCheck({
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        {showDateNav ? (
         <div className="flex items-center gap-1 text-[13px]">
           <Link
             href={`/sales/people/${salesmanId}?day=${addDays(day, -1)}`}
@@ -93,6 +112,9 @@ export function DayCheck({
             </Link>
           ) : null}
         </div>
+        ) : (
+          <span />
+        )}
 
         {evidence?.attendance ? (
           <p className="text-[13px] text-muted">
@@ -164,6 +186,7 @@ export function DayCheck({
               key={item.ref}
               item={item}
               canCorrect={!evidence?.claim?.decided}
+              onChanged={onChanged}
             />
           ))}
         </div>
@@ -197,7 +220,15 @@ export function DayCheck({
  * who mis-clicked Accept needs a way back, and a verdict with no way to revise
  * it is one people work around by not giving it.
  */
-function EvidenceCard({ item, canCorrect }: { item: EvidenceItem; canCorrect: boolean }) {
+function EvidenceCard({
+  item,
+  canCorrect,
+  onChanged,
+}: {
+  item: EvidenceItem;
+  canCorrect: boolean;
+  onChanged?: () => void;
+}) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
@@ -215,6 +246,7 @@ function EvidenceCard({ item, canCorrect }: { item: EvidenceItem; canCorrect: bo
       return;
     }
     router.refresh();
+    onChanged?.();
   };
 
   return (
@@ -302,6 +334,7 @@ function EvidenceCard({ item, canCorrect }: { item: EvidenceItem; canCorrect: bo
           onDone={() => {
             setOpen(false);
             router.refresh();
+            onChanged?.();
           }}
         />
       ) : null}

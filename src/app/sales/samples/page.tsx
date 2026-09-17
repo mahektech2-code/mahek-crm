@@ -6,16 +6,20 @@ import {
   Banner,
   Cell,
   Empty,
+  FilterChips,
   HeadCell,
   MetricRow,
   Pill,
   Row,
   ScreenHeader,
+  SortHead,
   Table,
 } from "../parts";
 import {
   plural,
 } from "../words";
+import { CustomerName } from "../customer-name";
+import { readSort, sortHref, sortRows, type SortColumns } from "../sort";
 
 export const metadata = { title: "Samples — Sales Dashboard — MahekOne" };
 
@@ -31,13 +35,75 @@ export const metadata = { title: "Samples — Sales Dashboard — MahekOne" };
  * so nothing in MahekOne can say what two cans of thinner are worth, and a
  * number derived from the packing cost would be a confident wrong one.
  */
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ show?: string; sort?: string; dir?: string }>;
+}) {
+  const params = await searchParams;
   const samples = await fieldSamples();
 
-  const awaiting = samples.filter((s) => s.trialOutcome === "pending");
-  const late = awaiting.filter((s) => s.lateDays > 0);
-  const converted = samples.filter((s) => s.trialOutcome === "converted");
+  /* The counts are SQL's, over every sample. The list is a page of them
+     ordered by what is owed — pending first, latest first — so the rows the
+     banner names are the rows at the top rather than the ones under the cap. */
+  const rows = samples.rows;
+  const late = rows.filter((s) => s.trialOutcome === "pending" && s.lateDays > 0);
   const oldest = late.reduce((n, s) => Math.max(n, s.lateDays), 0);
+
+  /*
+   * AWAITING FEEDBACK IS THE DEFAULT, not "past the date".
+   *
+   * The overdue ones are the loudest and they are already named in the banner
+   * above, which is where an exception belongs. The list itself is a worklist:
+   * a sample due on Friday is chased on Thursday, and a screen that opened on
+   * the late ones alone would show a manager only the chances he has already
+   * missed. Everything still owed is the set he can actually act on.
+   */
+  const show = (
+    ["late", "awaiting", "converted", "all"].includes(params.show ?? "") ? params.show! : "awaiting"
+  ) as "late" | "awaiting" | "converted" | "all";
+
+  const visible =
+    show === "late"
+      ? rows.filter((s) => s.trialOutcome === "pending" && s.lateDays > 0)
+      : show === "awaiting"
+        ? rows.filter((s) => s.trialOutcome === "pending")
+        : show === "converted"
+          ? rows.filter((s) => s.trialOutcome === "converted")
+          : rows;
+
+  /*
+   * THE CHIP COUNTS ARE SQL'S AND THE TABLE IS A PAGE OF ONE VIEW.
+   *
+   * `samples.late`, `.awaiting` and `.converted` are counted over every sample
+   * ever sent out; `visible` is a filter over the newest three hundred.
+   * Counting the page instead would be the cheaper answer and the wrong one in
+   * the direction that matters here — a sample goes quiet by being forgotten,
+   * so the figure that must never shrink is the one saying how many are still
+   * owed. A chip reading eleven on a book with forty outstanding is a screen
+   * telling a manager he is nearly finished. The cap is disclosed underneath
+   * instead, which says both true things rather than one of them.
+   */
+  const counts = {
+    late: samples.late,
+    awaiting: samples.awaiting,
+    converted: samples.converted,
+    all: samples.total,
+  };
+
+  const sort = readSort(params, COLUMNS);
+  const sorted = sortRows(visible, sort, COLUMNS);
+  const head = (key: string, label: string, width?: number, align?: "left" | "right") => (
+    <SortHead
+      width={width}
+      align={align}
+      href={sortHref("/sales/samples", sort, key, `show=${show}`)}
+      active={sort.key === key}
+      dir={sort.dir}
+    >
+      {label}
+    </SortHead>
+  );
 
   return (
     <div className="p-6">
@@ -46,10 +112,10 @@ export default async function Page() {
         subtitle="What is out with customers on trial. A sample with no feedback is stock given away, so anything past its follow-up date is flagged here rather than left to be noticed."
       />
 
-      {late.length ? (
+      {samples.late ? (
         <Banner
           tone="warn"
-          title={`${plural(late.length, "sample")} past the follow-up date`}
+          title={`${plural(samples.late, "sample")} past the follow-up date`}
           body={
             <>
               Oldest is {plural(oldest, "day")} late —{" "}
@@ -57,51 +123,92 @@ export default async function Page() {
                 .slice(0, 3)
                 .map((s) => `${s.customerName} (${s.salesmanName})`)
                 .join(" · ")}
-              {late.length > 3 ? ` and ${late.length - 3} more` : ""}. The handset raises a task
+              {samples.late > 3 ? ` and ${samples.late - 3} more` : ""}. The handset raises a task
               for these; nothing else chases them.
             </>
           }
         />
       ) : null}
 
+      {/* Counted over every sample and deliberately unmoved by the chips. A
+          figure that fell when somebody filtered the list under it would read
+          as progress rather than as a narrower question. */}
       <MetricRow
         metrics={[
-          { label: "Awaiting feedback", value: String(awaiting.length) },
+          { label: "Awaiting feedback", value: String(samples.awaiting) },
           {
             label: "Past the date",
-            value: String(late.length),
+            value: String(samples.late),
             sub: oldest ? `oldest ${plural(oldest, "day")}` : undefined,
-            tone: late.length ? "warn" : undefined,
+            tone: samples.late ? "warn" : undefined,
           },
-          { label: "Converted", value: String(converted.length), tone: "success" },
-          { label: "Sent in all", value: String(samples.length) },
+          { label: "Converted", value: String(samples.converted), tone: "success" },
+          { label: "Sent in all", value: String(samples.total) },
         ]}
       />
 
-      {samples.length === 0 ? (
+      {samples.total === 0 ? (
         <Empty
           title="Nothing out on trial"
           body="No sample has been requested from a handset. A sample needs somebody's approval before it goes, and it is asked for on the visit where the customer asked."
         />
       ) : (
+        <>
+          <FilterChips
+            current={show}
+            options={[
+              { key: "late", href: "/sales/samples?show=late", label: "Past the date", count: counts.late },
+              { key: "awaiting", href: "/sales/samples?show=awaiting", label: "Awaiting feedback", count: counts.awaiting },
+              { key: "converted", href: "/sales/samples?show=converted", label: "Converted", count: counts.converted },
+              { key: "all", href: "/sales/samples?show=all", label: "Everything", count: counts.all },
+            ]}
+          />
+
+          {samples.capped ? (
+            <p className="mb-2 text-[13px] text-muted">
+              {rows.length} of {samples.total}, everything still awaiting feedback first
+              {show === "all" ? "" : `, of which ${sorted.length} are in this view`}. The chip
+              counts above are taken over every sample, so they can be larger than what this page
+              holds.
+            </p>
+          ) : null}
+
+          {sorted.length === 0 ? (
+            <Empty
+              title={
+                show === "late"
+                  ? "Nothing is past its date"
+                  : show === "converted"
+                    ? "Nothing has converted yet"
+                    : "Nothing is waiting on feedback"
+              }
+              body={
+                show === "awaiting"
+                  ? "Every sample on this page has an answer against it, which is the state to be in — a sample with no feedback is stock given away."
+                  : "No sample on this page is in that state. The count on the chip is taken over every sample, so there may be older ones behind the cap."
+              }
+            />
+          ) : (
         <Table
           minWidth={1180}
           head={
             <>
-              <HeadCell width={220}>Customer</HeadCell>
-              <HeadCell width={160}>Salesman</HeadCell>
-              <HeadCell width={240}>Product</HeadCell>
-              <HeadCell align="right" width={90}>Cans</HeadCell>
-              <HeadCell width={130}>Requested</HeadCell>
-              <HeadCell width={150}>Feedback due</HeadCell>
-              <HeadCell>State</HeadCell>
+              {head("customer", "Customer", 220)}
+              {head("salesman", "Salesman", 160)}
+              {head("product", "Product", 240)}
+              {head("cans", "Cans", 90, "right")}
+              {head("requested", "Requested", 130)}
+              {head("due", "Feedback due", 150)}
+              {head("state", "State")}
               <HeadCell align="right" width={230} />
             </>
           }
         >
-          {samples.map((s, i) => (
+          {sorted.map((s, i) => (
             <Row key={s.id} striped={i % 2 === 1}>
-              <Cell truncate={220}>{s.customerName}</Cell>
+              <Cell truncate={220}>
+                <CustomerName id={s.customerId} name={s.customerName} />
+              </Cell>
               <Cell truncate={160}>
                 <Link
                   href={`/sales/people/${s.salesmanId}`}
@@ -175,7 +282,41 @@ export default async function Page() {
             </Row>
           ))}
         </Table>
+          )}
+        </>
       )}
     </div>
   );
 }
+
+/**
+ * What each sortable column is worth.
+ *
+ * `null` sorts last in both directions, which is the right way round for the
+ * two dates: a sample with no follow-up date set is not the most overdue thing
+ * on the screen, it is a sample nobody has said anything about, and floating it
+ * to the top of "latest due" would put the row that answers the question least
+ * where the eye goes first.
+ *
+ * The State column sorts on the stored outcome rather than on the words drawn
+ * in the pill — `pending` is rendered as "Awaiting feedback", and sorting by
+ * the label would order the table by a translation the engine knows nothing
+ * about.
+ */
+const COLUMNS: SortColumns<{
+  customerName: string;
+  salesmanName: string;
+  productName: string | null;
+  quantityCans: number | null;
+  requestedDate: string | null;
+  followUpDate: string | null;
+  trialOutcome: string;
+}> = {
+  customer: (s) => s.customerName,
+  salesman: (s) => s.salesmanName,
+  product: (s) => s.productName,
+  cans: (s) => s.quantityCans,
+  requested: (s) => (s.requestedDate ? new Date(s.requestedDate).getTime() : null),
+  due: (s) => (s.followUpDate ? new Date(s.followUpDate).getTime() : null),
+  state: (s) => s.trialOutcome,
+};

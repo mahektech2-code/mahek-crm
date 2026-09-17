@@ -216,6 +216,72 @@ export function HeadCell({
   );
 }
 
+/**
+ * A HEAD CELL THAT SORTS, and it looks like one before it is pressed.
+ *
+ * The arrow is drawn faint on every sortable column and solid on the one in
+ * force — a control that only appears on hover is a control most people never
+ * discover, and a table where three of nine columns sort has to say which
+ * three without being asked.
+ *
+ * It takes an `href` rather than a handler because these tables are server
+ * components: a sort is a URL here, exactly as a filter chip is, so it can be
+ * bookmarked and sent to somebody.
+ */
+export function SortHead({
+  align = "left",
+  width,
+  href,
+  active,
+  dir,
+  children,
+}: {
+  align?: "left" | "right";
+  width?: number;
+  href: string;
+  /** True on the column currently in force. */
+  active: boolean;
+  dir: "asc" | "desc";
+  children?: React.ReactNode;
+}) {
+  return (
+    <th
+      style={width ? { width, minWidth: width } : undefined}
+      className={cx(
+        "sticky top-0 z-2 h-8.5 border-b border-line bg-canvas px-4 text-[11px] font-medium tracking-[0.04em] whitespace-nowrap uppercase",
+        active ? "text-body" : "text-muted",
+        align === "right" ? "text-right" : "text-left",
+      )}
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <Link
+        href={href}
+        scroll={false}
+        title={active ? "Sort the other way" : "Sort by this column"}
+        className={cx(
+          "inline-flex items-center gap-1 tracking-[0.04em] uppercase no-underline hover:text-ink hover:no-underline",
+          active ? "text-body" : "text-muted",
+        )}
+      >
+        {align === "right" ? <Arrow active={active} dir={dir} /> : null}
+        {children}
+        {align === "right" ? null : <Arrow active={active} dir={dir} />}
+      </Link>
+    </th>
+  );
+}
+
+function Arrow({ active, dir }: { active: boolean; dir: "asc" | "desc" }) {
+  return (
+    <span
+      aria-hidden
+      className={cx("text-[9px] leading-none", active ? "text-[#5223E0]" : "text-line-strong")}
+    >
+      {active && dir === "asc" ? "\u25B2" : "\u25BC"}
+    </span>
+  );
+}
+
 export function Cell({
   align = "left",
   className,
@@ -298,6 +364,42 @@ export function Row({
     >
       {children}
     </tr>
+  );
+}
+
+/**
+ * THE NAME IN THE FIRST COLUMN, WHICH IS THE WAY IN.
+ *
+ * Twelve screens here drew their subject as `font-medium text-ink
+ * no-underline` — black, undecorated, indistinguishable from the eleven values
+ * beside it. It IS a link, and on a table where nothing else is clickable
+ * there is no way to find that out except by mousing over every cell in the
+ * row. "There is no option to open their details" is what somebody reported
+ * about the team list, and they were reading the screen correctly.
+ *
+ * It stays INK rather than becoming brand-coloured, because a first column of
+ * purple on every row of every table is a page that shouts, and the name is
+ * the thing being read rather than an action being offered. What carries the
+ * affordance is the hover — the underline and the colour arrive together under
+ * the pointer — which is the convention a table row already teaches.
+ */
+export function EntityLink({
+  href,
+  title,
+  children,
+}: {
+  href: string;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      title={title}
+      className="font-medium text-ink no-underline decoration-from-font underline-offset-2 hover:text-brand hover:underline"
+    >
+      {children}
+    </Link>
   );
 }
 
