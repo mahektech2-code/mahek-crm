@@ -24,13 +24,27 @@
 -- today — the sample desk without the book is a coherent thing to hold — and
 -- widening it would hand somebody the whole funnel on the strength of a group
 -- label changing.
+--
+-- THE APP IS READ OFF THE ROW, NEVER WRITTEN AS A LITERAL, and that is not a
+-- style choice. `sales` is not an original member of `app_id`: it is added by
+-- `ALTER TYPE ... ADD VALUE` in 0061. A value added to an enum may not be USED
+-- in the transaction that adds it, and drizzle-kit applies every pending
+-- migration in ONE transaction — so on a database being built from nothing,
+-- 0061 and this file are the same transaction, and `'sales'::app_id` here is an
+-- unsafe use of a new enum value. It fails on a fresh build and passes on every
+-- database that already has the app, which is the worst of both: green on a
+-- developer's machine, red in CI, and red on the next clean deploy.
+--
+-- `a.app` is a value read from an existing row rather than a literal resolved
+-- against the type, so it needs no such resolution. The `sales.leads` filter is
+-- text and already implies the app: no other app has that module key.
 
 insert into app_module_access (id, user_id, app, module)
 select
   -- `app_module_access.id` is TEXT, not uuid — the cast is not decoration.
   gen_random_uuid()::text,
   a.user_id,
-  'sales'::app_id,
+  a.app,
   m.module
 from app_module_access a
 cross join (
@@ -44,12 +58,11 @@ cross join (
     ('sales.lead-handovers'),
     ('sales.lead-oversight')
 ) as m(module)
-where a.app = 'sales'::app_id
-  and a.module = 'sales.leads'
+where a.module = 'sales.leads'
   and not exists (
     select 1
     from app_module_access existing
     where existing.user_id = a.user_id
-      and existing.app = 'sales'::app_id
+      and existing.app = a.app
       and existing.module = m.module
   );
