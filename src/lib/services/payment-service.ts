@@ -88,18 +88,14 @@ const NEXT_ACTION: Record<number, Record<"whatsapp" | "call", string>> = {
   3: { whatsapp: "Call - urgent", call: "Call - urgent" },
 };
 
-export async function getFollowUpWorklist(filters?: {
-  stage?: number;
-  slowPayersOnly?: boolean;
-  monthEnd?: boolean;
-}): Promise<WorklistRow[]> {
-  const ctx = await resolveScope();
-  const ids = scopedUserIds(ctx.scope);
-
-  const day = await today();
-
-  const rows = await db
-    .select({
+/**
+ * The row, selected once.
+ *
+ * Lifted out so the paged read and the whole-set read cannot disagree about
+ * what a worklist row IS — the same reason `toBillRow` sits beside `listBills`
+ * one screen over.
+ */
+const WORKLIST_SELECT = {
       state: followUpStates,
       customer: customers,
       ownerName: sql<string | null>`(select name from users u where u.id = customers.owner_id)`,
@@ -144,22 +140,23 @@ export async function getFollowUpWorklist(filters?: {
           from payment_receipts r
          where r.customer_id = customers.id and r.status in ('reported','held')
       )`,
-    })
-    .from(followUpStates)
-    .innerJoin(customers, eq(customers.id, followUpStates.customerId))
-    .where(
-      and(
-        // Whose book, by the single definition in access-control. Reading
-        // owner_id alone dropped every customer whose sales account manager
-        // had been set — off the collections list while still owing money,
-        // which is the one list nobody may quietly fall off.
-        scopedToUsers(ids),
-        filters?.stage ? eq(followUpStates.stage, filters.stage) : undefined,
-        filters?.slowPayersOnly ? eq(customers.slowPayer, true) : undefined,
-      ),
-    );
+} as const;
 
-  const mapped: WorklistRow[] = rows.map((
+function toWorklistRows(
+  rows: Array<{
+    state: typeof followUpStates.$inferSelect;
+    customer: typeof customers.$inferSelect;
+    ownerName: string | null;
+    assignedToName: string | null;
+    promisedAmount: number | null;
+    promisedDate: string | null;
+    reportedAmount: number | null;
+    reportedOn: string | null;
+    paymentOnHold: boolean;
+  }>,
+  day: BusinessDate,
+): WorklistRow[] {
+  return rows.map((
     { state, customer, ownerName, assignedToName, ...promise },
   ) => ({
     customerId: customer.id,
@@ -193,11 +190,258 @@ export async function getFollowUpWorklist(filters?: {
         ? "Promise broken - call today"
         : (NEXT_ACTION[state.stage]?.[state.nextChannel] ?? "Follow up"),
   }));
+}
+
+export async function getFollowUpWorklist(filters?: {
+  stage?: number;
+  slowPayersOnly?: boolean;
+  monthEnd?: boolean;
+}): Promise<WorklistRow[]> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const day = await today();
+
+  const rows = await db
+    .select(WORKLIST_SELECT)
+    .from(followUpStates)
+    .innerJoin(customers, eq(customers.id, followUpStates.customerId))
+    .where(
+      and(
+        // Whose book, by the single definition in access-control. Reading
+        // owner_id alone dropped every customer whose sales account manager
+        // had been set — off the collections list while still owing money,
+        // which is the one list nobody may quietly fall off.
+        scopedToUsers(ids),
+        filters?.stage ? eq(followUpStates.stage, filters.stage) : undefined,
+        filters?.slowPayersOnly ? eq(customers.slowPayer, true) : undefined,
+      ),
+    );
+
+  const mapped = toWorklistRows(rows, day);
 
   // Month-end sorts by collectable value; otherwise the oldest debt leads.
   return filters?.monthEnd
     ? mapped.sort((a, b) => b.totalOverdue - a.totalOverdue)
     : mapped.sort((a, b) => b.daysOverdue - a.daysOverdue);
+}
+
+/* ------------------------------------------------------- the worklist, paged */
+
+/**
+ * WHICH BUCKET OF THE WORKLIST somebody is looking at.
+ *
+ * `calls` and `messages` are the day's cadence and are NOT columns: the
+ * engine decides who is due, so the plan's own ids are handed in and the
+ * clause is an `in`. The rest are questions the database can answer for
+ * itself.
+ */
+export type WorklistTab =
+  | "calls"
+  | "messages"
+  | "all"
+  | "stage1"
+  | "stage2"
+  | "stage3"
+  | "promised";
+
+export const WORKLIST_TABS: readonly WorklistTab[] = [
+  "calls",
+  "messages",
+  "all",
+  "stage1",
+  "stage2",
+  "stage3",
+  "promised",
+];
+
+export const WORKLIST_PER_PAGE = 25;
+
+export type WorklistFilters = {
+  tab?: WorklistTab;
+  q?: string;
+  slowOnly?: boolean;
+  /** Sort by what is collectable rather than by what is oldest. */
+  monthEnd?: boolean;
+  page?: number;
+  perPage?: number;
+  /** Today's cadence, from the plan. The two engine-decided tabs. */
+  callIds?: readonly string[];
+  messageIds?: readonly string[];
+};
+
+export type WorklistPage = {
+  rows: WorklistRow[];
+  page: number;
+  pageCount: number;
+  perPage: number;
+  /** Matching every filter, including the tab. */
+  total: number;
+  /** The whole scoped worklist, before any filter. */
+  listTotal: number;
+  /** Overdue paise over the FILTERED set, not the page. */
+  filteredOverdue: number;
+  /** Per-tab counts, over everything the other filters match. */
+  counts: Record<WorklistTab, number>;
+  held: number;
+};
+
+/**
+ * ONE PAGE OF THE COLLECTIONS WORKLIST, counted in SQL.
+ *
+ * It used to be the whole thing: every scoped row serialised into the page,
+ * then filtered, searched and sorted in the browser over an array it had
+ * already been handed. That is the shape AGENTS.md records for the customer
+ * record under COLOUR CAMP, and it fails the same way — the accounts with the
+ * most overdue history are the ones somebody most needs to work, and they are
+ * the ones the screen could show the least of.
+ *
+ * The rules it has to keep, which are this codebase's own and not new:
+ *
+ * **A CAPPED LIST SAYS WHAT IT IS A SLICE OF, AND THE COUNT COMES FROM SQL.**
+ * The tab counts used to be `rows.filter(...).length` over everything the
+ * browser held, which is exactly why the browser held everything. They are
+ * `count(*) filter (...)` now, over the scoped set, so "Stage 3 · 41" is true
+ * on a page of twenty-five.
+ *
+ * **A count is over everything the OTHER filters match.** Searching for a name
+ * narrows every tab's count; standing on Stage 2 does not, or the tabs could
+ * never tell you what moving to another one would show.
+ *
+ * **A paged read needs a tiebreaker in its sort.** Hundreds of rows share a
+ * `days_overdue` and a whole book can share a `total_overdue` of zero, so
+ * `order by days_overdue desc` alone leaves their order to the planner — which
+ * is a row on two pages and another on none. The tiebreaker is the customer id.
+ */
+export async function followUpWorklistPage(
+  filters: WorklistFilters = {},
+): Promise<WorklistPage> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const day = await today();
+
+  const perPage = Math.min(Math.max(filters.perPage ?? WORKLIST_PER_PAGE, 1), 200);
+  const tab: WorklistTab = filters.tab ?? "calls";
+
+  const scoped = scopedToUsers(ids);
+
+  /*
+   * A dated promise, as a clause rather than as the column the row selects.
+   * The row reads the LATEST one for display; the filter only asks whether
+   * there is one at all, which is the same question the browser was asking of
+   * `Boolean(r.promisedDate)`.
+   */
+  const hasPromise = sql`exists (
+    select 1 from follow_up_attempts a
+     where a.customer_id = customers.id and a.promised_date is not null
+  )`;
+
+  /* Everything except the tab. The counts are taken over this. */
+  const q = filters.q?.trim();
+  const base = and(
+    scoped,
+    q ? sql`customers.name ilike ${"%" + q + "%"}` : undefined,
+    filters.slowOnly ? eq(customers.slowPayer, true) : undefined,
+  );
+
+  /*
+   * An empty set is "nobody", never "everybody" — the same rule `billsWhere`
+   * spells out. On a quiet day the cadence genuinely has nobody on it, and a
+   * missing clause there would show the entire book under "Due a call today".
+   */
+  const inIds = (list: readonly string[] | undefined) =>
+    list && list.length
+      ? inArray(customers.id, [...list])
+      : sql`false`;
+
+  const tabClause =
+    tab === "calls"
+      ? inIds(filters.callIds)
+      : tab === "messages"
+        ? inIds(filters.messageIds)
+        : tab === "stage1"
+          ? eq(followUpStates.stage, 1)
+          : tab === "stage2"
+            ? eq(followUpStates.stage, 2)
+            : tab === "stage3"
+              ? eq(followUpStates.stage, 3)
+              : tab === "promised"
+                ? hasPromise
+                : undefined;
+
+  const full = and(base, tabClause);
+
+  const countsFrom = db
+    .select({
+      all: sql<number>`count(*)::int`,
+      stage1: sql<number>`count(*) filter (where ${followUpStates.stage} = 1)::int`,
+      stage2: sql<number>`count(*) filter (where ${followUpStates.stage} = 2)::int`,
+      stage3: sql<number>`count(*) filter (where ${followUpStates.stage} = 3)::int`,
+      promised: sql<number>`count(*) filter (where ${hasPromise})::int`,
+      calls: sql<number>`count(*) filter (where ${inIds(filters.callIds)})::int`,
+      messages: sql<number>`count(*) filter (where ${inIds(filters.messageIds)})::int`,
+      held: sql<number>`count(*) filter (where ${followUpStates.held})::int`,
+    })
+    .from(followUpStates)
+    .innerJoin(customers, eq(customers.id, followUpStates.customerId))
+    .where(base);
+
+  const matchedFrom = db
+    .select({
+      total: sql<number>`count(*)::int`,
+      overdue: sql<number>`coalesce(sum(${followUpStates.totalOverdue}), 0)::bigint`,
+    })
+    .from(followUpStates)
+    .innerJoin(customers, eq(customers.id, followUpStates.customerId))
+    .where(full);
+
+  const listFrom = db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(followUpStates)
+    .innerJoin(customers, eq(customers.id, followUpStates.customerId))
+    .where(scoped);
+
+  const [[counts], [matched], [book]] = await Promise.all([
+    countsFrom,
+    matchedFrom,
+    listFrom,
+  ]);
+
+  const total = Number(matched?.total ?? 0);
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  const page = Math.min(Math.max(filters.page ?? 1, 1), pageCount);
+
+  const order = filters.monthEnd
+    ? [desc(followUpStates.totalOverdue), desc(customers.id)]
+    : [desc(followUpStates.daysOverdue), desc(customers.id)];
+
+  const rows = await db
+    .select(WORKLIST_SELECT)
+    .from(followUpStates)
+    .innerJoin(customers, eq(customers.id, followUpStates.customerId))
+    .where(full)
+    .orderBy(...order)
+    .limit(perPage)
+    .offset((page - 1) * perPage);
+
+  return {
+    rows: toWorklistRows(rows, day),
+    page,
+    pageCount,
+    perPage,
+    total,
+    listTotal: Number(book?.n ?? 0),
+    filteredOverdue: Number(matched?.overdue ?? 0),
+    counts: {
+      all: Number(counts?.all ?? 0),
+      stage1: Number(counts?.stage1 ?? 0),
+      stage2: Number(counts?.stage2 ?? 0),
+      stage3: Number(counts?.stage3 ?? 0),
+      promised: Number(counts?.promised ?? 0),
+      calls: Number(counts?.calls ?? 0),
+      messages: Number(counts?.messages ?? 0),
+    },
+    held: Number(counts?.held ?? 0),
+  };
 }
 
 /* --------------------------------------------------- today's follow-up plan */

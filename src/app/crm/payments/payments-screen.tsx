@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Badge,
   Button,
@@ -46,6 +46,7 @@ import type {
 } from "@/lib/services/payment-service";
 import type { PayOutcomeDefinition } from "@/lib/services/payment-followup-service";
 import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
+import { Pager } from "@/components/ui/pager";
 
 type Row = WorklistRow & {
   openBills: Array<{ id: string; billNo: string; balance: number; dueDate: string }>;
@@ -90,6 +91,11 @@ export function PaymentsScreen({
   outcomes,
   metrics,
   batchCount,
+  filters,
+  pageInfo,
+  counts,
+  held,
+  filteredOverdue,
 }: {
   /** `payments.modes` — the list is configuration, never a literal on a screen. */
   modes: string[];
@@ -112,15 +118,74 @@ export function PaymentsScreen({
   metrics: CollectionsMetrics;
   /** How many stage 1 customers a batch would actually go to today. */
   batchCount: number;
+  /**
+   * WHAT IS ON SCREEN IS WHAT THE ADDRESS SAYS.
+   *
+   * These were component state, which was fine while the browser held the
+   * whole worklist; the server does the filtering and the paging now, so it
+   * has to be told — and a filtered list gains a shareable link and a working
+   * back button for free. "These four, nobody has chased them" is a thing one
+   * telecaller sends another.
+   */
+  filters: {
+    tab: Tab;
+    query: string;
+    slowOnly: boolean;
+    monthEnd: boolean;
+  };
+  pageInfo: {
+    page: number;
+    pageCount: number;
+    perPage: number;
+    /** Matching the filters. */
+    total: number;
+    /** The whole scoped worklist, before any filter. */
+    listTotal: number;
+  };
+  /**
+   * Per-tab counts from SQL, over everything the OTHER filters match.
+   *
+   * They used to be `rows.filter(...).length` over an array the browser had
+   * been handed, which is precisely why it was handed all of it. On a page of
+   * twenty-five a counted-in-the-browser tab would read "Stage 3 · 4" against
+   * a book with forty-one, and nothing on the screen would say so.
+   */
+  counts: Record<Tab, number>;
+  /** Disputed and not escalating — over the scoped set, not the page. */
+  held: number;
+  /** Overdue paise over the filtered set, not the page. */
+  filteredOverdue: number;
 }) {
   const router = useRouter();
   const { run, push } = useToast();
 
-  // Opens on the calling list: it is the one list with work on it today.
-  const [tab, setTab] = React.useState<Tab>("calls");
-  const [query, setQuery] = React.useState("");
-  const [slowOnly, setSlowOnly] = React.useState(false);
-  const [monthEnd, setMonthEnd] = React.useState(false);
+  const search = useSearchParams();
+
+  // Opens on the calling list: it is the one list with work on it today. The
+  // default lives in the page, which is where the URL is read.
+  const { tab, query, slowOnly, monthEnd } = filters;
+  const { page, perPage, total: matched, listTotal } = pageInfo;
+
+  const navigate = React.useCallback(
+    (patch: Record<string, string | number | undefined>) => {
+      const next = new URLSearchParams(search.toString());
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined || v === "" || v === null) next.delete(k);
+        else next.set(k, String(v));
+      }
+      // Any change to what is being looked at starts at the beginning of it —
+      // unless the change IS the page.
+      if (!("page" in patch)) next.delete("page");
+      router.push(`?${next.toString()}`, { scroll: false });
+    },
+    [router, search],
+  );
+
+  // The search box is the one control that cannot afford a round trip per
+  // keystroke, so it holds its own text and navigates when typing settles.
+  const [draft, setDraft] = React.useState(query);
+  const searchTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
   const [promising, setPromising] = React.useState<Row | null>(null);
   const [paying, setPaying] = React.useState<Row | null>(null);
   const [heldOpen, setHeldOpen] = React.useState(false);
@@ -145,29 +210,12 @@ export function PaymentsScreen({
     tab === "messages" ? h.channel === "whatsapp" : h.channel === "call",
   );
 
-  const buckets = {
-    calls: rows.filter((r) => callReason.has(r.customerId)),
-    messages: rows.filter((r) => messageReason.has(r.customerId)),
-    all: rows,
-    stage1: rows.filter((r) => r.stage === 1),
-    stage2: rows.filter((r) => r.stage === 2),
-    stage3: rows.filter((r) => r.stage === 3),
-    promised: rows.filter((r) => Boolean(r.promisedDate)),
-  };
-
-  const visible = React.useMemo(() => {
-    let list = buckets[tab];
-    const q = query.trim().toLowerCase();
-    if (q) list = list.filter((r) => r.name.toLowerCase().includes(q));
-    if (slowOnly) list = list.filter((r) => r.slowPayer);
-    return monthEnd
-      ? [...list].sort((a, b) => b.totalOverdue - a.totalOverdue)
-      : [...list].sort((a, b) => b.daysOverdue - a.daysOverdue);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, query, slowOnly, monthEnd, rows]);
-
-  const total = visible.reduce((a, r) => a + r.totalOverdue, 0);
-  const held = rows.filter((r) => r.held).length;
+  /*
+   * `rows` IS the page now — filtered, sorted and cut in SQL. Nothing here
+   * narrows it further: a second filter in the browser would disagree with the
+   * count above the table, and the count is the half people read.
+   */
+  const visible = rows;
 
   return (
     <div className="max-w-[1440px] px-6 pt-6 pb-10">
@@ -220,7 +268,10 @@ export function PaymentsScreen({
                 [tab === "all" ? null : tab, slowOnly ? "slow-payers" : null,
                  monthEnd ? "month-end" : null, query || null],
               );
-              push(`Exported ${visible.length} rows`);
+              // The page, not the filtered set — the same thing the
+              // customers list exports, said out loud, because exporting
+              // twenty-five of three hundred silently is a trap.
+              push(`Exported ${visible.length} rows · this page of ${matched}`);
             }}
           >
             Export
@@ -286,14 +337,14 @@ export function PaymentsScreen({
           },
           {
             label: "To call today",
-            value: String(buckets.calls.length),
-            tone: buckets.calls.length ? "danger" : "ink",
-            sub: buckets.calls.length ? "past the quiet window" : "nobody is due",
+            value: String(counts.calls),
+            tone: counts.calls ? "danger" : "ink",
+            sub: counts.calls ? "past the quiet window" : "nobody is due",
           },
           {
             label: "To message today",
-            value: String(buckets.messages.length),
-            sub: buckets.messages.length ? "payment reminders" : undefined,
+            value: String(counts.messages),
+            sub: counts.messages ? "payment reminders" : undefined,
           },
           {
             label: "Held (disputed)",
@@ -326,7 +377,7 @@ export function PaymentsScreen({
             Month-end push · {workingDaysLeft} working days left
           </span>
           <span className="text-sm text-body">
-            Sorted by collectable value. Total collectable {money(total)} - chase the top
+            Sorted by collectable value. Total collectable {money(filteredOverdue)} - chase the top
             of this list first.
           </span>
         </Callout>
@@ -334,18 +385,23 @@ export function PaymentsScreen({
 
       <Card className="flex items-center gap-2.5 rounded-b-none border-b-0 px-4 py-2.5">
         <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={draft}
+          onChange={(e) => {
+            const v = e.target.value;
+            setDraft(v);
+            clearTimeout(searchTimer.current);
+            searchTimer.current = setTimeout(() => navigate({ q: v || undefined }), 250);
+          }}
           placeholder="Search customers"
           className="h-8 w-[220px]"
         />
         <Checkbox
           label="Slow payers only"
           checked={slowOnly}
-          onChange={(e) => setSlowOnly(e.target.checked)}
+          onChange={(e) => navigate({ slow: e.target.checked ? "1" : undefined })}
         />
         <button
-          onClick={() => setMonthEnd((m) => !m)}
+          onClick={() => navigate({ sort: monthEnd ? undefined : "value" })}
           className={cx(
             "h-8 flex-none cursor-pointer rounded-[4px] border px-2.5 text-[13px] whitespace-nowrap",
             monthEnd
@@ -358,9 +414,8 @@ export function PaymentsScreen({
         {query || slowOnly || monthEnd ? (
           <button
             onClick={() => {
-              setQuery("");
-              setSlowOnly(false);
-              setMonthEnd(false);
+              setDraft("");
+              navigate({ q: undefined, slow: undefined, sort: undefined });
             }}
             className="h-8 flex-none cursor-pointer px-2.5 text-sm whitespace-nowrap text-brand"
           >
@@ -368,8 +423,16 @@ export function PaymentsScreen({
           </button>
         ) : null}
         <span className="flex-1" />
+        {/*
+          A FILTERED LIST SAYS WHAT IT IS A SLICE OF. The tiles, the ageing
+          strip and the tab counts all describe a set somebody has narrowed,
+          and "41 customers" with no denominator beside it reads as the whole
+          book on a screen where that matters.
+        */}
         <span className="text-[13px] text-muted">
-          Sorted by {monthEnd ? "value" : "age"}
+          {matched === listTotal
+            ? `Sorted by ${monthEnd ? "value" : "age"}`
+            : `${matched.toLocaleString("en-IN")} of ${listTotal.toLocaleString("en-IN")} · sorted by ${monthEnd ? "value" : "age"}`}
         </span>
       </Card>
 
@@ -412,20 +475,20 @@ export function PaymentsScreen({
       <Card className="overflow-hidden rounded-t-none">
         <Tabs
           value={tab}
-          onChange={setTab}
+          onChange={(next) => navigate({ tab: next === "calls" ? undefined : next })}
           className="px-5"
           tabs={[
-            { key: "calls", label: "Call today", count: buckets.calls.length },
+            { key: "calls", label: "Call today", count: counts.calls },
             {
               key: "messages",
               label: "Message today",
-              count: buckets.messages.length,
+              count: counts.messages,
             },
-            { key: "all", label: "All customers", count: buckets.all.length },
-            { key: "stage1", label: "Stage 1 · WhatsApp nudge", count: buckets.stage1.length },
-            { key: "stage2", label: "Stage 2 · WhatsApp and calls", count: buckets.stage2.length },
-            { key: "stage3", label: "Stage 3 · Urgent", count: buckets.stage3.length },
-            { key: "promised", label: "Promised", count: buckets.promised.length },
+            { key: "all", label: "All customers", count: counts.all },
+            { key: "stage1", label: "Stage 1 · WhatsApp nudge", count: counts.stage1 },
+            { key: "stage2", label: "Stage 2 · WhatsApp and calls", count: counts.stage2 },
+            { key: "stage3", label: "Stage 3 · Urgent", count: counts.stage3 },
+            { key: "promised", label: "Promised", count: counts.promised },
           ]}
         />
 
@@ -568,9 +631,19 @@ export function PaymentsScreen({
                 </div>
               </div>
             ))}
-            <div className="bg-canvas px-5 py-2.5 text-[13px] text-muted">
-              Showing {visible.length} customers · {money(total)} collectable
-            </div>
+            {/*
+              The note is not decoration: the ageing strip, the tiles and the
+              collectable total above all describe the WHOLE filtered set, and
+              a reader is entitled to know they are not the page below.
+            */}
+            <Pager
+              total={matched}
+              page={page}
+              perPage={perPage}
+              note={`${money(filteredOverdue)} collectable across ${plural(matched, "customer")}`}
+              onPage={(p) => navigate({ page: p })}
+              onPerPage={(n) => navigate({ per: n === 25 ? undefined : n })}
+            />
           </>
         ) : (
           <EmptyState
