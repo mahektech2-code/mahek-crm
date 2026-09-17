@@ -11,6 +11,11 @@ import type { Person } from "@/lib/services/admin-people-service";
  * MahekOne actually has. It used to be a separate hand-written list of three,
  * so People could not grant the other four apps and the launcher and the
  * console disagreed about what existed.
+ *
+ * What `./data.ts` still supplies is the endpoint metadata and a short name.
+ * Everything a reader is shown — the name, whether it is live, where it goes,
+ * what it is for — comes from `APPS`, and the levels come from
+ * `lib/role-levels.ts`. Nothing about an app is typed in two places any more.
  */
 const FULL_REGISTRY: RegistryEntry[] = APPS.map((a, i) => {
   const sample = REGISTRY.find((r) => r.id === a.id);
@@ -21,7 +26,6 @@ const FULL_REGISTRY: RegistryEntry[] = APPS.map((a, i) => {
     short: sample?.short ?? a.initials,
     status: a.built ? "Live" : "Coming soon",
     route: a.href,
-    roles: sample?.roles ?? [],
     order: sample?.order ?? 100 + i,
     desc: a.description,
   } as RegistryEntry;

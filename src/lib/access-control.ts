@@ -773,17 +773,14 @@ const SHARED: ReadonlySet<Capability> = new Set<Capability>([
  * read; only the vocabulary is new.
  * ------------------------------------------------------------------------- */
 
-export type Role = "associate" | "manager" | "admin";
-
-const ROLE_LABELS: Record<Role, string> = {
-  associate: "Associate",
-  manager: "Manager",
-  admin: "Admin",
-};
-
-export function roleLabel(role: Role): string {
-  return ROLE_LABELS[role];
-}
+/*
+ * The type and the words live in `lib/role-levels.ts`, which is PURE and
+ * client-safe. This file is `server-only`, and the screens that have to NAME a
+ * level — the Admin Console's app drawer among them — run in a browser. Two
+ * copies of three words is still two copies.
+ */
+export { roleLabel, ROLE_LEVELS, type Role } from "./role-levels";
+import type { Role } from "./role-levels";
 
 /**
  * A HAT: the level, and the app it is worn in.

@@ -6,9 +6,21 @@
  * to the registry gives the console a working settings section without a code
  * change, because the console reads that app's schema endpoint.
  *
- * Everything here is the demo contract the UI is built against. The screens are
- * the deliverable; wiring these shapes to `app_settings` and the real tables is
- * the next step and does not change a single component below.
+ * WHAT IS LEFT HERE IS THE ENDPOINT METADATA AND NOTHING ELSE.
+ *
+ * It used to carry each app's name, status, route, description and a per-app
+ * "role vocabulary" as well — a hand-typed second copy of `lib/apps.ts` that
+ * had drifted to four apps out of nine, called the Salesman App "Coming soon"
+ * three releases after it shipped, described Accounts as loading sheets and
+ * vehicle assignment, and listed roles ("Telecaller", "Accounts") that the
+ * product deleted when a role became a level.
+ *
+ * `store.tsx` already derived the name, status, route and description from
+ * `APPS`, so those copies were dead weight being read by nobody. The roles
+ * were worse than dead: the drawer rendered them, so a console whose whole job
+ * is answering "what does this platform have" was answering from a fixture —
+ * which is the failure AGENTS.md names, because a console that answers from a
+ * file is worse than one that does not answer. It is believed.
  * ------------------------------------------------------------------------- */
 
 import type { Tone } from "@/components/ui/primitives";
@@ -26,10 +38,6 @@ export type RegistryEntry = {
   schemaEndpoint: string;
   writeEndpoint: string;
   summaryEndpoint: string;
-  roles: string[];
-  managerRole: string;
-  /** Whether this app's roles carry a reporting line. */
-  reportsTo?: boolean;
   order: number;
   desc: string;
 };
@@ -46,9 +54,6 @@ export const REGISTRY: RegistryEntry[] = [
     summaryEndpoint: "/api/crm/summary",
     /* The audiences this app's SOPs are written for, shown on the app's own
        card. Not a level, and never compared against one. role-name-ok */
-    roles: ["Telecaller", "Manager"],
-    managerRole: "Manager",
-    reportsTo: true,
     order: 1,
     desc: "Call queue, payment follow-up, reminders and the EOD report.",
   },
@@ -61,8 +66,6 @@ export const REGISTRY: RegistryEntry[] = [
     schemaEndpoint: "—",
     writeEndpoint: "—",
     summaryEndpoint: "—",
-    roles: ["Accounts", "Manager"],
-    managerRole: "Manager",
     order: 2,
     desc: "Loading sheets, vehicle assignment and delivery confirmation.",
   },
@@ -75,8 +78,6 @@ export const REGISTRY: RegistryEntry[] = [
     schemaEndpoint: "—",
     writeEndpoint: "—",
     summaryEndpoint: "—",
-    roles: ["Salesman", "Manager"],
-    managerRole: "Manager",
     order: 3,
     desc: "Visit requests, route for the day and outcomes from the field.",
   },

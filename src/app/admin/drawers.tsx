@@ -17,6 +17,7 @@ import {
 import { validateAppEndpoint, validateAppRoute, validateAppSlug } from "@/lib/apps";
 import { slugify } from "@/lib/slug";
 import { useAdmin, type Drawer as DrawerState } from "./store";
+import { ROLE_LEVELS, roleLabel } from "@/lib/role-levels";
 
 /* ---------------------------------------------------------------------------
  * Every editor in the console is the same drawer: a list of declared fields, an
@@ -378,8 +379,27 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
         error: validateAppEndpoint(v("summary", app?.summaryEndpoint ?? "")) ?? undefined,
       },
       {
-        key: "roles", label: "Role vocabulary", value: v("roles", app?.roles.join(", ") ?? ""), placeholder: "Dispatcher, Manager",
-        help: "The roles this app understands. The console renders these options in People → Roles.",
+        /*
+         * A ROLE IS A LEVEL, AND EVERY APP HAS THE SAME THREE.
+         *
+         * This was a free-text "role vocabulary" per app — "Telecaller,
+         * Manager" on the CRM, "Accounts, Manager" on Accounts — and both
+         * halves of it stopped being true when roles became levels: those two
+         * words are not roles any more, and the field's own help pointed at
+         * People → Roles, a screen that no longer exists. Nothing read the
+         * value, so it was a fiction somebody could edit and be believed by.
+         *
+         * It is read-only and derived now. What genuinely differs per app is
+         * the JOB the level amounts to — associate on the CRM is a telecaller,
+         * on Accounts a clerk, on the Salesman App a field salesman — and that
+         * is decided by the grant rather than by a word typed here.
+         */
+        key: "roles",
+        label: "Levels",
+        value: ROLE_LEVELS.map(roleLabel).join(", "),
+        readOnly: true,
+        help:
+          "Every app has these three. What the level amounts to is the job — an associate on the CRM is a telecaller, on Accounts a clerk — and that comes from the grant, not from a word typed here.",
       },
       {
         key: "desc", label: "Description", value: v("desc", app?.desc ?? ""), area: true,
