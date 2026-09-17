@@ -2241,17 +2241,33 @@ async function performanceFor(
            p.untargeted,
            p.unmatched_revenue_paise as "unmatchedRevenuePaise",
            p.computed_at as "computedAt",
+           /*
+            * A BAND IS ABOUT A FORMULATION NOW, and an inner join onto
+            * product_categories silently dropped every one of them.
+            *
+            * The mix moved off the three categories onto the nineteen
+            * formulations, so a row written for a formulation carries a null
+            * category_id — and this join, the last reader of the pair that was
+            * not updated, matched none of them. The handset then received an
+            * empty list for a target that plainly had bands set on it, which
+            * reads on the phone as nothing having been asked of him rather
+            * than as a payload with a hole in it. Both are read and coalesced,
+            * since a target set before the change still scores on its
+            * categories. (No backticks in here: they end the sql literal.)
+            */
            coalesce(
              (select json_agg(json_build_object(
-                        'name', pc.name,
+                        'name', coalesce(pf.name, pc.name),
                         'targetBp', c.target_bp,
                         'minimumBp', c.minimum_bp,
                         'actualBp', c.actual_bp,
                         'actualMl', c.actual_ml,
                         'status', c.status)
-                      order by pc.display_order)
+                      order by coalesce(pc.display_order, 0),
+                               coalesce(pf.name, pc.name))
                 from sales_performance_categories c
-                join product_categories pc on pc.id = c.category_id
+                left join product_categories pc on pc.id = c.category_id
+                left join product_formulations pf on pf.id = c.formulation_id
                where c.performance_id = p.id),
              '[]'::json
            ) as categories

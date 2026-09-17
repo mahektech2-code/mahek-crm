@@ -343,8 +343,16 @@ export async function baselineFor(
 export async function mixCategories(): Promise<
   { id: string; name: string; isResidual: boolean }[]
 > {
+  /*
+   * ACTIVE ONLY, because this is the OFFER — a formulation an admin has
+   * retired is one nobody should be aimed at next month. A band already set on
+   * one is untouched and goes on scoring: `bandsForTargets` reads it by id and
+   * does not ask, since a target somebody typed is a decision and deactivating
+   * a liquid mid-month must not silently drop a share out of their score.
+   */
   const rows = await db.execute<{ id: string; name: string; is_residual: boolean }>(sql`
     select id, name, is_residual from product_formulations
+     where active
      order by is_residual, name
   `);
   return rows.map((r) => ({ id: r.id, name: r.name, isResidual: r.is_residual }));

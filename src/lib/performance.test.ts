@@ -22,6 +22,7 @@ import {
   bills,
   customers,
   finishedGoods,
+  mbosDevices,
   orders,
   payments,
   paymentReceipts,
@@ -40,6 +41,7 @@ import {
   recomputeSalesPerformance,
   unattributedForPeriod,
 } from "@/lib/services/performance-service";
+import { buildBootstrap, type MbosPrincipal } from "@/lib/services/mbos-service";
 
 /* ------------------------------------------------------------------ harness */
 
@@ -181,8 +183,31 @@ async function makeOrder(
   return row;
 }
 
+/**
+ * The id each seeded formulation got, by slug.
+ *
+ * They are random per run, so a test setting a mix band on a FORMULATION has
+ * to look one up — a category band could name `pcat_universal` because the
+ * categories are fixed rows and formulations are not.
+ */
+const formulationId = new Map<string, string>();
+
 /** Enough of a catalogue for the mix to have something to classify. */
 async function seedCatalogue() {
+  formulationId.clear();
+  /*
+   * "Other" — the residual FORMULATION, which the migration creates in a real
+   * database and the truncate above removes from this one. Without it every
+   * test here would score the formulation bucket with unmatched value silently
+   * missing from the denominator, which is the one thing the residual exists
+   * to prevent.
+   */
+  const residualId = id("frm");
+  await db
+    .insert(productFormulations)
+    .values({ id: residualId, name: "Other", slug: "other", isResidual: true });
+  formulationId.set("other", residualId);
+
   const formulations = [
     { slug: "mahekuniversal", name: "Mahek Universal", category: "pcat_universal" },
     { slug: "m5x4", name: "M5x4", category: "pcat_nano" },
@@ -191,6 +216,7 @@ async function seedCatalogue() {
   ];
   for (const f of formulations) {
     const fid = id("frm");
+    formulationId.set(f.slug, fid);
     await db.insert(productFormulations).values({
       id: fid,
       name: f.name,
@@ -447,6 +473,125 @@ describe("volume and mix", () => {
     // It sits in the residual so the denominator stays whole.
     assert.equal(a.byCategory.get("pcat_other")?.valuePaise, 50_000_00);
     assert.equal(a.byCategory.get("pcat_other")?.millilitres, 0);
+  });
+});
+
+/* ================================== the mix is set on FORMULATIONS, not on
+                                      the three categories above them */
+
+describe("a mix set on formulations", () => {
+  /**
+   * The same publish the screen does: every band names a formulation and
+   * `category_id` is null, which is what the check constraint allows and what
+   * `sales_target_categories_one_subject` refuses to see both of.
+   */
+  async function publishFormulationTarget(userId: string) {
+    const targetId = id("stg");
+    await db.execute(sql`
+      insert into sales_targets (id, user_id, period, revenue_target_paise,
+        status, published_at)
+      values (${targetId}, ${userId}, ${PERIOD}, 100_000_00, 'published', now())
+    `);
+    for (const [slug, min, tgt, str] of [
+      ["mahekuniversal", 2500, 3000, 3500],
+      ["m5x4", 1000, 2000, 2500],
+      ["other", 0, 1000, 1000],
+    ] as const) {
+      await db.execute(sql`
+        insert into sales_target_categories (id, target_id, formulation_id,
+          minimum_bp, target_bp, stretch_bp)
+        values (${id("stc")}, ${targetId}, ${formulationId.get(slug)!},
+                ${min}, ${tgt}, ${str})
+      `);
+    }
+    return targetId;
+  }
+
+  test("each line lands in its own formulation, and unmatched value in Other", async () => {
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [
+      { product: UNIVERSAL, cans: 3, amountPaise: 30_000_00 },
+      { product: NANO, cans: 5, amountPaise: 50_000_00 },
+      { product: "Some Thinner Nobody Catalogued", cans: 9, amountPaise: 20_000_00 },
+    ]);
+
+    const a = (await actualsForPeriod(PERIOD)).get(rahul.id)!;
+    assert.equal(
+      a.byFormulation.get(formulationId.get("mahekuniversal")!)?.valuePaise,
+      30_000_00,
+    );
+    assert.equal(a.byFormulation.get(formulationId.get("m5x4")!)?.valuePaise, 50_000_00);
+    assert.equal(a.byFormulation.get(formulationId.get("other")!)?.valuePaise, 20_000_00);
+    const total = [...a.byFormulation.values()].reduce((s, v) => s + v.valuePaise, 0);
+    assert.equal(total, 100_000_00, "every rupee has to be in some formulation");
+  });
+
+  test("the shares are read off the formulation bucket, never the category one", async () => {
+    // The two buckets hold the same money under different keys, so scoring the
+    // wrong one would halve nothing and simply report a share against a name
+    // that is not on the target at all.
+    await publishFormulationTarget(rahul.id);
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [
+      { product: UNIVERSAL, cans: 3, amountPaise: 30_000_00 },
+      { product: NANO, cans: 7, amountPaise: 70_000_00 },
+    ]);
+
+    const [reading] = await readingsForPeriod(PERIOD, TODAY, { userIds: [rahul.id] });
+    assert.ok(reading, "expected a reading for a person holding a target");
+    const byName = new Map(reading.mix.categories.map((c2) => [c2.name, c2]));
+    assert.ok(byName.has("Mahek Universal"), "the band names a formulation");
+    assert.equal(byName.get("Mahek Universal")!.actualBp, 3000, "30% of the value");
+    assert.equal(byName.get("M5x4")!.actualBp, 7000);
+  });
+
+  test("the cache stores a formulation band as a formulation, not as a category", async () => {
+    await publishFormulationTarget(rahul.id);
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 10, amountPaise: 100_000_00 }]);
+    await recomputeSalesPerformance(PERIOD, TODAY);
+
+    const rows = await db.execute<{ cats: number; forms: number }>(sql`
+      select count(*) filter (where category_id is not null)::int as cats,
+             count(*) filter (where formulation_id is not null)::int as forms
+        from sales_performance_categories
+    `);
+    assert.equal(rows[0].cats, 0);
+    assert.equal(rows[0].forms, 3, "one row per formulation on the target");
+  });
+
+  test("AND IT REACHES THE HANDSET — the bands are on the sync payload", async () => {
+    /*
+     * The bug this pins: the wire read `sales_performance_categories` through
+     * an INNER join onto `product_categories`, so a row keyed on a formulation
+     * matched nothing and the phone was sent an empty mix for a target that
+     * plainly had one. Nothing failed anywhere — the payload was well formed
+     * and simply had a hole in it, which on the handset reads as nothing
+     * having been asked of him.
+     */
+    await publishFormulationTarget(rahul.id);
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 10, amountPaise: 100_000_00 }]);
+    await recomputeSalesPerformance(PERIOD, TODAY);
+
+    const deviceId = `perf-probe-${randomUUID().slice(0, 8)}`;
+    await db
+      .insert(mbosDevices)
+      .values({ id: id("dev"), userId: rahul.id, deviceId, active: true });
+
+    const payload = await buildBootstrap({
+      user: rahul,
+      deviceId,
+      role: "associate",
+      scope: { kind: "own", userIds: [rahul.id] },
+    } as MbosPrincipal);
+
+    const month = (payload.performance as { period: string; categories: unknown }[]).find(
+      (p) => p.period === PERIOD,
+    );
+    assert.ok(month, "the month he is being judged on has to be on the payload");
+    const names = (month.categories as { name: string }[]).map((x) => x.name).sort();
+    assert.deepEqual(names, ["M5x4", "Mahek Universal", "Other"]);
   });
 });
 
