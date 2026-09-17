@@ -379,7 +379,6 @@ export async function followUpWorklistPage(
       promised: sql<number>`count(*) filter (where ${hasPromise})::int`,
       calls: sql<number>`count(*) filter (where ${inIds(filters.callIds)})::int`,
       messages: sql<number>`count(*) filter (where ${inIds(filters.messageIds)})::int`,
-      held: sql<number>`count(*) filter (where ${followUpStates.held})::int`,
     })
     .from(followUpStates)
     .innerJoin(customers, eq(customers.id, followUpStates.customerId))
@@ -395,7 +394,11 @@ export async function followUpWorklistPage(
     .where(full);
 
   const listFrom = db
-    .select({ n: sql<number>`count(*)::int` })
+    .select({
+      n: sql<number>`count(*)::int`,
+      /* Over the scoped book rather than the filtered set — see `held`. */
+      held: sql<number>`count(*) filter (where ${followUpStates.held})::int`,
+    })
     .from(followUpStates)
     .innerJoin(customers, eq(customers.id, followUpStates.customerId))
     .where(scoped);
@@ -440,7 +443,7 @@ export async function followUpWorklistPage(
       calls: Number(counts?.calls ?? 0),
       messages: Number(counts?.messages ?? 0),
     },
-    held: Number(counts?.held ?? 0),
+    held: Number(book?.held ?? 0),
   };
 }
 
