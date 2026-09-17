@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -1340,7 +1341,24 @@ export type ReportedQuiet = {
  * A customer with both is treated as held. The strongest reason to leave
  * somebody alone is the one that should win, and a hold is a person saying so.
  */
-export async function reportedQuietByCustomer(): Promise<Map<string, ReportedQuiet>> {
+/*
+ * MEMOIZED PER REQUEST, like `getPaymentFollowUpPlan` beside it.
+ *
+ * This is one grouped aggregate over every undecided receipt in the book, and
+ * it answers a question about the WHOLE book however few customers the caller
+ * cares about. `paymentCadenceFor` then reads a single key out of it — and the
+ * reminders list calls that once per pending reminder, so a screen with forty
+ * of them scanned `payment_receipts` forty times to read forty rows out of one
+ * map. The collections worklist asks for the same map again in the same
+ * request.
+ *
+ * Nothing about the answer can change inside a request: a receipt confirmed
+ * mid-render is not a thing that happens, and every write path recomputes
+ * after it commits rather than reading this.
+ */
+export const reportedQuietByCustomer = cache(async function reportedQuietByCustomer(): Promise<
+  Map<string, ReportedQuiet>
+> {
   const rows = await db
     .select({
       customerId: paymentReceipts.customerId,
@@ -1375,7 +1393,7 @@ export async function reportedQuietByCustomer(): Promise<Map<string, ReportedQui
       },
     ]),
   );
-}
+});
 
 /* ------------------------------------------- money we already know about */
 

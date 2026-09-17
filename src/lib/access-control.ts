@@ -765,20 +765,42 @@ export type Hat = { app: AppId | null; role: Role };
  * account's own. A grant with no role means the account's primary one, which
  * is what every grant meant before roles existed and what `app:grant` writes.
  */
+const hatsForIds = cache(async function hatsForIds(
+  userId: string,
+  role: string,
+): Promise<Hat[]> {
+  const rows = await db
+    .select({ app: appAccess.app, role: appAccess.role })
+    .from(appAccess)
+    .where(eq(appAccess.userId, userId));
+
+  const hats: Hat[] = [{ app: null, role: role as Role }];
+  for (const r of rows) {
+    hats.push({ app: r.app as AppId, role: (r.role ?? role) as Role });
+  }
+  return hats;
+});
+
+/**
+ * MEMOIZED PER REQUEST, AND KEYED ON THE IDS RATHER THAN THE OBJECT.
+ *
+ * `canFor` asks this once per capability and `requireCapability` once per
+ * audited write, so it is the same `app_access` read several times over inside
+ * one request — four times on the customer record page, three on the customers
+ * list, and once more on every save. None of them can disagree: a grant cannot
+ * change half way through rendering a page.
+ *
+ * The inner function takes the id and the role as STRINGS deliberately.
+ * React's `cache` keys on argument identity, so memoizing on the `user` object
+ * would miss the moment two callers pass separately-read rows for one person —
+ * which is exactly the case this exists to collapse, and it would fail by
+ * silently doing nothing rather than by breaking.
+ */
 export async function hatsFor(user: {
   id: string;
   role: string;
 }): Promise<Hat[]> {
-  const rows = await db
-    .select({ app: appAccess.app, role: appAccess.role })
-    .from(appAccess)
-    .where(eq(appAccess.userId, user.id));
-
-  const hats: Hat[] = [{ app: null, role: user.role as Role }];
-  for (const r of rows) {
-    hats.push({ app: r.app as AppId, role: (r.role ?? user.role) as Role });
-  }
-  return hats;
+  return hatsForIds(user.id, user.role);
 }
 
 /**

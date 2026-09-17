@@ -1466,7 +1466,12 @@ export async function listTargetsPage(
     .leftJoin(monthlyTargets, joinTarget)
     .where(clause)
     .orderBy(
-      resolveSort(targetSortColumns(targetExpr, achievedExpr, gapExpr), filters.sort, "name"),
+      ...resolveSort(
+        targetSortColumns(targetExpr, achievedExpr, gapExpr),
+        filters.sort,
+        "name",
+        customers.id,
+      ),
     )
     .limit(perPage)
     .offset((page - 1) * perPage);

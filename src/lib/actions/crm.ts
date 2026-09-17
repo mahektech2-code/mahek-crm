@@ -1687,13 +1687,29 @@ export async function submitEod(body: string): Promise<Result> {
 
 /* -------------------------------------------------------- notifications */
 
+/*
+ * NEITHER OF THESE REVALIDATES, AND BOTH USED TO REVALIDATE EVERYTHING.
+ *
+ * They carried `revalidatePath("/", "layout")` — the broadest invalidation the
+ * framework offers — on the cheapest write in the app. Marking one
+ * notification read threw away the client's router cache for every route under
+ * `/`, so the next navigation to any screen was a cold server render, and the
+ * action's own response waited on a re-render of the current route with its
+ * layout underneath it. A bell is pressed between calls, which is exactly when
+ * somebody is about to navigate.
+ *
+ * Nothing is lost by dropping it: both call sites in `shell/header.tsx` follow
+ * the await with `router.refresh()` (or a `router.push` to the notification's
+ * own href), so the badge is already brought up to date by the client, off the
+ * path the person is waiting on. The read itself is committed before either
+ * runs.
+ */
 export async function markNotificationsRead(): Promise<Result> {
   const ctx = await resolveScope();
   await db
     .update(notifications)
     .set({ read: true })
     .where(eq(notifications.userId, ctx.user.id));
-  revalidatePath("/", "layout");
   return okVoid();
 }
 
@@ -1705,7 +1721,6 @@ export async function markNotificationRead(
     .update(notifications)
     .set({ read: true })
     .where(eq(notifications.id, notificationId));
-  revalidatePath("/", "layout");
   return okVoid();
 }
 
