@@ -1263,7 +1263,10 @@ const FLUSH_ENGINE = "mbos-app/src/engines/flush-answer.ts";
  * `partial` sits here because the server half is on its own branch. It comes
  * off the moment that lands, and the test after this one says so.
  */
-const AHEAD_OF_THE_ROUTE = new Set(["partial"]);
+/* Empty, and the test above is what emptied it. `partial` sat here for exactly
+   as long as the handset could read a word the route could not yet answer —
+   the safe deploy order, not a fault. Both halves are in now. */
+const AHEAD_OF_THE_ROUTE = new Set<string>([]);
 
 /** Every `tracking: "…"` literal the route can put in an answer. */
 function routeWords(): Set<string> {
