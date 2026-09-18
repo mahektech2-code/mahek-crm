@@ -14,20 +14,32 @@ import { metresBetween } from "@/lib/geo";
  * activity's recorded location, anything) ever reads this — only
  * `street-map.tsx`'s LineString does.
  *
- * `enhancePath` is deliberately never sent. It sounds like the setting a
- * caller wants — a smoother line — and what it actually does is interpolate
- * ola's OWN GUESS at how you would drive between two fixes that are not
- * close together, along roads its routing engine picked rather than roads
- * anybody was seen on: a batch of 50 real fixes came back as 82 points with
- * it set, 50 without. Ordinary sampling gaps make this fire constantly, and
- * what it draws is a plausible-looking detour with the same visual weight as
- * a real fix — a manager reported roads a route had never gone near, and the
- * shape of the trail was reading as a prediction while looking like a
- * record. Without it, Ola still nudges a real fix onto the nearest road —
- * genuine drift correction — but invents no path between two fixes that
- * were never that close; a gap in the real trail stays a straight line
- * between two real points, which is the same honest gap the raw trail
- * already drew.
+ * `enhancePath` IS SENT BY ONE OF THE TWO ENTRY POINTS AND NOT BY THE OTHER,
+ * and this paragraph said "never" for both long after that stopped being true.
+ * `snapToRoad` does not send it: it relocates a real fix onto the nearest road
+ * and invents nothing between two fixes, so it answers one point per point.
+ * `roadPathFor` DOES send it, deliberately and narrowly — see its own note for
+ * the argument, which is that fixes three seconds apart have no room between
+ * them for a routing engine to pick a road nobody was on, and that the caller
+ * hands it one confident run at a time with every real absence already cut out
+ * as a gap. Its answer has as many points as the road has corners.
+ *
+ * The objection the option was removed for in #251 stands where it applied: a
+ * batch of 50 real fixes minutes apart came back as 82 points with it set, and
+ * what it drew between the distant ones was a plausible detour carrying the
+ * same visual weight as a record. That is why it is not simply switched on for
+ * both, and why a caller reaching for it has to be able to say why the space
+ * it is guessing across is too small to guess in.
+ *
+ * A FAILED BATCH COSTS ITS OWN POINTS AND NOT THE DAY'S. One bad request used
+ * to return null for the WHOLE path, so a single 400 near the end of a long
+ * walk threw away every batch that had already come back correctly and the
+ * manager saw the raw line for all of it. What a failure means is "this stretch
+ * could not be improved", which is a statement about that stretch: its own raw
+ * points are carried through in place of the snapped ones and the rest of the
+ * line keeps its road. Null is still the answer where NOTHING was improved, so
+ * the caller's old fallback is untouched — an outage, a missing key and a path
+ * too short to snap all behave exactly as they did.
  *
  * Batched at Ola Maps' own ceiling per request — 50 points, not the 100 the
  * endpoint's own naming suggests. That was found, not read off a spec: every
@@ -62,9 +74,9 @@ type OlaMapsSnapResponse = {
 /**
  * Snaps a trail onto the road network, or returns null.
  *
- * One output point per input point, always — see the file header for why
- * `enhancePath` is never sent. Anything else would be Ola's routing engine
- * inventing a path between two fixes rather than relocating a real one.
+ * One output point per input point, always: this entry point does not send
+ * `enhancePath`, so nothing here is Ola's routing engine inventing a path
+ * between two fixes rather than relocating a real one.
  *
  * Null covers every way this can fail to help — no key set, fewer than two
  * points to draw a line between, a network error, a non-200, an answer that
@@ -130,6 +142,8 @@ async function callSnap(points: LatLng[], enhancePath: boolean): Promise<LatLng[
   if (!apiKey) return null;
 
   const snapped: LatLng[] = [];
+  /* Whether ANY batch came back from Ola. See the return below for why. */
+  let improved = false;
 
   /*
    * BATCHES OVERLAP BY ONE POINT, and that one point is the whole join.
@@ -159,34 +173,59 @@ async function callSnap(points: LatLng[], enhancePath: boolean): Promise<LatLng[
       continue;
     }
 
-    const path = batch.map((p) => `${p.lat},${p.lng}`).join("|");
-    const url =
-      `${SNAP_URL}?points=${encodeURIComponent(path)}&api_key=${encodeURIComponent(apiKey)}` +
-      (enhancePath ? "&enhancePath=true" : "");
-
-    let response: Response;
-    try {
-      response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-    } catch {
-      return null;
-    }
-    if (!response.ok) return null;
-
-    let body: OlaMapsSnapResponse;
-    try {
-      body = (await response.json()) as OlaMapsSnapResponse;
-    } catch {
-      return null;
-    }
-    if (body.status !== "SUCCESS" || !body.snapped_points?.length) return null;
+    const onRoad = await snapBatch(batch, apiKey, enhancePath);
+    if (onRoad) improved = true;
 
     /* The first point of every batch after the first is the previous batch's
-       last, already in `snapped`. */
-    const fresh = i > 0 ? body.snapped_points.slice(1) : body.snapped_points;
-    for (const sp of fresh) snapped.push({ lat: sp.location.lat, lng: sp.location.lng });
+       last, already in `snapped` — true of a failed batch too, since its raw
+       points carry the same boundary. */
+    const fresh = (onRoad ?? batch).slice(i > 0 ? 1 : 0);
+    for (const p of fresh) snapped.push(p);
 
     if (i + OLAMAPS_MAX_POINTS_PER_REQUEST >= points.length) break;
   }
 
+  /* Nothing anywhere on this path could be improved, so there is nothing to
+     answer with: the caller draws the raw trail, which is what `snapped` would
+     now be a copy of. Saying so plainly is what keeps "a network outage" and
+     "a line we bettered" distinguishable to whoever reads the answer. */
+  if (!improved) return null;
+
   return snapped;
+}
+
+/**
+ * One request's worth, snapped — or null where that stretch could not be.
+ *
+ * Every way this can fail is the same fact about the same stretch of road and
+ * says nothing about the batch before or after it, which is why it is answered
+ * here rather than thrown up to abandon the whole path.
+ */
+async function snapBatch(
+  batch: LatLng[],
+  apiKey: string,
+  enhancePath: boolean,
+): Promise<LatLng[] | null> {
+  const path = batch.map((p) => `${p.lat},${p.lng}`).join("|");
+  const url =
+    `${SNAP_URL}?points=${encodeURIComponent(path)}&api_key=${encodeURIComponent(apiKey)}` +
+    (enhancePath ? "&enhancePath=true" : "");
+
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+
+  let body: OlaMapsSnapResponse;
+  try {
+    body = (await response.json()) as OlaMapsSnapResponse;
+  } catch {
+    return null;
+  }
+  if (body.status !== "SUCCESS" || !body.snapped_points?.length) return null;
+
+  return body.snapped_points.map((sp) => ({ lat: sp.location.lat, lng: sp.location.lng }));
 }
