@@ -36,12 +36,40 @@ export const CONNECTION_TYPES = ["wifi", "cellular", "none", "unknown"] as const
 
 export type ConnectionType = (typeof CONNECTION_TYPES)[number];
 
+/**
+ * WHETHER THE PHONE'S OWN BATTERY MANAGER WILL LET MBOS KEEP RUNNING.
+ *
+ * Every other reading here answers "was the app allowed to"; this one answers
+ * "and did the phone let it", and it is the difference between the two that
+ * this whole subsystem keeps failing on. Three handsets in the field report
+ * `tracker_stalled_at` with every permission reading `always`, location
+ * services on and the background grant genuinely held — because vivo's Funtouch
+ * kills the foreground service the trail runs in whatever any of that says. The
+ * office had no column that could express it, so the Live map could say a phone
+ * had stopped and never why.
+ *
+ * TWO VALUES, NEVER "unknown". The handset sends nothing at all where it cannot
+ * check — iOS, an older APK, a ROM that refuses — and the absent-is-not-null
+ * rule below then leaves the stored answer alone. A third value meaning "could
+ * not check" would overwrite a real answer with the absence of one, which is
+ * the same failure "unknown is not exempt" already names on the handset.
+ */
+export const BATTERY_EXEMPTIONS = [
+  /** Android is leaving the app alone. */
+  "exempt",
+  /** Doze and app standby are free to kill the tracker's foreground service. */
+  "optimised",
+] as const;
+
+export type BatteryExemption = (typeof BATTERY_EXEMPTIONS)[number];
+
 export type DeviceState = {
   locationPermission?: LocationPermission;
   locationServicesEnabled?: boolean;
   connectionType?: ConnectionType;
   batteryPercent?: number;
   batteryCharging?: boolean;
+  batteryExemption?: BatteryExemption;
   backgroundSyncRegistered?: boolean;
   /**
    * `null` is a CLEAR and absent is still "leave it alone" — the two used to
@@ -136,6 +164,12 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
   if (typeof body.batteryCharging === "boolean") {
     state.batteryCharging = body.batteryCharging;
   }
+
+  /* The word or nothing. An unrecognised string is dropped rather than stored,
+     the same as a permission spelled differently — a screen is going to draw
+     this, and a figure a screen draws has to have come from somewhere. */
+  const exemption = oneOf(BATTERY_EXEMPTIONS, body.batteryExemption);
+  if (exemption) state.batteryExemption = exemption;
 
   /*
    * HOW FAR BEHIND THE PHONE IS, which is the number managers actually ask for.

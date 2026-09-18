@@ -1,0 +1,29 @@
+-- WHETHER THE PHONE'S OWN BATTERY MANAGER WILL LET MBOS KEEP RUNNING.
+--
+-- Every other reading on `mbos_devices` answers "was the app allowed to" —
+-- `location_permission`, `location_services_enabled`,
+-- `background_location_granted`. Not one of them answers "and did the phone
+-- let it", which on the handsets this field force actually carries is the
+-- question that decides the day.
+--
+-- All three live handsets self-report `tracker_stalled_at`. One of them is a
+-- vivo V2333 on the current build whose permissions read `always`, whose
+-- location services are on, whose background grant is genuinely held, and
+-- whose tracker stopped two minutes after check-in. Funtouch kills the
+-- foreground service the trail runs in and tells the app nothing. The office
+-- could see that a phone had stopped and never why, so a manager rang the
+-- salesman and asked him to read out his own settings screen — which is the
+-- exact loop `location_permission` was added to close one layer up.
+--
+-- `exempt` or `optimised`. NULL IS NOT "fine": it is iOS, an APK built before
+-- the native module, or a ROM that would not answer. The handset omits the
+-- field entirely in all three cases rather than sending a third word, so a
+-- report that cannot check leaves a real earlier answer standing instead of
+-- erasing it — the same absent-is-not-null rule every other column here is
+-- written under.
+--
+-- No check constraint, and none of the other text answers on this table has
+-- one either: `readDeviceState` drops a word it does not recognise rather than
+-- storing it, and refusing a whole device report over one bad field would lose
+-- the good readings beside it.
+ALTER TABLE "mbos_devices" ADD COLUMN IF NOT EXISTS "battery_exemption" text;

@@ -33,6 +33,26 @@ export type DeviceStateReport = {
   connectionType?: 'wifi' | 'cellular' | 'none' | 'unknown';
   batteryPercent?: number;
   batteryCharging?: boolean;
+  /**
+   * WHETHER THIS PHONE'S BATTERY MANAGER WILL LET MBOS KEEP RUNNING.
+   *
+   * The one fact that actually explains the vivo handsets, and the only one on
+   * this list the office could not see. Everything else here answers "was the
+   * app allowed to"; this answers "and did the phone let it". A salesman whose
+   * permissions all read `always`, whose services are on, and whose tracker
+   * stalls after two minutes is a phone reading `optimised` — and the cure is
+   * two switches in his own settings rather than anything anybody can do from a
+   * desk.
+   *
+   * TWO VALUES AND NOT THREE. `unknown` — iOS, web, an APK built before the
+   * native module, a ROM that refuses to answer — is sent as ABSENCE, because
+   * the server reads a missing key as "this build cannot say" and leaves the
+   * column alone. Sending the word would make "we could not check" overwrite a
+   * real answer a previous report gave for the same phone, which is exactly the
+   * mistake `'unknown' IS NOT 'exempt'` in `native/phone-setup.ts` exists to
+   * prevent, arriving from the other end.
+   */
+  batteryExemption?: 'exempt' | 'optimised';
   backgroundSyncRegistered?: boolean;
   /**
    * DURATIONS, not instants, and that is deliberate.
@@ -108,6 +128,27 @@ async function connectionState(): Promise<Partial<DeviceStateReport>> {
  * or a simulator that does not implement it — costs a caught import rather
  * than a screen that will not start.
  */
+/**
+ * Whether Android is exempting this app from battery optimisation.
+ *
+ * Its own reading rather than a line inside `batteryState`, because it must not
+ * share a `try` with expo-battery: a simulator without the battery module would
+ * otherwise take the exemption answer down with it, and the exemption is the
+ * half that explains a dead trail. Lazy import for the same reason the two
+ * above are — a build without the native module costs a caught import rather
+ * than a screen that will not start.
+ */
+async function exemptionState(): Promise<Partial<DeviceStateReport>> {
+  try {
+    const { batteryExemption } = await import('../native/phone-setup');
+    const answer = await batteryExemption();
+    /* `unknown` is absence — see the note on the field. */
+    return answer === 'unknown' ? {} : { batteryExemption: answer };
+  } catch {
+    return {};
+  }
+}
+
 async function batteryState(): Promise<Partial<DeviceStateReport>> {
   try {
     const Battery = await import('expo-battery');
@@ -213,6 +254,7 @@ export async function readDeviceState(): Promise<DeviceStateReport> {
     locationState(),
     connectionState(),
     batteryState(),
+    exemptionState(),
     backgroundState(),
   ]);
   return Object.assign({}, ...parts) as DeviceStateReport;

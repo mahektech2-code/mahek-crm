@@ -303,7 +303,7 @@ export async function checkIn(args: {
     /* Back from lunch: the trail starts again with the session it belongs to.
        It was stopped at the check-out, and an afternoon with no line on the map
        reads as an afternoon nobody worked. */
-    void trail.start();
+    void trail.start('check-in');
     return { id: existing.id, withinRadius, needsOverride: false };
   }
 
@@ -356,7 +356,7 @@ export async function checkIn(args: {
   /* The day is open, so the trail runs. Between here and the check-out and not
      one second either side — a track that carried on afterwards would be
      following somebody home. */
-  void trail.start();
+  void trail.start('check-in');
 
   return { id: base.id, withinRadius, needsOverride };
 }

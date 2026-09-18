@@ -6,7 +6,10 @@ import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/pr
 import { Icon } from '../src/components/ui/Icon';
 import type { UpdateVerdict } from '../src/engines/app-update';
 import { checkForUpdate, openDownload } from '../src/native/update-check';
-import { stalledAt as trackerStalledAt } from '../src/sync/trail';
+import { backgroundStartFailure, stalledAt as trackerStalledAt } from '../src/sync/trail';
+import { batteryExemption } from '../src/native/phone-setup';
+import { trackerNotice, type StartFailure } from '../src/engines/tracker-notice';
+import type { BatteryExemption } from '../src/engines/phone-readiness';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import { isoDate, plural, pretty } from '../src/lib/format';
 import { conflictCount, listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
@@ -126,6 +129,16 @@ export default function SyncScreen() {
      merely never set up — see `stalledAt`. The two read very differently and
      only one of them is urgent. */
   const [stalled, setStalled] = React.useState<number | null>(null);
+  /* WHETHER THE BATTERY MANAGER WILL LET THE TRACKER RUN — the one answer
+     Android actually gives about this, and the one this card was not reading.
+     It printed a hypothetical on every handset, including the ones provably
+     about to have the service killed. `unknown` until the phone answers, which
+     is also what iOS and any ROM that refuses leave it at. */
+  const [exemption, setExemption] = React.useState<BatteryExemption>('unknown');
+  /* Why the real tracker is not running, where it is not. Four causes with
+     four different cures, which `startBackground` used to answer with one
+     `false` — see `engines/tracker-notice.ts`. */
+  const [failure, setFailure] = React.useState<StartFailure | null>(null);
   /* Whether a newer APK has been published. Sideloading has no auto-update,
      so being told is the only way a handset ever finds out — see
      `engines/app-update.ts`. */
@@ -140,6 +153,11 @@ export default function SyncScreen() {
 
   const load = React.useCallback(() => {
     let live = true;
+    /* In memory rather than in the database — it describes a registration this
+       process made — so it is read here rather than during render, which the
+       React Compiler rules would object to and which would be a different
+       answer on every pass anyway. */
+    setFailure(backgroundStartFailure()?.why ?? null);
     void Promise.all([
       listQueue(),
       queueCounts(),
@@ -147,7 +165,12 @@ export default function SyncScreen() {
       conflictCount(),
       queueDepth(),
       trackerStalledAt(),
-    ]).then(([q, c, m, k, d, s]) => {
+      /* Read fresh on every focus rather than once: the whole shape of this
+         feature is him walking out to Settings and coming back, and a card
+         still warning about a battery saver he has just switched off is how
+         somebody concludes the screen is wrong about his phone. */
+      batteryExemption().catch<BatteryExemption>(() => 'unknown'),
+    ]).then(([q, c, m, k, d, s, x]) => {
       if (!live) return;
       setRows(q);
       setCounts(c);
@@ -155,6 +178,7 @@ export default function SyncScreen() {
       setConflicts(k);
       setDepth(d);
       setStalled(s);
+      setExemption(x);
     });
     return () => {
       live = false;
@@ -217,6 +241,11 @@ export default function SyncScreen() {
      directly above a caption reading "of 120 waiting". `depth` and the status
      strip's own `pendingCount` are now one predicate, so all three agree. */
   const waiting = depth + media.pending + media.failed;
+  /* One rule, in one pure place, for what this card says — see
+     `engines/tracker-notice.ts`. It read `stalled` and nothing else, so a
+     handset whose battery manager was readably switched on was told the same
+     hypothetical as one with nothing wrong with it. */
+  const notice = trackerNotice({ stalled: stalled !== null, exemption, failure });
   const rejected = counts.rejected ?? 0;
 
   return (
@@ -419,17 +448,13 @@ export default function SyncScreen() {
           padding: 16,
           borderRadius: radius.lg,
           borderWidth: 1,
-          borderColor: stalled ? C.danger : C.border,
+          borderColor: notice.tone === 'danger' ? C.danger : C.border,
           backgroundColor: C.surface,
         }}>
-        <T style={[{ fontSize: 15, color: stalled ? C.danger : C.ink }, weight(600)]}>
-          {stalled ? 'Your phone stopped the tracker' : 'Keep tracking on'}
+        <T style={[{ fontSize: 15, color: notice.tone === 'danger' ? C.danger : C.ink }, weight(600)]}>
+          {notice.title}
         </T>
-        <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>
-          {stalled
-            ? 'Your route stopped being recorded while the app was in your pocket. Two settings stop it happening again.'
-            : 'If your route has holes in it, your phone is stopping MahekOne to save battery. Two settings fix it.'}
-        </T>
+        <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>{notice.detail}</T>
       </Pressable>
 
       {/* A refusal is not a queue item to retry blindly — it goes to the screen
