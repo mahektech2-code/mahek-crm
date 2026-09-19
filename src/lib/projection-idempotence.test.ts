@@ -84,6 +84,10 @@ async function stageLine(fields: {
   area?: string | null;
   orderDate: string;
   amountPaise: number;
+  /** What the sheet's Final Amount says, where it is not the Amount itself. */
+  finalAmountPaise?: number;
+  discountBp?: number;
+  gstBp?: number;
   tally?: string;
   rowNumber: number;
 }) {
@@ -103,8 +107,10 @@ async function stageLine(fields: {
     creditDays: 30,
     description: "Nano Thinner - 20 Liter (Loose)",
     cans: 1,
-    finalAmountPaise: fields.amountPaise,
+    finalAmountPaise: fields.finalAmountPaise ?? fields.amountPaise,
     amountPaise: fields.amountPaise,
+    discountBp: fields.discountBp ?? null,
+    gstBp: fields.gstBp ?? null,
     tallyBillNo: fields.tally ?? `T-${fields.orderNumber}`,
   });
 }
@@ -305,5 +311,57 @@ test("a DECIDED order is still left alone, and the disagreement is still written
 
   // The row itself was not rewritten: it agreed with what the pass would have
   // written, decision and all.
+  assertNoRowRewritten(before, await tupleVersions("orders"));
+});
+
+test("the projection writes BOTH figures: what the customer owes, and the sale under it", async () => {
+  /*
+   * `Final Amount = Amount × (1 − discount) × (1 + GST)`, so the sheet states
+   * the same sale twice in two units. The bill and the credit limit want the
+   * first; a sales target is written in the second. Reading one for the other
+   * scored everybody about 18% ahead of where they were.
+   */
+  await stageLine({
+    orderNumber: "2001",
+    party: "Deep Paints",
+    orderDate: "2026-07-05",
+    amountPaise: 20_000_00, // list
+    discountBp: 400, // 4% off → ₹19,200 of sale
+    gstBp: 1800,
+    finalAmountPaise: 22_656_00, // ₹19,200 + 18%
+    rowNumber: 20,
+  });
+  await project();
+
+  const [row] = await db.execute<{ total: string; net: string }>(
+    sql`select orders.total_amount::text as total,
+               orders.net_amount_paise::text as net
+          from orders where orders.external_ref = 'SHEET-2001'`,
+  );
+  assert.equal(row.total, String(22_656_00), "the customer's own figure, tax in");
+  assert.equal(row.net, String(19_200_00), "Amount AFTER the discount, tax out");
+  // And not the list figure: a salesman must not be scored on money nobody was
+  // billed.
+  assert.notEqual(row.net, String(20_000_00));
+});
+
+test("a second pass over the same rows rewrites nothing, net included", async () => {
+  // The idempotence this whole file exists for. A column added to the upsert
+  // that is left out of `setWhere` is a row rewritten on every thirty-minute
+  // pass for ever.
+  await stageLine({
+    orderNumber: "2002",
+    party: "Deep Paints",
+    orderDate: "2026-07-06",
+    amountPaise: 10_000_00,
+    discountBp: 250,
+    gstBp: 1800,
+    finalAmountPaise: 11_505_00,
+    rowNumber: 21,
+  });
+  await project();
+
+  const before = await tupleVersions("orders");
+  await project();
   assertNoRowRewritten(before, await tupleVersions("orders"));
 });

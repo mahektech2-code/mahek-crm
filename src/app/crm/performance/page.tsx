@@ -102,7 +102,7 @@ export default async function Page({
                     : "ink",
             },
             {
-              label: "Revenue",
+              label: "Revenue excl. GST",
               value: money(reading.actuals.revenuePaise),
               sub: targetSub(revenue?.target ?? null, money),
             },
@@ -264,7 +264,7 @@ export default async function Page({
 }
 
 const COMPONENT_LABELS: Record<string, string> = {
-  revenue: "Revenue",
+  revenue: "Revenue excl. GST",
   volume: "Volume",
   mix: "Product mix",
   newCustomers: "New customers",

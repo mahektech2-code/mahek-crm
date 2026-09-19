@@ -315,6 +315,47 @@ export function parseOrderRow(cells: Record<string, string>): ParsedOrderRow {
 }
 
 /**
+ * One line's value NET OF TAX — Amount with its own discount taken off, in
+ * whole paise. The unit a sales target is written in.
+ *
+ * It is `Amount × (1 − discount)` and deliberately NOT `Amount`. Amount is the
+ * list figure before anybody was given anything off it, and 5,577 of the
+ * 24,560 lines on this book carry a discount — ₹33 lakh of it. Scoring a
+ * salesman on money nobody was billed marks him down for every discount he was
+ * authorised to give, which is the opposite of what a target is for.
+ *
+ * It is not `Final Amount` either: that is this figure with GST added, which is
+ * what the customer owes and what the bill says. The two live side by side in
+ * the sheet and are 18% apart on nearly every row.
+ *
+ * The identity it preserves is the one `checkArithmetic` enforces below, which
+ * is why the two read the same expression rather than two copies of it:
+ *
+ *     net × (1 + GST) = Final Amount
+ *
+ * So the ex-GST figure and the bill raised against the same order can always be
+ * reconciled to each other. Deriving it by dividing Final Amount by 1.18 could
+ * not: 820 lines here carry 0% GST, and those would come out 18% short with
+ * nothing on any screen able to say which ones.
+ *
+ * ROUNDED PER LINE, and the caller sums the rounded values rather than rounding
+ * a sum. Money is whole paise everywhere in MahekOne; an order of seven lines
+ * would otherwise carry seven fractions of a paisa into a figure that has to
+ * tie back to a bill.
+ *
+ * A line with no Amount is 0 rather than null, because the caller is summing:
+ * the order's own net is null only when nothing in the sheet stated one, and
+ * that is the projection's judgement to make, not this function's.
+ */
+export function netOfTaxPaise(line: {
+  amountPaise: number | null;
+  discountBp: number | null;
+}): number {
+  if (line.amountPaise === null) return 0;
+  return Math.round(line.amountPaise * (1 - (line.discountBp ?? 0) / 10_000));
+}
+
+/**
  * Cells that parsed cleanly but disagree with each other.
  *
  * These are the sheet's own errors rather than ours, and they are worth
@@ -331,8 +372,10 @@ function checkArithmetic(
 
   // Final Amount should follow from Amount, the discount and the GST.
   if (row.amountPaise !== null && row.finalAmountPaise !== null && row.gstBp !== null) {
-    const discounted = row.amountPaise * (1 - (row.discountBp ?? 0) / 10_000);
-    const expected = discounted * (1 + row.gstBp / 10_000);
+    // The same expression the projection scores a target on, read once rather
+    // than typed twice: if the two ever disagreed, the half that drifts is the
+    // one nothing checks.
+    const expected = netOfTaxPaise(row) * (1 + row.gstBp / 10_000);
     // A rupee and a half of slack: the sheet rounds Final Amount to whole
     // rupees, so an exact comparison would flag every second row.
     if (Math.abs(expected - row.finalAmountPaise) > 150) {

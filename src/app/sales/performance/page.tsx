@@ -113,7 +113,7 @@ export default async function Page({
 
       <MetricRow
         metrics={[
-          { label: "Revenue", value: money(totals.revenue) },
+          { label: "Revenue excl. GST", value: money(totals.revenue) },
           {
             label: "Volume",
             value: litres(totals.millilitres),
@@ -144,7 +144,7 @@ export default async function Page({
                 <HeadCell width={170}>Person</HeadCell>
                 <HeadCell align="right" width={90}>Score</HeadCell>
                 <HeadCell width={130}>Rating</HeadCell>
-                <HeadCell align="right" width={160}>Revenue</HeadCell>
+                <HeadCell align="right" width={160}>Revenue excl. GST</HeadCell>
                 <HeadCell align="right" width={150}>Volume</HeadCell>
                 <HeadCell align="right" width={90}>Mix</HeadCell>
                 <HeadCell align="right" width={100}>New</HeadCell>

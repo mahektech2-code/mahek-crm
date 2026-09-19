@@ -220,7 +220,7 @@ export function TargetsScreen({
             <>
               <HeadCell width={170}>Person</HeadCell>
               <HeadCell width={110}>Status</HeadCell>
-              <HeadCell align="right" width={150}>Revenue</HeadCell>
+              <HeadCell align="right" width={150}>Revenue excl. GST</HeadCell>
               <HeadCell align="right" width={160}>From existing customers</HeadCell>
               <HeadCell align="right" width={130}>Volume</HeadCell>
               <HeadCell align="right" width={90}>New</HeadCell>
@@ -474,7 +474,7 @@ function Editor({
     >
       <div className="mb-4 flex flex-wrap gap-x-8 gap-y-4">
         <Field
-          label="Revenue target"
+          label="Revenue target (excl. GST)"
           suffix="₹"
           value={revenue}
           onChange={setRevenue}

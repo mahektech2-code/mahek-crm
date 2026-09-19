@@ -142,7 +142,7 @@ export default function PerformanceScreen() {
               two decimal places with nothing saying which half to believe. */}
           <Card padded={false} style={{ marginTop: 12, flexDirection: 'row', overflow: 'hidden' }}>
             <Figure
-              label="Revenue"
+              label="Revenue excl. GST"
               value={inrFromPaise(current.revenueActualPaise)}
               target={current.revenueTargetPaise ? inrFromPaise(current.revenueTargetPaise) : null}
               bp={current.revenueAchievementBp}

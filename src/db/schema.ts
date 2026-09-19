@@ -2695,6 +2695,30 @@ export const orders = pgTable(
     declineReason: text("decline_reason"),
     orderedAt: timestamp("ordered_at", { withTimezone: true }).notNull(),
     totalAmount: bigint("total_amount", { mode: "number" }).notNull(),
+    /*
+     * THE SAME SALE WITH THE TAX AND THE DISCOUNT TAKEN OFF, and it is a
+     * SECOND column rather than a correction of the one above.
+     *
+     * `total_amount` is what the customer was billed — tax in, discount
+     * applied — and it has to stay that, because the credit-limit check, the
+     * approvals queue, the bill it becomes and the sentence on the timeline
+     * are all the customer's own figure and are all right today.
+     *
+     * A target is set on neither of those. Mahek sets one on the sale net of
+     * GST, and the order sheet's `Final Amount` is `Amount × (1 − discount) ×
+     * (1 + GST)` — so revenue was being scored against a target in a different
+     * unit, 17.6% adrift on this book, with nothing on any screen saying so.
+     * This is that same sale in the unit the target is written in.
+     *
+     * NULL MEANS NOBODY STATED ONE, never zero. Only the sheet projection
+     * fills it, because only the sheet carries a GST rate and a discount per
+     * line; a CRM order is one total somebody typed with no tax anywhere
+     * beside it, and inventing a net figure for it would be guessing at the
+     * convention the telecaller used. Every reader coalesces to
+     * `total_amount`, so an order with no net stated counts at its own value
+     * rather than falling out of somebody's month.
+     */
+    netAmountPaise: bigint("net_amount_paise", { mode: "number" }),
     status: orderStatusEnum("status").notNull().default("captured"),
     callId: text("call_id"),
     lineItems: jsonb("line_items").$type<OrderLine[]>(),
@@ -2746,6 +2770,16 @@ export type OrderLine = {
   /** Paise. */
   unitPrice: number;
   amount: number;
+  /**
+   * The line net of GST and after its discount, in paise — `orders.
+   * net_amount_paise` at the grain the product mix is computed on.
+   *
+   * Absent on every line written before this existed and on every line the
+   * sheet did not author, which is the same "nobody stated one" the column
+   * above means. The mix falls back to `amount`: a share computed over a
+   * denominator missing half its lines is wrong in a way no screen could show.
+   */
+  netAmount?: number;
 };
 
 /* --------------------------------------------------------- §3.6 bill, payment */
