@@ -69,7 +69,16 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # `packages: ''` because the action's DEFAULT is `tools platform-tools`,
+      # and `tools` is the long-deprecated SDK package Google has now removed
+      # from the repository — sdkmanager answers "Failed to find package
+      # 'tools'" and exits 1, which fails the build before a line of Kotlin is
+      # compiled. Nothing here ever used it: Gradle resolves the platform and
+      # build-tools it needs itself, and this action still accepts the SDK
+      # licences, which is the part that actually matters.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
       - name: Install dependencies
         working-directory: mbos-app
