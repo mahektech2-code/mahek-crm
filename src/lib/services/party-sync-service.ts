@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { sheetPartyRows, sheetSyncRuns } from "@/db/schema";
 import {
@@ -13,6 +13,7 @@ import { PARTY_COL, parsePartyRow, partyNameKey } from "@/lib/sheet-parse";
 import {
   hashRow,
   newSyncId,
+  notAmong,
   WRITE_BATCH,
   type SheetReader,
   type SyncOutcome,
@@ -105,27 +106,38 @@ export async function syncPartySheet(options: {
     );
     skippedNoName = table.rows.length - usable.length;
 
+    /** Every party key the tab holds. What is NOT in here has gone — see
+     *  `notAmong` in sheet-sync-core for why that replaced a per-row stamp. */
+    const seen = new Set<string>();
+
     for (let i = 0; i < usable.length; i += WRITE_BATCH) {
       const slice = usable.slice(i, i + WRITE_BATCH);
       const keys = slice.map((r) => partyNameKey(r.cells[PARTY_COL.name]));
 
       const existing = await db
-        .select({ partyKey: sheetPartyRows.partyKey, rowHash: sheetPartyRows.rowHash })
+        .select({
+          partyKey: sheetPartyRows.partyKey,
+          rowHash: sheetPartyRows.rowHash,
+          status: sheetPartyRows.status,
+        })
         .from(sheetPartyRows)
         .where(inArray(sheetPartyRows.partyKey, keys));
       const hashByKey = new Map(existing.map((e) => [e.partyKey, e.rowHash]));
+      const statusByKey = new Map(existing.map((e) => [e.partyKey, e.status]));
 
       const changed: (typeof sheetPartyRows.$inferInsert)[] = [];
-      const untouched: string[] = [];
+      /** Unchanged rows the sheet has taken back. Normally empty. */
+      const returned: string[] = [];
 
       for (const row of slice) {
         const hash = hashRow(row.cells);
         const key = partyNameKey(row.cells[PARTY_COL.name]);
         const known = hashByKey.get(key);
+        seen.add(key);
 
         if (known === hash) {
           unchanged++;
-          untouched.push(key);
+          if (statusByKey.get(key) !== "present") returned.push(key);
           continue;
         }
 
@@ -180,11 +192,11 @@ export async function syncPartySheet(options: {
           .values(changed)
           .onConflictDoUpdate({ target: sheetPartyRows.partyKey, set: upsertColumns() });
       }
-      if (untouched.length) {
+      if (returned.length) {
         await db
           .update(sheetPartyRows)
-          .set({ lastSeenSyncId: syncId, status: "present" })
-          .where(inArray(sheetPartyRows.partyKey, untouched));
+          .set({ lastSeenSyncId: syncId, status: "present", updatedAt: new Date() })
+          .where(inArray(sheetPartyRows.partyKey, returned));
       }
     }
 
@@ -193,8 +205,8 @@ export async function syncPartySheet(options: {
       .set({ status: "withdrawn", updatedAt: new Date() })
       .where(
         and(
-          ne(sheetPartyRows.lastSeenSyncId, syncId),
           eq(sheetPartyRows.status, "present"),
+          notAmong(sheetPartyRows.partyKey, seen),
         ),
       )
       .returning({ id: sheetPartyRows.id });

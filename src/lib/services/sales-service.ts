@@ -20,6 +20,7 @@ import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
 import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
 import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
 import { metresBetween } from "@/lib/geo";
+import { dropInaccurateFixes } from "../engines/trail-gaps";
 import {
   leaveBalances as leaveBalancesFor,
   leaveDebitDays,
@@ -3173,7 +3174,35 @@ export type LastKnown = {
  * row rather than implied by the screen drawing it.
  */
 export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
-  const scope = await managerScope();
+  return lastKnownPositionsFor(await managerScope(), day);
+}
+
+/**
+ * The same read, with the scope HANDED IN — and it is the one place in this
+ * file that does that.
+ *
+ * Every other read resolves `managerScope()` for itself, for the reason that
+ * function's own note gives: a filter a caller can forget to pass is a filter
+ * that leaks, silently, on a screen that looks like working software. That
+ * argument is untouched and this is not an exception to it.
+ *
+ * What forced it is that the Live map's stream is ONE request that outlives
+ * the moment it was made. `managerScope` reads the session through
+ * `requireUser`, which reads the request's own cookies; a tick firing two
+ * minutes later runs in no request at all, and asking there either throws or —
+ * far worse — falls into the `catch` that answers "a script, a job or a test,
+ * so nothing is narrowed", which is `national: true`. That is this codebase's
+ * own named failure mode arriving at a new door: the narrowing would fail OPEN
+ * and a manager would be streamed the whole country.
+ *
+ * So the stream resolves the scope ONCE, inside the request, and hands the
+ * resolved answer to every tick. The parameter is first and required, so it
+ * cannot be forgotten the way an optional one could.
+ */
+export async function lastKnownPositionsFor(
+  scope: ManagerScope,
+  day: string,
+): Promise<LastKnown[]> {
   return db.execute<LastKnown>(sql`
     with fixes as (
       select v.salesman_id as uid, v.check_in_lat as lat, v.check_in_lng as lng,
@@ -3433,6 +3462,188 @@ export async function activityPointsForDay(day: string): Promise<ActivityPoint[]
      order by a.captured_at asc
      limit 2000
   `) as unknown as ActivityPoint[];
+}
+
+/* ═══════════════════════════════════════════════════ the map is told, not asked */
+
+/**
+ * HOW FAR BACK A DELTA REACHES PAST THE CURSOR IT WAS GIVEN.
+ *
+ * The cursor is `now()` taken at the top of a tick, and rows are selected by
+ * `created_at`, which is stamped when the INSERT began rather than when it
+ * committed. So a batch that started before the cursor and committed after it
+ * would fall in the gap and never be asked for again — the classic read-your-
+ * own-writes race, and here it would cost a salesman a minute of his trail with
+ * nothing anywhere looking wrong.
+ *
+ * Every window therefore starts a little BEFORE the cursor it was handed. The
+ * overlap is paid for entirely by the two dedup keys in
+ * `engines/live-feed.ts` — the same keys the database's own unique indexes use
+ * — so the cost of a row arriving twice is that it is dropped, and the cost of
+ * one arriving never is a hole in somebody's trail.
+ *
+ * It is two seconds and not more because the overlap is not free: Postgres is a
+ * loopback away on the same droplet and commits there are measured in
+ * milliseconds, while a lag approaching the push cadence would re-send most of
+ * every batch to every watching manager, which on a box with one core is real
+ * money for a margin nothing needs. It is not configuration — nobody in the
+ * office has an opinion about commit skew — and the only number it has to be
+ * balanced against is how long a transaction on this box can take.
+ */
+const CURSOR_LAG_MS = 2_000;
+
+/** One fix on the wire, with whose it is. */
+export type LivePositionRow = TrackPoint & { salesmanId: string };
+
+/**
+ * What arrived since the Live map was last told anything.
+ *
+ * @see `src/app/api/sales/live/stream/route.ts` for why this exists at all.
+ *
+ * **Small and frequent, rather than the day over and over.** The screen used to
+ * be redrawn by re-running its Server Component every thirty seconds, which
+ * answered "what does the whole day look like" — every salesman's whole trail,
+ * every mark on it, the team panel, and a serialisation of all of it — whether
+ * or not one fix had arrived. This answers "what has changed", which on a quiet
+ * tick is two empty arrays and on a busy one is a few dozen rows.
+ *
+ * **The cursor is an ARRIVAL and not a READING.** `mbos_positions.at` is the
+ * handset's own clock and a phone with no signal queues its morning and uploads
+ * it at lunch — a cursor on `at` would step straight over every one of those
+ * and never come back. `created_at` is when the row reached us, which is the
+ * only ordering a delta can safely walk. It is also why `mergeTrack` sorts
+ * rather than appends: a delta legitimately carries fixes older than the newest
+ * point already on screen.
+ *
+ * **The day window is sargable, and that is the point.** Every other read in
+ * this file writes `(p.at at time zone 'Asia/Kolkata')::date = $day`, which is
+ * correct and cannot use `mbos_positions_user_at_idx` — fine at one query every
+ * thirty seconds and not fine at one every six. A half-open range on `at` with
+ * an explicit `+05:30` says the same thing and uses the index, which is what
+ * keeps this affordable on a box with one core.
+ *
+ * **The team read is the expensive half and runs on its own cadence.** It is
+ * asked for only where `withTeam` says so — see `mbos.location.liveTeamSeconds`
+ * — because a fix moves a pin and nothing else on the row, and the browser can
+ * do that arithmetic for itself from the fixes it was just handed.
+ */
+export async function liveDeltaFor(
+  scope: ManagerScope,
+  opts: {
+    day: string;
+    /** Where the client has been told up to. Null asks for the day so far. */
+    sinceMs: number | null;
+    /**
+     * WHETHER THE WORK MARKED ALONG THE DAY IS WANTED — and it is the only
+     * thing the view decides.
+     *
+     * The FIXES are always fetched, on both views. "Where they are now" draws
+     * no trail, so it is tempting to skip them there, and skipping them is
+     * exactly what would have left that view no more live than the poll it
+     * replaced: a pin is moved by a fix, and moving it only on the team read
+     * would put the morning view back at thirty seconds behind the handsets.
+     * The points land in the trail either way and `street-map.tsx` simply does
+     * not draw a trail on the `now` view.
+     */
+    withActivity: boolean;
+    withTeam: boolean;
+  },
+): Promise<{
+  cursorMs: number;
+  rows: LastKnown[] | null;
+  positions: LivePositionRow[];
+  activity: ActivityPoint[];
+}> {
+  const { day, sinceMs, withActivity, withTeam } = opts;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    throw new Error(`liveDeltaFor: ${day} is not a date`);
+  }
+
+  /* Read once, so the two queries below and the cursor that goes back to the
+     browser all describe the same instant. */
+  const cursorMs = Date.now();
+  /* A null cursor is the first ask of a connection that has been told nothing,
+     which is the whole day. It is bounded by the day window regardless. */
+  const since = new Date((sinceMs ?? 0) - CURSOR_LAG_MS).toISOString();
+
+  /* The day as a half-open range in Asia/Kolkata. `day` is checked against the
+     date shape above before it is ever raw-interpolated. */
+  const dayStart = sql.raw(`'${day} 00:00:00+05:30'::timestamptz`);
+  const dayEnd = sql.raw(`'${day} 00:00:00+05:30'::timestamptz + interval '1 day'`);
+
+  const [rows, positions, activity] = await Promise.all([
+    withTeam ? lastKnownPositionsFor(scope, day) : Promise.resolve(null),
+
+    (db.execute<LivePositionRow>(sql`
+          select p.user_id as "salesmanId", p.lat, p.lng, p.at,
+                 p.accuracy_m as "accuracyM", null::text as place
+            from mbos_positions p
+           where p.at >= ${dayStart} and p.at < ${dayEnd}
+             and p.created_at > ${since}::timestamptz
+             ${onlyMine(scope, "p.user_id")}
+          union all
+          -- A CHECK-IN IS A POINT ON THE TRAIL TOO, and a named one.
+          -- tracksForDay unions these in, so a delta that carried only
+          -- mbos_positions would leave every shop reached after the page was
+          -- opened unmarked on the line — and on a handset whose background
+          -- tracking is dead, a visit is the ONLY point the trail ever gets.
+          -- server_created_at is the arrival mark here, for the same reason
+          -- created_at is above: check_in_at is the handset's own clock.
+          select v.salesman_id, v.check_in_lat, v.check_in_lng, v.check_in_at,
+                 v.check_in_accuracy_m, c.name
+            from mbos_visits v
+            join customers c on c.id = v.customer_id
+           where v.check_in_at >= ${dayStart} and v.check_in_at < ${dayEnd}
+             and v.check_in_lat is not null
+             and v.server_created_at > ${since}::timestamptz
+             ${onlyMine(scope, "v.salesman_id")}
+           order by at asc
+           limit 5000
+        `) as unknown as Promise<LivePositionRow[]>),
+
+    withActivity
+      ? (db.execute<ActivityPoint>(sql`
+          select a.user_id as "salesmanId", a.entity_type as "entityType",
+                 a.entity_id as "entityId", a.lat, a.lng,
+                 a.accuracy_m as "accuracyM", a.captured_at as "capturedAt",
+                 a.age_seconds as "ageSeconds", a.source
+            from mbos_activity_locations a
+           where a.lat is not null and a.lng is not null
+             and a.captured_at >= ${dayStart} and a.captured_at < ${dayEnd}
+             and a.created_at > ${since}::timestamptz
+             ${onlyMine(scope, "a.user_id")}
+           order by a.captured_at asc
+           limit 500
+        `) as unknown as Promise<ActivityPoint[]>)
+      : Promise.resolve([]),
+  ]);
+
+  /* A FIX THE HANDSET RATED AS IMPRECISE NEVER REACHES THE MAP, and it is
+     dropped here rather than by whoever draws it. `page.tsx` already applies
+     exactly this to the trail it renders at first paint — see
+     `dropInaccurateFixes` — and a delta that did not would mean the same day
+     was filtered for its first hour and unfiltered for the rest of it, with a
+     phantom hop appearing on the line the moment the page stopped being
+     re-rendered. `getConfig` caches for thirty seconds, so asking per tick
+     costs a cached object read and not a query. */
+  /* Imported here rather than at the top of the file, as every other reader of
+     it in this service does — `config/store` reaches back into places that
+     reach back here. */
+  const { getConfig } = await import("../config/store");
+  const threshold = (await getConfig())["mbos.location.gpsAccuracyThresholdM"];
+
+  /* A raw `db.execute` hands timestamps back as strings whatever the type says
+     — see `trackForDay`. `at` is the one the map reads `.getTime()` off, so it
+     is revived here rather than left for whoever draws it to discover. */
+  return {
+    cursorMs,
+    rows,
+    positions: dropInaccurateFixes(positions, threshold).map((p) => ({
+      ...p,
+      at: new Date(p.at),
+    })),
+    activity,
+  };
 }
 
 /**
@@ -4892,6 +5103,7 @@ export type SalesmanRecord = {
     checkInAt: Date | null;
     checkOutAt: Date | null;
     status: string;
+    workedSeconds: number | null;
     withinGeofence: boolean | null;
     regularisationRequested: boolean;
   }>;
@@ -4996,6 +5208,12 @@ export async function salesmanRecord(
       db.execute(sql`
         select d.day::text as day, d.check_in_at as "checkInAt",
                d.check_out_at as "checkOutAt", d.status::text as status,
+               /* The hours, because the verdict alone cannot say whether a day
+                  was JUDGED: status is NOT NULL defaulting to absent, and a day
+                  still open is left alone by the job that writes it. The pill
+                  tells the two apart from this. (No backticks in here: this is
+                  inside a sql template and one would end it.) */
+               d.worked_seconds as "workedSeconds",
                d.within_geofence as "withinGeofence",
                d.regularisation_requested as "regularisationRequested"
           from mbos_attendance_days d

@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { sheetFieldActivityRows, sheetSyncRuns, users } from "@/db/schema";
 import { readTab, sheetsConfigured, type SheetTable } from "@/lib/sheets";
@@ -17,6 +17,7 @@ import {
 import {
   hashRow,
   newSyncId,
+  notAmong,
   readWindows,
   runSync,
   watermark,
@@ -156,12 +157,16 @@ async function pullFromSheet(
   let withIssues = 0;
   let highestRow = Math.max(startRow - 1, 1);
 
+  /** Every activity key this pass found, accumulated across windows. A
+   *  reconcile withdraws what is NOT in here; an append never withdraws. */
+  const seen = new Set<string>();
+
   for await (const window of readWindows(read, startRow, FIRST_DATA_ROW)) {
     const rows = window.rows.filter((row) => !isBlankFieldActivityRow(row.cells));
     rowsRead += rows.length;
     for (const row of rows) highestRow = Math.max(highestRow, row.rowNumber);
 
-    const result = await writeWindow(syncId, { ...window, rows }, salesmen, customerCache);
+    const result = await writeWindow(syncId, { ...window, rows }, salesmen, customerCache, seen);
     created += result.created;
     updated += result.updated;
     unchanged += result.unchanged;
@@ -180,8 +185,8 @@ async function pullFromSheet(
       .set({ status: "withdrawn", updatedAt: new Date() })
       .where(
         and(
-          ne(sheetFieldActivityRows.lastSeenSyncId, syncId),
           eq(sheetFieldActivityRows.status, "present"),
+          notAmong(sheetFieldActivityRows.activityId, seen),
         ),
       )
       .returning({ id: sheetFieldActivityRows.id });
@@ -210,6 +215,7 @@ async function writeWindow(
   window: SheetTable,
   salesmen: { id: string; name: string }[],
   customerCache: Map<string, MatchResult>,
+  seen: Set<string>,
 ) {
   let created = 0;
   let updated = 0;
@@ -226,20 +232,27 @@ async function writeWindow(
       hash: hashRow(row.cells),
     }));
 
-    const activityIds = prepared.map((p) => p.parsed.activityId).filter(Boolean);
+    // Keyed on what the row is actually STORED under, which for a row with no
+    // Activity ID is its row number. Looking up only the real ids left those
+    // rows matching nothing, so every pass read them as new and rewrote them —
+    // a small count, and a rewrite of a row that had not moved all the same.
+    const activityIds = prepared.map((p) => p.parsed.activityId || `ROW-${p.row.rowNumber}`);
     const existing = activityIds.length
       ? await db
           .select({
             activityId: sheetFieldActivityRows.activityId,
             rowHash: sheetFieldActivityRows.rowHash,
+            status: sheetFieldActivityRows.status,
           })
           .from(sheetFieldActivityRows)
           .where(inArray(sheetFieldActivityRows.activityId, activityIds))
       : [];
     const hashByActivityId = new Map(existing.map((e) => [e.activityId, e.rowHash]));
+    const statusByActivityId = new Map(existing.map((e) => [e.activityId, e.status]));
 
     const changed: (typeof sheetFieldActivityRows.$inferInsert)[] = [];
-    const untouched: string[] = [];
+    /** Unchanged rows the sheet has taken back. Normally empty. */
+    const returned: string[] = [];
 
     for (const { row, parsed, hash } of prepared) {
       // No Activity ID: cannot be matched on a re-import, so it is written
@@ -248,9 +261,10 @@ async function writeWindow(
       // blank rows before they were ever offered to this function.
       const key = parsed.activityId || `ROW-${row.rowNumber}`;
       const known = hashByActivityId.get(key);
+      seen.add(key);
       if (known === hash) {
         unchanged++;
-        untouched.push(key);
+        if (statusByActivityId.get(key) !== "present") returned.push(key);
         continue;
       }
       if (parsed.issues.length) withIssues++;
@@ -273,11 +287,11 @@ async function writeWindow(
         });
     }
 
-    if (untouched.length) {
+    if (returned.length) {
       await db
         .update(sheetFieldActivityRows)
-        .set({ lastSeenSyncId: syncId, status: "present" })
-        .where(inArray(sheetFieldActivityRows.activityId, untouched));
+        .set({ lastSeenSyncId: syncId, status: "present", updatedAt: new Date() })
+        .where(inArray(sheetFieldActivityRows.activityId, returned));
     }
   }
 
