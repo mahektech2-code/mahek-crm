@@ -93,6 +93,37 @@ export type HandsetFacts = {
   /** When the handset's own watchdog last caught the tracker accepted and silent. */
   trackerStalledAt: Date | string | null;
   /**
+   * MBOS'S OWN RECORDER, and it is OPTIONAL on this type rather than nullable.
+   *
+   * Every other field here is `| null`, because every handset reports on every
+   * one of them or reports null. These four arrived with a new APK, and a
+   * sideloaded app has no staged rollout: most of the field is running a build
+   * that has never heard of them, and so is most of the code that constructs
+   * this object. Optional says exactly that — nothing was passed, so nothing
+   * is asserted — where `| null` would have made every existing caller declare
+   * an answer it does not have.
+   *
+   * `running` false with `undefined` are therefore NOT the same, and the note
+   * below reads only the first.
+   */
+  locationServiceRunning?: boolean | null;
+  locationServiceLastFixAt?: Date | string | null;
+  /**
+   * WHEN A BATCH WAS LAST ACCEPTED, and it is the only reading on this row
+   * taken at OUR end.
+   *
+   * The recorder can say whether it BELIEVES it is sending — a cadence is set,
+   * it holds a credential, the server has not refused that credential, the day
+   * is open and the service is up. Every one of those is true of an uploader
+   * that is wedged, and the app reads the same belief and leaves the queue to
+   * it, so the buffer climbs towards its cap with nothing saying why. This is
+   * the one fact that tells the two apart.
+   */
+  locationServiceLastUploadAt?: Date | string | null;
+  locationServiceStartsToday?: number | null;
+  locationServiceRefusedAt?: Date | string | null;
+  locationServiceRefusal?: string | null;
+  /**
    * WHICH BUILD IS IN HIS POCKET, or null where no handset has ever bound.
    *
    * It is a fact about the phone exactly like the battery is, and it belongs
@@ -109,6 +140,17 @@ export type HandsetThresholds = {
   lowBatteryPercent: number;
   /** Unsent fixes worth saying out loud. See the note where it is read. */
   queuedPositionsWorthSaying: number;
+  /**
+   * How often the recorder is configured to POST — `serviceUploadEverySeconds`
+   * as the office set it. ZERO is the escape hatch: the recorder does not send
+   * at all and the app does, so there is no channel of its own to be silent on
+   * and the note below never fires.
+   *
+   * It is not a threshold in its own right. It is here because a silence is
+   * only meaningful against the interval it is a silence in — see
+   * `uploaderSilenceMs`.
+   */
+  serviceUploadEverySeconds: number;
   /**
    * THE BUILD THE OFFICE HAS PUBLISHED, and it is a THRESHOLD rather than a
    * fact about any handset — which is the whole reason it sits here.
@@ -129,6 +171,29 @@ export type HandsetThresholds = {
    */
   currentAppVersion: string | null;
 };
+
+/**
+ * HOW LONG THE RECORDER'S OWN CHANNEL MAY BE SILENT — derived, never a third
+ * number somebody typed.
+ *
+ * `quietMinutes` is the office's own answer to "how long may a working handset
+ * go silent on a channel before this panel says so", and this asks exactly
+ * that question of one channel rather than of the phone as a whole. A second
+ * setting beside it would be a second answer to one question, invisible on the
+ * screen that sets the first — which is the thing this codebase spends a
+ * paragraph refusing everywhere else.
+ *
+ * The send cadence is a FLOOR under it and not a multiplier. At the defaults
+ * it never binds — thirty minutes is three hundred six-second intervals — and
+ * it exists for the corner where an office has set quiet to its five-minute
+ * minimum and the send interval to its two-minute maximum, where a note could
+ * otherwise fire on two ordinary posts going astray.
+ */
+export function uploaderSilenceMs(
+  t: Pick<HandsetThresholds, "quietMinutes" | "serviceUploadEverySeconds">,
+): number {
+  return Math.max(t.quietMinutes * 60_000, t.serviceUploadEverySeconds * 1_000);
+}
 
 const ms = (at: Date | string | null): number | null => {
   if (!at) return null;
@@ -330,6 +395,132 @@ export function handsetNotes(
   nowMs: number,
 ): HandsetNote[] {
   const notes: HandsetNote[] = [];
+
+  /*
+   * THE PLATFORM REFUSED TO START THE RECORDER, and it is first because the
+   * fix is one tap and nothing below it is.
+   *
+   * This is not a battery manager killing anything. Android 12 forbids
+   * starting a foreground service from the background outside a short list of
+   * exempt moments, and a phone that has not been given the battery exemption
+   * is refused there by design. Drawn as "his phone stopped the tracker" it
+   * would send somebody hunting through an OEM settings tree for a switch that
+   * is not the problem.
+   */
+  const refused = ms(f.locationServiceRefusedAt ?? null);
+  if (refused !== null && f.dayOpen && f.locationServiceRunning === false) {
+    notes.push({
+      tone: "bad",
+      text: `His phone would not let MahekOne start recording — ${ageWords(refused, nowMs)} ago`,
+      detail:
+        "Android refuses to start a background recorder on a phone that is not exempt from battery optimisation. He fixes it in one tap on Sync → Keep tracking on, which puts up the system dialog; until he does, the route records only while the app is open.",
+    });
+  }
+
+  /*
+   * THE RECORDER IS DOWN, which is a different sentence from either of the two
+   * around it.
+   *
+   * `undefined` is a build that has never heard of the service and says
+   * nothing at all; `false` is a handset that has one and is not running it.
+   * The refusal note above is the case where we know why, so this fires only
+   * where we do not — and it is drawn as a warning rather than a fault,
+   * because the watchdog starts it again within the quarter hour and a row
+   * that shouts at every ordinary gap is a row nobody reads.
+   *
+   * THE WATCHDOG'S OWN VERDICT IS THE SECOND CASE WHERE WE KNOW WHY, and it
+   * is excluded here for exactly the reason the refusal is. A phone whose
+   * watchdog has caught the tracker accepted and silent reports both facts at
+   * once — the service is down AND we know what took it down — and drawn
+   * together this line sat ABOVE the one naming the cause, saying the recorder
+   * starts itself again and his work is safe, over a handset an OEM battery
+   * manager is killing. That is a reassurance contradicting the fault
+   * underneath it, and the thing to act on has to come first. `trackerStalled`
+   * says it better and says what to do, so it says it alone.
+   */
+  if (
+    f.locationServiceRunning === false &&
+    f.dayOpen &&
+    refused === null &&
+    !trackerStalled(f)
+  ) {
+    notes.push({
+      tone: "warn",
+      text: "Route recorder not running",
+      detail:
+        "MahekOne's own recorder is down on this handset. It starts itself again on the next wake-up, and his work is safe on the phone either way — if it stays down all day the handset needs its battery and autostart settings checked.",
+    });
+  }
+
+  /*
+   * IT IS UP AND IT IS NOT RECORDING, which is the failure no other column on
+   * this row can see.
+   *
+   * A foreground service can hold its notification, keep its process alive,
+   * and have a fused provider that has quietly stopped delivering — Play
+   * services updated under a running app, a ROM suspending the provider
+   * without touching the process. From every other angle that handset looks
+   * perfect. It is a warning rather than a fault because the service re-asks
+   * the provider on its own heartbeat and most of these recover unaided.
+   */
+  if (f.locationServiceRunning === true && f.dayOpen) {
+    const lastFix = ms(f.locationServiceLastFixAt ?? null);
+    if (lastFix !== null && nowMs - lastFix > t.noTrailMinutes * 60_000) {
+      notes.push({
+        tone: "warn",
+        text: `Recorder running but no fix for ${ageWords(lastFix, nowMs)}`,
+        detail:
+          "The recorder is up and the phone's location provider has stopped answering it — usually Play services updating underneath, or the handset's power manager suspending the provider. It re-asks every minute on its own.",
+      });
+    }
+
+    /*
+     * IT IS SENDING AND NOTHING IS BEING TAKEN, which nothing could see.
+     *
+     * `uploads()` on the handset answers whether the recorder BELIEVES it is
+     * posting — cadence set, credential held, server not refusing it, day
+     * open, service up. All five survive a post that times out for ever
+     * against a captive portal, or a body the far end keeps refusing for a
+     * reason that is not auth. And the app reads that same belief through
+     * `chooseSender` and leaves the queue alone, so the only visible symptom
+     * is the buffer climbing towards `serviceBufferCap` — at which point the
+     * OLDEST fixes are dropped, and a morning of somebody's route is gone.
+     *
+     * THE GAP IS MEASURED AT THE PHONE'S END, NOT AGAINST NOW, and that is the
+     * half that makes this safe to draw. Both marks are stamped on our clock
+     * inside one request, so their difference is exactly the silence the
+     * handset reported and carries no drift at all. Measured against `nowMs`
+     * instead it would fire on every phone whose app has simply not run for a
+     * while — a recorder doing all the posting does not refresh this report,
+     * so a healthy handset would accuse itself the moment its owner stopped
+     * opening the app. It also means a phone out of signal cannot trip it: the
+     * last thing it told us was said while it was online, when the gap was
+     * small, and silence since freezes the figure rather than growing it.
+     * Silence has its own line, further down, and one fact gets one sentence.
+     *
+     * The reading's own age is printed beside it for the reason the battery's
+     * is: it is what the phone last said, never a live number.
+     */
+    const lastUpload = ms(f.locationServiceLastUploadAt ?? null);
+    const said = ms(f.deviceStateAt);
+    /* NULL IS NEVER AN ACCUSATION. A recorder that has never had a batch taken
+       is the ordinary state wherever the office posts from the app instead —
+       `serviceUploadEverySeconds` at zero — and there is no age to print
+       beside one either way. */
+    if (
+      t.serviceUploadEverySeconds > 0 &&
+      lastUpload !== null &&
+      said !== null &&
+      said - lastUpload > uploaderSilenceMs(t)
+    ) {
+      notes.push({
+        tone: "warn",
+        text: `Recorder holding its fixes — nothing sent for ${ageWords(lastUpload, said)}, read ${ageWords(said, nowMs)} ago`,
+        detail:
+          "The recorder is up and taking fixes, and its own sending has stopped being accepted — a captive wifi that answers every request, or a credential this handset can no longer refresh. His work is not lost: it is held on the phone and goes up whenever he opens the app. What it costs is the live map while the app is shut, and if it runs all day the oldest fixes are eventually dropped. Ask him to open MahekOne on mobile data rather than wifi; if it persists, signing out and back in is what replaces the credential.",
+      });
+    }
+  }
 
   /*
    * THE PHONE KILLED THE TRACKER, and it is first because it outranks every

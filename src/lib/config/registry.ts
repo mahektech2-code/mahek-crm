@@ -1774,6 +1774,61 @@ export const SETTINGS = [
     max: 7200,
   },
   {
+    key: "mbos.location.trackerRetryAfterMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long a stopped tracker is left alone before trying again",
+    description:
+      "Minutes. When the watchdog above catches the tracker accepted and silent it drops to a foreground timer — which only advances while the app is the thing on screen, so a phone that goes back in a pocket records nothing at all. That verdict used to stand for the life of the app's run: the first stall of the morning was the last word on the subject, and every later attempt — the afternoon check-in, every time he opened the app — was skipped without asking. Trying again on every one of those is the other extreme and is what the permanent verdict was avoiding: each attempt clears the timer and hands a dead task another whole silent window to prove itself, so the day comes back punched full of holes exactly that size. This is the rate in between, and the cost of being wrong is bounded by it. A new calendar day and a check-in both re-open the question for free, whatever this says — overnight is when somebody is told to go into Settings, and a check-in is a man who has just been walked to the switch. Lower it on a fleet whose phones sometimes relent; raise it where they never do. It governs the BORROWED tracker only: where MahekOne's own recorder starts, that one holds itself up and none of this is reached.",
+    default: 30,
+    min: 0,
+    max: 1440,
+  },
+  {
+    key: "mbos.location.serviceWatchdogMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often the phone checks that its own tracker is still running",
+    description:
+      "Minutes. MahekOne now runs its own recorder on the handset rather than borrowing the one the location library provides, and the recorder holds itself up once it has started. This is the safety net under it: a periodic wake-up that starts the recorder again if the phone's battery manager has force-stopped it. Fifteen is Android's own floor and anything shorter is silently rounded up by the OS, so a smaller number here would mean something different on the phone from what it says on this screen. It is a NET and not the mechanism — the same wake-up scheduler has been measured going as long as fifteen hours between runs on these handsets, which is why the recorder does not depend on it.",
+    default: 15,
+    min: 15,
+    max: 180,
+  },
+  {
+    key: "mbos.location.serviceBufferCap",
+    type: "integer",
+    category: "mbos-location",
+    label: "Fixes the recorder may hold before the oldest are dropped",
+    description:
+      "The recorder writes to its own store on the phone because it runs with the app shut, and the app moves those fixes into the upload queue the next time it is alive. This is how many may pile up in between. It only ever bites where the app has not run for a very long time while the day stayed open — at the three-second cadence 50,000 is about forty hours of somebody's route — and when it does, the OLDEST go first, which is the opposite of the upload queue's own rule: a manager looking for where somebody is now is not helped by the first hour of a week-old silence. Raising it costs storage on the handset and nothing else.",
+    default: 50_000,
+    min: 1_000,
+    max: 500_000,
+  },
+  {
+    key: "mbos.location.serviceMaxDayHours",
+    type: "integer",
+    category: "mbos-location",
+    label: "Longest a handset may record without hearing from the app again",
+    description:
+      "Hours, and it is a privacy deadline rather than a tuning knob. The route is recorded between the check-in and the check-out and not one second either side — but the recorder now survives the app being killed and the phone being rebooted, so a check-out is no longer the only way a day can end. A phone switched off at four and turned on at eleven has no check-out coming and no app running to notice; without a deadline it would start recording again and follow its owner home. The app pushes this out every few minutes for as long as it is alive and the day is open, so a genuine working day never reaches it. Set it longer than the longest day anybody actually works and shorter than an evening.",
+    default: 16,
+    min: 1,
+    max: 24,
+  },
+  {
+    key: "mbos.location.serviceUploadEverySeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often the recorder sends what it has taken",
+    description:
+      "Seconds, and it is a SEPARATE question from how often a position is taken. Capture decides what the trail LOOKS like; this decides only how fresh the pin on the Live map is and how often the radio wakes. Every fix that is captured is sent either way, so the drawn route is identical at any value here — a longer interval simply sends two or three fixes in one go instead of one at a time. Six is the default rather than three because it is roughly half the radio wakes for a difference on the map nobody watching it can perceive, on a phone that has to survive a full field day. Below about three there is nothing new to send between one post and the next and the radio is spent for an empty batch, which is why the floor is the capture cadence itself and `checkConsistency` refuses a value under it. Longer than a minute and 'where is he now' stops being a live answer. ZERO turns the recorder's own sending off entirely: the fixes then wait for the app to be alive and are uploaded by it, which is exactly what this app did before the recorder could send for itself — the escape hatch, not a tuning value, because a phone Android has killed has no app to do that with.",
+    default: 6,
+    min: 0,
+    max: 120,
+  },
+  {
     key: "mbos.location.startOfDayGate",
     type: "text",
     category: "mbos-location",
@@ -3398,6 +3453,31 @@ export function checkConsistency(config: Config): string[] {
   }
 
   /*
+   * SENDING FASTER THAN WE CAPTURE IS A RADIO WAKE FOR AN EMPTY BATCH.
+   *
+   * The two are deliberately independent — one decides what the trail looks
+   * like, the other only how fresh the live pin is — and they are independent
+   * in one direction only. Posting every two seconds while a fix is taken
+   * every six spends two thirds of its wakes on a batch with nothing new in
+   * it, on the battery of a phone that has to last a field day, and buys not
+   * one point on the map.
+   *
+   * ZERO IS EXEMPT, because zero is not a fast cadence: it is the recorder's
+   * sending switched off altogether, which leaves the app to upload exactly as
+   * it did before the recorder could. Folding that into the comparison would
+   * refuse the one setting that means "do not do this at all".
+   */
+  if (
+    config["mbos.location.serviceUploadEverySeconds"] > 0 &&
+    config["mbos.location.serviceUploadEverySeconds"] <
+      config["mbos.location.trackEverySeconds"]
+  ) {
+    problems.push(
+      `Trail: sending every ${config["mbos.location.serviceUploadEverySeconds"]}s when a position is only taken every ${config["mbos.location.trackEverySeconds"]}s wakes the radio for batches with nothing new in them. Set the send interval at or above the take interval, or 0 to let the app do the sending.`,
+    );
+  }
+
+  /*
    * Sarvam's synchronous endpoint refuses audio over 30 seconds. With the
    * fallback on, a longer recording simply goes to OpenAI instead and the
    * limit can be whatever suits a telecaller. With it off, a limit above 30
@@ -3957,6 +4037,13 @@ export type Config = {
   "mbos.location.trailKeepEverySeconds": number;
   "mbos.location.trailStalledAfterMisses": number;
   "mbos.location.queueRetentionDays": number;
+  /**
+   * How often the handset's own recorder posts what it has taken. Named here,
+   * unlike its three `service*` siblings, because `checkConsistency` reads it
+   * against the capture cadence and a key the type does not carry cannot be
+   * read at all.
+   */
+  "mbos.location.serviceUploadEverySeconds": number;
   "mbos.location.queuedPositionsWorthSaying": number;
   "mbos.location.trailStalledMinSilenceSeconds": number;
   "mbos.location.nearbyBookRadiusKm": number;

@@ -1139,6 +1139,124 @@ test("nothing lingers on the outstanding list after it has been published", () =
 });
 
 /* ---------------------------------------------------------------------------
+ * THE THIRD WORD, AND WHY IT COULD NOT BE PINNED UNTIL NOW.
+ *
+ * `POST /api/mbos/positions` answers with a `tracking` word, or with none, and
+ * that word is the only thing `flush()` may branch on. Two of the three have
+ * always existed. The third, `partial`, is the fix for a data-loss bug with the
+ * worst possible shape: a batch the server could only partly file came back
+ * looking delivered, so the handset deleted rows the office had never stored —
+ * a salesman's fixes destroyed on his own phone by a successful upload, with
+ * every layer reporting 200 all the way down.
+ *
+ * The obvious alternative was worse. Answering `no-session-yet` for a mixed
+ * batch keeps the rows and stops the drain, and the drain is oldest-first, so
+ * ONE permanently unfileable fix in the oldest five hundred holds up everything
+ * behind it until `queueRetentionDays` ages it out — and the phones with an
+ * unfileable tail are exactly the phones in the incident. A handful of lost
+ * fixes becomes a week of lost days.
+ *
+ * WHY IT IS PINNED AS TEXT. The route's answer is a string in a Next.js handler
+ * and the handset's reading is a string in a project this `tsconfig.json`
+ * excludes; the two are joined only inside a phone, exactly like the schema
+ * rule at the top of this file. A word the ROUTE can answer and the HANDSET
+ * does not know is read as "delivered" and deletes the batch, which is the bug
+ * itself arriving under a new name.
+ *
+ * THE OTHER DIRECTION IS DELIBERATELY NOT AN ERROR. A word the handset knows
+ * and the route does not answer yet is the SAFE deploy order and the whole
+ * reason any of this can ship before a single APK is updated — an APK cannot be
+ * recalled, so the phone has to be able to learn a word first. `AHEAD_OF_THE_
+ * ROUTE` is where such a word is recorded rather than forgotten, and the test
+ * below empties it, in the same idiom as `OUTSTANDING` above.
+ * ------------------------------------------------------------------------- */
+
+const POSITIONS_ROUTE = "src/app/api/mbos/positions/route.ts";
+const FLUSH_ENGINE = "mbos-app/src/engines/flush-answer.ts";
+
+/**
+ * Words the handset can read that the route cannot yet answer.
+ *
+ * EMPTY, and that is the state it is supposed to be in. `partial` sat here
+ * while the server half was on its own branch; that branch has landed, the
+ * route answers the word, and the test after this one is what took it off —
+ * a list that keeps a word the route now says is a list that stops meaning
+ * anything, and the next entry is then read as noise.
+ */
+const AHEAD_OF_THE_ROUTE = new Set<string>([]);
+
+/** Every `tracking: "…"` literal the route can put in an answer. */
+function routeWords(): Set<string> {
+  const src = readFileSync(POSITIONS_ROUTE, "utf8");
+  return new Set([...src.matchAll(/tracking:\s*"([a-z-]+)"/g)].map((m) => m[1]!));
+}
+
+/** Every word `decideFlush` compares against. */
+function handsetWords(): Set<string> {
+  const src = readFileSync(FLUSH_ENGINE, "utf8");
+  return new Set(
+    [...src.matchAll(/answer\.tracking\s*===\s*'([a-z-]+)'/g)].map((m) => m[1]!),
+  );
+}
+
+test("every tracking word the route can answer is one the handset reads", () => {
+  const route = routeWords();
+  const handset = handsetWords();
+  assert.ok(route.size >= 2, "found almost no tracking answers — the scan is broken, not the route");
+  assert.ok(handset.size >= 2, "found almost no tracking branches — the scan is broken, not the engine");
+
+  const unread = [...route].filter((w) => !handset.has(w));
+  assert.deepEqual(
+    unread,
+    [],
+    "the route can answer these and the handset has never heard of them, so it " +
+      "reads them as a clean delivery and DELETES the batch — which is the " +
+      "data-loss bug `partial` was added to fix, wearing a new word: " +
+      unread.join(", "),
+  );
+});
+
+test("a word the handset learned first is recorded rather than forgotten", () => {
+  const route = routeWords();
+  const early = [...handsetWords()].filter((w) => !route.has(w));
+  const unrecorded = early.filter((w) => !AHEAD_OF_THE_ROUTE.has(w));
+  assert.deepEqual(
+    unrecorded,
+    [],
+    "the handset branches on these and the route never says them, which is " +
+      "either the safe deploy order or a word that has quietly died. Say which " +
+      "by putting it in AHEAD_OF_THE_ROUTE with a reason: " + unrecorded.join(", "),
+  );
+
+  const landed = [...AHEAD_OF_THE_ROUTE].filter((w) => route.has(w));
+  assert.deepEqual(
+    landed,
+    [],
+    "the route answers these now, so they should come off AHEAD_OF_THE_ROUTE " +
+      "or the list stops meaning anything: " + landed.join(", "),
+  );
+});
+
+test("partial keeps the rows it was not told about, and does not stop the drain", () => {
+  const src = readFileSync(FLUSH_ENGINE, "utf8");
+  const branch = src.slice(src.indexOf("answer.tracking === 'partial'"));
+  const body = branch.slice(0, branch.indexOf("\n  }"));
+
+  assert.ok(
+    /carryOn:\s*remove\.length\s*>\s*0/.test(body),
+    "partial must carry on to the next batch whenever something moved. A flat " +
+      "`carryOn: false` here is `no-session-yet` wearing a different word, and " +
+      "it head-of-line blocks the whole queue behind one unfileable fix for " +
+      "`queueRetentionDays`.",
+  );
+  assert.ok(
+    !/remove:\s*\[\.\.\.sentIds\]/.test(body),
+    "partial must delete only what the server named. Deleting the batch is the " +
+      "original bug: rows the office never stored, gone from the phone.",
+  );
+});
+
+/* ---------------------------------------------------------------------------
  * A NUMBER IS NOT A BOOLEAN, and SQLite cannot tell you which it meant.
  *
  * Every flag on the handset is an `INTEGER NOT NULL DEFAULT 0`, because SQLite

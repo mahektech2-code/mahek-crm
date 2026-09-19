@@ -2,7 +2,7 @@
   "expo": {
     "name": "Mahek MBOS",
     "slug": "mbos",
-    "version": "1.8.0",
+    "version": "1.9.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -19,7 +19,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "in.mahek.mbos",
-      "versionCode": 13,
+      "versionCode": 14,
       "edgeToEdgeEnabled": true,
       "permissions": [
         "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
@@ -73,6 +73,7 @@
         }
       ],
       "./plugins/withReleaseSigning.js",
+      "./plugins/withCredentialBackupRules.js",
       "@maplibre/maplibre-react-native"
     ],
     "scheme": "mbos",

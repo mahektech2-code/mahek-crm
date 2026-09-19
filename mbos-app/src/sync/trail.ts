@@ -5,7 +5,30 @@ import { getConfig } from '../data/config';
 import { getFix, fixOf, rememberFix } from '../native/location';
 import { shouldKeepFix } from '../engines/cadence';
 import { trailVerdict } from '../engines/trail-watchdog';
-import { postPositions, reportLocationPermission } from './api';
+import { mayRetryBackground, type Demotion } from '../engines/trail-retry';
+import { decideFlush } from '../engines/flush-answer';
+import { isoDate } from '../lib/format';
+import { chooseCapture, trackingDeadlineSeconds } from '../engines/capture';
+import {
+  available as serviceAvailable,
+  drainFixes,
+  forgetFixes,
+  serviceState,
+  setServiceCredentials,
+  startService,
+  stopService,
+  touchService,
+  type ServiceState,
+} from '../native/location-service';
+import { chooseSender } from '../engines/upload';
+import {
+  BASE,
+  accessToken,
+  deviceId,
+  postPositions,
+  refreshToken,
+  reportLocationPermission,
+} from './api';
 
 /**
  * The trail.
@@ -205,7 +228,23 @@ let foregroundTimer: ReturnType<typeof setInterval> | null = null;
  * every call to `start()` tries to upgrade past it, because the only thing
  * that changed between one call and the next might be a permission grant.
  */
-let mode: 'background' | 'foreground' | null = null;
+let mode: 'service' | 'background' | 'foreground' | null = null;
+
+/**
+ * The watchdog period this process last asked WorkManager for.
+ *
+ * `UPDATE` resets a periodic job's period, so passing it on every start would
+ * push the next run out for ever on a handset whose app is opened every ten
+ * minutes — a `setInterval` cleared on every resume, arriving inside the one
+ * scheduler that was supposed to be immune to that. So the period is only ever
+ * replaced on the ONE call where the office's number differs from the last one
+ * we used, which is what this remembers.
+ *
+ * In memory rather than in the kv store, deliberately: a fresh process has not
+ * enqueued anything, and `KEEP` on a job that is already scheduled at the right
+ * period is exactly the right answer for it.
+ */
+let watchdogMinutesInForce = 0;
 
 /**
  * When the OS last said yes to the background task, and whether it has since
@@ -218,8 +257,47 @@ let mode: 'background' | 'foreground' | null = null;
  * registration it no longer knows the fate of.
  */
 let backgroundStartedAt = 0;
-let backgroundProvedSilent = false;
+/**
+ * The last demotion this process made, or null.
+ *
+ * IT WAS A BOOLEAN AND IT WAS NEVER CLEARED, which is the second bug this
+ * watchdog has produced rather than caught. Once set, `start()`'s first act was
+ * to skip background registration — for the check-in, for the afternoon
+ * session, for every foreground resume, for the rest of the process. And the
+ * thing it fell back to is a `setInterval`, which only advances while the app
+ * is the thing on screen: a handset demoted at nine and put in a pocket
+ * recorded NOTHING for the rest of the day, and `flush()` is not called on that
+ * path either, so the office saw a man standing where he had last opened the
+ * app. The demotion was meant to salvage part of a day; on the phone it was
+ * built for it salvaged none.
+ *
+ * It carries its calendar day as well as its instant because the rule that
+ * spends it wants both, and `isoDate` is the local date — never `toISOString`,
+ * which answers in UTC and would roll the day over at half past five in the
+ * morning here. `engines/trail-retry.ts` is the rule.
+ */
+let demotion: Demotion = null;
+/**
+ * What the OS last said when we asked it to register, where that was not yes.
+ *
+ * A REGISTRATION FAILURE AND AN OEM KILL USED TO BE THE SAME ANSWER —
+ * `startBackground` returned `false` for both, and for a refused permission,
+ * and for a platform with no background location at all. So "the tracker is not
+ * running" was the whole of what anybody could be told, on a screen whose
+ * entire job is telling somebody which of four different things to go and do.
+ */
+let startFailure: BackgroundStartFailure | null = null;
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * The last permission answer this process actually reported.
+ *
+ * Kept so that a later report can RESTATE it rather than re-assert something
+ * nobody re-checked — see the note in `fallBackToFloor`, which used to send
+ * `false` here and made two columns in the office contradict each other about
+ * one phone.
+ */
+let lastReportedGrant: boolean | null = null;
 
 /**
  * `precise` FOR THE SAME REASON THE BACKGROUND TASK ASKS FOR `High`.
@@ -246,6 +324,22 @@ async function takeForeground(): Promise<void> {
     const fix = fixOf(result);
     if (!fix) return;
     await store(fix.lat, fix.lng, fix.accuracyM, fix.at);
+    /*
+     * AND THEN SENT, which the floor never did.
+     *
+     * The background task flushes inline for the reason given at its own call
+     * site — it is the OS waking the app, so it is the one reliable moment to
+     * empty the queue. The floor had no such line, so on the handsets that
+     * most need it (a demoted phone, or one with no background permission at
+     * all) fixes were taken and then sat waiting for the sync timer, which is
+     * the very `setInterval` this file exists to distrust. The office saw
+     * nothing until the salesman opened a screen that happened to sync.
+     *
+     * `flush()` is not re-entrant and returns immediately while a pass is
+     * already running, so this costs nothing where the sync engine got there
+     * first.
+     */
+    await flush();
   } catch {
     /* No fix, no permission, no radio. Nothing to say and nothing to do. */
   }
@@ -282,17 +376,41 @@ async function takeForeground(): Promise<void> {
  * TOLD about a fix, not how often one is taken, and the two were conflated
  * because both are measured in milliseconds.
  */
-async function startBackground(everyMs: number): Promise<boolean> {
+/**
+ * WHY IT DID NOT START, which used to be one word for four situations.
+ *
+ * `unavailable` is a build or a platform with no background location in it at
+ * all. The two permission answers are a salesman to talk to. `registration_failed`
+ * is the OS itself refusing, which is nobody's settings screen and is the one
+ * that has to reach somebody who can read a log — and it was indistinguishable
+ * from a battery manager killing an accepted task, which is the opposite
+ * diagnosis with the opposite cure.
+ */
+export type BackgroundStartFailure = {
+  why: 'unavailable' | 'no_foreground_permission' | 'no_background_permission' | 'registration_failed';
+  at: number;
+  /** The thrown message, where there was one. Never shown to a salesman. */
+  detail?: string;
+};
+
+type BackgroundStart = { ok: true } | ({ ok: false } & BackgroundStartFailure);
+
+async function startBackground(everyMs: number): Promise<BackgroundStart> {
+  const failed = (
+    why: BackgroundStartFailure['why'],
+    detail?: string,
+  ): BackgroundStart => ({ ok: false, why, at: Date.now(), detail });
+
   try {
-    if (!(await Location.isBackgroundLocationAvailableAsync())) return false;
+    if (!(await Location.isBackgroundLocationAvailableAsync())) return failed('unavailable');
 
     const fg = await Location.getForegroundPermissionsAsync();
-    if (fg.status !== 'granted') return false;
+    if (fg.status !== 'granted') return failed('no_foreground_permission');
 
     const bg = await Location.getBackgroundPermissionsAsync();
     const granted =
       bg.status === 'granted' ? true : (await Location.requestBackgroundPermissionsAsync()).status === 'granted';
-    if (!granted) return false;
+    if (!granted) return failed('no_background_permission');
 
     await Location.startLocationUpdatesAsync(TASK_NAME, {
       /*
@@ -389,10 +507,196 @@ async function startBackground(everyMs: number): Promise<boolean> {
         killServiceOnDestroy: false,
       },
     });
-    return true;
+    return { ok: true };
+  } catch (e) {
+    /*
+     * THE THROW USED TO BE INDISTINGUISHABLE FROM A KILLED SERVICE.
+     *
+     * `catch { return false }` made "the OS refused to register the task" read
+     * exactly like "the salesman has not granted the permission" and exactly
+     * like "Funtouch accepted it and then killed it" — three problems, three
+     * different things to do about them, one answer. It is kept as a reason
+     * with its message, which is what makes it reportable at all; nothing is
+     * rethrown, because a failure here must never cost the check-in that is
+     * waiting on it.
+     */
+    return failed('registration_failed', e instanceof Error ? e.message : String(e));
+  }
+}
+
+/* -------------------------------------------------------- our own service */
+
+/**
+ * WHAT THE NATIVE SERVICE IS TOLD, AND WHY EACH NUMBER HAS TO CROSS.
+ *
+ * The service can be started next by a boot receiver or a WorkManager worker,
+ * in a process with no JavaScript runtime and therefore no `getConfig`, no
+ * SQLite and no pull. So every number it runs on is written into its own
+ * preferences file on the way past, by this function, and it reads them from
+ * there. That is a MIRROR and not a second source of truth: JavaScript writes,
+ * native reads, nothing native ever writes back.
+ *
+ * `wantedForSeconds` is the one that is not a tuning knob. It is the deadline
+ * that ends a day which had no check-out — a phone switched off at four and
+ * turned on at eleven would otherwise find "the office wants tracking" in a
+ * file nobody had been able to clear, and would follow its owner home. "Not one
+ * second either side" is the rule the whole trail rests on and a preferences
+ * file is exactly where such a rule gets lost. It is pushed forward on every
+ * flush, so a working day extends it and a dead one expires.
+ */
+async function startOurService(everyMs: number): Promise<boolean> {
+  if (!serviceAvailable()) return false;
+
+  try {
+    const keepSeconds = Math.round((await minGapMs()) / 1000);
+    const cap = await getConfig<number>('mbos.location.serviceBufferCap', 50_000);
+    const hours = await getConfig<number>('mbos.location.serviceMaxDayHours', 16);
+    const watchdogMinutes = await getConfig<number>('mbos.location.serviceWatchdogMinutes', 15);
+
+    const uploadSeconds = await getConfig<number>(
+      'mbos.location.serviceUploadEverySeconds',
+      6,
+    );
+    const retentionDays = await getConfig<number>('mbos.location.queueRetentionDays', 7);
+
+    const periodChanged =
+      watchdogMinutesInForce !== 0 && watchdogMinutesInForce !== watchdogMinutes;
+    watchdogMinutesInForce = watchdogMinutes;
+
+    /*
+     * THE CREDENTIAL GOES FIRST, BEFORE THE SERVICE IS ASKED TO START.
+     *
+     * The service posts for itself, and a service started without one would
+     * spend its first cadence discovering it has nothing to sign with, mark
+     * itself blocked, and sit at the backoff ceiling for five minutes on the
+     * one morning the salesman is watching. Written first, its very first tick
+     * can send.
+     *
+     * It is also written from `setTokens` in `sync/api.ts`, which is the one
+     * place the app ever mints a token, so the mirror follows a refresh
+     * without waiting for the next `start()`.
+     */
+    await setServiceCredentials({
+      baseUrl: BASE,
+      deviceId: await deviceId(),
+      accessToken: (await accessToken()) ?? '',
+      refreshToken: (await refreshToken()) ?? '',
+    });
+
+    return await startService({
+      askEverySeconds: Math.max(3, Math.round(everyMs / 1000)),
+      keepEverySeconds: Math.max(3, keepSeconds),
+      bufferCap: Math.max(1, cap),
+      wantedForSeconds: trackingDeadlineSeconds(hours),
+      watchdogMinutes: Math.max(15, watchdogMinutes),
+      periodChanged,
+      /* NOT FLOORED, unlike everything beside it. Zero is a decision — the
+         recorder does not send and this app does, which is what it did before
+         the uploader existed — and flooring it would take that answer away. */
+      uploadEverySeconds: Math.max(0, Math.round(uploadSeconds)),
+      retentionDays: Math.max(1, Math.round(retentionDays)),
+    });
   } catch {
+    /* Configuration could not be read, which on a handset that has never
+       pulled is ordinary. The service is not started on a guess — the next
+       call to `start()`, on the next resume, will have the numbers. */
     return false;
   }
+}
+
+/**
+ * MOVE WHAT THE SERVICE RECORDED INTO THE TRAIL.
+ *
+ * The service writes to its own SQLite file and not to `mbos.db`, for the three
+ * reasons `FixStore` sets out — chiefly that two different SQLite libraries on
+ * one file, on handsets the OS reaps mid-write, risks the database holding
+ * every unsent visit, order and payment on the phone. So there is a drain, and
+ * this is it.
+ *
+ * IT IS TWO-PHASE AND THE ORDER IS THE POINT. The rows are read, inserted, and
+ * only then forgotten. A kill between the read and the insert costs a repeat;
+ * a repeat costs nothing, because `fixId` is derived from the reading and the
+ * insert is `INSERT OR IGNORE`. Forgetting on read would save one bridge call
+ * and cost a morning of somebody's route to the same kill.
+ *
+ * It runs at the top of `flush()` rather than on a timer of its own, because
+ * flush is already every moment this app has a reason to touch the queue — the
+ * sync pass, the check-out, and the position task's own inline call.
+ */
+async function drainService(): Promise<number> {
+  if (!serviceAvailable()) return 0;
+
+  /*
+   * ONE OWNER, AND IT IS THE SERVICE WHENEVER THE SERVICE CAN SEND.
+   *
+   * The recorder posts for itself now — that is what made this module a whole
+   * fix rather than half of one — so moving its rows into `positions` here
+   * while it is also sending them would have two queues draining the same
+   * fixes. Nothing is lost by that (the id of a position is its own reading,
+   * and both the local insert and the server's are conflict-ignore) and it is
+   * still two phones' worth of data spent to deliver one.
+   *
+   * `uploads` is the service's own answer about five things it knows and this
+   * side does not — the office's cadence, whether it holds a usable
+   * credential, whether the server has refused that credential, whether the
+   * day is still open and whether the service is even running. Every one of
+   * those going false hands the queue back here, which is what makes the
+   * handover unambiguous in BOTH directions: the check-out clears the deadline
+   * and the flush that follows it picks up the last few minutes of the day.
+   */
+  const state = await serviceState();
+  if (chooseSender({ serviceAvailable: true, nativeUploads: state.uploads }) === 'native') {
+    return 0;
+  }
+
+  let moved = 0;
+  /* Bounded, so a buffer that somehow grew past every cap cannot spin here for
+     ever. The cap is generous: at the three-second cadence this is several
+     hours of somebody's route, and a short read ends the loop anyway. */
+  for (let pass = 0; pass < DRAIN_PASSES; pass++) {
+    const rows = await drainFixes(DRAIN_BATCH);
+    if (!rows.length) return moved;
+
+    const kept: string[] = [];
+    for (const row of rows) {
+      try {
+        await store(row.lat, row.lng, row.accuracyM, row.at);
+        kept.push(row.id);
+      } catch {
+        /* One row that would not insert must not strand the page behind it.
+           It is left in the buffer and tried again on the next drain; if it is
+           genuinely unstorable the cap eventually retires it, which is the
+           right end for one fix and the wrong end for a morning. */
+      }
+    }
+    await forgetFixes(kept);
+    moved += kept.length;
+
+    if (rows.length < DRAIN_BATCH) return moved;
+  }
+  return moved;
+}
+
+/** One page of the native buffer, and how many pages one drain may take. */
+const DRAIN_BATCH = 500;
+const DRAIN_PASSES = 50;
+
+/**
+ * WHAT THE SERVICE HAS BEEN DOING, for the office.
+ *
+ * The office could see that a handset had gone quiet and never why. These four
+ * facts answer it: whether the service is up at all, when it last took a fix,
+ * how many it is still holding, and how many times today it has had to be
+ * started — which is the number that names an OEM battery manager rather than
+ * describing its effects.
+ *
+ * It rides the position batch, which is already authenticated, already names
+ * the device and already runs every few minutes while a day is open. A channel
+ * of its own would spend the battery in order to report on it.
+ */
+export async function ourServiceState(): Promise<ServiceState | null> {
+  if (!serviceAvailable()) return null;
+  return serviceState();
 }
 
 /* ----------------------------------------------------------- the watchdog */
@@ -488,22 +792,36 @@ async function watch(): Promise<void> {
  * the same cadence the floor is keeping, and the id of a position is its own
  * reading, so the two mechanisms cannot double anything between them.
  *
- * It does not try the upgrade again either, for the rest of this process.
- * `start()` retrying on every resume would clear the floor's timer each time,
- * hand the dead task another whole window to prove itself, and leave the day
- * full of holes exactly the size of the window — the retry is right where the
- * answer might have changed (a permission granted in Settings) and wrong where
- * the OS has already said yes and meant nothing by it. A fresh process starts
- * the judgement over, which is what a phone reaped and reopened is.
+ * IT DOES TRY THE UPGRADE AGAIN, AND IT USED NOT TO. The objection that stopped
+ * it is real and is kept: retrying on every resume clears the floor's timer each
+ * time, hands the dead task another whole window to prove itself, and leaves the
+ * day full of holes exactly the size of that window. What was wrong was the
+ * conclusion drawn from it — that the demotion should stand for the life of the
+ * process. It stood on a `setInterval` that only advances while the app is on
+ * screen, so a pocketed handset recorded nothing at all for the rest of the day
+ * and `flush()` never ran either. `engines/trail-retry.ts` bounds the cost
+ * instead: one window per configured interval, plus a free attempt on a new day
+ * and on a check-in, which is the moment he has just been walked to the
+ * autostart switch.
  *
- * `false` is the honest thing to report. The column means "is a real background
- * trail running", and it is not — while `locationPermission`, riding the same
- * request, still reads `always`, so the office can tell this apart from a
- * salesman who refused the prompt. Those are two different conversations to
- * have with him, and only one of them is about the phone.
+ * WHAT IT NO LONGER DOES IS SAY THE PERMISSION WAS REFUSED. It reported
+ * `backgroundGranted: false` here, reasoning that the column means "is a real
+ * background trail running". The column does not mean that — the schema says
+ * "whether this handset actually got the OS's background location permission" —
+ * and the app did not re-check one. Production shows exactly the contradiction
+ * that produces: `location_permission = 'always'` beside
+ * `background_location_granted = false` on the same row, on two handsets. The
+ * office reads the boolean, the office sends somebody to check a setting that
+ * was already correct, and the real cause — a battery manager killing an
+ * accepted service — is the one thing nobody goes and looks at.
+ *
+ * The honest field for "background is not working" already exists and is
+ * `trackerStalledAt`, written from the mark this function's caller sets and
+ * carried by `readDeviceState` on every report. So the report still goes, and
+ * the permission answer it carries is RESTATED unchanged rather than asserted.
  */
 async function fallBackToFloor(): Promise<void> {
-  backgroundProvedSilent = true;
+  demotion = { at: Date.now(), day: isoDate(new Date()) };
   stopWatching();
   mode = 'foreground';
 
@@ -515,7 +833,16 @@ async function fallBackToFloor(): Promise<void> {
     foregroundTimer = setInterval(() => void takeForeground(), Math.max(3, seconds) * 1_000);
   }
 
-  void reportLocationPermission(false).catch(() => {});
+  /*
+   * The stall mark is already in the kv store by the time this runs — the
+   * caller writes it before calling — so this report carries
+   * `trackerStalledAgoSeconds` and the office learns the true thing. The
+   * boolean is whatever this process last reported and is sent again unchanged;
+   * `true` is the fallback for the case where nothing has reported yet, because
+   * we only reach here from `mode === 'background'`, which means the permission
+   * was granted. Inventing `false` is precisely the bug above.
+   */
+  void reportLocationPermission(lastReportedGrant ?? true).catch(() => {});
 }
 
 function startWatching(everyMs: number): void {
@@ -557,9 +884,33 @@ export function isTracking(): boolean {
  * in with nothing on any screen and nothing in the office saying so. Noticing
  * is the watchdog's job, above; the early return is honest again because
  * something else is now doing the re-evaluating.
+ *
+ * `reason` SEPARATES A CHECK-IN FROM A RESUME, and the difference is the whole
+ * of the recovery path. A resume is the app coming forward, which happens
+ * dozens of times a day and says nothing new about the phone; a check-in is a
+ * man who has just been through the start-of-day gate, which is the screen that
+ * walks him to the autostart switch. A demotion made earlier today stands
+ * against the first and never against the second — refusing to re-test what he
+ * was just sent to fix would make that screen pointless. It defaults to
+ * `'resume'`, so a caller that says nothing gets the cautious answer.
  */
-export async function start(): Promise<void> {
+export async function start(reason: 'check-in' | 'resume' = 'resume'): Promise<void> {
   if (mode === 'background') return;
+
+  /*
+   * `mode === 'service'` IS DELIBERATELY NOT AN EARLY RETURN, unlike the line
+   * above it.
+   *
+   * That one exists because re-registering an expo task the OS has already
+   * accepted buys nothing and hands a dead task another whole window to prove
+   * itself. This is the opposite case on both counts: running `start` again
+   * against a live service is cheap, it is how configuration pulled this
+   * morning reaches the native side, and it is how the privacy deadline gets
+   * pushed out on a handset whose flushes have all failed. The native side is
+   * idempotent — a second `startForegroundService` on a running service is one
+   * more `onStartCommand`, which removes its old provider callback before
+   * installing a new one.
+   */
 
   const on = await getConfig<boolean>('mbos.location.trackWhileWorking', true);
   if (!on) return;
@@ -567,10 +918,157 @@ export async function start(): Promise<void> {
   const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 3);
   const every = Math.max(3, seconds) * 1_000;
 
-  /* Caught delivering nothing once already in this process. See
-     `fallBackToFloor` for why that answer stands until the process does not. */
-  const backgroundStarted = backgroundProvedSilent ? false : await startBackground(every);
+  /*
+   * OUR OWN SERVICE IS ASKED FIRST, AND THAT IS THE WHOLE POINT OF THIS
+   * RELEASE.
+   *
+   * Everything below this block is the mechanism that has been failing in the
+   * field: `expo-location`'s task, and the `setInterval` floor it falls back
+   * to. The cause is one line in a library we do not own —
+   * `LocationTaskConsumer.maybeStartForegroundService()` returns early on
+   * `!AppForegroundedSingleton.isForegrounded`, and that flag is set only from
+   * `OnActivityEntersForeground`, so a task restored into a headless process
+   * gets NO foreground service and Android 10+ throttles it to a few fixes an
+   * hour. Only a person opening the app puts the dense tracker back, which is
+   * exactly the silence-then-burst shape in the production data: fifty-one
+   * silences and 523 minutes lost in one day on a handset reporting perfect
+   * health.
+   *
+   * `modules/location-service` is a foreground service of ours that can be
+   * started from a receiver or a worker with no Activity anywhere, which is
+   * the one thing expo-location cannot do.
+   *
+   * THE OLD PATH IS LEFT INTACT UNDERNEATH rather than deleted. An APK cannot
+   * be recalled: a handset in somebody's pocket runs the build it has until
+   * somebody installs the next one, and this file is compiled into both. It is
+   * also the honest fallback for the case where the platform refuses our
+   * service outright — see `chooseCapture`, which is where that choice lives
+   * so it can be tested without a phone.
+   */
+  const serviceStarted = await startOurService(every);
+
+  /*
+   * THE DEMOTION GOVERNS THE BORROWED TRACKER AND NOTHING ELSE, which is what
+   * keeps two mechanisms from fighting over one act.
+   *
+   * `engines/trail-retry.ts` exists because the old `backgroundProvedSilent`
+   * was a one-way boolean: the first stall of a process was its last word, and
+   * the floor it fell to is a `setInterval` that only advances while the app is
+   * on screen, so a pocketed handset recorded nothing for the rest of the day.
+   * That bug is entirely about `startLocationUpdatesAsync`, so the rule that
+   * bounds it is asked ONLY where that call is about to be made. Where our own
+   * service took capture the question is not asked, no demotion is written
+   * (`fallBackToFloor` is reached only from the JS watchdog, which is stopped
+   * below), and the service's own WorkManager watchdog, boot receiver and
+   * heartbeat are the single mechanism holding capture up.
+   */
+  const retryMinutes = await getConfig<number>('mbos.location.trackerRetryAfterMinutes', 30);
+  const mayTry =
+    !serviceStarted &&
+    mayRetryBackground({
+      demotion,
+      now: Date.now(),
+      today: isoDate(new Date()),
+      freshCheckIn: reason === 'check-in',
+      retryAfterMs: Math.max(0, retryMinutes) * 60_000,
+    });
+
+  const attempt = mayTry ? await startBackground(every) : null;
+  /* A refusal to attempt is not a failure to report: the last reason stands,
+     because it is still the reason. */
+  if (attempt) startFailure = attempt.ok ? null : attempt;
+  const backgroundStarted = attempt?.ok === true;
+
+  const capture = chooseCapture({
+    trackingOn: true,
+    serviceAvailable: serviceAvailable(),
+    serviceStarted,
+    /* Both are settled by the time we get here: the check-in's own fix has
+       already established the foreground grant, and `startBackground` asks for
+       the background one and reports what it got. Reading the permissions
+       again here would be two more native round trips to learn what the two
+       booleans beside them already say. */
+    foregroundGranted: true,
+    backgroundGranted: backgroundStarted,
+    taskStarted: backgroundStarted,
+  });
+
+  if (capture === 'service') {
+    /* The service owns capture from here. The floor's timer is redundant and
+       running both would double the very sampling this exists to fix; the JS
+       watchdog is redundant too, because the thing it watches for — a task
+       accepted and silent — is now watched by the service's own heartbeat,
+       inside a process the OS has agreed not to reap. */
+    if (foregroundTimer) {
+      clearInterval(foregroundTimer);
+      foregroundTimer = null;
+    }
+    stopWatching();
+    mode = 'service';
+    backgroundStartedAt = 0;
+    /* A stall mark belongs to the OLD mechanism. Leaving it standing would have
+       the office reading "his phone stopped the tracker" off a verdict about a
+       task this handset is no longer using — the same permanent false alarm the
+       explicit null was added to `device-state.ts` to end. The in-memory
+       demotion goes for the same reason, one scope down: it is a verdict about
+       a registration this handset is no longer relying on, and leaving it would
+       demote the first attempt made on a day the service could not start. */
+    await setKv(STALLED_AT, '');
+    demotion = null;
+    /*
+     * AND THE START FAILURE GOES WITH IT, which is the one thing that fell out
+     * of putting the two branches together and is in neither of them.
+     *
+     * `startFailure` is read by the Sync screen through `backgroundStartFailure()`
+     * and turned into a sentence by `engines/tracker-notice.ts`. A
+     * `registration_failed` recorded at nine — when the borrowed tracker was
+     * the only mechanism — would go on drawing "This phone would not start the
+     * tracker. Ring the office" all day on a handset whose own service is
+     * recording perfectly well. It is the false alarm on a healthy phone that
+     * this whole release is about, arriving by a third door: the verdict is
+     * about a registration nothing is relying on any more.
+     */
+    startFailure = null;
+    /*
+     * THE REPORT STILL GOES, AND THE BOOLEAN IS RESTATED RATHER THAN INVENTED.
+     *
+     * It said `true` here, flatly, and on this path nothing has asked the OS
+     * about the background permission at all — `startBackground` is the only
+     * thing that does and it was skipped. Asserting a grant nobody checked is
+     * the mirror image of the bug this release exists to fix, where
+     * `fallBackToFloor` asserted a REFUSAL nobody checked and put
+     * `location_permission = 'always'` beside `background_location_granted =
+     * false` on two production handsets.
+     *
+     * The report itself is not optional: `/api/mbos/location-permission`
+     * refuses a body with no boolean in it, and this call is the carrier for
+     * the whole device state — `locationServiceRunning`, the buffer depth, the
+     * last accepted upload. On a handset whose recorder is posting for itself,
+     * `flush()` hands the queue to the native uploader and this is the only
+     * channel left that says anything about the phone.
+     *
+     * So the last answer this process gave is sent again, and `true` is the
+     * fallback where there is none. It is the benign direction and the one
+     * that invents least: `false` maps to `restricted` in
+     * `lib/handset-health.ts` and would draw "Background location off — trail
+     * has real gaps" on a phone whose trail is fine, which is a false alarm on
+     * the one panel built on a healthy handset saying nothing. And the boolean
+     * is very nearly vestigial for a build that has this service at all —
+     * `locationState` prefers `locationPermission`, which rides in this same
+     * payload read fresh from the OS, and `trailIsDead` catches a genuinely
+     * dead trail whatever any permission says.
+     */
+    const report = lastReportedGrant ?? true;
+    lastReportedGrant = report;
+    void reportLocationPermission(report).catch(() => {});
+    return;
+  }
+
   if (backgroundStarted) {
+    /* It works again. Whatever this process concluded earlier was about a phone
+       in a state it is no longer in, and leaving the mark would demote the
+       next attempt on the strength of it. */
+    demotion = null;
     /* Upgrading off the floor — its timer is now redundant, and running
        both would double the very sampling this exists to fix. */
     if (foregroundTimer) {
@@ -594,13 +1092,42 @@ export async function start(): Promise<void> {
     mode = 'foreground';
   }
 
-  /* Told to the office, not kept to the handset: a manager watching the Live
-     map has no other way to learn a trail's real gaps are a permission, not
-     a bug. Fire-and-forget, the same as a position that fails to send — this
-     is not on the critical path of the day opening, and every retry above
-     reports again, which is how a permission granted mid-session is ever
-     seen without waiting for a check-out. */
-  void reportLocationPermission(backgroundStarted).catch(() => {});
+  /*
+   * Told to the office, not kept to the handset: a manager watching the Live
+   * map has no other way to learn a trail's real gaps are a permission, not
+   * a bug. Fire-and-forget, the same as a position that fails to send — this
+   * is not on the critical path of the day opening, and every retry above
+   * reports again, which is how a permission granted mid-session is ever
+   * seen without waiting for a check-out.
+   *
+   * THE BOOLEAN IS ONLY SENT WHERE A PERMISSION WAS ACTUALLY ANSWERED. It was
+   * `backgroundStarted`, which folds four different outcomes into one word:
+   * "he refused the prompt", "this build has no background location in it",
+   * "the OS threw on registration", and — once the demotion above stands —
+   * "we did not ask". Three of those four say nothing whatever about a
+   * permission, and the column means the permission. Sending `false` for them
+   * is the same overload `fallBackToFloor` was corrected for, arriving one
+   * function along; `locationPermission` in the device state beside it is read
+   * fresh from the OS every time and carries the richer truth regardless.
+   */
+  const grant =
+    attempt === null
+      ? null
+      : attempt.ok
+        ? true
+        : attempt.why === 'no_foreground_permission' || attempt.why === 'no_background_permission'
+          ? false
+          : null;
+
+  /* Nothing new was learned about the permission, so the last answer is
+     restated rather than a new one invented. With no previous answer at all
+     there is nothing honest to say and the report is skipped — the position
+     flush carries the device state anyway. */
+  const report = grant ?? lastReportedGrant;
+  if (report !== null) {
+    lastReportedGrant = report;
+    void reportLocationPermission(report).catch(() => {});
+  }
 }
 
 /**
@@ -610,11 +1137,24 @@ export async function start(): Promise<void> {
  */
 async function stopTicking(): Promise<void> {
   mode = null;
+  /* THE DEADLINE IS CLEARED BEFORE ANYTHING ELSE. `stopService` clears it and
+     then asks the platform to stop the service, in that order, so a stop the
+     platform refuses still leaves a service that will stop itself on its next
+     fix — it reads the same flag on every one. The opposite order would leave
+     a cleared flag and a service nobody told. */
+  await stopService();
   /* The day is over, so there is nothing left to watch — and `backgroundStartedAt`
      goes with it, because a mark left standing would have the next check-in's
      task judged on the silence of the one before it. */
   stopWatching();
   backgroundStartedAt = 0;
+  /* The demotion goes with it. It was a verdict about a task registered for
+     the day that has just ended, and holding it would have the next check-in
+     judged on a silence belonging to the one before it — the same reasoning
+     `backgroundStartedAt` is cleared for, one line up. The persisted
+     `STALLED_AT` mark is deliberately NOT cleared: that one describes the
+     handset rather than a registration, and `stalledAt()` says why. */
+  demotion = null;
   if (foregroundTimer) {
     clearInterval(foregroundTimer);
     foregroundTimer = null;
@@ -712,6 +1252,35 @@ export async function queueDepth(): Promise<number> {
   return typeof n === 'number' && Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * How many ids one `IN (…)` may carry.
+ *
+ * SQLite binds each one as its own variable and `SQLITE_MAX_VARIABLE_NUMBER`
+ * is 999 on the older builds this app still runs on. A batch is five hundred,
+ * so today's largest delete fits — but `filed` is a list the SERVER composes,
+ * and a rule that happens to be safe because of a constant in a different file
+ * is one deploy away from not being. Chunked at a number well under the floor,
+ * which costs nothing and cannot be got wrong later.
+ */
+const DELETE_CHUNK = 400;
+
+/**
+ * Let go of exactly these rows, and nothing else.
+ *
+ * An empty list does NOT mean "everything" — it means the server named nothing
+ * it was finished with, which is a real answer on a partial. A bare
+ * `DELETE ... WHERE id IN ()` is a syntax error in SQLite anyway, and the
+ * version of this bug where an empty list is read as "all" is the one that
+ * would quietly empty somebody's queue.
+ */
+async function removeIds(ids: readonly string[]): Promise<void> {
+  for (let i = 0; i < ids.length; i += DELETE_CHUNK) {
+    const chunk = ids.slice(i, i + DELETE_CHUNK);
+    const marks = chunk.map(() => '?').join(',');
+    await run(`DELETE FROM positions WHERE id IN (${marks})`, [...chunk]);
+  }
+}
+
 let flushing = false;
 
 /**
@@ -730,6 +1299,22 @@ export async function flush(): Promise<number> {
   if (flushing) return 0;
   flushing = true;
   try {
+    /* THE NATIVE BUFFER IS EMPTIED FIRST, so the rows the service took while
+       this bundle was dead are in `positions` before the page is selected.
+       Draining afterwards would post the queue as it stood before the drain
+       and leave the newest part of somebody's route — which is the only part
+       the Live map wants — waiting for the next pass. */
+    await drainService();
+
+    /* THE DAY IS STILL OPEN, said to the native side on a channel that is
+       already running. A flush happens on every sync pass, so this is the
+       cheapest possible place to push the deadline out, and it means a phone
+       that is syncing at all can never have its tracker expire underneath it. */
+    if (mode !== null) {
+      const hours = await getConfig<number>('mbos.location.serviceMaxDayHours', 16);
+      void touchService(trackingDeadlineSeconds(hours));
+    }
+
     let sent = 0;
 
     for (let pass = 0; pass < MAX_PASSES; pass++) {
@@ -747,9 +1332,15 @@ export async function flush(): Promise<number> {
       }
       if (!answer?.ok) return sent;
 
+      /* WHAT THE ANSWER MEANS is decided in `engines/flush-answer.ts`, which
+         is pure and tested — two production data-loss bugs have now been in
+         this loop, and nothing in this file can be exercised without a device.
+         What is left here is the doing. */
+      const decision = decideFlush(answer, rows.map((r) => r.id));
+
       /* The office turned it off. Stop taking fixes and drop what is held —
          keeping them would be storing something nobody asked for. */
-      if (answer.tracking === 'off') {
+      if (decision.effect === 'stop-tracking') {
         await stopTicking();
         await run('DELETE FROM positions');
         return sent;
@@ -761,14 +1352,23 @@ export async function flush(): Promise<number> {
          race by thirty seconds is the worse trade. Anything old enough that no
          check-in is ever coming goes, so this cannot become a queue that only
          grows. */
-      if (answer.tracking === 'no-session-yet') {
+      if (decision.effect === 'age-out') {
         await run('DELETE FROM positions WHERE at < ?', [Date.now() - (await retentionMs())]);
         return sent;
       }
 
-      const marks = rows.map(() => '?').join(',');
-      await run(`DELETE FROM positions WHERE id IN (${marks})`, rows.map((r) => r.id));
-      sent += rows.length;
+      await removeIds(decision.remove);
+      sent += decision.sent;
+
+      /*
+       * A PARTIAL ANSWER LEAVES ROWS BEHIND AND STILL GOES ROUND, which is the
+       * whole reason the word exists: the rows the server could not file are
+       * kept, and the queue behind them is not held hostage to them. It is
+       * `decision.carryOn` rather than the length test below, because on a
+       * partial the batch was full and the loop must still be allowed to end
+       * where nothing moved.
+       */
+      if (!decision.carryOn) return sent;
 
       /* A short read is the last of them. Asking again would cost a round trip
          to be told the same thing. */
@@ -795,4 +1395,23 @@ export async function stalledAt(): Promise<number | null> {
   const raw = await getKv(STALLED_AT);
   const n = raw ? Number(raw) : NaN;
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Why the real tracker is not running in THIS process, where it is not.
+ *
+ * Null is either "it is running" or "nothing has tried yet", which are the two
+ * cases with nothing to say. The four reasons are four different things to do,
+ * and until this existed all four arrived at every screen as the same silence —
+ * `startBackground` answered `false` to a refused permission, to a platform
+ * that has no background location, to an OS that threw on registration, and to
+ * a battery manager killing an accepted task.
+ *
+ * Deliberately in memory and deliberately not on the wire. It describes a
+ * registration this process made, so a fresh process has nothing to inherit;
+ * what the office needs about this handset is `trackerStalledAt`, which is
+ * persisted and does ride up. Read by the Sync screen.
+ */
+export function backgroundStartFailure(): BackgroundStartFailure | null {
+  return startFailure;
 }

@@ -1,0 +1,49 @@
+// The whole build file, short for the reason `phone-setup`'s and
+// `tracker-watchdog`'s are: `expo-module-gradle-plugin` already applies
+// com.android.library, kotlin-android and maven-publish, adds
+// expo-modules-core as a compileOnly dependency, and takes compileSdk/minSdk/
+// targetSdk from the root project — so this module cannot drift from the app
+// it is compiled into. Everything below is what the plugin cannot know.
+//
+// THE KOTLIN PACKAGE IS `expo.modules.locationservice` AND NOT `in.mahek.*`,
+// for the reason recorded twice already in this directory: `in` is a reserved
+// word in Kotlin, so `package in.mahek.mbos.locationservice` does not parse.
+
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.locationservice'
+version = '1.0.0'
+
+android {
+  namespace 'expo.modules.locationservice'
+}
+
+dependencies {
+  // BOTH OF THESE ARE ALREADY IN THE APP'S GRAPH, and are stated anyway.
+  //
+  // `expo-location` declares play-services-location as an `api` dependency, so
+  // FusedLocationProviderClient is already on this app's compile classpath
+  // transitively; `expo-background-task` pulls WorkManager in the same way.
+  // Neither adds an artefact to the APK by being repeated here. What being
+  // explicit buys is that this module compiles against the classes IT uses
+  // rather than against another package's transitive graph — which is the
+  // coupling that breaks on a library bump nobody connected to this file.
+  //
+  // The versions match what those two packages ask for today. Gradle resolves
+  // ONE of each for the whole app, taking the higher, so an expo bump wins
+  // here without this file being touched. If they ever needed to differ they
+  // could not, and for a scheduler and a location provider that is the right
+  // answer.
+  implementation 'com.google.android.gms:play-services-location:21.0.1'
+  implementation 'androidx.work:work-runtime-ktx:2.9.1'
+}
+
+// NOT PUBLISHED, for the reason the two modules beside it give: the plugin
+// would otherwise create a maven publication for a directory inside this app
+// that nothing will ever resolve from a repository.
+expoModule {
+  canBePublished false
+}
