@@ -33,6 +33,26 @@ export type DeviceStateReport = {
   connectionType?: 'wifi' | 'cellular' | 'none' | 'unknown';
   batteryPercent?: number;
   batteryCharging?: boolean;
+  /**
+   * WHETHER THIS PHONE'S BATTERY MANAGER WILL LET MBOS KEEP RUNNING.
+   *
+   * The one fact that actually explains the vivo handsets, and the only one on
+   * this list the office could not see. Everything else here answers "was the
+   * app allowed to"; this answers "and did the phone let it". A salesman whose
+   * permissions all read `always`, whose services are on, and whose tracker
+   * stalls after two minutes is a phone reading `optimised` — and the cure is
+   * two switches in his own settings rather than anything anybody can do from a
+   * desk.
+   *
+   * TWO VALUES AND NOT THREE. `unknown` — iOS, web, an APK built before the
+   * native module, a ROM that refuses to answer — is sent as ABSENCE, because
+   * the server reads a missing key as "this build cannot say" and leaves the
+   * column alone. Sending the word would make "we could not check" overwrite a
+   * real answer a previous report gave for the same phone, which is exactly the
+   * mistake `'unknown' IS NOT 'exempt'` in `native/phone-setup.ts` exists to
+   * prevent, arriving from the other end.
+   */
+  batteryExemption?: 'exempt' | 'optimised';
   backgroundSyncRegistered?: boolean;
   /**
    * DURATIONS, not instants, and that is deliberate.
@@ -57,6 +77,65 @@ export type DeviceStateReport = {
    * only that this build cannot say, and is never read as nothing waiting.
    */
   queuedPositions?: number;
+  /**
+   * MBOS'S OWN LOCATION SERVICE, which is the answer to "why did this phone go
+   * quiet" that nothing could give before.
+   *
+   * The office could see a trail with a hole in it and never what put it
+   * there. These say it: whether the service is up at all, when it last took a
+   * fix, when a batch of them was last ACCEPTED, how many it is still holding,
+   * and how many times today it has had to be STARTED — which is the number
+   * that names an OEM battery manager rather than describing its effects. One
+   * start is a check-in; twenty is a phone killing the tracker twenty times.
+   *
+   * ABSENT MEANS THIS BUILD HAS NO SUCH SERVICE, which is every handset in the
+   * field until somebody installs the next APK, and is never read as "not
+   * running". `null` on the two durations means the mark has never been
+   * written — the service has never started, the platform has never refused
+   * one — and is a different fact from a large number.
+   */
+  locationServiceRunning?: boolean;
+  locationServiceLastFixAgoSeconds?: number | null;
+  /**
+   * WHEN A BATCH WAS LAST ACCEPTED, which is a different question from whether
+   * the recorder BELIEVES it is sending.
+   *
+   * `FixStore.uploads()` answers the second — a cadence is set, there is a
+   * credential, the server has not refused it, the day is open and the service
+   * is up. All five can be true of an uploader that is wedged: a post that
+   * times out for ever against a proxy, a body the server keeps refusing for
+   * a reason that is not auth. Nothing about that phone looks wrong. The
+   * buffer climbs towards `serviceBufferCap` while JavaScript, reading
+   * `uploads` as true, politely leaves the queue to the recorder — and the
+   * office sees one number rising with nothing saying why.
+   *
+   * This is the only reading that can tell the two apart, because it is the
+   * only one taken at the far end: the mark is written where the server said
+   * yes. It rides the same device-state channel as everything else here and
+   * opens nothing of its own.
+   *
+   * `null` means THIS RECORDER HAS NEVER HAD A BATCH ACCEPTED — the commonest
+   * reason being that the office has turned its sending off entirely, which is
+   * `serviceUploadEverySeconds` at zero and the app doing the posting. It is
+   * never an accusation and the office draws no note on it, because there is
+   * no age to print beside one.
+   */
+  locationServiceLastUploadAgoSeconds?: number | null;
+  locationServiceBuffered?: number;
+  locationServiceStartsToday?: number;
+  /**
+   * WHEN THE PLATFORM ITSELF REFUSED TO START IT, which is a completely
+   * different support call from a battery manager killing a running service.
+   *
+   * Android 12 forbids starting a foreground service from the background
+   * outside a short list of exempt moments, and a phone that has not been
+   * given the battery exemption is refused there by design. Nothing is being
+   * killed; the fix is one tap on the Sync screen rather than a trip through
+   * an OEM settings tree, and the office can only tell the two apart if the
+   * phone says which happened.
+   */
+  locationServiceRefusedAgoSeconds?: number | null;
+  locationServiceRefusal?: string;
 };
 
 /**
@@ -108,6 +187,27 @@ async function connectionState(): Promise<Partial<DeviceStateReport>> {
  * or a simulator that does not implement it — costs a caught import rather
  * than a screen that will not start.
  */
+/**
+ * Whether Android is exempting this app from battery optimisation.
+ *
+ * Its own reading rather than a line inside `batteryState`, because it must not
+ * share a `try` with expo-battery: a simulator without the battery module would
+ * otherwise take the exemption answer down with it, and the exemption is the
+ * half that explains a dead trail. Lazy import for the same reason the two
+ * above are — a build without the native module costs a caught import rather
+ * than a screen that will not start.
+ */
+async function exemptionState(): Promise<Partial<DeviceStateReport>> {
+  try {
+    const { batteryExemption } = await import('../native/phone-setup');
+    const answer = await batteryExemption();
+    /* `unknown` is absence — see the note on the field. */
+    return answer === 'unknown' ? {} : { batteryExemption: answer };
+  } catch {
+    return {};
+  }
+}
+
 async function batteryState(): Promise<Partial<DeviceStateReport>> {
   try {
     const Battery = await import('expo-battery');
@@ -168,6 +268,42 @@ async function backgroundState(): Promise<Partial<DeviceStateReport>> {
          field is left absent, which the server reads as "cannot say" rather
          than as a clear queue. */
     }
+    /*
+     * OUR OWN SERVICE, asked through the same two-file wrapper every caller
+     * uses — so a build without the native half answers `null` here rather
+     * than throwing, and a handset in somebody's pocket running the old APK
+     * goes on reporting exactly what it always did.
+     *
+     * Every field is OMITTED rather than nulled where there is nothing to say.
+     * That is the rule the wire already keeps in both directions: the server
+     * reads an absent key as "leave the column alone", so a partial report from
+     * an older build cannot wipe the richer answers a newer one gave for the
+     * same phone.
+     */
+    try {
+      const { ourServiceState } = await import('./trail');
+      const svc = await ourServiceState();
+      if (svc) {
+        out.locationServiceRunning = svc.running;
+        /* An explicit null is a CLEAR and an absent key is not — the same
+           distinction the stall mark below turns on. The service has never
+           taken a fix, and saying so is different from saying nothing. */
+        out.locationServiceLastFixAgoSeconds = svc.lastFixAgoSeconds;
+        /* Same shape, same reason: an explicit null says "I can report this
+           and there is nothing to report", which is a recorder that has never
+           had a batch taken — and it has to be able to CLEAR a stored mark,
+           because a handset reinstalled or handed to somebody else starts
+           again from nothing. */
+        out.locationServiceLastUploadAgoSeconds = svc.lastUploadAgoSeconds;
+        if (svc.buffered !== null) out.locationServiceBuffered = svc.buffered;
+        if (svc.startsToday !== null) out.locationServiceStartsToday = svc.startsToday;
+        out.locationServiceRefusedAgoSeconds = svc.lastRefusalAgoSeconds;
+        if (svc.lastRefusal) out.locationServiceRefusal = svc.lastRefusal;
+      }
+    } catch {
+      /* Left absent, which the office reads as "this build did not say". */
+    }
+
     if (stalled !== null && stalled <= now) {
       out.trackerStalledAgoSeconds = Math.round((now - stalled) / 1000);
     } else if (stalled === null) {
@@ -213,6 +349,7 @@ export async function readDeviceState(): Promise<DeviceStateReport> {
     locationState(),
     connectionState(),
     batteryState(),
+    exemptionState(),
     backgroundState(),
   ]);
   return Object.assign({}, ...parts) as DeviceStateReport;

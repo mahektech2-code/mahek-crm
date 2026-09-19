@@ -1,0 +1,104 @@
+<!--
+  THE ONE MANIFEST IN THIS DIRECTORY THAT IS NOT EMPTY, and every line of it
+  earns its place.
+
+  `phone-setup` and `tracker-watchdog` both declare nothing, because everything
+  they need is either already merged or lives in `app.json` — the standing rule
+  that every permission this app asks a salesman for is readable in ONE file.
+  That rule is kept here too: THERE IS NOT A SINGLE `uses-permission` BELOW.
+  What cannot live in app.json is a component, and this module is three of them.
+
+  THE FOUR PERMISSIONS THIS MODULE NEEDS ARE ALREADY GRANTED TO THE APP, by
+  `expo-location`'s own config plugin, from the options already set in
+  `app.json`:
+
+    ACCESS_FINE_LOCATION           declared in expo-location's own manifest
+    ACCESS_BACKGROUND_LOCATION     added by `isAndroidBackgroundLocationEnabled`
+    FOREGROUND_SERVICE             added by `isAndroidForegroundServiceEnabled`
+    FOREGROUND_SERVICE_LOCATION    added by the same option
+
+  That was VERIFIED in `node_modules/expo-location/plugin/build/withLocation.js`
+  rather than assumed, because a foreground service of type `location` that is
+  missing FOREGROUND_SERVICE_LOCATION does not warn: on API 34 it throws
+  SecurityException at `startForeground`, inside a service started from a
+  background worker, which is the exact shape of failure nobody ever sees.
+
+  `RECEIVE_BOOT_COMPLETED` IS ALSO ALREADY THERE, and this is the one that
+  surprises people. `androidx.work:work-runtime` declares it in its own
+  manifest; `expo-background-task` has depended on WorkManager since it was
+  added, so the permission has been merged into this app since long before this
+  module existed. Declaring it again would read, to the next person, as the
+  thing that made boot work.
+
+  WHAT IS NOT ALREADY THERE IS A RECEIVER THAT STARTS *THIS* SERVICE.
+  androidx.work's own `RescheduleReceiver` re-enqueues periodic work, and
+  expo-task-manager's `TaskBroadcastReceiver` reconstructs the expo task —
+  neither of them knows this service exists. So the receiver below is the third
+  restart layer and not a fourth copy of anything.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+
+    <!--
+      THE SERVICE ITSELF.
+
+      `exported="false"` because nothing outside this app may start it: it
+      records where a salesman is, and a component another app could poke is a
+      component another app can turn into a tracker.
+
+      `foregroundServiceType="location"` is what makes `startForeground` legal
+      at all from API 29, and from API 34 it is checked against the permission
+      list as well. It is declared HERE and passed AGAIN as the third argument
+      to `startForeground` — the manifest declares what the service may be, the
+      call declares what this start actually is, and on API 34 both are read.
+
+      `stopWithTask="false"` is the load-bearing one and it is the whole reason
+      this exists rather than a task. A salesman swiping MahekOne off the
+      recents list is the ordinary way an Android phone is tidied up, and it
+      must not be the way a working day stops being recorded. The trail already
+      has one honest end — the check-out — and only that may stop it.
+
+      There is no `android:process`, deliberately. A separate process would
+      give the service its own memory and make it survive a JS crash, and it
+      would also mean two processes reading one SQLite file, which is the
+      problem `FixStore` exists to avoid rather than to introduce.
+    -->
+    <service
+      android:name="expo.modules.locationservice.MbosLocationService"
+      android:exported="false"
+      android:stopWithTask="false"
+      android:foregroundServiceType="location" />
+
+    <!--
+      RESTART LAYER THREE: the phone was switched off and on again.
+
+      `BOOT_COMPLETED` is also one of the documented exemptions from Android
+      12's restriction on starting a foreground service from the background —
+      which is the restriction the whole of `ServiceLauncher` is written
+      around — so this receiver is not merely allowed to run, it is one of the
+      few moments a cold process is allowed to put the service back.
+
+      `MY_PACKAGE_REPLACED` is the same fact after an app update rather than a
+      reboot: a sideloaded APK replaces the running one, every process is
+      killed, and a day that was open at the moment of the install would
+      otherwise record nothing until somebody opened the app. This app is
+      installed by hand, over the top, on working phones; that is not a rare
+      case here.
+
+      `QUICKBOOT_POWERON` is HTC's and some Chinese ROMs' own spelling of a
+      boot broadcast. It costs one line and catches the handsets least likely
+      to send the standard one.
+    -->
+    <receiver
+      android:name="expo.modules.locationservice.BootReceiver"
+      android:exported="false"
+      android:directBootAware="false">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+      </intent-filter>
+    </receiver>
+
+  </application>
+</manifest>

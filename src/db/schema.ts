@@ -5259,6 +5259,31 @@ export const mbosDevices = pgTable(
     /** On charge at the same moment: 20% climbing is not 20% falling. */
     batteryCharging: boolean("battery_charging"),
     /**
+     * WHETHER THE PHONE'S OWN BATTERY MANAGER WILL LET MBOS KEEP RUNNING.
+     *
+     * `exempt` or `optimised`, and null for never reported. Every other column
+     * on this row answers "was the app allowed to" — the permission, the
+     * services toggle, the background grant — and this is the only one that
+     * answers "and did the phone let it", which on the handsets this field
+     * force actually carries is the question that decides the day.
+     *
+     * Three live handsets report `tracker_stalled_at` with
+     * `location_permission = 'always'`, location services on and the background
+     * permission genuinely held. A vivo V2333 on the current build stalled two
+     * minutes after check-in with every one of those reading correct. Funtouch
+     * kills the foreground service the trail runs in and tells the app nothing,
+     * and until this column existed the office could see that a phone had
+     * stopped and never why — so a manager rang a salesman and asked him to
+     * read out his own settings screen, which is exactly the loop
+     * `location_permission` was added to close one layer up.
+     *
+     * NULL IS NOT "fine". It is iOS, an APK built before the native module, or
+     * a ROM that would not answer. The handset omits the field entirely in all
+     * three rather than sending a third word, so a report that cannot check
+     * leaves a real earlier answer standing instead of erasing it.
+     */
+    batteryExemption: text("battery_exemption"),
+    /**
      * WHEN THE THREE READINGS ABOVE WERE TAKEN, and the reason they are
      * useless without it.
      *
@@ -5328,6 +5353,104 @@ export const mbosDevices = pgTable(
      */
     queuedPositions: integer("queued_positions"),
     queuedPositionsAt: timestamp("queued_positions_at", { withTimezone: true }),
+
+    /**
+     * MBOS'S OWN RECORDER, and the four facts that finally answer "why did
+     * this phone go quiet".
+     *
+     * The trail used to run on `expo-location`'s background task, and in
+     * production it stopped: fifty-one silences and 523 minutes lost inside
+     * one working day, single gaps of 999 and 498 minutes, on handsets
+     * reporting `location_permission = 'always'` with background granted and
+     * services on. The cause is one line in that library —
+     * `LocationTaskConsumer.maybeStartForegroundService` returns early when no
+     * Activity has been foregrounded, so a task restored into a headless
+     * process runs with no foreground service and Android 10+ throttles it to
+     * a few fixes an hour. The office could see the hole and never what made
+     * it.
+     *
+     * `location_service_running` is whether our own foreground service is up
+     * as the handset last knew. `location_service_last_fix_at` is the only
+     * evidence it means anything — a service can hold its notification and
+     * have a provider that has quietly stopped delivering, which is the second
+     * failure and looks identical from every other column.
+     *
+     * NULL ON ALL FOUR IS A BUILD THAT PREDATES THE SERVICE, which is every
+     * handset in the field until somebody installs the next APK, and is never
+     * read as "not running". An APK cannot be recalled.
+     */
+    locationServiceRunning: boolean("location_service_running"),
+    /**
+     * Stamped from a DURATION the handset sends, like the two marks above it
+     * and for the same reason: when the service last took a fix is a fact only
+     * the phone holds, and seconds-ago survives a clock that is wrong by hours
+     * where an absolute instant would not.
+     */
+    locationServiceLastFixAt: timestamp("location_service_last_fix_at", {
+      withTimezone: true,
+    }),
+    /**
+     * WHEN A BATCH OF THEM WAS LAST ACCEPTED, and it is the only reading on
+     * this row taken at OUR end rather than reported by the phone.
+     *
+     * The recorder can say whether it BELIEVES it is sending — a cadence is
+     * set, it holds a credential, the server has not refused that credential,
+     * the day is open and the service is up. Every one of those can be true of
+     * an uploader that is wedged: a post timing out for ever against a captive
+     * proxy, a body the far end keeps refusing for a reason that is not auth.
+     * Nothing about that handset looks wrong from any other column, and the
+     * app — reading the same belief — leaves the queue to it, so
+     * `location_service_buffered` climbs towards its cap with nothing anywhere
+     * saying why. This mark is written where the server actually said yes,
+     * which is what makes it the one thing that separates the two.
+     *
+     * Stamped from a DURATION, like the marks around it and for the same
+     * reason. NULL is a recorder that has never had a batch taken, which is
+     * every handset on a deployment that posts from the app rather than from
+     * the service — `mbos.location.serviceUploadEverySeconds` at zero — and is
+     * never read as a fault.
+     */
+    locationServiceLastUploadAt: timestamp("location_service_last_upload_at", {
+      withTimezone: true,
+    }),
+    /**
+     * Fixes the recorder is still holding, not yet in the upload queue.
+     *
+     * It writes to its own store because it runs with the app shut; the app
+     * moves them across the next time it is alive. A figure here that is not
+     * draining is a phone whose JavaScript has not run for hours — which is a
+     * different fault from a phone with no signal, and until this column the
+     * two were the same silence.
+     */
+    locationServiceBuffered: integer("location_service_buffered"),
+    /**
+     * HOW MANY TIMES TODAY THE RECORDER HAD TO BE STARTED, and it is the
+     * single most useful number on this row.
+     *
+     * One start is the check-in. Twenty is a battery manager killing the
+     * tracker twenty times, which no API reports and which every other column
+     * can only describe the effects of. Counted on the handset's own local
+     * calendar day and rolled over at its midnight — overnight is when a phone
+     * is charged and when an OEM's own bookkeeping resets, so yesterday's
+     * twenty say nothing about this morning.
+     */
+    locationServiceStartsToday: integer("location_service_starts_today"),
+    /**
+     * WHEN THE PLATFORM ITSELF REFUSED TO START IT — a completely different
+     * support call from a battery manager killing a running service.
+     *
+     * Android 12 forbids starting a foreground service from the background
+     * outside a short list of exempt moments. A phone that has not been given
+     * the battery exemption is refused there BY DESIGN: nothing is being
+     * killed, and the fix is one tap on the handset's own Sync screen rather
+     * than a trip through an OEM settings tree. `location_service_refusal`
+     * carries the platform's own word for it, so a refusal nobody has seen
+     * before arrives as itself rather than as a category somebody guessed.
+     */
+    locationServiceRefusedAt: timestamp("location_service_refused_at", {
+      withTimezone: true,
+    }),
+    locationServiceRefusal: text("location_service_refusal"),
   },
   (t) => [
     uniqueIndex("mbos_devices_device_key").on(t.deviceId),

@@ -36,12 +36,40 @@ export const CONNECTION_TYPES = ["wifi", "cellular", "none", "unknown"] as const
 
 export type ConnectionType = (typeof CONNECTION_TYPES)[number];
 
+/**
+ * WHETHER THE PHONE'S OWN BATTERY MANAGER WILL LET MBOS KEEP RUNNING.
+ *
+ * Every other reading here answers "was the app allowed to"; this one answers
+ * "and did the phone let it", and it is the difference between the two that
+ * this whole subsystem keeps failing on. Three handsets in the field report
+ * `tracker_stalled_at` with every permission reading `always`, location
+ * services on and the background grant genuinely held — because vivo's Funtouch
+ * kills the foreground service the trail runs in whatever any of that says. The
+ * office had no column that could express it, so the Live map could say a phone
+ * had stopped and never why.
+ *
+ * TWO VALUES, NEVER "unknown". The handset sends nothing at all where it cannot
+ * check — iOS, an older APK, a ROM that refuses — and the absent-is-not-null
+ * rule below then leaves the stored answer alone. A third value meaning "could
+ * not check" would overwrite a real answer with the absence of one, which is
+ * the same failure "unknown is not exempt" already names on the handset.
+ */
+export const BATTERY_EXEMPTIONS = [
+  /** Android is leaving the app alone. */
+  "exempt",
+  /** Doze and app standby are free to kill the tracker's foreground service. */
+  "optimised",
+] as const;
+
+export type BatteryExemption = (typeof BATTERY_EXEMPTIONS)[number];
+
 export type DeviceState = {
   locationPermission?: LocationPermission;
   locationServicesEnabled?: boolean;
   connectionType?: ConnectionType;
   batteryPercent?: number;
   batteryCharging?: boolean;
+  batteryExemption?: BatteryExemption;
   backgroundSyncRegistered?: boolean;
   /**
    * `null` is a CLEAR and absent is still "leave it alone" — the two used to
@@ -53,6 +81,27 @@ export type DeviceState = {
   /** Unsent fixes still on the phone. Zero is a real answer; absent is not. */
   queuedPositions?: number;
   queuedPositionsAt?: Date;
+  /**
+   * MBOS'S OWN RECORDER. Absent on every handset whose build predates it,
+   * which is all of them until somebody installs the next APK — and absent is
+   * never read as "not running".
+   */
+  locationServiceRunning?: boolean;
+  locationServiceLastFixAt?: Date | null;
+  /**
+   * WHEN A BATCH WAS LAST ACCEPTED — the only reading here taken at OUR end.
+   *
+   * Everything else on this row is the phone's account of itself. This mark is
+   * written where the server said yes, which is what makes it the one thing
+   * that can tell a recorder that IS sending from one that merely believes it
+   * is. Null is a recorder that has never had one taken, which on a deployment
+   * that posts from the app rather than from the service is every handset.
+   */
+  locationServiceLastUploadAt?: Date | null;
+  locationServiceBuffered?: number;
+  locationServiceStartsToday?: number;
+  locationServiceRefusedAt?: Date | null;
+  locationServiceRefusal?: string;
   deviceStateAt?: Date;
 };
 
@@ -137,6 +186,12 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
     state.batteryCharging = body.batteryCharging;
   }
 
+  /* The word or nothing. An unrecognised string is dropped rather than stored,
+     the same as a permission spelled differently — a screen is going to draw
+     this, and a figure a screen draws has to have come from somewhere. */
+  const exemption = oneOf(BATTERY_EXEMPTIONS, body.batteryExemption);
+  if (exemption) state.batteryExemption = exemption;
+
   /*
    * HOW FAR BEHIND THE PHONE IS, which is the number managers actually ask for.
    *
@@ -190,6 +245,78 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
   if (stalledAgo) state.trackerStalledAt = stalledAgo;
   else if (isPresentNull(body, "trackerStalledAgoSeconds")) {
     state.trackerStalledAt = null;
+  }
+
+  /*
+   * MBOS'S OWN RECORDER, read on exactly the terms everything above it is.
+   *
+   * A boolean that arrived is stored; one that did not is left alone, so an
+   * older handset's report cannot wipe what a newer one said about the same
+   * phone. The two DURATIONS follow the `trackerStalledAt` rule one paragraph
+   * up rather than the `queuedPositions` rule: an explicit `null` is the
+   * handset saying "I can report this and there is nothing to report" and
+   * clears the column, while an absent key means "I cannot say" and leaves it.
+   * That distinction is what stopped a stall mark from surviving a reinstall,
+   * and it matters here for the same reason — a phone that has been given the
+   * battery exemption stops being refused, and a refusal nobody can clear is a
+   * standing false alarm on a panel whose whole discipline is that a healthy
+   * handset says nothing.
+   *
+   * ZERO IS A REAL ANSWER for the two counts and the common one: nothing
+   * buffered, and a recorder that has been started once today and stayed up.
+   * So they follow `queuedPositions` — stored whenever they arrive, and it is
+   * absence rather than zero that means the build cannot say.
+   */
+  if (typeof body.locationServiceRunning === "boolean") {
+    state.locationServiceRunning = body.locationServiceRunning;
+  }
+
+  const fixAgo = instantFromAgo(body.locationServiceLastFixAgoSeconds);
+  if (fixAgo) state.locationServiceLastFixAt = fixAgo;
+  else if (isPresentNull(body, "locationServiceLastFixAgoSeconds")) {
+    state.locationServiceLastFixAt = null;
+  }
+
+  /* THE SAME RULE AS THE FIX MARK ABOVE, and it matters here for the same
+     reason: a handset reinstalled, or handed to somebody else, starts with a
+     recorder that has never had a batch taken — and a mark nobody can clear is
+     a standing figure on a panel whose whole discipline is that a healthy phone
+     says nothing. An absent key still leaves the column alone, so an older
+     build that has never heard of this cannot wipe it. */
+  const uploadAgo = instantFromAgo(body.locationServiceLastUploadAgoSeconds);
+  if (uploadAgo) state.locationServiceLastUploadAt = uploadAgo;
+  else if (isPresentNull(body, "locationServiceLastUploadAgoSeconds")) {
+    state.locationServiceLastUploadAt = null;
+  }
+
+  if (
+    typeof body.locationServiceBuffered === "number" &&
+    Number.isFinite(body.locationServiceBuffered)
+  ) {
+    const buffered = Math.round(body.locationServiceBuffered);
+    if (buffered >= 0) state.locationServiceBuffered = buffered;
+  }
+
+  if (
+    typeof body.locationServiceStartsToday === "number" &&
+    Number.isFinite(body.locationServiceStartsToday)
+  ) {
+    const starts = Math.round(body.locationServiceStartsToday);
+    if (starts >= 0) state.locationServiceStartsToday = starts;
+  }
+
+  const refusedAgo = instantFromAgo(body.locationServiceRefusedAgoSeconds);
+  if (refusedAgo) state.locationServiceRefusedAt = refusedAgo;
+  else if (isPresentNull(body, "locationServiceRefusedAgoSeconds")) {
+    state.locationServiceRefusedAt = null;
+  }
+
+  /* The platform's own word for it, capped rather than trusted: a handset is
+     free to send whatever it likes to a URL, and this one is drawn on a screen.
+     A long string is truncated rather than dropped, because the first part of
+     an exception class name is the useful part. */
+  if (typeof body.locationServiceRefusal === "string" && body.locationServiceRefusal.trim()) {
+    state.locationServiceRefusal = body.locationServiceRefusal.trim().slice(0, 120);
   }
 
   /*
