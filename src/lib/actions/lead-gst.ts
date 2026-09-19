@@ -86,22 +86,23 @@ const schema = z.object({
 /**
  * Validate — or refuse — the GSTIN somebody recorded against a lead.
  *
- * WHO MAY DO IT is two answers, and the second is the one that matters.
+ * WHO MAY DO IT is decided by which APP somebody holds, not by how senior they
+ * are — Mahek's own instruction, and the reason `lead.gstValidate` sits in no
+ * seniority set. Anybody with the Sales Dashboard, the CRM or the Accounts desk
+ * may check a GSTIN, at either level: a clerk checking a number is doing the
+ * job rather than making a decision above their station. The person named in
+ * `back_office_am_id` on the row may too, capability or not — where a team does
+ * name somebody to that seat, requiring them to also hold a grant would mean
+ * the named person could not do the one thing the seat is for.
  *
- * Anybody holding `lead.gstValidate` may, which is the accounts desk and
- * managers (see the capability's own note for why it landed there and not in a
- * back-office set that does not exist). AND the person actually named in
- * `back_office_am_id` on this row may, capability or not — because that is who
- * the specification gives the job to, and requiring them to also hold a
- * capability would mean the named seat holder could not do the one thing the
- * seat is for.
- *
- * WHO MAY NOT is the point of the whole exercise: the lead's own owner, which
- * is the salesman who collected the number. He is refused even where he would
- * otherwise qualify — a manager who also owns the lead is still the collector
- * on this one — because a check performed by the person who did the work is not
- * a check. It is the same rule the expense policy already keeps for
- * verification, and the same reason `lead.verify` is kept off the salesman.
+ * WHO MAY NOT is the point of the whole exercise, and it is enforced twice.
+ * The handset is the one book app absent from the grant, so the field salesman
+ * who collected the number cannot certify it. And the lead's own OWNER is
+ * refused here outright, whatever hat he holds — a man who works the field and
+ * also holds the CRM would otherwise walk straight round the first rule on his
+ * own leads. A check performed by the person who did the work is not a check;
+ * it is the same reasoning that keeps `lead.verify` off the salesman and that
+ * makes the expense policy demand a second pair of eyes.
  */
 export async function validateGstin(
   input: z.infer<typeof schema>,

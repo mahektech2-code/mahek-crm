@@ -38,28 +38,34 @@ async function can(
 }
 
 describe("§11.6 — the GST check is not the collector's", () => {
-  test("the calling desk may validate", async () => {
-    assert.equal(await can({ app: "crm", role: "associate" }, "lead.gstValidate"), true);
-  });
+  /*
+   * GRANTED BY APP AND NOT BY LEVEL, which is Mahek's own instruction: whoever
+   * holds the Sales Dashboard, the CRM or the Accounts desk may check a GSTIN,
+   * and an associate is not held to be too junior for it. So both levels of
+   * all three are asserted rather than just the senior one — the first attempt
+   * at this grant reached every MANAGER in the building and still missed the
+   * accounts clerk who does this work all day.
+   */
+  for (const app of ["crm", "sales", "accounts"] as const) {
+    for (const role of ["associate", "manager"] as const) {
+      test(`${app} / ${role} may validate`, async () => {
+        assert.equal(await can({ app, role }, "lead.gstValidate"), true);
+      });
+    }
+  }
 
-  test("accounts may validate, clerk and manager alike", async () => {
-    /* The CLERK especially. This is the desk that finds out the hard way that
-       a GSTIN is wrong, and the first attempt at this grant reached every
-       manager in the building while missing them. */
-    assert.equal(await can({ app: "accounts", role: "associate" }, "lead.gstValidate"), true);
-    assert.equal(await can({ app: "accounts", role: "manager" }, "lead.gstValidate"), true);
-  });
-
-  test("the calling desk's manager may too", async () => {
-    assert.equal(await can({ app: "crm", role: "manager" }, "lead.gstValidate"), true);
-  });
-
-  /* THE ONE THAT MATTERS. A field associate is the salesman who collected the
-     number. He is refused the capability outright — and refused a second time
-     by `validateGstin`, which turns away the lead's own owner whatever hat he
-     holds, so a salesman who is also a manager somewhere cannot come in the
-     side door either. */
-  test("the field salesman may NOT", async () => {
+  /*
+   * THE ONE THAT MATTERS, and the reason the capability is withheld by default
+   * rather than left in no set at all.
+   *
+   * MBOS is the field salesman's app — the man who typed the number into his
+   * phone standing in the shop. He is refused the capability outright, at both
+   * levels, and refused a second time by `validateGstin`, which turns away the
+   * lead's own owner whatever hat he holds. A capability in none of the
+   * restricted sets is one everybody holds, which is exactly how an earlier
+   * attempt handed this back to him with nothing going red.
+   */
+  test("the field salesman may NOT, at either level", async () => {
     assert.equal(await can({ app: "field", role: "associate" }, "lead.gstValidate"), false);
     assert.equal(await can({ app: "field", role: "manager" }, "lead.gstValidate"), false);
   });
