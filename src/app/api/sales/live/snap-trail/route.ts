@@ -12,8 +12,19 @@ import {
   tripColour,
   tripOffset,
 } from "@/lib/engines/trail-trips";
+import { planDay, type Coord, type SnappedRun } from "@/lib/engines/snap-plan";
 import { trackForDay } from "@/lib/services/sales-service";
-import { roadPathFor } from "@/lib/services/road-snap-service";
+import { roadPathFor, roadPathTail } from "@/lib/services/road-snap-service";
+import { heldRunsFor, holdRunsFor } from "@/lib/services/snap-cache";
+/* `Coord` is the same `[number, number]` in both engines and is taken from
+   `snap-plan` above, so there is one name for one shape in this file. */
+import {
+  gapVerdict,
+  joinGapPath,
+  pathMetres,
+  routeIsBelievable,
+} from "@/lib/engines/trail-gap-route";
+import { roadRouteBetween } from "@/lib/services/ola-directions-service";
 
 /**
  * The Live map's road-snapped trail, for one salesman on one day.
@@ -81,11 +92,30 @@ export async function GET(request: Request) {
    * already are, so trips and gaps are decided from the real fixes and only
    * the drawing is road-matched.
    *
-   * A gap keeps the raw straight line between its two ends. That is the
-   * boundary #251 drew and it is kept exactly: the road is reconstructed only
-   * inside a run of fixes dense enough that there is nothing to invent.
+   * A run of fixes dense enough that there is nothing to invent is
+   * reconstructed onto the road it was walked on — that is the boundary #251
+   * drew and it still holds for everything the map calls EVIDENCE.
+   *
+   * A GAP IS THE OTHER THING, and it is now drawn in one of two ways rather
+   * than one. A SHORT gap — inside `mbos.location.gapRouteMaxMinutes` and
+   * `mbos.location.gapRouteMaxKm` — is drawn following the roads between its
+   * two ends, because at this sampling density a gap of a minute or two is a
+   * tunnel, a lift or a reaped tracker, and a straight line through three
+   * blocks of buildings is a worse picture of that than the road is. Every
+   * longer gap keeps the crow's flight it always had: real days here carry
+   * single gaps of 437 and 999 minutes, and nothing should be drawn across
+   * those at all.
+   *
+   * NEITHER IS PROMOTED TO EVIDENCE. Both stay dashed, faint and without the
+   * casing that makes a line read as a route somebody took, the routed one
+   * carries `inferred` so the hover can say in words that it is an estimate,
+   * and neither adds a metre to the distance a salesman is measured on.
    */
   const gapMetres = config["mbos.location.trailGapMeters"];
+  const gapLimits = {
+    maxMinutes: config["mbos.location.gapRouteMaxMinutes"],
+    maxKm: config["mbos.location.gapRouteMaxKm"],
+  };
   const trips = splitTrailIntoTrips(accurate, {
     gapMetres,
     dwellRadiusMetres: config["mbos.location.dwellRadiusMeters"],
@@ -113,6 +143,17 @@ export async function GET(request: Request) {
    * removed, it is a leg that was never followed. Below a quarter the raw
    * figure stands: inflated, and still the better of two wrong answers, because
    * it at least reflects that he moved about.
+   *
+   * AND THE LINE GOES BACK WITH THE FIGURE, which for a long time it did not.
+   * This refused the collapsed METRES and still answered with the collapsed
+   * COORDINATES — so the number on the hover was the honest raw one and the
+   * shape under it was the shortcut, on the same segment, disagreeing. The map
+   * replaces its geometry with whatever this returns and caches it, so the
+   * straight line across the blocks he actually walked survived every redraw
+   * and every poll for the rest of the day. A path this route has already
+   * decided it does not believe is not a path to draw: where it collapsed the
+   * raw fixes are what is sent, which is exactly what the map drew before Ola
+   * was asked at all.
    */
   const COLLAPSED_BELOW = 0.25;
 
@@ -129,46 +170,121 @@ export async function GET(request: Request) {
    * REPLACES its geometry with whatever this returns: fixing the map alone
    * changed nothing on screen.
    *
-   * `dayTrailSegments` covers every consecutive pair exactly once. Which
-   * pieces reach Ola is unchanged — only a solid run inside a trip is
-   * road-matched, a gap keeps its straight line — so this costs no extra call.
+   * `dayTrailSegments` covers every consecutive pair exactly once, and which
+   * SERVICE a piece reaches is decided by what the piece is: a solid run goes
+   * to Snap-to-Road, a short gap to Directions, and a long gap to neither.
+   * This paragraph used to end "so this costs no extra call", which was true
+   * when a gap was never sent anywhere; a short gap is a Directions request
+   * now, cached on its two rounded ends and refused outright past the ceilings
+   * above.
    */
   const byIndex = new Map(trips.map((t) => [t.index, t] as const));
   const segments = [];
   const roadMetresByTrip = new Map<number, number>();
+  /* Kept beside each segment, in step with it, so a leg the ratio disowns can
+     be given its own fixes back. The verdict is per TRIP and cannot be reached
+     until the whole leg has been walked, so the raw line has to survive the
+     loop that builds the road one. */
+  const rawByIndex: [number, number][][] = [];
 
-  for (const piece of dayTrailSegments(accurate, {
+  const pieces = dayTrailSegments(accurate, {
     gapMetres,
     dwellRadiusMetres: config["mbos.location.dwellRadiusMeters"],
     tripBreakMinutes: config["mbos.location.tripBreakMinutes"],
-  })) {
+  });
+
+  /*
+   * ONLY WHAT IS NEW IS BOUGHT, and that is the whole of this block.
+   *
+   * Snap-to-Road is metered — a hundred thousand requests a month, and one
+   * salesman's full day is around thirty of them. Asked for the whole day on
+   * every look, a team of seven watched by one manager for a couple of hours
+   * exceeds a month's quota on its own, and what it buys back is a road that
+   * has not changed since the last look: a day grows at ONE END. So the held
+   * geometry is extended by the walking since rather than replaced, which is
+   * one request instead of thirty, and it is held HERE rather than in the
+   * browser so a second manager and a page reload cost nothing at all.
+   *
+   * `planDay` decides, per run, whether anything is owed; `snap-cache.ts`
+   * argues for the store and states its invalidation, which is that every
+   * held run is re-checked against the fixes that have just been read. A run
+   * that no longer matches is bought again, so the cache cannot drift into
+   * disagreeing with the trail — it can only fail its own check.
+   */
+  const minRefreshMs = config["mbos.location.snapRefreshSeconds"] * 1_000;
+  const askedAtMs = Date.now();
+  const held = heldRunsFor(salesmanId, day);
+  const plans = planDay(
+    /* A gap is never snapped, so nothing is ever held for one — and a run
+       nothing is held for must not invalidate the runs after it. */
+    pieces.map((piece, i) => (piece.gap ? undefined : held[i])),
+    pieces.map((piece) => ({
+      coordinates: piece.coordinates as Coord[],
+      fromMs: piece.fromAt.getTime(),
+    })),
+    { nowMs: askedAtMs, minRefreshMs },
+  );
+  const nextHeld: (SnappedRun | undefined)[] = [];
+
+  for (let index = 0; index < pieces.length; index++) {
+    const piece = pieces[index];
     const raw = piece.coordinates;
     const trip = byIndex.get(piece.trip);
-    /* `[lng, lat]` on the wire, `{lat,lng}` through the service — GeoJSON
-       and Ola disagree about the order and this is where they meet. */
+    /* A gap has no fixes to snap and a run has nothing to route across, so
+       the two never meet: `routedGap` asks Directions about the silence and
+       `roadFor` asks Snap-to-Road about the walking, and only one of them is
+       ever asked about one piece. `[lng, lat]` on the wire and `{lat,lng}`
+       through both services — GeoJSON and Ola disagree about the order, and
+       each of the two turns it round inside itself. */
     const road = piece.gap
-      ? null
-      : await roadPathFor(raw.map(([lng, lat]) => ({ lat, lng })));
+      ? await routedGap(raw, piece.fromAt, piece.toAt)
+      : await roadFor(plans[index], raw as Coord[], index);
     /* Trips are 1-based and `NO_TRIP` is 0, which `tripOffset` would stagger
        the wrong way off the line. Ground in no journey sits where it is. */
     const offset = trip ? tripOffset(piece.trip) : 0;
     const drawn = offsetPolyline(
-      road ? (road.map((p) => [p.lng, p.lat]) as [number, number][]) : raw,
+      /* Both answer in the drawn order already — `[lng, lat]`, the same as
+         the raw piece — so there is nothing to turn round here. */
+      road ?? raw,
       offset,
     );
+    const inferred = piece.gap && road !== null;
 
-    /* A gap contributes its straight line — nobody knows the road taken, and
-       pretending it was longer than the crow flies would be an invention. */
+    /*
+     * A GAP CONTRIBUTES ITS STRAIGHT LINE, and that does not change because
+     * the map now draws a road across it.
+     *
+     * Nobody knows the road taken. Following one is a better PICTURE of a
+     * short dropout than a line through three blocks of buildings, and it is
+     * not better EVIDENCE — so what a salesman is measured on stays what it
+     * always was, the crow's flight between two real fixes. Measuring `drawn`
+     * here would have quietly added every routed detour to a day's distance,
+     * which on a beat with a dozen small dropouts is a figure that grows
+     * because the map got prettier.
+     */
+    const measured = inferred ? offsetPolyline(raw, offset) : drawn;
     if (trip) {
       let metres = 0;
-      for (let i = 1; i < drawn.length; i++) {
-        metres += metresBetween(drawn[i - 1][1], drawn[i - 1][0], drawn[i][1], drawn[i][0]);
+      for (let i = 1; i < measured.length; i++) {
+        metres += metresBetween(
+          measured[i - 1][1],
+          measured[i - 1][0],
+          measured[i][1],
+          measured[i][0],
+        );
       }
       roadMetresByTrip.set(piece.trip, (roadMetresByTrip.get(piece.trip) ?? 0) + metres);
     }
 
     segments.push({
       gap: piece.gap,
+      /*
+       * WHICH DASHED LINES ARE A GUESS AT A ROAD, and which are no guess at
+       * all. Both stay dashed and faint — a routed gap is never promoted to
+       * the solid, cased treatment that says somebody was seen here — but the
+       * two are not the same claim, and the hover says which in words.
+       */
+      inferred,
       trip: piece.trip,
       colour: trip ? tripColour(piece.trip) : NO_TRIP_COLOUR,
       offset,
@@ -183,15 +299,187 @@ export async function GET(request: Request) {
          corners somebody is trying to follow. */
       coordinates: drawn,
     });
+    rawByIndex.push(offsetPolyline(raw, offset));
   }
 
-  /* Written back onto each trip's segments now the whole leg is known. */
+  holdRunsFor(salesmanId, day, nextHeld);
+
+  /**
+   * The road under one piece: reused, extended by its tail, or bought whole.
+   *
+   * A FAILURE NEVER COSTS THE HEAD. Where a tail cannot be bought the held
+   * road is kept and the new stretch is drawn as the raw fixes it is — which
+   * is exactly what the map draws for every trail whose snap has not landed —
+   * and the held run is left where it was, so the next look asks again. A
+   * transient hiccup must not throw away eight hours of road that arrived
+   * perfectly well.
+   */
+  async function roadFor(
+    plan: (typeof plans)[number],
+    raw: Coord[],
+    index: number,
+  ): Promise<Coord[] | null> {
+    const keep = (path: Coord[], coveredCount: number, snappedAtMs: number) => {
+      nextHeld[index] = {
+        fromMs: pieces[index].fromAt.getTime(),
+        firstCoord: raw[0],
+        coveredCount,
+        seam: raw[coveredCount - 1],
+        path,
+        snappedAtMs,
+      };
+    };
+
+    if (plan.kind === "reuse") {
+      /* Unchanged in every respect, including WHEN it was bought — the refresh
+         window is measured from the last time Ola was actually asked. */
+      nextHeld[index] = held[index];
+      return plan.path;
+    }
+
+    if (plan.kind === "hold") {
+      /*
+       * THE LINE IS NEVER SHORTENED to save a request. The road we hold runs
+       * out at the seam and the walking since is carried as the raw fixes it
+       * is, joined at the seam's snapped position — a jog of whatever Ola
+       * moved that one fix by, on the newest stretch only, and gone the next
+       * time the tail is bought. Two consequences worth naming: that stretch
+       * is drawn as fixes rather than as road, which is what every trail
+       * looks like until its snap lands anyway; and the leg's distance is
+       * measured over it with the jitter still in, so a hold reads very
+       * slightly long for as many seconds as `mbos.location.snapRefreshSeconds`
+       * says. The held run does not advance — nothing was bought — so the
+       * next look past the window asks for exactly this tail.
+       */
+      nextHeld[index] = held[index];
+      return [...plan.path, ...plan.rawTail];
+    }
+
+    if (plan.kind === "extend") {
+      const tail = await roadPathTail(
+        { lat: plan.seam[1], lng: plan.seam[0] },
+        plan.tail.map(([lng, lat]) => ({ lat, lng })),
+      );
+      if (!tail) {
+        /* Ola could not improve this stretch. That is a statement about the
+           stretch and not about the eight hours behind it, so the head is
+           kept and the new fixes are drawn raw — the same shape a hold
+           takes, and the held run stays where it is so the next look tries
+           again rather than the day going unsnapped for good. */
+        nextHeld[index] = held[index];
+        return [...plan.head.path, ...plan.tail];
+      }
+      const joined: Coord[] = [
+        ...plan.head.path,
+        ...tail.map((p) => [p.lng, p.lat] as Coord),
+      ];
+      keep(joined, raw.length, askedAtMs);
+      return joined;
+    }
+
+    const snapped = await roadPathFor(raw.map(([lng, lat]) => ({ lat, lng })));
+    if (!snapped) return null;
+    const path = snapped.map((p) => [p.lng, p.lat] as Coord);
+    keep(path, raw.length, askedAtMs);
+    return path;
+  }
+
+  /**
+   * The road across a gap, or null for the straight line the map always drew.
+   *
+   * A GAP IS A STRETCH WITH NO FIXES IN IT, and this is the one place in the
+   * request that asks an outside service to say what happened there. Whether
+   * it may ask at all is `gapVerdict` — two configured ceilings, one on the
+   * silence and one on the span, both of which have to hold — and whether the
+   * answer is worth drawing is `routeIsBelievable`, measured on the geometry
+   * that will actually be drawn rather than on a distance field beside it.
+   *
+   * Only the gap's TWO ENDS are sent. There is nothing in between to send;
+   * that is what makes it a gap, and it is also what makes this cheap and
+   * cacheable — a pair of endpoints is one question with one answer, and the
+   * same pair recurs every morning of the week.
+   *
+   * Null at every refusal, exactly as `roadPathFor` is null at every failure.
+   * The caller's fallback is identical in both cases and is the behaviour this
+   * map shipped with.
+   */
+  async function routedGap(
+    raw: [number, number][],
+    fromAt: Date,
+    toAt: Date,
+  ): Promise<Coord[] | null> {
+    if (raw.length < 2) return null;
+
+    /*
+     * HOP BY HOP, because a gap piece is not always one hop. `dayTrailSegments`
+     * merges consecutive pairs that share a flag and a trip, so a handset that
+     * woke for a single fix in the middle of a long silence produces ONE gap
+     * piece with a REAL FIX inside it. Routing that end to end would draw a
+     * road straight over the one reading anybody actually has, which is the
+     * exact inversion of the rule this whole file is written around.
+     *
+     * The clock is shared out evenly across the hops: the piece carries two
+     * timestamps and nothing finer, and a merged gap is a rare shape. Sharing
+     * it out is not exact, and it errs the only safe way — each hop is judged
+     * as SHORTER than the whole piece only in proportion to how many there
+     * are, so a merged piece can never route a hop the whole piece would have
+     * been refused for.
+     */
+    const hops = raw.length - 1;
+    const perHopMs = Math.max(0, toAt.getTime() - fromAt.getTime()) / hops;
+
+    const out: Coord[] = [raw[0]];
+    let any = false;
+
+    for (let i = 1; i < raw.length; i++) {
+      const from = { lat: raw[i - 1][1], lng: raw[i - 1][0] };
+      const to = { lat: raw[i][1], lng: raw[i][0] };
+      const verdict = gapVerdict({ from, to, fromMs: 0, toMs: perHopMs }, gapLimits);
+      const route = verdict.route ? await roadRouteBetween(from, to) : null;
+      const believable =
+        route !== null &&
+        verdict.route &&
+        routeIsBelievable(verdict.straightMetres, pathMetres(route.path), gapLimits);
+
+      if (route && believable) {
+        /* `joinGapPath` pins both ends to the real fixes, so dropping its
+           first point joins this hop to the one before at a point they agree
+           on rather than butting two copies of it together. */
+        out.push(...joinGapPath(from, to, route.path).slice(1));
+        any = true;
+      } else {
+        /* Refused, or Ola said nothing: this hop keeps the honest straight
+           line, in the middle of a piece whose other hops may not have. */
+        out.push(raw[i]);
+      }
+    }
+
+    return any ? out : null;
+  }
+
+  /* Written back onto each trip's segments now the whole leg is known — and
+     where the leg collapsed, the raw geometry is written back with it. One
+     verdict, both halves, so the shape and the figure can never disagree
+     about a leg.
+
+     A GAP SEGMENT CAN CARRY A TRIP INDEX — `dayTrailSegments` lets the index
+     ride on a gap where one end has a trip — so a collapsed leg hands its
+     fixes back to a routed gap too, and `inferred` has to go with them.
+     Left set, the hover would say "we think he took this road" over the
+     straight line the segment has just been given back, which is the same
+     shape-and-figure disagreement one field along. */
   for (const [index, roadMetres] of roadMetresByTrip) {
     const trip = byIndex.get(index);
     if (!trip) continue;
-    const measurable = roadMetres >= trip.metres * COLLAPSED_BELOW;
-    if (measurable && roadMetres > 0) {
-      for (const seg of segments) if (seg.trip === index) seg.metres = roadMetres;
+    const measurable = roadMetres > 0 && roadMetres >= trip.metres * COLLAPSED_BELOW;
+    for (let i = 0; i < segments.length; i++) {
+      if (segments[i].trip !== index) continue;
+      if (measurable) {
+        segments[i].metres = roadMetres;
+      } else {
+        segments[i].coordinates = rawByIndex[i];
+        segments[i].inferred = false;
+      }
     }
   }
 

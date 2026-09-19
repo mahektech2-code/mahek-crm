@@ -80,11 +80,17 @@ export function ShopMap({
   shops,
   prospects,
   apiKey,
+  keysSpent,
 }: {
   shops: ShopPin[];
   prospects: ProspectPin[];
   /** Ola Maps' key, read once server-side and handed down — see `street-map.tsx`'s doc comment. */
   apiKey: string | null;
+  /**
+   * With no key: whether every key held has run out, or none is set at all.
+   * Two silences, two sentences — see `live/street-map.tsx`.
+   */
+  keysSpent: boolean;
 }) {
   const host = React.useRef<HTMLDivElement | null>(null);
   const map = React.useRef<maplibregl.Map | null>(null);
@@ -407,10 +413,14 @@ export function ShopMap({
     return (
       <Frame key="no-key">
         <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-          <p className="text-[15px] font-semibold text-ink">The map needs a key</p>
+          <p className="text-[15px] font-semibold text-ink">
+            {keysSpent ? "Every Ola Maps key has run out" : "The map needs a key"}
+          </p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
-            Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under
-            this. The table above still has everything that is known.
+            {keysSpent
+              ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Platform → Maps."
+              : "Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under this."}{" "}
+            The table above still has everything that is known.
           </p>
         </div>
       </Frame>

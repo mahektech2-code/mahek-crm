@@ -15,7 +15,7 @@ import {
   scopedUserIds,
   type DataScope, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
-import { readSecret } from "../secrets";
+import { liveOlaKey } from "./ola-key-service";
 import { dictationAvailability } from "../dictation-requests";
 import {
   territoriesFor,
@@ -459,7 +459,14 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
    * grey rectangle: a map that fails when opened is worse than one never
    * offered, which is the same rule the microphone follows.
    */
-  const mapKey = await readSecret("olamaps.apiKey").catch(() => null);
+  /* THE LIVE KEY AT THE MOMENT THE PULL IS ANSWERED. A handset cannot fail
+     over any more than a browser can — the key is baked into what it has
+     already cached, and MapLibre asks Ola for tiles without going through us —
+     so what it gets is whichever key is in force on its NEXT pull, which on a
+     phone syncing through the day is minutes rather than a session. */
+  const mapKey = await liveOlaKey()
+    .then((r) => r.key)
+    .catch(() => null);
   if (mapKey) out["maps.olaKey"] = mapKey;
 
   /*

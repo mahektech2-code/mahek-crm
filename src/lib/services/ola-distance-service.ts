@@ -2,7 +2,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/db";
-import { readSecret } from "@/lib/secrets";
+import { olaGet, olaKeysHeld } from "@/lib/services/ola-key-service";
 import { batchMatrix, legKey, pairKey, type LatLng } from "@/lib/road-legs";
 
 /* ---------------------------------------------------------------------------
@@ -101,33 +101,31 @@ export async function roadLegs(
   );
   if (!wantedOrigins.length || !wantedDestinations.length) return out;
 
-  const apiKey = await readSecret("olamaps.apiKey");
-  if (!apiKey) return out;
 
   /* -------------------------------------------------------------- and Ola */
+  /* Asked once rather than inside the loop: with no key there is nothing to
+     ask Ola and the plan falls back to straight-line distances, exactly as it
+     did before the pool existed. */
+  if (!(await olaKeysHeld())) return out;
+
   const batches = batchMatrix(wantedOrigins, wantedDestinations).slice(0, budget);
   const fresh: { fromKey: string; toKey: string; metres: number; seconds: number }[] = [];
 
   for (const batch of batches) {
-    const params = new URLSearchParams({
-      origins: batch.origins.map((p) => `${p.lat},${p.lng}`).join("|"),
-      destinations: batch.destinations.map((p) => `${p.lat},${p.lng}`).join("|"),
-      api_key: apiKey,
-    });
-
-    let body: MatrixResponse;
-    try {
-      const response = await fetch(`${MATRIX_URL}?${params}`, {
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-      if (!response.ok) continue;
-      body = (await response.json()) as MatrixResponse;
-    } catch {
-      /* One bad batch is some missing legs, not a failed plan. The rest of the
-         rectangle is still worth having. */
-      continue;
-    }
-    if (!body.rows?.length) continue;
+    /* WHICH KEY THIS IS SPENT ON, and the move to the next account when Ola
+       says this one has run out, are `olaGet`'s — see
+       `services/ola-key-service.ts`. One bad batch is still some missing legs
+       rather than a failed plan: the rest of the rectangle is worth having. */
+    const body = await olaGet<MatrixResponse>(
+      (apiKey) =>
+        `${MATRIX_URL}?${new URLSearchParams({
+          origins: batch.origins.map((p) => `${p.lat},${p.lng}`).join("|"),
+          destinations: batch.destinations.map((p) => `${p.lat},${p.lng}`).join("|"),
+          api_key: apiKey,
+        })}`,
+      REQUEST_TIMEOUT_MS,
+    );
+    if (!body?.rows?.length) continue;
 
     body.rows.forEach((row, i) => {
       const origin = batch.origins[i];
