@@ -4417,6 +4417,60 @@ no uploader. The service refreshes for itself on a 401 and the app's own copy
 goes on working — the refresh endpoint is a stateless JWT with no denylist, so
 rotating one copy does not sign the other out.
 
+**A BATCH THE OFFICE COULD ONLY PARTLY FILE IS NO LONGER DELETED WHOLE.**
+`flush()` had two answers — delivered, and it dropped the lot, or
+`no-session-yet`, and it kept them — so a mixed batch came back looking
+delivered and the handset destroyed rows the office had never stored. Every
+layer reported 200 all the way down, which is the worst shape a data-loss bug
+takes. Answering `no-session-yet` for a mixed batch is the obvious fix and is
+worse: the drain is oldest-first, so ONE permanently unfileable fix in the
+oldest five hundred holds up everything behind it until `queueRetentionDays`
+ages it out, and the phones with an unfileable tail are exactly the phones in
+the incident. So the server gains a third word, `partial`, naming the ids IT IS
+FINISHED WITH; the handset deletes those, keeps the rest, and CARRIES ON to the
+next batch. The shape is ids-that-landed rather than ids-to-keep, and the
+asymmetry is the whole safety argument: an id the server forgets to name costs
+one round trip, where under the opposite shape it would cost the fix. AN
+UNKNOWN WORD STILL MEANS DELIVERED, deliberately, because an APK cannot be
+recalled and a phone that wedged its queue on a word it had never heard of
+could only be unwedged by sideloading. `engines/flush-answer.ts` is the rule,
+pure, because `sync/trail.ts` imports expo-location at module scope and two
+production data-loss bugs have now been in that loop. The NATIVE uploader feeds
+the same queue and answers to the same protocol, so this is an upload-path fix
+and not a capture-path one — it is orthogonal to which recorder took the fix.
+
+**THE WATCHDOG'S VERDICT EXPIRES, AND IT IS A VERDICT ABOUT THE BORROWED
+TRACKER ONLY.** `backgroundProvedSilent` was a module-level boolean set by the
+watchdog and cleared by nothing, so the FIRST demotion of a process was its last
+word: every later `start()` — the afternoon check-in, every resume — fell
+through to the floor, and the floor is a `setInterval` that only advances while
+the app is on screen. A handset demoted at nine and put in a pocket recorded
+nothing for the rest of the day, and `flush()` never ran on that path either.
+`engines/trail-retry.ts` bounds the cost instead of making it permanent: a new
+calendar day, a fresh check-in and `mbos.location.trackerRetryAfterMinutes`
+each re-open the question, so the price of a wrong retry is one silent window
+per interval rather than one per resume. It is asked ONLY where
+`startLocationUpdatesAsync` is about to be called. Where MBOS's own service
+took capture the question is never put, the JS watchdog is stopped and the
+stall mark is dropped — one mechanism holding capture up, never two.
+
+**AND NEITHER END MAY ASSERT A PERMISSION NOBODY CHECKED.** `fallBackToFloor`
+reported `backgroundGranted: false` on the reasoning that the column means "is
+a real background trail running". It does not — the schema says whether the OS
+granted the background permission — and the app had not re-checked one.
+Production carries the contradiction it produces: `location_permission =
+'always'` beside `background_location_granted = false` on two handsets, which
+sends somebody to check a setting that was already correct while the real cause,
+a battery manager killing an accepted service, is the one thing nobody looks at.
+The honest field for "background is not working" is `trackerStalledAt`. The
+service path had the same overload in the other direction, asserting `true`
+where nothing had asked, and both now RESTATE the last answer this process gave
+rather than inventing one. `startBackground` returns a REASON instead of
+`false` for four different situations — no background location in the build, a
+refused foreground permission, a refused background one, and the OS throwing on
+registration — because those are four different things to do about it, and
+`engines/tracker-notice.ts` is the one place any of them becomes a sentence.
+
 **A QUEUE DRAINED OLDEST-FIRST, ONE BATCH PER TICK, CANNOT CATCH UP.** `flush()`
 sent exactly one batch of five hundred, and the sync tick that calls it is a
 `setInterval` that only advances while the app is open — a drain with a fixed
