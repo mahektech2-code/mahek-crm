@@ -113,6 +113,17 @@ export async function GET(request: Request) {
    * removed, it is a leg that was never followed. Below a quarter the raw
    * figure stands: inflated, and still the better of two wrong answers, because
    * it at least reflects that he moved about.
+   *
+   * AND THE LINE GOES BACK WITH THE FIGURE, which for a long time it did not.
+   * This refused the collapsed METRES and still answered with the collapsed
+   * COORDINATES — so the number on the hover was the honest raw one and the
+   * shape under it was the shortcut, on the same segment, disagreeing. The map
+   * replaces its geometry with whatever this returns and caches it, so the
+   * straight line across the blocks he actually walked survived every redraw
+   * and every poll for the rest of the day. A path this route has already
+   * decided it does not believe is not a path to draw: where it collapsed the
+   * raw fixes are what is sent, which is exactly what the map drew before Ola
+   * was asked at all.
    */
   const COLLAPSED_BELOW = 0.25;
 
@@ -136,6 +147,11 @@ export async function GET(request: Request) {
   const byIndex = new Map(trips.map((t) => [t.index, t] as const));
   const segments = [];
   const roadMetresByTrip = new Map<number, number>();
+  /* Kept beside each segment, in step with it, so a leg the ratio disowns can
+     be given its own fixes back. The verdict is per TRIP and cannot be reached
+     until the whole leg has been walked, so the raw line has to survive the
+     loop that builds the road one. */
+  const rawByIndex: [number, number][][] = [];
 
   for (const piece of dayTrailSegments(accurate, {
     gapMetres,
@@ -183,15 +199,21 @@ export async function GET(request: Request) {
          corners somebody is trying to follow. */
       coordinates: drawn,
     });
+    rawByIndex.push(offsetPolyline(raw, offset));
   }
 
-  /* Written back onto each trip's segments now the whole leg is known. */
+  /* Written back onto each trip's segments now the whole leg is known — and
+     where the leg collapsed, the raw geometry is written back with it. One
+     verdict, both halves, so the shape and the figure can never disagree
+     about a leg. */
   for (const [index, roadMetres] of roadMetresByTrip) {
     const trip = byIndex.get(index);
     if (!trip) continue;
-    const measurable = roadMetres >= trip.metres * COLLAPSED_BELOW;
-    if (measurable && roadMetres > 0) {
-      for (const seg of segments) if (seg.trip === index) seg.metres = roadMetres;
+    const measurable = roadMetres > 0 && roadMetres >= trip.metres * COLLAPSED_BELOW;
+    for (let i = 0; i < segments.length; i++) {
+      if (segments[i].trip !== index) continue;
+      if (measurable) segments[i].metres = roadMetres;
+      else segments[i].coordinates = rawByIndex[i];
     }
   }
 
