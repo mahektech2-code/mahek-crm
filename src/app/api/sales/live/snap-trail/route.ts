@@ -170,9 +170,13 @@ export async function GET(request: Request) {
    * REPLACES its geometry with whatever this returns: fixing the map alone
    * changed nothing on screen.
    *
-   * `dayTrailSegments` covers every consecutive pair exactly once. Which
-   * pieces reach Ola is unchanged — only a solid run inside a trip is
-   * road-matched, a gap keeps its straight line — so this costs no extra call.
+   * `dayTrailSegments` covers every consecutive pair exactly once, and which
+   * SERVICE a piece reaches is decided by what the piece is: a solid run goes
+   * to Snap-to-Road, a short gap to Directions, and a long gap to neither.
+   * This paragraph used to end "so this costs no extra call", which was true
+   * when a gap was never sent anywhere; a short gap is a Directions request
+   * now, cached on its two rounded ends and refused outright past the ceilings
+   * above.
    */
   const byIndex = new Map(trips.map((t) => [t.index, t] as const));
   const segments = [];
