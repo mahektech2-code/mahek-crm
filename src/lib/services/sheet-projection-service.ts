@@ -247,6 +247,14 @@ export async function projectCustomers(
           externalCode: customers.externalCode,
           phone: customers.phone,
           amDecidedAt: customers.amDecidedAt,
+          // Read so the projected values can be compared with what is already
+          // stored. See the skip below for why that comparison and not a hash.
+          name: customers.name,
+          city: customers.city,
+          creditTermDays: customers.creditTermDays,
+          creditDays: customers.creditDays,
+          ownerId: customers.ownerId,
+          salesAmId: customers.salesAmId,
         })
         .from(customers)
         .where(inArray(customers.externalCode, codes))
@@ -287,16 +295,56 @@ export async function projectCustomers(
       // running it must not quietly undo the individual accounts somebody
       // moved to cover for a leaver.
       const amIsDecided = Boolean(known.amDecidedAt);
+      const seats: { ownerId?: string; salesAmId?: string } =
+        options.reassign && options.assignToUserId && !amIsDecided
+          ? { ownerId: options.assignToUserId, salesAmId: options.assignToUserId }
+          : {};
+      const name = party.name;
+      const city = party.area ?? "";
+      const creditTermDays = party.creditDays ?? 30;
+      const creditDays = party.creditDays ?? null;
+
+      /*
+       * A ROW THE SHEET STILL AGREES WITH IS NOT REWRITTEN.
+       *
+       * This tab is read every thirty minutes and its own log says "0 new, 0
+       * changed, 1199 unchanged" — and this loop then rewrote 565 customer
+       * rows anyway, because it built the same values and wrote them
+       * unconditionally. Postgres has no in-place update: each of those was a
+       * new tuple, a WAL record and a dirty page, for a row whose contents did
+       * not move.
+       *
+       * The gate is the PROJECTED VALUES against the STORED ones, and
+       * deliberately NOT the staging row's `row_hash`. What this loop writes
+       * depends on more than the party row — the reassignment options, and
+       * `am_decided_at`, which a person sets in the app long after the sheet
+       * last changed. Hash-equality would skip a row whose seats genuinely
+       * needed moving, silently, which is the one failure mode a projection
+       * cannot afford. Comparing the outputs is correct whatever produced
+       * them.
+       *
+       * `updated_at` is excluded and moves only when something else did. It is
+       * what the MBOS pull delta cursors on, so advancing it on every pass
+       * meant every handset re-pulled its whole book on every pull.
+       */
+      const unchanged =
+        known.name === name &&
+        known.city === city &&
+        known.creditTermDays === creditTermDays &&
+        known.creditDays === creditDays &&
+        (seats.ownerId === undefined || known.ownerId === seats.ownerId) &&
+        (seats.salesAmId === undefined || known.salesAmId === seats.salesAmId);
+
+      if (unchanged) continue;
+
       toUpdate.push({
         id: known.id,
         values: {
-          name: party.name,
-          city: party.area ?? "",
-          creditTermDays: party.creditDays ?? 30,
-          creditDays: party.creditDays,
-          ...(options.reassign && options.assignToUserId && !amIsDecided
-            ? { ownerId: options.assignToUserId, salesAmId: options.assignToUserId }
-            : {}),
+          name,
+          city,
+          creditTermDays,
+          creditDays,
+          ...seats,
           updatedAt: new Date(),
         },
       });
@@ -469,8 +517,18 @@ export async function projectOrders(
   }
 
   if (!options.dryRun) {
+    /*
+     * Rows actually WRITTEN, counted off `returning` rather than off the loop
+     * above. With the skip below, the loop counts the orders the sheet has and
+     * this counts the ones that moved, and on a steady pass the second is
+     * almost always zero — which is the number a person reading the run output
+     * needs, and the one whose absence let ~11,000 no-op writes a cycle go
+     * unnoticed for as long as they did. It costs nothing: in steady state
+     * there is nothing to return.
+     */
+    let written = 0;
     for (const batch of chunked(pending)) {
-      await db
+      const touched = await db
         .insert(orders)
         .values(batch)
         .onConflictDoUpdate({
@@ -501,8 +559,53 @@ export async function projectOrders(
             expectedDispatch: sql`excluded.expected_dispatch`,
             updatedAt: sql`excluded.updated_at`,
           },
-        });
+          /*
+           * AN ORDER THE SHEET STILL AGREES WITH IS NOT REWRITTEN.
+           *
+           * The same measurement as the bills and the customers beside them:
+           * this upsert rebuilt every order it could see on every thirty-minute
+           * pass, on a book of 10,957. `DO UPDATE` is an update, so each of
+           * those was a new tuple, a WAL record and a dirty page for a row
+           * whose contents did not move — and `line_items` is jsonb, which
+           * makes these the widest rows in the statement.
+           *
+           * The comparison is on the values that would be WRITTEN, which for
+           * `status` means the resolved CASE rather than `excluded.status`: an
+           * order accounts decided keeps the app's status, so comparing the
+           * sheet's would rewrite exactly the rows the guard above exists to
+           * leave alone, for ever.
+           *
+           * `is distinct from` rather than `<>` because `credit_days`,
+           * `expected_dispatch` and `line_items` are all nullable, and
+           * `null <> null` is null — a `<>` chain would answer "not different"
+           * for every row carrying one and skip the rows that most need
+           * writing.
+           *
+           * `updated_at` is outside the comparison and moves only when
+           * something else did, which is what makes it mean anything.
+           *
+           * `recordStatusConflicts` runs BEFORE this statement and is
+           * untouched, so a disagreement between the sheet and a decision is
+           * still written down whether or not the row itself is rewritten.
+           */
+          setWhere: sql`(
+            "orders"."customer_id" is distinct from excluded.customer_id
+            or "orders"."status" is distinct from
+                 (case when "orders"."approved_at" is null
+                       then excluded.status else "orders"."status" end)
+            or "orders"."ordered_at" is distinct from excluded.ordered_at
+            or "orders"."total_amount" is distinct from excluded.total_amount
+            or "orders"."line_items" is distinct from excluded.line_items
+            or "orders"."credit_days" is distinct from excluded.credit_days
+            or "orders"."expected_dispatch" is distinct from excluded.expected_dispatch
+          )`,
+        })
+        .returning({ id: orders.id });
+      written += touched.length;
     }
+    // A created row is always written, so what is left is the updates that
+    // actually changed something.
+    updated = Math.max(0, written - created);
   }
 
   return {
@@ -678,6 +781,63 @@ export async function unpaidPerPaymentTab(): Promise<Set<string>> {
  * written on INSERT and never on UPDATE, because a bill somebody has since
  * spoken for must not be returned to silence by the next scheduled pass.
  */
+/**
+ * What the sheet states about a bill, as stored.
+ *
+ * Read so a projection can tell a bill it would rewrite identically from one
+ * it would actually change. `bill_date` and `due_date` come back as strings
+ * because they are `date` columns, which is the same shape the staging rows
+ * hand over, so the two compare directly.
+ */
+type BillFacts = {
+  customerId: string;
+  billNo: string;
+  orderId: string | null;
+  billDate: string;
+  dueDate: string | null;
+  amount: number;
+};
+
+/**
+ * A BILL THE SHEET STILL AGREES WITH IS NOT REWRITTEN.
+ *
+ * Both projections rebuilt every bill they could see on every pass — 11,007
+ * updates per thirty-minute cycle on a table of 10,878 rows, in cycles whose
+ * own log reported nothing changed. Postgres has no in-place update, so each
+ * of those was a new tuple, a WAL record and a dirty page; on a 961 MB droplet
+ * that is what evicts the page cache and keeps the box swapping while it is
+ * otherwise idle.
+ *
+ * The comparison is the PROJECTED VALUES against the STORED ones rather than
+ * the staging row's `row_hash`. What a bill comes out as depends on more than
+ * its own sheet row: the customer is resolved through `orders`, the bill
+ * number is settled against every number already taken across the whole table,
+ * and a Tally number repeating elsewhere changes it. A hash of the source row
+ * would skip a bill whose number genuinely had to move the day another order
+ * claimed it — silently, and a projection that skips work it needed to do is
+ * the worst failure available here. Comparing outputs is correct whatever
+ * derived them.
+ *
+ * Two columns are deliberately outside the comparison, because both move on
+ * every pass by construction and either alone would defeat the whole thing:
+ * `updated_at`, which should mean the row changed, and `last_synced_at`, which
+ * nothing in MahekOne reads and now means the same. "When the sheet last
+ * CHANGED this bill" is the more useful of the two readings anyway.
+ *
+ * `payment_position` is not compared because it is not written by an update at
+ * all — that rule is unchanged and is stated at each call site.
+ */
+function billUnchanged(stored: BillFacts, values: BillFacts): boolean {
+  return (
+    stored.customerId === values.customerId &&
+    stored.billNo === values.billNo &&
+    stored.orderId === values.orderId &&
+    stored.billDate === values.billDate &&
+    stored.dueDate === values.dueDate &&
+    stored.amount === values.amount
+  );
+}
+
 export async function projectBillsFromOrders(
   options: ProjectionOptions = {},
 ): Promise<ProjectionReport["bills"]> {
@@ -746,10 +906,17 @@ export async function projectBillsFromOrders(
       billNo: bills.billNo,
       externalRef: bills.externalRef,
       paymentDecidedAt: bills.paymentDecidedAt,
+      // The rest of what this pass would write, so `billUnchanged` can tell a
+      // bill that needs rewriting from one that does not.
+      customerId: bills.customerId,
+      orderId: bills.orderId,
+      billDate: bills.billDate,
+      dueDate: bills.dueDate,
+      amount: bills.amount,
     })
     .from(bills);
   const billByRef = new Map(
-    existing.filter((b) => b.externalRef).map((b) => [b.externalRef!, b.id]),
+    existing.filter((b) => b.externalRef).map((b) => [b.externalRef!, b]),
   );
   const billByNo = new Map(existing.map((b) => [b.billNo, b]));
   /*
@@ -819,13 +986,20 @@ export async function projectBillsFromOrders(
       updatedAt: new Date(),
     };
 
+    const stored = billByRef.get(externalRef);
+    // Reported as unchanged rather than as updated, here and on a real run,
+    // because "565 updated" on a pass that wrote nothing is what let this run
+    // for as long as it did.
+    const noop = stored ? billUnchanged(stored, values) : false;
+
     if (options.dryRun) {
-      if (billByRef.has(externalRef)) updated++;
-      else created++;
+      if (stored) {
+        if (!noop) updated++;
+      } else created++;
       continue;
     }
 
-    let billId = billByRef.get(externalRef);
+    let billId = stored?.id;
     if (billId) {
       /*
        * `payment_position` is NOT in `values`, so an update never touches it.
@@ -833,8 +1007,10 @@ export async function projectBillsFromOrders(
        * receivables report applied — must not be returned to silence because
        * a scheduled pass re-read the row it came from.
        */
-      await db.update(bills).set(values).where(eq(bills.id, billId));
-      updated++;
+      if (!noop) {
+        await db.update(bills).set(values).where(eq(bills.id, billId));
+        updated++;
+      }
     } else {
       billId = newId("bil");
       /*
@@ -850,7 +1026,17 @@ export async function projectBillsFromOrders(
     // So the next order in this same pass sees the number as taken. A bill
     // this pass just wrote carries no decision — the projection never makes
     // one — so the mark is null whether it was created or updated here.
-    billByNo.set(billNo, { id: billId, billNo, externalRef, paymentDecidedAt: null });
+    billByNo.set(billNo, {
+      id: billId,
+      billNo,
+      externalRef,
+      paymentDecidedAt: null,
+      customerId: values.customerId,
+      orderId: values.orderId,
+      billDate: values.billDate,
+      dueDate: values.dueDate,
+      amount: values.amount,
+    });
   }
 
   return {
@@ -932,10 +1118,19 @@ export async function projectBills(
       id: bills.id,
       externalRef: bills.externalRef,
       paymentDecidedAt: bills.paymentDecidedAt,
+      // The rest of what this pass would write, so a bill the tab still agrees
+      // with is left alone. See `billUnchanged` for why the comparison is on
+      // the values and not on the staging row's hash.
+      customerId: bills.customerId,
+      billNo: bills.billNo,
+      orderId: bills.orderId,
+      billDate: bills.billDate,
+      dueDate: bills.dueDate,
+      amount: bills.amount,
     })
     .from(bills)
     .where(sql`${bills.externalRef} like 'SHEETPAY-%'`);
-  const billByRef = new Map(existing.map((b) => [b.externalRef!, b.id]));
+  const billByRef = new Map(existing.map((b) => [b.externalRef!, b]));
   let created = 0;
   let updated = 0;
   let paidWithoutDate = 0;
@@ -981,17 +1176,22 @@ export async function projectBills(
     };
     if (!values.billDate) continue;
 
+    const stored = billByRef.get(externalRef);
+    const noop = stored ? billUnchanged(stored, values) : false;
+
     if (options.dryRun) {
-      if (billByRef.has(externalRef)) updated++;
-      else created++;
+      if (stored) {
+        if (!noop) updated++;
+      } else created++;
       continue;
     }
 
-    const billId = billByRef.get(externalRef);
-    if (billId) {
+    if (stored) {
       // `payment_position` is not in `values`, so an update never touches it.
-      await db.update(bills).set(values).where(eq(bills.id, billId));
-      updated++;
+      if (!noop) {
+        await db.update(bills).set(values).where(eq(bills.id, stored.id));
+        updated++;
+      }
     } else {
       /*
        * `unstated` even here, where the tab DOES carry a received flag.

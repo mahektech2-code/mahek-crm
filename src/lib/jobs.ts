@@ -207,7 +207,10 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   results.push(
     await run("recompute-cycles", async () => {
       const n = await recomputeAllBuyingCycles();
-      return { recordsAffected: n, detail: `${n} customers` };
+      // Customers whose cycle MOVED. The whole book is read every pass and
+      // almost none of it changes between two passes an hour apart, so a
+      // figure near zero here is the pass working rather than the pass idling.
+      return { recordsAffected: n, detail: `${n} customers changed` };
     }, triggeredById),
   );
 

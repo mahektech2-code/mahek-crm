@@ -65,6 +65,11 @@ const files = [
   // The queue ranks calls by a cached median now. If the cache and the
   // subquery it replaced ever disagree, the calling list silently reorders.
   "src/lib/typical-order-cache.test.ts",
+  // The sheet projection and the cycle recompute run together every thirty
+  // minutes. That a pass over an unchanged book writes no tuple is only
+  // checkable against a real database — `xmin` is the witness — so it lives
+  // here, and it will regress silently the moment anything stops comparing.
+  "src/lib/projection-idempotence.test.ts",
 ];
 
 let failed = 0;
