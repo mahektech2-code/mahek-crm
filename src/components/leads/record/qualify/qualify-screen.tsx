@@ -4,12 +4,13 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { money, parseRupees } from "@/lib/format";
+import { money, parseRupees, stamp } from "@/lib/format";
 import { cx, Input, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
 import type { Condition, GateVerdict } from "@/lib/engines/lead-gates";
 import { saveLeadQualification, saveProspectFields } from "@/lib/actions/leads";
+import { reviewLeadQualification } from "@/lib/actions/lead-qualification-review";
 import {
   saveDistributorProfile,
   type DistributorProfilePatch,
@@ -17,6 +18,7 @@ import {
 import type { DistributorProfile } from "@/lib/services/lead-record-service";
 import { Banner, Button, Empty, Pill, ScreenHeader } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
+import { ProductField } from "@/components/products/product-field";
 
 /* ---------------------------------------------------------------------------
  * §9 §11 — the qualification checklist, at full size.
@@ -190,6 +192,22 @@ const GROUP_TITLE: Record<string, string> = {
  */
 export type QualifyValues = Record<string, string | number | boolean | null>;
 
+/**
+ * §5.3 — what the sales manager has said about this checklist, as it stands.
+ *
+ * One object rather than four loose props because the four are only ever read
+ * together and three of them are meaningless without the first: a note with no
+ * verdict is a sentence nobody can place, and a date with no note is a fact
+ * about when somebody looked rather than what they found. `verdict` null is a
+ * checklist nobody has reviewed, which is most of the book and does NOT block.
+ */
+export type QualificationReview = {
+  verdict: "verified" | "incomplete" | "clarification" | null;
+  note: string | null;
+  at: Date | string | null;
+  byName: string | null;
+};
+
 export function QualifyScreen({
   workspace,
   customerId,
@@ -204,6 +222,8 @@ export function QualifyScreen({
   profile,
   requiredProductName,
   canWork,
+  review,
+  canReview,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -221,6 +241,15 @@ export function QualifyScreen({
   profile: DistributorProfile | null;
   requiredProductName: string | null;
   canWork: boolean;
+  /** §5.3 — the manager's standing verdict, drawn for everybody. */
+  review: QualificationReview;
+  /**
+   * `lead.verify`, resolved on the server. It decides whether the VERDICT
+   * control is drawn; it decides nothing about the block, which is enforced by
+   * `reviewLeadQualification` and by the gate engine. A hidden control is not a
+   * permission.
+   */
+  canReview: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -386,6 +415,20 @@ export function QualifyScreen({
         />
       ) : (
         <>
+          {/*
+            * THE MANAGER'S VERDICT IS DRAWN FIRST, and above the gate's own
+            * banner rather than under it.
+            *
+            * The gate's sentence says a manager marked this incomplete; it
+            * cannot say what he wrote, because `lead-gates.ts` is pure, runs on
+            * the handset, and takes the verdict without the note. So a salesman
+            * reading only the gate learns that his lead has stopped and not one
+            * word about what to do — which is the exact failure the blocking
+            * version of this rule had to avoid. Drawn first because it is the
+            * answer to the question the banner under it raises.
+            */}
+          <ReviewNotice review={review} />
+
           {verdict && opensRung ? (
             verdict.open ? (
               <Banner
@@ -406,6 +449,19 @@ export function QualifyScreen({
                 }
               />
             )
+          ) : null}
+
+          {canReview ? (
+            /* Keyed on the verdict that is stored, so a manager who has just
+               sent this back gets a REMOUNT with a cleared note box rather than
+               an effect resetting one — the React Compiler rules are on and
+               resetting state in an effect on a prop change is what they
+               forbid. Every dialog and drawer in this codebase does the same. */
+            <ReviewPanel
+              key={`${review.verdict ?? "none"}-${String(review.at ?? "")}`}
+              customerId={customerId}
+              review={review}
+            />
           ) : null}
 
           <p className="mb-3 max-w-[760px] text-[13px] text-pretty text-muted">
@@ -514,6 +570,165 @@ export function QualifyScreen({
 }
 
 /* ------------------------------------------------------------------ parts */
+
+/**
+ * §5.3 — what the sales manager said, quoted, for whoever opens this screen.
+ *
+ * It is drawn for EVERYBODY and not only for the salesman, because a manager
+ * coming back to look again needs to read what he wrote last time before he
+ * decides whether it has been answered — and a second copy of the note inside
+ * the verdict panel below would be the same sentence twice on one screen.
+ *
+ * A VERIFIED CHECKLIST IS A LINE AND NOT A BANNER. Nothing is being asked of
+ * anybody, and a banner that appears when everything is fine is one people
+ * learn to scroll past — which costs exactly nothing until the day it is a
+ * refusal. The two negatives are `warn` because they are work waiting, and they
+ * are the only reason this component exists.
+ */
+function ReviewNotice({ review }: { review: QualificationReview }) {
+  if (!review.verdict) return null;
+
+  const who = [review.byName, review.at ? stamp(review.at) : null].filter(Boolean).join(" · ");
+
+  if (review.verdict === "verified") {
+    return (
+      <p className="mb-3 text-[13px] text-muted">
+        Checklist verified by your sales manager{who ? ` — ${who}` : ""}.
+      </p>
+    );
+  }
+
+  return (
+    <Banner
+      tone="warn"
+      title={
+        review.verdict === "incomplete"
+          ? "Your sales manager marked this checklist incomplete"
+          : "Your sales manager has asked for a clarification"
+      }
+      body={
+        <>
+          {review.note ? <span className="block text-ink">“{review.note}”</span> : null}
+          <span className="block">
+            {who ? `${who}. ` : ""}This lead is held at Qualification until he looks again — answer
+            the note above, then ask him to review it.
+          </span>
+        </>
+      }
+    />
+  );
+}
+
+/**
+ * The verdict itself, and it lives HERE rather than on the cross-book desk.
+ *
+ * The desk at `/leads/qualify/checklist` is where a manager chooses WHICH lead
+ * to work — it draws a count, a “ticked but empty” tally and the missing
+ * conditions joined into one line. None of that is the material a verdict is
+ * formed from. Saying a checklist is not finished is a judgement about the
+ * twelve ANSWERS, and this is the only screen in the product that draws them:
+ * the litres, the competitor's name, the application, each beside the condition
+ * it satisfies. A verdict button on a row showing “7 / 12” would be somebody
+ * refusing a lead on a number, which is the shape of review Mahek already has
+ * and does not want more of. The desk loses nothing by it — the gate's own
+ * sentence is already in its “Stuck behind” column the moment a verdict is
+ * outstanding, so a manager working the desk sees which leads he has sent back
+ * and opens the one he means.
+ *
+ * `lead.verify` is checked in the action. This only decides what is drawn.
+ */
+function ReviewPanel({
+  customerId,
+  review,
+}: {
+  customerId: string;
+  review: QualificationReview;
+}) {
+  const router = useRouter();
+  const toast = useToast();
+
+  /* The stored note is the starting point rather than an empty box: a manager
+     looking again usually wants to restate most of what he said and change one
+     clause, and retyping it is how the second refusal ends up shorter and
+     vaguer than the first. */
+  const [note, setNote] = React.useState(review.note ?? "");
+  const [busy, setBusy] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const blocked = review.verdict === "incomplete" || review.verdict === "clarification";
+
+  async function send(verdict: "verified" | "incomplete" | "clarification") {
+    setBusy(verdict);
+    setError(null);
+    try {
+      const result = await reviewLeadQualification({ customerId, verdict, note });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      toast.push(result.message ?? "Recorded.");
+      router.refresh();
+    } finally {
+      /* Cleared whatever happened, so a rejected promise cannot leave three
+         buttons dead until somebody reloads the page. */
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
+      <div className="mb-2 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+        Your verdict on this checklist
+      </div>
+
+      <p className="mb-3 max-w-[760px] text-[13px] text-pretty text-muted">
+        Marking it incomplete or asking for a clarification HOLDS the lead at Qualification until
+        you look again — it used to be recorded and change nothing, so a checklist could be sent
+        back and go to a sample anyway. Either of those needs a sentence saying what is wrong,
+        because that sentence is the whole of what the salesman has to work from, and it reaches
+        him as a notification rather than waiting for him to open this screen.
+      </p>
+
+      <Textarea
+        rows={3}
+        maxLength={2000}
+        className="mb-3 w-full max-w-[760px]"
+        value={note}
+        disabled={busy !== null}
+        onChange={(e) => setNote(e.target.value)}
+        aria-label="What the salesman needs to do"
+        placeholder="What is missing, or what needs clarifying"
+      />
+
+      {error ? (
+        <p className="mb-3 text-[13px] text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button tone="primary" disabled={busy !== null} onClick={() => send("verified")}>
+          {busy === "verified" ? "Saving…" : blocked ? "Verified — lift the hold" : "Verified"}
+        </Button>
+        <Button
+          tone="danger"
+          disabled={busy !== null || !note.trim()}
+          title={note.trim() ? undefined : "Say what is not finished — this holds the lead."}
+          onClick={() => send("incomplete")}
+        >
+          {busy === "incomplete" ? "Saving…" : "Not finished"}
+        </Button>
+        <Button
+          disabled={busy !== null || !note.trim()}
+          title={note.trim() ? undefined : "Say what needs clarifying — this holds the lead."}
+          onClick={() => send("clarification")}
+        >
+          {busy === "clarification" ? "Saving…" : "Needs a clarification"}
+        </Button>
+      </div>
+    </section>
+  );
+}
 
 /** §11's five groups, in the order the conditions already carry. */
 function groupsOf(conditions: readonly Condition[]): Array<[string | null, Condition[]]> {
@@ -646,160 +861,6 @@ function FieldControl({
       ) : spec.hint ? (
         <span className="mt-0.5 block text-[12px] text-muted">{spec.hint}</span>
       ) : null}
-    </div>
-  );
-}
-
-/**
- * Which of ours they need, searched rather than listed.
- *
- * Two hundred SKUs is a search box's job and not a list's — the catalogue is
- * never shipped to the browser, so this asks `/api/product-search` a keystroke
- * at a time exactly as the order form does. The name already on the lead is
- * kept and shown, so a picker nobody has searched yet still says what the
- * answer currently is rather than reading as empty.
- *
- * An empty list means THREE different things and says which: still searching,
- * nothing matched, and nothing typed yet. A list that means "wait" and one that
- * means "we do not sell that" must never look alike.
- */
-function ProductField({
-  customerId,
-  productId,
-  productName,
-  disabled,
-  onPick,
-}: {
-  customerId: string;
-  productId: string | null;
-  productName: string | null;
-  disabled: boolean;
-  onPick: (id: string | null) => void;
-}) {
-  const [query, setQuery] = React.useState("");
-  /*
-   * THE RESULT CARRIES THE QUERY IT ANSWERS, which is what lets everything
-   * below be derived rather than stored.
-   *
-   * The obvious shape is `rows` plus a `state`, cleared in an effect whenever
-   * the box is emptied. The React Compiler lint refuses that and is right to:
-   * a `setState` in an effect body is a second render on every keystroke, and
-   * this one ran on a component inside a twelve-condition form. Worse, it is a
-   * copy of a fact the query string already holds — "there is nothing to show
-   * because nobody has typed two characters" is not state, it is arithmetic.
-   *
-   * Keeping the query beside its rows also fixes the flicker for free: a
-   * result for "thin" is not shown under "thinner", because the two strings do
-   * not match, so it reads as still searching rather than as a wrong answer.
-   */
-  const [result, setResult] = React.useState<{
-    query: string;
-    rows: Array<{ productId: string; displayName: string; subtitle: string | null }>;
-  } | null>(null);
-  const [pickedName, setPickedName] = React.useState<string | null>(productName);
-
-  const q = query.trim();
-  const searching = q.length >= 2;
-  const rows = result && result.query === q ? result.rows : [];
-  const state: "idle" | "searching" | "done" = !searching
-    ? "idle"
-    : result?.query === q
-      ? "done"
-      : "searching";
-
-  React.useEffect(() => {
-    if (q.length < 2) return;
-    let live = true;
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(
-          `/api/product-search?q=${encodeURIComponent(q)}&customerId=${encodeURIComponent(customerId)}`,
-        );
-        const body = (await res.json()) as {
-          products?: Array<{ productId: string; displayName: string; subtitle: string | null }>;
-        };
-        if (live) setResult({ query: q, rows: body.products ?? [] });
-      } catch {
-        /* A search that did not answer is an empty list for THIS query, and
-         * the screen says "nothing matched" rather than sitting on a spinner. */
-        if (live) setResult({ query: q, rows: [] });
-      }
-    }, 200);
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [q, customerId]);
-
-  return (
-    <div>
-      <div className="mb-1 text-[13px] text-body">
-        {pickedName ? (
-          <>
-            <span className="font-medium text-ink">{pickedName}</span>
-            {disabled ? null : (
-              <button
-                type="button"
-                className="ml-2 cursor-pointer border-0 bg-transparent p-0 text-[12px] text-muted underline"
-                onClick={() => {
-                  setPickedName(null);
-                  onPick(null);
-                }}
-              >
-                change
-              </button>
-            )}
-          </>
-        ) : (
-          <span className="text-muted">
-            {productId
-              ? "A product is set on this lead that the catalogue could not name."
-              : "Nothing chosen"}
-          </span>
-        )}
-      </div>
-
-      {pickedName ? null : (
-        <>
-          <Input
-            disabled={disabled}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search the catalogue"
-          />
-          <div className="mt-1 text-[12px] text-muted">
-            {query.trim().length < 2
-              ? "Type two letters to search the catalogue."
-              : state === "searching"
-                ? "Searching…"
-                : rows.length === 0
-                  ? "Nothing in the catalogue matched that."
-                  : plural(rows.length, "match", "matches")}
-          </div>
-          {rows.length ? (
-            <ul className="mt-1 mb-0 max-h-[180px] list-none overflow-y-auto rounded-[4px] border border-line p-0">
-              {rows.map((r) => (
-                <li key={r.productId} className="border-b border-divider last:border-b-0">
-                  <button
-                    type="button"
-                    className="w-full cursor-pointer border-0 bg-transparent px-2.5 py-1.5 text-left hover:bg-canvas"
-                    onClick={() => {
-                      setPickedName(r.displayName);
-                      onPick(r.productId);
-                      setQuery("");
-                    }}
-                  >
-                    <span className="block text-[13px] text-ink">{r.displayName}</span>
-                    {r.subtitle ? (
-                      <span className="block text-[12px] text-muted">{r.subtitle}</span>
-                    ) : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </>
-      )}
     </div>
   );
 }

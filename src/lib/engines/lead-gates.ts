@@ -59,25 +59,48 @@ export const PROSPECT_CONDITIONS: readonly Condition[] = [
 ] as const;
 
 /**
- * §9 — the twelve a shop answers before anybody may send it a sample.
+ * §5 — THE EIGHT a shop answers before anybody may send it a sample.
  *
- * The specification calls these common to direct and third-party customers, and
- * they are the conditions that make a trial mean something: a sample given to
+ * These are the conditions that make a trial mean something: a sample given to
  * somebody whose application we do not understand cannot be reviewed, because
  * nobody knows what a good result would look like.
+ *
+ * ---------------------------------------------------------------------------
+ * IT WAS TWELVE, AND FOUR WERE REMOVED ON THE SPECIFICATION'S OWN INSTRUCTION.
+ *
+ * `monthly_requirement`, `monthly_potential`, `required_product` and
+ * `competitor_identified` are gone from this list. They are not unimportant —
+ * they are SECTION 4 CONVERSION FIELDS, asked and answered at Suspect →
+ * Prospect, and `PROSPECT_CONDITIONS` above still refuses that move without
+ * them. The specification excludes them here in as many words, and the
+ * principle it excludes them under is its first one: a fact captured once by
+ * whoever was in the shop is never re-asked of the customer by another role.
+ * Checking them again at Qualification is the checklist asking the salesman to
+ * re-certify work a gate has already refused to let him skip.
+ *
+ * WHAT THIS COSTS IS REAL AND IS WORTH NAMING. A lead can now reach Sample /
+ * Trial with a monthly requirement that was true in March and is stale in
+ * September, because nothing on this rung looks at it again. That is the trade
+ * the specification makes deliberately: the alternative is a gate that blocks a
+ * sample over a field the lead could not have got this far without, which
+ * teaches people that the checklist is furniture. The staleness is a question
+ * for the verification call, which re-asks exactly these four of the CUSTOMER
+ * and records the answer beside the salesman's rather than over it.
+ *
+ * Removing rather than reinterpreting: a stored tick against one of the four
+ * stays in `lead_qualification` and is simply never read. Nothing is rewritten,
+ * so a lead somebody qualified last week does not change what it means.
+ *
+ * `buyer_confirmed` is the eighth and it is CONDITIONAL — see its satisfier.
  */
 export const QUALIFICATION_CONDITIONS: readonly Condition[] = [
-  { id: "gst_verified", says: "Get their GST number and check it" },
-  { id: "monthly_requirement", says: "Confirm what they use in a month" },
-  { id: "monthly_potential", says: "Confirm what they could be worth" },
-  { id: "required_product", says: "Settle which product this is about" },
-  { id: "competitor_identified", says: "Establish whose product they use now" },
-  { id: "credit_days", says: "Ask what credit they need" },
+  { id: "gst_verified", says: "Get their GST number — the back office checks it" },
+  { id: "application_understood", says: "Get the precise detail of what they will use it on" },
   { id: "price_discussed", says: "Talk about price, or at least a range" },
-  { id: "delivery_discussed", says: "Agree how long delivery takes" },
-  { id: "decision_maker", says: "Find out who actually signs off a purchase" },
-  { id: "agrees_to_test", says: "Get them to agree to try it" },
-  { id: "application_understood", says: "Understand what they will use it on" },
+  { id: "credit_days", says: "Ask what credit they need" },
+  { id: "delivery_discussed", says: "State how long delivery takes and check it suits them" },
+  { id: "buyer_confirmed", says: "Confirm who places the order, if that is not the decision maker" },
+  { id: "agrees_to_test", says: "Reconfirm they will try it, now price and credit are on the table" },
   { id: "next_step_agreed", says: "Agree what happens if the trial goes well" },
 ] as const;
 
@@ -152,6 +175,41 @@ export type LeadGateInput = {
   requiredProductId?: string | null;
   contactPerson?: string | null;
   decisionMaker?: string | null;
+  /**
+   * §4.2 — who PLACES the order, where that is not who approves it. Null on
+   * the ordinary shop where one man does both, which is why the condition
+   * reading it accepts a confirmed decision maker instead.
+   */
+  buyer?: string | null;
+  /**
+   * §5.3 — TRUE where the four conversion figures are older than
+   * `leads.figuresFreshDays` and nobody has said they still hold.
+   *
+   * A BOOLEAN the caller works out, not a date and a threshold and a clock
+   * handed to an engine that is pure and means to stay that way. It is the same
+   * shape as `prospectReasonRecorded` below, and for the same reason: the
+   * engine answers "may this move", and whether sixty days have passed is a
+   * question about the calendar rather than about the lead.
+   *
+   * `false` and `undefined` are the same answer here — not stale — because a
+   * deployment with the check switched off, and one where somebody confirmed
+   * the figures this morning, should both simply pass.
+   */
+  figuresStale?: boolean;
+  /**
+   * §5.3 — the sales manager's verdict on the qualification checklist.
+   *
+   * `incomplete` and `clarification` HOLD the lead, on Mahek's instruction.
+   * Undefined is a checklist nobody has reviewed, which passes: demanding a
+   * review nobody was ever asked for would stop every lead in the book on the
+   * day it shipped.
+   */
+  qualificationReview?: "verified" | "incomplete" | "clarification" | null;
+  /**
+   * §11.6 — the BACK OFFICE's answer, not the salesman's tick. `gstin` above
+   * is the number somebody wrote down; this is whether anybody checked it.
+   */
+  gstVerified?: boolean | null;
   creditDaysWanted?: number | null;
   application?: string | null;
   gstin?: string | null;
@@ -316,28 +374,98 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
         out.push(
           ...missingFrom(QUALIFICATION_CONDITIONS, (c) => {
             switch (c.id) {
-              /* EIGHT of the twelve are answered by a real column rather than
+              /* THREE of the eight are answered by a real column rather than
                  a tick, so the gate reads the value: a ticked box beside an
                  empty field is exactly the state this engine exists to stop.
-                 Only `gst_verified` demands the column AND the tick, because
-                 holding a GST number is not the same statement as having
-                 checked it — the other seven are self-evidencing, since a
-                 competitor's name in the box IS the competitor being
-                 identified. The remaining four are genuine yes/no judgements
-                 with nothing to store but the answer. */
-              case "gst_verified": return has(i.gstin) && ticked(q, "gst_verified");
-              case "monthly_requirement": return has(i.monthlyLitres);
-              case "monthly_potential": return has(i.potentialPaise);
-              case "required_product": return has(i.requiredProductId);
-              case "competitor_identified": return has(i.competitor);
+                 The rest are genuine yes/no judgements with nothing to store
+                 but the answer — "did you talk about price" has no column
+                 because the answer is the conversation.
+
+                 §11.6 — GST NOW READS A COLUMN SOMEBODY ELSE WROTE. It used to
+                 be the number plus a TICK, and the tick was writable by anyone
+                 holding `lead.work`, which is the salesman who typed the number
+                 in. So the man collecting it was the man certifying it. The
+                 specification gives validation to the back office, and
+                 `customers.gst_verified` is their answer, stamped with who and
+                 when. The old tick is not read at all: carrying it forward
+                 would import the self-certification into the column that exists
+                 to end it. */
+              case "gst_verified": return has(i.gstin) && i.gstVerified === true;
               case "credit_days": return has(i.creditDaysWanted);
-              case "decision_maker": return has(i.decisionMaker);
               case "application_understood": return has(i.application);
+              /* CONDITIONAL, and the only condition here that can be satisfied
+                 by a fact about a DIFFERENT field.
+
+                 The specification asks for the buyer "only if different from
+                 the Decision Maker already on record" — so on a shop where the
+                 owner both decides and orders, naming him once is the whole
+                 answer and being asked again is the re-asking this checklist
+                 was cut down to avoid. A buyer on the record satisfies it
+                 outright; with no buyer named, a decision maker plus the
+                 salesman's tick saying "same man" does.
+
+                 The tick is also read under its OLD id. This condition was
+                 `decision_maker` until the list was cut to eight, and a lead
+                 somebody qualified last week carries that key in its jsonb —
+                 reading only the new one would un-tick work already done and
+                 send finished leads back down the ladder. */
+              case "buyer_confirmed":
+                return (
+                  has(i.buyer) ||
+                  (has(i.decisionMaker) &&
+                    (ticked(q, "buyer_confirmed") || ticked(q, "decision_maker")))
+                );
               default: return ticked(q, c.id);
             }
           }),
         );
       }
+      /*
+       * §5.3 — THE FIGURES HAVE TO BE CURRENT, which is the other half of
+       * cutting the checklist from twelve questions to eight.
+       *
+       * Those four — the monthly requirement, the potential, the product and
+       * the competitor — are captured once at Suspect to Prospect and
+       * deliberately not re-asked here. Mahek chose that AND asked for the gap
+       * it leaves to be closed: a sample must not go out on a requirement that
+       * was true in March. So nothing is re-asked and one thing is confirmed.
+       *
+       * It refuses the SAMPLE rather than the stage below it, because that is
+       * where the cost is. A stale figure costs nothing while somebody is
+       * still talking to the shop; it costs stock, a courier and a review
+       * nobody can interpret the moment a can leaves the godown.
+       */
+      if (i.figuresStale) {
+        out.push({
+          id: "figures_fresh",
+          says: "Confirm the monthly requirement, the potential, the product and the competitor still hold",
+        });
+      }
+
+      /*
+       * §5.3 — AND A MANAGER WHO SAID IT WAS NOT FINISHED IS NOW LISTENED TO.
+       *
+       * This is a reversal. The manager's review was recorded and changed
+       * nothing: the checklist alone decided, so he could write "this is not
+       * finished, go back and ask him about the credit" and watch the lead
+       * move to a sample regardless. A verdict nobody has to answer is a
+       * comment, and people stop writing comments nobody answers.
+       *
+       * Only the two NEGATIVE verdicts hold. An unreviewed checklist passes —
+       * demanding a review that nobody has been asked for would stop the whole
+       * book on the day this shipped, which is the one way to make a new gate
+       * hated before anybody understands it.
+       */
+      if (i.qualificationReview === "incomplete" || i.qualificationReview === "clarification") {
+        out.push({
+          id: "manager_review_open",
+          says:
+            i.qualificationReview === "incomplete"
+              ? "Your sales manager marked this checklist incomplete — answer his note and ask him to look again"
+              : "Your sales manager asked for a clarification — answer it and ask him to look again",
+        });
+      }
+
       /* §23 — a shop we do not invoice has to say who does, before it is given
          anything. A sample sent to a counter nobody bills is stock nobody can
          account for. */
@@ -634,15 +762,18 @@ export function checklistFor(
 }
 
 /**
- * §12 — whether an appointment needs management as well as a manager.
+ * §12 — whether anything about this appointment is out of the ordinary.
  *
- * The specification names three things that push it up: a special discount, a
- * credit limit, and territory exclusivity. Anything out of the ordinary in
- * those is a decision with a cost attached, and the person carrying the target
- * should not be the person allowing it.
+ * The specification names three things: a special discount, a credit limit, and
+ * territory exclusivity. Anything out of the ordinary in those is a decision
+ * with a cost attached, and the person carrying the target should not be the
+ * person allowing it.
  *
- * Returns the `routeReason` the approval row carries, or null where the sales
- * manager's own signature is enough.
+ * Returns the trigger's own name, or null where none of the three applies. It
+ * does NOT answer whether management see the appointment — they always do, and
+ * `managementRouteReason` below is the function that says so. This one is read
+ * by the screens that draw the escalation callout, where "nothing forced this
+ * upstairs" is the whole point of the paragraph.
  */
 export function approvalRouteReason(
   profile: Record<string, unknown> | null | undefined,
@@ -660,6 +791,49 @@ export function approvalRouteReason(
   if (discount > thresholds.discountPercent) return "over_discount";
   if (limit > thresholds.creditLimitPaise) return "over_credit_limit";
   return null;
+}
+
+/**
+ * The word an unescalated appointment reaches management under.
+ *
+ * It is a stored `routeReason` like `exclusivity` or `over_discount`, and it
+ * exists so that "nothing forced this upstairs" is a thing the row can SAY
+ * rather than a row that is absent. A missing row and an ordinary one look
+ * alike in a queue and are opposite answers to "has anybody been asked".
+ */
+export const STANDARD_ROUTE_REASON = "standard";
+
+/**
+ * Why this appointment is in front of management — and it always is.
+ *
+ * MANAGEMENT ALWAYS REVIEWS, AND THAT IS A REVERSAL. `approvalRouteReason`
+ * above used to decide whether a second signature was needed AT ALL, and a
+ * routine candidate — no exclusivity, discount and credit limit both under the
+ * thresholds — got no `stepIndex` 1 row written for it. But the gate on
+ * `distributor_approval` asks for `distributorApprovalApproved` unconditionally
+ * and always has, so there was nothing anybody could ever approve: an ordinary
+ * candidate reached `commercial_discussion` and stayed there for ever, with the
+ * checklist complete, the terms agreed and the refusal naming a signature that
+ * no screen could produce. The specification settles it in as many words — "Who
+ * acts: Management only" against BOTH `management_review` and
+ * `distributor_approval` — and it names the fallback wording itself: the
+ * escalation callout lists whichever trigger applies, or falls back to
+ * "standard review" where none do.
+ *
+ * So `approvalRouteReason` no longer answers WHETHER management see it. It
+ * answers WHY it reached them, and this function is the whole of that change:
+ * a trigger where there is one, `standard` where there is not. The two are kept
+ * as separate functions deliberately — the record screen's escalation callout
+ * still needs to know whether anything was ABOVE A THRESHOLD, which is a
+ * different question from which words go on the row, and folding them together
+ * would make an ordinary appointment read as an escalated one on the one screen
+ * where the difference is the point.
+ */
+export function managementRouteReason(
+  profile: Record<string, unknown> | null | undefined,
+  thresholds: { discountPercent: number; creditLimitPaise: number },
+): string {
+  return approvalRouteReason(profile, thresholds) ?? STANDARD_ROUTE_REASON;
 }
 
 /**

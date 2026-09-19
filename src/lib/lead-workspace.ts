@@ -121,6 +121,31 @@ export const LEAD_SECTIONS: readonly LeadSection[] = [
         label: "Board",
         hint: "The same book as columns per rung — where a book is bunching.",
       },
+      /*
+       * §8.2's seven management blocks.
+       *
+       * A TAB AND NOT AN ELEVENTH MODULE, deliberately. A module is something
+       * that can be GRANTED, and there is nothing here to grant: every figure
+       * on it is a count of rows from Qualification, Samples and Commercial,
+       * and the person who may see those counts is exactly the person who may
+       * open those screens — which the grants already say, and which the
+       * screen itself re-reads rather than assuming. A key of its own would be
+       * a second answer to a question already answered, and the one that
+       * drifts would be the one that widens.
+       *
+       * It sits under All Leads because it is a third view of the same book:
+       * the List answers "which lead", the Board answers "where is the book
+       * bunching", and this answers "what is waiting on somebody". It is NOT
+       * the first tab, though a dashboard usually would be — `path` above is
+       * what the sidebar points at and what `crm.leads`/`sales.leads` name as
+       * their href, so leading with it would move the module's own landing
+       * page and put a redirect in front of every sidebar click.
+       */
+      {
+        path: "leads/dashboard",
+        label: "Dashboard",
+        hint: "Seven queues across the funnel — what is waiting on somebody, each opening the list behind it.",
+      },
     ],
   },
   {
@@ -259,6 +284,30 @@ export const LEAD_SECTIONS: readonly LeadSection[] = [
         exact: true,
         hint: "§12's two-step chain, and the named reason each one escalated.",
       },
+      /*
+       * THE LEADS LEFT BEHIND ON THIS LADDER, and a TAB rather than an
+       * eleventh module.
+       *
+       * It sits under Distributor appointments because it is the same book
+       * read the other way round: the tab beside it is every appointment
+       * somebody still has to sign, and this is every lead that will never
+       * reach one, because Mahek does not appoint distributors through
+       * MahekOne and the ladder was retired for new leads. Anybody who may
+       * see the first may see the second — they are the same rows at
+       * different rungs — so there is nothing here to grant separately, and a
+       * key of its own would be a second answer to a question the existing
+       * grant already answers.
+       *
+       * It is not the FIRST tab, though a worklist that should be emptied
+       * might argue for it: `path` above is what the sidebar points at, so
+       * leading with this would move the module's own landing page and put a
+       * redirect in front of every sidebar click.
+       */
+      {
+        path: "leads/appointments/prospective",
+        label: "Prospective distributors",
+        hint: "Leads still on the retired distributor ladder — waiting on an appointment nobody in MahekOne can make.",
+      },
     ],
   },
   {
@@ -281,6 +330,32 @@ export const LEAD_SECTIONS: readonly LeadSection[] = [
         path: "leads/actions/none",
         label: "Nothing scheduled",
         hint: "§24 — an active lead with nothing owed by anybody is the state the rule exists to prevent.",
+      },
+      /*
+       * PARKED LEADS, AND A TAB RATHER THAN AN ELEVENTH MODULE.
+       *
+       * It sits under Next actions & nurture because that is exactly what it
+       * is: a resume date is a next action with a different name — a day
+       * somebody named on which this lead is owed something — and the three
+       * tabs beside it are the same question asked of leads that are still
+       * moving. Splitting parked leads onto a module of their own would put
+       * "what is owed, and when" in two places in the sidebar, and the half
+       * people stop opening is always the one further down.
+       *
+       * There is also nothing here to GRANT. Every row is a lead the person
+       * can already open on the List, at a rung they can already read, and the
+       * park itself was made with `lead.work` — which the tabs beside it
+       * already require. A key of its own would be a second answer to a
+       * question the existing grant answers, and the one that drifts widens.
+       *
+       * It is not the FIRST tab: `path` above is what the sidebar points at,
+       * so leading with this would move the module's own landing page and put
+       * a redirect in front of every sidebar click.
+       */
+      {
+        path: "leads/actions/parked",
+        label: "On hold",
+        hint: "Leads somebody paused, the day each comes back, and how far past that day it is.",
       },
       {
         path: "leads/actions/nurture",

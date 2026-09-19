@@ -16,11 +16,13 @@ import { getConfig } from "@/lib/config/store";
 import { addDays, APP_TIMEZONE } from "@/lib/business-date";
 import {
   NURTURE_SOURCE_TYPE,
+  expectedReorderEvent,
   sampleChaseDue,
   tasksDueFor,
   type NurtureConfig,
   type NurtureEvent,
 } from "@/lib/engines/lead-nurture";
+import type { RoutineCallConfig } from "@/lib/engines/queue";
 import { today } from "@/lib/recompute";
 import { recomputeAttendanceVerdicts } from "@/lib/services/attendance-verdict-service";
 import { recomputeSalesPerformance } from "@/lib/services/performance-service";
@@ -771,13 +773,25 @@ const NURTURE_LOOKBACK_DAYS = 60;
  * already — the keys are stable, so it would be dropped — or belongs to a lead
  * nobody has touched since spring, which is a report rather than a task.
  *
- * FOUR OF THE FIFTEEN TRIGGERS ARE NOT WIRED HERE, and that is deliberate
- * rather than unfinished. `delivery_completed` needs a dispatch mark MahekOne
- * does not record yet; `expected_reorder` is the Call Log's own job and a
- * second list chasing the same reorder would ring the customer twice with two
- * people each believing they were the only one. Both raise correctly the
- * moment something calls `raiseNurtureTasks` with them.
+ * ONE OF THE FIFTEEN TRIGGERS IS STILL NOT WIRED HERE, and that is deliberate
+ * rather than unfinished: `delivery_completed` needs a dispatch mark MahekOne
+ * does not record yet. It raises correctly the moment something calls
+ * `raiseNurtureTasks` with it.
  * TODO(integration): `delivery_completed` once dispatch is recorded.
+ *
+ * **`expected_reorder` USED TO BE ON THAT LIST AND MAHEK HAS DECIDED
+ * OTHERWISE.** The argument for leaving it off was that the Call Log already
+ * chases a reorder, and a second list chasing the same one would ring the
+ * customer twice with two people each believing they were the only one. What
+ * that argument missed is that the two lists are not the same list and were
+ * never going to be: the Call Log is a telecaller's four hundred names ordered
+ * by what is worth doing this morning, and this is one named lead manager's
+ * task with a date on it, on an account somebody has been put in charge of. So
+ * the rung is raised for the accounts that HAVE a lead manager and for no
+ * others — `nurtureOwners` resolves that seat and a row with nobody in it is
+ * skipped — which is the narrowest set that honours the decision. The overlap
+ * is real on exactly those accounts and is named here rather than papered
+ * over: see the note below the query.
  */
 export async function runNurturePass(): Promise<Counted> {
   const config = await getConfig();
@@ -785,6 +799,14 @@ export async function runNurturePass(): Promise<Counted> {
   const since = addDays(day, -NURTURE_LOOKBACK_DAYS);
   const nurtureConfig: NurtureConfig = {
     sampleReviewChaseDays: config["leads.sampleReviewChaseDays"],
+  };
+  /* The repeat-order call is dated by the queue engine's own `routineDayFor`,
+     so it reads the queue's own three settings rather than a second copy of
+     the 70% figure. See `expectedReorderEvent`. */
+  const routineConfig: RoutineCallConfig = {
+    "queue.routineCallPercent": config["queue.routineCallPercent"],
+    "queue.routineConfidenceSwing": config["queue.routineConfidenceSwing"],
+    "queue.routineMinCycleDays": config["queue.routineMinCycleDays"],
   };
 
   /* Every date below is derived in the business's own zone, in SQL, naming it
@@ -977,6 +999,72 @@ export async function runNurturePass(): Promise<Counted> {
       customerId: b.customerId,
       salesmanId: null,
     });
+  }
+
+  /*
+   * §13's last rung: the shop whose own rhythm says it is about due to buy
+   * again.
+   *
+   * **THE DAY IS NOT DERIVED IN SQL, and that is the point of reading four
+   * columns instead of writing a `CASE`.** `cycle_days * 0.7` is expressible
+   * in a query and would have been shorter — and it would be a second
+   * definition of the routine percentage, blind to the confidence swing and to
+   * the short-cycle carve-out, and silently unchanged on the day somebody
+   * edited the setting on the Settings screen. The four columns are the
+   * caches `lib/recompute.ts` already maintains; `expectedReorderEvent` turns
+   * them into a day by asking the queue engine's own function.
+   *
+   * **MEASURED CYCLES ONLY, and the filter is in the WHERE clause as well as
+   * in the engine.** `cycle_is_default` is true on most of this book — nobody
+   * has measured a shop with one order or none — and reading those rows only
+   * to have the engine drop every one of them would be a table scan a night
+   * for nothing.
+   *
+   * **`lead_stage` NOT NULL is what keeps this to the funnel**, the same
+   * narrowing every other trigger above uses. Without it the pass would offer
+   * a repeat-order call on all five thousand shops of the imported master, and
+   * the ones that also carry a lead manager would get it — which is not what
+   * §13 is, and would land as a list nobody could work in an afternoon. WHERE
+   * IT DOES OVERLAP the Call Log's own order chasing is on a funnel account
+   * with a lead manager, and that is a real overlap rather than one this
+   * comment can argue away: the same shop can be on a telecaller's list for a
+   * reorder and on the manager's task list for the same reorder on the same
+   * week. Mahek has asked for the call; whether the Call Log should hold those
+   * accounts back the way it holds back a working lead is their decision to
+   * make and is not taken here.
+   */
+  const reorderCandidates = await db
+    .select({
+      id: customers.id,
+      lastOrderOn: customers.lastOrderDate,
+      cycleDays: customers.cycleDays,
+      cycleIsDefault: customers.cycleIsDefault,
+      cycleConfidence: customers.cycleConfidence,
+    })
+    .from(customers)
+    .where(
+      and(
+        isNotNull(customers.leadStage),
+        isNotNull(customers.leadManagerId),
+        isNotNull(customers.lastOrderDate),
+        eq(customers.cycleIsDefault, false),
+      ),
+    );
+  for (const r of reorderCandidates) {
+    const due = expectedReorderEvent(
+      {
+        customerId: r.id,
+        lastOrderOn: r.lastOrderOn,
+        cycleDays: r.cycleDays,
+        cycleIsDefault: r.cycleIsDefault,
+        cycleConfidence: r.cycleConfidence,
+      },
+      day,
+      routineConfig,
+      NURTURE_LOOKBACK_DAYS,
+    );
+    if (!due) continue;
+    candidates.push({ ...due, customerId: r.id, salesmanId: null });
   }
 
   /* Grouped by customer, because the owner of a task is a fact about the LEAD

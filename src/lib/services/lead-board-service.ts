@@ -4,6 +4,8 @@ import { db } from "@/db";
 import { APP_TIMEZONE, asDate } from "../business-date";
 import { gateForNext, type GateVerdict, type LeadGateInput } from "../engines/lead-gates";
 import { ladderFor } from "../engines/lead-ladder";
+import { getConfig } from "../config/store";
+import { figuresAreStale } from "./lead-service";
 import type { LeadFilters } from "../lead-filters";
 import type { LeadSalesType, LeadStage } from "../lead-labels";
 import { orderCountsSql } from "../order-status";
@@ -123,6 +125,9 @@ export async function leadBoard(
   const scope = await managerScope();
   const filters = options.filters ?? {};
   const ladder = ladderFor(options.salesType);
+  /* Read ONCE for the whole board rather than per row: whether sixty days have
+     passed is a fact about the calendar, not about a lead. */
+  const freshDays = (await getConfig())["leads.figuresFreshDays"];
 
   /* A sales type is a column that can be null, so "this board" is two different
      predicates and neither may be written as the other: `= null` matches
@@ -204,6 +209,10 @@ export async function leadBoard(
            c.lead_required_product_id as "requiredProductId",
            c.contact_person as "contactPerson",
            c.lead_decision_maker as "decisionMaker",
+           c.lead_buyer as "buyer",
+           c.gst_verified as "gstVerified",
+           c.lead_figures_confirmed_at as "figuresConfirmedAt",
+           c.lead_qualification_review::text as "qualificationReview",
            c.lead_credit_days_wanted as "creditDaysWanted",
            c.lead_application as application,
            c.gstin,
@@ -302,9 +311,30 @@ export async function leadBoard(
       requiredProductId: (r.requiredProductId as string | null) ?? null,
       contactPerson: (r.contactPerson as string | null) ?? null,
       decisionMaker: (r.decisionMaker as string | null) ?? null,
+      buyer: (r.buyer as string | null) ?? null,
       creditDaysWanted: (r.creditDaysWanted as number | null) ?? null,
       application: (r.application as string | null) ?? null,
       gstin: (r.gstin as string | null) ?? null,
+      /* §11.6 — somebody else's check, not the salesman's tick. */
+      gstVerified: Boolean(r.gstVerified),
+      /*
+       * THE BOARD IS THE THIRD READING OF ONE LEAD, and it has to agree with
+       * the other two.
+       *
+       * `leadGateInput` assembles this for the handset and `gateInputFor` for
+       * the record; this one draws the Kanban. All three ask the same engine
+       * whether a lead may move, and all three have to hand it the same facts —
+       * a field added to one and forgotten in another is not a type error and
+       * not a failing test, it is a lead that can be dragged forward on the
+       * board while its own record refuses the same move, with nothing on
+       * either screen explaining the disagreement.
+       *
+       * Both of these arrived that way. They were wired into the handset's
+       * assembler and missed here and on the record.
+       */
+      figuresStale: figuresAreStale(asDate(r.figuresConfirmedAt), freshDays),
+      qualificationReview:
+        (r.qualificationReview as LeadGateInput["qualificationReview"]) ?? null,
       nextAction: (r.nextAction as string | null) ?? null,
       nextActionDate: (r.nextActionDate as string | null) ?? null,
       nextActionOwnerId: (r.nextActionOwnerId as string | null) ?? null,
@@ -668,6 +698,15 @@ export type TransitionsHead = {
   city: string | null;
   salesType: LeadSalesType | null;
   stage: LeadStage;
+  /**
+   * The lead's own salesman, as an id as well as a name.
+   *
+   * The name is what the header prints; the ID is what the park control
+   * pre-selects as the owner of the action a parked lead comes back to. A
+   * picker that opened on "Nobody yet" for the one answer that is right nine
+   * times in ten is a picker people fill in wrongly to get past it.
+   */
+  ownerId: string | null;
   ownerName: string | null;
 };
 
@@ -677,7 +716,7 @@ export async function transitionsHead(customerId: string): Promise<TransitionsHe
     select c.id as "customerId", c.name, c.company_name as "companyName", c.city,
            c.lead_sales_type::text as "salesType",
            c.lead_stage::text as stage,
-           u.name as "ownerName"
+           c.owner_id as "ownerId", u.name as "ownerName"
       from customers c
       left join users u on u.id = c.owner_id
      where c.id = ${customerId}
