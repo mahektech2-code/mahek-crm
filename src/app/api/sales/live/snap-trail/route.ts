@@ -12,8 +12,10 @@ import {
   tripColour,
   tripOffset,
 } from "@/lib/engines/trail-trips";
+import { planDay, type Coord, type SnappedRun } from "@/lib/engines/snap-plan";
 import { trackForDay } from "@/lib/services/sales-service";
-import { roadPathFor } from "@/lib/services/road-snap-service";
+import { roadPathFor, roadPathTail } from "@/lib/services/road-snap-service";
+import { heldRunsFor, holdRunsFor } from "@/lib/services/snap-cache";
 
 /**
  * The Live map's road-snapped trail, for one salesman on one day.
@@ -153,23 +155,59 @@ export async function GET(request: Request) {
      loop that builds the road one. */
   const rawByIndex: [number, number][][] = [];
 
-  for (const piece of dayTrailSegments(accurate, {
+  const pieces = dayTrailSegments(accurate, {
     gapMetres,
     dwellRadiusMetres: config["mbos.location.dwellRadiusMeters"],
     tripBreakMinutes: config["mbos.location.tripBreakMinutes"],
-  })) {
+  });
+
+  /*
+   * ONLY WHAT IS NEW IS BOUGHT, and that is the whole of this block.
+   *
+   * Snap-to-Road is metered — a hundred thousand requests a month, and one
+   * salesman's full day is around thirty of them. Asked for the whole day on
+   * every look, a team of seven watched by one manager for a couple of hours
+   * exceeds a month's quota on its own, and what it buys back is a road that
+   * has not changed since the last look: a day grows at ONE END. So the held
+   * geometry is extended by the walking since rather than replaced, which is
+   * one request instead of thirty, and it is held HERE rather than in the
+   * browser so a second manager and a page reload cost nothing at all.
+   *
+   * `planDay` decides, per run, whether anything is owed; `snap-cache.ts`
+   * argues for the store and states its invalidation, which is that every
+   * held run is re-checked against the fixes that have just been read. A run
+   * that no longer matches is bought again, so the cache cannot drift into
+   * disagreeing with the trail — it can only fail its own check.
+   */
+  const minRefreshMs = config["mbos.location.snapRefreshSeconds"] * 1_000;
+  const askedAtMs = Date.now();
+  const held = heldRunsFor(salesmanId, day);
+  const plans = planDay(
+    /* A gap is never snapped, so nothing is ever held for one — and a run
+       nothing is held for must not invalidate the runs after it. */
+    pieces.map((piece, i) => (piece.gap ? undefined : held[i])),
+    pieces.map((piece) => ({
+      coordinates: piece.coordinates as Coord[],
+      fromMs: piece.fromAt.getTime(),
+    })),
+    { nowMs: askedAtMs, minRefreshMs },
+  );
+  const nextHeld: (SnappedRun | undefined)[] = [];
+
+  for (let index = 0; index < pieces.length; index++) {
+    const piece = pieces[index];
     const raw = piece.coordinates;
     const trip = byIndex.get(piece.trip);
     /* `[lng, lat]` on the wire, `{lat,lng}` through the service — GeoJSON
        and Ola disagree about the order and this is where they meet. */
-    const road = piece.gap
-      ? null
-      : await roadPathFor(raw.map(([lng, lat]) => ({ lat, lng })));
+    const road = piece.gap ? null : await roadFor(plans[index], raw as Coord[], index);
     /* Trips are 1-based and `NO_TRIP` is 0, which `tripOffset` would stagger
        the wrong way off the line. Ground in no journey sits where it is. */
     const offset = trip ? tripOffset(piece.trip) : 0;
     const drawn = offsetPolyline(
-      road ? (road.map((p) => [p.lng, p.lat]) as [number, number][]) : raw,
+      /* `roadFor` answers in the drawn order already — `[lng, lat]`, the same
+         as the raw piece — so there is nothing to turn round here. */
+      road ?? raw,
       offset,
     );
 
@@ -200,6 +238,88 @@ export async function GET(request: Request) {
       coordinates: drawn,
     });
     rawByIndex.push(offsetPolyline(raw, offset));
+  }
+
+  holdRunsFor(salesmanId, day, nextHeld);
+
+  /**
+   * The road under one piece: reused, extended by its tail, or bought whole.
+   *
+   * A FAILURE NEVER COSTS THE HEAD. Where a tail cannot be bought the held
+   * road is kept and the new stretch is drawn as the raw fixes it is — which
+   * is exactly what the map draws for every trail whose snap has not landed —
+   * and the held run is left where it was, so the next look asks again. A
+   * transient hiccup must not throw away eight hours of road that arrived
+   * perfectly well.
+   */
+  async function roadFor(
+    plan: (typeof plans)[number],
+    raw: Coord[],
+    index: number,
+  ): Promise<Coord[] | null> {
+    const keep = (path: Coord[], coveredCount: number, snappedAtMs: number) => {
+      nextHeld[index] = {
+        fromMs: pieces[index].fromAt.getTime(),
+        firstCoord: raw[0],
+        coveredCount,
+        seam: raw[coveredCount - 1],
+        path,
+        snappedAtMs,
+      };
+    };
+
+    if (plan.kind === "reuse") {
+      /* Unchanged in every respect, including WHEN it was bought — the refresh
+         window is measured from the last time Ola was actually asked. */
+      nextHeld[index] = held[index];
+      return plan.path;
+    }
+
+    if (plan.kind === "hold") {
+      /*
+       * THE LINE IS NEVER SHORTENED to save a request. The road we hold runs
+       * out at the seam and the walking since is carried as the raw fixes it
+       * is, joined at the seam's snapped position — a jog of whatever Ola
+       * moved that one fix by, on the newest stretch only, and gone the next
+       * time the tail is bought. Two consequences worth naming: that stretch
+       * is drawn as fixes rather than as road, which is what every trail
+       * looks like until its snap lands anyway; and the leg's distance is
+       * measured over it with the jitter still in, so a hold reads very
+       * slightly long for as many seconds as `mbos.location.snapRefreshSeconds`
+       * says. The held run does not advance — nothing was bought — so the
+       * next look past the window asks for exactly this tail.
+       */
+      nextHeld[index] = held[index];
+      return [...plan.path, ...plan.rawTail];
+    }
+
+    if (plan.kind === "extend") {
+      const tail = await roadPathTail(
+        { lat: plan.seam[1], lng: plan.seam[0] },
+        plan.tail.map(([lng, lat]) => ({ lat, lng })),
+      );
+      if (!tail) {
+        /* Ola could not improve this stretch. That is a statement about the
+           stretch and not about the eight hours behind it, so the head is
+           kept and the new fixes are drawn raw — the same shape a hold
+           takes, and the held run stays where it is so the next look tries
+           again rather than the day going unsnapped for good. */
+        nextHeld[index] = held[index];
+        return [...plan.head.path, ...plan.tail];
+      }
+      const joined: Coord[] = [
+        ...plan.head.path,
+        ...tail.map((p) => [p.lng, p.lat] as Coord),
+      ];
+      keep(joined, raw.length, askedAtMs);
+      return joined;
+    }
+
+    const snapped = await roadPathFor(raw.map(([lng, lat]) => ({ lat, lng })));
+    if (!snapped) return null;
+    const path = snapped.map((p) => [p.lng, p.lat] as Coord);
+    keep(path, raw.length, askedAtMs);
+    return path;
   }
 
   /* Written back onto each trip's segments now the whole leg is known — and

@@ -4680,6 +4680,51 @@ snapped line is a second, disposable geometry for the map's `LineString`
 only, re-derivable at any time, exactly like every other engine reading in
 this codebase.
 
+**AND ONLY WHAT IS NEW IS EVER BOUGHT, because Snap-to-Road is METERED.**
+A hundred thousand requests a month, and one salesman's full day at twenty-metre
+anchors is around thirty of them — so a team of seven, asked for in full every
+time anybody looks, spends a month's quota in a fortnight and then draws no road
+at all. The waste is structural rather than accidental: a day grows at ONE END,
+and the first eight hours of a trail have not changed since the last look.
+`lib/engines/snap-plan.ts` decides per run of fixes whether anything is owed —
+reuse, extend by the tail, hold, or buy whole — and the tail of a two-minute gap
+is ONE request whatever the day has behind it. It is an engine because the thing
+worth pinning is a COUNT, and a count is invisible to a type check, a lint and
+every assertion about the line that gets drawn; `snap-plan.test.ts` grows a
+thirty-kilometre day two minutes at a time and asserts the total.
+
+**THE SEAM IS THE SAME PROBLEM `callSnap` ALREADY SOLVES, one level up.** Two
+independently-snapped halves meet at nothing and what lands on the map is a
+notch or a little hook past a corner — which is why batches inside one request
+share their boundary point. A held head and a new tail have exactly that seam,
+so the tail request is told about the head's last fix as its FIRST point and
+drops its own snapped copy of it on the way in. `enhancePath` means the answer
+is not one point per point, so nothing may pair it back up by index: dropping
+the first point is the only positional assumption made, and it holds because
+Ola answers in the order it was asked.
+
+**The road already bought is held on the SERVER, and it is never a source of
+truth.** `lib/services/snap-cache.ts` keys it on the salesman and the day, so a
+second manager watching the same team costs nothing and a page reload costs
+nothing — the browser's own ref only ever saved the tab it lived in. It is in
+memory rather than a table deliberately: every entry is a disposable second
+geometry, re-derivable from `mbos_positions` at any time, and a table would put
+a write on a read-only request plus a sweep for rows nobody reads after
+midnight, to buy back one thing — the first look after a deploy, which costs
+exactly what EVERY look costs today. Invalidation is not a sweep either: a held
+run is rebuilt against the fixes on every read, and one whose start time, first
+fix or far-end fix no longer match is discarded and bought again. It cannot
+drift into disagreeing with the trail; it can only fail its own check.
+
+**And the refresh window NEVER SHORTENS THE LINE.**
+`mbos.location.snapRefreshSeconds` is how recently we may have asked before a
+grown run is left to draw its newest stretch as the raw fixes instead of buying
+it again — configuration, because it is a cost control with a bill attached and
+somebody has to be able to move it without a deploy. What it decides is whether
+the last stretch is drawn on the road or as the fixes themselves, which is what
+every trail looks like until its snap lands anyway. The line always reaches the
+latest fix.
+
 **Map and satellite are a `setStyle` call, not two maps.** `StreetMap` swaps
 the style JSON in place rather than tearing the whole map down — the camera,
 the markers and the click handlers survive, because only what the STYLE
