@@ -33,9 +33,17 @@ DO $$ BEGIN
     ON DELETE cascade ON UPDATE no action;
 EXCEPTION WHEN duplicate_object THEN null; END $$;
 
+-- The constraint name is SHORTENED by hand rather than left to Postgres.
+-- Drizzle's own convention would spell it
+-- `lead_verification_corrections_validation_id_mbos_lead_validations_id_fk`,
+-- which is 71 characters; Postgres truncates an identifier at 63 and says so
+-- in a notice nobody reads. Truncation is deterministic, so it works — until
+-- two long names share their first 63 characters, at which point the second
+-- collides with the first and the failure names an identifier that appears
+-- nowhere in the source.
 DO $$ BEGIN
   ALTER TABLE "lead_verification_corrections"
-    ADD CONSTRAINT "lead_verification_corrections_validation_id_mbos_lead_validations_id_fk"
+    ADD CONSTRAINT "lead_verif_corrections_validation_id_fk"
     FOREIGN KEY ("validation_id") REFERENCES "public"."mbos_lead_validations"("id")
     ON DELETE cascade ON UPDATE no action;
 EXCEPTION WHEN duplicate_object THEN null; END $$;

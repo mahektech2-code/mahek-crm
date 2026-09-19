@@ -63,6 +63,26 @@ EXCEPTION WHEN duplicate_object THEN null; END $$;
 
 -- A parked lead is worked off its resume date, so the list that finds them has
 -- to be cheap. Partial: it costs nothing on the customers that are not parked.
+--
+-- THE PREDICATE IS THE DATE AND NOT THE STAGE, and that is not a preference.
+--
+-- It read `WHERE lead_stage = 'on_hold'`, which is the obvious spelling and
+-- fails on a database built FROM NOTHING. `on_hold` is added to the
+-- `mbos_lead_stage` enum by `ALTER TYPE ... ADD VALUE` in 0101, drizzle-kit
+-- applies every pending migration in ONE transaction, and Postgres refuses to
+-- USE an enum value whose ALTER has not committed. On any database that has
+-- already been through 0101 — which is every developer's — it applies
+-- perfectly. It failed only in CI, at "Apply migrations", on the one database
+-- in the world that had never seen 0101 commit.
+--
+-- Casting the enum to text would have silenced it and left a predicate the
+-- planner cannot match against `lead_stage = 'on_hold'`, which is an index
+-- nobody uses wearing the shape of one somebody does.
+--
+-- The date says the same thing and says it better: `lead_hold_resume_date` is
+-- written only when a lead is parked and CLEARED the moment it comes back, so
+-- "has a resume date" and "is parked" are the same set of rows — and the
+-- worklist's own query is ordered by exactly this column.
 CREATE INDEX IF NOT EXISTS "customers_lead_hold_resume_idx"
   ON "customers" ("lead_hold_resume_date")
-  WHERE "lead_stage" = 'on_hold';
+  WHERE "lead_hold_resume_date" IS NOT NULL;
