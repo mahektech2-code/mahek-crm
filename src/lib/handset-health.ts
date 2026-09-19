@@ -123,6 +123,15 @@ export type HandsetFacts = {
   locationServiceStartsToday?: number | null;
   locationServiceRefusedAt?: Date | string | null;
   locationServiceRefusal?: string | null;
+  /**
+   * WHICH BUILD IS IN HIS POCKET, or null where no handset has ever bound.
+   *
+   * It is a fact about the phone exactly like the battery is, and it belongs
+   * here rather than on a screen because what it MEANS is a comparison — see
+   * `buildIsBehind` — and a comparison typed into a panel is the second
+   * vocabulary this file exists to prevent.
+   */
+  appVersion: string | null;
 };
 
 export type HandsetThresholds = {
@@ -142,6 +151,25 @@ export type HandsetThresholds = {
    * `uploaderSilenceMs`.
    */
   serviceUploadEverySeconds: number;
+  /**
+   * THE BUILD THE OFFICE HAS PUBLISHED, and it is a THRESHOLD rather than a
+   * fact about any handset — which is the whole reason it sits here.
+   *
+   * Empty or null means nobody has stated one, and then nothing is said about
+   * anybody's build: null is not an answer, and a screen that called every
+   * phone current because the office had not filled a box in would be the
+   * reassuring reading on the question that has earned it least.
+   *
+   * WHY IT IS STATED AND NOT DERIVED. The two honest-looking alternatives are
+   * both worse. The server cannot read an APK, so it has no way to know what
+   * was built; and taking the HIGHEST version any handset reports derives the
+   * answer from the very population being judged — on a fleet where nobody has
+   * updated, the newest straggler becomes "current" and every phone reads as
+   * up to date, which is exactly the day this needed to speak. A release is a
+   * decision somebody makes (see DEPLOY.md, "Releasing the handset app"), so
+   * the number somebody decided is what this is compared against.
+   */
+  currentAppVersion: string | null;
 };
 
 /**
@@ -285,6 +313,74 @@ export function trailIsDead(
 }
 
 /**
+ * THE HANDSET'S OWN WATCHDOG SAYS ITS TRACKER IS STOPPED.
+ *
+ * Its own function for the same reason `trailIsDead` and `trailHasGaps` have
+ * theirs: the Live map's banner counts these and each row explains its own,
+ * and a banner saying "two salesmen" over three flagged rows is the kind of
+ * disagreement nobody reports and everybody stops trusting.
+ *
+ * IT IS A STANDING FACT AND NOT A HISTORY. The column is CLEARED the moment
+ * the tracker delivers again — see `lib/mbos/device-state.ts` — so a value
+ * present is a phone the watchdog believes is stalled AS OF ITS LAST CONTACT,
+ * not a stall it had once. The age printed beside it is therefore how long the
+ * phone has been in that state, which is the number a manager acts on.
+ *
+ * An open day is still required. Tracking runs only between a punch-in and a
+ * punch-out, so a stall carried overnight on a phone in a drawer is a
+ * yesterday that has not been cleared rather than a route being lost now, and
+ * flagging every handset every morning is how a screen teaches people to
+ * ignore it.
+ */
+export function trackerStalled(
+  f: Pick<HandsetFacts, "dayOpen" | "trackerStalledAt">,
+): boolean {
+  return f.dayOpen && ms(f.trackerStalledAt) !== null;
+}
+
+/**
+ * WHETHER THE PHONE IS RUNNING AN OLDER BUILD THAN THE ONE THE OFFICE
+ * PUBLISHED — and null wherever that cannot be answered.
+ *
+ * Three separate ways this has no answer, and every one of them has to be null
+ * rather than false: no handset has ever bound, the handset is too old to
+ * report its version, and the office has not said what the current build is.
+ * `false` would mean "this phone is up to date", which is a claim, and making
+ * a claim out of a missing input is the one failure this whole file is written
+ * against.
+ *
+ * COMPARED PART BY PART AS NUMBERS, never as strings: "1.10.0" sorts BELOW
+ * "1.9.0" lexically, which would call the newest build in the fleet the
+ * stalest one — and it would do so silently, on the release where it first
+ * mattered. A version that parses to nothing (a hand-built APK naming itself
+ * something else) is null as well, because guessing which side of a
+ * comparison an unrecognisable string falls on is inventing a fact.
+ *
+ * A build AHEAD of the stated one is not behind, and says nothing. Somebody
+ * testing tomorrow's APK is not a fault, and the honest reading is that the
+ * office has not updated the setting yet.
+ */
+export function buildIsBehind(reported: string | null, current: string | null): boolean | null {
+  const a = versionParts(reported);
+  const b = versionParts(current);
+  if (!a || !b) return null;
+  const width = Math.max(a.length, b.length);
+  for (let i = 0; i < width; i += 1) {
+    const mine = a[i] ?? 0;
+    const theirs = b[i] ?? 0;
+    if (mine !== theirs) return mine < theirs;
+  }
+  return false;
+}
+
+/** "1.8.0", "1.8.0 (42)" and " 1.8 " all read as their leading dotted numbers. */
+function versionParts(v: string | null): number[] | null {
+  const match = /^\s*v?(\d+(?:\.\d+)*)/.exec(v ?? "");
+  if (!match) return null;
+  return match[1].split(".").map(Number);
+}
+
+/**
  * Everything worth saying about one handset, worst first.
  *
  * NOTHING IS SAID ABOUT A HEALTHY PHONE. A row that lists four green facts is
@@ -331,8 +427,23 @@ export function handsetNotes(
    * where we do not — and it is drawn as a warning rather than a fault,
    * because the watchdog starts it again within the quarter hour and a row
    * that shouts at every ordinary gap is a row nobody reads.
+   *
+   * THE WATCHDOG'S OWN VERDICT IS THE SECOND CASE WHERE WE KNOW WHY, and it
+   * is excluded here for exactly the reason the refusal is. A phone whose
+   * watchdog has caught the tracker accepted and silent reports both facts at
+   * once — the service is down AND we know what took it down — and drawn
+   * together this line sat ABOVE the one naming the cause, saying the recorder
+   * starts itself again and his work is safe, over a handset an OEM battery
+   * manager is killing. That is a reassurance contradicting the fault
+   * underneath it, and the thing to act on has to come first. `trackerStalled`
+   * says it better and says what to do, so it says it alone.
    */
-  if (f.locationServiceRunning === false && f.dayOpen && refused === null) {
+  if (
+    f.locationServiceRunning === false &&
+    f.dayOpen &&
+    refused === null &&
+    !trackerStalled(f)
+  ) {
     notes.push({
       tone: "warn",
       text: "Route recorder not running",
@@ -423,7 +534,7 @@ export function handsetNotes(
    * believing the next thing the office tells him.
    */
   const stalled = ms(f.trackerStalledAt);
-  if (stalled !== null && f.dayOpen) {
+  if (stalled !== null && trackerStalled(f)) {
     notes.push({
       tone: "bad",
       text: `His phone stopped the tracker — ${ageWords(stalled, nowMs)} ago`,
@@ -690,6 +801,38 @@ export function handsetNotes(
       text: `${queued.toLocaleString("en-IN")} fixes still on his phone${when}`,
       detail:
         "His phone records every position and keeps it until we confirm we have it, so none of this is lost — it is waiting for a connection. It arrives on its own, usually within minutes of him getting signal or opening the app. Worth a look only if the number keeps growing all day.",
+    });
+  }
+
+  /*
+   * AN OLD BUILD, LAST — and last is where it belongs rather than an oversight.
+   *
+   * Nothing above it is undone by an update and nothing below it is waiting on
+   * one; this is the line that explains the OTHERS. A phone three releases back
+   * does not report half the columns this panel reads, so its row is quiet not
+   * because the handset is well but because that build has nothing to say — and
+   * a manager who does not know which build a man is on reads that silence as
+   * health. Two of the three handsets in the field on the day this was written
+   * were on 1.6.1 and 1.1.0 against a published 1.8.0, and no screen in
+   * MahekOne said so; the build was on the row's hover title and nowhere else,
+   * which is the same as nowhere.
+   *
+   * It is NOT gated on an open day. A build is stale in a drawer at midnight
+   * exactly as it is stale on a beat, and the evening — when somebody is
+   * reading back over the day rather than chasing it — is when anybody has
+   * time to go and get a phone updated.
+   *
+   * `warn` rather than `bad`: an old build still records a day, sends its
+   * visits and takes its orders. What it loses is the newest of what it could
+   * tell us about itself, which is a hole in this panel rather than in his
+   * work. Silent where either version is unknown — see `buildIsBehind`.
+   */
+  if (buildIsBehind(f.appVersion, t.currentAppVersion)) {
+    notes.push({
+      tone: "warn",
+      text: `Running MBOS ${f.appVersion} — ${t.currentAppVersion} is out`,
+      detail:
+        "An old build still records his day and still sends it; what it cannot do is report everything newer builds report about themselves, so the rest of this row may be quieter than the phone actually deserves. He updates from the download link the office gives out — and if a handset stays behind for weeks it is usually because the update was never installed rather than never offered.",
     });
   }
 

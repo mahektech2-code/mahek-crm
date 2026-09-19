@@ -163,6 +163,32 @@ are a SEPARATE Ola key for the handset, revocable without taking the console's
 maps down, and a spend cap on it. It is sent only to a device already
 authenticated as a bound handset, which is the most the server side can do.
 
+**THE OLA KEY IS A POOL OF FIVE, SPENT ONE AT A TIME.** `olamaps.apiKey`
+through `olamaps.apiKey5` are five accounts' keys and MahekOne spends the first
+until Ola refuses it for quota, then the second. NOT round-robin: spreading
+constant load across several accounts of one organisation is the pattern a
+provider acts on, and it would put every account near its ceiling at once
+instead of leaving four at zero, where an exhaustion is attributable to exactly
+one of them. **Exhaustion is OBSERVED, never counted** — `classifyOlaAnswer` in
+`engines/ola-key-pool.ts` retires a key on a 429 or a 403 that SAYS it is about
+a limit, and on nothing else: a 400 is Snap-to-Road's batch ceiling, a 401 is a
+key somebody mistyped, a timeout is weather, and a local request counter that
+drifted either way would abandon a good account or keep calling with a dead
+one. **A retired key comes back** on `maps.olaKeyCooldownHours` and, whatever
+that says, from the first of the next month, because a quota is monthly — it is
+read as an earlier month's refusal rather than cleared by a job, so nothing has
+to fire on the right night. `ola_key_health` is where that is remembered, keyed
+on the credential's NAME and not on `app_secrets`, because a key may come from
+the environment and have no row there; it is not `app_settings`, because
+nobody decided this and there is nothing to audit. **A BROWSER CANNOT FAIL OVER
+MID-SESSION** and nothing pretends it can: the page is handed whichever key is
+live at RENDER, a reload picks up the change, and where every key is spent it
+is handed none and the map says THAT rather than "add a key" — two silences,
+two sentences. **ONE KEY COSTS WHAT IT ALWAYS DID**: `olaGet` short-circuits on
+a pool of one — no health read, no retry, no notification — because production
+holds one key and insurance that taxed the uninsured case would be a price paid
+daily against a risk nobody has run.
+
 **A PIN IS ONLY DRAWN WHERE THERE IS A FIX, and what could not be drawn is said
 in words.** Half this book has never been pinned. Spacing those shops out to
 fill the screen is the one thing a map of where things are must not do, and a
@@ -2021,6 +2047,56 @@ NOT a cache: rebuilding it from the two marks is precisely the loss it exists
 to prevent. It is also the only place N photographs can live, since a day with
 two breaks carries six.
 
+**A DAY'S VERDICT IS DERIVED, AND FOR A LONG TIME NOTHING DERIVED IT.**
+`mbos_attendance_days.status` and `worked_seconds` are caches — the column
+comments have said so since the table was written, and `handleAttendance`
+declines to type either by name, correctly, because a handset that can type its
+own verdict can type its own pay. The job it defers to was never written. So
+every row ever stored read `absent` with no hours against it, including days
+carrying a check-in, a check-out and two selfies: three screens drew a red pill
+saying a man who worked was absent, `daysOnLeave` on the salary screen was a
+count of a value nothing wrote, and the two configuration keys that would have
+driven it had no consumer at all. `lib/engines/attendance.ts` is the rule and
+`recomputeAttendanceVerdicts` is the wiring, hourly for the last two days and
+nightly over everything.
+
+**The HOURS are the sessions, never the two marks.** Subtracting `check_in_at`
+from `check_out_at` on a 9-to-1-then-2-to-6 day answers nine hours, which is
+exactly the lie the `sessions` column was added to kill. An open session
+contributes nothing and is never run to `now`: a clock read when the cron fired
+is a measurement of the cron. An EMPTY session list beside two real marks is
+the one fallback, because it is a row an older handset wrote and reading it as
+zero seconds would mark a full day absent — the same bug through the back door.
+
+**WORK OUTRANKS BOTH LEAVE AND A HOLIDAY; a holiday outranks leave where
+nothing was worked.** A man who came out and sold on a public holiday worked
+that day, and a record calling it `holiday` erases the only evidence he did —
+it would also be counted twice on the salary screen, whose `daysWorked` reads
+the check-in and whose `daysOnLeave` reads this column. Between the two where
+nobody worked, the holiday wins: `leaveWorkingDays` already excludes holidays
+from a request's span, so reading it as leave taken would contradict the
+balance that was actually debited.
+
+**A DAY WITH AN OPEN SESSION GETS NO VERDICT AT ALL, and the screen says so.**
+Today's day while it is being worked, and the past day `markMissedCheckouts`
+could not close for want of any evidence of when he stopped. That job already
+refuses to invent a closing time, and inventing a verdict out of the hours it
+declined to guess would walk straight round it — so nothing is written and the
+row keeps the column's `absent` DEFAULT, which is not a judgement anybody made.
+`worked_seconds` null beside a check-in is what tells the two apart, and
+`lib/attendance-labels.ts` — pure and client-safe, like `customer-health.ts` —
+draws it as "not measured" rather than as a red "absent".
+
+**And the rebuild skips a row it would rewrite identically.** This pass sees
+every attendance day there has ever been, on a schedule, for ever, and a
+verdict that settled in March does not move in September. Both columns are
+compared with `is distinct from` — `worked_seconds` is nullable, and `null <>
+null` is null — so a converged table is rewritten nowhere. The gate is the
+OUTPUT and never a hash of the attendance row: leave approved this morning for
+last week, a holiday added afterwards and a changed threshold all reach
+backwards into days already judged, which is also why the nightly pass takes no
+window.
+
 **A check-in is never refused because a photograph is still uploading.** Media
 is a separate queue that syncs AFTER its parent — that is the whole point of
 it — so an attendance row routinely names a file whose bytes are still on the
@@ -3027,9 +3103,42 @@ the same change four times in four minutes before giving up, and the account
 they were trying to move sat in the wrong person's Call Log for a day. The
 projection now skips all four manager columns on a decided account and records
 the disagreement in `sync_conflicts`, which is what the order projection
-already did for `orders.status`. Everything that is NOT a manager — the phone
-number, the credit term, the area — still comes from the sheet, because the
-sheet is simply right about those.
+already did for `orders.status`.
+
+**AND THE SAME RULE NOW COVERS THE STATUS AND EVERYTHING ELSE, which is a
+REVERSAL.** This paragraph used to end by saying that everything which is not a
+manager — the phone number, the credit term, the area — still comes from the
+sheet, because the sheet is simply right about those. It is right about an
+account nobody has touched, which is almost all of them, and wrong the moment
+somebody has: a telecaller who corrects a town after actually speaking to the
+customer is better informed than a spreadsheet, and having it put back within
+the half hour with nothing saying so is the reassignment bug wearing different
+clothes. So the projection FILLS A BLANK and never corrects a person —
+`city`, `region`, `price_tag`, `lead_source` and the credit term joined the
+phone number and the GSTIN, which had always worked this way.
+
+**A CREDIT TERM NEEDS TWO COLUMNS TO SAY "NOBODY HAS STATED THIS".**
+`credit_term_days` is NOT NULL DEFAULT 30, so on that column a deliberate 30
+and an untouched row are the same value and no blank test can tell them apart.
+`credit_days` is the nullable mirror and is what the projection reads. That is
+why `updateCustomer` writes BOTH: writing only the first left a term somebody
+had agreed on the phone still reading as empty, so the guard looked right and
+did nothing.
+
+**AND THE STATUS IS A DECISION, so it gets a mark rather than a blank test.**
+`status_decided_at` is the third of its kind after `orders.approved_at` and
+`customers.am_decided_at`. The projection already declined to REACTIVATE what a
+person had closed in the CRM, by reading `deactivation_reason` — and nothing
+whatever guarded the other direction, because the `Deactive` branch writes
+unconditionally. `deactivation_reason` could never have covered both: a
+reactivation CLEARS it by design, so the decision destroys its own evidence.
+In production an admin reactivated one shop twice, both marked "Mistake", and
+the sync re-closed it sixteen minutes after the second. A closed account is
+invisible to the Call Log — `queueInputs` filters the status BEFORE the scope
+filter is reached, so no seat and no score can put it back on a list — and that
+shop went on taking dispatched orders while nobody was allowed to ring it.
+Null means NOT DECIDED, which is every row that predates the column, so adding
+it moved no figure.
 
 **`updateCustomer` is not a door to it either.** It wrote `owner_id` for
 anybody who could edit a customer and `back_office_am_id` for any manager, both
@@ -4783,6 +4892,103 @@ The raw fixes in `mbos_positions` are never touched by any of this: the
 snapped line is a second, disposable geometry for the map's `LineString`
 only, re-derivable at any time, exactly like every other engine reading in
 this codebase.
+
+**AND ONLY WHAT IS NEW IS EVER BOUGHT, because Snap-to-Road is METERED.**
+A hundred thousand requests a month, and one salesman's full day at twenty-metre
+anchors is around thirty of them — so a team of seven, asked for in full every
+time anybody looks, spends a month's quota in a fortnight and then draws no road
+at all. The waste is structural rather than accidental: a day grows at ONE END,
+and the first eight hours of a trail have not changed since the last look.
+`lib/engines/snap-plan.ts` decides per run of fixes whether anything is owed —
+reuse, extend by the tail, hold, or buy whole — and the tail of a two-minute gap
+is ONE request whatever the day has behind it. It is an engine because the thing
+worth pinning is a COUNT, and a count is invisible to a type check, a lint and
+every assertion about the line that gets drawn; `snap-plan.test.ts` grows a
+thirty-kilometre day two minutes at a time and asserts the total.
+
+**THE SEAM IS THE SAME PROBLEM `callSnap` ALREADY SOLVES, one level up.** Two
+independently-snapped halves meet at nothing and what lands on the map is a
+notch or a little hook past a corner — which is why batches inside one request
+share their boundary point. A held head and a new tail have exactly that seam,
+so the tail request is told about the head's last fix as its FIRST point and
+drops its own snapped copy of it on the way in. `enhancePath` means the answer
+is not one point per point, so nothing may pair it back up by index: dropping
+the first point is the only positional assumption made, and it holds because
+Ola answers in the order it was asked.
+
+**The road already bought is held on the SERVER, and it is never a source of
+truth.** `lib/services/snap-cache.ts` keys it on the salesman and the day, so a
+second manager watching the same team costs nothing and a page reload costs
+nothing — the browser's own ref only ever saved the tab it lived in. It is in
+memory rather than a table deliberately: every entry is a disposable second
+geometry, re-derivable from `mbos_positions` at any time, and a table would put
+a write on a read-only request plus a sweep for rows nobody reads after
+midnight, to buy back one thing — the first look after a deploy, which costs
+exactly what EVERY look costs today. Invalidation is not a sweep either: a held
+run is rebuilt against the fixes on every read, and one whose start time, first
+fix or far-end fix no longer match is discarded and bought again. It cannot
+drift into disagreeing with the trail; it can only fail its own check.
+
+**And the refresh window NEVER SHORTENS THE LINE.**
+`mbos.location.snapRefreshSeconds` is how recently we may have asked before a
+grown run is left to draw its newest stretch as the raw fixes instead of buying
+it again — configuration, because it is a cost control with a bill attached and
+somebody has to be able to move it without a deploy. What it decides is whether
+the last stretch is drawn on the road or as the fixes themselves, which is what
+every trail looks like until its snap lands anyway. The line always reaches the
+latest fix.
+
+**A SHORT GAP FOLLOWS THE ROAD; A LONG ONE STAYS A STRAIGHT LINE.** The
+straight lines still on that map were never failures of the snap — they are
+the stretches with NO FIXES AT ALL, cut out by `mbos.location.trailGapMeters`,
+and the route deliberately never sent one to Ola. At a fix every few seconds a
+gap of a minute or two is a tunnel, a lift, a signal shadow or Android reaping
+the tracker mid-ride: the man was travelling throughout and there is very
+nearly one way he can have got from the fix before to the fix after, so a line
+through three blocks of buildings is a worse picture of that than the road is.
+Ola's Directions endpoint answers the two ends and `roadRouteBetween` caches
+it in `trail_gap_routes`, keyed on the same rounded coordinate pair
+`road_legs` uses — a gap's ends never change once the day is past, and the
+stretch from a man's house to the first shop is one question asked every
+morning of the week.
+
+**THE CEILINGS ARE WHERE THE HONESTY LIVES.** `mbos.location.gapRouteMaxMinutes`
+(8) and `mbos.location.gapRouteMaxKm` (3) both have to hold. Real days on this
+book carry single gaps of 437, 456, 498 and 999 minutes, which are days the
+handset was off, and nothing should be drawn across those at all: given twenty
+minutes somebody can park, walk somewhere, have a conversation and come back,
+and the two endpoints look exactly as they would if he had driven straight
+through. The kilometre ceiling is the check the clock cannot make — a handset
+quiet in Nagpur and speaking again in Wardha lost a signal across a batch
+upload rather than travelling — and it is reused to refuse an ANSWER that is
+not believable, a correct route round a river with no bridge for fifteen
+kilometres, rather than adding a second number that could drift from the
+first.
+
+**AND A ROUTED GAP IS NEVER PROMOTED TO EVIDENCE.** It keeps the gap's own
+colour, half opacity and absence of casing — the casing is what makes a line
+read as a route somebody took — and is DOTTED rather than dashed, which is a
+layer of its own only because `line-dasharray` is the one paint property
+MapLibre will not take an expression for. The hover says it in words, because
+a line that bends round corners says "somebody drove this" to everybody and
+that is the stronger signal. Its length is NOT added to the day: `snap-trail`
+measures a gap on the crow's flight between its two real fixes whatever it
+drew, so a beat with a dozen small dropouts cannot grow a distance because the
+map got prettier. `lib/engines/trail-gap-route.ts` is the pure half — may this
+gap be routed, is the answer believable, how does a routed stretch join the
+fixes either side — and it pins both ends to the real fixes, since Ola routes
+between the nearest points on the carriageway and a doorway is not on one.
+
+**AND DIRECTIONS IS THE ONE OLA CALLER STILL OUTSIDE THE KEY POOL, said here
+rather than discovered.** Snap-to-Road, geocoding and the distance matrix all
+go through `olaGet`, which fails over on an observed exhaustion;
+`ola-directions-service.ts` reads `olamaps.apiKey` itself, because it is a
+POST-then-GET and `olaGet` is a GET. On the shipping configuration — one key —
+that is no difference at all: both spend the same credential and both answer
+null when it stops working. On a pool it means a routed gap is the first thing
+to go quiet and the last to come back, which is the right end of the product
+to lose, and it fails the way this whole feature fails, as the straight dashed
+line the map drew before.
 
 **Map and satellite are a `setStyle` call, not two maps.** `StreetMap` swaps
 the style JSON in place rather than tearing the whole map down — the camera,

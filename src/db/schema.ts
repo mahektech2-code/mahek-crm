@@ -669,6 +669,34 @@ export const appSecrets = pgTable("app_secrets", {
   updatedById: text("updated_by_id"),
 });
 
+/**
+ * WHAT IS KNOWN ABOUT AN OLA MAPS KEY THAT RAN OUT.
+ *
+ * MahekOne may hold several Ola accounts' keys and spends them in order,
+ * moving to the next only once Ola has actually refused the one in force for
+ * quota. This is where that refusal is remembered, so a redeploy does not go
+ * back to hammering a key that is already finished, and so two instances of
+ * the app agree about which one is live.
+ *
+ * KEYED ON THE CREDENTIAL'S NAME and deliberately not two columns on
+ * `app_secrets`: a key may come from the environment instead of the console,
+ * in which case there is no `app_secrets` row to hang anything off. The fact
+ * is about the account behind the name.
+ *
+ * Nothing spendable is stored here — not the value, not even its last four.
+ */
+export const olaKeyHealth = pgTable("ola_key_health", {
+  /** A `SecretName`; `olamaps.apiKey` through `olamaps.apiKey5`. */
+  name: text("name").primaryKey(),
+  /** When Ola last refused it for quota. The cooldown runs from here. */
+  spentAt: timestamp("spent_at", { withTimezone: true }),
+  /** `YYYY-MM` in Asia/Kolkata — the month that refusal belongs to. */
+  spentMonth: text("spent_month"),
+  /** Which signal retired it: `http_429`, `http_403_quota`, `body_quota`. */
+  spentSignal: text("spent_signal"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /* ------------------------------------------------------------------ §3.2 user */
 
 export const users = pgTable(
@@ -1563,6 +1591,29 @@ export const customers = pgTable(
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
     deactivatedById: text("deactivated_by_id").references(() => users.id),
     deactivationReason: text("deactivation_reason"),
+    /**
+     * A STATUS SOMEBODY DECIDED, AND THEREFORE ONE THE SHEET MAY NOT RESTATE.
+     *
+     * The same mark as `amDecidedAt` one field family over, and it exists
+     * because the party projection shipped with exactly half the rule. It
+     * already refused to REACTIVATE what a person had closed in the CRM, by
+     * reading `deactivationReason`; nothing at all guarded the other
+     * direction, because the Deactive branch writes unconditionally. So an
+     * account somebody brought BACK was re-closed on the next pass, every
+     * pass, for ever.
+     *
+     * Reading `deactivationReason` could never have covered both: a
+     * reactivation CLEARS that column by design — a stale reason on a live row
+     * is how a screen explains a deactivation that was reversed in March — so
+     * the evidence of the decision is destroyed by the decision itself. It
+     * needs a mark of its own.
+     *
+     * Null means NOT DECIDED, never "active": every row written before this,
+     * and every account the spreadsheet alone has spoken for. Those go on
+     * tracking the sheet exactly as they did, which is why adding this moved
+     * no figure on any screen.
+     */
+    statusDecidedAt: timestamp("status_decided_at", { withTimezone: true }),
     /** Raised by a telecaller, decided by a manager. */
     deactivationRequested: boolean("deactivation_requested").notNull().default(false),
     /**
@@ -8845,4 +8896,45 @@ export const roadLegs = pgTable(
     fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("road_legs_pair_key").on(t.fromKey, t.toKey)],
+);
+
+/**
+ * The road Ola guessed across a gap in a trail, cached by its two ends.
+ *
+ * A CACHE, like `road_legs` above it, and nothing derives from it that cannot
+ * be recomputed. Empty it and every gap on the Live map falls back to the
+ * straight dashed line it drew before — which is also exactly what an
+ * unreachable Ola looks like, so the two are one already-handled thing.
+ *
+ * WHAT IS STORED IS A GUESS, and every screen that draws it says so. Ola
+ * answers the route its engine recommends, not the route anybody took; whether
+ * a particular gap is short enough for that guess to be worth drawing is
+ * `lib/engines/trail-gap-route.ts`, and it is never drawn as evidence and
+ * never added to a distance anybody is measured on.
+ *
+ * Keyed on the ROUNDED coordinate — `legKey` in `lib/road-legs.ts`, the same
+ * four decimal places the road legs beside it use — because a gap's two ends
+ * never change once the day is past, and the same two ends recur every
+ * morning of the week. DIRECTED for the same reason road distance is.
+ */
+export const trailGapRoutes = pgTable(
+  "trail_gap_routes",
+  {
+    id: text("id").primaryKey(),
+    /** `legKey` in `lib/road-legs.ts` — the one place the rounding is decided. */
+    fromKey: text("from_key").notNull(),
+    toKey: text("to_key").notNull(),
+    /**
+     * Ola's own encoded polyline, stored as sent.
+     *
+     * A tenth of the size of the decoded points, and re-decoding it on read
+     * means the decoder is exercised by every cache hit rather than only by a
+     * fresh fetch — which is the half that can be wrong silently.
+     */
+    polyline: text("polyline").notNull(),
+    /** Ola's figure for the route, kept for a reader rather than for a decision. */
+    metres: integer("metres").notNull().default(0),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("trail_gap_routes_pair_key").on(t.fromKey, t.toKey)],
 );

@@ -14,6 +14,7 @@ import {
   tripOffset,
 } from "@/lib/engines/trail-trips";
 import { clock, clockSeconds } from "@/lib/format";
+import { departedTrailIds, trailLayerIds, trailSourceId } from "@/lib/map-layers";
 import { formatDistance } from "@/lib/geo";
 import type { ActivityPoint, LastKnown, ShopPin, TrackPoint } from "@/lib/services/sales-service";
 import { activityLabel } from "@/lib/mbos/activity-labels";
@@ -153,6 +154,24 @@ import { CustomerQuickView } from "@/components/console/customer-quick-view";
 /** Enough that a single pin does not open zoomed to the rooftop. */
 const MAX_FIT_ZOOM = 15;
 
+/**
+ * HOW OFTEN A GROWING TRAIL IS ROAD-MATCHED AGAIN.
+ *
+ * The page polls every thirty seconds (see `live-panel.tsx`), and asking Ola
+ * to re-match every trail on every one of those is the cost the snap was
+ * gated behind a selection to avoid in the first place. Asking NEVER is the
+ * other failure and the one this was: a trail snapped at ten past nine is the
+ * line still on screen at one o'clock, because the snapped geometry is
+ * preferred over the raw fixes and nothing ever replaced it.
+ *
+ * So a trail is re-matched only once it has actually grown AND only this often
+ * — a few requests an hour per salesman rather than a few a minute. It is a
+ * request cadence and not a business rule, which is why it is here rather than
+ * in `lib/config/registry.ts`: nobody in the office has an opinion about it,
+ * and the number it has to be balanced against is the poll above it.
+ */
+const SNAP_REFRESH_MS = 120_000;
+
 /** "12 min", or "1h 5m" once a stop runs past the hour. */
 function formatMinutes(minutes: number): string {
   if (minutes < 60) return `${Math.round(minutes)} min`;
@@ -169,6 +188,21 @@ function formatMinutes(minutes: number): string {
 type TripSegment = TrailSegment & {
   trip: number;
   colour: string;
+  /**
+   * A dashed stretch whose ROAD was guessed rather than recorded.
+   *
+   * Only ever true on a gap, and only where the gap was short enough that the
+   * server was willing to ask — see `lib/engines/trail-gap-route.ts`. It
+   * changes nothing about the weight of the line, deliberately: a guess must
+   * never be promoted to the solid, cased treatment that says somebody was
+   * seen here. What it changes is the DASH and the WORDS, so a manager
+   * pointing at a dashed line that follows a road is told it follows a road
+   * Ola picked rather than one anybody was seen on.
+   *
+   * Absent on the client's own first draw, which is the honest default: the
+   * browser has no key and asks nobody, so nothing it draws is ever inferred.
+   */
+  inferred?: boolean;
   /** Pixels to the right of travel — see `tripOffset`. */
   offset: number;
   /** The whole trip's figures, repeated on each of its segments — see `tripSegments`. */
@@ -242,6 +276,10 @@ function trailFeatureCollection(segments: TripSegment[]): GeoJSON.FeatureCollect
       type: "Feature",
       properties: {
         gap: s.gap,
+        /* `?? false` rather than left undefined: a MapLibre filter comparing
+           against a property that is not there is a different question to one
+           comparing against false, and the two gap layers split on it. */
+        inferred: s.inferred ?? false,
         trip: s.trip,
         colour: s.colour,
         offset: s.offset,
@@ -376,6 +414,48 @@ function trailPointsFeatureCollection(trails: [string, { lat: number; lng: numbe
   };
 }
 
+/**
+ * Where a trail stood still, as its own collection.
+ *
+ * Lifted out of the drawing for the reason `trailPointsFeatureCollection` was:
+ * a redraw writes the same features into a source that already exists, and a
+ * collection built inline in the `addSource` call is one only the first draw
+ * can ever reach — which is precisely how the map came to be frozen at first
+ * paint.
+ */
+function dwellFeatureCollection(stops: DwellStop[]): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: stops.map((s) => ({
+      type: "Feature" as const,
+      properties: {
+        label: `Stopped ${formatMinutes(s.minutes)} · ${clock(s.startAt)}–${clock(s.endAt)}`,
+      },
+      geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
+    })),
+  };
+}
+
+/** The work, marked where it was done — see `dwellFeatureCollection` above. */
+function activityFeatureCollection(
+  marks: ActivityPoint[],
+  staleAfterSeconds: number,
+): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: marks.map((a) => ({
+      type: "Feature" as const,
+      properties: {
+        label: `${activityLabel(a.entityType)}${a.accuracyM ? ` · ±${a.accuracyM} m` : ""}`,
+        /* A stale fix is drawn hollow rather than hidden: the act is certain
+           and only its place is not. */
+        stale: (a.ageSeconds ?? 0) > staleAfterSeconds ? 1 : 0,
+      },
+      geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] },
+    })),
+  };
+}
+
 /** A ring round whoever the team list has picked, drawn above everybody else. */
 /**
  * The first layer this file added, in the style's own draw order — what the
@@ -412,6 +492,7 @@ export function StreetMap({
   view,
   selectedId,
   apiKey,
+  keysSpent,
 }: {
   day: string;
   rows: LastKnown[];
@@ -430,6 +511,14 @@ export function StreetMap({
   selectedId: string | null;
   /** Ola Maps' key, read once server-side and handed down — see the doc comment above. */
   apiKey: string | null;
+  /**
+   * With no key: whether every key held has run out, or none is set at all.
+   *
+   * Two different silences and they need two different sentences. "Add a key"
+   * to somebody who added five of them, four of which have run out, sends them
+   * looking for a configuration mistake they did not make.
+   */
+  keysSpent: boolean;
 }) {
   const host = React.useRef<HTMLDivElement | null>(null);
   const map = React.useRef<maplibregl.Map | null>(null);
@@ -451,6 +540,21 @@ export function StreetMap({
   /** Which trip the cursor is over, or null. A ref — see the mousemove handler. */
   const hoveredTrip = React.useRef<number | null>(null);
   const [failed, setFailed] = React.useState(false);
+  /*
+   * THE STREETS DREW AND THE DAY DID NOT — a third state, because it is a
+   * third fact.
+   *
+   * `failed` is "the map could not be drawn" and hangs off the style never
+   * loading, which is the one signal that does not depend on reading meaning
+   * into MapLibre's error text (see the `error` note in the build effect).
+   * That rule is right and it left a hole: everything this file draws ON the
+   * map — the trail, the fixes, the dwell rings, the work — runs after the
+   * style has loaded, so a throw in any of it used to leave a perfectly good
+   * street map with no day on it, no failure anywhere, and nothing saying the
+   * line was missing rather than absent. A manager reading an empty map
+   * concludes the salesman did not move.
+   */
+  const [overlaysFailed, setOverlaysFailed] = React.useState(false);
   const [styleMode, setStyleMode] = React.useState<OlaMapsStyleMode>("map");
   /* The book, fetched once by the client — see the effect below and the
      route's own comment. Held in a ref as well as in state: `drawOverlays`
@@ -492,7 +596,91 @@ export function StreetMap({
 
   const hasAnything = points.length > 0;
 
+  /*
+   * WHAT THE MAP IS CURRENTLY DRAWING, AS A REF — and this is the whole of the
+   * "live tracking is dead" bug.
+   *
+   * The map is built once, in an effect with no dependencies, because
+   * rebuilding it on a prop change refetched every tile and threw the camera
+   * away (see that effect's own note, and the house rule: remount with a
+   * `key`, never re-run on a prop). Both drawing functions were defined INSIDE
+   * that effect, so they closed over the `pinned`, `trails`, `marks` and
+   * `stops` computed on the FIRST render and nothing else — and they are
+   * invoked from `style.load`, which fires on mount and on a Map/Satellite
+   * switch. Never on new data.
+   *
+   * The page polls every thirty seconds and `page.tsx` keys this panel on the
+   * day and the view, neither of which changes during a day, so the component
+   * re-rendered with fresh props and no effect ever ran again. The team list
+   * ticked forward beside a map frozen at first paint: a manager watching a
+   * salesman cross a city saw him standing still, on a screen whose entire
+   * subject is that he is moving.
+   *
+   * Holding the data in a ref and redrawing INTO the sources that already
+   * exist is what fixes it without giving any of that up. A redraw is
+   * `setData` on a handful of GeoJSON sources — no tiles refetched, no camera
+   * touched, nothing to pay Ola Maps for — and `style.load` reads the same ref,
+   * so a Satellite switch draws what is on screen now rather than what was on
+   * screen at nine o'clock.
+   */
+  const frame = React.useRef({ pinned, trails, marks, stops, points });
+  /** Whose trail has a source and layers on the map — see `lib/map-layers.ts`. */
+  const drawnTrails = React.useRef<string[]>([]);
+  /** Read by the marker rebuild, which has to put the ring back where it was. */
+  const selectedIdRef = React.useRef(selectedId);
+  /** Set once the map exists; null until then, so an early poll is a no-op. */
+  const redraw = React.useRef<(() => void) | null>(null);
+
+  /*
+   * A SIGNATURE, not the arrays themselves.
+   *
+   * Every one of them is a fresh object on every render — that is exactly what
+   * made depending on them tear the map down in a loop before it was keyed —
+   * so what a redraw has to key on is whether the CONTENT moved. Positions,
+   * how many fixes each trail holds and its newest timestamp, and the two
+   * counts: between them they change on every poll that brought anything and
+   * on none that did not, which keeps a selection click or a legend toggle
+   * from rebuilding every marker on the map.
+   */
+  const dataSignature = [
+    pinned.map((r) => `${r.salesmanId}@${r.lat},${r.lng}`).join("|"),
+    trails
+      .map(([id, ps]) => `${id}#${ps.length}@${ps.length ? ps[ps.length - 1].at.getTime() : 0}`)
+      .join("|"),
+    `m${marks.length}`,
+    `s${stops.length}`,
+  ].join("~");
+
   React.useEffect(() => {
+    frame.current = { pinned, trails, marks, stops, points };
+    redraw.current?.();
+    /* The signature IS the dependency — see its own note. The arrays it is
+       built from change identity every render and say nothing by doing so. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataSignature]);
+
+  React.useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  React.useEffect(() => {
+    /*
+     * BUILT ONCE THE FIRST TIME THERE IS ANYTHING TO PLACE — and `hasAnything`
+     * is in the dependencies for a reason that cost a whole screen.
+     *
+     * This returned early when nothing had reported yet, and the host div was
+     * not even mounted in that state: the component rendered a "nothing to
+     * place yet" panel instead. When the first position arrived on a later
+     * poll the component re-rendered WITH the host div — and this effect,
+     * having no dependencies, never ran again. So a manager who opened the
+     * Live map before anybody checked in had no map for the rest of the day,
+     * however many salesmen reported afterwards, and reloading the page was
+     * the only way anybody found out. The host is always mounted now and this
+     * runs again the moment there is something to draw.
+     *
+     * `map.current` is still the real guard against building twice, so a
+     * re-run after the map exists costs one comparison.
+     */
     if (!host.current || map.current || !hasAnything || !apiKey) return;
 
     /*
@@ -509,7 +697,7 @@ export function StreetMap({
     let loadTimeout: ReturnType<typeof setTimeout> | undefined;
     const markerMap = markers.current;
 
-    const frame = requestAnimationFrame(async () => {
+    const build = requestAnimationFrame(async () => {
       if (cancelled || !host.current) return;
 
       /* Ola's own style declares a layer over data it does not serve, which
@@ -717,9 +905,25 @@ export function StreetMap({
           Number.isFinite(fromMs) && Number.isFinite(toMs)
             ? ` · ${clock(new Date(fromMs))}–${clock(new Date(toMs))}`
             : "";
+        /*
+         * A DASHED LINE THAT FOLLOWS A ROAD HAS TO SAY SO IN WORDS.
+         *
+         * The dash pattern already says "not recorded" to anybody who knows
+         * the key, and a line that bends round corners says "somebody drove
+         * this" to everybody — which is the stronger of the two signals and is
+         * the wrong one. So the stretch under the cursor names itself: the
+         * road is Ola's guess at how he got between two fixes, nobody was seen
+         * on it, and it is not in the distance quoted beside it. The figure is
+         * the trip's own, measured on the crow's flight across every gap in
+         * it, exactly as it was before this existed.
+         */
+        const inferred = f.properties?.inferred === true;
+        const what = inferred
+          ? " · estimated route, not recorded — not counted in the distance"
+          : "";
         tripPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false })
           .setLngLat(e.lngLat)
-          .setText(`Trip ${next} · ${formatDistance(metres)}${when}`)
+          .setText(`Trip ${next} · ${formatDistance(metres)}${when}${what}`)
           .addTo(built);
       });
 
@@ -734,18 +938,62 @@ export function StreetMap({
        */
       function drawOverlays() {
         /*
-         * The map is provably working the moment its STYLE has loaded, which
-         * is well before every tile in view has finished downloading — that
-         * wait is what MapLibre's "load" event actually measures, and Ola
-         * Maps serving a burst of dozens of tile/glyph/sprite requests on one
-         * page can genuinely take longer than the load timeout to finish all
-         * of them. Marking `loadedOnce` here, on the first `style.load`
-         * rather than on the eventual `load`, is what keeps a merely slow
-         * connection from reading as a broken map.
+         * THE HEALTH MARK IS MADE AT THE END, AND IT IS MADE EITHER WAY.
+         *
+         * Two separate facts, and they used to be one. The map is provably
+         * working the moment its STYLE has loaded — well before every tile in
+         * view has downloaded, which is what MapLibre's "load" event actually
+         * measures, and Ola Maps serving a burst of dozens of tile, glyph and
+         * sprite requests on one page can genuinely take longer than the load
+         * timeout to finish all of them. So `loadedOnce` hangs off the first
+         * `style.load` and is set in a `finally`: a throw in anything below is
+         * not the map failing to draw, and turning it into "the map could not
+         * be drawn" would be the same mistake as wiring MapLibre's `error`
+         * event to `failed`, which put every page load into that state over
+         * one bad layer reference in Ola's own style.
+         *
+         * But marking it at the TOP, as this did, meant a throw half way
+         * through left the streets drawn, no failure state anywhere, and the
+         * day's trail silently absent — which reads as a salesman who did not
+         * move. Drawing gets its own answer, and the screen says which of the
+         * two happened.
          */
-        loadedOnce.current = true;
-        setMapReady(true);
-        clearTimeout(loadTimeout);
+        try {
+          drawEverything();
+          setOverlaysFailed(false);
+        } catch {
+          setOverlaysFailed(true);
+        } finally {
+          loadedOnce.current = true;
+          setMapReady(true);
+          clearTimeout(loadTimeout);
+        }
+      }
+
+      /**
+       * ADD IT, OR UPDATE WHAT IS ALREADY THERE.
+       *
+       * The same function serves both callers, which is what makes one drawing
+       * path safe for two completely different moments: after a `setStyle`
+       * every source this file owns has been thrown away and has to be built
+       * again, and after a poll every one of them exists and only its data has
+       * moved. Asking the map which of those it is, rather than tracking it,
+       * means the two can never get out of step — and `setData` on an existing
+       * source refetches nothing and repaints without touching the camera.
+       *
+       * An EMPTY collection is still written to a source that exists — a day's
+       * activity does not vanish, but a dwell can stop being one as a trail
+       * grows through it, and leaving the old features there would draw a ring
+       * the engine no longer says is real.
+       */
+      function upsert(id: string, data: GeoJSON.FeatureCollection, add: () => void) {
+        const source = built.getSource(id) as maplibregl.GeoJSONSource | undefined;
+        if (source) source.setData(data);
+        else if (data.features.length) add();
+      }
+
+      function drawEverything() {
+        const { trails, marks, stops } = frame.current;
 
         /* MapLibre's compact attribution starts EXPANDED, and stays that way
            until the map is DRAGGED — that is the only event its minimiser
@@ -766,21 +1014,66 @@ export function StreetMap({
            from the ref rather than the closure: this function runs again on
            every style switch, and by then the fetch below has usually
            landed. */
-        if (bookRef.current.length) {
+        upsert("book", bookPinFeatures(bookRef.current), () =>
           addBookPinLayers(built, {
             features: bookPinFeatures(bookRef.current),
             visible: showBookRef.current,
-          });
-        }
+            /* Underneath the day, however late the shops arrive — the same
+               reasoning the fetch below spells out. On a fresh style load
+               there is nothing of ours yet and this is undefined, which is
+               the top of the stack and exactly where the book belongs. */
+            beforeId: lowestOwnLayer(built),
+          }),
+        );
 
-        /* The trail next, so pins and marks sit on top of it. */
-        for (const [id, ps] of trails) {
-          /* The road-matched line if it has arrived, the raw fixes until it
-             does. Both are the same shape, so nothing below knows which. */
-          const segments =
-            roadLines.current.get(id) ??
-            tripSegments(ps, gapMetres, dwellRadiusMetres, tripBreakMinutes);
-          if (!segments.length) continue;
+        /*
+         * The trail next, so pins and marks sit on top of it.
+         *
+         * WORKED OUT FIRST, THEN DRAWN, because a trail with nothing to draw
+         * has to count as absent for the teardown below as well as for the
+         * drawing — otherwise a salesman whose line shrinks to nothing keeps
+         * his layers for ever, and nothing on the map looks wrong.
+         */
+        const drawable = trails
+          .map(([id, ps]) => {
+            /* The road-matched line if it has arrived, the raw fixes until it
+               does. Both are the same shape, so nothing below knows which. */
+            return [
+              id,
+              roadLines.current.get(id) ??
+                tripSegments(ps, gapMetres, dwellRadiusMetres, tripBreakMinutes),
+            ] as const;
+          })
+          .filter(([, segments]) => segments.length > 0);
+
+        /*
+         * WHOEVER HAS LEFT THE MAP GOES FIRST, and all three of his layers go
+         * with his source — MapLibre refuses to remove a source a layer is
+         * still reading, and a half-done teardown throws in the middle of a
+         * redraw and takes the rest of the day's drawing with it. Guarded on
+         * what actually exists rather than on what was drawn, because a
+         * `setStyle` has already thrown the lot away and this same function is
+         * what rebuilds it.
+         */
+        for (const id of departedTrailIds(drawnTrails.current, drawable.map(([i]) => i))) {
+          for (const layer of trailLayerIds(id)) {
+            if (built.getLayer(layer)) built.removeLayer(layer);
+          }
+          if (built.getSource(trailSourceId(id))) built.removeSource(trailSourceId(id));
+        }
+        drawnTrails.current = drawable.map(([id]) => id);
+
+        for (const [id, segments] of drawable) {
+          const existing = built.getSource(`trail-${id}`) as maplibregl.GeoJSONSource | undefined;
+          if (existing) {
+            existing.setData(trailFeatureCollection(segments));
+            continue;
+          }
+          /* A trail that appears mid-day — his first fix of the morning — is
+             added UNDER the shared fix, dwell and activity layers if those are
+             already up, so a late arrival is not drawn over the marks it is
+             supposed to run beneath. */
+          const under = ["trail-points", "dwells", "activity"].find((l) => built.getLayer(l));
           built.addSource(`trail-${id}`, {
             type: "geojson",
             data: trailFeatureCollection(segments),
@@ -802,7 +1095,7 @@ export function StreetMap({
               "line-width": trailPaint(null).casingWidth,
               "line-opacity": trailPaint(null).casingOpacity,
             },
-          });
+          }, under);
           built.addLayer({
             id: `trail-${id}`,
             type: "line",
@@ -814,12 +1107,16 @@ export function StreetMap({
               "line-width": trailPaint(null).width,
               "line-opacity": trailPaint(null).opacity,
             },
-          });
+          }, under);
           built.addLayer({
             id: `trail-gap-${id}`,
             type: "line",
             source: `trail-${id}`,
-            filter: ["==", ["get", "gap"], true],
+            filter: [
+              "all",
+              ["==", ["get", "gap"], true],
+              ["!=", ["get", "inferred"], true],
+            ],
             layout: { "line-cap": "round", "line-join": "round" },
             paint: {
               /* The gap keeps its trip's colour too — it is part of that
@@ -832,13 +1129,50 @@ export function StreetMap({
               "line-opacity": 0.5,
               "line-dasharray": [1.5, 2],
             },
-          });
+          }, under);
+          /*
+           * A GAP WHOSE ROAD WAS GUESSED, drawn as its own layer for one
+           * reason: `line-dasharray` is the one paint property here that
+           * MapLibre will not take a data-driven expression for, so two dash
+           * patterns is two layers or it is nothing.
+           *
+           * Everything else about it is the gap treatment above, unchanged and
+           * deliberately so — same colour, same half opacity, no casing. It is
+           * NOT closer to the recorded line for following a road; a routed gap
+           * is a plausible guess and the recorded line is a reading, and the
+           * moment those two look alike this map has started lying. The dots
+           * are finer than the dashes beside them, which reads as less certain
+           * rather than more, and the hover says which in words for anybody who
+           * does not read a dash pattern as a claim.
+           *
+           * Named `trail-gap-inferred-` and not `trail-inferred-`, because the
+           * hover handler skips every `trail-gap-` layer when it thickens the
+           * leg under the cursor — a guess must not brighten and fatten with
+           * the evidence around it.
+           */
+          built.addLayer({
+            id: `trail-gap-inferred-${id}`,
+            type: "line",
+            source: `trail-${id}`,
+            filter: [
+              "all",
+              ["==", ["get", "gap"], true],
+              ["==", ["get", "inferred"], true],
+            ],
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": trailPaint(null).colour,
+              "line-width": widthByZoom(2.5),
+              "line-opacity": 0.5,
+              "line-dasharray": [0.5, 2],
+            },
+          }, under);
         }
 
         /* Every real fix, hoverable for its exact time — see
            `trailPointsFeatureCollection`. Sits on top of the lines just
            added, below the dwell rings and activity dots that follow. */
-        if (trails.length) {
+        upsert("trail-points", trailPointsFeatureCollection(trails), () => {
           built.addSource("trail-points", {
             type: "geojson",
             data: trailPointsFeatureCollection(trails),
@@ -899,24 +1233,15 @@ export function StreetMap({
               "circle-stroke-color": "rgba(22,22,22,0.35)",
             },
           });
-        }
+        });
 
         /* Where a trail stood still — a bigger, hollow ring rather than the
            activity dot above, so a stop reads as "paused here" and not as a
            third kind of visit. */
-        if (stops.length) {
+        upsert("dwells", dwellFeatureCollection(stops), () => {
           built.addSource("dwells", {
             type: "geojson",
-            data: {
-              type: "FeatureCollection",
-              features: stops.map((s) => ({
-                type: "Feature" as const,
-                properties: {
-                  label: `Stopped ${formatMinutes(s.minutes)} · ${clock(s.startAt)}–${clock(s.endAt)}`,
-                },
-                geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
-              })),
-            },
+            data: dwellFeatureCollection(stops),
           });
           built.addLayer({
             id: "dwells",
@@ -930,28 +1255,14 @@ export function StreetMap({
               "circle-stroke-color": "#5223E0",
             },
           });
-        }
+        });
 
         /* The work, marked where it was done. An order taken two kilometres
            off the beat is obvious on a line and invisible in a list. */
-        if (marks.length) {
+        upsert("activity", activityFeatureCollection(marks, staleAfterSeconds), () => {
           built.addSource("activity", {
             type: "geojson",
-            data: {
-              type: "FeatureCollection",
-              features: marks.map((a) => ({
-                type: "Feature" as const,
-                properties: {
-                  label: `${activityLabel(a.entityType)}${
-                    a.accuracyM ? ` · ±${a.accuracyM} m` : ""
-                  }`,
-                  // A stale fix is drawn hollow rather than hidden: the act is
-                  // certain and only its place is not.
-                  stale: (a.ageSeconds ?? 0) > staleAfterSeconds ? 1 : 0,
-                },
-                geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] },
-              })),
-            },
+            data: activityFeatureCollection(marks, staleAfterSeconds),
           });
           built.addLayer({
             id: "activity",
@@ -964,7 +1275,7 @@ export function StreetMap({
               "circle-stroke-color": "#5223E0",
             },
           });
-        }
+        });
       }
 
       built.on("style.load", drawOverlays);
@@ -994,6 +1305,13 @@ export function StreetMap({
        */
       let fittedOnce = false;
       function placePinsAndFit() {
+        /* THE LATEST PINS, not the ones this closure was created with — see
+           `frame`. The markers are torn down and rebuilt rather than moved
+           because that is what already made a style switch idempotent, and a
+           poll is the same problem: whoever has stopped reporting has to lose
+           his pin, and whoever has started has to gain one. */
+        const { pinned, points } = frame.current;
+
         for (const el of markerMap.values()) el.remove();
         markerMap.clear();
 
@@ -1017,8 +1335,18 @@ export function StreetMap({
             )
             .addTo(built);
           markerMap.set(r.salesmanId, el);
+          /* THE RING GOES BACK ON. Every marker here is a new element, so the
+             selection highlight applied by the effect below is on a node that
+             no longer exists — without this, picking somebody and then waiting
+             thirty seconds silently deselected them on the map while the team
+             list went on showing them picked. */
+          highlightMarker(el, r.salesmanId === selectedIdRef.current);
         }
 
+        /* NEVER REFIT ON A POLL. The first draw frames the day; after that the
+           camera belongs to whoever is looking at it, and yanking a manager
+           back to the whole team every thirty seconds while he is reading one
+           lane is the one thing that would make this screen unusable. */
         if (fittedOnce || !points.length) return;
         fittedOnce = true;
         /* FIT, never fill. One pin gets a sensible zoom instead of a rooftop. */
@@ -1052,12 +1380,27 @@ export function StreetMap({
         drawOverlays();
         placePinsAndFit();
       }
+
+      /*
+       * AND THIS IS WHAT A POLL CALLS. The two drawing functions have to stay
+       * inside this effect — they close over the map instance, its load
+       * timeout and its marker map, none of which outlive it — so the effect
+       * that hears about new data reaches them through a ref rather than the
+       * other way round. Set last, so nothing can call a half-built map.
+       */
+      redraw.current = () => {
+        if (!built.isStyleLoaded()) return;
+        drawOverlays();
+        placePinsAndFit();
+      };
     });
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(frame);
+      cancelAnimationFrame(build);
       clearTimeout(loadTimeout);
+      redraw.current = null;
+      drawnTrails.current = [];
       m?.remove();
       map.current = null;
       markerMap.clear();
@@ -1071,10 +1414,13 @@ export function StreetMap({
      * half of that it caught. The house rule covers this: do not re-run on a
      * prop change, give the component a `key` and let it remount. The page
      * keys it on the day and the view, which are the only two things that can
-     * change without a navigation.
+     * change without a navigation. What DOES belong here is `hasAnything`:
+     * with nothing to place there is no map to build, and this has to run
+     * again on the poll that first brings a position — see the note at the
+     * top of the effect.
      */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hasAnything]);
 
   /*
    * Map / satellite is a property of the STYLE, so switching it calls
@@ -1260,10 +1606,34 @@ export function StreetMap({
    * has it waiting.
    */
   const roadLines = React.useRef(new Map<string, TripSegment[]>());
-  const snappedFor = React.useRef(new Set<string>());
+  /**
+   * WHO HAS BEEN ASKED ABOUT, HOW BIG THEIR TRAIL WAS AND WHEN.
+   *
+   * It was a Set of "day and person", which answered "asked" once and for
+   * ever — correct while the map was frozen at first paint and wrong the
+   * moment it started redrawing, because `drawEverything` prefers the snapped
+   * geometry over the raw fixes and nothing ever replaced it. A trail matched
+   * at ten past nine would have stayed the line on screen all afternoon.
+   *
+   * The two numbers are what make re-asking affordable: a request goes only
+   * where the trail has actually GROWN, and then at most once every
+   * `SNAP_REFRESH_MS` — so a poll that brought nothing costs nothing, and a
+   * man walking all morning costs a few requests an hour rather than two a
+   * minute. Written at REQUEST time and not on the answer, so a slow call
+   * cannot be fired again by the poll behind it, and a failed one waits its
+   * turn instead of retrying every thirty seconds.
+   */
+  const snappedFor = React.useRef(new Map<string, { points: number; atMs: number }>());
   /* Stable across the thirty-second poll: `tracks` is a fresh Map every time,
      but WHO is on it rarely changes, and who is on it is all this needs. */
   const trailIds = [...tracks.keys()].sort().join(",");
+  /* How much of each trail has arrived, which is the half that DOES change on
+     a poll — the effect has to wake up for it, and the guard inside decides
+     whether that is worth a request. */
+  const trailSizes = [...tracks.entries()]
+    .map(([id, ps]) => `${id}:${ps.length}`)
+    .sort()
+    .join(",");
   React.useEffect(() => {
     if (view !== "today" || !trailIds || !mapReady) return;
     const built = map.current;
@@ -1286,18 +1656,23 @@ export function StreetMap({
      */
     for (const id of trailIds.split(",")) {
       const cacheKey = `${day}:${id}`;
-      if (snappedFor.current.has(cacheKey)) continue;
-      void fetchRoadLine(id, cacheKey);
+      const points = tracks.get(id)?.length ?? 0;
+      const asked = snappedFor.current.get(cacheKey);
+      /* Nothing new to match, or matched recently enough — see `snappedFor`. */
+      if (asked && (points <= asked.points || Date.now() - asked.atMs < SNAP_REFRESH_MS)) {
+        continue;
+      }
+      snappedFor.current.set(cacheKey, { points, atMs: Date.now() });
+      void fetchRoadLine(id);
     }
 
-    function fetchRoadLine(id: string, cacheKey: string) {
+    function fetchRoadLine(id: string) {
       return fetch(
         `/api/sales/live/snap-trail?salesmanId=${encodeURIComponent(id)}&day=${encodeURIComponent(day)}`,
       )
       .then((r) => (r.ok ? r.json() : null))
       .then((body: { segments: TripSegment[] | null } | null) => {
         if (cancelled || !body?.segments?.length) return;
-        snappedFor.current.add(cacheKey);
         roadLines.current.set(id, body.segments);
         const source = built!.getSource(`trail-${id}`) as maplibregl.GeoJSONSource | undefined;
         /*
@@ -1318,32 +1693,25 @@ export function StreetMap({
     return () => {
       cancelled = true;
     };
-  }, [trailIds, day, view, mapReady]);
+    /* `tracks` is a fresh Map on every render and says nothing by being one;
+       `trailSizes` is what actually changes when fixes arrive, and the guard
+       above is what decides whether a change is worth a request. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trailIds, trailSizes, day, view, mapReady]);
 
   if (!apiKey) {
     return (
       <Frame key="no-key">
         <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-          <p className="text-[15px] font-semibold text-ink">The map needs a key</p>
-          <p className="mt-1 max-w-[420px] text-[13px] text-muted">
-            Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under
-            this. The team list beside this still shows everything that is known —
-            nobody&rsquo;s position is lost, only the picture of it.
+          <p className="text-[15px] font-semibold text-ink">
+            {keysSpent ? "Every Ola Maps key has run out" : "The map needs a key"}
           </p>
-        </div>
-      </Frame>
-    );
-  }
-
-  if (!hasAnything) {
-    return (
-      <Frame key="empty">
-        <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-          <p className="text-[15px] font-semibold text-ink">Nothing to place yet</p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
-            No handset has sent a position {view === "today" ? "today" : "yet"}, so there is
-            nothing to draw. Everybody is still listed beside this, with what is known about
-            each of them.
+            {keysSpent
+              ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Platform → Maps."
+              : "Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under this."}{" "}
+            The team list beside this still shows everything that is known —
+            nobody&rsquo;s position is lost, only the picture of it.
           </p>
         </div>
       </Frame>
@@ -1366,7 +1734,42 @@ export function StreetMap({
 
   return (
     <Frame key="map">
+      {/*
+        THE HOST IS ALWAYS MOUNTED, and "nothing to place yet" is drawn OVER it
+        rather than instead of it.
+
+        It used to replace this div entirely, which made the empty state
+        permanent: the build effect returns early with nothing to place, and
+        when the first position arrived on a later poll the component
+        re-rendered with a host div that no effect was ever going to run
+        against again. Opening the Live map before anybody had checked in meant
+        no map for the rest of the day. The message sits on top now, the div
+        underneath it stays put, and the effect builds the map the moment there
+        is something to draw.
+      */}
       <div ref={host} className="h-full w-full" />
+      {!hasAnything ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
+          <p className="text-[15px] font-semibold text-ink">Nothing to place yet</p>
+          <p className="mt-1 max-w-[420px] text-[13px] text-muted">
+            No handset has sent a position {view === "today" ? "today" : "yet"}, so there is
+            nothing to draw. Everybody is still listed beside this, with what is known about
+            each of them.
+          </p>
+        </div>
+      ) : null}
+      {/* THE STREETS ARE THERE AND THE DAY IS NOT — said plainly, because the
+          alternative is an empty map that reads as a salesman who did not
+          move. It is not the failure frame above: that one is for a map that
+          never drew at all, and calling this one that would be the same
+          overstatement as flipping `failed` on any MapLibre error. */}
+      {overlaysFailed ? (
+        <div className="absolute top-2 right-2 left-2 z-20 mx-auto max-w-[520px] rounded-[6px] border border-line bg-surface/95 px-3 py-2 text-[12px] text-[#B3261E] shadow-[0_1px_4px_rgba(22,22,22,0.15)]">
+          The streets drew, the day did not — the trail, the stops and the work could not be
+          put on this map. Every position is still recorded and the team list beside this is
+          unaffected; reloading the page is worth one try.
+        </div>
+      ) : null}
       <OlaMapsStyleSwitcher mode={styleMode} onChange={setStyleMode} />
       {/* The catchment's own legend, stacked under the style switcher rather
           than beside it — both anchored top-left read as one cluster of map
@@ -1411,7 +1814,7 @@ export function StreetMap({
   );
 }
 
-/** One shape for the map and both of the states that replace it. */
+/** One shape for the map and the state that replaces it. */
 function Frame({ children }: { children: React.ReactNode }) {
   return (
     <div className="relative overflow-hidden rounded-[6px] border border-line bg-surface">

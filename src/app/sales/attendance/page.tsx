@@ -4,6 +4,7 @@ import { today } from "@/lib/recompute";
 import { attendanceForDay } from "@/lib/services/sales-service";
 import { unreviewedCounts } from "@/lib/services/day-evidence-service";
 import { getSetting } from "@/lib/config/store";
+import { readAttendanceVerdict } from "@/lib/attendance-labels";
 import {
   Banner,
   Cell,
@@ -235,19 +236,23 @@ export default async function Page({
               </Cell>
               <Cell align="right">{r.visits || <span className="text-muted">—</span>}</Cell>
               <Cell>
-                <Pill
-                  tone={
-                    r.status === "present"
-                      ? "success"
-                      : r.status === "absent"
-                        ? "danger"
-                        : r.status === "on_leave"
-                          ? "brand"
-                          : "warn"
-                  }
-                >
-                  {r.status.replace(/_/g, " ")}
-                </Pill>
+                {(() => {
+                  /* The stored verdict is not always a verdict: `status` is NOT
+                     NULL defaulting to `absent`, and the job leaves a day with
+                     an open session alone rather than guessing at hours nobody
+                     measured. `readAttendanceVerdict` is the one place that is
+                     turned into words — see the file for why. */
+                  const verdict = readAttendanceVerdict({
+                    status: r.status,
+                    hasCheckIn: r.checkInAt != null,
+                    workedSeconds: r.workedSeconds,
+                  });
+                  return (
+                    <span title={verdict.title ?? undefined}>
+                      <Pill tone={verdict.tone}>{verdict.word}</Pill>
+                    </span>
+                  );
+                })()}
               </Cell>
               <Cell>
                 <Selfies row={r} />

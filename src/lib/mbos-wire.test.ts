@@ -1177,10 +1177,13 @@ const FLUSH_ENGINE = "mbos-app/src/engines/flush-answer.ts";
 /**
  * Words the handset can read that the route cannot yet answer.
  *
- * `partial` sits here because the server half is on its own branch. It comes
- * off the moment that lands, and the test after this one says so.
+ * EMPTY, and that is the state it is supposed to be in. `partial` sat here
+ * while the server half was on its own branch; that branch has landed, the
+ * route answers the word, and the test after this one is what took it off —
+ * a list that keeps a word the route now says is a list that stops meaning
+ * anything, and the next entry is then read as noise.
  */
-const AHEAD_OF_THE_ROUTE = new Set(["partial"]);
+const AHEAD_OF_THE_ROUTE = new Set<string>([]);
 
 /** Every `tracking: "…"` literal the route can put in an answer. */
 function routeWords(): Set<string> {

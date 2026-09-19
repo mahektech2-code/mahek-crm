@@ -25,6 +25,7 @@ import {
 } from "@/lib/services/sheet-order-service";
 import { sheetsConfigured } from "@/lib/sheets";
 import { secretStatuses } from "@/lib/secrets";
+import { OLA_KEY_NAMES, olaPoolStatus } from "@/lib/services/ola-key-service";
 import { listPeople } from "@/lib/services/admin-people-service";
 import { listAccess } from "@/lib/services/access-service";
 import { feedbackCounts, listFeedback } from "@/lib/services/feedback-service";
@@ -155,6 +156,7 @@ export default async function Page({
     await canFor(user, "expense.policy.publish"),
   );
   const secrets = await secretStatuses();
+  const olaPool = await olaPoolStatus();
 
   // The platform sections. Every one of these was a fixture until now, so they
   // are read here with everything else rather than fetched by a client.
@@ -296,14 +298,26 @@ export default async function Page({
         canWrite: isPlatformAdmin,
       }}
       maps={{
-        secrets: secrets
-          .filter((s) => s.name === "olamaps.apiKey")
+        /* All five pool names, in order. The screen decides which to DRAW —
+           an unset slot is not a gap to be filled, and a console that listed
+           four empty ones would be nagging about a configuration somebody
+           chose. */
+        secrets: (OLA_KEY_NAMES as readonly string[])
+          .flatMap((name) => secrets.filter((s) => s.name === name))
           .map((s) => ({
             name: s.name,
             source: s.source,
             last4: s.last4,
             updatedAt: s.updatedAt ? s.updatedAt.toISOString() : null,
           })),
+        pool: olaPool.keys.map((k) => ({
+          name: k.name,
+          position: k.position,
+          state: k.state,
+          retryAt: k.retryAt ? k.retryAt.toISOString() : null,
+          spentAt: k.spentAt ? k.spentAt.toISOString() : null,
+        })),
+        allKeysSpent: olaPool.allSpent,
         canWrite: isPlatformAdmin,
       }}
       crm={{

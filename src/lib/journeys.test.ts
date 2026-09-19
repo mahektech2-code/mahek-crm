@@ -6557,6 +6557,280 @@ async function stagePartyRow(partyName: string, salesPersonName: string) {
   });
 }
 
+/** The same, but the row carries the master's Party Status cell. */
+async function stagePartyRowWithStatus(partyName: string, partyStatus: string) {
+  const [run] = await db
+    .insert(sheetSyncRuns)
+    .values({
+      id: id("syn"),
+      source: "sales_party",
+      spreadsheetId: "test-sheet",
+      tabTitle: "Sales Party",
+      mode: "reconcile",
+      status: "ok",
+    })
+    .returning();
+  await db.insert(sheetPartyRows).values({
+    id: id("spy"),
+    syncId: run.id,
+    rowNumber: 2,
+    partyName,
+    partyKey: partyNameKey(partyName),
+    raw: {},
+    rowHash: randomUUID(),
+    partyStatus,
+  });
+}
+
+/** A party row carrying the master's own area, state, tier and credit term. */
+async function stagePartyRowWithDetail(
+  partyName: string,
+  detail: {
+    area?: string;
+    state?: string;
+    tagPricelist?: string;
+    creditDays?: number;
+    counterType?: string;
+  },
+) {
+  const [run] = await db
+    .insert(sheetSyncRuns)
+    .values({
+      id: id("syn"),
+      source: "sales_party",
+      spreadsheetId: "test-sheet",
+      tabTitle: "Sales Party",
+      mode: "reconcile",
+      status: "ok",
+    })
+    .returning();
+  await db.insert(sheetPartyRows).values({
+    id: id("spy"),
+    syncId: run.id,
+    rowNumber: 2,
+    partyName,
+    partyKey: partyNameKey(partyName),
+    raw: {},
+    rowHash: randomUUID(),
+    ...detail,
+  });
+}
+
+describe("the sheet fills a blank and never corrects a person", () => {
+  test("a town a telecaller typed is not put back by the next pass", async () => {
+    /*
+     * `updateCustomer` writes `city`, and the projection overwrote it on every
+     * pass — so a telecaller who corrected a town after actually speaking to
+     * the customer had it reverted within the half hour, silently. The same
+     * shape as the status bug, and quieter, because a wrong town does not take
+     * an account off a screen; it just sends somebody to the wrong place.
+     */
+    const customer = await makeCustomer(priya.id, { name: "MOVED PAINTS", city: "Thane" });
+    await stagePartyRowWithDetail("MOVED PAINTS", { area: "Chinchwad" });
+
+    const { updateCustomer } = await import("@/lib/actions/crm");
+    setTestUser(priya);
+    assert.equal(
+      (await updateCustomer(customer.id, { city: "Bhiwandi" })).ok,
+      true,
+    );
+
+    await projectParties();
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.city, "Bhiwandi", "the sheet corrected somebody who was on the call");
+  });
+
+  test("a credit term typed in the app survives, mirror column and all", async () => {
+    // `creditTermDays` is NOT NULL DEFAULT 30, so it cannot express "nobody has
+    // said". The nullable `creditDays` is the blank test, which means the app
+    // has to write BOTH — otherwise a term somebody typed still reads as empty
+    // and the sheet puts its own number back.
+    const customer = await makeCustomer(priya.id, { name: "TERMS PAINTS" });
+    await stagePartyRowWithDetail("TERMS PAINTS", { creditDays: 15 });
+
+    const { updateCustomer } = await import("@/lib/actions/crm");
+    setTestUser(priya);
+    assert.equal(
+      (await updateCustomer(customer.id, { creditTermDays: 45 })).ok,
+      true,
+    );
+
+    await projectParties();
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.creditTermDays, 45, "the sheet overwrote an agreed credit term");
+    assert.equal(after.creditDays, 45, "and the mirror has to move with it, or it reads as blank");
+  });
+
+  test("but a blank is still the sheet's to fill", async () => {
+    // The whole point of the rule is that it only protects what somebody has
+    // actually touched. An untouched account still gets everything.
+    const customer = await makeCustomer(priya.id, {
+      name: "EMPTY PAINTS",
+      city: "",
+      region: null,
+      priceTag: null,
+    });
+    await stagePartyRowWithDetail("EMPTY PAINTS", {
+      area: "Nagpur",
+      state: "Maharashtra",
+      tagPricelist: "Tier 2",
+      creditDays: 21,
+    });
+
+    await projectParties();
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.city, "Nagpur");
+    assert.equal(after.region, "Maharashtra");
+    assert.equal(after.priceTag, "Tier 2");
+    assert.equal(after.creditTermDays, 21);
+  });
+
+  test("and a second pass does not undo the first", async () => {
+    // Fill-a-blank has to be stable: once the sheet has filled the field the
+    // field is no longer blank, and the rule must not then read that as a
+    // person's value it is forbidden to refresh. It is the sheet's own value
+    // either way, so what matters is only that it stops changing.
+    const customer = await makeCustomer(priya.id, { name: "STABLE PAINTS", city: "" });
+    await stagePartyRowWithDetail("STABLE PAINTS", { area: "Pune" });
+
+    await projectParties();
+    await projectParties();
+    await projectParties();
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.city, "Pune");
+  });
+});
+
+describe("a status somebody decided survives the sheet", () => {
+  test("a reactivated account is not re-closed by the next pass", async () => {
+    /*
+     * The reported bug, end to end, and the exact shape of the reassignment
+     * one above it.
+     *
+     * The projection already declined to REACTIVATE what a person had closed
+     * in the CRM. The opposite direction had no guard at all, so `Deactive` in
+     * the spreadsheet re-closed an account somebody had deliberately brought
+     * back — on every pass, for ever. In production it ran three times on one
+     * shop: two admin reactivations marked "Mistake", the second undone
+     * sixteen minutes later, while the shop went on taking dispatched orders
+     * and sat in nobody's Call Log, because `queueInputs` filters the status
+     * before the scope filter is ever reached.
+     */
+    const customer = await makeCustomer(priya.id, { name: "REOPENED PAINTS" });
+    await stagePartyRowWithStatus("REOPENED PAINTS", "Deactive");
+
+    // The sheet closes it, exactly as it always has — nobody has decided yet.
+    await projectParties();
+    const [closed] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(closed.status, "deactivated", "the sheet still closes an undecided account");
+    assert.equal(closed.statusDecidedAt, null, "and a sync is not a decision");
+
+    // A person brings it back.
+    setTestUser(manager);
+    assert.equal((await decideReactivation(customer.id, true)).ok, true);
+
+    // The spreadsheet has not changed its mind, and no longer gets a say.
+    await projectParties();
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.status, "active", "the sync re-closed an account a person reopened");
+    assert.notEqual(after.statusDecidedAt, null, "the decision left its mark");
+
+    const conflicts = await db
+      .select()
+      .from(syncConflicts)
+      .where(eq(syncConflicts.entityId, customer.id));
+    assert.equal(conflicts.length, 1, "a kept decision is written down, not just kept");
+    assert.equal(conflicts[0].field, "status");
+    assert.equal(conflicts[0].sheetValue, "deactivated");
+    assert.equal(conflicts[0].appValue, "active");
+  });
+
+  test("and it does not drift back over repeated passes", async () => {
+    // The half that made the production case so hard to see: any ONE pass
+    // looked fine to whoever had just pressed the button, because the revert
+    // arrived with the next sync rather than with the click.
+    const customer = await makeCustomer(priya.id, { name: "STUBBORN PAINTS" });
+    await stagePartyRowWithStatus("STUBBORN PAINTS", "Deactive");
+    await projectParties();
+
+    setTestUser(manager);
+    await decideReactivation(customer.id, true);
+
+    for (let pass = 0; pass < 5; pass++) await projectParties();
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.status, "active", "five passes and the sheet won one of them");
+  });
+
+  test("a person closing an account is equally final", async () => {
+    // The mark is about WHO decided, not which way they decided. An account
+    // somebody closed in the app must not be reopened because the master has
+    // since been tidied up.
+    const customer = await makeCustomer(priya.id, { name: "CLOSED PAINTS" });
+    await stagePartyRowWithStatus("CLOSED PAINTS", "Active");
+
+    setTestUser(manager);
+    assert.equal(
+      (await decideDeactivation(customer.id, true, "Shut up shop")).ok,
+      true,
+    );
+
+    await projectParties();
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.status, "deactivated", "the sheet reopened an account a person closed");
+  });
+
+  test("an undecided account is still the sheet's to state", async () => {
+    // The guard must not freeze the book. This is what lets the change ship
+    // without moving a figure: nobody has ruled on this one, so nothing moved.
+    const customer = await makeCustomer(priya.id, { name: "OPEN STATUS PAINTS" });
+    await stagePartyRowWithStatus("OPEN STATUS PAINTS", "Deactive");
+
+    await projectParties();
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.status, "deactivated");
+    assert.equal(
+      after.deactivationReason,
+      "Marked Deactive on the customer master",
+      "and it still says who closed it",
+    );
+  });
+});
+
 describe("a reassignment survives the sheet", () => {
   test("the party projection leaves a decided account alone, and says the sheet disagrees", async () => {
     /*

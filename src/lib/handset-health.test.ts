@@ -2,7 +2,9 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ageWords,
+  buildIsBehind,
   handsetNotes,
+  trackerStalled,
   trailHasGaps,
   trailIsDead,
   uploaderSilenceMs,
@@ -19,6 +21,10 @@ const T = {
      `quietMinutes` and uses this only as a floor — but it is what turns the
      recorder's own silence note on at all, and zero turns it off. */
   serviceUploadEverySeconds: 6,
+  /* The office has published 1.8.0. Stated rather than left blank, so every
+     test above this one is a test of a handset on the current build rather
+     than of a deployment that has never named a release. */
+  currentAppVersion: "1.8.0",
 };
 
 const facts = (over: Partial<HandsetFacts> = {}): HandsetFacts => ({
@@ -43,6 +49,8 @@ const facts = (over: Partial<HandsetFacts> = {}): HandsetFacts => ({
   backgroundSyncRegistered: true,
   backgroundSyncLastRunAt: new Date(NOW - 5 * 60_000),
   trackerStalledAt: null,
+  /* On the build the office has published — see `currentAppVersion` above. */
+  appVersion: "1.8.0",
   /* A clean start: the start-of-day gate found nothing wrong, so nothing was
      claimed and there is nothing to say. Null would be just as healthy — it is
      a handset too old to report — but it would make every test above this one
@@ -578,6 +586,21 @@ describe("a wedged uploader is named, and nothing else is", () => {
     assert.ok(!said.some((x) => /nothing sent for/.test(x)));
   });
 
+  test("says nothing where the watchdog has already named the cause", () => {
+    /* Both facts arrive on one row: the service is down, and the handset's own
+       watchdog caught what took it down. Said together, this line sat above
+       the one naming the cause and told a manager the recorder restarts itself
+       and the work is safe — a reassurance over a phone being killed. The
+       stall note says it better and says what to do. */
+    const killed = sending({
+      locationServiceRunning: false,
+      trackerStalledAt: new Date(NOW - 40 * 60_000),
+    });
+    const said = texts(killed);
+    assert.ok(!said.some((x) => /Route recorder not running/.test(x)));
+    assert.match(said[0]!, /stopped the tracker/);
+  });
+
   test("says nothing on a closed day", () => {
     const shut = sending({
       dayOpen: false,
@@ -624,5 +647,106 @@ describe("the silence window is derived, never a number of its own", () => {
     assert.ok(!texts(stuck).some((x) => /nothing sent for/.test(x)));
     const loud = { ...T, quietMinutes: 10 };
     assert.ok(handsetNotes(stuck, loud, NOW).some((n) => /nothing sent for/.test(n.text)));
+  });
+});
+
+/*
+ * THE STALL, AND THE BUILD IT MIGHT BE HIDING BEHIND.
+ *
+ * Three handsets were in the field with `tracker_stalled_at` set for three
+ * days and nobody knew, and two of them were several releases behind — which
+ * is the pair of facts a manager needed together, because an old build is the
+ * commonest reason a row is quieter than the phone deserves.
+ */
+describe("the stall a manager has to be able to count", () => {
+  test("is a standing fact on an open day, and the note and the count agree", () => {
+    const stalled = facts({ trackerStalledAt: new Date(NOW - 40 * 60_000) });
+    assert.equal(trackerStalled(stalled), true);
+    assert.ok(texts(stalled).some((t) => /stopped the tracker/.test(t)));
+  });
+
+  /* The banner and the rows read ONE function, so a banner counting two over
+     three flagged rows is not a shape this screen can take. */
+  test("says nothing on a day nobody has opened", () => {
+    const closed = facts({ trackerStalledAt: new Date(NOW - 40 * 60_000), dayOpen: false });
+    assert.equal(trackerStalled(closed), false);
+    assert.ok(!texts(closed).some((t) => /stopped the tracker/.test(t)));
+  });
+
+  test("a handset that has never reported a stall is not stalled", () => {
+    assert.equal(trackerStalled(facts()), false);
+  });
+});
+
+describe("an old build", () => {
+  test("is compared part by part as numbers, never as strings", () => {
+    /* THE ONE THAT WOULD HAVE SHIPPED. Lexically "1.10.0" < "1.9.0", so a
+       string comparison calls the newest build in the fleet the stalest — and
+       does it silently, on the release where it first matters. */
+    assert.equal(buildIsBehind("1.10.0", "1.9.0"), false);
+    assert.equal(buildIsBehind("1.9.0", "1.10.0"), true);
+  });
+
+  test("reads the two handsets this was written for", () => {
+    assert.equal(buildIsBehind("1.6.1", "1.8.0"), true);
+    assert.equal(buildIsBehind("1.1.0", "1.8.0"), true);
+    assert.equal(buildIsBehind("1.8.0", "1.8.0"), false);
+  });
+
+  test("a shorter version is padded rather than guessed at", () => {
+    assert.equal(buildIsBehind("1.8", "1.8.0"), false);
+    assert.equal(buildIsBehind("1.8", "1.8.1"), true);
+    assert.equal(buildIsBehind("2", "1.8.1"), false);
+  });
+
+  test("a build AHEAD of the stated one is not behind", () => {
+    assert.equal(buildIsBehind("1.9.0", "1.8.0"), false);
+  });
+
+  /* NULL IS NOT AN ANSWER, three times over. `false` here would read as "this
+     phone is up to date", which is a claim, and every one of these is a
+     missing input rather than a reassuring one. */
+  test("answers null wherever it cannot answer", () => {
+    assert.equal(buildIsBehind(null, "1.8.0"), null);
+    assert.equal(buildIsBehind("1.6.1", null), null);
+    assert.equal(buildIsBehind("1.6.1", ""), null);
+    assert.equal(buildIsBehind("nightly", "1.8.0"), null);
+  });
+
+  test("is said on the row, with both versions on it", () => {
+    const old = texts(facts({ appVersion: "1.6.1" }));
+    assert.ok(old.some((t) => t.includes("1.6.1") && t.includes("1.8.0")));
+  });
+
+  /* A stale build is not a fault in his work — it still records the day, sends
+     the visits and takes the orders. What it costs is this panel's own
+     reading of the phone. */
+  test("is a warning rather than a failure", () => {
+    const note = handsetNotes(facts({ appVersion: "1.6.1" }), T, NOW).find((n) =>
+      /Running MBOS/.test(n.text),
+    );
+    assert.equal(note?.tone, "warn");
+  });
+
+  test("says nothing at all where no release has been stated", () => {
+    const unstated = { ...T, currentAppVersion: null };
+    assert.deepEqual(handsetNotes(facts({ appVersion: "1.1.0" }), unstated, NOW), []);
+  });
+
+  test("says nothing about a handset that has never reported its build", () => {
+    assert.deepEqual(handsetNotes(facts({ appVersion: null }), T, NOW), []);
+  });
+
+  /* And it does not outrank anything: the fault comes first, the build last,
+     because the build is what EXPLAINS the rest rather than the thing to act
+     on. */
+  test("sits below a real fault on the same row", () => {
+    const both = handsetNotes(
+      facts({ appVersion: "1.6.1", trackerStalledAt: new Date(NOW - 40 * 60_000) }),
+      T,
+      NOW,
+    );
+    assert.match(both[0].text, /stopped the tracker/);
+    assert.match(both[both.length - 1].text, /Running MBOS/);
   });
 });
