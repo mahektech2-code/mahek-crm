@@ -1833,6 +1833,28 @@ export const SETTINGS = [
     min: 50,
     max: 2000,
   },
+  {
+    key: "mbos.location.gapRouteMaxMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long a gap may be before the map stops guessing the road across it",
+    description:
+      "Minutes of silence. A gap shorter than this is drawn following the roads between its two ends rather than as a straight line through whatever buildings lie between them — still dashed, still faint, still labelled an estimate, because it is one. The reasoning is that at the sampling this app uses a fix arrives every few seconds, so a gap of a minute or two is a tunnel, a lift, a signal shadow or Android reaping the tracker mid-ride: the man was travelling the whole time and there is very nearly one way he can have got from the fix before to the fix after. Past this the guess stops being nearly determined — given twenty minutes somebody can park, walk somewhere, have a conversation and come back, and the two ends look exactly the same as if he had driven straight through. Real days on this book carry single gaps of 437, 456 and 999 minutes, which are days the handset was off and about which nothing should be drawn at all. Raise it and the map starts asserting routes across periods somebody might be asked to account for; set it to the minimum and only the shortest dropouts are filled in.",
+    default: 8,
+    min: 1,
+    max: 60,
+  },
+  {
+    key: "mbos.location.gapRouteMaxKm",
+    type: "integer",
+    category: "mbos-location",
+    label: "How far apart a gap's ends may be before the map stops guessing the road",
+    description:
+      "Kilometres, straight-line, between the two ends of a gap. The cheap second check the clock cannot make: a handset that went quiet in one town and spoke again in the next a few minutes later did not travel that road, it lost and regained a signal across a batch upload, and drawing the highway between them would put a journey on the map that nobody made. It is also what refuses an ANSWER that is not believable — a route back across a river with no bridge for fifteen kilometres is perfectly correct routing and is not what happened in ninety seconds — so the same number governs the question and the answer rather than two that could drift apart. Every gap above this keeps the straight dashed line the map has always drawn.",
+    default: 3,
+    min: 1,
+    max: 50,
+  },
 
   {
     key: "mbos.location.snapRefreshSeconds",
@@ -3730,6 +3752,8 @@ export type Config = {
   "mbos.location.tripBreakMinutes": number;
   "mbos.location.trailGapMeters": number;
   "mbos.location.snapRefreshSeconds": number;
+  "mbos.location.gapRouteMaxMinutes": number;
+  "mbos.location.gapRouteMaxKm": number;
   "mbos.location.logActivityLocation": boolean;
   "mbos.location.activityFixMaxAgeSeconds": number;
   "mbos.location.handsetQuietMinutes": number;

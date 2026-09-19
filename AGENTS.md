@@ -4725,6 +4725,46 @@ the last stretch is drawn on the road or as the fixes themselves, which is what
 every trail looks like until its snap lands anyway. The line always reaches the
 latest fix.
 
+**A SHORT GAP FOLLOWS THE ROAD; A LONG ONE STAYS A STRAIGHT LINE.** The
+straight lines still on that map were never failures of the snap — they are
+the stretches with NO FIXES AT ALL, cut out by `mbos.location.trailGapMeters`,
+and the route deliberately never sent one to Ola. At a fix every few seconds a
+gap of a minute or two is a tunnel, a lift, a signal shadow or Android reaping
+the tracker mid-ride: the man was travelling throughout and there is very
+nearly one way he can have got from the fix before to the fix after, so a line
+through three blocks of buildings is a worse picture of that than the road is.
+Ola's Directions endpoint answers the two ends and `roadRouteBetween` caches
+it in `trail_gap_routes`, keyed on the same rounded coordinate pair
+`road_legs` uses — a gap's ends never change once the day is past, and the
+stretch from a man's house to the first shop is one question asked every
+morning of the week.
+
+**THE CEILINGS ARE WHERE THE HONESTY LIVES.** `mbos.location.gapRouteMaxMinutes`
+(8) and `mbos.location.gapRouteMaxKm` (3) both have to hold. Real days on this
+book carry single gaps of 437, 456, 498 and 999 minutes, which are days the
+handset was off, and nothing should be drawn across those at all: given twenty
+minutes somebody can park, walk somewhere, have a conversation and come back,
+and the two endpoints look exactly as they would if he had driven straight
+through. The kilometre ceiling is the check the clock cannot make — a handset
+quiet in Nagpur and speaking again in Wardha lost a signal across a batch
+upload rather than travelling — and it is reused to refuse an ANSWER that is
+not believable, a correct route round a river with no bridge for fifteen
+kilometres, rather than adding a second number that could drift from the
+first.
+
+**AND A ROUTED GAP IS NEVER PROMOTED TO EVIDENCE.** It keeps the gap's own
+colour, half opacity and absence of casing — the casing is what makes a line
+read as a route somebody took — and is DOTTED rather than dashed, which is a
+layer of its own only because `line-dasharray` is the one paint property
+MapLibre will not take an expression for. The hover says it in words, because
+a line that bends round corners says "somebody drove this" to everybody and
+that is the stronger signal. Its length is NOT added to the day: `snap-trail`
+measures a gap on the crow's flight between its two real fixes whatever it
+drew, so a beat with a dozen small dropouts cannot grow a distance because the
+map got prettier. `lib/engines/trail-gap-route.ts` is the pure half — may this
+gap be routed, is the answer believable, how does a routed stretch join the
+fixes either side — and it pins both ends to the real fixes, since Ola routes
+between the nearest points on the carriageway and a doorway is not on one.
 **Map and satellite are a `setStyle` call, not two maps.** `StreetMap` swaps
 the style JSON in place rather than tearing the whole map down — the camera,
 the markers and the click handlers survive, because only what the STYLE
