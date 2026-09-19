@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { AppFrame } from "./app-frame";
 import { Header } from "./header";
 import { Sidebar } from "./sidebar";
 import { ToastProvider } from "@/components/ui/toast";
@@ -38,19 +39,22 @@ export function AppShell({
 
   return (
     <ToastProvider>
-      {/* The design carries a 1000px floor: below that the sidebar and a
-          data table cannot both be honest, so the page scrolls instead. */}
-      <div className="flex h-screen min-w-[1000px] flex-col overflow-hidden bg-canvas">
-        <Header
-          user={user}
-          hat={hat}
-          isManager={isManager}
-          scope={scope}
-          notifications={notifications}
-          apps={apps}
-          onToggleSidebar={() => setCollapsed((c) => !c)}
-        />
-        <div className="flex min-h-0 flex-1">
+      {/* The floor, the scroll model and the arrival animation are the frame's
+          now — see `app-frame.tsx` for why eight apps could not be left to
+          state them for themselves. */}
+      <AppFrame
+        header={
+          <Header
+            user={user}
+            hat={hat}
+            isManager={isManager}
+            scope={scope}
+            notifications={notifications}
+            apps={apps}
+            onToggleSidebar={() => setCollapsed((c) => !c)}
+          />
+        }
+        sidebar={
           <Sidebar
             collapsed={collapsed}
             user={user}
@@ -59,9 +63,10 @@ export function AppShell({
             groups={nav}
             pinned={pinnedNav}
           />
-          <main className="relative min-w-0 flex-1 overflow-y-auto">{children}</main>
-        </div>
-      </div>
+        }
+      >
+        {children}
+      </AppFrame>
     </ToastProvider>
   );
 }
