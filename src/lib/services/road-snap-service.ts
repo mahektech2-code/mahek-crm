@@ -1,5 +1,5 @@
 import "server-only";
-import { readSecret } from "@/lib/secrets";
+import { olaGet } from "@/lib/services/ola-key-service";
 import { metresBetween } from "@/lib/geo";
 
 /* ---------------------------------------------------------------------------
@@ -126,9 +126,6 @@ export async function snapToRoad(points: LatLng[]): Promise<LatLng[] | null> {
 async function callSnap(points: LatLng[], enhancePath: boolean): Promise<LatLng[] | null> {
   if (points.length < 2) return null;
 
-  const apiKey = await readSecret("olamaps.apiKey");
-  if (!apiKey) return null;
-
   const snapped: LatLng[] = [];
 
   /*
@@ -160,25 +157,18 @@ async function callSnap(points: LatLng[], enhancePath: boolean): Promise<LatLng[
     }
 
     const path = batch.map((p) => `${p.lat},${p.lng}`).join("|");
-    const url =
-      `${SNAP_URL}?points=${encodeURIComponent(path)}&api_key=${encodeURIComponent(apiKey)}` +
-      (enhancePath ? "&enhancePath=true" : "");
 
-    let response: Response;
-    try {
-      response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-    } catch {
-      return null;
-    }
-    if (!response.ok) return null;
-
-    let body: OlaMapsSnapResponse;
-    try {
-      body = (await response.json()) as OlaMapsSnapResponse;
-    } catch {
-      return null;
-    }
-    if (body.status !== "SUCCESS" || !body.snapped_points?.length) return null;
+    /* WHICH KEY THIS IS SPENT ON is `olaGet`'s to decide, and so is what to do
+       when Ola says that account has run out — see
+       `services/ola-key-service.ts`. Everything this file has ever done with a
+       failure is unchanged: null, and the map draws the raw trail. */
+    const body = await olaGet<OlaMapsSnapResponse>(
+      (apiKey) =>
+        `${SNAP_URL}?points=${encodeURIComponent(path)}&api_key=${encodeURIComponent(apiKey)}` +
+        (enhancePath ? "&enhancePath=true" : ""),
+      REQUEST_TIMEOUT_MS,
+    );
+    if (!body || body.status !== "SUCCESS" || !body.snapped_points?.length) return null;
 
     /* The first point of every batch after the first is the previous batch's
        last, already in `snapped`. */

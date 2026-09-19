@@ -669,6 +669,34 @@ export const appSecrets = pgTable("app_secrets", {
   updatedById: text("updated_by_id"),
 });
 
+/**
+ * WHAT IS KNOWN ABOUT AN OLA MAPS KEY THAT RAN OUT.
+ *
+ * MahekOne may hold several Ola accounts' keys and spends them in order,
+ * moving to the next only once Ola has actually refused the one in force for
+ * quota. This is where that refusal is remembered, so a redeploy does not go
+ * back to hammering a key that is already finished, and so two instances of
+ * the app agree about which one is live.
+ *
+ * KEYED ON THE CREDENTIAL'S NAME and deliberately not two columns on
+ * `app_secrets`: a key may come from the environment instead of the console,
+ * in which case there is no `app_secrets` row to hang anything off. The fact
+ * is about the account behind the name.
+ *
+ * Nothing spendable is stored here — not the value, not even its last four.
+ */
+export const olaKeyHealth = pgTable("ola_key_health", {
+  /** A `SecretName`; `olamaps.apiKey` through `olamaps.apiKey5`. */
+  name: text("name").primaryKey(),
+  /** When Ola last refused it for quota. The cooldown runs from here. */
+  spentAt: timestamp("spent_at", { withTimezone: true }),
+  /** `YYYY-MM` in Asia/Kolkata — the month that refusal belongs to. */
+  spentMonth: text("spent_month"),
+  /** Which signal retired it: `http_429`, `http_403_quota`, `body_quota`. */
+  spentSignal: text("spent_signal"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /* ------------------------------------------------------------------ §3.2 user */
 
 export const users = pgTable(

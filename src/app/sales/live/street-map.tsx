@@ -412,6 +412,7 @@ export function StreetMap({
   view,
   selectedId,
   apiKey,
+  keysSpent,
 }: {
   day: string;
   rows: LastKnown[];
@@ -430,6 +431,14 @@ export function StreetMap({
   selectedId: string | null;
   /** Ola Maps' key, read once server-side and handed down — see the doc comment above. */
   apiKey: string | null;
+  /**
+   * With no key: whether every key held has run out, or none is set at all.
+   *
+   * Two different silences and they need two different sentences. "Add a key"
+   * to somebody who added five of them, four of which have run out, sends them
+   * looking for a configuration mistake they did not make.
+   */
+  keysSpent: boolean;
 }) {
   const host = React.useRef<HTMLDivElement | null>(null);
   const map = React.useRef<maplibregl.Map | null>(null);
@@ -1324,10 +1333,14 @@ export function StreetMap({
     return (
       <Frame key="no-key">
         <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-          <p className="text-[15px] font-semibold text-ink">The map needs a key</p>
+          <p className="text-[15px] font-semibold text-ink">
+            {keysSpent ? "Every Ola Maps key has run out" : "The map needs a key"}
+          </p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
-            Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under
-            this. The team list beside this still shows everything that is known —
+            {keysSpent
+              ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Platform → Maps."
+              : "Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under this."}{" "}
+            The team list beside this still shows everything that is known —
             nobody&rsquo;s position is lost, only the picture of it.
           </p>
         </div>
