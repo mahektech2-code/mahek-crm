@@ -14,6 +14,14 @@ import {
 } from "@/lib/engines/trail-trips";
 import { trackForDay } from "@/lib/services/sales-service";
 import { roadPathFor } from "@/lib/services/road-snap-service";
+import {
+  gapVerdict,
+  joinGapPath,
+  pathMetres,
+  routeIsBelievable,
+  type Coord,
+} from "@/lib/engines/trail-gap-route";
+import { roadRouteBetween } from "@/lib/services/ola-directions-service";
 
 /**
  * The Live map's road-snapped trail, for one salesman on one day.
@@ -80,11 +88,30 @@ export async function GET(request: Request) {
    * already are, so trips and gaps are decided from the real fixes and only
    * the drawing is road-matched.
    *
-   * A gap keeps the raw straight line between its two ends. That is the
-   * boundary #251 drew and it is kept exactly: the road is reconstructed only
-   * inside a run of fixes dense enough that there is nothing to invent.
+   * A run of fixes dense enough that there is nothing to invent is
+   * reconstructed onto the road it was walked on — that is the boundary #251
+   * drew and it still holds for everything the map calls EVIDENCE.
+   *
+   * A GAP IS THE OTHER THING, and it is now drawn in one of two ways rather
+   * than one. A SHORT gap — inside `mbos.location.gapRouteMaxMinutes` and
+   * `mbos.location.gapRouteMaxKm` — is drawn following the roads between its
+   * two ends, because at this sampling density a gap of a minute or two is a
+   * tunnel, a lift or a reaped tracker, and a straight line through three
+   * blocks of buildings is a worse picture of that than the road is. Every
+   * longer gap keeps the crow's flight it always had: real days here carry
+   * single gaps of 437 and 999 minutes, and nothing should be drawn across
+   * those at all.
+   *
+   * NEITHER IS PROMOTED TO EVIDENCE. Both stay dashed, faint and without the
+   * casing that makes a line read as a route somebody took, the routed one
+   * carries `inferred` so the hover can say in words that it is an estimate,
+   * and neither adds a metre to the distance a salesman is measured on.
    */
   const gapMetres = config["mbos.location.trailGapMeters"];
+  const gapLimits = {
+    maxMinutes: config["mbos.location.gapRouteMaxMinutes"],
+    maxKm: config["mbos.location.gapRouteMaxKm"],
+  };
   const trips = splitTrailIntoTrips(accurate, {
     gapMetres,
     dwellRadiusMetres: config["mbos.location.dwellRadiusMeters"],
@@ -146,28 +173,51 @@ export async function GET(request: Request) {
     /* `[lng, lat]` on the wire, `{lat,lng}` through the service — GeoJSON
        and Ola disagree about the order and this is where they meet. */
     const road = piece.gap
-      ? null
-      : await roadPathFor(raw.map(([lng, lat]) => ({ lat, lng })));
+      ? await routedGap(raw, piece.fromAt, piece.toAt)
+      : ((await roadPathFor(raw.map(([lng, lat]) => ({ lat, lng }))))?.map(
+          (p) => [p.lng, p.lat] as [number, number],
+        ) ?? null);
     /* Trips are 1-based and `NO_TRIP` is 0, which `tripOffset` would stagger
        the wrong way off the line. Ground in no journey sits where it is. */
     const offset = trip ? tripOffset(piece.trip) : 0;
-    const drawn = offsetPolyline(
-      road ? (road.map((p) => [p.lng, p.lat]) as [number, number][]) : raw,
-      offset,
-    );
+    const drawn = offsetPolyline(road ?? raw, offset);
+    const inferred = piece.gap && road !== null;
 
-    /* A gap contributes its straight line — nobody knows the road taken, and
-       pretending it was longer than the crow flies would be an invention. */
+    /*
+     * A GAP CONTRIBUTES ITS STRAIGHT LINE, and that does not change because
+     * the map now draws a road across it.
+     *
+     * Nobody knows the road taken. Following one is a better PICTURE of a
+     * short dropout than a line through three blocks of buildings, and it is
+     * not better EVIDENCE — so what a salesman is measured on stays what it
+     * always was, the crow's flight between two real fixes. Measuring `drawn`
+     * here would have quietly added every routed detour to a day's distance,
+     * which on a beat with a dozen small dropouts is a figure that grows
+     * because the map got prettier.
+     */
+    const measured = inferred ? offsetPolyline(raw, offset) : drawn;
     if (trip) {
       let metres = 0;
-      for (let i = 1; i < drawn.length; i++) {
-        metres += metresBetween(drawn[i - 1][1], drawn[i - 1][0], drawn[i][1], drawn[i][0]);
+      for (let i = 1; i < measured.length; i++) {
+        metres += metresBetween(
+          measured[i - 1][1],
+          measured[i - 1][0],
+          measured[i][1],
+          measured[i][0],
+        );
       }
       roadMetresByTrip.set(piece.trip, (roadMetresByTrip.get(piece.trip) ?? 0) + metres);
     }
 
     segments.push({
       gap: piece.gap,
+      /*
+       * WHICH DASHED LINES ARE A GUESS AT A ROAD, and which are no guess at
+       * all. Both stay dashed and faint — a routed gap is never promoted to
+       * the solid, cased treatment that says somebody was seen here — but the
+       * two are not the same claim, and the hover says which in words.
+       */
+      inferred,
       trip: piece.trip,
       colour: trip ? tripColour(piece.trip) : NO_TRIP_COLOUR,
       offset,
@@ -182,6 +232,79 @@ export async function GET(request: Request) {
          corners somebody is trying to follow. */
       coordinates: drawn,
     });
+  }
+
+  /**
+   * The road across a gap, or null for the straight line the map always drew.
+   *
+   * A GAP IS A STRETCH WITH NO FIXES IN IT, and this is the one place in the
+   * request that asks an outside service to say what happened there. Whether
+   * it may ask at all is `gapVerdict` — two configured ceilings, one on the
+   * silence and one on the span, both of which have to hold — and whether the
+   * answer is worth drawing is `routeIsBelievable`, measured on the geometry
+   * that will actually be drawn rather than on a distance field beside it.
+   *
+   * Only the gap's TWO ENDS are sent. There is nothing in between to send;
+   * that is what makes it a gap, and it is also what makes this cheap and
+   * cacheable — a pair of endpoints is one question with one answer, and the
+   * same pair recurs every morning of the week.
+   *
+   * Null at every refusal, exactly as `roadPathFor` is null at every failure.
+   * The caller's fallback is identical in both cases and is the behaviour this
+   * map shipped with.
+   */
+  async function routedGap(
+    raw: [number, number][],
+    fromAt: Date,
+    toAt: Date,
+  ): Promise<Coord[] | null> {
+    if (raw.length < 2) return null;
+
+    /*
+     * HOP BY HOP, because a gap piece is not always one hop. `dayTrailSegments`
+     * merges consecutive pairs that share a flag and a trip, so a handset that
+     * woke for a single fix in the middle of a long silence produces ONE gap
+     * piece with a REAL FIX inside it. Routing that end to end would draw a
+     * road straight over the one reading anybody actually has, which is the
+     * exact inversion of the rule this whole file is written around.
+     *
+     * The clock is shared out evenly across the hops: the piece carries two
+     * timestamps and nothing finer, and a merged gap is a rare shape. Sharing
+     * it out is not exact, and it errs the only safe way — each hop is judged
+     * as SHORTER than the whole piece only in proportion to how many there
+     * are, so a merged piece can never route a hop the whole piece would have
+     * been refused for.
+     */
+    const hops = raw.length - 1;
+    const perHopMs = Math.max(0, toAt.getTime() - fromAt.getTime()) / hops;
+
+    const out: Coord[] = [raw[0]];
+    let any = false;
+
+    for (let i = 1; i < raw.length; i++) {
+      const from = { lat: raw[i - 1][1], lng: raw[i - 1][0] };
+      const to = { lat: raw[i][1], lng: raw[i][0] };
+      const verdict = gapVerdict({ from, to, fromMs: 0, toMs: perHopMs }, gapLimits);
+      const route = verdict.route ? await roadRouteBetween(from, to) : null;
+      const believable =
+        route !== null &&
+        verdict.route &&
+        routeIsBelievable(verdict.straightMetres, pathMetres(route.path), gapLimits);
+
+      if (route && believable) {
+        /* `joinGapPath` pins both ends to the real fixes, so dropping its
+           first point joins this hop to the one before at a point they agree
+           on rather than butting two copies of it together. */
+        out.push(...joinGapPath(from, to, route.path).slice(1));
+        any = true;
+      } else {
+        /* Refused, or Ola said nothing: this hop keeps the honest straight
+           line, in the middle of a piece whose other hops may not have. */
+        out.push(raw[i]);
+      }
+    }
+
+    return any ? out : null;
   }
 
   /* Written back onto each trip's segments now the whole leg is known. */

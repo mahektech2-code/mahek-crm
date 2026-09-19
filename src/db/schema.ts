@@ -8433,3 +8433,44 @@ export const roadLegs = pgTable(
   },
   (t) => [uniqueIndex("road_legs_pair_key").on(t.fromKey, t.toKey)],
 );
+
+/**
+ * The road Ola guessed across a gap in a trail, cached by its two ends.
+ *
+ * A CACHE, like `road_legs` above it, and nothing derives from it that cannot
+ * be recomputed. Empty it and every gap on the Live map falls back to the
+ * straight dashed line it drew before — which is also exactly what an
+ * unreachable Ola looks like, so the two are one already-handled thing.
+ *
+ * WHAT IS STORED IS A GUESS, and every screen that draws it says so. Ola
+ * answers the route its engine recommends, not the route anybody took; whether
+ * a particular gap is short enough for that guess to be worth drawing is
+ * `lib/engines/trail-gap-route.ts`, and it is never drawn as evidence and
+ * never added to a distance anybody is measured on.
+ *
+ * Keyed on the ROUNDED coordinate — `legKey` in `lib/road-legs.ts`, the same
+ * four decimal places the road legs beside it use — because a gap's two ends
+ * never change once the day is past, and the same two ends recur every
+ * morning of the week. DIRECTED for the same reason road distance is.
+ */
+export const trailGapRoutes = pgTable(
+  "trail_gap_routes",
+  {
+    id: text("id").primaryKey(),
+    /** `legKey` in `lib/road-legs.ts` — the one place the rounding is decided. */
+    fromKey: text("from_key").notNull(),
+    toKey: text("to_key").notNull(),
+    /**
+     * Ola's own encoded polyline, stored as sent.
+     *
+     * A tenth of the size of the decoded points, and re-decoding it on read
+     * means the decoder is exercised by every cache hit rather than only by a
+     * fresh fetch — which is the half that can be wrong silently.
+     */
+    polyline: text("polyline").notNull(),
+    /** Ola's figure for the route, kept for a reader rather than for a decision. */
+    metres: integer("metres").notNull().default(0),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("trail_gap_routes_pair_key").on(t.fromKey, t.toKey)],
+);
