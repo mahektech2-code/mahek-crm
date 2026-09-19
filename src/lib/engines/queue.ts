@@ -628,17 +628,46 @@ function laterOf(a: BusinessDate | null, b: BusinessDate): BusinessDate {
 }
 
 /**
+ * The three settings that decide where in a cycle the routine call lands.
+ *
+ * Narrower than `QueueConfig` deliberately. `routineDayFor` is read from
+ * outside this engine now — §13's repeat-order call is dated from the same
+ * arithmetic — and a caller that wants only the DAY should not have to hand
+ * over the keys that decide the RANKING as well. `QueueConfig` satisfies this
+ * by construction, so the queue's own call site did not change.
+ */
+export type RoutineCallConfig = Pick<
+  Config,
+  | "queue.routineCallPercent"
+  | "queue.routineConfidenceSwing"
+  | "queue.routineMinCycleDays"
+>;
+
+/**
  * How many days after an order the customer becomes worth calling.
  *
  * Lead scales with the cycle and is clamped at both ends. The quiet window is
  * NOT folded in here on purpose — see suppressionReason. Keeping it separate
  * is what lets the screen say "held back until day 15" instead of silently
  * omitting a customer who is late by their own reckoning.
+ *
+ * **IT IS EXPORTED BECAUSE THERE IS A SECOND ASKER NOW, AND ONE 70% IS THE
+ * WHOLE POINT.** §13's `expected_reorder` row raises a repeat-order call for
+ * the lead manager, and Mahek's instruction is that it is timed from the
+ * customer's own measured cycle at the configured percentage — which is this
+ * function, exactly. Writing `cycleDays * 0.7` into the nurture engine would
+ * have been three lines and a second definition of one business number: the
+ * confidence swing would not have moved it, the short-cycle carve-out would
+ * not have applied to it, and on the day somebody edited
+ * `queue.routineCallPercent` on the Settings screen one of the two calls would
+ * have moved and the other would not, with nothing on any screen saying which.
+ * So the arithmetic stays here, beside the reasoning for each of its clauses,
+ * and the nurture engine asks it rather than copying it.
  */
-function routineDayFor(
+export function routineDayFor(
   cycleDays: number,
   confidence: number | null,
-  config: QueueConfig,
+  config: RoutineCallConfig,
 ): number {
   /*
    * A customer who buys every fortnight or less gets NO stock-check call, and

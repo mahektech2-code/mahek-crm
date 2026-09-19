@@ -76,13 +76,51 @@ export type CodedOption = { code: string; label: string };
  * choose, so it names the CHAIN rather than defining the term: "who ends up
  * holding the invoice" is answerable on a doorstep, and "third party" is not.
  */
-export const SALES_TYPES: readonly { code: LeadSalesType; label: string; hint: string }[] = [
+export const SALES_TYPES: readonly {
+  code: LeadSalesType;
+  label: string;
+  hint: string;
+  /**
+   * Withdrawn from every picker, and kept here so the leads already on this
+   * ladder go on reading correctly — the same shape a retired pay outcome
+   * takes in `payment-followup-service.ts`, and for the same reason: a stored
+   * value is a CODE and never a label, so a type that stops being OFFERED must
+   * not stop being RESOLVABLE, or every record carrying it starts reading
+   * "Not set" on the day the option was withdrawn.
+   */
+  retired?: true;
+}[] = [
   {
     code: "direct",
     label: "Direct customer",
     hint: "We sell to them and we invoice them.",
   },
   {
+    /**
+     * MAHEK'S OWN DECISION, and it was taken because this track had no end.
+     *
+     * Choosing it started a lead up a nine-rung ladder running through a
+     * management review, a commercial discussion and a two-step appointment
+     * approval — and Mahek does not appoint distributors through MahekOne, so
+     * nobody ever walked to the end of one. What that cost was not an unused
+     * feature, which would have been harmless: it was leads parked half way up
+     * a ladder behind a gate nobody in the building had the authority to open,
+     * indistinguishable on every screen from leads somebody was working.
+     *
+     * NOTHING IS DELETED AND NOTHING IS MIGRATED. Every lead already on this
+     * ladder keeps its rung, its gates, its Distributor Profile, its approval
+     * chain and its ability to advance; the whole of the change is that it is
+     * no longer OFFERED for a new one. Deleting the code instead would have
+     * rewritten their history rather than stopping new ones —
+     * `salesTypeLabel` would answer "Not set" on exactly the records that most
+     * need explaining, `ladderFor` would drop them onto the legacy six rungs,
+     * and the thirty answers underneath them would stop being the ones their
+     * gates read.
+     *
+     * If distributor appointments are ever formalised, deleting the single
+     * `retired: true` line below turns it back on everywhere at once.
+     */
+    retired: true,
     code: "distributor",
     label: "Distributor",
     hint: "They buy from us and sell it on. The job is to appoint them.",
@@ -96,6 +134,36 @@ export const SALES_TYPES: readonly { code: LeadSalesType; label: string; hint: s
 
 export function salesTypeLabel(t: LeadSalesType | null | undefined): string {
   return SALES_TYPES.find((s) => s.code === t)?.label ?? "Not set";
+}
+
+/**
+ * What a picker may put in front of somebody raising a lead TODAY.
+ *
+ * `SALES_TYPES` stays the whole vocabulary, because everything that reads a
+ * lead which already EXISTS — the board's ladder chips, the label on a card,
+ * the query parameter that picks a board — has to go on knowing about a
+ * retired one. This answers the other question, and only the forms that WRITE
+ * a sales type ask it: the intake form, the bulk file, and the handset's own
+ * two sheets.
+ */
+export function offeredSalesTypes(): { code: LeadSalesType; label: string; hint: string }[] {
+  return SALES_TYPES.filter((s) => !s.retired).map(({ code, label, hint }) => ({
+    code,
+    label,
+    hint,
+  }));
+}
+
+/**
+ * May a lead be STARTED on this ladder, or moved onto it?
+ *
+ * Read by the server doors rather than by a screen, because a server action is
+ * a URL and a picker that no longer draws a chip is not a rule. It says
+ * nothing about a lead already on that ladder, which is a different question
+ * and is asked where the answer matters.
+ */
+export function salesTypeIsOffered(t: LeadSalesType): boolean {
+  return SALES_TYPES.some((s) => s.code === t && !s.retired);
 }
 
 /* ---------------------------------------------------------------- stages */
@@ -451,6 +519,75 @@ export function verificationVerdict(verdict: string | null): boolean | null {
   if (verdict === "confirmed") return true;
   if (verdict === "not_qualified") return false;
   return null;
+}
+
+/**
+ * WHAT A VERIFICATION CALL CAN ESTABLISH, and the third answer is new.
+ *
+ * Two of these have been here since §8 shipped and their meanings do not move.
+ * `verified` says the visit happened and Mahek was explained, and it is what
+ * opens the gate to qualification. `follow_up` says THIS CALL could not confirm
+ * the visit — which is a statement about our own salesman rather than about the
+ * shop, so it closes nothing and puts a task back on his list. Marking a lead
+ * dead on the strength of not having reached our own man would be the office
+ * writing off a customer for an internal failure, and that argument is as good
+ * today as it was the day it was written.
+ *
+ * `not_qualified` is a DIFFERENT statement and that is the whole reason it can
+ * exist beside the other two: the OPPORTUNITY is false. The shop denies any
+ * such visit or any such requirement, the business is not there, the contact
+ * was made up, or somebody raised the row in error. Nothing about the salesman
+ * being hard to reach belongs in it, and the screen says so before the button
+ * is pressed, because the cost of the two being confused is a real shop closed
+ * as lost on the strength of a bad afternoon on the phone.
+ *
+ * It is a LIST rather than three branches in a screen because both doors onto
+ * this call — the full page and the modal — have to offer the same words for
+ * the same act, and a sentence typed into one of them is the copy that drifts.
+ */
+export type VerificationOutcome = "verified" | "follow_up" | "not_qualified";
+
+export const VERIFICATION_OUTCOMES: readonly {
+  code: VerificationOutcome;
+  /** The radio's own line, which is the whole of what most people read. */
+  label: string;
+  /** What it means and what it costs, said before the button is pressed. */
+  says: string;
+}[] = [
+  {
+    code: "verified",
+    label: "Verified — the visit happened and Mahek was explained",
+    says: "Opens the gate to qualification. Nothing else on this page does.",
+  },
+  {
+    code: "follow_up",
+    label: "Follow-up required — this call could not confirm the visit",
+    says:
+      "NOT a failure of the lead. What could not be confirmed is our salesman's visit, so this raises a task back on him with your own words on it and leaves the lead exactly where it is.",
+  },
+  {
+    code: "not_qualified",
+    label: "Verification failed — there is no opportunity here",
+    says:
+      "For a false opportunity ONLY: the shop denies any such visit or requirement, the business does not exist, the contact is fabricated, or this was raised in error. It CLOSES the lead as lost and asks you to say in writing what the shop said. A call that merely went badly, or a salesman you could not reach, is the answer above this one.",
+  },
+] as const;
+
+/**
+ * The outcome as `mbos_lead_validations.verdict` stores it.
+ *
+ * One function so the two forms and anything that reads the row back cannot
+ * disagree about which word means which: a failed verification stored as
+ * `pending` and a false opportunity stored as `pending` would be one column
+ * saying two things, and `verificationVerdict` above — which the record page
+ * reads — would draw both as undecided.
+ */
+export function verificationVerdictFor(
+  outcome: VerificationOutcome,
+): "confirmed" | "pending" | "not_qualified" {
+  if (outcome === "verified") return "confirmed";
+  if (outcome === "not_qualified") return "not_qualified";
+  return "pending";
 }
 
 /* ------------------------------------------------- §16 the sample review */

@@ -54,6 +54,7 @@ import { FirstOrderPanel } from "../first-order-panel";
 import { VerificationForm } from "../verification-form";
 import { AdvanceStage } from "./advance-stage";
 import { MarkLost } from "./mark-lost";
+import { LeadPriorityControl } from "./lead-priority";
 import { HandoverPanel } from "./handover-panel";
 
 /**
@@ -266,6 +267,7 @@ export function LeadRecordScreen({
   canWork,
   canHandOver,
   canOverride,
+  canPrioritise,
   overrideAllowed,
   nowMs,
 }: {
@@ -308,6 +310,14 @@ export function LeadRecordScreen({
   canWork: boolean;
   canHandOver: boolean;
   canOverride: boolean;
+  /**
+   * §4.1 — whether this person may say how hard to push the lead. The control
+   * is drawn either way and DISABLED with the reason on the hover where they
+   * may not: the value is the manager talking to the salesman working the
+   * shop, so withholding the reading would withhold it from the one person it
+   * is addressed to.
+   */
+  canPrioritise: boolean;
   overrideAllowed: boolean;
   /** The clock, read once on the server. A client may not read it in render. */
   nowMs: number;
@@ -414,6 +424,19 @@ export function LeadRecordScreen({
           label="Potential"
           value={record.potentialPaise ? money(record.potentialPaise) : "Not estimated"}
           sub={record.monthlyLitres ? `${record.monthlyLitres} L a month` : undefined}
+        />
+        {/* §4.1 — IMMEDIATELY AFTER THE POTENTIAL, and that is the argument
+            rather than the layout. The two carry the same three words and
+            answer different questions — what the shop could spend, which is
+            the salesman's estimate, and whether it is this fortnight's work,
+            which is the manager's word. Read side by side they are the
+            sentence somebody meant; read a screen apart they are one fact
+            appearing to be stated twice. */}
+        <LeadPriorityControl
+          customerId={record.customerId}
+          priority={record.priority}
+          potentialPaise={record.potentialPaise}
+          canPrioritise={canPrioritise}
         />
       </section>
 

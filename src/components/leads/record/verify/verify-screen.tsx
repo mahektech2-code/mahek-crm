@@ -7,7 +7,13 @@ import { useRouter } from "next/navigation";
 import { stamp } from "@/lib/format";
 import { cx, Input, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { VERIFICATION_QUESTIONS, salesTypeLabel, stageLabel } from "@/lib/lead-labels";
+import {
+  VERIFICATION_OUTCOMES,
+  VERIFICATION_QUESTIONS,
+  salesTypeLabel,
+  stageLabel,
+  type VerificationOutcome,
+} from "@/lib/lead-labels";
 import type { LeadStage } from "@/lib/lead-labels";
 import { recordLeadValidationCall } from "@/lib/actions/leads";
 import type { ManagerCall } from "@/lib/services/lead-console-service";
@@ -85,6 +91,7 @@ export function VerifyScreen({
   stage,
   findings,
   priorCalls,
+  lostReasons,
   canVerify,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
@@ -96,6 +103,8 @@ export function VerifyScreen({
   stage: LeadStage;
   findings: Finding[];
   priorCalls: ManagerCall[];
+  /** §26's configured codes, for the one outcome that closes the lead. */
+  lostReasons: { code: string; label: string }[];
   canVerify: boolean;
 }) {
   const router = useRouter();
@@ -103,7 +112,8 @@ export function VerifyScreen({
 
   const [answers, setAnswers] = React.useState<Record<string, Answer>>({});
   const [questions, setQuestions] = React.useState<Record<string, string>>({});
-  const [verdict, setVerdict] = React.useState<"verified" | "follow_up" | null>(null);
+  const [verdict, setVerdict] = React.useState<VerificationOutcome | null>(null);
+  const [lostReason, setLostReason] = React.useState("");
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -195,7 +205,12 @@ export function VerifyScreen({
   });
 
   const answered = findings.filter((f) => answers[f.id]?.verdict).length;
-  const needsNote = verdict === "follow_up" && !composedNote.trim();
+  /* Both unsuccessful outcomes demand the sentence, for two different reasons:
+     a follow-up's words become the salesman's task, and a failed verification's
+     are the only record anybody will have of why a real-looking lead was
+     closed. The action demands both again — a form is not a rule. */
+  const needsNote = verdict !== null && verdict !== "verified" && !composedNote.trim();
+  const needsLostReason = verdict === "not_qualified" && !lostReason;
 
   async function submit() {
     if (!verdict) return;
@@ -213,8 +228,9 @@ export function VerifyScreen({
 
       const result = await recordLeadValidationCall(customerId, {
         answers: payload,
-        verified: verdict === "verified",
+        outcome: verdict,
         followUpNote: composedNote.trim() || undefined,
+        lostReasonCode: verdict === "not_qualified" ? lostReason : undefined,
       });
       if (!result.ok) {
         setError(result.error);
@@ -223,6 +239,7 @@ export function VerifyScreen({
       setAnswers({});
       setQuestions({});
       setVerdict(null);
+      setLostReason("");
       setNote("");
       toast.push(result.message ?? "Call recorded.");
       router.push(leadHref(workspace, `leads/${customerId}`));
@@ -234,7 +251,13 @@ export function VerifyScreen({
     }
   }
 
-  const blocked = !canVerify || busy || !verdict || unreasonedCorrections.length > 0 || needsNote;
+  const blocked =
+    !canVerify ||
+    busy ||
+    !verdict ||
+    unreasonedCorrections.length > 0 ||
+    needsNote ||
+    needsLostReason;
 
   return (
     <div className="p-6">
@@ -382,36 +405,38 @@ export function VerifyScreen({
           What this call establishes
         </div>
         <p className="mb-3 max-w-[620px] text-[12px] text-pretty text-muted">
-          The only thing on this page the rest of the funnel reads. Verified opens the gate to
-          qualification; follow-up required does not, and it is NOT a failure of the lead — it
-          raises a task back on the salesman, because what could not be confirmed is his visit
-          rather than the shop&rsquo;s interest.
+          The only thing on this page the rest of the funnel reads. Two of the three are about our
+          own salesman and one is about the shop, and telling them apart is the whole of this
+          choice: a call that went badly, or a salesman nobody could reach, is a follow-up.
+          &ldquo;There is no opportunity here&rdquo; is for a lead that turns out to be false, and
+          it closes the record.
         </p>
 
-        <div className="flex flex-col gap-2">
-          {[
-            {
-              v: "verified" as const,
-              label: "Verified — the visit happened and Mahek was explained",
-            },
-            {
-              v: "follow_up" as const,
-              label: "Follow-up required — this call could not confirm the visit",
-            },
-          ].map((o) => (
+        <div className="flex flex-col gap-2.5">
+          {VERIFICATION_OUTCOMES.map((o) => (
             <label
-              key={o.v}
-              className="flex cursor-pointer items-center gap-2 text-[13px] text-body"
+              key={o.code}
+              className="flex cursor-pointer items-start gap-2 text-[13px] text-body"
             >
               <input
                 type="radio"
                 name="call-verdict"
-                className="h-[14px] w-[14px] accent-[#6835FB]"
+                className="mt-[3px] h-[14px] w-[14px] accent-[#6835FB]"
                 disabled={!canVerify}
-                checked={verdict === o.v}
-                onChange={() => setVerdict(o.v)}
+                checked={verdict === o.code}
+                onChange={() => setVerdict(o.code)}
               />
-              {o.label}
+              <span>
+                <span className={o.code === "not_qualified" ? "text-danger" : undefined}>
+                  {o.label}
+                </span>
+                {/* WHAT IT COSTS, SAID BEFORE THE BUTTON IS PRESSED. A closure
+                    explained only in the toast that follows it is one somebody
+                    finds out about from the salesman whose lead went. */}
+                <span className="mt-0.5 block max-w-[620px] text-[12px] text-pretty text-muted">
+                  {o.says}
+                </span>
+              </span>
             </label>
           ))}
           {verdict === null ? (
@@ -422,10 +447,43 @@ export function VerifyScreen({
           ) : null}
         </div>
 
+        {/* §26's codes, offered only under the outcome that spends one. Drawn
+            all the time it would be a reason field on a call that closes
+            nothing, which is how a lead ends up carrying a lost reason it was
+            never lost for. The list is the CONFIGURED one, handed down by the
+            page — a reason list typed into a screen is the same mistake as a
+            product list typed into a screen. */}
+        {verdict === "not_qualified" ? (
+          <label className="mt-3.5 block max-w-[520px]">
+            <span className="mb-1 block text-[13px] text-body">
+              Why it is being closed — required
+            </span>
+            <select
+              className="h-9 w-full rounded-[4px] border border-line bg-surface px-2 text-[13px] text-body"
+              disabled={!canVerify}
+              value={lostReason}
+              onChange={(e) => setLostReason(e.target.value)}
+            >
+              <option value="">Pick a reason</option>
+              {lostReasons.map((r) => (
+                <option key={r.code} value={r.code}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-[12px] text-muted">
+              A code rather than a sentence, because &ldquo;how many did we lose to leads that
+              were never real&rdquo; is a question somebody asks of a code and cannot ask of a
+              grep.
+            </span>
+          </label>
+        ) : null}
+
         <label className="mt-3.5 block">
           <span className="mb-1 block text-[13px] text-body">
-            What the salesman should do about it
-            {verdict === "follow_up" ? " — required" : " — optional"}
+            {verdict === "not_qualified"
+              ? "What the shop actually said — required"
+              : `What the salesman should do about it${verdict === "follow_up" ? " — required" : " — optional"}`}
           </span>
           <Textarea
             rows={3}
@@ -434,8 +492,9 @@ export function VerifyScreen({
             onChange={(e) => setNote(e.target.value)}
           />
           <span className="mt-1 block text-[12px] text-muted">
-            This sentence is what lands on his list, so it has to be an instruction rather than a
-            verdict.
+            {verdict === "not_qualified"
+              ? "The shop’s own words, because this is the whole of what anybody reading the closure in March will have. It goes to the salesman as well — the lead he was working has just gone, and this says why."
+              : "This sentence is what lands on his list, so it has to be an instruction rather than a verdict."}
           </span>
         </label>
 
@@ -468,13 +527,21 @@ export function VerifyScreen({
                 ? "Say what the call established before recording it."
                 : unreasonedCorrections.length
                   ? "A correction has to say what the shop said and why the two differ."
+                  : needsLostReason
+                  ? "Closing a lead needs one of the configured reasons."
                   : needsNote
-                    ? "A call that could not confirm the visit has to say what the salesman should do about it."
+                    ? verdict === "not_qualified"
+                      ? "Closing a lead as a false opportunity has to say what the shop actually said."
+                      : "A call that could not confirm the visit has to say what the salesman should do about it."
                     : undefined
           }
           onClick={submit}
         >
-          {busy ? "Recording…" : "Record the call"}
+          {busy
+            ? "Recording…"
+            : verdict === "not_qualified"
+              ? "Record the call and close the lead"
+              : "Record the call"}
         </Button>
         <Link
           href={leadHref(workspace, `leads/${customerId}`)}

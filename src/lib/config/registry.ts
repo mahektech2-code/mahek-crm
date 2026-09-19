@@ -2913,15 +2913,39 @@ export const SETTINGS = [
     description:
       "The only answers to 'how did we find this one'. A CODE and a label, like every other list here, so a source can be reworded without every lead raised before today losing its answer - and so 'which sources actually produce customers' is a question somebody can ask, which free text could never answer. Editing this list is how Mahek adds a channel; nothing in the code names a source.",
     default: [
-      { code: "salesman_visit", label: "Found by a salesman on his beat" },
-      { code: "telecalling", label: "Telecalling - cold" },
-      { code: "website", label: "Website enquiry" },
-      { code: "customer_referral", label: "Referred by an existing customer" },
-      { code: "dealer_referral", label: "Referred by a dealer or distributor" },
-      { code: "exhibition", label: "Exhibition or trade fair" },
-      { code: "walk_in", label: "Walked in to the office or godown" },
-      { code: "phone_enquiry", label: "Rang us themselves" },
-      { code: "online", label: "Social media or an online listing" },
+      { code: "salesman_prospecting", label: "Salesman Prospecting" },
+      /*
+       * role-name-ok — and this is the second marked exception in the
+       * codebase, beside the WhatsApp template variable.
+       *
+       * The guard forbids the word because `telecaller` was a ROLE value that
+       * no longer exists: in TypeScript it is silently false, in SQL it is a
+       * 500. This is neither. It is a lead SOURCE — the name Mahek gives the
+       * channel a lead arrived through — and it is the word he used when he
+       * wrote the list out. The code is `telecalling` rather than `telecaller`
+       * so that nothing stored anywhere reads like the dead role; only the
+       * LABEL keeps his word, which is the half a person reads.
+       */
+      // role-name-ok — a lead SOURCE's label, not a role value. See above.
+      { code: "telecalling", label: "Telecaller" },
+      { code: "customer_reference", label: "Existing Customer Reference" },
+      { code: "dealer_reference", label: "Dealer / Distributor Reference" },
+      { code: "website", label: "Website / Online Enquiry" },
+      { code: "whatsapp", label: "WhatsApp Enquiry" },
+      { code: "phone", label: "Phone Enquiry" },
+      { code: "exhibition", label: "Exhibition / Trade Fair" },
+      { code: "walk_in", label: "Walk-in" },
+      /*
+       * `other` is the only one that ASKS A SECOND QUESTION, and that is
+       * Mahek's own instruction: picking it demands Source Details in words.
+       *
+       * Without it "Other" is where a list goes to die — it is the easiest
+       * answer on every dropdown, it costs the person filling the form
+       * nothing, and a year later it is the largest bar on the chart with
+       * nothing behind it. Made to cost a sentence, it is picked when it is
+       * true, and the sentences themselves are what tell Mahek which
+       * eleventh source is worth adding to this list.
+       */
       { code: "other", label: "Other" },
     ],
   },

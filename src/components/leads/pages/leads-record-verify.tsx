@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { money } from "@/lib/format";
 import { VERIFICATION_FINDINGS } from "@/lib/lead-labels";
 import { today } from "@/lib/recompute";
+import { getConfig } from "@/lib/config/store";
 import { canLead, leadRecord, managerCalls } from "@/lib/services/lead-console-service";
 import { VerifyScreen, type Finding } from "@/components/leads/record/verify/verify-screen";
 
@@ -48,6 +49,16 @@ export async function Body({
   if (!record) notFound();
 
   const calls = await managerCalls(id);
+
+  /*
+   * §26's OWN list, read here rather than typed into the screen.
+   *
+   * The third outcome closes the lead as lost, and a loss demands one of the
+   * configured codes — a manager who reworded "Wrong lead" last month must see
+   * his own wording on this radio, or the two screens that close a lead would
+   * be offering two different vocabularies for one column.
+   */
+  const lostReasons = (await getConfig())["leads.lostReasons"];
 
   /*
    * A finding with nothing recorded against it is still LISTED. "He did not
@@ -106,6 +117,7 @@ export async function Body({
       stage={record.stage}
       findings={findings}
       priorCalls={calls}
+      lostReasons={lostReasons}
       canVerify={await canLead(user, "lead.verify")}
     />
   );

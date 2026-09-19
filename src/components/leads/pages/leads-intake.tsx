@@ -52,6 +52,7 @@ export async function Body({
       <LeadTabs workspace={workspace} />
       <IntakeForm workspace={workspace}
         sources={sources}
+        sourceOptions={config["leads.sources"]}
         owners={owners}
         today={day}
         requireNextAction={config["leads.requireNextAction"]}

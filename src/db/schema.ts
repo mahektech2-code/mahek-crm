@@ -1152,6 +1152,25 @@ export const customers = pgTable(
      */
     kind: customerKindEnum("kind").notNull().default("customer"),
     leadSource: text("lead_source"),
+    /**
+     * The sentence behind `other`, and the only source that asks for one.
+     *
+     * Mahek's instruction, and the reason is what "Other" does to a list left
+     * alone: it is the easiest answer on any dropdown, it costs the person
+     * filling the form nothing, and a year later it is the biggest bar on the
+     * chart with nothing behind it. Made to cost a sentence it is picked when
+     * it is true — and the sentences are what say which eleventh source is
+     * worth adding to `leads.sources`.
+     *
+     * Free TEXT and deliberately not a second code list: the whole point is to
+     * catch the channel nobody has thought of yet, and a coded list of the
+     * unknown is a contradiction.
+     *
+     * Kept when the source is later changed away from `other` rather than
+     * cleared, because it is a record of what somebody believed on the day
+     * they raised the lead.
+     */
+    leadSourceDetail: text("lead_source_detail"),
 
     /* ---- working a lead ----
      *

@@ -21,15 +21,20 @@ import {
   hatsFor,
 } from "@/lib/access-control";
 import { today } from "@/lib/recompute";
+import { getConfig } from "@/lib/config/store";
 import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
 import { err, fromThrown, ok, type FieldError, type Result } from "@/lib/result";
 import {
   COMMUNICATION_ACTIONS,
   FIRST_ORDER_QUESTIONS,
+  salesTypeIsOffered,
+  salesTypeLabel,
   stageLabel,
   VERIFICATION_COLUMNS,
   VERIFICATION_QUESTIONS,
+  verificationVerdictFor,
   type LeadSalesType,
+  type VerificationOutcome,
   type LeadStage,
 } from "@/lib/lead-labels";
 import { checklistFor } from "@/lib/engines/lead-gates";
@@ -375,6 +380,32 @@ export async function setLeadSalesType(
     const lead = found.lead;
     const was = lead.leadSalesType as LeadSalesType | null;
     if (was === salesType) return ok(null, "That is already the sales type.");
+
+    /*
+     * A RETIRED LADDER CANNOT BE MOVED ONTO, and this is checked here rather
+     * than left to the sheets that no longer draw the chip, because a server
+     * action is a URL and a handset in somebody's pocket cannot be recalled —
+     * an APK built before Mahek's decision goes on offering Distributor and
+     * goes on posting it here.
+     *
+     * Mahek does not appoint distributors through MahekOne, so a lead started
+     * up that nine-rung ladder stalled behind an approval nobody in the
+     * building could give; `SALES_TYPES` in `lib/lead-labels.ts` carries the
+     * whole of the reasoning and the one line that reverses it.
+     *
+     * A lead that already IS one is untouched by this. It never reaches here —
+     * `was === salesType` has already answered — and every OTHER thing that
+     * lead can do, its rung, its gates, its Distributor Profile and its
+     * approval chain, is exactly as it was. What is refused is a NEW lead
+     * arriving on the ladder, including the far commoner shape of that: a
+     * direct lead being moved onto it.
+     */
+    if (!salesTypeIsOffered(salesType)) {
+      return err(
+        `${salesTypeLabel(salesType)} is no longer a ladder a lead can be moved onto — Mahek does not appoint distributors through MahekOne. The leads already on it are untouched and still advance.`,
+        "rule_violation",
+      );
+    }
 
     const stage = lead.leadStage as LeadStage | null;
     const ladder = ladderFor(was);
@@ -905,12 +936,36 @@ export async function assignLeadManager(
  * about the salesman rather than about the sale, and a check somebody performs
  * on their own work is not a check.
  *
- * `verified: false` closes NOTHING. It is a follow-up required — the salesman
- * gets a task with the manager's own words on it, because a notification can be
- * missed and a task on the list cannot — and the lead stays exactly where it is.
- * The answers are kept whichever way the verdict went: "which competitor did he
- * say he was using" is what somebody needs before the negotiation call, and it
- * does not stop being useful because the visit could not be confirmed.
+ * `follow_up` closes NOTHING. The salesman gets a task with the manager's own
+ * words on it, because a notification can be missed and a task on the list
+ * cannot — and the lead stays exactly where it is. The answers are kept
+ * whichever way the verdict went: "which competitor did he say he was using" is
+ * what somebody needs before the negotiation call, and it does not stop being
+ * useful because the visit could not be confirmed.
+ *
+ * `not_qualified` IS A THIRD OUTCOME AND IT IS NOT THE ONE ABOVE IN STRONGER
+ * WORDS. This action used to store `pending` on every unsuccessful call, and
+ * the comment beside it argued — correctly — that a failed verification means
+ * the VISIT could not be confirmed, which is a statement about our own salesman,
+ * and that closing the lead on the strength of not reaching him would be the
+ * office writing off a customer for an internal failure. That reasoning is
+ * untouched and `follow_up` still carries it. What Mahek asked for is the case
+ * it never covered: the OPPORTUNITY itself is false — the shop denies any such
+ * visit or requirement, the business is not there, the contact was invented, the
+ * row was raised in error. There is nothing to work and nobody to ring, so the
+ * lead is closed as lost.
+ *
+ * Three things follow from that, and each of them is the same rule something
+ * else in this file already obeys. It DEMANDS A REASON IN WRITING, checked here
+ * and not only on the form, exactly as a lost lead, an On Hold and a rejected
+ * sample all do, and for the same reason: the next lead from that source goes
+ * the same way otherwise. It closes the lead through `advanceLeadStage`, so the
+ * §26 reason code is validated against the CONFIGURED list, the transition is
+ * appended to `lead_stage_transitions` like every other move, and there is no
+ * second path to `lost` for somebody to fix one of later. And it stays
+ * `lead.verify`, a manager's — a salesman who could close his own leads as
+ * fabrications would be marking his own work, which is the argument the
+ * capability exists for in the first place.
  *
  * IT WRITES MAIN'S TABLE, and that is the whole of what changed here. Two
  * teams built §8 at once: this one stored the twelve answers as jsonb on a
@@ -923,14 +978,27 @@ export async function assignLeadManager(
  */
 export async function recordLeadValidationCall(
   customerId: string,
-  call: { answers: Record<string, string>; verified: boolean; followUpNote?: string },
+  call: {
+    answers: Record<string, string>;
+    outcome: VerificationOutcome;
+    /**
+     * What the salesman should do about it, or — on `not_qualified` — what the
+     * shop actually said. One field rather than two because it is one sentence
+     * going to one column, and a second box for the same paragraph is how half
+     * of a manager's words end up in a column nobody reads.
+     */
+    followUpNote?: string;
+    /** §26's code, required by the move rather than by this schema. */
+    lostReasonCode?: string;
+  },
 ): Promise<Result<null>> {
   try {
     const parsed = z
       .object({
         answers: z.record(z.string(), z.string().trim().max(1000)),
-        verified: z.boolean(),
+        outcome: z.enum(["verified", "follow_up", "not_qualified"]),
         followUpNote: z.string().trim().max(2000).optional(),
+        lostReasonCode: z.string().trim().max(80).optional(),
       })
       .safeParse(call);
     if (!parsed.success) return zodErr(parsed.error);
@@ -951,11 +1019,44 @@ export async function recordLeadValidationCall(
       if (known.has(id) && value.trim()) answers[id] = value.trim();
     }
 
-    if (!c.verified && !c.followUpNote?.trim()) {
+    /* Both unsuccessful outcomes demand a sentence, and they demand it for two
+       different reasons — which is why the refusals are two sentences rather
+       than one about "a note". A follow-up's words become the salesman's task;
+       a failed verification's words are the only record anybody will ever have
+       of why a real-looking lead was closed, read months later by whoever is
+       asked whether the source that produced it is worth buying from again. */
+    if (c.outcome === "follow_up" && !c.followUpNote?.trim()) {
       return err(
         "A call that could not confirm the visit has to say what the salesman should do about it — that sentence is what lands on his list.",
         "validation",
       );
+    }
+    if (c.outcome === "not_qualified" && !c.followUpNote?.trim()) {
+      return err(
+        "Closing a lead as a false opportunity has to say what the shop actually said. Without it the record shows a lead somebody killed on a phone call, and the next lead from the same source goes exactly the same way.",
+        "validation",
+      );
+    }
+
+    /*
+     * §26's code is checked HERE as well, though `advanceLeadStage` below is
+     * the authority on it — and the reason is the order of the two writes. The
+     * call lands first and the closure follows it, so a missing or misspelt
+     * code refused only by the move would leave a verification call recorded
+     * against a lead still sitting where it was, with a manager reading a
+     * refusal about a reason list he was never shown. The list is the
+     * CONFIGURED one at both ends, never a literal, so a team that reworded its
+     * reasons cannot be refused here on one spelling and accepted there on
+     * another.
+     */
+    if (c.outcome === "not_qualified") {
+      const codes = (await getConfig())["leads.lostReasons"];
+      if (!c.lostReasonCode || !codes.some((r) => r.code === c.lostReasonCode)) {
+        return err(
+          "Say why this lead is being closed. A shop that turns out not to exist is usually “Wrong lead — should not have been raised”, and the code is what makes it countable later.",
+          "validation",
+        );
+      }
     }
 
     const callId = gen("lmc");
@@ -997,13 +1098,18 @@ export async function recordLeadValidationCall(
         dispatchFeedback: columns.dispatchFeedback,
         genuineInterest: columns.genuineInterest,
         /*
-         * `pending` rather than `not_qualified` on a failed verification, and
-         * the difference matters: §8 failing means the VISIT could not be
-         * confirmed, which raises a follow-up and closes nothing. Calling the
-         * lead not qualified would be the office turning down a shop on the
-         * strength of not having reached its own salesman.
+         * `pending` on a follow-up and `not_qualified` only on the third
+         * outcome, and the difference is the whole of why there are three.
+         * §8 failing means the VISIT could not be confirmed, which raises a
+         * follow-up and closes nothing — writing `not_qualified` there would be
+         * the office turning down a shop on the strength of not having reached
+         * its own salesman. `not_qualified` is the manager saying the
+         * opportunity is false, which is a statement about the shop and is the
+         * one that closes the lead. One mapping, in `lead-labels.ts`, because
+         * the record page reads this column back through its neighbour and two
+         * outcomes stored as one word would draw as one thing on it.
          */
-        verdict: c.verified ? "confirmed" : "pending",
+        verdict: verificationVerdictFor(c.outcome),
         verdictReason: c.followUpNote ?? null,
         createdById: ctx.user.id,
         updatedById: ctx.user.id,
@@ -1013,13 +1119,20 @@ export async function recordLeadValidationCall(
         leadLastActivityDate: day,
         updatedAt: new Date(),
       };
-      if (c.verified) {
+      if (c.outcome === "verified") {
         set.leadVerifiedAt = new Date();
         set.leadVerifiedById = ctx.user.id;
       }
       await tx.update(customers).set(set).where(eq(customers.id, customerId));
 
-      if (!c.verified) {
+      /* A task ONLY on a follow-up. The third outcome is about to close the
+         lead, and a high-priority task on the salesman's list against a shop
+         that no longer exists is work he cannot do and cannot close — the same
+         noise `raiseReorderFollowUps` guards against one module over. What he
+         is owed on a false lead is being TOLD, which is a notification below —
+         `applyLeadStageMove` writes one only on a promotion, so a lost lead
+         reaches its salesman as a row that quietly left his board otherwise. */
+      if (c.outcome === "follow_up") {
         /* The salesman on the account — the owner of a lead, which is what
            `ASSIGNED_TO_SQL` reads. Falling back to the sales seat covers a lead
            that has already been promoted and is being re-verified. */
@@ -1049,9 +1162,23 @@ export async function recordLeadValidationCall(
         sourceRecordId: callId,
         occurredAt: new Date(),
         actorUserId: ctx.user.id,
-        summary: c.verified
-          ? `Sales manager verified ${lead.name} by phone.`
-          : `Sales manager could not verify ${lead.name} — follow-up raised.`,
+        /*
+         * THE THIRD SUMMARY HAS TO BE READABLE IN MARCH, and what it has to be
+         * readable AGAINST is an ordinary lost lead. The stage move writes its
+         * own row saying the lead was closed and why, and a hundred leads a year
+         * carry one; this sentence is the only thing on the customer's history
+         * that says the closure came out of a verification call and that what
+         * was found was a false opportunity rather than a customer who chose
+         * somebody else. It names the call, the finding and the manager's own
+         * words, because a reader who has to open three records to tell those
+         * two apart is a reader who does not bother.
+         */
+        summary:
+          c.outcome === "verified"
+            ? `Sales manager verified ${lead.name} by phone.`
+            : c.outcome === "follow_up"
+              ? `Sales manager could not verify ${lead.name} — follow-up raised.`
+              : `Verification call found no opportunity at ${lead.name} — the shop did not stand the lead up. Closed as lost. ${c.followUpNote ?? ""}`.trim(),
       });
 
       await tx.insert(auditLog).values({
@@ -1062,14 +1189,89 @@ export async function recordLeadValidationCall(
         entityId: customerId,
         actorRole: ctx.authorisedBy,
         actorApp: ctx.authorisedIn,
-        afterState: { callId, verified: c.verified, answered: Object.keys(answers).length },
+        /* The OUTCOME rather than a boolean: `verified: false` said the same
+           word about a follow-up and about a false opportunity, and the audit
+           log is exactly where somebody goes to ask which of the two a manager
+           actually recorded. */
+        afterState: { callId, outcome: c.outcome, answered: Object.keys(answers).length },
       });
     });
 
     refresh(customerId);
-    return ok(null, 
-      c.verified ? "Verified." : "Recorded, and the follow-up is on the salesman's list.",
-    );
+
+    if (c.outcome !== "not_qualified") {
+      return ok(
+        null,
+        c.outcome === "verified"
+          ? "Verified."
+          : "Recorded, and the follow-up is on the salesman's list.",
+      );
+    }
+
+    /*
+     * THE CLOSURE GOES THROUGH THE ORDINARY DOOR, after the call is safe.
+     *
+     * `advanceLeadStage` is the one path to `lost` — it asks the gate engine,
+     * validates the §26 code against the configured list, appends to
+     * `lead_stage_transitions` and notifies. Writing `lead_stage = 'lost'` here
+     * would be a second path, and the second path is always the one that stops
+     * writing the transition the day somebody changes the first.
+     *
+     * It runs OUTSIDE the transaction above and cannot roll it back, which is
+     * deliberate and is the same trade the next-step sentence makes on a call:
+     * the verification call is evidence of a conversation that really happened,
+     * and losing it because a lead was already closed, or already off the
+     * funnel, would destroy the record to protect a consequence of it. Where the
+     * move is refused the refusal is handed straight back, naming the call as
+     * recorded — a manager told only "could not close" would record the call
+     * again to try, and the second row would be a second conversation on a
+     * history nobody had two.
+     */
+    const closed = await advanceLeadStage({
+      customerId,
+      to: "lost",
+      reasonCode: c.lostReasonCode,
+      note: c.followUpNote,
+    });
+    if (!closed.ok) {
+      return err(
+        `The call is recorded and the lead is still open: ${closed.error}`,
+        "rule_violation",
+      );
+    }
+
+    /*
+     * THE SALESMAN IS TOLD, because the lead he was working has just gone.
+     *
+     * `applyLeadStageMove` notifies on a PROMOTION and on nothing else, so a
+     * lead closed from a desk leaves its owner's board overnight with nothing
+     * anywhere saying why — and this is the one closure he is most likely to
+     * want to argue with, since what it says is that the shop denies the visit
+     * he recorded. The manager's own words travel IN the message rather than
+     * behind a link, the same rule a declined order follows: the reason is the
+     * entire content, and a bell that makes somebody open a screen to find out
+     * what was said is a bell they read later.
+     *
+     * It runs after the close, cannot fail it, and is not sent to the manager
+     * who just pressed the button — they are looking at the screen that says so.
+     */
+    const tell = lead.ownerId ?? lead.salesAmId;
+    if (tell && tell !== ctx.user.id) {
+      try {
+        await db.insert(notifications).values({
+          id: gen("ntf"),
+          userId: tell,
+          title: `${lead.name} is closed — the verification call found no opportunity`,
+          body: `${lead.name} was rung to verify your visit and the shop did not stand the lead up, so it is closed as lost. ${c.followUpNote ?? ""}`.trim(),
+          kind: "warn",
+          href: `/crm/customers/${customerId}`,
+        });
+      } catch {
+        /* A courtesy on top of a closure already standing in the ledger. */
+      }
+    }
+
+    return ok(null, "Recorded. The lead is closed as lost.");
   } catch (e) {
     return fromThrown(e);
   }

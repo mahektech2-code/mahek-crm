@@ -13,6 +13,7 @@ import {
 import { splitFilter, type LeadFilters } from "@/lib/lead-filters";
 import {
   appointmentQueue,
+  canLead,
   leadsWithoutNextAction,
   verificationQueue,
 } from "@/lib/services/lead-console-service";
@@ -93,6 +94,7 @@ export async function Body({
     source: params.source,
     stage: params.stage,
     potential: params.potential,
+    priority: params.priority,
     next: params.next,
     age: params.age,
     health: params.health,
@@ -132,6 +134,7 @@ export async function Body({
         source: splitFilter(filters.source),
         stage: splitFilter(filters.stage),
         potential: splitFilter(filters.potential),
+        priority: splitFilter(filters.priority),
         next: splitFilter(filters.next),
         age: splitFilter(filters.age),
         health: splitFilter(filters.health),
@@ -143,6 +146,13 @@ export async function Body({
       healthAtRiskBelow={config["mbos.health.atRiskBelow"]}
       healthStrongAtOrAbove={config["mbos.health.strongAtOrAbove"]}
       team={team.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name }))}
+      /* §4.1 — the manager's priority is a manager's to set, and the same
+         capability is checked in `setLeadPriority`. `lead.verify` is asked for
+         rather than a capability of its own: it already means "the sales
+         manager's own judgement about a lead, which the salesman working it
+         may not make about his own work", which is this act exactly — see the
+         action for why `lead.override` and `lead.work` were the wrong two. */
+      canPrioritise={await canLead(user, "lead.verify")}
       desks={{
         verification: verification.total,
         verificationMine: verification.mine,

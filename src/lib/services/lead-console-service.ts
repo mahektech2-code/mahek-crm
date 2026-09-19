@@ -10,6 +10,7 @@ import {
   type LeadSalesType,
   type LeadStage,
 } from "../lead-labels";
+import type { LeadPriority } from "../lead-priority";
 import { asDate } from "../business-date";
 import { orderCountsSql } from "../order-status";
 import { leadsVisible, managerScope, onlyMine } from "./sales-service";
@@ -883,6 +884,14 @@ export type LeadRecord = {
   /* ---- §6 what the salesman established ---- */
   monthlyLitres: number | null;
   potentialPaise: number | null;
+  /**
+   * §4.1 — the MANAGER's judgement of how hard to push this one, which is a
+   * different question from the potential immediately above it and is
+   * deliberately not that enum despite the three words matching. See
+   * `lib/lead-priority.ts`. Null means nobody has judged it, which is not the
+   * same fact as somebody having judged it low, and nothing backfills one.
+   */
+  priority: LeadPriority | null;
   competitor: string | null;
   requiredProductId: string | null;
   requiredProductName: string | null;
@@ -992,6 +1001,7 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
 
            c.lead_monthly_volume_litres as "monthlyLitres",
            c.lead_estimated_potential_paise as "potentialPaise",
+           c.lead_priority::text as priority,
            c.lead_competitor as competitor,
            c.lead_required_product_id as "requiredProductId",
            p.name as "requiredProductName",

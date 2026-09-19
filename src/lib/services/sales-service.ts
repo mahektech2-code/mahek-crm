@@ -7,6 +7,7 @@ import {
   type LeadFilters,
 } from "../lead-filters";
 import { stageLabel, type LeadStage } from "../lead-labels";
+import type { LeadPriority } from "../lead-priority";
 import type { BusinessDate } from "../business-date";
 import { cache } from "react";
 import { sql } from "drizzle-orm";
@@ -1225,6 +1226,17 @@ export type LeadRow = {
   area: string | null;
   source: string;
   estimatedPotentialPaise: number | null;
+  /**
+   * §4.1 — HOW HARD TO PUSH THIS ONE, which is the manager's word and not the
+   * estimate above it. `lib/lead-priority.ts` carries the argument for why two
+   * fields share the same three words.
+   *
+   * NULL IS THE ORDINARY CASE, and the cell says so in words rather than being
+   * left blank: nobody has judged this lead, which is not the same fact as
+   * somebody having judged it low. The list is deliberately NOT sorted by it —
+   * see the note on the order by in `leadsPage`.
+   */
+  priority: LeadPriority | null;
   stage: string;
   salesmanId: string | null;
   salesmanName: string | null;
@@ -1307,6 +1319,12 @@ const LEAD_ROW_SELECT = sql`
             * could see it; the guarantee has to be restored here in the SQL. */
            coalesce(c.lead_source, 'manual') as source,
            c.lead_estimated_potential_paise as "estimatedPotentialPaise",
+           /* The manager's priority, cast to text like every other enum read
+            * here - the screens compare it against the plain words in
+            * lib/lead-priority.ts and a pg enum arrives as a string anyway.
+            * NO BACKTICKS in this comment: it sits inside a sql template
+            * literal and one backtick would end the literal. */
+           c.lead_priority::text as priority,
            c.lead_stage::text as stage,
            c.owner_id as "salesmanId",
            u.name as "salesmanName", u.initials,
@@ -1466,6 +1484,27 @@ export function leadFilterClause(
       case "under50k": return sql`${p} > 0 and ${p} < 5000000`;
       case "50kto2l": return sql`${p} >= 5000000 and ${p} <= 20000000`;
       case "over2l": return sql`${p} > 20000000`;
+      default: return null;
+    }
+  });
+
+  /*
+   * §4.1 — the manager's priority, and "none" is the option this filter is
+   * mostly opened for.
+   *
+   * `in (…)` never matches NULL, which is the same trap the owner filter one
+   * screen up carries its own paragraph about — so the unjudged leads need a
+   * clause of their own or they could not be found at all, and they are most
+   * of the book. "Which of mine has nobody been through" is the question a
+   * manager asks of a field their team has just been given.
+   */
+  anyOf(splitFilter(filters.priority), (v) => {
+    const p = sql`c.lead_priority`;
+    switch (v) {
+      case "high": return sql`${p} = 'high'`;
+      case "medium": return sql`${p} = 'medium'`;
+      case "low": return sql`${p} = 'low'`;
+      case "none": return sql`${p} is null`;
       default: return null;
     }
   });
@@ -1632,6 +1671,25 @@ export async function leadsPage(
       left join users lm on lm.id = c.lead_manager_id
       ${where}
       ${narrowed}
+     /*
+      * §4.1 — THE PRIORITY IS NOT IN THIS SORT, AND THAT IS DELIBERATE.
+      *
+      * It is null on every lead the day the column ships and it stays null on
+      * whatever a manager never gets to, which is most of the book. Sorted on,
+      * that field would put every unjudged lead at one end of the list with
+      * nothing on the screen saying why — the high ones at the top read as the
+      * list working, and the several hundred nobody has been through read as
+      * the tail of the book rather than as the work outstanding. Sorting them
+      * to the TOP is worse again: an unjudged lead would outrank one a manager
+      * deliberately marked high.
+      *
+      * The order stays what somebody PROMISED and when anybody last touched it
+      * — a worklist ordered by what is owed, which does not change because a
+      * second opinion arrived beside it. Priority is a BADGE on the row and a
+      * FILTER above it instead, so "show me the high ones" and "show me the
+      * ones nobody has judged" are both one click and neither is imposed on
+      * everybody else's reading of the list.
+      */
      ${archived
        ? sql`order by c.lead_archived_at desc nulls last, c.id desc`
        : sql`order by c.lead_next_follow_up_date asc nulls last,

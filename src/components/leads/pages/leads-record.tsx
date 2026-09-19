@@ -198,6 +198,13 @@ export async function Body({
          action as well as here — a server action is a URL. */
       canHandOver={await canLead(user, "customer.handOver")}
       canOverride={(await canLead(user, "lead.override")) && config["leads.allowManagerOverride"]}
+      /* §4.1 — how hard to push this lead is the manager's word, and
+         `lead.verify` is the capability that already means exactly that: the
+         sales manager's own judgement about a lead, which the salesman working
+         it may not make about his own work. The action asks for the same one —
+         a server action is a URL. See `actions/lead-priority.ts` for why
+         `lead.override` and `lead.work` were the wrong two to reach for. */
+      canPrioritise={await canLead(user, "lead.verify")}
       overrideAllowed={config["leads.allowManagerOverride"]}
       nowMs={nowMs()}
     />
