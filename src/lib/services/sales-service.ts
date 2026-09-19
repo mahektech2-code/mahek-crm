@@ -2396,7 +2396,15 @@ export type FieldSamples = {
   capped: boolean;
   awaiting: number;
   late: number;
-  converted: number;
+  /**
+   * The verdict that opens a negotiation, and the ONLY success this column can
+   * state. It counted `converted`, which `mbos_sample_outcome` has never
+   * carried — pending, approved, rejected, more_testing is the whole list — so
+   * Postgres refused the literal at parse time with a 22P02 and every read of
+   * this screen answered 500. A sample does not "convert"; a shop's order
+   * does, and that is a different record with a different table behind it.
+   */
+  approved: number;
 };
 
 /**
@@ -2417,13 +2425,13 @@ export async function fieldSamples(): Promise<FieldSamples> {
     total: number;
     awaiting: number;
     late: number;
-    converted: number;
+    approved: number;
   }>(sql`
     select count(*)::int as "total",
            count(*) filter (where s.trial_outcome = 'pending')::int as "awaiting",
            count(*) filter (where s.trial_outcome = 'pending'
                               and current_date > s.follow_up_date)::int as "late",
-           count(*) filter (where s.trial_outcome = 'converted')::int as "converted"
+           count(*) filter (where s.trial_outcome = 'approved')::int as "approved"
       from mbos_samples s
      where true ${onlyMine(scope, "s.salesman_id")}
   `);
@@ -2463,7 +2471,7 @@ export async function fieldSamples(): Promise<FieldSamples> {
     capped: total > FIELD_SAMPLE_LIMIT,
     awaiting: counted?.awaiting ?? 0,
     late: counted?.late ?? 0,
-    converted: counted?.converted ?? 0,
+    approved: counted?.approved ?? 0,
   };
 }
 
