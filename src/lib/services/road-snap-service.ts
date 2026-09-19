@@ -1,6 +1,10 @@
 import "server-only";
 import { readSecret } from "@/lib/secrets";
-import { metresBetween } from "@/lib/geo";
+import {
+  downsampleForPath,
+  OLA_MAX_POINTS_PER_REQUEST as OLAMAPS_MAX_POINTS_PER_REQUEST,
+  type LatLng,
+} from "@/lib/engines/snap-plan";
 
 /* ---------------------------------------------------------------------------
  * Ola Maps' Snap-to-Road, called for the Live map's trail line only.
@@ -48,11 +52,10 @@ import { metresBetween } from "@/lib/geo";
  * own, for lines nobody is looking at yet.
  * ------------------------------------------------------------------------- */
 
-const OLAMAPS_MAX_POINTS_PER_REQUEST = 50;
 const SNAP_URL = "https://api.olamaps.io/routing/v1/snapToRoad";
 const REQUEST_TIMEOUT_MS = 8_000;
 
-export type LatLng = { lat: number; lng: number };
+export type { LatLng };
 
 type OlaMapsSnapResponse = {
   status?: string;
@@ -102,21 +105,45 @@ type OlaMapsSnapResponse = {
  * Returns null exactly as `snapToRoad` does, and the caller's fallback is the
  * same: draw the raw fixes, which is what the map has always done.
  */
-const PATH_ANCHOR_METRES = 20;
-
-function downsampleForPath(points: LatLng[]): LatLng[] {
-  if (points.length <= 2) return points;
-  const kept: LatLng[] = [points[0]];
-  for (const p of points.slice(1, -1)) {
-    const last = kept[kept.length - 1];
-    if (metresBetween(last.lat, last.lng, p.lat, p.lng) >= PATH_ANCHOR_METRES) kept.push(p);
-  }
-  kept.push(points[points.length - 1]);
-  return kept;
-}
-
 export async function roadPathFor(points: LatLng[]): Promise<LatLng[] | null> {
   return callSnap(downsampleForPath(points), true);
+}
+
+/**
+ * THE SAME ROAD, ASKED ABOUT ONLY WHERE IT IS NEW.
+ *
+ * A day grows at one end. The first eight hours of a trail have not changed
+ * since the last time Ola was asked about them, and asking again buys back a
+ * road we already hold — while the two minutes of walking since is one
+ * request's worth. Snap-to-Road is metered, and re-buying a whole day on every
+ * look is what takes one manager watching the Live map past a month's quota on
+ * his own. `lib/engines/snap-plan.ts` decides what is new; this fetches it.
+ *
+ * `seam` IS THE JOIN and is not part of the answer. It is the last raw fix the
+ * held path already reaches, sent again here as the first point — so both the
+ * held head and this tail are told about one point in common, both snap it to
+ * the same place, and this drops its copy on the way out. That is the same
+ * answer `callSnap` gives between two batches of one request, and for the same
+ * reason: two independently-snapped halves meet at nothing, and what lands on
+ * the map is a notch or a little hook past the corner.
+ *
+ * `enhancePath` means the answer is NOT one point per point — it has as many
+ * points as the road has corners — so nothing here may pair it back up with
+ * the input by index. Dropping the FIRST point is index-free and is the only
+ * positional assumption made: Ola answers in the order it was asked, so the
+ * first point out is the first point in, however many follow it.
+ *
+ * Null exactly as `roadPathFor` answers null, and the caller's fallback is the
+ * same: keep the head and draw the new tail raw. A held head is never thrown
+ * away because a tail could not be bought.
+ */
+export async function roadPathTail(
+  seam: LatLng,
+  tail: LatLng[],
+): Promise<LatLng[] | null> {
+  const path = await callSnap(downsampleForPath([seam, ...tail]), true);
+  if (!path || path.length < 2) return null;
+  return path.slice(1);
 }
 
 export async function snapToRoad(points: LatLng[]): Promise<LatLng[] | null> {

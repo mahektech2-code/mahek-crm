@@ -1835,6 +1835,18 @@ export const SETTINGS = [
   },
 
   {
+    key: "mbos.location.snapRefreshSeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often the Live map's road line may be bought again",
+    description:
+      "Seconds. The road line under a trail is bought from Ola Maps, which is metered — and a day grows at one end, so the first eight hours of a trail have not changed and only the walking since the last look has to be asked about. This is how recently we may have asked before a grown trail is left to draw its newest stretch as the raw fixes instead of buying it. It never shortens a line: the newest stretch is always drawn, and this decides only whether it is drawn on the road or as the fixes themselves, which is what every trail looks like anyway until its snap lands. Raise it if the monthly request quota is tight; lower it towards zero for a map that is road-matched to the last minute at a higher bill.",
+    default: 120,
+    min: 0,
+    max: 3_600,
+  },
+
+  {
     key: "mbos.location.logActivityLocation",
     type: "boolean",
     category: "mbos-location",
@@ -3717,6 +3729,7 @@ export type Config = {
   "mbos.location.dwellMinMinutes": number;
   "mbos.location.tripBreakMinutes": number;
   "mbos.location.trailGapMeters": number;
+  "mbos.location.snapRefreshSeconds": number;
   "mbos.location.logActivityLocation": boolean;
   "mbos.location.activityFixMaxAgeSeconds": number;
   "mbos.location.handsetQuietMinutes": number;
