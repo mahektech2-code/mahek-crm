@@ -202,6 +202,21 @@ export const MBOS_EVENT = {
   /** Every move up, down or out of a ladder. §25's timeline is built on it. */
   leadStage: "lead_stage",
 
+  /**
+   * §5.3 — the sales manager's verdict on a qualification checklist.
+   *
+   * Its own kind rather than a second use of `validation`, which is the §8
+   * verification CALL to the customer. The two are different people answering
+   * different questions — one asks the shop whether the visit happened, the
+   * other asks whether the twelve answers the salesman wrote down stand up —
+   * and folding them together would make "when was this lead sent back" a
+   * question nobody could answer off the record. It matters because the two
+   * negative verdicts HOLD the lead at qualification: a reader working out why
+   * a lead sat still for a fortnight needs the day the block went on and the
+   * day it came off, and both are rows of this kind.
+   */
+  qualificationReview: "lead_qualification_review",
+
   /** §15 — the points where somebody's word about a sample changes. */
   sampleRequested: "sample_requested",
   sampleDecided: "sample_request_decided",
@@ -211,11 +226,40 @@ export const MBOS_EVENT = {
   distributorSubmitted: "distributor_submitted",
   distributorTerms: "distributor_terms_agreed",
   distributorAgreement: "distributor_agreement",
+  /*
+   * Sent back for correction, which is neither of the two decisions either
+   * side of it. It earns a kind of its own because a record that showed only
+   * the eventual approval would say the application went through first time —
+   * and "this was turned back twice before anybody signed it" is precisely
+   * what somebody reading a distributor's history months later wants to know.
+   * The source row is the approval, and a step is sent back more than once, so
+   * the stage rides in the source id the way a sample's three dates do.
+   */
+  distributorSentBack: "distributor_sent_back",
 
   /** §14 — a file sent or a call placed from the manager's lead page. */
   leadCommunication: "lead_communication",
   /** §18 — the eight questions, and the date they produced. */
   firstOrderAsk: "lead_first_order_ask",
+
+  /**
+   * §8 — ONE FIELD THE VERIFICATION CALL CORRECTED, on its own row.
+   *
+   * Not a second use of `validation`, which is the CALL: one call produces one
+   * of those and says what the call established. A correction is a different
+   * statement — the shop contradicting the salesman about one thing — and a
+   * reader scanning a history for "when did anybody find out the competitor was
+   * wrong" is looking for that sentence rather than for the call it happened
+   * on. Folded into the call's own summary it would be one line saying four
+   * things, which is a line people stop reading.
+   *
+   * A call corrects several fields, so the FIELD goes in the source id —
+   * `<callId>:correction:<field>` — exactly as a sample's three dates ride the
+   * sample's. Left as the bare call id the natural key would collapse every
+   * correction from one call onto one row, the first written would win, and the
+   * other three would never appear at all.
+   */
+  verificationCorrection: "lead_verification_correction",
 } as const;
 
 /**

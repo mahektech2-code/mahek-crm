@@ -1,6 +1,7 @@
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { checklistFor, gateTo } from "@/lib/engines/lead-gates";
 import { nextStage } from "@/lib/engines/lead-ladder";
@@ -50,7 +51,13 @@ export async function Body({
 
   const conditions = checklistFor(record.salesType, "qualification");
   const opensRung = nextStage("qualification", record.salesType);
-  const verdict = opensRung ? gateTo(gateInputFor(record), opensRung) : null;
+  /* §5.3 — `freshDays` is required rather than defaulted, because a caller
+     that left it out drew a rail saying the sample rung was open on a lead the
+     action would then refuse. The configured window, read once. */
+  const config = await getConfig();
+  const verdict = opensRung
+    ? gateTo(gateInputFor(record, config["leads.figuresFreshDays"]), opensRung)
+    : null;
 
   /*
    * Every stored answer on one map, keyed the way the ACTION that writes it
@@ -92,6 +99,25 @@ export async function Body({
       profile={profile}
       requiredProductName={record.requiredProductName}
       canWork={await canLead(user, "lead.work")}
+      /*
+       * §5.3 — the manager's standing verdict, passed whole rather than as four
+       * props. Drawn for everybody, because a salesman blocked by something he
+       * cannot see is blocked by nothing he can act on.
+       */
+      review={{
+        verdict: record.qualificationReview,
+        note: record.qualificationReviewNote,
+        at: record.qualificationReviewedAt,
+        byName: record.qualificationReviewedByName,
+      }}
+      /*
+       * `lead.verify` — the sales manager's own judgement about a lead,
+       * recorded on the lead, which the salesman working it may not make about
+       * his own work. Resolved here and checked again in
+       * `reviewLeadQualification`: a server action is a URL and an undrawn
+       * button is a fact about a component.
+       */
+      canReview={await canLead(user, "lead.verify")}
     />
   );
 }

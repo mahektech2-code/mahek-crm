@@ -13,6 +13,7 @@
 import { COMPLAINT_CATEGORIES } from "../constants";
 import {
   LOST_REASONS,
+  VERIFICATION_FAILURE_REASONS,
   OVERRIDE_REASONS,
   PROSPECT_REASONS,
   SAMPLE_REASONS,
@@ -2937,6 +2938,15 @@ export const SETTINGS = [
     default: LOST_REASONS.map((r) => ({ ...r })),
   },
   {
+    key: "leads.verificationFailureReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "What the verification call found",
+    description:
+      "§8. When a sales manager's verification call closes a lead, the loss reason is always 'Verification failed' - this is the second question, and it is the half anybody can act on. 'Verification failed: 18' is a number; 'customer denied the visit: 6, wrong business: 4, duplicate: 3' points at three different fixes. A customer who did not ANSWER the phone is not on this list and never should be: that is an unfinished verification, not a failed one, and folding it in would make every count here read high and mean nothing.",
+    default: VERIFICATION_FAILURE_REASONS.map((r) => ({ ...r })),
+  },
+  {
     key: "leads.overrideReasons",
     type: "structured",
     category: "mbos-leads",
@@ -2966,6 +2976,61 @@ export const SETTINGS = [
     max: 30,
   },
   {
+    key: "leads.figuresFreshDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Conversion figures go stale after",
+    description:
+      "Days. The monthly requirement, the potential, the product and the competitor are captured once when a suspect becomes a prospect and the qualification checklist deliberately stops re-asking them. Past this many days somebody has to say they still hold before a sample may be sent - one confirmation on one screen, not four fields retyped. 0 switches the check off.",
+    default: 60,
+    min: 0,
+    max: 365,
+  },
+  {
+    key: "leads.sources",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Where a lead came from",
+    description:
+      "The only answers to 'how did we find this one'. A CODE and a label, like every other list here, so a source can be reworded without every lead raised before today losing its answer - and so 'which sources actually produce customers' is a question somebody can ask, which free text could never answer. Editing this list is how Mahek adds a channel; nothing in the code names a source.",
+    default: [
+      { code: "salesman_prospecting", label: "Salesman Prospecting" },
+      /*
+       * role-name-ok — and this is the second marked exception in the
+       * codebase, beside the WhatsApp template variable.
+       *
+       * The guard forbids the word because `telecaller` was a ROLE value that
+       * no longer exists: in TypeScript it is silently false, in SQL it is a
+       * 500. This is neither. It is a lead SOURCE — the name Mahek gives the
+       * channel a lead arrived through — and it is the word he used when he
+       * wrote the list out. The code is `telecalling` rather than `telecaller`
+       * so that nothing stored anywhere reads like the dead role; only the
+       * LABEL keeps his word, which is the half a person reads.
+       */
+      // role-name-ok — a lead SOURCE's label, not a role value. See above.
+      { code: "telecalling", label: "Telecaller" },
+      { code: "customer_reference", label: "Existing Customer Reference" },
+      { code: "dealer_reference", label: "Dealer / Distributor Reference" },
+      { code: "website", label: "Website / Online Enquiry" },
+      { code: "whatsapp", label: "WhatsApp Enquiry" },
+      { code: "phone", label: "Phone Enquiry" },
+      { code: "exhibition", label: "Exhibition / Trade Fair" },
+      { code: "walk_in", label: "Walk-in" },
+      /*
+       * `other` is the only one that ASKS A SECOND QUESTION, and that is
+       * Mahek's own instruction: picking it demands Source Details in words.
+       *
+       * Without it "Other" is where a list goes to die — it is the easiest
+       * answer on every dropdown, it costs the person filling the form
+       * nothing, and a year later it is the largest bar on the chart with
+       * nothing behind it. Made to cost a sentence, it is picked when it is
+       * true, and the sentences themselves are what tell Mahek which
+       * eleventh source is worth adding to this list.
+       */
+      { code: "other", label: "Other" },
+    ],
+  },
+  {
     key: "leads.distributorDiscountApprovalPercent",
     type: "integer",
     category: "mbos-leads",
@@ -2983,7 +3048,32 @@ export const SETTINGS = [
     label: "Credit limit needing management approval",
     description:
       "§12, in paise. A credit limit above this routes the appointment to management. Territory exclusivity always does, whatever the numbers say, because it is the one term that cannot be walked back without taking something away from somebody.",
-    default: 50000000,
+    /*
+     * ₹3,00,000, and it moved from ₹5,00,000 on the owner's own answer.
+     *
+     * THE SPECIFICATION CONTRADICTS ITSELF HERE, so the number could not be
+     * read off it. Its prose says "a credit limit above ₹30,00,000" in two
+     * places; the expression it gives beside that prose is
+     * `creditLimitRequestedPaise > 30000000`, which in paise is ₹3,00,000 — a
+     * hundredth of what the sentence says. One of the two is a typing slip and
+     * nothing in the document says which.
+     *
+     * Mahek settled it: ₹3,00,000. So the EXPRESSION was right and the prose
+     * was the slip, which is the opposite of the way that mistake usually
+     * runs — rupees typed into a paise field is the common one, and this was
+     * an extra zero in a sentence.
+     *
+     * Worth keeping the whole story rather than just the figure, because the
+     * next person to read the specification will hit the same contradiction
+     * and needs to know it was asked and answered rather than overlooked.
+     *
+     * A distributor asking for more than three lakh of credit goes to
+     * management. Below it the sales manager's own step still applies —
+     * management sign every appointment regardless, which is a separate rule
+     * this threshold does not govern; all this decides is whether the routing
+     * NAMES the credit limit as the reason.
+     */
+    default: 30000000,
     min: 0,
   },
 
@@ -3911,9 +4001,12 @@ export type Config = {
   "leads.prospectReasons": { code: string; label: string }[];
   "leads.sampleReasons": { code: string; label: string }[];
   "leads.lostReasons": { code: string; label: string }[];
+  "leads.verificationFailureReasons": { code: string; label: string }[];
   "leads.overrideReasons": { code: string; label: string }[];
   "leads.sampleReviewChaseDays": number[];
   "leads.verificationDueDays": number;
+  "leads.figuresFreshDays": number;
+  "leads.sources": { code: string; label: string }[];
   "leads.distributorDiscountApprovalPercent": number;
   "leads.distributorCreditLimitApprovalPaise": number;
 

@@ -41,7 +41,7 @@ import {
   isParked,
   isTerminal,
   ladderFor,
-  SALES_TYPES,
+  offeredSalesTypes,
   salesTypeLabel,
   stageLabel,
   stageSentence,
@@ -950,8 +950,15 @@ function LadderSheet({
         It decides which questions the rest of the funnel asks. Changing it starts the climb again at the foot.
       </T>
 
+      {/* The same withdrawal as the raise screen, and it bites hardest here:
+          this sheet is the one place a lead could be MOVED onto the
+          distributor ladder. The server refuses it too, because an APK cannot
+          be recalled and an older build goes on drawing the chip. A lead
+          already on that ladder is untouched — it sits at `current`, the
+          button below is disabled while `picked === current`, and nothing here
+          takes it off. */}
       <View style={{ gap: 8, marginTop: 14 }}>
-        {SALES_TYPES.map((t) => (
+        {offeredSalesTypes().map((t) => (
           <Choice
             key={t.code}
             label={t.label}

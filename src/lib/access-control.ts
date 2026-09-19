@@ -460,6 +460,17 @@ export const CAPABILITIES = [
   "customer.assignSalesManager",
   "customer.handOver",
   "customer.classify",
+  /**
+   * §11.6 — VALIDATING A GSTIN, which is not the same act as collecting one.
+   *
+   * The salesman writes the number down standing in the shop and somebody else
+   * checks it is a real business we can invoice. It had no capability because
+   * it had no action: the qualification checklist carried a `gst_verified`
+   * tick, and that tick was writable by anybody holding `lead.work` — which is
+   * the salesman. So the collector certified his own collection, and
+   * "validated once" was a sentence on a checklist rather than a fact.
+   */
+  "lead.gstValidate",
   /*
    * The expense policy: writing a draft, and putting one into force.
    *
@@ -959,12 +970,47 @@ export { conflictsFor, ROLE_CONFLICTS, type RoleConflict } from "@/lib/role-conf
  * moving a capability between the sets, beside the paragraph explaining it.
  */
 
+/**
+ * PAPERWORK CHECKED AT A DESK — GRANTED BY APP, AND DELIBERATELY NOT BY LEVEL.
+ *
+ * `lead.gstValidate` is the only member, and the set exists for one reason: to
+ * make the capability WITHHELD by default. `can()` withholds only what a set
+ * names, so a capability in none of them is one EVERYBODY holds — which handed
+ * this straight back to the field salesman who collected the number, the one
+ * person it must stay away from. Who actually gets it is named on the apps in
+ * the table below.
+ *
+ * WHO, per Mahek: anybody with the Sales Dashboard, the CRM or the Accounts
+ * desk — and explicitly NOT split by level. An associate checking a GSTIN is
+ * doing the job rather than making a decision above their station, so both
+ * levels of each of those three apps carry it. That instruction is why this is
+ * not `MANAGER_ONLY` or `ACCOUNTS_OR_MANAGER`: every existing set encodes a
+ * seniority rule, and the answer here was that seniority is not the question.
+ *
+ * Two earlier attempts were both wrong and both caught by
+ * `gst-validation-grant.test.ts` rather than by anybody looking.
+ * `ACCOUNTS_OR_MANAGER` spread into `BOOK_MANAGEMENT` and so reached every
+ * manager of every book app INCLUDING the handset, while still missing the
+ * accounts clerk who does this work all day. Removing it from every set made
+ * it universal, salesman included.
+ *
+ * WHAT IS STILL WITHHELD is the handset, and that is the whole control. MBOS
+ * is the field salesman's app and it is the one book app absent from the grant
+ * below, so the man who typed the number into his phone standing in the shop
+ * cannot be the man who certifies it. The second half of that rule lives in
+ * `validateGstin`, which refuses the lead's OWNER outright whatever hat he
+ * holds — so somebody who works the field and also holds the CRM cannot come
+ * in the side door on his own leads.
+ */
+const DESK_CHECKS: ReadonlySet<Capability> = new Set<Capability>(["lead.gstValidate"]);
+
 const restricted = new Set<Capability>([
   ...MANAGER_ONLY,
   ...ACCOUNTS_ONLY,
   ...ACCOUNTS_OR_MANAGER,
   ...ADMIN_ONLY,
   ...SHARED,
+  ...DESK_CHECKS,
 ]);
 
 /**
@@ -1039,14 +1085,29 @@ type AppMatrix = { associate: readonly Capability[]; manager: readonly Capabilit
 
 const MATRIX: Record<AppId, AppMatrix> = {
   /* The calling book. */
-  crm: { associate: BOOK_WORK, manager: [...BOOK_WORK, ...BOOK_MANAGEMENT] },
+  /*
+   * §11.6's GST check is handed out BY NAME, at BOTH levels, on the three
+   * apps Mahek named — the CRM here, the Sales Dashboard and Accounts below.
+   * See `DESK_CHECKS` for why it is not in any of the seniority sets and why
+   * the handset is the one book app left out.
+   */
+  crm: {
+    associate: [...BOOK_WORK, "lead.gstValidate"],
+    manager: [...BOOK_WORK, ...BOOK_MANAGEMENT, "lead.gstValidate"],
+  },
   /* MBOS. A salesman works the same book from a handset — this is the grant
      that used to be spelled "telecaller" on a man who has never made a call. */
   field: { associate: BOOK_WORK, manager: [...BOOK_WORK, ...BOOK_MANAGEMENT] },
   /* The Sales Dashboard reads that book and sets targets against it. */
-  sales: { associate: BOOK_WORK, manager: [...BOOK_WORK, ...BOOK_MANAGEMENT] },
+  sales: {
+    associate: [...BOOK_WORK, "lead.gstValidate"],
+    manager: [...BOOK_WORK, ...BOOK_MANAGEMENT, "lead.gstValidate"],
+  },
   /* The desk. An associate records and reads; the manager decides. */
-  accounts: { associate: LEDGER_WORK, manager: [...LEDGER_WORK, ...LEDGER_DECISIONS] },
+  accounts: {
+    associate: [...LEDGER_WORK, "lead.gstValidate"],
+    manager: [...LEDGER_WORK, ...LEDGER_DECISIONS, "lead.gstValidate"],
+  },
   /* Reading screens. Nothing here writes, so neither level carries a write. */
   reports: { associate: [], manager: ["team.report"] },
   founder: { associate: [], manager: ["team.report"] },

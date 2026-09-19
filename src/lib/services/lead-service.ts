@@ -87,6 +87,18 @@ const LEAD_COLUMNS = {
   leadCompetitor: customers.leadCompetitor,
   leadRequiredProductId: customers.leadRequiredProductId,
   leadDecisionMaker: customers.leadDecisionMaker,
+  /* §4.2 / §11.6 — the buyer, and somebody else's check on the GST number.
+     Both are read by the qualification gate. */
+  leadBuyer: customers.leadBuyer,
+  gstVerified: customers.gstVerified,
+  /* §5.3 — read by the gate through `figuresAreStale` and by the record page,
+     which prints the date so somebody can see how old the figures are rather
+     than only being refused by them. */
+  leadFiguresConfirmedAt: customers.leadFiguresConfirmedAt,
+  leadQualificationReview: customers.leadQualificationReview,
+  leadQualificationReviewNote: customers.leadQualificationReviewNote,
+  leadPriority: customers.leadPriority,
+  leadHoldResumeDate: customers.leadHoldResumeDate,
   leadCreditDaysWanted: customers.leadCreditDaysWanted,
   leadApplication: customers.leadApplication,
   leadQualification: customers.leadQualification,
@@ -136,9 +148,35 @@ export async function leadRow(customerId: string): Promise<LeadRow | null> {
  * gate is about the second. Counting the first would walk a lead onto the book
  * on the strength of an order accounts were about to decline.
  */
+/**
+ * §5.3 — are the four conversion figures old enough to need standing behind?
+ *
+ * ONE definition, because three different screens ask it and a second reading
+ * would let the lead record and the gate disagree about the same shop on the
+ * same afternoon. It is computed HERE rather than in the engine for the reason
+ * every engine here takes precomputed facts: the engine is pure and has no
+ * clock, and whether sixty days have passed is a question about the calendar.
+ *
+ * A window of 0 switches the check off entirely, which is what the setting's
+ * own minimum is for. Never confirmed and past the window are the SAME answer
+ * — stale — because a figure nobody has ever stood behind is exactly the case
+ * this exists to catch, and it is every lead raised before the column existed.
+ */
+export function figuresAreStale(
+  confirmedAt: Date | null | undefined,
+  freshDays: number,
+  now: Date = new Date(),
+): boolean {
+  if (!freshDays || freshDays <= 0) return false;
+  if (!confirmedAt) return true;
+  const age = now.getTime() - confirmedAt.getTime();
+  return age > freshDays * 24 * 60 * 60 * 1000;
+}
+
 export async function leadGateInput(customerId: string): Promise<LeadGateInput | null> {
   const lead = await leadRow(customerId);
   if (!lead) return null;
+  const gateConfig = await getConfig();
 
   const [
     visitCount,
@@ -252,9 +290,24 @@ export async function leadGateInput(customerId: string): Promise<LeadGateInput |
     requiredProductId: lead.leadRequiredProductId,
     contactPerson: lead.contactPerson,
     decisionMaker: lead.leadDecisionMaker,
+    /* §4.2 — who PLACES the order, where that is somebody other than who
+       approves it. The qualification gate asks for it only in that case. */
+    buyer: lead.leadBuyer,
     creditDaysWanted: lead.leadCreditDaysWanted,
     application: lead.leadApplication,
     gstin: lead.gstin,
+    /* §11.6 — the back office's own answer, and NOT the salesman's checklist
+       tick, which is what the gate used to read. The number and the check are
+       two different people's statements and the gate wants both. */
+    gstVerified: lead.gstVerified,
+    /* §5.3 — the two halves of what replaced the four questions that were cut
+       out of the qualification checklist: the figures still holding, and a
+       manager who said the checklist was not finished being listened to. */
+    figuresStale: figuresAreStale(
+      lead.leadFiguresConfirmedAt,
+      gateConfig["leads.figuresFreshDays"],
+    ),
+    qualificationReview: lead.leadQualificationReview,
 
     nextAction: lead.leadNextAction,
     nextActionDate: lead.leadNextActionDate,
@@ -828,6 +881,18 @@ export async function applyLeadStageMove(
       ownerId: string;
       outcome?: string | null;
     } | null;
+    /**
+     * §— PARKING A LEAD, and the two facts that make it a pause rather than a
+     * quiet death.
+     *
+     * OPTIONAL here on purpose, and demanded by the WEB action instead. An APK
+     * cannot be recalled, so handsets in the field go on parking leads the way
+     * the build in somebody's pocket knows how — and refusing those would turn
+     * a salesman recording a real plant shutdown into a rejection he cannot
+     * act on. The handset has always demanded its own reason; the resume date
+     * is asked where it can be asked.
+     */
+    hold?: { reason: string; resumeDate: string } | null;
     /** The business date, resolved by the caller — engines read no clock. */
     day: string;
   },
@@ -885,6 +950,36 @@ export async function applyLeadStageMove(
        credit terms this quarter" is a question somebody can ask of a code and
        cannot ask of a grep. Old rows keep their sentences and still read. */
     if (to === "lost" && o.reasonCode) set.leadLostReason = o.reasonCode;
+
+    /*
+     * §— ON HOLD IS A PAUSE, AND A PAUSE HAS TO SAY WHEN IT ENDS.
+     *
+     * Parking already demanded a reason, and a reason alone is how a lead sits
+     * for six months: "back after Diwali" is a sentence nobody is watching, so
+     * a parked lead stayed parked until somebody happened to scroll past it. A
+     * DATE is a thing a worklist can be built from, which is the difference
+     * between a pause and a quiet death.
+     *
+     * Both written together or neither, because a resume date with no reason
+     * says a lead comes back and not why anybody stopped, and a reason with no
+     * date is what this exists to end.
+     */
+    if (to === "on_hold" && o.hold) {
+      set.leadHoldReason = o.hold.reason;
+      set.leadHoldResumeDate = o.hold.resumeDate;
+    }
+
+    /*
+     * COMING BACK CLEARS THEM. A lead moved off `on_hold` to any rung is no
+     * longer parked, and a stale resume date left on the row would keep it on
+     * the resume worklist for ever — a list that shows leads nobody needs to
+     * resume is one people stop opening. The REASON goes with it: it answered
+     * "why is this stopped", and it is not stopped.
+     */
+    if (from === "on_hold" && to !== "on_hold") {
+      set.leadHoldReason = null;
+      set.leadHoldResumeDate = null;
+    }
 
     if (promoted) {
       set.kind = "customer";
@@ -1046,4 +1141,34 @@ export async function leadManagerCandidates(region: string | null): Promise<
   /* Whoever names this region sorts above whoever covers everywhere: a
      regional answer is the better default and the picker is read top-down. */
   return out.sort((a, b) => Number(a.national) - Number(b.national));
+}
+
+/**
+ * The same answer, asked about a LEAD rather than about a region.
+ *
+ * `assignLeadManager` reads the region off the row it has already fetched and
+ * calls `leadManagerCandidates` with it. The record page has no region on it —
+ * `LeadRecord` carries the five seats and not the geography behind them — so a
+ * screen offering the same default would otherwise have to work out who covers
+ * this lead a second way, and the half that drifts is always the half somebody
+ * is reading. This is one column read and a delegation: the picker and the
+ * action cannot name different people, and the head of this list is exactly who
+ * the action picks when nobody names anybody.
+ *
+ * An unknown id answers with an empty list rather than throwing. Whether this
+ * person may see this lead is `reachableLead`'s question, asked in the action
+ * and asked again before the page draws; a candidate list is not the place to
+ * answer it, and a thrown error here would take a whole record page down over a
+ * picker.
+ */
+export async function leadManagerCandidatesFor(
+  customerId: string,
+): Promise<{ id: string; name: string; national: boolean }[]> {
+  const [row] = await db
+    .select({ region: customers.territoryRegion })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+  if (!row) return [];
+  return leadManagerCandidates(row.region);
 }

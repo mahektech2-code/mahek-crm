@@ -152,6 +152,19 @@ export type AppointmentStep = {
   approverName: string | null;
   decidedAt: Date | string | null;
   decisionNote: string | null;
+  /*
+   * Sent back for correction, and the step is still waiting.
+   *
+   * These three ride alongside `state` rather than inside it because nobody
+   * decided anything — the row is `pending` and the queue is right to go on
+   * showing it. What they add is WHY it has been sitting there: a step turned
+   * back with "no warehouse answer" is a step waiting on the salesman, and one
+   * with nothing here is a step waiting on the reviewer. Those are two
+   * different people to chase and the card could not tell them apart.
+   */
+  sentBackAt: Date | string | null;
+  sentBackByName: string | null;
+  sentBackNote: string | null;
 };
 
 /**
@@ -395,10 +408,14 @@ export async function appointmentSteps(customerId: string): Promise<AppointmentS
            r.name as "requestedByName",
            d.name as "approverName",
            a.decided_at as "decidedAt",
-           a.decision_note as "decisionNote"
+           a.decision_note as "decisionNote",
+           a.sent_back_at as "sentBackAt",
+           b.name as "sentBackByName",
+           a.sent_back_note as "sentBackNote"
       from mbos_approvals a
       left join users r on r.id = a.requested_by_user_id
       left join users d on d.id = a.approver_user_id
+      left join users b on b.id = a.sent_back_by_id
      where a.type = 'distributor_appointment'
        and a.subject_type = 'customers'
        and a.subject_id = ${customerId}
