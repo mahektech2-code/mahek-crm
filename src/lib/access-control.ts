@@ -693,26 +693,6 @@ const ADMIN_ONLY: ReadonlySet<Capability> = new Set<Capability>([
 const ACCOUNTS_OR_MANAGER: ReadonlySet<Capability> = new Set<Capability>([
   "sheet.import",
   /*
-   * §11.6's GST validation, and WHY IT SITS HERE rather than anywhere else.
-   *
-   * The specification gives this to the back office, and the back office is not
-   * a role in MahekOne — it is a SEAT, `customers.back_office_am_id`, held by
-   * somebody whose hat is an ordinary one. So there is no "back office"
-   * capability set to put it in, and inventing one would be inventing the fifth
-   * role this codebase deliberately does not have.
-   *
-   * What it lands on instead is the two desks that already do exactly this kind
-   * of work: accounts, who hold the ledger and are the people who find out the
-   * hard way that a GSTIN is wrong, and managers, so that a team with nobody
-   * named in the back office seat is not simply stuck. That fall-through is the
-   * same one the sample-chase task already takes, and for the same reason.
-   *
-   * The seat holder gets in WITHOUT this capability — see `validateGstin`,
-   * which admits the named back office person on the row directly. The
-   * capability is for everybody else.
-   */
-  "lead.gstValidate",
-  /*
    * Setting somebody's target, publishing it, revising it, and reading the
    * coverage/customer shortfall behind it.
    *
@@ -990,12 +970,40 @@ export { conflictsFor, ROLE_CONFLICTS, type RoleConflict } from "@/lib/role-conf
  * moving a capability between the sets, beside the paragraph explaining it.
  */
 
+/**
+ * PAPERWORK CHECKED BY A DESK, WHICH IS NEITHER OF THE TWO SHAPES ABOVE.
+ *
+ * `lead.gstValidate` is the only member and the set exists because none of the
+ * others could hold it without being wrong in one direction or the other.
+ *
+ * §11.6 gives validating a GSTIN to the back office — and the back office is
+ * not a role here, it is a seat on the row. Asked who does it in practice,
+ * Mahek said the accounts desk and the calling desk. `ACCOUNTS_OR_MANAGER`,
+ * where it first sat, spreads into `BOOK_MANAGEMENT` and so reached every
+ * manager of every book app including the handset, while still missing the
+ * accounts CLERK who does this work all day. Leaving it in no set at all is
+ * worse: an unrestricted capability is one EVERYBODY holds, which handed it
+ * straight back to the field salesman who collected the number. Both readings
+ * were caught by `gst-validation-grant.test.ts` rather than by anybody looking.
+ *
+ * So the set's whole job is to make it WITHHELD by default. Who actually gets
+ * it is named on the two apps in the table below, at both levels, because a
+ * clerk checking a number is doing the job rather than making a decision above
+ * their level.
+ *
+ * It is not a permission to validate one's OWN work: `validateGstin` refuses
+ * the lead's owner outright whatever hat he holds, so a salesman who also
+ * holds the CRM cannot come in the side door.
+ */
+const DESK_CHECKS: ReadonlySet<Capability> = new Set<Capability>(["lead.gstValidate"]);
+
 const restricted = new Set<Capability>([
   ...MANAGER_ONLY,
   ...ACCOUNTS_ONLY,
   ...ACCOUNTS_OR_MANAGER,
   ...ADMIN_ONLY,
   ...SHARED,
+  ...DESK_CHECKS,
 ]);
 
 /**
@@ -1070,14 +1078,43 @@ type AppMatrix = { associate: readonly Capability[]; manager: readonly Capabilit
 
 const MATRIX: Record<AppId, AppMatrix> = {
   /* The calling book. */
-  crm: { associate: BOOK_WORK, manager: [...BOOK_WORK, ...BOOK_MANAGEMENT] },
+  /*
+   * §11.6's GST check is handed out BY NAME to two desks, and this is the only
+   * capability in the table that is.
+   *
+   * Mahek's answer to "who validates a GSTIN here" was accounts and the calling
+   * desk. Neither of the obvious routes expresses that. `BOOK_WORK` would hand
+   * it to the FIELD app's associate in the same motion — the salesman who
+   * collected the number, which is the one person it must stay away from — and
+   * `ACCOUNTS_OR_MANAGER`, where it first sat, spreads into `BOOK_MANAGEMENT`
+   * and so reaches every manager of every book app including the handset,
+   * while still missing the accounts CLERK who does this work all day. A test
+   * caught both.
+   *
+   * So it is named on the two apps that carry it, at both levels: an accounts
+   * associate checking a GSTIN is doing the job, not making a decision above
+   * their level, and the calling desk is where Mahek says the other half of it
+   * happens.
+   *
+   * The guard against somebody validating their own lead is not here —
+   * `validateGstin` refuses the lead's owner outright, whatever hat he holds,
+   * so a salesman who also holds the CRM cannot come in the side door. This
+   * decides who may do it at all.
+   */
+  crm: {
+    associate: [...BOOK_WORK, "lead.gstValidate"],
+    manager: [...BOOK_WORK, ...BOOK_MANAGEMENT, "lead.gstValidate"],
+  },
   /* MBOS. A salesman works the same book from a handset — this is the grant
      that used to be spelled "telecaller" on a man who has never made a call. */
   field: { associate: BOOK_WORK, manager: [...BOOK_WORK, ...BOOK_MANAGEMENT] },
   /* The Sales Dashboard reads that book and sets targets against it. */
   sales: { associate: BOOK_WORK, manager: [...BOOK_WORK, ...BOOK_MANAGEMENT] },
   /* The desk. An associate records and reads; the manager decides. */
-  accounts: { associate: LEDGER_WORK, manager: [...LEDGER_WORK, ...LEDGER_DECISIONS] },
+  accounts: {
+    associate: [...LEDGER_WORK, "lead.gstValidate"],
+    manager: [...LEDGER_WORK, ...LEDGER_DECISIONS, "lead.gstValidate"],
+  },
   /* Reading screens. Nothing here writes, so neither level carries a write. */
   reports: { associate: [], manager: ["team.report"] },
   founder: { associate: [], manager: ["team.report"] },

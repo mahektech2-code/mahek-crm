@@ -40,6 +40,23 @@ import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
  * column that exists to end it, and would stamp the salesman's name into
  * `gst_verified_by_id` as the validator.
  *
+ * WHAT A REFUSAL DOES, as Mahek asked for it: it BLOCKS, and it is reversible
+ * without anybody undoing anything.
+ *
+ * A refused GSTIN sets the column false with the date and the name on it, and
+ * the qualification gate refuses `sample_trial` while it stands — so no sample
+ * goes out to a business we could not confirm we may invoice. It is not a
+ * warning, because a warning on this one is a sample already dispatched by the
+ * time somebody reads it.
+ *
+ * Lifting it needs no separate act. The gate reads the column on every
+ * evaluation rather than caching a verdict anywhere, so the moment somebody
+ * validates the corrected number the lead is unblocked and carries on from the
+ * rung it was already on. Nothing has to be re-ticked, no transition is
+ * rewritten, and the refusal stays in the audit log and on the timeline as the
+ * record of what happened in between — which is the point of storing the
+ * refusal rather than simply leaving the flag false.
+ *
  * A SEPARATE FILE from `actions/leads.ts`, because this is the back office's
  * one write on the lead ladder and it does not belong inside the file the
  * salesman's and the manager's writes live in. It is also the whole of what a

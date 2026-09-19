@@ -63,25 +63,43 @@ export function MarkLost({
 
   const [open, setOpen] = React.useState(false);
   /*
-   * §9's catalogue says the radio list defaults to Price, which is the head of
-   * the configured list rather than a literal "price" — a deployment that has
-   * reworded or reordered its reasons would otherwise open this modal with a
-   * code selected that its own list no longer carries.
+   * NOTHING IS PRE-SELECTED, and that is a deliberate departure from §9.
+   *
+   * The specification's catalogue says this list defaults to Price. Mahek was
+   * asked and said no, and the reasoning is the one §26 rests on: a
+   * pre-selected reason means "Mark lost" then "Mark it lost" records a coded
+   * reason nobody chose, and Price quietly becomes the commonest loss in the
+   * book. The whole point of holding these as codes rather than free text is
+   * that "how many did we lose on credit terms this quarter" is a question
+   * somebody can ask — and a default answers it wrongly at scale, invisibly,
+   * in the direction of whichever code happens to sit at the top of the list.
+   *
+   * It is also how every other coded picker in this product behaves: an empty
+   * start and a refusal until somebody answers. A default here would have been
+   * the odd one out as well as the wrong one.
    */
-  const firstReason = lostReasons[0]?.code ?? "";
-  const [reasonCode, setReasonCode] = React.useState(firstReason);
+  const [reasonCode, setReasonCode] = React.useState("");
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   function begin() {
-    setReasonCode(firstReason);
+    setReasonCode("");
     setNote("");
     setError(null);
     setOpen(true);
   }
 
   async function submit() {
+    /* Refused HERE as well as by the disabled button, because a disabled
+       button is not a rule — and refused with the sentence rather than
+       silently, so somebody who got here by keyboard is told what is wanted.
+       The server refuses it too: `evaluateLeadStageMove` will not take a move
+       to lost without a code from the configured list. */
+    if (!reasonCode) {
+      setError("Pick why this was lost. Nobody will look at this lead again, so the reason is the only thing it is still worth.");
+      return;
+    }
     setBusy(true);
     setError(null);
     let result;

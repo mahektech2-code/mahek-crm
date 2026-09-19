@@ -2913,29 +2913,31 @@ export const SETTINGS = [
     description:
       "§12, in paise. A credit limit above this routes the appointment to management. Territory exclusivity always does, whatever the numbers say, because it is the one term that cannot be walked back without taking something away from somebody.",
     /*
-     * ₹30,00,000 — the specification's stated number, and it moved from
-     * ₹5,00,000 on its instruction.
+     * ₹3,00,000, and it moved from ₹5,00,000 on the owner's own answer.
      *
-     * THE SPECIFICATION CONTRADICTS ITSELF HERE and the contradiction is worth
-     * recording rather than quietly resolving. Its prose says "a credit limit
-     * above ₹30,00,000" in two separate places; the expression it gives beside
-     * that prose is `creditLimitRequestedPaise > 30000000`, which in paise is
-     * ₹3,00,000 — a hundredth of what the sentence says. That is the ordinary
-     * rupees-typed-into-a-paise-field slip, and money is paise everywhere in
-     * this codebase, so the literal is the half that is wrong.
+     * THE SPECIFICATION CONTRADICTS ITSELF HERE, so the number could not be
+     * read off it. Its prose says "a credit limit above ₹30,00,000" in two
+     * places; the expression it gives beside that prose is
+     * `creditLimitRequestedPaise > 30000000`, which in paise is ₹3,00,000 — a
+     * hundredth of what the sentence says. One of the two is a typing slip and
+     * nothing in the document says which.
      *
-     * Taken as the PROSE, because the prose is the business rule a person
-     * wrote down and the expression is an implementation of it in a prototype
-     * with no real money in it. The consequence of being wrong in this
-     * direction is that some appointments reach management that need not have;
-     * the other direction appoints distributors on a ₹30 lakh credit line that
-     * nobody senior ever saw.
+     * Mahek settled it: ₹3,00,000. So the EXPRESSION was right and the prose
+     * was the slip, which is the opposite of the way that mistake usually
+     * runs — rupees typed into a paise field is the common one, and this was
+     * an extra zero in a sentence.
      *
-     * It is a setting, so a manager can move it without a deploy — and this is
-     * the first question on the list for the owner, because it is his number
-     * and not ours.
+     * Worth keeping the whole story rather than just the figure, because the
+     * next person to read the specification will hit the same contradiction
+     * and needs to know it was asked and answered rather than overlooked.
+     *
+     * A distributor asking for more than three lakh of credit goes to
+     * management. Below it the sales manager's own step still applies —
+     * management sign every appointment regardless, which is a separate rule
+     * this threshold does not govern; all this decides is whether the routing
+     * NAMES the credit limit as the reason.
      */
-    default: 300000000,
+    default: 30000000,
     min: 0,
   },
 
