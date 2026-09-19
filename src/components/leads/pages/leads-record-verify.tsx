@@ -2,7 +2,9 @@ import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { money } from "@/lib/format";
+import { VERIFICATION_FINDINGS } from "@/lib/lead-labels";
 import { today } from "@/lib/recompute";
+import { getConfig } from "@/lib/config/store";
 import { canLead, leadRecord, managerCalls } from "@/lib/services/lead-console-service";
 import { VerifyScreen, type Finding } from "@/components/leads/record/verify/verify-screen";
 
@@ -49,67 +51,54 @@ export async function Body({
   const calls = await managerCalls(id);
 
   /*
+   * §26's OWN list, read here rather than typed into the screen.
+   *
+   * The third outcome closes the lead as lost, and a loss demands one of the
+   * configured codes — a manager who reworded "Wrong lead" last month must see
+   * his own wording on this radio, or the two screens that close a lead would
+   * be offering two different vocabularies for one column.
+   */
+  const failureReasons = (await getConfig())["leads.verificationFailureReasons"];
+
+  /*
    * A finding with nothing recorded against it is still LISTED. "He did not
    * establish what they use in a month" is a fact about the visit and one of
    * the things this call exists to find out; dropping the row would make a
    * report with six blanks look like a report with three answers.
    */
-  const findings: Finding[] = [
-    {
-      id: "competitor",
-      label: "Whose product they use now",
-      reported: record.competitor,
-      lands: "competitor",
-    },
-    {
-      id: "monthly_litres",
-      label: "What they use in a month",
-      reported: record.monthlyLitres != null ? `${record.monthlyLitres} litres` : null,
-      lands: "monthly_requirement",
-    },
-    {
-      id: "potential",
-      label: "What they could be worth in a month",
-      reported: record.potentialPaise != null ? money(record.potentialPaise) : null,
-      lands: "potential",
-    },
-    {
-      id: "required_product",
-      label: "Which of ours they need",
-      reported: record.requiredProductName,
-      lands: null,
-    },
-    {
-      id: "contact_person",
-      label: "Who we ask for when we ring",
-      reported: record.contactPerson,
-      lands: null,
-    },
-    {
-      id: "decision_maker",
-      label: "Who signs off a purchase",
-      reported: record.decisionMaker,
-      lands: null,
-    },
-    {
-      id: "credit_days",
-      label: "The credit they want",
-      reported: record.creditDaysWanted != null ? `${record.creditDaysWanted} days` : null,
-      lands: null,
-    },
-    {
-      id: "application",
-      label: "What they will use it on",
-      reported: record.application,
-      lands: null,
-    },
-    {
-      id: "customer_type",
-      label: "What kind of business this is",
-      reported: record.customerType,
-      lands: null,
-    },
-  ];
+  /*
+   * BUILT FROM `VERIFICATION_FINDINGS`, never listed again here.
+   *
+   * The nine ids, their words and which column each lands in are one constant
+   * now, because three things read them: this page, the verify screen's rows,
+   * and the action that validates a correction on its way to
+   * `lead_verification_corrections`. Typed out here as well, a tenth finding
+   * added to the screen and not to the validator would be a correction
+   * silently dropped — which reads afterwards as a manager who never bothered.
+   *
+   * What stays here is the only part that is about THIS lead: what the
+   * salesman actually reported, formatted. Money is paise everywhere in this
+   * codebase and litres are litres, so the formatting belongs on the server
+   * beside the record rather than in the client that draws the row.
+   */
+  const reported: Record<string, string | null> = {
+    competitor: record.competitor,
+    monthly_litres: record.monthlyLitres != null ? `${record.monthlyLitres} litres` : null,
+    potential: record.potentialPaise != null ? money(record.potentialPaise) : null,
+    required_product: record.requiredProductName,
+    contact_person: record.contactPerson,
+    decision_maker: record.decisionMaker,
+    credit_days: record.creditDaysWanted != null ? `${record.creditDaysWanted} days` : null,
+    application: record.application,
+    customer_type: record.customerType,
+  };
+
+  const findings: Finding[] = VERIFICATION_FINDINGS.map((f) => ({
+    id: f.id,
+    label: f.label,
+    reported: reported[f.id] ?? null,
+    lands: f.lands,
+  }));
 
   const detail =
     [record.companyName, record.city].filter(Boolean).join(" · ") || record.mobile || "";
@@ -128,6 +117,7 @@ export async function Body({
       stage={record.stage}
       findings={findings}
       priorCalls={calls}
+      failureReasons={failureReasons}
       canVerify={await canLead(user, "lead.verify")}
     />
   );

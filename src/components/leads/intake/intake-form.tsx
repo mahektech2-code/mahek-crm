@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Card, Field, Input, Select, Textarea, cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { SALES_TYPES, type LeadSalesType } from "@/lib/lead-labels";
+import { offeredSalesTypes, salesTypeLabel, type LeadSalesType } from "@/lib/lead-labels";
 import { captureLead } from "@/lib/actions/lead-intake";
 import type {
   LeadSourceOption,
@@ -68,6 +68,7 @@ type Answer = LeadSalesType | "undecided";
 export function IntakeForm({
   workspace,
   sources,
+  sourceOptions,
   owners,
   today,
   requireNextAction,
@@ -76,6 +77,8 @@ export function IntakeForm({
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
   sources: LeadSourceOption[];
+  /** The configured ten. A picker, not a suggestion — see the block below. */
+  sourceOptions: { code: string; label: string }[];
   owners: NextActionOwner[];
   /** Asia/Kolkata, resolved on the server — never read from a browser clock. */
   today: string;
@@ -99,6 +102,7 @@ export function IntakeForm({
     city: "",
     address: "",
     source: "",
+    sourceDetail: "",
     customerType: "",
     monthlyLitres: "",
     competitor: "",
@@ -128,6 +132,7 @@ export function IntakeForm({
         city: f.city,
         address: f.address || undefined,
         source: f.source,
+        sourceDetail: f.sourceDetail.trim() || undefined,
         /* Narrowed rather than cast. A cast across this boundary is how an
            unknown string reaches an enum column and fails at the database. */
         customerType: CUSTOMER_TYPE_CODES.find((c) => c === f.customerType) ?? null,
@@ -263,8 +268,16 @@ export function IntakeForm({
           somebody tapping a different chip.
         </p>
 
+        {/*
+          OFFERED rather than all of them, and Distributor is the one missing.
+          Mahek does not appoint distributors through MahekOne, so starting a
+          lead on that ladder parked it behind a nine-step approval nobody in
+          the building could complete — see the note on the entry itself in
+          `lead-labels.ts`. Leads already on it keep everything they have; this
+          list is only about what a lead may be STARTED on.
+        */}
         <div className="mt-4 grid gap-2 sm:grid-cols-2">
-          {SALES_TYPES.map((t) => (
+          {offeredSalesTypes().map((t) => (
             <button
               key={t.code}
               type="button"
@@ -346,7 +359,7 @@ export function IntakeForm({
               <Pill tone="brand">
                 {answer === "undecided"
                   ? "No ladder chosen"
-                  : (SALES_TYPES.find((t) => t.code === answer)?.label ?? "")}
+                  : salesTypeLabel(answer)}
               </Pill>
             </div>
 
@@ -406,31 +419,66 @@ export function IntakeForm({
               Where did it come from, and what are they?
             </h2>
             <p className="mb-4 max-w-[720px] text-[13px] text-pretty text-muted">
-              The source is free text on purpose — a trade fair happens once and a
-              form that refused a new answer would teach people to pick the
-              nearest wrong one. What is offered below is what the book is already
-              using, which is the cheapest thing there is to stop &ldquo;Website&rdquo;
-              becoming three sources.
+              Ten answers and no eleventh, because the question this list exists
+              to answer is which channels actually produce customers &mdash; and
+              free text cannot answer it. &ldquo;Website&rdquo;,
+              &ldquo;website enquiry&rdquo; and &ldquo;Web&rdquo; are three bars
+              on that chart and one channel in real life. If a channel is
+              genuinely missing, it is added to the list rather than typed into
+              a box: Settings &rarr; Lead sources.
             </p>
-
-            {/* Outside the grid: a datalist renders nothing, but as a grid
-                child it would still take a cell. */}
-            <datalist id="lead-sources">
-              {sources.map((s) => (
-                <option key={s.source} value={s.source} />
-              ))}
-            </datalist>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Source" error={errors.source}>
-                <Input
+                <Select
                   value={f.source}
-                  invalid={Boolean(errors.source)}
-                  onChange={(e) => set("source")(e.target.value)}
-                  list="lead-sources"
-                  placeholder="Telephone enquiry, website, referral…"
-                />
+                  onChange={(e) => {
+                    set("source")(e.target.value);
+                    /* Cleared when the answer moves off Other, so a detail
+                       typed and then reconsidered is not saved against a
+                       source it does not describe. Nothing is cleared on the
+                       SAVED record — see the column's own note. */
+                    if (e.target.value !== "other") set("sourceDetail")("");
+                  }}
+                >
+                  <option value="">Pick one&hellip;</option>
+                  {sourceOptions.map((o) => (
+                    <option key={o.code} value={o.code}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
               </Field>
+
+              {/*
+                * ONLY UNDER "OTHER", and required there.
+                *
+                * Mahek asked for it, and the reason is what Other does to a
+                * coded list left alone: it is the easiest answer on the
+                * dropdown, it costs nothing to pick, and a year later it is
+                * the biggest bar on the chart with nothing behind it. Made to
+                * cost a sentence it gets picked when it is true — and the
+                * sentences are what say which eleventh source is worth adding.
+                *
+                * Drawn conditionally rather than always-present-and-disabled:
+                * a field that is dead on nine answers out of ten is furniture,
+                * and people stop reading furniture.
+                */}
+              {f.source === "other" ? (
+                <Field
+                  label="Source details"
+                  hint="Where did this one actually come from? One line is enough."
+                  error={errors.sourceDetail}
+                >
+                  <Input
+                    value={f.sourceDetail}
+                    invalid={Boolean(errors.sourceDetail)}
+                    onChange={(e) => set("sourceDetail")(e.target.value)}
+                    placeholder="A builder on the site next door sent him"
+                  />
+                </Field>
+              ) : null}
+
               <Field
                 label="What kind of account"
                 hint="What they ARE in the trade. Not the same question as the ladder above — a dealer can be sold to directly or through a distributor."

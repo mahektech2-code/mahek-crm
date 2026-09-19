@@ -1,5 +1,9 @@
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { notFound } from "next/navigation";
+import { requireUser } from "@/lib/auth";
+import { today } from "@/lib/recompute";
+import { canLead } from "@/lib/services/lead-console-service";
+import { nextActionOwnerCandidates } from "@/lib/services/lead-actions-service";
 import {
   leadStream,
   parkedFrom,
@@ -77,13 +81,35 @@ export async function Body({
 
   const cursor = parseCursor(after);
 
-  const [page, parked] = await Promise.all([leadStream(id, { cursor }), parkedFrom(id)]);
+  /*
+   * THE PARK CONTROL'S THREE DEPENDENCIES, fetched here and passed down.
+   *
+   * `today()` applies `workingDay.dayBoundaryHour` in Asia/Kolkata, which is
+   * the only date this business recognises — a modal reading `new Date()` would
+   * be reading the browser's zone during a render, which the React Compiler
+   * rules forbid for the second reason and this codebase forbids for the first.
+   * The candidates are the people a next action may be owed by, the same read
+   * the Next actions screens use rather than a second list of "who counts as a
+   * person here". And `canWork` only decides whether the button is DRAWN: the
+   * action asks `lead.work` again on the server, because a server action is a
+   * URL and a disabled button is not a permission.
+   */
+  const [page, parked, user, day, candidates] = await Promise.all([
+    leadStream(id, { cursor }),
+    parkedFrom(id),
+    requireUser(),
+    today(),
+    nextActionOwnerCandidates(),
+  ]);
 
   return (
     <TransitionsScreen workspace={workspace}
       head={head}
       page={page}
       parked={parked}
+      day={day}
+      ownerCandidates={candidates}
+      canWork={await canLead(user, "lead.work")}
       /* Whether this is the newest page, which is what decides the "back to the
          newest" link. It is asked of the cursor rather than of the rows: an
          empty page with no cursor is a lead with no history, and an empty page

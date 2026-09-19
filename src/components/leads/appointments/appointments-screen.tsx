@@ -26,6 +26,7 @@ import {
   Table,
 } from "@/components/console/parts";
 import { plural, waitingWords } from "@/components/console/words";
+import { LeadTabs } from "@/components/leads/lead-tabs";
 
 type Acting =
   | { kind: "decide"; row: AppointmentRow; approve: boolean }
@@ -135,6 +136,10 @@ export function AppointmentsScreen({
 
   return (
     <div className="p-6">
+      {/* This section carried one tab and therefore drew no strip at all — the
+          tab beside it, the leads left stranded on the retired ladder, would
+          otherwise be a screen only a typed URL could reach. */}
+      <LeadTabs workspace={workspace} />
       <ScreenHeader
         title="Distributor appointments"
         subtitle="Thirty answers, then two signatures. A sales manager may recommend an appointment and may not make one — a discount, a credit limit or exclusivity is a decision with a cost, and the person carrying the target should not be the one allowing it."

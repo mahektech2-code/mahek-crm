@@ -29,6 +29,10 @@ import {
   leadVisitsFor,
   parkedFrom,
 } from "@/lib/services/lead-record-service";
+/* §7 — the SAME candidate list `assignLeadManager` defaults from, asked about
+   this lead rather than about a region the record does not carry. A picker
+   that worked out who covers Vidarbha its own way is the copy that drifts. */
+import { leadManagerCandidatesFor } from "@/lib/services/lead-service";
 import { LeadRecordScreen } from "@/components/leads/record/lead-record-screen";
 
 
@@ -112,6 +116,7 @@ export async function Body({
     profile,
     park,
     config,
+    leadManagers,
   ] = await Promise.all([
     leadTransitions(id),
     managerCalls(id),
@@ -135,9 +140,46 @@ export async function Body({
        a guaranteed null. */
     isParked(record.stage) ? parkedFrom(id) : Promise.resolve(null),
     getConfig(),
+    leadManagerCandidatesFor(id),
   ]);
 
-  const gateInput = gateInputFor(record);
+  /*
+   * §5.3 — THE WINDOW IS PASSED IN, because the gate the action runs computes
+   * staleness and the one this page drew did not.
+   *
+   * `figuresStale` is optional on the engine's input and `undefined` reads as
+   * "not stale", so this page used to draw the sample rung OPEN on a lead the
+   * server action would refuse the moment somebody pressed the button — a
+   * refusal naming a condition the page had never shown. One reading, from
+   * `figuresAreStale`, through a required argument.
+   */
+  const freshDays = config["leads.figuresFreshDays"];
+  const gateInput = gateInputFor(record, freshDays);
+  const figuresStale = Boolean(gateInput.figuresStale);
+
+  /*
+   * §11.6 — WHO MAY ANSWER THE GST CHECK ON THIS LEAD, resolved here because it
+   * is the action's rule and the screen must not invent a second one.
+   *
+   * Two halves, both read straight off `validateGstin`. The capability OR the
+   * named back office seat says who may — a team that has put somebody in that
+   * seat should not have to also grant them an app for the one thing the seat
+   * is for. And the lead's own owner or sales account manager may NOT, whatever
+   * else they hold, because the man who wrote the number down cannot be the man
+   * who certifies it; that is the entire purpose of the column.
+   *
+   * The sentence travels with the answer, so the disabled control's hover says
+   * the same thing the action would have said.
+   */
+  const gstSeatOrCapability =
+    record.backOfficeAmId === user.id || (await canLead(user, "lead.gstValidate"));
+  const gstCollectedByMe = record.salesmanId === user.id || record.salesAmId === user.id;
+  const canValidateGst = gstSeatOrCapability && !gstCollectedByMe;
+  const gstBlockedReason = gstCollectedByMe
+    ? "You recorded this number, so you cannot be the one who checks it. A check somebody performs on their own work is not a check — ask the back office or accounts."
+    : gstSeatOrCapability
+      ? null
+      : "Checking a GST number is the back office's, the CRM's or the accounts desk's. Yours is not one of the hats that carries it.";
   const ladder = ladderOf(record);
 
   /*
@@ -183,6 +225,11 @@ export async function Body({
       nurture={nurture}
       handover={handover}
       handoverReasons={config["people.amChangeReasons"]}
+      sampleReasons={config["leads.sampleReasons"]}
+      /* §26's ten codes as a MANAGER may have reworded them. The action
+         validates what arrives against this same setting, so a picker built
+         from the literal list would offer a code the server refuses. */
+      lostReasons={config["leads.lostReasons"]}
       discountThresholdPercent={config["leads.distributorDiscountApprovalPercent"]}
       creditLimitThresholdPaise={config["leads.distributorCreditLimitApprovalPaise"]}
       canVerify={await canLead(user, "lead.verify")}
@@ -193,7 +240,42 @@ export async function Body({
          is done on the customer record. Refused by the capability in the
          action as well as here — a server action is a URL. */
       canHandOver={await canLead(user, "customer.handOver")}
+      /* Moving a lead off the retired distributor ladder. `lead.override` on
+         its own, and not the line below it: that one is the same capability
+         AND `leads.allowManagerOverride`, which is about passing a shut gate.
+         This passes none — the ladder was retired underneath these leads and
+         nobody in the building can give the approval it ends at — so the
+         action does not read that setting and neither does this. */
+      canMigrate={await canLead(user, "lead.override")}
+      /* §2 — moving a lead onto a different LADDER once it is past Prospect.
+         The same capability `holdsOverride` reads inside `setLeadSalesType`,
+         and deliberately not `canOverride` below it: that one is the
+         capability AND `leads.allowManagerOverride`, which is about passing a
+         shut gate. This passes none — it corrects which ladder a lead was
+         started on, and the answers underneath it are what the reason the
+         action demands is for. Below Prospect the action asks for neither, and
+         the control asks for neither either. */
+      canChangeLadder={await canLead(user, "lead.override")}
+      /* §7 — who covers this lead's region, as the action's own default
+         function answered it. The head of this list is the person
+         `assignLeadManager` seats when nobody names anybody, so the picker and
+         the action cannot disagree about one lead. */
+      leadManagers={leadManagers}
       canOverride={(await canLead(user, "lead.override")) && config["leads.allowManagerOverride"]}
+      /* §4.1 — how hard to push this lead is the manager's word, and
+         `lead.verify` is the capability that already means exactly that: the
+         sales manager's own judgement about a lead, which the salesman working
+         it may not make about his own work. The action asks for the same one —
+         a server action is a URL. See `actions/lead-priority.ts` for why
+         `lead.override` and `lead.work` were the wrong two to reach for. */
+      canPrioritise={await canLead(user, "lead.verify")}
+      /* §11.6 — the answer and the sentence, never the rule itself. */
+      canValidateGst={canValidateGst}
+      gstBlockedReason={gstBlockedReason}
+      /* §5.3 — the SAME boolean the engine was given, so the panel and the
+         rail cannot say different things about one lead on one afternoon. */
+      figuresStale={figuresStale}
+      figuresFreshDays={freshDays}
       overrideAllowed={config["leads.allowManagerOverride"]}
       nowMs={nowMs()}
     />

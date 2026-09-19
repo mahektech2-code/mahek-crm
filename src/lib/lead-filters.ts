@@ -24,6 +24,8 @@
  * configuration and are passed in rather than written here.
  * ------------------------------------------------------------------------- */
 
+import { LEAD_PRIORITIES, NO_PRIORITY_LABEL, priorityLabel } from "./lead-priority";
+
 export type FilterOption = { value: string; label: string };
 
 /** `,`-separated in the URL, like every other multi-select in the product. */
@@ -47,6 +49,25 @@ export const POTENTIAL_BUCKETS = [
   { value: "under50k", label: "Under ₹50,000" },
   { value: "50kto2l", label: "₹50,000 – ₹2,00,000" },
   { value: "over2l", label: "Over ₹2,00,000" },
+] as const satisfies readonly FilterOption[];
+
+/**
+ * §4.1 — the manager's priority, and the FOURTH option is the one it is for.
+ *
+ * DERIVED from `LEAD_PRIORITIES` rather than retyped, because those three
+ * words carry the argument for why this is not the potential filter above it,
+ * and a hand-typed copy here would be a second answer that drifts from it —
+ * the same discipline `access-control.ts` applies to the bundles it hands out.
+ *
+ * "Not set" is appended rather than left out. It is the majority of the book
+ * on the day the column ships and it is the answer a manager opens this filter
+ * for — "which of my leads has nobody been through" — and it is also what
+ * keeps the bucket coverage test honest: every lead has to fall in exactly one
+ * bucket, and a null priority falls in none of the three.
+ */
+export const PRIORITY_BUCKETS = [
+  ...LEAD_PRIORITIES.map((value) => ({ value: value as string, label: priorityLabel(value) })),
+  { value: "none", label: NO_PRIORITY_LABEL },
 ] as const satisfies readonly FilterOption[];
 
 export const NEXT_BUCKETS = [
@@ -88,6 +109,7 @@ export const HEALTH_BUCKETS = [
 /** Every bucket list, for the coverage test that pins each one against SQL. */
 export const BUCKET_LISTS = {
   potential: POTENTIAL_BUCKETS,
+  priority: PRIORITY_BUCKETS,
   next: NEXT_BUCKETS,
   age: AGE_BUCKETS,
   health: HEALTH_BUCKETS,
@@ -114,6 +136,8 @@ export type LeadFilters = {
   source?: string;
   stage?: string;
   potential?: string;
+  /** §4.1 — the manager's own. See `PRIORITY_BUCKETS` and `lead-priority.ts`. */
+  priority?: string;
   next?: string;
   age?: string;
   health?: string;
