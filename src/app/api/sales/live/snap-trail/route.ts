@@ -226,12 +226,12 @@ export async function GET(request: Request) {
     const piece = pieces[index];
     const raw = piece.coordinates;
     const trip = byIndex.get(piece.trip);
-    /* `[lng, lat]` on the wire, `{lat,lng}` through the service — GeoJSON
-       and Ola disagree about the order and this is where they meet. */
     /* A gap has no fixes to snap and a run has nothing to route across, so
        the two never meet: `routedGap` asks Directions about the silence and
        `roadFor` asks Snap-to-Road about the walking, and only one of them is
-       ever asked about one piece. */
+       ever asked about one piece. `[lng, lat]` on the wire and `{lat,lng}`
+       through both services — GeoJSON and Ola disagree about the order, and
+       each of the two turns it round inside itself. */
     const road = piece.gap
       ? await routedGap(raw, piece.fromAt, piece.toAt)
       : await roadFor(plans[index], raw as Coord[], index);
@@ -456,14 +456,26 @@ export async function GET(request: Request) {
   /* Written back onto each trip's segments now the whole leg is known — and
      where the leg collapsed, the raw geometry is written back with it. One
      verdict, both halves, so the shape and the figure can never disagree
-     about a leg. */  for (const [index, roadMetres] of roadMetresByTrip) {
+     about a leg.
+
+     A GAP SEGMENT CAN CARRY A TRIP INDEX — `dayTrailSegments` lets the index
+     ride on a gap where one end has a trip — so a collapsed leg hands its
+     fixes back to a routed gap too, and `inferred` has to go with them.
+     Left set, the hover would say "we think he took this road" over the
+     straight line the segment has just been given back, which is the same
+     shape-and-figure disagreement one field along. */
+  for (const [index, roadMetres] of roadMetresByTrip) {
     const trip = byIndex.get(index);
     if (!trip) continue;
     const measurable = roadMetres > 0 && roadMetres >= trip.metres * COLLAPSED_BELOW;
     for (let i = 0; i < segments.length; i++) {
       if (segments[i].trip !== index) continue;
-      if (measurable) segments[i].metres = roadMetres;
-      else segments[i].coordinates = rawByIndex[i];
+      if (measurable) {
+        segments[i].metres = roadMetres;
+      } else {
+        segments[i].coordinates = rawByIndex[i];
+        segments[i].inferred = false;
+      }
     }
   }
 
