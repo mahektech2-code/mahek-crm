@@ -707,8 +707,23 @@ export async function updateCustomer(
         ...(parsed.data.gstin !== undefined
           ? { gstin: parsed.data.gstin || null }
           : {}),
+        /*
+         * BOTH COLUMNS, because only one of them can say "nobody has stated
+         * this".
+         *
+         * `creditTermDays` is NOT NULL DEFAULT 30, so on that column a
+         * deliberate 30 and an untouched row are the same value and the party
+         * projection cannot tell them apart. `creditDays` is the nullable
+         * mirror and is what the sheet now reads to decide whether the field
+         * is EMPTY. Writing only the first left a term somebody typed here
+         * looking untouched, and the next sync put the spreadsheet's number
+         * back within the half hour.
+         */
         ...(parsed.data.creditTermDays !== undefined
-          ? { creditTermDays: parsed.data.creditTermDays }
+          ? {
+              creditTermDays: parsed.data.creditTermDays,
+              creditDays: parsed.data.creditTermDays,
+            }
           : {}),
         ...(parsed.data.cycleDays !== undefined
           ? { cycleDays: parsed.data.cycleDays }
@@ -915,6 +930,8 @@ export async function decideDeactivation(
               deactivatedById: ctx.user.id,
               deactivationReason: reason ?? existing.deactivationReason,
               deactivationRequested: false,
+              // A person decided, so the sheet stops speaking for this row.
+              statusDecidedAt: new Date(),
               updatedAt: new Date(),
               updatedById: ctx.user.id,
             }
@@ -1079,6 +1096,17 @@ export async function decideReactivation(
               deactivationRequested: false,
               reactivationRequested: false,
               reactivationReason: null,
+              /*
+               * THE HALF THE SYNC USED TO UNDO.
+               *
+               * Clearing `deactivationReason` two lines up is what the party
+               * projection had been reading to tell a CRM decision from its
+               * own, so a reactivation erased the only evidence that anybody
+               * had decided anything — and the next pass, seeing `Deactive`
+               * still in the spreadsheet, closed the account again. Sixteen
+               * minutes, in the case that found this.
+               */
+              statusDecidedAt: new Date(),
               updatedAt: new Date(),
               updatedById: ctx.user.id,
             }
