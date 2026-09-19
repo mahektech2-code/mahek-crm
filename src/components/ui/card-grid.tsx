@@ -28,20 +28,28 @@ const NAMED = { card: 216, panel: 260, broad: 380 } as const;
 
 export function CardGrid({
   min = "card",
-  gap = "md",
+  gap = "gap-4",
   className,
   children,
 }: {
   /** The width below which one of these stops being readable. */
   min?: keyof typeof NAMED | number;
-  gap?: "sm" | "md";
+  /**
+   * The gap, as the Tailwind class rather than a size of this component's
+   * own invention. There are seven different gaps on the grids in this suite —
+   * `gap-px` on a divider grid, `gap-2.5` inside a drawer, `gap-x-8 gap-y-3`
+   * on a definition list — and a two-value scale here would mean either
+   * changing six layouts that are correct or leaving six grids outside this
+   * component, which is how the second spelling comes back.
+   */
+  gap?: string;
   className?: string;
   children: React.ReactNode;
 }) {
   const floor = typeof min === "number" ? min : NAMED[min];
   return (
     <div
-      className={cx("grid", gap === "sm" ? "gap-3" : "gap-4", className)}
+      className={cx("grid", gap, className)}
       style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${floor}px, 1fr))` }}
     >
       {children}

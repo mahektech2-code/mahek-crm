@@ -42,6 +42,7 @@ import {
 import { applyMerge, fieldLabel, mergeValues, missingFields, usedFields } from "@/lib/merge";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { money, phoneDisplay, stamp } from "@/lib/format";
+import { CardGrid } from "@/components/ui/card-grid";
 
 /**
  * The real `template_category` enum, with the words a manager reads instead
@@ -1140,7 +1141,7 @@ function RunTab({
     }));
 
     return (
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(380px,1fr))] items-start gap-4">
+      <CardGrid min="broad" className="items-start">
         <Card className="p-5">
           <div className="mb-1 text-lg font-semibold text-ink">Set up a send run</div>
           <p className="mb-4 text-[13px] text-muted">
@@ -1215,7 +1216,7 @@ function RunTab({
             </div>
           ))}
         </Card>
-      </div>
+      </CardGrid>
     );
   }
 

@@ -33,6 +33,7 @@ import { money, moneyShort, pct, periodLabel } from "@/lib/format";
 import { UNASSIGNED_FILTER_VALUE } from "@/lib/am-filters";
 import { useRestoreSort, rememberSort } from "@/components/ui/use-remembered-sort";
 import { parseSort, nextSort, formatSort } from "@/lib/sort-param";
+import { CardGrid } from "@/components/ui/card-grid";
 
 const PER_PAGE = [25, 50, 100] as const;
 
@@ -567,7 +568,7 @@ export function MonthlyTargetsScreen({
           is a statement about your book.
         </Card>
       ) : tab === "shortfall" ? (
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(420px,1fr))] items-start gap-4">
+        <CardGrid min={420} className="items-start">
           {groups.map((g) => (
             <Card key={g.title}>
               <div
@@ -631,7 +632,7 @@ export function MonthlyTargetsScreen({
               </table>
             </Card>
           ))}
-        </div>
+        </CardGrid>
       ) : (
         <>
           <Card className={cx("overflow-auto", chips.length ? "rounded-t-none" : "mt-0 rounded-t-none border-t-0")}>

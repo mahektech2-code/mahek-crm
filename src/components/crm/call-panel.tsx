@@ -2522,7 +2522,7 @@ function CallPanelForm({
                               <div className="mb-2.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
                                 Frequently purchased
                               </div>
-                              <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-2.5">
+                              <CardGrid min={200} gap="gap-2.5">
                                 {visibleFrequent.map((p) => {
                                   const raw = quantities[p.id];
                                   // Chosen means a real quantity. A box holding
@@ -2576,7 +2576,7 @@ function CallPanelForm({
                                     </div>
                                   );
                                 })}
-                              </div>
+                              </CardGrid>
                               {frequent.length > FREQUENT_PREVIEW ? (
                                 <button
                                   onClick={() => setShowAllFrequent((v) => !v)}
