@@ -177,3 +177,105 @@ describe("whether the phone let the app run", () => {
     assert.ok(readDeviceState({ batteryExemption: "optimised" }).deviceStateAt instanceof Date);
   });
 });
+
+describe("MBOS's own location service", () => {
+  test("a build that predates it reports nothing, and nothing is read as off", () => {
+    const state = readDeviceState({ batteryPercent: 50 });
+    assert.ok(!("locationServiceRunning" in state));
+    assert.ok(!("locationServiceLastFixAt" in state));
+    assert.ok(!("locationServiceBuffered" in state));
+    assert.ok(!("locationServiceStartsToday" in state));
+    assert.ok(!("locationServiceLastUploadAt" in state));
+  });
+
+  test("when a batch was last ACCEPTED is its own fact", () => {
+    /* `uploads()` on the handset says whether the recorder believes it is
+       posting, from five things that are all true of an uploader wedged
+       against a captive portal. This is the only reading taken at our end, and
+       the only one that can tell the two apart. */
+    const state = readDeviceState({
+      locationServiceRunning: true,
+      locationServiceLastFixAgoSeconds: 3,
+      locationServiceLastUploadAgoSeconds: 2 * 60 * 60,
+    });
+    const at = state.locationServiceLastUploadAt as Date;
+    assert.ok(at instanceof Date);
+    assert.ok(Date.now() - at.getTime() > 90 * 60 * 1000);
+  });
+
+  test("an explicit null clears the upload mark, and an absent key does not", () => {
+    /* A handset reinstalled, or handed to somebody else, starts with a
+       recorder that has never had a batch taken — and a mark nobody can clear
+       is a standing figure on a panel built on a healthy phone saying nothing.
+       An older build that has never heard of the key still leaves it alone. */
+    assert.equal(
+      readDeviceState({ locationServiceLastUploadAgoSeconds: null }).locationServiceLastUploadAt,
+      null,
+    );
+    assert.ok(!("locationServiceLastUploadAt" in readDeviceState({ batteryPercent: 50 })));
+  });
+
+  test("running, and when it last actually took a fix", () => {
+    const state = readDeviceState({
+      locationServiceRunning: true,
+      locationServiceLastFixAgoSeconds: 12,
+    });
+    assert.equal(state.locationServiceRunning, true);
+    assert.ok(state.locationServiceLastFixAt instanceof Date);
+  });
+
+  test("running and silent is expressible, which is the whole point of two fields", () => {
+    /* A service can hold its notification and have a provider that has quietly
+       stopped delivering. That is invisible in every other column. */
+    const state = readDeviceState({
+      locationServiceRunning: true,
+      locationServiceLastFixAgoSeconds: 4 * 60 * 60,
+    });
+    assert.equal(state.locationServiceRunning, true);
+    const at = state.locationServiceLastFixAt as Date;
+    assert.ok(Date.now() - at.getTime() > 3 * 60 * 60 * 1000);
+  });
+
+  test("an explicit null clears, and an absent key leaves the column alone", () => {
+    /* The same rule as the stall mark: a phone that has been given the battery
+       exemption stops being refused, and a refusal nobody can clear is a
+       standing false alarm. */
+    assert.equal(
+      readDeviceState({ locationServiceRefusedAgoSeconds: null }).locationServiceRefusedAt,
+      null,
+    );
+    assert.ok(!("locationServiceRefusedAt" in readDeviceState({ batteryPercent: 50 })));
+  });
+
+  test("zero starts and an empty buffer are real answers", () => {
+    const state = readDeviceState({
+      locationServiceBuffered: 0,
+      locationServiceStartsToday: 0,
+    });
+    assert.equal(state.locationServiceBuffered, 0);
+    assert.equal(state.locationServiceStartsToday, 0);
+  });
+
+  test("a negative count is dropped rather than clamped", () => {
+    /* `-1` is the native side's own word for "nothing to say", and the handset
+       wrapper turns it into an omitted key. Anything that reaches here as a
+       negative came from somewhere else entirely. */
+    const state = readDeviceState({
+      locationServiceBuffered: -1,
+      locationServiceStartsToday: -1,
+    });
+    assert.ok(!("locationServiceBuffered" in state));
+    assert.ok(!("locationServiceStartsToday" in state));
+  });
+
+  test("the refusal is the platform's own word, trimmed and capped", () => {
+    assert.equal(
+      readDeviceState({ locationServiceRefusal: " watchdog:ForegroundServiceStartNotAllowedException " })
+        .locationServiceRefusal,
+      "watchdog:ForegroundServiceStartNotAllowedException",
+    );
+    const long = readDeviceState({ locationServiceRefusal: "x".repeat(400) });
+    assert.equal(long.locationServiceRefusal?.length, 120);
+    assert.ok(!("locationServiceRefusal" in readDeviceState({ locationServiceRefusal: "   " })));
+  });
+});

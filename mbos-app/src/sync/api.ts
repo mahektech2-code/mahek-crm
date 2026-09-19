@@ -94,18 +94,67 @@ export async function deviceLabel(): Promise<string> {
   return [Device.manufacturer, Device.modelName].filter(Boolean).join(' ') || 'Unknown handset';
 }
 
+/**
+ * THE ONE PLACE A TOKEN IS WRITTEN, which is why the mirror is written here.
+ *
+ * MBOS's own location service posts positions for itself — that is the whole
+ * point of it, because the moment it matters is the moment this JavaScript is
+ * not running — and it cannot read the keychain these live in. So the pair is
+ * MIRRORED into the service's own preferences, and it is done HERE rather than
+ * at the three call sites that mint tokens, because a mirror updated at two of
+ * three places is a service posting with an expired token and nobody able to
+ * say why.
+ *
+ * It never fails a sign-in: `setServiceCredentials` swallows everything, and a
+ * mirror that did not land costs the service its ability to send, which hands
+ * the queue back to `flush()` — the behaviour this app had before the uploader
+ * existed.
+ */
 export async function setTokens(access: string, refresh: string): Promise<void> {
   await setSecret(ACCESS_KEY, access);
   await setSecret(REFRESH_KEY, refresh);
+  await mirrorCredentials(access, refresh);
 }
 
 export async function clearTokens(): Promise<void> {
   await deleteSecret(ACCESS_KEY);
   await deleteSecret(REFRESH_KEY);
+  /* ALL FOUR EMPTY IS THE SIGN-OUT, and it clears rather than storing blanks.
+     A released handset holding a refresh token is a handset that could still
+     post for somebody who has left. */
+  await mirrorCredentials('', '');
+}
+
+async function mirrorCredentials(access: string, refresh: string): Promise<void> {
+  try {
+    const { setServiceCredentials } = await import('../native/location-service');
+    await setServiceCredentials({
+      baseUrl: access ? BASE : '',
+      deviceId: access ? await deviceId() : '',
+      accessToken: access,
+      refreshToken: refresh,
+    });
+  } catch {
+    /* A build with no such module, or a bridge that would not answer. The
+       service then cannot send and the app drains the buffer instead, which is
+       exactly what it did before the service could send at all. */
+  }
 }
 
 export async function accessToken(): Promise<string | null> {
   return getSecret(ACCESS_KEY);
+}
+
+/**
+ * The refresh token, for the ONE caller that is not `tryRefresh`.
+ *
+ * The service holds its own copy so it can refresh with no JavaScript in the
+ * process. Both copies go on working: the server's refresh is a stateless JWT
+ * with no denylist, so rotating one does not invalidate the other, and each
+ * side carries its own until it expires.
+ */
+export async function refreshToken(): Promise<string | null> {
+  return getSecret(REFRESH_KEY);
 }
 
 /* ---------------------------------------------------------------- request */
