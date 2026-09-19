@@ -1016,6 +1016,20 @@ export async function start(reason: 'check-in' | 'resume' = 'resume'): Promise<v
     await setKv(STALLED_AT, '');
     demotion = null;
     /*
+     * AND THE START FAILURE GOES WITH IT, which is the one thing that fell out
+     * of putting the two branches together and is in neither of them.
+     *
+     * `startFailure` is read by the Sync screen through `backgroundStartFailure()`
+     * and turned into a sentence by `engines/tracker-notice.ts`. A
+     * `registration_failed` recorded at nine — when the borrowed tracker was
+     * the only mechanism — would go on drawing "This phone would not start the
+     * tracker. Ring the office" all day on a handset whose own service is
+     * recording perfectly well. It is the false alarm on a healthy phone that
+     * this whole release is about, arriving by a third door: the verdict is
+     * about a registration nothing is relying on any more.
+     */
+    startFailure = null;
+    /*
      * THE REPORT STILL GOES, AND THE BOOLEAN IS RESTATED RATHER THAN INVENTED.
      *
      * It said `true` here, flatly, and on this path nothing has asked the OS
