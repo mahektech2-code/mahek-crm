@@ -3077,9 +3077,42 @@ the same change four times in four minutes before giving up, and the account
 they were trying to move sat in the wrong person's Call Log for a day. The
 projection now skips all four manager columns on a decided account and records
 the disagreement in `sync_conflicts`, which is what the order projection
-already did for `orders.status`. Everything that is NOT a manager — the phone
-number, the credit term, the area — still comes from the sheet, because the
-sheet is simply right about those.
+already did for `orders.status`.
+
+**AND THE SAME RULE NOW COVERS THE STATUS AND EVERYTHING ELSE, which is a
+REVERSAL.** This paragraph used to end by saying that everything which is not a
+manager — the phone number, the credit term, the area — still comes from the
+sheet, because the sheet is simply right about those. It is right about an
+account nobody has touched, which is almost all of them, and wrong the moment
+somebody has: a telecaller who corrects a town after actually speaking to the
+customer is better informed than a spreadsheet, and having it put back within
+the half hour with nothing saying so is the reassignment bug wearing different
+clothes. So the projection FILLS A BLANK and never corrects a person —
+`city`, `region`, `price_tag`, `lead_source` and the credit term joined the
+phone number and the GSTIN, which had always worked this way.
+
+**A CREDIT TERM NEEDS TWO COLUMNS TO SAY "NOBODY HAS STATED THIS".**
+`credit_term_days` is NOT NULL DEFAULT 30, so on that column a deliberate 30
+and an untouched row are the same value and no blank test can tell them apart.
+`credit_days` is the nullable mirror and is what the projection reads. That is
+why `updateCustomer` writes BOTH: writing only the first left a term somebody
+had agreed on the phone still reading as empty, so the guard looked right and
+did nothing.
+
+**AND THE STATUS IS A DECISION, so it gets a mark rather than a blank test.**
+`status_decided_at` is the third of its kind after `orders.approved_at` and
+`customers.am_decided_at`. The projection already declined to REACTIVATE what a
+person had closed in the CRM, by reading `deactivation_reason` — and nothing
+whatever guarded the other direction, because the `Deactive` branch writes
+unconditionally. `deactivation_reason` could never have covered both: a
+reactivation CLEARS it by design, so the decision destroys its own evidence.
+In production an admin reactivated one shop twice, both marked "Mistake", and
+the sync re-closed it sixteen minutes after the second. A closed account is
+invisible to the Call Log — `queueInputs` filters the status BEFORE the scope
+filter is reached, so no seat and no score can put it back on a list — and that
+shop went on taking dispatched orders while nobody was allowed to ring it.
+Null means NOT DECIDED, which is every row that predates the column, so adding
+it moved no figure.
 
 **`updateCustomer` is not a door to it either.** It wrote `owner_id` for
 anybody who could edit a customer and `back_office_am_id` for any manager, both

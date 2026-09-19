@@ -1563,6 +1563,29 @@ export const customers = pgTable(
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
     deactivatedById: text("deactivated_by_id").references(() => users.id),
     deactivationReason: text("deactivation_reason"),
+    /**
+     * A STATUS SOMEBODY DECIDED, AND THEREFORE ONE THE SHEET MAY NOT RESTATE.
+     *
+     * The same mark as `amDecidedAt` one field family over, and it exists
+     * because the party projection shipped with exactly half the rule. It
+     * already refused to REACTIVATE what a person had closed in the CRM, by
+     * reading `deactivationReason`; nothing at all guarded the other
+     * direction, because the Deactive branch writes unconditionally. So an
+     * account somebody brought BACK was re-closed on the next pass, every
+     * pass, for ever.
+     *
+     * Reading `deactivationReason` could never have covered both: a
+     * reactivation CLEARS that column by design — a stale reason on a live row
+     * is how a screen explains a deactivation that was reversed in March — so
+     * the evidence of the decision is destroyed by the decision itself. It
+     * needs a mark of its own.
+     *
+     * Null means NOT DECIDED, never "active": every row written before this,
+     * and every account the spreadsheet alone has spoken for. Those go on
+     * tracking the sheet exactly as they did, which is why adding this moved
+     * no figure on any screen.
+     */
+    statusDecidedAt: timestamp("status_decided_at", { withTimezone: true }),
     /** Raised by a telecaller, decided by a manager. */
     deactivationRequested: boolean("deactivation_requested").notNull().default(false),
     /**
