@@ -61,23 +61,31 @@ export async function Body({
    * the late ones alone would show a manager only the chances he has already
    * missed. Everything still owed is the set he can actually act on.
    */
+  /*
+   * THE THIRD VIEW IS APPROVED, and it used to name a verdict that does not
+   * exist. `mbos_sample_outcome` is pending, approved, rejected, more_testing;
+   * "converted" was never one of them, so the count behind this chip was a SQL
+   * literal Postgres refused outright and the whole screen answered 500. A
+   * sample is APPROVED — §L, which is what opens the negotiation — and it is
+   * the shop's order that converts, one record along.
+   */
   const show = (
-    ["late", "awaiting", "converted", "all"].includes(params.show ?? "") ? params.show! : "awaiting"
-  ) as "late" | "awaiting" | "converted" | "all";
+    ["late", "awaiting", "approved", "all"].includes(params.show ?? "") ? params.show! : "awaiting"
+  ) as "late" | "awaiting" | "approved" | "all";
 
   const visible =
     show === "late"
       ? rows.filter((s) => s.trialOutcome === "pending" && s.lateDays > 0)
       : show === "awaiting"
         ? rows.filter((s) => s.trialOutcome === "pending")
-        : show === "converted"
-          ? rows.filter((s) => s.trialOutcome === "converted")
+        : show === "approved"
+          ? rows.filter((s) => s.trialOutcome === "approved")
           : rows;
 
   /*
    * THE CHIP COUNTS ARE SQL'S AND THE TABLE IS A PAGE OF ONE VIEW.
    *
-   * `samples.late`, `.awaiting` and `.converted` are counted over every sample
+   * `samples.late`, `.awaiting` and `.approved` are counted over every sample
    * ever sent out; `visible` is a filter over the newest three hundred.
    * Counting the page instead would be the cheaper answer and the wrong one in
    * the direction that matters here — a sample goes quiet by being forgotten,
@@ -89,7 +97,7 @@ export async function Body({
   const counts = {
     late: samples.late,
     awaiting: samples.awaiting,
-    converted: samples.converted,
+    approved: samples.approved,
     all: samples.total,
   };
 
@@ -144,7 +152,7 @@ export async function Body({
             sub: oldest ? `oldest ${plural(oldest, "day")}` : undefined,
             tone: samples.late ? "warn" : undefined,
           },
-          { label: "Converted", value: String(samples.converted), tone: "success" },
+          { label: "Approved", value: String(samples.approved), tone: "success" },
           { label: "Sent in all", value: String(samples.total) },
         ]}
       />
@@ -161,7 +169,7 @@ export async function Body({
             options={[
               { key: "late", href: "/sales/samples?show=late", label: "Past the date", count: counts.late },
               { key: "awaiting", href: "/sales/samples?show=awaiting", label: "Awaiting feedback", count: counts.awaiting },
-              { key: "converted", href: "/sales/samples?show=converted", label: "Converted", count: counts.converted },
+              { key: "approved", href: "/sales/samples?show=approved", label: "Approved", count: counts.approved },
               { key: "all", href: "/sales/samples?show=all", label: "Everything", count: counts.all },
             ]}
           />
@@ -180,8 +188,8 @@ export async function Body({
               title={
                 show === "late"
                   ? "Nothing is past its date"
-                  : show === "converted"
-                    ? "Nothing has converted yet"
+                  : show === "approved"
+                    ? "No trial has been approved yet"
                     : "Nothing is waiting on feedback"
               }
               body={
