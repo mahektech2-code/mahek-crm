@@ -881,6 +881,18 @@ export async function applyLeadStageMove(
       ownerId: string;
       outcome?: string | null;
     } | null;
+    /**
+     * §— PARKING A LEAD, and the two facts that make it a pause rather than a
+     * quiet death.
+     *
+     * OPTIONAL here on purpose, and demanded by the WEB action instead. An APK
+     * cannot be recalled, so handsets in the field go on parking leads the way
+     * the build in somebody's pocket knows how — and refusing those would turn
+     * a salesman recording a real plant shutdown into a rejection he cannot
+     * act on. The handset has always demanded its own reason; the resume date
+     * is asked where it can be asked.
+     */
+    hold?: { reason: string; resumeDate: string } | null;
     /** The business date, resolved by the caller — engines read no clock. */
     day: string;
   },
@@ -938,6 +950,36 @@ export async function applyLeadStageMove(
        credit terms this quarter" is a question somebody can ask of a code and
        cannot ask of a grep. Old rows keep their sentences and still read. */
     if (to === "lost" && o.reasonCode) set.leadLostReason = o.reasonCode;
+
+    /*
+     * §— ON HOLD IS A PAUSE, AND A PAUSE HAS TO SAY WHEN IT ENDS.
+     *
+     * Parking already demanded a reason, and a reason alone is how a lead sits
+     * for six months: "back after Diwali" is a sentence nobody is watching, so
+     * a parked lead stayed parked until somebody happened to scroll past it. A
+     * DATE is a thing a worklist can be built from, which is the difference
+     * between a pause and a quiet death.
+     *
+     * Both written together or neither, because a resume date with no reason
+     * says a lead comes back and not why anybody stopped, and a reason with no
+     * date is what this exists to end.
+     */
+    if (to === "on_hold" && o.hold) {
+      set.leadHoldReason = o.hold.reason;
+      set.leadHoldResumeDate = o.hold.resumeDate;
+    }
+
+    /*
+     * COMING BACK CLEARS THEM. A lead moved off `on_hold` to any rung is no
+     * longer parked, and a stale resume date left on the row would keep it on
+     * the resume worklist for ever — a list that shows leads nobody needs to
+     * resume is one people stop opening. The REASON goes with it: it answered
+     * "why is this stopped", and it is not stopped.
+     */
+    if (from === "on_hold" && to !== "on_hold") {
+      set.leadHoldReason = null;
+      set.leadHoldResumeDate = null;
+    }
 
     if (promoted) {
       set.kind = "customer";

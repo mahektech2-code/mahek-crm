@@ -137,6 +137,18 @@ const advanceSchema = z.object({
     })
     .optional(),
   nextAction: nextActionSchema.optional(),
+  /**
+   * §— the two facts that make On Hold a pause. Demanded below when the move
+   * is a park, and meaningless on any other move.
+   */
+  hold: z
+    .object({
+      reason: z.string().trim().min(1, "Why is it stopping?").max(500),
+      resumeDate: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, "Give the day it should come back as a date."),
+    })
+    .optional(),
 });
 
 /**
@@ -194,6 +206,47 @@ export async function advanceLeadStage(input: {
         }
       : gate;
 
+    /*
+     * §— PARKING DEMANDS THREE ANSWERS, AND ONLY FROM THIS DOOR.
+     *
+     * Mahek's instruction: a lead going On Hold says WHY it stopped, WHEN it
+     * comes back, and WHAT happens when it does. The three are one rule —
+     * a reason with no date is a lead that sits for six months because "back
+     * after Diwali" is a sentence nobody is watching; a date with nothing
+     * scheduled is a lead that comes back to nobody.
+     *
+     * Checked HERE and deliberately not in `evaluateLeadStageMove`, which the
+     * HANDSET shares. An APK cannot be recalled, so phones in the field go on
+     * parking leads the way the build in somebody's pocket knows how, and
+     * refusing those would turn a salesman recording a real plant shutdown
+     * into a rejection he can do nothing about. The handset has always
+     * demanded its own reason; the other two are asked where they can be.
+     *
+     * §24 already demands a next action on every upward move, and a park is
+     * not one — so it is demanded again, by name, rather than assumed.
+     */
+    if (to === "on_hold") {
+      const missing: FieldError[] = [];
+      if (!p.hold?.reason?.trim()) {
+        missing.push({ field: "holdReason", message: "Why is it stopping?" });
+      }
+      if (!p.hold?.resumeDate) {
+        missing.push({ field: "holdResumeDate", message: "When should it come back?" });
+      }
+      if (!p.nextAction) {
+        missing.push({ field: "nextAction", message: "What happens when it does?" });
+      }
+      if (missing.length) {
+        return {
+          ok: false,
+          error:
+            "On hold is a pause, not a quiet death. Say why it stopped, the day it should come back, and what happens when it does — otherwise it comes back to nobody.",
+          code: "validation",
+          fieldErrors: missing,
+        };
+      }
+    }
+
     const decision = await evaluateLeadStageMove({
       lead,
       gate: withNextAction,
@@ -239,6 +292,10 @@ export async function advanceLeadStage(input: {
         reasonCode: p.reasonCode ?? p.override?.reasonCode ?? null,
         note: p.note ?? p.override?.note ?? null,
         nextAction: p.nextAction ?? null,
+        /* Written by the same transaction that moves the rung: a park that
+           saved and a reason that failed a moment later would leave a lead
+           stopped with nothing saying why. */
+        hold: p.hold ?? null,
         day: await today(),
       },
     );
