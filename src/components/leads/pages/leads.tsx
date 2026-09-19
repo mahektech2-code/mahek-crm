@@ -17,6 +17,7 @@ import {
   leadsWithoutNextAction,
   verificationQueue,
 } from "@/lib/services/lead-console-service";
+import { vantageViewer } from "@/lib/services/lead-vantage-service";
 import { LeadsScreen } from "@/components/leads/leads-screen";
 
 
@@ -101,7 +102,7 @@ export async function Body({
   };
 
   const day = await today();
-  const [page, config, team, archivedCount, verification, exceptions, appointments, options] =
+  const [page, config, team, archivedCount, verification, exceptions, appointments, options, viewer] =
     await Promise.all([
       leadsPage(day, {
         archived: showArchived,
@@ -116,6 +117,16 @@ export async function Body({
       leadsWithoutNextAction(day, { limit: 1 }),
       appointmentQueue(),
       leadFilterOptions(showArchived),
+      /*
+       * §7 — whose job this reader is doing, asked ONCE for the whole page.
+       *
+       * Two of the five vantages come off seats on the row, so the resolution
+       * itself has to happen per row; what does not is reading the person's
+       * hats, which is one memoized `app_access` select however many leads are
+       * drawn. It rides in the same `Promise.all` as everything else on the
+       * screen, so §7 costs this page no round trip of its own.
+       */
+      vantageViewer(user),
     ]);
 
   return (
@@ -153,6 +164,10 @@ export async function Body({
          may not make about his own work", which is this act exactly — see the
          action for why `lead.override` and `lead.work` were the wrong two. */
       canPrioritise={await canLead(user, "lead.verify")}
+      /* WORDS, never rights. See `lib/lead-vantage.ts` — this decides which
+         instruction each row prints and nothing whatever about what may be
+         done to the lead, which every action goes on checking for itself. */
+      viewer={viewer}
       desks={{
         verification: verification.total,
         verificationMine: verification.mine,

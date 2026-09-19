@@ -6,7 +6,8 @@ import {
   type FilterOption,
   type LeadFilters,
 } from "../lead-filters";
-import { stageLabel, type LeadStage } from "../lead-labels";
+import { stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
+import { orderCountsSql } from "../order-status";
 import type { LeadPriority } from "../lead-priority";
 import type { BusinessDate } from "../business-date";
 import { cache } from "react";
@@ -1286,6 +1287,38 @@ export type LeadRow = {
    */
   customerHealthBand: HealthBand | null;
   customerOutstandingPaise: number | null;
+  /* ─────────────────────────────────────────────────────────── §7's facts
+   *
+   * FIVE COLUMNS THAT EXIST TO FEED ONE PURE FUNCTION.
+   * `engines/lead-role-action.ts` turns a lead plus a VANTAGE into the
+   * instruction that vantage is being given, and it is the piece of business
+   * logic the specification calls the most important in the pipeline — so what
+   * it needs rides on the read that already runs rather than on a query per
+   * row. Three of the five are correlated subqueries against tables this row
+   * already owns; none of them adds a join, because every bare column in the
+   * builder would become ambiguous and the clause is spliced into three
+   * statements that do not all join `users`.
+   */
+  /** Which of the three ladders. Null is the fourth answer — see `leadSalesType`. */
+  salesType: LeadSalesType | null;
+  /**
+   * The back office SEAT, and it is selected for the VANTAGE rather than for
+   * the screen: `lead-vantage.ts` reads it to decide whether the person
+   * looking at this row is the one who has to dispatch the sample on it.
+   */
+  backOfficeAmId: string | null;
+  /**
+   * §3.4 — a FORECAST somebody recorded, and never a sale. The two expected-
+   * order columns are what a customer SAID on a phone call, which is the whole
+   * reason the sales manager's verb in Negotiation forks on it: a commitment
+   * on file with no order against it is money left on the table, and it is
+   * exactly those leads the danger tone has to surface out of four hundred.
+   */
+  hasCommitment: boolean;
+  /** A counting order exists — `PURCHASE_STATUSES`, never three statuses typed here. */
+  hasOrder: boolean;
+  /** A sample somebody asked for and nobody has sent. What lights the back office up. */
+  sampleAwaitingDispatch: boolean;
 };
 
 /*
@@ -1354,7 +1387,36 @@ const LEAD_ROW_SELECT = sql`
            case when c.lead_converted_at is not null then c.status::text end as "customerStatus",
            case when c.lead_converted_at is not null then c.last_order_date::text end as "customerLastOrderDate",
            case when c.lead_converted_at is not null then c.cycle_days end as "customerCycleDays",
-           case when c.lead_converted_at is not null then c.outstanding end as "customerOutstandingPaise"
+           case when c.lead_converted_at is not null then c.outstanding end as "customerOutstandingPaise",
+           /* §7's five facts. They are here rather than in a read of their own
+            * because the instruction a lead carries is wanted on EVERY row of
+            * the list, and a per-row query for it would be four hundred round
+            * trips to answer a column. NO BACKTICKS in this comment: it sits
+            * inside a sql template literal, and one backtick ends the literal.
+            *
+            * The sales type is cast to text like every other enum read here -
+            * the screens compare it against the plain words in
+            * lib/lead-labels.ts, and a pg enum arrives as a string anyway. */
+           c.lead_sales_type::text as "salesType",
+           c.back_office_am_id as "backOfficeAmId",
+           /* A FORECAST, not a sale. Either half of the commitment counts:
+            * a date with no value and a value with no date are both somebody
+            * having asked the question and written the answer down, and
+            * demanding both would read a half-recorded commitment as none. */
+           (c.lead_expected_order_date is not null
+             or c.lead_expected_order_value_paise is not null) as "hasCommitment",
+           /* What counts as a sale is PURCHASE_STATUSES through
+            * orderCountsSql, never a status list typed into a query. */
+           exists (select 1 from orders o
+                    where o.customer_id = c.id
+                      and ${orderCountsSql("o")}) as "hasOrder",
+           /* Asked for and not yet sent. The two states BEFORE dispatch are
+            * the whole of it: rejected and cancelled are somebody having
+            * decided, and everything past dispatched is out of the desk's
+            * hands - so neither is a parcel anybody is waiting on. */
+           exists (select 1 from mbos_samples s
+                    where s.customer_id = c.id
+                      and s.state in ('requested', 'approved')) as "sampleAwaitingDispatch"
 `;
 
 /** Prospects each salesman is working, and how long since anybody touched one. */

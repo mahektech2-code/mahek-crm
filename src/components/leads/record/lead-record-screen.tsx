@@ -8,6 +8,7 @@ import { cx } from "@/components/ui/primitives";
 import {
   FEEDBACK_FIELDS,
   VERIFICATION_QUESTIONS,
+  findingLabel,
   labelOf,
   LOST_REASONS,
   OVERRIDE_REASONS,
@@ -32,6 +33,7 @@ import type {
   LeadOrderRow,
   LeadReceiptRow,
   LeadRecord,
+  LeadCorrection,
   LeadTransition,
   ManagerCall,
   NurtureSchedule,
@@ -49,13 +51,19 @@ import type {
 } from "@/lib/services/lead-record-service";
 import { Banner, Button, Cell, HeadCell, Pill, Row, ScreenHeader, Table } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
+import { RequestSample } from "@/components/samples/request-sample";
 import { CommunicationPanel } from "../communication-panel";
 import { FirstOrderPanel } from "../first-order-panel";
 import { VerificationForm } from "../verification-form";
 import { AdvanceStage } from "./advance-stage";
 import { MarkLost } from "./mark-lost";
+import { MigrateDistributor } from "./migrate-distributor";
 import { LeadPriorityControl } from "./lead-priority";
 import { HandoverPanel } from "./handover-panel";
+import { ConfirmFigures } from "./confirm-figures";
+import { ValidateGst } from "./validate-gst";
+import { SetSalesType } from "./set-sales-type";
+import { AssignLeadManager, type LeadManagerCandidate } from "./assign-lead-manager";
 
 /**
  * One lead's whole record, in the order somebody reads it.
@@ -260,14 +268,22 @@ export function LeadRecordScreen({
   nurture,
   handover,
   handoverReasons,
+  sampleReasons,
   lostReasons,
   discountThresholdPercent,
   creditLimitThresholdPaise,
   canVerify,
   canWork,
   canHandOver,
+  canMigrate,
+  canChangeLadder,
+  leadManagers,
   canOverride,
   canPrioritise,
+  canValidateGst,
+  gstBlockedReason,
+  figuresStale,
+  figuresFreshDays,
   overrideAllowed,
   nowMs,
 }: {
@@ -302,6 +318,13 @@ export function LeadRecordScreen({
   nurture: NurtureSchedule;
   handover: HandoverCandidate[];
   handoverReasons: string[];
+  /**
+   * §10's configured list — the codes and the words a sample request is raised
+   * against. Handed down rather than imported from `lead-labels`, because the
+   * constant there is only the DEFAULT: a manager rewording one on the settings
+   * screen must not find the form still offering what shipped.
+   */
+  sampleReasons: { code: string; label: string }[];
   /** `leads.lostReasons`, resolved on the server. Never the literal list. */
   lostReasons: { code: string; label: string }[];
   discountThresholdPercent: number;
@@ -309,6 +332,38 @@ export function LeadRecordScreen({
   canVerify: boolean;
   canWork: boolean;
   canHandOver: boolean;
+  /**
+   * Whether this person may move a lead off the retired distributor ladder.
+   *
+   * `lead.override` alone, and deliberately NOT `canOverride` below — that one
+   * is the same capability AND `leads.allowManagerOverride`, the switch a team
+   * throws when it would rather a lead got stuck than got pushed past a shut
+   * gate. This passes no gate: the ladder was retired underneath these leads
+   * and moving them is the correction Mahek asked for, which is why the action
+   * does not read that setting either. Reading it here would leave a team that
+   * turned overrides off unable to clear a backlog nobody chose to have.
+   */
+  canMigrate: boolean;
+  /**
+   * §2 — whether this person may move a lead that is PAST Prospect onto a
+   * different ladder. `holdsOverride` inside `setLeadSalesType` reads exactly
+   * this capability, and the control mirrors the condition with the same two
+   * engine functions the action runs, so a reason is asked for exactly when
+   * the server is about to demand one. Below Prospect neither asks: nothing
+   * has been established that the change could throw away, and making a
+   * salesman find a manager to correct a first-visit mistake is how people
+   * learn to raise a second lead instead.
+   */
+  canChangeLadder: boolean;
+  /**
+   * §7 — who covers this lead's region, from `leadManagerCandidatesFor`, which
+   * is `assignLeadManager`'s own default function asked about this lead. The
+   * head of the list is who the action seats when nobody names anybody. Empty
+   * is a real answer — nobody covers this region and there is no national
+   * manager — and the dialog says so rather than drawing a picker with nothing
+   * in it.
+   */
+  leadManagers: LeadManagerCandidate[];
   canOverride: boolean;
   /**
    * §4.1 — whether this person may say how hard to push the lead. The control
@@ -318,6 +373,27 @@ export function LeadRecordScreen({
    * is addressed to.
    */
   canPrioritise: boolean;
+  /**
+   * §11.6 — whether this person may answer the GST check on THIS lead.
+   *
+   * Resolved on the server, because it is two rules rather than one: the
+   * capability or the named back office seat says who may, and the lead's own
+   * owner and sales account manager are refused whatever else they hold. Both
+   * halves are `validateGstin`'s, and the screen is handed the answer rather
+   * than re-deriving it — a control drawn for somebody the action refuses is
+   * worse than no control, because the refusal arrives after the note.
+   */
+  canValidateGst: boolean;
+  /** Why not, in words, for the hover on the disabled control. */
+  gstBlockedReason: string | null;
+  /**
+   * §5.3 — whether the sample gate is refusing on the age of the four figures
+   * right now. The same boolean `gateInputFor` puts into the engine, passed
+   * down so the panel and the rail cannot say different things about one lead.
+   */
+  figuresStale: boolean;
+  /** `leads.figuresFreshDays`, so the panel can say how long the window is. */
+  figuresFreshDays: number;
   overrideAllowed: boolean;
   /** The clock, read once on the server. A client may not read it in render. */
   nowMs: number;
@@ -357,6 +433,26 @@ export function LeadRecordScreen({
                 a lost lead has nothing left to lose, and a lead that reached
                 the book has been WON, so marking it lost would overwrite the
                 record of a sale rather than record a loss. */}
+            {/* THE DOOR ONTO THE MIGRATION, and the four conditions are here
+                rather than inside the control because three of them are facts
+                about this record that the screen already holds.
+
+                Only a distributor lead has anything to migrate; a CLOSED one
+                has nothing to put back to work — and `active_distributor` is
+                in that set, which is the half that matters. Mahek's rule is
+                that Prospective Distributor is a historical lead TYPE and
+                Distributor means formally APPOINTED, so a lead standing on
+                that rung was appointed, is a distributor, and the action
+                refuses it. Offering it there would be offering work that
+                cannot be done. */}
+            {record.salesType === "distributor" && !CLOSED_STAGES.has(record.stage) ? (
+              <MigrateDistributor
+                customerId={record.customerId}
+                name={record.name}
+                stage={record.stage}
+                canMigrate={canMigrate}
+              />
+            ) : null}
             {CLOSED_STAGES.has(record.stage) ? null : (
               <MarkLost
                 customerId={record.customerId}
@@ -379,6 +475,32 @@ export function LeadRecordScreen({
               ? ladderName(record.salesType)
               : "on the original ladder — nothing backfills a type"}
           </span>
+          {/* §2 — UNDER THE FACT IT CHANGES, which is the argument rather than
+              the layout. A lead raised before the funnel existed reads "Not
+              set · on the original ladder", and that sentence is the reason
+              somebody is looking for a way to fix it; the control belongs
+              where the problem is stated and not in a header row of buttons
+              three feet away that says nothing about ladders.
+
+              NOT on a distributor lead: `MigrateDistributor` is that path and
+              answers what happens to the rung as well, which this action
+              deliberately does not. Two doors onto one correction is how two
+              of them come to disagree about a rung. Not on a closed lead
+              either — a won, lost or converted account has no ladder left to
+              climb, so changing which one it was on moves nothing and invites
+              somebody to rewrite the record of a sale. */}
+          {record.salesType === "distributor" || CLOSED_STAGES.has(record.stage) ? null : (
+            <span className="mt-1 block">
+              <SetSalesType
+                customerId={record.customerId}
+                name={record.name}
+                salesType={record.salesType}
+                stage={record.stage}
+                canWork={canWork}
+                canOverride={canChangeLadder}
+              />
+            </span>
+          )}
         </Fact>
         <Fact label="Stage" value={park ? "On hold" : stageLabel(record.stage)}>
           <span className="block max-w-[280px] text-[12px] text-pretty text-muted">
@@ -543,7 +665,7 @@ export function LeadRecordScreen({
 
           {here === "overview" ? (
             <>
-              <SeatsPanel record={record} />
+              <SeatsPanel record={record} leadManagers={leadManagers} canWork={canWork} />
               <VisitsPanel visits={visits} total={counts.visits} record={record} />
               <HandoverPanel
                 customerId={record.customerId}
@@ -566,7 +688,37 @@ export function LeadRecordScreen({
           ) : null}
 
           {here === "qualification" ? (
-            <QualificationPanel record={record} base={base} canWork={canWork} />
+            <>
+              <QualificationPanel record={record} base={base} canWork={canWork} />
+              {/* The two gates that stand between a qualified lead and a
+                  sample, on the tab whose whole subject is what has to be true
+                  before one goes out. Both are read off a column rather than a
+                  tick, so neither is answerable on the checklist above — which
+                  is exactly why they need a panel that says who answers them
+                  and offers the control that does. */}
+              <FiguresPanel
+                record={record}
+                base={base}
+                canWork={canWork}
+                stale={figuresStale}
+                freshDays={figuresFreshDays}
+                nowMs={nowMs}
+              />
+              {/* NOT ON A DISTRIBUTOR, because its gate reads a different
+                  column. `DISTRIBUTOR_CONDITIONS` answers `gst_verified` off
+                  `distributor_profiles`, which the profile tab draws; this
+                  panel is about `customers.gst_verified`, which nothing on that
+                  ladder reads. Drawn on both, it would offer a control that
+                  lifted no gate and read as the back office having done the
+                  check somebody was still waiting for. */}
+              {distributor ? null : (
+                <GstPanel
+                  record={record}
+                  canValidateGst={canValidateGst}
+                  gstBlockedReason={gstBlockedReason}
+                />
+              )}
+            </>
           ) : null}
 
           {here === "verification" ? (
@@ -580,7 +732,16 @@ export function LeadRecordScreen({
             />
           ) : null}
 
-          {here === "samples" ? <SamplesPanel workspace={workspace} samples={samples} total={counts.samples} /> : null}
+          {here === "samples" ? (
+            <SamplesPanel
+              workspace={workspace}
+              samples={samples}
+              total={counts.samples}
+              record={record}
+              reasons={sampleReasons}
+              canWork={canWork}
+            />
+          ) : null}
 
           {here === "commercial" ? (
             <>
@@ -636,6 +797,7 @@ export function LeadRecordScreen({
         <div className="flex min-w-0 flex-col gap-4">
           <GateRail
             record={record}
+            base={base}
             verdict={nextVerdict}
             nextRung={nextRung}
             park={park}
@@ -774,6 +936,32 @@ function Panel({
 }
 
 /**
+ * The two conditions that are answered by a CONTROL rather than by the
+ * checklist, and the words that lead somebody to it.
+ *
+ * Two of the three are read off a column somebody else writes — the age of the
+ * four conversion figures, and the back office’s check on the GST number — so
+ * neither can be ticked on the qualification form, and a manager reading the
+ * refusal has no way to guess where the answer is given. Keyed on the engine’s
+ * own condition ids so a renamed condition drops its link rather than pointing
+ * somewhere wrong.
+ *
+ * THE THIRD NAMES A DIFFERENT TAB, which is why the value is a pair rather
+ * than a word. `sample_sent` is the gate refusing Negotiation because nothing
+ * has been given to the customer to try, and the answer to it is not on the
+ * qualification checklist at all — it is the request form on the Samples tab.
+ * With one hard-coded destination the only way to add it would have been to
+ * send somebody to the checklist and let them hunt, which is the failure this
+ * map exists to end: a gate that says what it wants and gives no way to do it
+ * teaches people the page is broken.
+ */
+const FIXED_ON: Record<string, { label: string; tab: RecordTab }> = {
+  figures_fresh: { label: "Confirm them", tab: "qualification" },
+  gst_verified: { label: "Check the GST", tab: "qualification" },
+  sample_sent: { label: "Ask for one", tab: "samples" },
+};
+
+/**
  * THE ONE QUESTION A MANAGER OPENS THIS PAGE TO ASK.
  *
  * What is next, may it happen, and if not what is in the way — named, in words,
@@ -789,6 +977,7 @@ function Panel({
  */
 function GateRail({
   record,
+  base,
   verdict,
   nextRung,
   park,
@@ -797,6 +986,8 @@ function GateRail({
   overrideAllowed,
 }: {
   record: LeadRecord;
+  /** Where this lead lives, so a refusal can point at the screen that fixes it. */
+  base: string;
   verdict: GateVerdict;
   nextRung: LeadStage | null;
   park: ParkDetail | null;
@@ -855,11 +1046,38 @@ function GateRail({
         </p>
       ) : (
         <ul className="m-0 mb-3 list-none p-0">
-          {verdict.missing.map((c) => (
-            <li key={c.id} className="border-b border-divider py-1.5 text-[13px] text-warn-ink last:border-b-0">
-              · {c.says}
-            </li>
-          ))}
+          {verdict.missing.map((c) => {
+            /*
+             * A REFUSAL HAS TO REACH THE THING THAT LIFTS IT.
+             *
+             * §28's argument is that a gate which does not say what it wants
+             * teaches people to press the button again; the same argument one
+             * step further is that a gate which says what it wants and gives no
+             * way to do it teaches them the page is broken. Most of these
+             * conditions are answered on the checklist, which the tab already
+             * reaches — these two are answered by a column with a control of
+             * its own, on a panel somebody would otherwise have to know to go
+             * and find. The rest are left as plain text rather than every line
+             * being made a link that mostly goes to one place.
+             */
+            const fix = FIXED_ON[c.id];
+            return (
+              <li
+                key={c.id}
+                className="border-b border-divider py-1.5 text-[13px] text-warn-ink last:border-b-0"
+              >
+                · {c.says}
+                {fix ? (
+                  <>
+                    {" "}
+                    <Link href={`${base}?tab=${fix.tab}`} className="whitespace-nowrap underline">
+                      {fix.label}
+                    </Link>
+                  </>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -967,7 +1185,15 @@ function LadderPanel({
 }
 
 /** The five seats, where this lead came from, and who invoices the shop. */
-function SeatsPanel({ record }: { record: LeadRecord }) {
+function SeatsPanel({
+  record,
+  leadManagers,
+  canWork,
+}: {
+  record: LeadRecord;
+  leadManagers: LeadManagerCandidate[];
+  canWork: boolean;
+}) {
   return (
     <Panel
       title="Who holds this"
@@ -984,11 +1210,31 @@ function SeatsPanel({ record }: { record: LeadRecord }) {
           value={record.salesAmName ?? "Nobody"}
           sub="Moving this moves revenue, so it is accounts' and admin's."
         />
+        {/* §7 — BESIDE THE OTHER SEATS rather than in a block of its own,
+            because "who holds this" is one question and a lead manager named
+            on a different part of the page reads as a different kind of fact.
+            It is the only one of the five that can be changed from here: the
+            sales seat moves revenue and is accounts' and admin's on the
+            customer record, the relationship seat has its own panel below with
+            its own reason codes, and the back office seat is the customer's.
+            This one drives a worklist and nothing else, which is why the
+            action lets a salesman press it. */}
         <Fact
           label="Lead manager"
           value={record.leadManagerName ?? "Nobody"}
           sub="Coordinates. Read for sight, never for credit."
-        />
+        >
+          <span className="mt-1 block">
+            <AssignLeadManager
+              customerId={record.customerId}
+              name={record.name}
+              currentId={record.leadManagerId}
+              currentName={record.leadManagerName}
+              candidates={leadManagers}
+              canWork={canWork}
+            />
+          </span>
+        </Fact>
         <Fact label="Back office" value={record.backOfficeName ?? "Nobody"} sub="Dispatch, billing, paperwork." />
         <Fact
           label="Relationship owner"
@@ -1184,6 +1430,205 @@ function QualificationPanel({
 }
 
 /**
+ * §5.3 — THE FOUR CONVERSION FIGURES, AND HOW OLD SOMEBODY'S WORD ON THEM IS.
+ *
+ * These four are not on the checklist above and that is deliberate — the
+ * specification took them off it, because a fact established by whoever stood
+ * in the shop is not re-certified later by another role. What the gate asks
+ * instead is whether anybody has said recently that they still hold, and until
+ * this panel existed there was nowhere on any screen to see them, see the age
+ * of that word, or give it.
+ *
+ * **The age is the subject, not the figures.** A requirement of four hundred
+ * litres is not interesting on its own; four hundred litres somebody stood
+ * behind in March is a number nobody should send stock against. So the date
+ * leads, in days, and the figures sit under it as what the date is about.
+ *
+ * **Where it is blocking, it says so and says what it blocks.** A gate refusing
+ * in the rail and a panel saying nothing about it is how somebody concludes the
+ * page is broken rather than that there is work to do.
+ *
+ * **Correcting a figure is a different act and the panel says where.** Somebody
+ * who reads these and finds the requirement has doubled must not feel that
+ * confirming is the only thing on offer.
+ */
+function FiguresPanel({
+  record,
+  base,
+  canWork,
+  stale,
+  freshDays,
+  nowMs,
+}: {
+  record: LeadRecord;
+  base: string;
+  canWork: boolean;
+  stale: boolean;
+  freshDays: number;
+  /** The clock, read once on the server. A client may not read it in render. */
+  nowMs: number;
+}) {
+  const confirmedAt = record.figuresConfirmedAt ? new Date(record.figuresConfirmedAt) : null;
+  const ageDays =
+    confirmedAt && !Number.isNaN(confirmedAt.getTime())
+      ? Math.max(0, Math.floor((nowMs - confirmedAt.getTime()) / 86_400_000))
+      : null;
+
+  const figures: { label: string; value: string }[] = [
+    {
+      label: "A month",
+      value: record.monthlyLitres ? `${record.monthlyLitres} L` : "Not recorded",
+    },
+    {
+      label: "Could be worth",
+      value: record.potentialPaise ? `${money(record.potentialPaise)} a month` : "Not estimated",
+    },
+    { label: "Wants", value: record.requiredProductName ?? "No product named" },
+    { label: "Using now", value: record.competitor ?? "No competitor named" },
+  ];
+
+  return (
+    <Panel
+      title="The conversion figures"
+      hint={
+        freshDays > 0
+          ? `What this shop uses, what it could be worth, what it needs and whose product it buys now. Answered once when it became a Prospect and never re-asked - so before a sample goes out, somebody has to say they still hold. They go stale after ${plural(freshDays, "day")}.`
+          : "What this shop uses, what it could be worth, what it needs and whose product it buys now. Answered once when it became a Prospect and never re-asked. The staleness check is switched off on this deployment, so nothing here blocks a sample."
+      }
+      action={<ConfirmFigures customerId={record.customerId} canWork={canWork} stale={stale} />}
+    >
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {stale ? <Pill tone="warn">Stale</Pill> : null}
+        <span className="text-[13px] text-body">
+          {ageDays === null ? (
+            "Nobody has ever said these still hold."
+          ) : (
+            <>
+              Confirmed {stamp(record.figuresConfirmedAt)}
+              {record.figuresConfirmedByName ? ` by ${record.figuresConfirmedByName}` : ""} —{" "}
+              {ageDays === 0 ? "today" : `${plural(ageDays, "day")} ago`}.
+            </>
+          )}
+        </span>
+      </div>
+
+      {stale ? (
+        <p className="mb-3 text-[13px] text-pretty text-warn-ink">
+          This is what is holding the sample. A can must not go out against a requirement that was
+          true in March — read the four below, and if they still hold, say so. If one of them has
+          moved, correct it on the checklist instead: confirming figures that have changed is worse
+          than leaving them stale, because it puts somebody&rsquo;s name to them.
+        </p>
+      ) : null}
+
+      <dl className="m-0 grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
+        {figures.map((f) => (
+          <div key={f.label} className="min-w-0">
+            <dt className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+              {f.label}
+            </dt>
+            <dd className="m-0 truncate text-[13px] text-body">{f.value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <p className="mt-3 text-[12px] text-pretty text-muted">
+        Confirming writes a date and a name and never a second copy of these four — a copy would be
+        free to drift from the columns every other screen reads.{" "}
+        <Link href={`${base}/qualify`} className="text-body underline">
+          Change a figure on the checklist
+        </Link>{" "}
+        if one of them no longer holds.
+      </p>
+    </Panel>
+  );
+}
+
+/**
+ * §11.6 — THE GST NUMBER, AND WHETHER ANYBODY HAS CHECKED IT.
+ *
+ * Three states and they are three different facts, drawn as three different
+ * sentences: nobody has looked, somebody looked and it holds, somebody looked
+ * and refused it with a reason. A boolean alone cannot tell the first from the
+ * third, which is why `gst_verified_at` and `gst_verified_by_id` exist and why
+ * this panel prints them — "GST verified: No" was the whole of what a manager
+ * could learn about a lead the gate had stopped, and it sent them nowhere.
+ *
+ * The check is deliberately not the salesman's: he wrote the number down, and a
+ * check somebody performs on their own work is not a check. The control is
+ * drawn for him and disabled with that reason on the hover, because the person
+ * waiting on somebody else is exactly the person who needs to see that they are
+ * waiting.
+ */
+function GstPanel({
+  record,
+  canValidateGst,
+  gstBlockedReason,
+}: {
+  record: LeadRecord;
+  canValidateGst: boolean;
+  gstBlockedReason: string | null;
+}) {
+  const has = Boolean(record.gstin?.trim());
+  const looked = Boolean(record.gstVerifiedAt);
+  const refused = looked && !record.gstVerified;
+
+  return (
+    <Panel
+      title="GST"
+      hint="Whether we could invoice this business, answered by somebody other than the man who wrote the number down. The qualification gate reads this column, so a sample waits on it."
+      action={
+        <ValidateGst
+          customerId={record.customerId}
+          name={record.name}
+          gstin={record.gstin}
+          verified={record.gstVerified}
+          canValidate={canValidateGst}
+          blockedReason={gstBlockedReason}
+        />
+      }
+    >
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-[15px] font-medium text-ink">
+          {has ? record.gstin : "No number recorded"}
+        </span>
+        {record.gstVerified ? (
+          <Pill tone="success">Validated</Pill>
+        ) : refused ? (
+          <Pill tone="danger">Refused</Pill>
+        ) : (
+          <Pill tone="warn">Nobody has checked it</Pill>
+        )}
+      </div>
+
+      <p className="text-[13px] text-pretty text-body">
+        {!has ? (
+          <>
+            The salesman records the number, standing in the shop; this screen only ever says
+            whether it holds up. Until there is one, the sample gate stays shut and there is nothing
+            here for the back office to check.
+          </>
+        ) : looked ? (
+          <>
+            {refused ? "Refused" : "Validated"} {stamp(record.gstVerifiedAt)}
+            {record.gstVerifiedByName ? ` by ${record.gstVerifiedByName}` : ""}.
+            {refused
+              ? " Nothing has to be undone to lift it: the gate reads this column on every evaluation, so validating a corrected number releases the lead from the rung it is already on. The reason is on the timeline."
+              : " This is what the qualification gate reads before anybody may send a sample."}
+          </>
+        ) : (
+          <>
+            Nobody has looked at this number yet, which is not the same as having looked and refused
+            it — and it is what is holding the sample. The back office, the CRM or the accounts desk
+            answers it; the salesman who collected it may not.
+          </>
+        )}
+      </p>
+    </Panel>
+  );
+}
+
+/**
  * §24 — what happens next, on what day, and who is doing it.
  *
  * All three parts or none: a date with nobody against it is how a lead sits for
@@ -1315,6 +1760,7 @@ function VerificationPanel({
                   {c.followUpNote}
                 </p>
               ) : null}
+              <Corrections rows={c.corrections} />
               <dl className="mt-1.5 mb-0 grid grid-cols-1 gap-x-4 gap-y-0.5">
                 {VERIFICATION_QUESTIONS.filter((q) => c.answers?.[q.id]).map((q) => (
                   <div key={q.id} className="flex gap-2 text-[12px]">
@@ -1328,6 +1774,65 @@ function VerificationPanel({
         </div>
       )}
     </Panel>
+  );
+}
+
+/**
+ * WHAT THE CALL CORRECTED, and the sentence saying it corrected nothing on the
+ * lead.
+ *
+ * **A READER MUST NOT TAKE THIS FOR AN EDIT HISTORY.** Every other before/after
+ * list in MahekOne — the account manager changes, a target's revisions — is a
+ * record of a value that MOVED. This one is not: the lead still carries the
+ * salesman's answer, the shop's is stored beside it, and the two disagreeing is
+ * the single most useful thing the verification call produces. Drawn as a bare
+ * arrow between two values it would read as the office having overwritten his
+ * report, which is the one thing §8 must never do — so the words are on the
+ * screen rather than left to the reader to infer.
+ *
+ * The two readings are LABELLED rather than separated by an arrow alone, for
+ * the same reason. "Still on the lead" and "the shop says" are four words that
+ * cost nothing and remove the whole ambiguity.
+ */
+function Corrections({ rows }: { rows: LeadCorrection[] }) {
+  if (!rows.length) return null;
+  return (
+    <div className="mt-2 rounded-[4px] border border-divider bg-canvas px-3 py-2">
+      <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+        What the call corrected
+      </div>
+      <p className="mb-2 max-w-[560px] text-[12px] text-pretty text-muted">
+        The lead still carries the salesman&rsquo;s own answer. These are what the shop said
+        instead, kept beside his rather than written over it &mdash; this is not an edit history.
+      </p>
+      <div className="flex flex-col gap-2">
+        {rows.map((r) => (
+          /* One column on a phone, two once there is room. A before/after side
+             by side at 360px is two words a line and unreadable. */
+          <div key={r.id} className="border-l-[3px] border-warn pl-2.5">
+            <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+              {findingLabel(r.field)}
+            </div>
+            <div className="mt-0.5 grid grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-2">
+              <div className="min-w-0 text-[12px]">
+                <span className="text-muted">Still on the lead: </span>
+                <span className="text-body">
+                  {r.original ?? <span className="text-muted">he recorded nothing</span>}
+                </span>
+              </div>
+              <div className="min-w-0 text-[12px]">
+                <span className="text-muted">The shop says: </span>
+                <span className="text-ink">{r.corrected}</span>
+              </div>
+            </div>
+            <div className="mt-0.5 text-[12px] text-pretty text-body">{r.reason}</div>
+            <div className="mt-0.5 text-[12px] text-muted">
+              {r.changedByName ?? "a manager"} · {stamp(r.changedAt)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1348,10 +1853,24 @@ function SamplesPanel({
   workspace,
   samples,
   total,
+  record,
+  reasons,
+  canWork,
 }: {
   workspace: LeadWorkspace;
   samples: LeadSampleRow[];
   total: number;
+  /**
+   * The lead itself, for the two answers the request form carries FORWARD
+   * rather than asking again — the product it was qualified on and what they
+   * said they would use it on. Both are already columns the gate reads, so a
+   * lead that has got as far as being offered a trial has answered them, and
+   * asking a second time at a desk is the re-asking this product exists to
+   * avoid.
+   */
+  record: LeadRecord;
+  reasons: { code: string; label: string }[];
+  canWork: boolean;
 }) {
   return (
     <Panel
@@ -1365,12 +1884,33 @@ function SamplesPanel({
             : undefined
       }
       action={
-        <Link
-          href={leadHref(workspace, "samples/desk")}
-          className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
-        >
-          The desk
-        </Link>
+        /*
+         * ASKING IS OFFERED HERE, and the desk is one link along.
+         *
+         * A sample is raised AGAINST a lead, and this is the only screen in the
+         * console where the lead is already known — which is what lets the
+         * product and the application be carried forward instead of retyped.
+         * The desk answers the question after this one, what to do with the
+         * requests that exist, and it has no lead in hand to default anything
+         * from.
+         */
+        <span className="flex flex-wrap items-center justify-end gap-1.5">
+          <RequestSample
+            customerId={record.customerId}
+            customerName={record.name}
+            defaultProductId={record.requiredProductId}
+            defaultProductName={record.requiredProductName}
+            defaultApplication={record.application}
+            reasons={reasons}
+            canWork={canWork}
+          />
+          <Link
+            href={leadHref(workspace, "samples/desk")}
+            className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
+          >
+            The desk
+          </Link>
+        </span>
       }
     >
       {samples.length === 0 ? (

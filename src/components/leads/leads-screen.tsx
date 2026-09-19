@@ -42,7 +42,27 @@ import {
 } from "@/lib/lead-priority";
 import { setLeadPriority } from "@/lib/actions/lead-priority";
 import type { LeadRow } from "@/lib/services/sales-service";
-import { ALL_LEAD_STAGES, stageLabel, type LeadStage } from "@/lib/lead-labels";
+import {
+  ALL_LEAD_STAGES,
+  stageLabel,
+  type LeadSalesType,
+  type LeadStage,
+} from "@/lib/lead-labels";
+import {
+  isOnQueueFor,
+  roleAction,
+  type LeadAction,
+  type LeadActionFacts,
+  type LeadVantage,
+} from "@/lib/engines/lead-role-action";
+import {
+  LEAD_VANTAGES,
+  primaryVantage,
+  vantageAsYou,
+  vantagesFor,
+  vantageLabel,
+  type VantageViewer,
+} from "@/lib/lead-vantage";
 import {
   Button,
   Cell,
@@ -128,6 +148,7 @@ export function LeadsScreen({
   team,
   desks,
   canPrioritise,
+  viewer,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -182,6 +203,18 @@ export function LeadsScreen({
    * disabled menu item is a fact about a component.
    */
   canPrioritise: boolean;
+  /**
+   * §7 — WHOSE JOB THIS READER IS DOING, resolved once on the server and
+   * applied here per row.
+   *
+   * Four booleans rather than a vantage, because two of the five are read off
+   * SEATS ON THE ROW and there are four hundred rows: the same person is the
+   * back office on one lead and the sales manager on the next, and one vantage
+   * computed on the server would have to be wrong about one of them. It
+   * decides WORDS only — `lib/lead-vantage.ts` carries the argument at length,
+   * and every action on this screen goes on checking its own capability.
+   */
+  viewer: VantageViewer;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -511,6 +544,8 @@ export function LeadsScreen({
         <>
           {!showArchived ? <DeskLine workspace={workspace} desks={desks} /> : null}
 
+          {!showArchived ? <NeedsYouLine leads={leads} viewer={viewer} /> : null}
+
           {/* Counted over the FILTERED list in SQL, not over the ten rows this
               page happens to hold — see `leadsPage`. Before pagination the two
               were the same number; they are not any more, and the one worth
@@ -565,7 +600,7 @@ export function LeadsScreen({
 
           <Table
             chrome={false}
-            minWidth={1456}
+            minWidth={1636}
             head={
               <>
                 {/* PINNED. The row's name and its actions are the two cells
@@ -615,6 +650,25 @@ export function LeadsScreen({
                     states above. */}
                 <HeadCell width={120}>Priority</HeadCell>
                 <HeadCell width={110}>Stage</HeadCell>
+                {/* §7 — IMMEDIATELY AFTER THE STAGE, because the stage is
+                    where a lead IS and this is what that means for the person
+                    reading it. "Negotiation" on its own is a noun somebody has
+                    to translate into a morning's work, and the translation is
+                    different for each of the five jobs — so the two belong side
+                    by side and the verb belongs in the reader's own voice. The
+                    header names the vantage rather than saying "Action",
+                    because a column of instructions with no subject reads as
+                    instructions for everybody.
+
+                    IT IS HEADED "For you" AND NOT WITH A JOB TITLE, though the
+                    job is what the cell is answering from. The vantage is
+                    resolved per ROW — two of the five come off seats on the
+                    lead — so the same person genuinely reads this column as the
+                    back office on one line and as the sales manager on the next,
+                    and a single title over all of them would be wrong about
+                    some. Which job produced a given sentence rides on the
+                    cell's own hover, where it is asked rather than asserted. */}
+                <HeadCell width={180}>For you</HeadCell>
                 <HeadCell width={130}>Next</HeadCell>
                 <HeadCell width={110}>Age</HeadCell>
                 <HeadCell width={190}>Health &amp; metrics</HeadCell>
@@ -715,6 +769,9 @@ export function LeadsScreen({
                         {stageLabel(l.stage as LeadStage)}
                       </Pill>
                     </Cell>
+                    <Cell truncate={180}>
+                      <ActionCell lead={l} viewer={viewer} />
+                    </Cell>
                     <Cell>
                       {l.nextFollowUpDate ? (
                         shortDate(l.nextFollowUpDate)
@@ -778,8 +835,8 @@ export function LeadsScreen({
                       className={i % 2 === 1 ? "bg-canvas" : "bg-surface"}
                       onClick={() => toggleExpanded(l.id)}
                     >
-                      <td colSpan={10} className="cursor-pointer border-b border-divider px-4 pb-3.5">
-                        <DetailPanel lead={l} hasDetail={hasDetail} />
+                      <td colSpan={11} className="cursor-pointer border-b border-divider px-4 pb-3.5">
+                        <DetailPanel lead={l} hasDetail={hasDetail} viewer={viewer} />
                       </td>
                     </tr>
                   ) : null}
@@ -1156,12 +1213,201 @@ function HealthCell({
   );
 }
 
-function DetailPanel({ lead, hasDetail }: { lead: LeadRow; hasDetail: boolean }) {
-  if (!hasDetail) {
+/* ═══════════════════════════════════════════════════════ §7, on a row */
+
+/**
+ * A `LeadRow` read as the five facts the engine asks for.
+ *
+ * Written once, here, because the row cell and the cross-vantage panel both
+ * need it and two readings of "what is true of this lead" is how one screen
+ * comes to tell two people different things about one shop. The stage is cast
+ * for the same reason every other read of it on this screen is: the column
+ * arrives from the database as a plain string and `LeadRow` types it as one.
+ */
+function factsOf(lead: LeadRow): LeadActionFacts {
+  return {
+    stage: lead.stage as LeadStage,
+    salesType: lead.salesType as LeadSalesType | null,
+    hasCommitment: lead.hasCommitment,
+    hasOrder: lead.hasOrder,
+    sampleAwaitingDispatch: lead.sampleAwaitingDispatch,
+  };
+}
+
+/** The seats this row carries, as `vantagesFor` wants them. */
+function seatsOf(lead: LeadRow) {
+  /* `salesmanId` IS `owner_id` — the list names the column for the person
+     rather than for the foreign key, which is the right word on a screen and
+     the wrong one here, where the seat is what is being matched. */
+  return {
+    ownerId: lead.salesmanId,
+    backOfficeAmId: lead.backOfficeAmId,
+    leadManagerId: lead.leadManagerId,
+  };
+}
+
+/**
+ * How the tones the engine returns are drawn.
+ *
+ * MUTED IS NOT A PILL, and that is the whole of the mapping's judgement.
+ * `lead-role-action.ts` says in its own header that "Nothing operational
+ * pending" drawn at the weight of "Payment follow-up" would be read as a task,
+ * and a pill is exactly that weight — it is the shape this console uses for
+ * something worth noticing. So the three live tones get the house pill and the
+ * fourth gets plain muted text, which is the absence of one rather than a
+ * fourth colour. No new skin, and nothing outside the tokens.
+ */
+function ActionPill({ action }: { action: LeadAction }) {
+  if (action.tone === "muted") {
+    return <span className="text-[13px] text-muted">{action.label}</span>;
+  }
+  return <Pill tone={action.tone}>{action.label}</Pill>;
+}
+
+/**
+ * §7 for the person reading the screen.
+ *
+ * The vantage is resolved per row and the FIRST one is what the cell prints —
+ * `vantagesFor` orders them most specific first, and the argument for that
+ * ordering is in `lib/lead-vantage.ts`. The hover names which job produced the
+ * sentence, because the same reader legitimately reads this column as two
+ * different people down one page and a sentence with no subject is one nobody
+ * can check.
+ *
+ * NO VANTAGE IS SAID IN WORDS rather than left blank. It is a real answer —
+ * somebody holding the leads module through an app that gives them no job on
+ * this particular shop — and a blank cell in a column of instructions reads as
+ * data that failed to load, which is the rule the priority cell two columns
+ * along already follows.
+ */
+function ActionCell({ lead, viewer }: { lead: LeadRow; viewer: VantageViewer }) {
+  const vantage = primaryVantage(viewer, seatsOf(lead));
+  if (!vantage) {
     return (
-      <p className="pt-1 text-[13px] text-muted">
-        Nothing more recorded — no notes, no pin, and this shop has not converted.
-      </p>
+      <span
+        className="text-[13px] text-muted"
+        title="Nobody has put you on this lead and none of your apps gives you a job on it. Open the row to see what it reads as to the people who do."
+      >
+        No job on this one
+      </span>
+    );
+  }
+  const action = roleAction(factsOf(lead), vantage);
+  return (
+    <span title={`${vantageAsYou(vantage)}. ${action.label}.`}>
+      <ActionPill action={action} />
+    </span>
+  );
+}
+
+/**
+ * THE SAME LEAD READ BY ALL FIVE, which is the affordance §7 is actually for.
+ *
+ * A manager's question about a stuck lead is not "what do I do" — his own verb
+ * is already on the row — it is "what is owed, and by whom". Five sentences
+ * side by side answer it in one glance: a lead in Negotiation where the
+ * manager reads "Confirm actual order" and the salesman reads "Negotiation
+ * visit" is a lead where two people are each waiting for the other, and there
+ * is nowhere else in the product that fact is visible.
+ *
+ * It is in the EXPANDED ROW and not on the row itself, because five
+ * instructions where one is wanted is how a worklist becomes a report. The row
+ * carries the reader's own; opening it asks the second question.
+ *
+ * The reader's own vantages are MARKED rather than removed from the list. A
+ * table with one row quietly missing is one nobody can count against the
+ * specification, and "this one is yours" is the useful mark anyway.
+ */
+function RoleReadings({ lead, viewer }: { lead: LeadRow; viewer: VantageViewer }) {
+  /* EVERY vantage the reader holds, not just the one the row printed. A sales
+     manager who is also the named back office person on this lead is being
+     asked for two different things by two of these five rows, and the panel
+     exists precisely to show that. */
+  const mine = new Set<LeadVantage>(vantagesFor(viewer, seatsOf(lead)));
+  const facts = factsOf(lead);
+  return (
+    <div className="col-span-3 border-t border-divider pt-2">
+      <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+        What this lead reads as
+      </div>
+      {/* Wraps rather than scrolls: five short phrases fit one line on a desk
+          and stack on a phone, and a sideways scroll inside an expanded row is
+          a thing nobody finds. */}
+      <div className="mt-1 flex flex-wrap gap-x-6 gap-y-1.5">
+        {LEAD_VANTAGES.map((v) => {
+          const action = roleAction(facts, v);
+          return (
+            <span key={v} className="flex items-baseline gap-1.5 text-[13px]">
+              <span className="text-muted">
+                {vantageLabel(v)}
+                {mine.has(v) ? " · you" : ""}
+              </span>
+              <ActionPill action={action} />
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Four of these fifteen need you" — §7's `isOnQueueFor`, counted.
+ *
+ * The engine's own header says the actionable flag is what decides whether a
+ * lead counts towards somebody's "needs you today", and this is that sentence.
+ * It is deliberately NOT a second reading of the ladder: it asks `roleAction`
+ * through `isOnQueueFor` and believes the answer, so the count above the table
+ * and the verbs in it cannot disagree about one shop.
+ *
+ * IT SAYS WHAT IT IS A SLICE OF, because it is counted over the PAGE and not
+ * over the filtered book. Everything else measured around this table is
+ * counted in SQL — the stale strip says so in its own comment — and this one
+ * cannot be, because two of the five vantages are read off seats and the
+ * arithmetic is per person. A bare "4 need you" over a list of four hundred
+ * would be read as four in the whole book, which is the capped-list mistake
+ * the timeline's filter pills are a paragraph about. So it names the page.
+ *
+ * Nothing is drawn where the answer is none: a line reading "0 need you" is
+ * furniture on the screen somebody opens to find work, and the table beneath
+ * it already says which leads are whose.
+ */
+function NeedsYouLine({ leads, viewer }: { leads: LeadRow[]; viewer: VantageViewer }) {
+  const mine = leads.filter((l) => {
+    const vantage = primaryVantage(viewer, seatsOf(l));
+    return vantage !== null && isOnQueueFor(factsOf(l), vantage);
+  });
+  if (mine.length === 0) return null;
+  return (
+    <div className="mb-3 text-[13px] text-body">
+      <span className="font-semibold text-ink">{plural(mine.length, "lead")}</span> on this page{" "}
+      {mine.length === 1 ? "is" : "are"} waiting on you — the{" "}
+      <span className="text-muted">For you</span> column says what each one wants.
+    </div>
+  );
+}
+
+function DetailPanel({
+  lead,
+  hasDetail,
+  viewer,
+}: {
+  lead: LeadRow;
+  hasDetail: boolean;
+  viewer: VantageViewer;
+}) {
+  if (!hasDetail) {
+    /* The five readings are drawn even here. "Nothing more recorded" is about
+       what somebody has TYPED on this lead, and §7's instructions are derived
+       from where it stands — which is exactly as true of a lead with no notes
+       and no pin, and is the only thing an otherwise empty panel has to say. */
+    return (
+      <div className="grid grid-cols-3 gap-x-8 gap-y-2 pt-1 text-[13px]">
+        <p className="col-span-3 text-[13px] text-muted">
+          Nothing more recorded — no notes, no pin, and this shop has not converted.
+        </p>
+        <RoleReadings lead={lead} viewer={viewer} />
+      </div>
     );
   }
   return (
@@ -1205,6 +1451,7 @@ function DetailPanel({ lead, hasDetail }: { lead: LeadRow; hasDetail: boolean })
           Converted {stamp(lead.convertedAt)}.
         </div>
       ) : null}
+      <RoleReadings lead={lead} viewer={viewer} />
     </div>
   );
 }

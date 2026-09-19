@@ -227,11 +227,43 @@ export function VerifyScreen({
         if (v && f.lands) payload[f.lands] = v;
       }
 
+      /*
+       * EVERY CORRECTION, AS ITS OWN RECORD, and the four with a column send
+       * one too.
+       *
+       * The column holds the shop's ANSWER in the same shape a confirmation
+       * leaves it, so it cannot say that the answer DIFFERED, what the salesman
+       * had, or why — and the other five findings had nowhere but a labelled
+       * line in the note, which is a sentence and not something anybody can
+       * count. `original` is sent from here because this screen is the one
+       * place holding what the salesman reported at the moment the manager
+       * contradicted it: the lead's own column is live and a later visit
+       * legitimately overwrites it, so reading it back in March would answer
+       * with whatever the field says then.
+       *
+       * It is what the manager typed, never applied to the lead — the action
+       * writes rows and touches no `customers` column, which is the whole
+       * point of the table.
+       */
+      const corrections = findings.flatMap((f) => {
+        const a = answers[f.id];
+        if (a?.verdict !== "corrected") return [];
+        return [
+          {
+            field: f.id,
+            original: f.reported,
+            corrected: a.corrected.trim(),
+            reason: a.reason.trim(),
+          },
+        ];
+      });
+
       const result = await recordLeadValidationCall(customerId, {
         answers: payload,
         outcome: verdict,
         followUpNote: composedNote.trim() || undefined,
         failureReasonCode: verdict === "not_qualified" ? failureReason : undefined,
+        corrections,
       });
       if (!result.ok) {
         setError(result.error);
@@ -301,7 +333,9 @@ export function VerifyScreen({
       <p className="mb-4 max-w-[760px] text-[13px] text-pretty text-muted">
         Read each finding out and record what the shop says back. Nothing here is written over the
         salesman&rsquo;s own answers — his stay on the lead and the shop&rsquo;s are stored beside
-        them, because the two disagreeing is the single most useful thing this call produces.
+        them, because the two disagreeing is the single most useful thing this call produces. Every
+        correction is kept as a record of its own, with what he had, what the shop says, why the two
+        differ and who was told.
         {" "}
         {answered} of {findings.length} findings answered.
       </p>
@@ -349,11 +383,14 @@ export function VerifyScreen({
           </div>
           <p className="mb-3 max-w-[620px] text-[12px] text-pretty text-muted">
             <code>mbos_lead_validations</code> carries a column for each of §8&rsquo;s twelve
-            answers and none for these {unlanded.length}. What is recorded here goes into the
-            call&rsquo;s own note, labelled, at the bottom of this page — so it is kept and it is
-            readable, and &ldquo;how many leads had the wrong contact person&rdquo; is not a
-            question anybody can ask of it yet. That is the gap; it is not closed by writing these
-            over the salesman&rsquo;s columns, which is the one thing this call must never do.
+            answers and none for these {unlanded.length}. A CORRECTION here is still a record of
+            its own &mdash; it goes to <code>lead_verification_corrections</code> with what the
+            salesman had, what the shop says and why, so &ldquo;how many leads had the wrong
+            contact person&rdquo; is a question somebody can ask. What is left in words is a
+            confirmation or an &ldquo;unable to verify&rdquo; on one of these {unlanded.length}:
+            those have no column and no correction row, so they are kept in the call&rsquo;s own
+            note at the bottom of this page. Neither is written over the salesman&rsquo;s columns,
+            which is the one thing this call must never do.
           </p>
           <div className="flex flex-col gap-3.5">
             {unlanded.map((f) => (

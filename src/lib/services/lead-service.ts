@@ -1142,3 +1142,33 @@ export async function leadManagerCandidates(region: string | null): Promise<
      regional answer is the better default and the picker is read top-down. */
   return out.sort((a, b) => Number(a.national) - Number(b.national));
 }
+
+/**
+ * The same answer, asked about a LEAD rather than about a region.
+ *
+ * `assignLeadManager` reads the region off the row it has already fetched and
+ * calls `leadManagerCandidates` with it. The record page has no region on it —
+ * `LeadRecord` carries the five seats and not the geography behind them — so a
+ * screen offering the same default would otherwise have to work out who covers
+ * this lead a second way, and the half that drifts is always the half somebody
+ * is reading. This is one column read and a delegation: the picker and the
+ * action cannot name different people, and the head of this list is exactly who
+ * the action picks when nobody names anybody.
+ *
+ * An unknown id answers with an empty list rather than throwing. Whether this
+ * person may see this lead is `reachableLead`'s question, asked in the action
+ * and asked again before the page draws; a candidate list is not the place to
+ * answer it, and a thrown error here would take a whole record page down over a
+ * picker.
+ */
+export async function leadManagerCandidatesFor(
+  customerId: string,
+): Promise<{ id: string; name: string; national: boolean }[]> {
+  const [row] = await db
+    .select({ region: customers.territoryRegion })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+  if (!row) return [];
+  return leadManagerCandidates(row.region);
+}

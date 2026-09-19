@@ -9,6 +9,7 @@ import {
   auditLog,
   customers,
   mbosDocuments,
+  leadVerificationCorrections,
   mbosLeadValidations,
   mbosTasks,
   notifications,
@@ -27,6 +28,8 @@ import { err, fromThrown, ok, type FieldError, type Result } from "@/lib/result"
 import {
   COMMUNICATION_ACTIONS,
   FIRST_ORDER_QUESTIONS,
+  isVerificationFinding,
+  findingLabel as verificationFindingLabel,
   salesTypeIsOffered,
   salesTypeLabel,
   stageLabel,
@@ -173,6 +176,22 @@ export async function advanceLeadStage(input: {
   note?: string;
   override?: { reasonCode: string; note?: string };
   nextAction?: { action: string; date: string; ownerId: string; outcome?: string };
+  /**
+   * §— the two facts a park demands, beside the next action it also demands.
+   *
+   * HAND-WRITTEN BESIDE A ZOD SCHEMA THAT ALREADY KNEW, which is the shape of
+   * bug worth naming: `advanceSchema` gained `hold` and this parameter type did
+   * not, so the runtime demanded a field TypeScript refused to let anybody
+   * pass. Nothing was red — the action compiled, its own tests compiled, and
+   * the only thing that could not compile was a screen that had not been
+   * written yet. The first caller found it and had to cast its way past.
+   *
+   * The two are written out twice because this signature is deliberately
+   * narrower than the schema's inferred type at three points (`to` is a
+   * `LeadStage` rather than a string here). That is worth having, and the cost
+   * is exactly this: a field added to one and not the other.
+   */
+  hold?: { reason: string; resumeDate: string };
 }): Promise<Result<{ stage: LeadStage; promoted: boolean }>> {
   try {
     const parsed = advanceSchema.safeParse(input);
@@ -1051,6 +1070,30 @@ export async function recordLeadValidationCall(
     /** §8 — what the call FOUND. Required on `not_qualified`; the loss code is
      *  fixed and is never the manager's pick. */
     failureReasonCode?: string;
+    /**
+     * EVERY FINDING THE SHOP CONTRADICTED, one entry per field.
+     *
+     * The four that have a column on `mbos_lead_validations` land there as
+     * well, and that is not a duplicate: the column holds the shop's ANSWER, in
+     * the same shape a confirmation would leave it, and this holds the fact
+     * that it differed from the salesman's, what his was, and why. The five
+     * with no column had nowhere at all to go but a labelled line inside the
+     * call's note, which is a sentence rather than an answer — "how many leads
+     * had the wrong contact person" is exactly the question §8 exists to
+     * produce and `verdict_reason ilike '%contact%'` is not an answer to it.
+     *
+     * `original` is what the salesman had, sent by the screen that was
+     * displaying it. It is a COPY on purpose — see the schema comment on the
+     * table: the lead's own column is live and a later visit legitimately
+     * overwrites it, so reading it back to find out what was corrected would
+     * answer with whatever the field says today.
+     */
+    corrections?: {
+      field: string;
+      original?: string | null;
+      corrected: string;
+      reason: string;
+    }[];
   },
 ): Promise<Result<null>> {
   try {
@@ -1065,6 +1108,26 @@ export async function recordLeadValidationCall(
          * the loss reason rather than a restatement of it.
          */
         failureReasonCode: z.string().trim().max(80).optional(),
+        corrections: z
+          .array(
+            z.object({
+              field: z.string().trim().max(80),
+              original: z.string().trim().max(1000).nullish(),
+              corrected: z.string().trim().min(1).max(1000),
+              /*
+               * REQUIRED HERE AND NOT ONLY ON THE FORM. The screen already
+               * refuses a correction with no reason, and a server action is a
+               * URL: a rule that lives in an interface is not a rule. What it
+               * buys is the whole value of the row — a correction with nothing
+               * behind it is the manager's word against the salesman's with
+               * nothing to settle it, read in March by somebody deciding
+               * whether the salesman or the shop was mistaken.
+               */
+              reason: z.string().trim().min(1).max(1000),
+            }),
+          )
+          .max(40)
+          .optional(),
       })
       .safeParse(call);
     if (!parsed.success) return zodErr(parsed.error);
@@ -1083,6 +1146,32 @@ export async function recordLeadValidationCall(
     const answers: Record<string, string> = {};
     for (const [id, value] of Object.entries(c.answers)) {
       if (known.has(id) && value.trim()) answers[id] = value.trim();
+    }
+
+    /*
+     * ONLY THE NINE, AND ONE ROW PER FIELD PER CALL.
+     *
+     * The same discipline the twelve answers get a few lines above, for the
+     * same reason: a tenth field arriving from a screen somebody edited is
+     * dropped rather than stored, because the summary reads back through
+     * `VERIFICATION_FINDINGS` and a correction to a finding nobody can see is
+     * worse than no correction. `isVerificationFinding` is the one validator,
+     * so the list the screen draws from and the list the action accepts cannot
+     * drift apart.
+     *
+     * A field arriving twice is the same finding answered twice by a form that
+     * should not be able to produce it, and the LAST one wins — the manager's
+     * final answer rather than a first draft of it. Two rows for one field on
+     * one call would read on the summary as a shop that contradicted itself.
+     */
+    const corrections = new Map<string, { original: string | null; corrected: string; reason: string }>();
+    for (const entry of c.corrections ?? []) {
+      if (!isVerificationFinding(entry.field)) continue;
+      corrections.set(entry.field, {
+        original: entry.original?.trim() || null,
+        corrected: entry.corrected,
+        reason: entry.reason,
+      });
     }
 
     /* Both unsuccessful outcomes demand a sentence, and they demand it for two
@@ -1214,6 +1303,42 @@ export async function recordLeadValidationCall(
         updatedById: ctx.user.id,
       });
 
+      /*
+       * THE CORRECTIONS, IN THE CALL'S OWN TRANSACTION.
+       *
+       * A call that landed and corrections that failed a moment later would
+       * leave a verification on the record with the shop's contradictions
+       * missing — and nothing on the screen saying so, because a call with no
+       * corrections is the ordinary case and reads as a report that checked
+       * out. The whole call would then have to be made again to record them,
+       * and the second row would be a second conversation on a history nobody
+       * had two of.
+       *
+       * NOTHING HERE TOUCHES A `customers` COLUMN, and that is the rule this
+       * table exists to keep rather than to bend. `lead_competitor` is what the
+       * salesman was told standing in the shop; this is what the office was
+       * told on the phone, and the two disagreeing is the single most useful
+       * thing the call produces. Writing the corrected value onto the lead
+       * would overwrite the first reading with the second and destroy exactly
+       * that — so this is a record OF a correction and never an application of
+       * one.
+       */
+      for (const [field, entry] of corrections) {
+        await tx.insert(leadVerificationCorrections).values({
+          id: gen("lvc"),
+          customerId,
+          validationId: callId,
+          field,
+          original: entry.original,
+          corrected: entry.corrected,
+          reason: entry.reason,
+          changedById: ctx.user.id,
+          /* Readable after the account is gone, the same reasoning
+             `customer_am_changes` keeps its own name column for. */
+          changedByName: ctx.user.name,
+        });
+      }
+
       const set: Partial<typeof customers.$inferInsert> = {
         leadLastActivityDate: day,
         updatedAt: new Date(),
@@ -1280,6 +1405,33 @@ export async function recordLeadValidationCall(
               : `Verification call found no opportunity at ${lead.name} — the shop did not stand the lead up. Closed as lost. ${c.followUpNote ?? ""}`.trim(),
       });
 
+      /*
+       * ONE ENTRY PER CORRECTED FIELD, and the field rides in the SOURCE ID.
+       *
+       * The natural key is (app, kind, source row), so every correction from
+       * one call naming the bare call id would collapse onto a single row: the
+       * first written would win and the other three would never appear on the
+       * record at all. `<callId>:correction:<field>` is the same shape a
+       * sample's dispatched/received/review dates use, for the same reason.
+       *
+       * The sentence says BOTH readings, because a history that printed only
+       * the corrected value would read as the lead having been edited — which
+       * is the one thing this call does not do.
+       */
+      for (const [field, entry] of corrections) {
+        await writeTimelineEvent(tx, {
+          customerId,
+          eventType: MBOS_EVENT.verificationCorrection,
+          sourceApp: "crm",
+          sourceRecordId: `${callId}:correction:${field}`,
+          occurredAt: new Date(),
+          actorUserId: ctx.user.id,
+          summary: `Verification call corrected ${verificationFindingLabel(field).toLowerCase()} at ${lead.name}: ${
+            entry.original ? `the salesman reported “${entry.original}”` : "the salesman had recorded nothing"
+          }, the shop says “${entry.corrected}” — ${entry.reason}. The lead still carries the salesman's own answer.`,
+        });
+      }
+
       await tx.insert(auditLog).values({
         id: gen("aud"),
         actorId: ctx.user.id,
@@ -1292,7 +1444,15 @@ export async function recordLeadValidationCall(
            word about a follow-up and about a false opportunity, and the audit
            log is exactly where somebody goes to ask which of the two a manager
            actually recorded. */
-        afterState: { callId, outcome: c.outcome, answered: Object.keys(answers).length },
+        afterState: {
+          callId,
+          outcome: c.outcome,
+          answered: Object.keys(answers).length,
+          /* WHICH fields rather than how many. "Was anybody told the competitor
+             was wrong on this lead" is the question an audit log is opened
+             with, and a count cannot answer it. */
+          corrected: [...corrections.keys()],
+        },
       });
     });
 
