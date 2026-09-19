@@ -1887,6 +1887,68 @@ export const SETTINGS = [
     min: 5,
     max: 50,
   },
+
+  /* ------------------------------------------------- the map is TOLD, not asked
+   *
+   * The Live map used to re-run its whole Server Component every thirty
+   * seconds and redraw from the answer. That made the POLL the binding
+   * constraint on the word "live": a handset uploading every six seconds could
+   * not move a pin faster than the browser next thought to ask, and every one
+   * of those asks paid for the team read, both trail reads, the activity read
+   * and a full RSC serialisation of all of it — for every open tab, whether or
+   * not anything had changed.
+   *
+   * It is a stream now, and these four numbers are what it is made of. They are
+   * here rather than as constants in the route for the ordinary reason: they
+   * decide what a screen ASSERTS is happening now, they are the first thing
+   * anybody would reach for if the box were struggling, and a cadence nobody
+   * can see is a cadence nobody can turn down. The same argument
+   * `mbos.location.activityFixMaxAgeSeconds` already makes one category above.
+   */
+  {
+    key: "mbos.location.livePushSeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often the Live map is told about new positions",
+    description:
+      "Seconds between the server looking for fixes that have arrived since it last spoke, and pushing them down the open connection to whoever is watching. This is the number that decides how live \u201clive\u201d is: a handset uploading every six seconds cannot move a pin sooner than this, and nothing is gained by setting it faster than the handsets actually upload. What it costs is one small indexed query per watching manager per tick — the fixes that arrived, and nothing else — so it is cheap in a way the old thirty-second page refresh was not.",
+    default: 6,
+    min: 2,
+    max: 120,
+  },
+  {
+    key: "mbos.location.liveTeamSeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often the whole team panel is read again",
+    description:
+      "Seconds. A position is a handful of numbers; the row beside it is the check-in, the battery, the device, the permission and the place name, and reading all of that for every salesman is much the more expensive of the two queries. So the pin moves at the cadence above and the row catches up at this one — which is the cadence the whole screen used to run at, and nobody found that panel slow. Lowering it towards the push cadence is the one setting here that can genuinely cost this server something.",
+    default: 30,
+    min: 5,
+    max: 600,
+  },
+  {
+    key: "mbos.location.liveStreamMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long one live connection is allowed to run",
+    description:
+      "Minutes, after which the server closes the connection and the browser opens another — which it does by itself, carrying the cursor, so nothing is missed and nobody sees anything. It is deliberately SHORT. A connection held open for hours is one nobody is reading, one whose signed-in session may have been ended an hour ago, and one that has to survive every timeout between here and the browser; a connection that ends and is remade is re-authenticated, re-scoped, and re-priced against whatever the proxy in front of this app believes about long responses. Keep it under five minutes: that is the read timeout Caddy is configured with for this deployment, and a stream that outlives it would be cut at a moment nobody chose.",
+    default: 4,
+    min: 1,
+    max: 4,
+  },
+  {
+    key: "mbos.location.livePollSeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often the Live map asks, when it cannot be told",
+    description:
+      "Seconds. A corporate proxy, an antivirus that buffers responses, or a browser that has run out of connections can all leave a stream that never delivers anything, and a map that silently stops updating is worse than one that never claimed to. So the screen falls back to asking for the same small delta on this cadence and SAYS which of the two it is doing. It is still far cheaper than the page refresh this replaced, because what comes back is the fixes that arrived rather than the whole day.",
+    default: 15,
+    min: 5,
+    max: 300,
+  },
   {
     key: "mbos.sync.quietHours",
     type: "integer",
@@ -3113,6 +3175,23 @@ export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
 
   /*
+   * A push slower than the full team read is a push that never arrives first.
+   *
+   * The two cadences are a pair: the cheap one moves the pin and the expensive
+   * one refreshes everything else about the row. Set the cheap one slower than
+   * the expensive one and the arrangement has been inverted — the server is
+   * now paying for the heavy query more often than for the light one, and the
+   * pin is no more live than it was before any of this existed. It reads as
+   * working software, which is why it is refused here rather than left to be
+   * noticed by somebody wondering why the map got slower.
+   */
+  if (config["mbos.location.livePushSeconds"] > config["mbos.location.liveTeamSeconds"]) {
+    problems.push(
+      `Live map: positions are pushed every ${config["mbos.location.livePushSeconds"]}s but the team panel is re-read every ${config["mbos.location.liveTeamSeconds"]}s \u2014 the cheap update must not be the slower of the two.`,
+    );
+  }
+
+  /*
    * A score cannot be both strong and worth watching. Set the strong threshold
    * at or below the watch one and every score in the overlap is rendered green
    * by one rule and red by the other on two screens that both claim to show
@@ -3722,6 +3801,10 @@ export type Config = {
   "mbos.location.handsetQuietMinutes": number;
   "mbos.location.noTrailMinutes": number;
   "mbos.location.lowBatteryPercent": number;
+  "mbos.location.livePushSeconds": number;
+  "mbos.location.liveTeamSeconds": number;
+  "mbos.location.liveStreamMinutes": number;
+  "mbos.location.livePollSeconds": number;
   "mbos.sync.quietHours": number;
 
   "mbos.route.averageSpeedKmph": number;

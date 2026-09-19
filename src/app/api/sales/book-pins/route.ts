@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { listUserModules } from "@/lib/access";
+import { canOpenModule } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
 import { shopPins } from "@/lib/services/sales-service";
 
@@ -23,10 +23,11 @@ import { shopPins } from "@/lib/services/sales-service";
  * caller did not already have, and what comes back is narrowed by
  * `managerScope` inside `shopPins` regardless of what was sent.
  *
- * **A REQUEST RATHER THAN A PROP.** `/sales/live` re-runs its Server
- * Component every thirty seconds while the tab is open (see
- * `live-panel.tsx`), and everything that page hands the map is re-serialised
- * into each of those answers. The shops do not move. Asked by the client
+ * **A REQUEST RATHER THAN A PROP.** `/sales/live` used to re-run its Server
+ * Component every thirty seconds while the tab is open, re-serialising
+ * everything that page hands the map into each of those answers. It is told
+ * what has arrived instead now (see `live-panel.tsx`), which removes that cost
+ * and leaves this reasoning standing: the shops do not move. Asked by the client
  * instead, once, and again only when the team has moved far enough for the
  * catchment to mean somewhere else.
  *
@@ -68,8 +69,10 @@ export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ pins: [] }, { status: 401, ...NO_STORE });
 
-  const modules = await listUserModules(user.id, "sales");
-  if (!modules.some((m) => m.key === "sales.live")) {
+  /* The `sales` GRANT and the `sales.live` module together, in that order —
+     see `canOpenModule`. Asking `listUserModules` alone answers "every module"
+     for somebody who holds none of the app. */
+  if (!(await canOpenModule(user.id, "sales.live"))) {
     return NextResponse.json({ pins: [] }, { status: 403, ...NO_STORE });
   }
 

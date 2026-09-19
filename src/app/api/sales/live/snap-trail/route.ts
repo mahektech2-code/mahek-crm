@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { listUserModules } from "@/lib/access";
+import { canOpenModule } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
 import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
 import { metresBetween } from "@/lib/geo";
@@ -19,10 +19,9 @@ import { roadPathFor } from "@/lib/services/road-snap-service";
  * The Live map's road-snapped trail, for one salesman on one day.
  *
  * Deliberately its own request rather than folded into `tracksForDay` (which
- * `page.tsx` reads for every salesman on every thirty-second poll of the
- * "today" view): snapping the whole team on every poll would turn one page
- * load into dozens of calls to an outside service, most of them for a trail
- * nobody has selected. This is asked once, by the client, only when a manager
+ * `page.tsx` reads for every salesman drawing the "today" view): snapping the
+ * whole team would turn one page load into dozens of calls to an outside
+ * service, most of them for a trail nobody has selected. This is asked once, by the client, only when a manager
  * picks a name — see `street-map.tsx`.
  *
  * A 401 or a 403 answers exactly like a missing trail: `{ points: null }`.
@@ -46,8 +45,10 @@ export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ points: null }, { status: 401, ...NO_STORE });
 
-  const modules = await listUserModules(user.id, "sales");
-  if (!modules.some((m) => m.key === "sales.live")) {
+  /* The `sales` GRANT and the `sales.live` module together, in that order —
+     see `canOpenModule`. Asking `listUserModules` alone answers "every module"
+     for somebody who holds none of the app. */
+  if (!(await canOpenModule(user.id, "sales.live"))) {
     return NextResponse.json({ points: null }, { status: 403, ...NO_STORE });
   }
 
