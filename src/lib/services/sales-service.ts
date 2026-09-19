@@ -4748,6 +4748,7 @@ export type SalesmanRecord = {
     checkInAt: Date | null;
     checkOutAt: Date | null;
     status: string;
+    workedSeconds: number | null;
     withinGeofence: boolean | null;
     regularisationRequested: boolean;
   }>;
@@ -4852,6 +4853,12 @@ export async function salesmanRecord(
       db.execute(sql`
         select d.day::text as day, d.check_in_at as "checkInAt",
                d.check_out_at as "checkOutAt", d.status::text as status,
+               /* The hours, because the verdict alone cannot say whether a day
+                  was JUDGED: status is NOT NULL defaulting to absent, and a day
+                  still open is left alone by the job that writes it. The pill
+                  tells the two apart from this. (No backticks in here: this is
+                  inside a sql template and one would end it.) */
+               d.worked_seconds as "workedSeconds",
                d.within_geofence as "withinGeofence",
                d.regularisation_requested as "regularisationRequested"
           from mbos_attendance_days d

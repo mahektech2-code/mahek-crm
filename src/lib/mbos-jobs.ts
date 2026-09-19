@@ -22,6 +22,7 @@ import {
   type NurtureEvent,
 } from "@/lib/engines/lead-nurture";
 import { today } from "@/lib/recompute";
+import { recomputeAttendanceVerdicts } from "@/lib/services/attendance-verdict-service";
 import { recomputeSalesPerformance } from "@/lib/services/performance-service";
 import { notifyUsers } from "./notify";
 import { collectPushReceipts, prunePushFailures } from "./mbos/push";
@@ -145,6 +146,42 @@ export async function markMissedCheckouts(): Promise<Counted> {
         ? ` — ${withTime} closed at the last thing they did` +
           (blind ? `, ${blind} left open because nothing was recorded` : "")
         : ""),
+  };
+}
+
+/**
+ * WHAT EACH DAY WAS, and how long it was worked.
+ *
+ * `mbos_attendance_days.status` and `worked_seconds` are derived caches whose
+ * job was never written — so every row in the table read `absent` with no hours
+ * against it, including days with a check-in, a check-out and two selfies, and
+ * three screens drew a red pill saying so. The rule is
+ * `lib/engines/attendance.ts` and the wiring is
+ * `services/attendance-verdict-service.ts`.
+ *
+ * **In the nightly it takes no window, and that is the point of it being
+ * here.** Leave approved this morning for last week, a holiday added to the
+ * calendar afterwards and a changed threshold all reach BACKWARDS into days
+ * already judged, and only a pass over everything carries the correction to
+ * them. It costs a read and almost no writes: both columns are compared
+ * against what is stored, so a converged table is rewritten nowhere.
+ *
+ * **It runs after `markMissedCheckouts` on purpose.** That job is what closes
+ * yesterday's forgotten days at the last evidence there is of somebody
+ * working, and a day it has not closed yet has an open session — which this
+ * one refuses to judge. Run first, every forgotten day would wait a further
+ * twenty-four hours for a verdict it could have had tonight.
+ */
+export async function rebuildAttendanceVerdicts(): Promise<Counted> {
+  const { written, read, unjudged } = await recomputeAttendanceVerdicts();
+  return {
+    /* What was WRITTEN, never what was considered. A pass that reports its
+       whole read as "affected" is how a job that changes nothing goes on
+       looking busy. */
+    recordsAffected: written,
+    detail:
+      `${written} of ${read} days re-judged` +
+      (unjudged ? ` — ${unjudged} left alone, still open with no check-out` : ""),
   };
 }
 
@@ -437,6 +474,9 @@ export async function mbosNightly(): Promise<Counted> {
     await sweepPushFailures(),
     await closeOpenVisits(),
     await markMissedCheckouts(),
+    /* AFTER the two closers above, so a day they just closed is judged tonight
+       rather than tomorrow night. */
+    await rebuildAttendanceVerdicts(),
     await ageLeads(),
     await raiseReorderFollowUps(),
     await countCustomersWithoutGps(),
@@ -488,6 +528,31 @@ async function sweepSelfies(): Promise<Counted> {
   };
 }
 
+/**
+ * The last two days' verdicts, on the hour.
+ *
+ * HERE as well as in the nightly for the same reason the salesman score is: it
+ * is a cache a SCREEN reads. A verdict rebuilt only at night means the
+ * attendance screen shows every one of today's days as `absent` until the
+ * following morning — which is the bug this whole thing was written to end,
+ * merely twelve hours smaller. A man who checks out at two o'clock should not
+ * read as absent at three.
+ *
+ * Two days rather than one because a day closes late: a handset that was out
+ * of signal at six posts its check-out at nine, `markMissedCheckouts` closes
+ * yesterday's forgotten days at midnight, and both land on a date that is no
+ * longer today. Anything older than that is the nightly's, which takes no
+ * window at all.
+ */
+async function judgeRecentDays(): Promise<Counted> {
+  const day = await today();
+  const { written, read } = await recomputeAttendanceVerdicts({
+    from: addDays(day, -1),
+    to: day,
+  });
+  return { recordsAffected: written, detail: `${written} of ${read} recent days re-judged` };
+}
+
 export async function mbosHourly(): Promise<Counted> {
   const parts = [
     await escalateOverdueTasks(),
@@ -500,6 +565,7 @@ export async function mbosHourly(): Promise<Counted> {
     await chaseSampleReviews(),
     await flagSamplesPastDelivery(),
     await refreshPerformance(),
+    await judgeRecentDays(),
     await readPushReceipts(),
     await sweepSelfies(),
   ];
