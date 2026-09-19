@@ -43,6 +43,8 @@ export type PartyProjectionReport = {
   deactivated: number;
   /** Accounts whose managers the sheet still disagrees with, and lost. */
   amDecisionsKept: number;
+  /** And the same for a status a person ruled on: disagreed with, and lost. */
+  statusDecisionsKept: number;
   leadsAvailable: number;
   leadsCreated: number;
 };
@@ -100,10 +102,20 @@ export async function projectParties(
        */
       amDecidedAt: customers.amDecidedAt,
       gstin: customers.gstin,
+      // Read so the sheet can tell an EMPTY field from one somebody filled in.
+      // `creditDays` is the nullable mirror and is the only honest blank test
+      // for a credit term: `creditTermDays` is NOT NULL DEFAULT 30, so on that
+      // column a deliberate 30 and an untouched row are the same value.
+      city: customers.city,
+      region: customers.region,
+      priceTag: customers.priceTag,
+      leadSource: customers.leadSource,
+      creditDays: customers.creditDays,
       kind: customers.kind,
       status: customers.status,
       deactivatedAt: customers.deactivatedAt,
       deactivationReason: customers.deactivationReason,
+      statusDecidedAt: customers.statusDecidedAt,
     })
     .from(customers);
   const byKey = new Map(existing.map((c) => [partyNameKey(c.name), c]));
@@ -139,6 +151,7 @@ export async function projectParties(
     unlinkedPeople: [],
     deactivated: 0,
     amDecisionsKept: 0,
+    statusDecisionsKept: 0,
     leadsAvailable: 0,
     leadsCreated: 0,
   };
@@ -232,6 +245,38 @@ export async function projectParties(
       if (amConflicts.length > before) report.amDecisionsKept++;
     }
 
+    /*
+     * AND THE SAME RULE FOR THE STATUS, which shipped with only half of it.
+     *
+     * The branch below already declined to reactivate what a person had closed
+     * in the CRM. The opposite case had no guard at all: `Deactive` in the
+     * spreadsheet wrote `deactivated` unconditionally, so an account somebody
+     * had deliberately brought BACK was closed again on the next pass — and on
+     * the one after that, for as long as the cell said Deactive. It cannot be
+     * answered from `deactivationReason`, because reactivating CLEARS that
+     * column: the decision destroys its own evidence.
+     *
+     * A closed account is invisible to the Call Log — `queueInputs` filters
+     * the status before the scope filter is reached — so the cost of getting
+     * this wrong is a trading customer nobody is allowed to ring, with nothing
+     * on any screen saying why. That is worth a conflict row rather than
+     * silence: the spreadsheet still disagrees, and somebody has to reconcile
+     * the two or the next person to look will reactivate it a fourth time.
+     */
+    const statusDecided = Boolean(customer.statusDecidedAt);
+    if (statusDecided) {
+      const sheetStatus = deactive ? "deactivated" : "active";
+      if (sheetStatus !== customer.status) {
+        amConflicts.push({
+          customerId: customer.id,
+          field: "status",
+          sheetValue: sheetStatus,
+          appValue: customer.status,
+        });
+        report.statusDecisionsKept++;
+      }
+    }
+
     updates.push({ id: customer.id, values: {
         ...(fillPhone ? { phone: party.mobileNo! } : {}),
         ...(fillWhatsapp ? { whatsappPhone: party.whatsappNo! } : {}),
@@ -251,17 +296,36 @@ export async function projectParties(
           ? { backOfficeName: party.backOfficeName }
           : {}),
         ...(party.gstNumber && !customer.gstin ? { gstin: party.gstNumber } : {}),
-        ...(party.creditDays !== null
+        /*
+         * FILL A BLANK, NEVER CORRECT A PERSON — the rule the phone number and
+         * the GSTIN above have always followed, now applied to the rest.
+         *
+         * These five overwrote on every pass, and two of them are editable in
+         * the app: `updateCustomer` writes `city` and `creditTermDays`. So a
+         * telecaller who corrected a town after speaking to the customer had it
+         * put back within the half hour, with nothing anywhere saying so — the
+         * same shape as the status bug one field down, and quieter, because a
+         * reverted town does not take an account off a screen.
+         *
+         * The sheet is still the authority for an account nobody has touched,
+         * which is almost all of them: it fills what is EMPTY and stops there.
+         */
+        ...(party.creditDays !== null && customer.creditDays === null
           ? { creditTermDays: party.creditDays, creditDays: party.creditDays }
           : {}),
-        // The sheet is simply right about which tier an account pays at, the
-        // same as a phone number or a credit term — there is no in-app
-        // decision to protect, unlike the AM columns above.
-        ...(party.tagPricelist?.trim() ? { priceTag: party.tagPricelist.trim() } : {}),
-        ...(party.area ? { city: party.area } : {}),
-        ...(party.state ? { region: party.state } : {}),
-        ...(party.counterType ? { leadSource: party.counterType } : {}),
-        ...(deactive
+        ...(party.tagPricelist?.trim() && !customer.priceTag?.trim()
+          ? { priceTag: party.tagPricelist.trim() }
+          : {}),
+        ...(party.area && !customer.city.trim() ? { city: party.area } : {}),
+        ...(party.state && !customer.region?.trim() ? { region: party.state } : {}),
+        ...(party.counterType && !customer.leadSource?.trim()
+          ? { leadSource: party.counterType }
+          : {}),
+        ...(statusDecided
+          ? // A PERSON HAS RULED ON THIS ACCOUNT, so the sheet says nothing
+            // about its status in either direction. See `statusDecidedAt`.
+            {}
+          : deactive
           ? {
               status: "deactivated" as const,
               deactivatedAt: customer.deactivatedAt ?? new Date(),
