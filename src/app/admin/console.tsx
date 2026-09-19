@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import type { AppDefinition } from "@/lib/apps";
 import { Badge, Button, Card, EmptyState, cx } from "@/components/ui/primitives";
+import { AppFrame } from "@/components/shell/app-frame";
 import { Modal } from "@/components/ui/overlays";
 import { ToastProvider } from "@/components/ui/toast";
 import type { Config } from "@/lib/config/registry";
@@ -419,155 +420,160 @@ function ConsoleShell({
   const readOnly = appDef?.id === "crm" && !crm.canWrite;
 
   return (
-    <div className="flex h-screen min-w-[1000px] flex-col overflow-hidden bg-canvas">
-      <header className="relative z-20 flex h-14 flex-none items-center gap-4 border-b border-line bg-surface px-5">
-        {/* The same switcher every other app carries. Moving between apps is a
-            platform affordance, not something each app decides to offer. */}
-        {apps.length > 1 ? <AppSwitcher apps={apps} current="admin" /> : null}
-        <Link href="/apps" className="text-[15px] font-semibold whitespace-nowrap text-ink no-underline hover:no-underline">
-          MAHEK<span className="text-brand">ONE</span>
-        </Link>
-        <span className="h-5 w-px flex-none bg-divider" />
-        <span className="text-[15px] font-semibold whitespace-nowrap text-ink">Admin Console</span>
-        <span className="min-w-2 flex-1" />
+    <>
+      {/* The floor, the scroll model and the arrival animation belong to the
+          frame — see `components/shell/app-frame.tsx`. The console stated its
+          own 1000px floor, one of the four this suite used to carry. */}
+      <AppFrame
+        header={
+          <header className="relative z-20 flex h-14 flex-none items-center gap-4 border-b border-line bg-surface px-5">
+            {/* The same switcher every other app carries. Moving between apps is a
+                platform affordance, not something each app decides to offer. */}
+            {apps.length > 1 ? <AppSwitcher apps={apps} current="admin" /> : null}
+            <Link href="/apps" className="text-[15px] font-semibold whitespace-nowrap text-ink no-underline hover:no-underline">
+              MAHEK<span className="text-brand">ONE</span>
+            </Link>
+            <span className="h-5 w-px flex-none bg-divider" />
+            <span className="text-[15px] font-semibold whitespace-nowrap text-ink">Admin Console</span>
+            <span className="min-w-2 flex-1" />
 
-        {/* Who is signed in. There were two fictional personas here — a
-            platform admin and a CRM manager nobody could log in as — which
-            meant the console named somebody other than the person reading it. */}
-        <span className="flex flex-none items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
-            {me.initials}
-          </span>
-          <span className="leading-[14px]">
-            <span className="block text-[13px] font-medium whitespace-nowrap text-ink">{me.name}</span>
-            <span className="block text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
-              {/* The level held on the Admin Console, not the widest held anywhere.
-                  "Platform admin" is a real distinction and stays — it is a
-                  capability rather than a level — but everybody else reads
-                  what they actually are here. */}
-              {isPlatformAdmin ? "Platform admin" : me.role}
+            {/* Who is signed in. There were two fictional personas here — a
+                platform admin and a CRM manager nobody could log in as — which
+                meant the console named somebody other than the person reading it. */}
+            <span className="flex flex-none items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
+                {me.initials}
+              </span>
+              <span className="leading-[14px]">
+                <span className="block text-[13px] font-medium whitespace-nowrap text-ink">{me.name}</span>
+                <span className="block text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+                  {/* The level held on the Admin Console, not the widest held anywhere.
+                      "Platform admin" is a real distinction and stays — it is a
+                      capability rather than a level — but everybody else reads
+                      what they actually are here. */}
+                  {isPlatformAdmin ? "Platform admin" : me.role}
+                </span>
+              </span>
             </span>
-          </span>
-        </span>
-      </header>
+          </header>
+        }
+        sidebar={
+            <aside className="flex w-60 flex-none flex-col border-r border-line bg-surface">
+              <nav className="flex-1 overflow-y-auto p-2 pb-4">
+                {isPlatformAdmin ? (
+                  <div>
+                    <div className="px-3 pt-3 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                      Platform
+                    </div>
+                    {PLATFORM_NAV.map((n) => (
+                      <NavButton
+                        key={n.key}
+                        label={n.label}
+                        active={section === n.key}
+                        tone={
+                          n.key === "overview" && failing
+                            ? "danger"
+                            : n.key === "feedback" && feedback.counts.new
+                              ? "danger"
+                              : "neutral"
+                        }
+                        badge={
+                          n.key === "overview" && failing
+                            ? String(failing)
+                            : n.key === "feedback" && feedback.counts.new
+                              ? String(feedback.counts.new)
+                              : undefined
+                        }
+                        title={
+                          n.key === "feedback" && feedback.counts.new
+                            ? `${feedback.counts.new} reports nobody has read yet`
+                            : undefined
+                        }
+                        onClick={() => navigate(n.key, firstTab(n.key))}
+                      />
+                    ))}
+                  </div>
+                ) : null}
 
-      <div className="flex min-h-0 flex-1">
-        <aside className="flex w-60 flex-none flex-col border-r border-line bg-surface">
-          <nav className="flex-1 overflow-y-auto p-2 pb-4">
-            {isPlatformAdmin ? (
-              <div>
-                <div className="px-3 pt-3 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                  Platform
+                <div className="px-3 pt-3.5 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                  Apps
                 </div>
-                {PLATFORM_NAV.map((n) => (
+                {visibleApps.map((a) => (
                   <NavButton
-                    key={n.key}
-                    label={n.label}
-                    active={section === n.key}
-                    tone={
-                      n.key === "overview" && failing
-                        ? "danger"
-                        : n.key === "feedback" && feedback.counts.new
-                          ? "danger"
-                          : "neutral"
-                    }
-                    badge={
-                      n.key === "overview" && failing
-                        ? String(failing)
-                        : n.key === "feedback" && feedback.counts.new
-                          ? String(feedback.counts.new)
-                          : undefined
-                    }
-                    title={
-                      n.key === "feedback" && feedback.counts.new
-                        ? `${feedback.counts.new} reports nobody has read yet`
-                        : undefined
-                    }
-                    onClick={() => navigate(n.key, firstTab(n.key))}
+                    key={a.id}
+                    label={a.name}
+                    active={appId === a.id}
+                    tone={a.status === "Live" ? "success" : "neutral"}
+                    badge={a.status === "Live" ? undefined : "Soon"}
+                    title={a.status === "Live" ? undefined : a.status}
+                    onClick={() => navigate(`${APP_PREFIX}${a.id}`, firstTab(a.id))}
                   />
                 ))}
+
+                {/* Shared data rather than one app's settings: the catalogue is what
+                    every order line points at, and dispatch and accounts will read
+                    the same rows when they arrive. */}
+                <div className="px-3 pt-3.5 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                  Data
+                </div>
+                <NavButton
+                  label="Catalogue"
+                  active={section === CATALOGUE_SECTION}
+                  tone={catalogue.summary.unresolved ? "danger" : "success"}
+                  badge={catalogue.summary.unresolved ? String(catalogue.summary.unresolved) : undefined}
+                  title={
+                    catalogue.summary.unresolved
+                      ? `${catalogue.summary.unresolved} SKU names still need a canonical legacy ID`
+                      : undefined
+                  }
+                  onClick={() => navigate(CATALOGUE_SECTION, firstTab(CATALOGUE_SECTION))}
+                />
+                <NavButton
+                  label="Expense policy"
+                  active={section === EXPENSE_POLICY_SECTION}
+                  tone={expensePolicy.versions.some((v) => v.inForce) ? "success" : "danger"}
+                  badge={
+                    expensePolicy.versions.some((v) => v.inForce)
+                      ? undefined
+                      : expensePolicy.versions.length
+                        ? "draft"
+                        : "none"
+                  }
+                  title={
+                    expensePolicy.versions.some((v) => v.inForce)
+                      ? undefined
+                      : "No expense policy is in force, so no claim has an eligible amount yet."
+                  }
+                  onClick={() => navigate(EXPENSE_POLICY_SECTION, firstTab(EXPENSE_POLICY_SECTION))}
+                />
+                <NavButton
+                  label="Order sheet"
+                  active={section === SHEET_SECTION}
+                  tone={sheet.summary.rowsWithIssues ? "danger" : "success"}
+                  badge={
+                    sheet.summary.rowsWithIssues
+                      ? String(sheet.summary.rowsWithIssues)
+                      : undefined
+                  }
+                  title={
+                    sheet.summary.rowsWithIssues
+                      ? `${sheet.summary.rowsWithIssues} imported rows need attention`
+                      : undefined
+                  }
+                  onClick={() => navigate(SHEET_SECTION, firstTab(SHEET_SECTION))}
+                />
+              </nav>
+
+              <div className="flex-none border-t border-divider p-3">
+                <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Schema</div>
+                <div className="mt-1 text-[13px] text-body">
+                  {visibleApps.filter((a) => a.status === "Live").length} live schema,{" "}
+                  {visibleApps.filter((a) => a.status !== "Live").length} registered
+                </div>
               </div>
-            ) : null}
-
-            <div className="px-3 pt-3.5 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              Apps
-            </div>
-            {visibleApps.map((a) => (
-              <NavButton
-                key={a.id}
-                label={a.name}
-                active={appId === a.id}
-                tone={a.status === "Live" ? "success" : "neutral"}
-                badge={a.status === "Live" ? undefined : "Soon"}
-                title={a.status === "Live" ? undefined : a.status}
-                onClick={() => navigate(`${APP_PREFIX}${a.id}`, firstTab(a.id))}
-              />
-            ))}
-
-            {/* Shared data rather than one app's settings: the catalogue is what
-                every order line points at, and dispatch and accounts will read
-                the same rows when they arrive. */}
-            <div className="px-3 pt-3.5 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              Data
-            </div>
-            <NavButton
-              label="Catalogue"
-              active={section === CATALOGUE_SECTION}
-              tone={catalogue.summary.unresolved ? "danger" : "success"}
-              badge={catalogue.summary.unresolved ? String(catalogue.summary.unresolved) : undefined}
-              title={
-                catalogue.summary.unresolved
-                  ? `${catalogue.summary.unresolved} SKU names still need a canonical legacy ID`
-                  : undefined
-              }
-              onClick={() => navigate(CATALOGUE_SECTION, firstTab(CATALOGUE_SECTION))}
-            />
-            <NavButton
-              label="Expense policy"
-              active={section === EXPENSE_POLICY_SECTION}
-              tone={expensePolicy.versions.some((v) => v.inForce) ? "success" : "danger"}
-              badge={
-                expensePolicy.versions.some((v) => v.inForce)
-                  ? undefined
-                  : expensePolicy.versions.length
-                    ? "draft"
-                    : "none"
-              }
-              title={
-                expensePolicy.versions.some((v) => v.inForce)
-                  ? undefined
-                  : "No expense policy is in force, so no claim has an eligible amount yet."
-              }
-              onClick={() => navigate(EXPENSE_POLICY_SECTION, firstTab(EXPENSE_POLICY_SECTION))}
-            />
-            <NavButton
-              label="Order sheet"
-              active={section === SHEET_SECTION}
-              tone={sheet.summary.rowsWithIssues ? "danger" : "success"}
-              badge={
-                sheet.summary.rowsWithIssues
-                  ? String(sheet.summary.rowsWithIssues)
-                  : undefined
-              }
-              title={
-                sheet.summary.rowsWithIssues
-                  ? `${sheet.summary.rowsWithIssues} imported rows need attention`
-                  : undefined
-              }
-              onClick={() => navigate(SHEET_SECTION, firstTab(SHEET_SECTION))}
-            />
-          </nav>
-
-          <div className="flex-none border-t border-divider p-3">
-            <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Schema</div>
-            <div className="mt-1 text-[13px] text-body">
-              {visibleApps.filter((a) => a.status === "Live").length} live schema,{" "}
-              {visibleApps.filter((a) => a.status !== "Live").length} registered
-            </div>
-          </div>
-        </aside>
-
-        <main className="relative min-w-0 flex-1 overflow-y-auto">
+            </aside>
+        }
+      >
           <div className="px-6 pt-6 pb-12">
             {detailId ? (
               <DetailPane id={detailId} platform={platform} onBack={() => setDetailId(null)} />
@@ -714,8 +720,7 @@ function ConsoleShell({
               </>
             )}
           </div>
-        </main>
-      </div>
+      </AppFrame>
 
       <Modal
         open={reviewOpen}
@@ -787,7 +792,7 @@ function ConsoleShell({
           discards them.
         </div>
       </Modal>
-    </div>
+    </>
   );
 }
 
@@ -876,7 +881,7 @@ function SectionBody({
     return (
       <div className="mt-5">
         <MapsSection data={maps} />
-      </div>
+    </div>
     );
   }
 

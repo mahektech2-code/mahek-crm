@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
+import { AppFrame } from "@/components/shell/app-frame";
 import { signOut } from "@/lib/actions/auth";
 import { AccountsIcon, type AccountsIconName } from "./icons";
 import { AccountsSearch } from "./accounts-search";
@@ -184,161 +185,168 @@ export function AccountsShell({
     .filter((g) => g.items.length > 0);
 
   return (
-    <div className="flex h-screen min-w-[1000px] flex-col overflow-hidden bg-canvas">
-      <header className="relative z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
-        <div className="flex min-w-0 flex-none items-center gap-2">
-          {switcher}
-          <button
-            onClick={() => setCollapsed((c) => !c)}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-          >
-            <AccountsIcon name="menu" size={18} />
-          </button>
-          <Link
-            href="/accounts"
-            className="flex items-center gap-2 no-underline hover:no-underline"
-          >
-            <span className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] bg-brand">
-              <span className="block h-1.5 w-1.5 rounded-[1px] bg-brand-lime" />
-            </span>
-            <span className="truncate text-[15px] font-semibold tracking-[-0.01em] whitespace-nowrap text-ink">
-              MAHEK AC
-            </span>
-          </Link>
-        </div>
+    <>
+      {/* The floor, the scroll model and the arrival animation belong to the
+          frame now — see `components/shell/app-frame.tsx`. Accounts stated its
+          own 1000px floor, one of the four different answers this suite
+          carried for one question. */}
+      <AppFrame
+        header={
+          <header className="relative z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
+            <div className="flex min-w-0 flex-none items-center gap-2">
+              {switcher}
+              <button
+                onClick={() => setCollapsed((c) => !c)}
+                title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
+              >
+                <AccountsIcon name="menu" size={18} />
+              </button>
+              <Link
+                href="/accounts"
+                className="flex items-center gap-2 no-underline hover:no-underline"
+              >
+                <span className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] bg-brand">
+                  <span className="block h-1.5 w-1.5 rounded-[1px] bg-brand-lime" />
+                </span>
+                <span className="truncate text-[15px] font-semibold tracking-[-0.01em] whitespace-nowrap text-ink">
+                  MAHEK AC
+                </span>
+              </Link>
+            </div>
 
-        <AccountsSearch />
+            <AccountsSearch />
 
-        <div className="min-w-2 flex-1" />
+            <div className="min-w-2 flex-1" />
 
-        <div className="flex min-w-0 flex-none items-center gap-2">
-          {feedback}
-          <button
-            onClick={() => setShortcutsOpen(true)}
-            title="Keyboard shortcuts"
-            className="flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-[13px] font-medium text-muted hover:bg-canvas hover:text-body"
-          >
-            ?
-          </button>
-          <span className="mx-1 h-6 w-px flex-none bg-divider" />
-          <div className="flex flex-none items-center gap-2">
-            <span
-              title={`${user.name} — ${user.roleSentence}`}
-              className="flex h-7 w-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]"
-            >
-              {user.initials}
-            </span>
-            <span className="min-w-0 leading-[14px]">
-              <span className="block text-[13px] font-medium whitespace-nowrap text-ink">
-                {user.name}
-              </span>
-              <span className="block text-[11px] whitespace-nowrap text-muted capitalize">
-                {user.role}
-              </span>
-            </span>
-          </div>
-        </div>
-      </header>
-
-      <div className="flex min-h-0 flex-1">
-        <aside
-          className={cx(
-            "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150 ease-[var(--ease-swift)]",
-            collapsed ? "w-16" : "w-[clamp(196px,17vw,240px)]",
-          )}
-        >
-          <nav
-            aria-label="Accounts sections"
-            className="flex-1 overflow-y-auto px-1.5 pt-2 pb-4"
-          >
-            {groups.map((group) => (
-              <div key={group.label}>
-                {collapsed ? (
-                  <div className="mx-2 mt-2 mb-1 h-3 border-t border-divider" />
-                ) : (
-                  <div className="px-3 pt-3.5 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                    {group.label}
-                  </div>
-                )}
-                {group.items.map((item) => {
-                  const active = item.exact
-                    ? pathname === item.href
-                    : pathname.startsWith(item.href);
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      title={collapsed ? item.label : undefined}
-                      aria-current={active ? "page" : undefined}
-                      className={cx(
-                        "relative mb-px flex h-9 items-center gap-2.5 overflow-hidden rounded-[4px] border-l-[3px] text-sm whitespace-nowrap no-underline transition-colors duration-100 hover:no-underline",
-                        collapsed ? "px-2.5" : "pr-2.5 pl-[9px]",
-                        active
-                          ? "border-l-brand font-medium text-[#5223E0]"
-                          : "border-l-transparent text-body hover:bg-canvas",
-                      )}
-                    >
-                      {active ? (
-                        <span className="pointer-events-none absolute inset-0 rounded-[4px] bg-brand-soft" />
-                      ) : null}
-                      <AccountsIcon name={item.icon} className="relative z-1 flex-none" />
-                      {collapsed ? null : (
-                        <span className="relative z-1 min-w-0 flex-1 overflow-hidden text-ellipsis">
-                          {item.label}
-                        </span>
-                      )}
-                      {!collapsed && item.badge ? (
-                        <span
-                          className={cx(
-                            "relative z-1 flex-none rounded-[9px] px-1.5 py-px text-[11px] font-medium tabular-nums",
-                            item.urgent
-                              ? "bg-danger-soft text-danger"
-                              : "bg-brand-soft text-[#5223E0]",
-                          )}
-                        >
-                          {item.badge}
-                        </span>
-                      ) : null}
-                    </Link>
-                  );
-                })}
-              </div>
-            ))}
-          </nav>
-
-          <div className="flex flex-none items-center gap-2.5 border-t border-divider px-3 py-2.5">
-            <span className="flex h-7.5 w-7.5 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
-              {user.initials}
-            </span>
-            {collapsed ? null : (
-              <>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] leading-4 font-medium text-ink">
+            <div className="flex min-w-0 flex-none items-center gap-2">
+              {feedback}
+              <button
+                onClick={() => setShortcutsOpen(true)}
+                title="Keyboard shortcuts"
+                className="flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-[13px] font-medium text-muted hover:bg-canvas hover:text-body"
+              >
+                ?
+              </button>
+              <span className="mx-1 h-6 w-px flex-none bg-divider" />
+              <div className="flex flex-none items-center gap-2">
+                <span
+                  title={`${user.name} — ${user.roleSentence}`}
+                  className="flex h-7 w-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]"
+                >
+                  {user.initials}
+                </span>
+                <span className="min-w-0 leading-[14px]">
+                  <span className="block text-[13px] font-medium whitespace-nowrap text-ink">
                     {user.name}
                   </span>
-                  <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                  <span className="block text-[11px] whitespace-nowrap text-muted capitalize">
                     {user.role}
                   </span>
                 </span>
-                <form action={signOut} className="flex-none">
-                  <button
-                    type="submit"
-                    title="Signing out records your finish time for the day"
-                    aria-label="Sign out"
-                    className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-                  >
-                    <AccountsIcon name="signout" size={16} />
-                  </button>
-                </form>
-              </>
-            )}
-          </div>
-        </aside>
+              </div>
+            </div>
+          </header>
+        }
+        sidebar={
+            <aside
+              className={cx(
+                "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150 ease-[var(--ease-swift)]",
+                collapsed ? "w-16" : "w-[clamp(196px,17vw,240px)]",
+              )}
+            >
+              <nav
+                aria-label="Accounts sections"
+                className="flex-1 overflow-y-auto px-1.5 pt-2 pb-4"
+              >
+                {groups.map((group) => (
+                  <div key={group.label}>
+                    {collapsed ? (
+                      <div className="mx-2 mt-2 mb-1 h-3 border-t border-divider" />
+                    ) : (
+                      <div className="px-3 pt-3.5 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                        {group.label}
+                      </div>
+                    )}
+                    {group.items.map((item) => {
+                      const active = item.exact
+                        ? pathname === item.href
+                        : pathname.startsWith(item.href);
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          title={collapsed ? item.label : undefined}
+                          aria-current={active ? "page" : undefined}
+                          className={cx(
+                            "relative mb-px flex h-9 items-center gap-2.5 overflow-hidden rounded-[4px] border-l-[3px] text-sm whitespace-nowrap no-underline transition-colors duration-100 hover:no-underline",
+                            collapsed ? "px-2.5" : "pr-2.5 pl-[9px]",
+                            active
+                              ? "border-l-brand font-medium text-[#5223E0]"
+                              : "border-l-transparent text-body hover:bg-canvas",
+                          )}
+                        >
+                          {active ? (
+                            <span className="pointer-events-none absolute inset-0 rounded-[4px] bg-brand-soft" />
+                          ) : null}
+                          <AccountsIcon name={item.icon} className="relative z-1 flex-none" />
+                          {collapsed ? null : (
+                            <span className="relative z-1 min-w-0 flex-1 overflow-hidden text-ellipsis">
+                              {item.label}
+                            </span>
+                          )}
+                          {!collapsed && item.badge ? (
+                            <span
+                              className={cx(
+                                "relative z-1 flex-none rounded-[9px] px-1.5 py-px text-[11px] font-medium tabular-nums",
+                                item.urgent
+                                  ? "bg-danger-soft text-danger"
+                                  : "bg-brand-soft text-[#5223E0]",
+                              )}
+                            >
+                              {item.badge}
+                            </span>
+                          ) : null}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                ))}
+              </nav>
 
-        <main className="animate-fade-in min-w-0 flex-1 overflow-y-auto">{children}</main>
-      </div>
+              <div className="flex flex-none items-center gap-2.5 border-t border-divider px-3 py-2.5">
+                <span className="flex h-7.5 w-7.5 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
+                  {user.initials}
+                </span>
+                {collapsed ? null : (
+                  <>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] leading-4 font-medium text-ink">
+                        {user.name}
+                      </span>
+                      <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                        {user.role}
+                      </span>
+                    </span>
+                    <form action={signOut} className="flex-none">
+                      <button
+                        type="submit"
+                        title="Signing out records your finish time for the day"
+                        aria-label="Sign out"
+                        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
+                      >
+                        <AccountsIcon name="signout" size={16} />
+                      </button>
+                    </form>
+                  </>
+                )}
+              </div>
+            </aside>
+        }
+      >
+        {children}
+      </AppFrame>
 
       <Modal
         open={shortcutsOpen}
@@ -358,6 +366,6 @@ export function AccountsShell({
           </div>
         ))}
       </Modal>
-    </div>
+    </>
   );
 }

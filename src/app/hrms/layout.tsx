@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { getApp, webApps } from "@/lib/apps";
+import { AppFrame } from "@/components/shell/app-frame";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import { Wordmark } from "@/components/shell/wordmark";
 import { AccountMenu } from "@/components/shell/account-menu";
@@ -48,36 +49,41 @@ export default async function HrmsLayout({
 
   return (
     <ToastProvider>
-      <div className="animate-fade-in flex min-h-screen flex-col bg-canvas">
-        <header className="flex h-14 flex-none items-center gap-3 border-b border-line bg-surface px-4">
-          {apps.length > 1 ? (
-            <AppSwitcher
-              apps={webApps(apps)}
-              current="hrms"
-            />
-          ) : null}
-          <Wordmark label={app.name} />
-          <nav className="ml-4 flex items-center gap-1">
-            {MODULES.filter((m) => modules.some((a) => a.href === m.href)).map((m) => (
-              <Link
-                key={m.href}
-                href={m.href}
-                className="rounded-[4px] px-3 py-1.5 text-[13px] font-medium text-body hover:bg-canvas"
-              >
-                {m.label}
-              </Link>
-            ))}
-          </nav>
-          <span className="flex-1" />
-          <FeedbackButton compact />
-          {/* HRMS is the app somebody can hold on its own, so it lands them
-              straight in and they never see the launcher. Without the menu
-              here, an HRMS-only account has no door to its own password. */}
-          <AccountMenu user={user} hat={hat} variant="header" />
-        </header>
-
-        <div className="flex-1">{children}</div>
-      </div>
+      {/* The floor and the scroll model are the frame's — this app stated
+          neither, which is how an app ends up with no floor at all. See
+          `components/shell/app-frame.tsx`. */}
+      <AppFrame
+        header={
+            <header className="flex h-14 flex-none items-center gap-3 border-b border-line bg-surface px-4">
+              {apps.length > 1 ? (
+                <AppSwitcher
+                  apps={webApps(apps)}
+                  current="hrms"
+                />
+              ) : null}
+              <Wordmark label={app.name} />
+              <nav className="ml-4 flex items-center gap-1">
+                {MODULES.filter((m) => modules.some((a) => a.href === m.href)).map((m) => (
+                  <Link
+                    key={m.href}
+                    href={m.href}
+                    className="rounded-[4px] px-3 py-1.5 text-[13px] font-medium text-body hover:bg-canvas"
+                  >
+                    {m.label}
+                  </Link>
+                ))}
+              </nav>
+              <span className="flex-1" />
+              <FeedbackButton compact />
+              {/* HRMS is the app somebody can hold on its own, so it lands them
+                  straight in and they never see the launcher. Without the menu
+                  here, an HRMS-only account has no door to its own password. */}
+              <AccountMenu user={user} hat={hat} variant="header" />
+            </header>
+        }
+      >
+        {children}
+      </AppFrame>
     </ToastProvider>
   );
 }

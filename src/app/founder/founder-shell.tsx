@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
+import { AppFrame } from "@/components/shell/app-frame";
 
 /* ---------------------------------------------------------------------------
  * The Founder Dashboard shell — a top bar, exactly like Reports and for the
@@ -52,65 +53,70 @@ export function FounderShell({
   const visible = TABS.filter((t) => allowed.includes(t.href));
 
   return (
-    <div className="min-h-screen bg-canvas">
-      <header className="border-b border-line bg-surface">
-        <div className="flex items-center justify-between gap-4 px-6 pt-4">
-          <div className="flex min-w-0 items-center gap-3">
-            {switcher}
-            <span className="flex items-baseline gap-3">
-              <span className="text-[15px] font-semibold text-ink">Founder Dashboard</span>
-              <span className="text-[13px] text-muted">
-                Every app, one reading of the company
+    // Founder floored at nothing and scrolled the body — it predates nobody
+    // deciding either, which is what eight hand-written app roots produce. The
+    // frame states both once; see `components/shell/app-frame.tsx`.
+    <AppFrame
+      header={
+        <header className="border-b border-line bg-surface">
+          <div className="flex items-center justify-between gap-4 px-6 pt-4">
+            <div className="flex min-w-0 items-center gap-3">
+              {switcher}
+              <span className="flex items-baseline gap-3">
+                <span className="text-[15px] font-semibold text-ink">Founder Dashboard</span>
+                <span className="text-[13px] text-muted">
+                  Every app, one reading of the company
+                </span>
               </span>
-            </span>
-          </div>
-          <div className="flex items-center gap-2.5">
-            {feedback}
-            <span
-              className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-divider text-[11px] font-medium text-body"
-              title={user.name}
-            >
-              {user.initials}
-            </span>
-            <span className="leading-[14px]">
-              <span className="block truncate text-[13px] font-medium text-ink">
-                {user.name}
-              </span>
+            </div>
+            <div className="flex items-center gap-2.5">
+              {feedback}
               <span
-                title={user.roleSentence}
-                className="block truncate text-[11px] font-medium tracking-[0.04em] text-muted uppercase"
+                className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-divider text-[11px] font-medium text-body"
+                title={user.name}
               >
-                {user.role}
+                {user.initials}
               </span>
-            </span>
+              <span className="leading-[14px]">
+                <span className="block truncate text-[13px] font-medium text-ink">
+                  {user.name}
+                </span>
+                <span
+                  title={user.roleSentence}
+                  className="block truncate text-[11px] font-medium tracking-[0.04em] text-muted uppercase"
+                >
+                  {user.role}
+                </span>
+              </span>
 
+            </div>
           </div>
-        </div>
 
-        <nav className="flex gap-1 px-6 pt-3">
-          {visible.map((tab) => {
-            const active = tab.exact
-              ? pathname === tab.href
-              : pathname.startsWith(tab.href);
-            return (
-              <Link
-                key={tab.href}
-                href={tab.href}
-                className={cx(
-                  "-mb-px border-b-2 px-3 py-2 text-[13px] no-underline hover:no-underline",
-                  active
-                    ? "border-brand font-medium text-ink"
-                    : "border-transparent text-muted hover:text-body",
-                )}
-              >
-                {tab.label}
-              </Link>
-            );
-          })}
-        </nav>
-      </header>
-
-      <main>{children}</main>
-    </div>
+          <nav className="flex gap-1 px-6 pt-3">
+            {visible.map((tab) => {
+              const active = tab.exact
+                ? pathname === tab.href
+                : pathname.startsWith(tab.href);
+              return (
+                <Link
+                  key={tab.href}
+                  href={tab.href}
+                  className={cx(
+                    "-mb-px border-b-2 px-3 py-2 text-[13px] no-underline hover:no-underline",
+                    active
+                      ? "border-brand font-medium text-ink"
+                      : "border-transparent text-muted hover:text-body",
+                  )}
+                >
+                  {tab.label}
+                </Link>
+              );
+            })}
+          </nav>
+        </header>
+      }
+    >
+      {children}
+    </AppFrame>
   );
 }
