@@ -200,7 +200,7 @@ export async function Body({
             />
           ) : (
         <Table
-          minWidth={1180}
+          minWidth={1220}
           head={
             <>
               {head("customer", "Customer", 220)}

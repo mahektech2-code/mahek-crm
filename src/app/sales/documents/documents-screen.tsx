@@ -232,7 +232,7 @@ export function DocumentsScreen({ rows }: { rows: DocumentRow[] }) {
           />
 
           <Table
-            minWidth={1160}
+            minWidth={1180}
             head={
               <>
                 <HeadCell width={300}>Document</HeadCell>

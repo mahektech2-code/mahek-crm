@@ -181,7 +181,7 @@ export function OverridesScreen({
         />
       ) : (
         <Table
-          minWidth={1120}
+          minWidth={1200}
           head={
             <>
               <HeadCell width={140}>When</HeadCell>

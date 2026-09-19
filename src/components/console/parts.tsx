@@ -191,7 +191,21 @@ export function Table({
   chrome?: boolean;
 }) {
   return (
+    /*
+     * A BOX THAT SCROLLS HAS TO BE REACHABLE FROM A KEYBOARD.
+     *
+     * At the narrow end of the desktop range a fourteen-column table is wider
+     * than the space beside the sidebar, so this box scrolls — that is the
+     * design and it is right. What was missing is that a scrollable region
+     * with nothing focusable inside its overflow can only be scrolled with a
+     * mouse: `tabIndex` is what makes the arrow keys work, and the label is
+     * what tells a screen reader that the region moves. Both are the standard
+     * treatment for a scroll container, and neither draws anything.
+     */
     <div
+      tabIndex={0}
+      role="region"
+      aria-label="Table, scrolls sideways"
       className={cx(
         "min-w-0 overflow-auto",
         chrome ? "rounded-[6px] border border-line bg-surface" : "bg-surface",
