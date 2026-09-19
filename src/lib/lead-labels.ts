@@ -334,7 +334,53 @@ export const LOST_REASONS: readonly CodedOption[] = [
   { code: "delivery_service", label: "Delivery or service" },
   { code: "not_interested", label: "Customer not interested" },
   { code: "wrong_lead", label: "Wrong lead — should not have been raised" },
+  /**
+   * §8 — ITS OWN CODE, AND DELIBERATELY NOT `wrong_lead`.
+   *
+   * Mahek's instruction, and the reason is that the two are different
+   * situations wearing one word. `wrong_lead` is somebody at Mahek raising
+   * something that was never a lead — a duplicate typed twice, a supplier
+   * filed as a customer. This is the verification CALL finding that the
+   * opportunity the salesman reported is not there.
+   *
+   * Folded together, "how many did the verification call kill this quarter"
+   * could not be asked, and the answer to "how many leads should never have
+   * been raised" would silently include every shop that denied a visit.
+   */
+  { code: "verification_failed", label: "Verification failed" },
   { code: "territory_conflict", label: "Distributor or territory conflict" },
+  { code: "other", label: "Other" },
+] as const;
+
+/**
+ * §8 — WHY THE VERIFICATION CALL FOUND NOTHING, which is a second question.
+ *
+ * The loss reason says the call killed it; this says what the call actually
+ * found, and Mahek asked for it because the two together are the report:
+ * "Verification failed — 18" is a number, and "customer denied the visit — 6,
+ * wrong business — 4, duplicate — 3" is something somebody can act on. Six of
+ * those seven answers point at a different fix — one is a salesman problem,
+ * one is a data problem, one is an intake problem.
+ *
+ * A CODE, like every reason list here, so it can be counted rather than
+ * grepped. Demanded whenever the outcome is taken, because a failure with no
+ * finding behind it is the number without the breakdown.
+ *
+ * WHAT IS NOT IN THIS LIST, on Mahek's explicit instruction: a customer who
+ * did not answer the phone. That is not a failed verification, it is an
+ * unfinished one, and it stays `follow_up` — folding it in here would make
+ * every one of these counts read high and mean nothing.
+ */
+/** The one loss code §8's third outcome ever writes. Never the manager's pick. */
+export const VERIFICATION_FAILED_CODE = "verification_failed";
+
+export const VERIFICATION_FAILURE_REASONS: readonly CodedOption[] = [
+  { code: "denies_visit", label: "Customer denies the visit" },
+  { code: "denies_enquiry", label: "Customer denies the enquiry" },
+  { code: "no_such_business", label: "Business or shop does not exist" },
+  { code: "wrong_contact", label: "Wrong contact or wrong business" },
+  { code: "duplicate", label: "Duplicate lead" },
+  { code: "false_information", label: "False or inaccurate information" },
   { code: "other", label: "Other" },
 ] as const;
 

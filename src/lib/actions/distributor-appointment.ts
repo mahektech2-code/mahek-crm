@@ -464,6 +464,14 @@ export async function agreeCommercialTerms(
             routeReason,
             reason: termsSentence(parsed.data),
             requestedAt: now,
+            /* Restating the terms IS acting on the step, so a send-back asking
+               for exactly that is answered by this write and its marks go. It
+               is the step 1 half of the rule the decision above keeps: a note
+               saying "come back with a credit limit we can live with" must not
+               survive the credit limit being changed. */
+            sentBackAt: null,
+            sentBackById: null,
+            sentBackNote: null,
             updatedAt: now,
             updatedById: ctx.user.id,
           })
@@ -627,6 +635,18 @@ export async function decideDistributorAppointment(
           approverUserId: ctx.user.id,
           decidedAt: now,
           decisionNote: note ?? null,
+          /* AND ANY OUTSTANDING SEND-BACK IS CLEARED BY THE DECISION.
+             A step that was turned back last month and has now been answered
+             is answered; leaving the note standing would put "the warehouse
+             answer is missing" on a row somebody has since corrected and had
+             approved, which sends the next reader to fix what is already
+             fixed. What happened is not lost — the send-back wrote its own
+             timeline entry and its own audit row, which is where the history
+             of an application belongs rather than on a mark whose whole job is
+             to say what is outstanding NOW. */
+          sentBackAt: null,
+          sentBackById: null,
+          sentBackNote: null,
           updatedAt: now,
           updatedById: ctx.user.id,
         })
@@ -748,6 +768,189 @@ export async function decideDistributorAppointment(
     return moved.ok
       ? ok(null, done)
       : ok(null, done + " The ladder did not move: " + moved.error, [moved.error]);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* --------------------------------------------- §12 sending it back, either step */
+
+const sendBackSchema = z.object({
+  note: z.string().trim().min(1).max(1000),
+});
+
+/**
+ * Sent back for correction — which is NOT a decision, and the stage does not
+ * move.
+ *
+ * This is the specification's third management action and it had never been
+ * built. A reviewer had two buttons: approve, which appoints somebody whose
+ * application he cannot actually read, and refuse, which ends the application
+ * and sends the salesman back to the candidate to say no. Neither is what he
+ * means when the warehouse answer is blank. So in practice he pressed neither:
+ * he rang the salesman, the request sat in the queue looking unanswered, and
+ * the only record of what was wrong was a phone call. The queue ages, nobody
+ * can say why, and the reason lives in one person's memory.
+ *
+ * **THE STAGE IS LEFT ENTIRELY ALONE, and that is the whole feature.** Mahek
+ * asked for this explicitly. A lead at `management_review` that is sent back
+ * stays at `management_review`: the application is still in front of the same
+ * people, it is simply incomplete. Moving it down a rung would be the system
+ * asserting that the commercial conversation is over, undoing gates the
+ * salesman has already passed, and — because `advanceLeadStage` records a
+ * transition row — writing that reversal into §25's timeline as though
+ * somebody had decided it. Nothing here imports the ladder for that reason,
+ * and there is a test that reads this function and fails if it ever does.
+ *
+ * **THE ROW STAYS `pending`.** Nobody decided anything, which is exactly what
+ * pending means. See the columns on `mbos_approvals` for why that is three
+ * columns rather than a fourth enum value; the short of it is that every
+ * existing reader of `state` — the queue, the record screen, and the "is
+ * anything still outstanding" count that stops management appointing somebody
+ * the sales manager has not recommended — goes on being correct by doing
+ * nothing.
+ *
+ * **A NOTE IS REQUIRED, in the action and not only in the form.** A send-back
+ * with no note is "do it again" with no idea what was wrong, which is the
+ * failure this exists to prevent and is strictly worse than the phone call it
+ * replaces. A server action is a URL, so the form is not the rule.
+ *
+ * **WHO MAY, is the step's own capability.** Mirroring
+ * `decideDistributorAppointment` exactly: step 1 is `distributor.approve` and
+ * anything below it is `distributor.terms`. Sending a step back is holding the
+ * decision, which is the same authority as taking it — letting a weaker hat
+ * turn back management's step would be a way to stall an appointment without
+ * the right to refuse one.
+ */
+export async function sendBackForCorrection(
+  approvalId: string,
+  input: z.infer<typeof sendBackSchema>,
+): Promise<Result<null>> {
+  try {
+    const parsed = sendBackSchema.safeParse(input);
+    if (!parsed.success) {
+      return err(
+        "Say what needs correcting — a send-back with no note is \"do it again\" with nothing to act on.",
+        "validation",
+        [{ field: "note", message: "Say what has to be fixed before this can be answered." }],
+      );
+    }
+    const { note } = parsed.data;
+
+    const [approval] = await db
+      .select({
+        id: mbosApprovals.id,
+        subjectId: mbosApprovals.subjectId,
+        stepIndex: mbosApprovals.stepIndex,
+        state: mbosApprovals.state,
+        routeReason: mbosApprovals.routeReason,
+        requestedByUserId: mbosApprovals.requestedByUserId,
+      })
+      .from(mbosApprovals)
+      .where(
+        and(eq(mbosApprovals.id, approvalId), eq(mbosApprovals.type, "distributor_appointment")),
+      );
+    if (!approval) return err("That request no longer exists.", "not_found");
+    /* A decided step cannot be sent back. Not because the reviewer changed his
+       mind illegitimately, but because there is nobody waiting: the answer has
+       already gone to whoever asked, and a note landing afterwards reads as a
+       second, contradictory answer to a question that is closed. Deciding again
+       is what an approval that was wrong needs, and that is refused too — which
+       is a real gap, and it is named in the report rather than papered over. */
+    if (approval.state !== "pending") {
+      return err("That step has already been decided — there is nothing waiting to send back.", "conflict");
+    }
+
+    /* The capability is the step's, exactly as the decision's is. */
+    const ctx =
+      approval.stepIndex >= 1
+        ? await requireCapability("distributor.approve")
+        : await requireCapability("distributor.terms");
+
+    const candidate = await reachableCandidate(approval.subjectId);
+    if (!candidate) return err("That candidate no longer exists.", "not_found");
+
+    const now = new Date();
+
+    await db.transaction(async (tx) => {
+      /* `state` is untouched and so is every decision column. The row is what
+         it was — a request nobody has answered — plus a note saying what is
+         stopping the answer. */
+      await tx
+        .update(mbosApprovals)
+        .set({
+          sentBackAt: now,
+          sentBackById: ctx.user.id,
+          sentBackNote: note,
+          updatedAt: now,
+          updatedById: ctx.user.id,
+        })
+        .where(eq(mbosApprovals.id, approval.id));
+
+      /* A send-back is worth a line on the customer's own history, because a
+         record showing only the eventual approval says the application went
+         through first time. "Turned back twice before anybody signed it" is
+         what a reader months later actually wants.
+
+         The natural key is (app, kind, source row) and one step is sent back
+         more than once, so the INSTANT rides in the source id — the same
+         discipline a sample's dispatched/received/review stages keep. The bare
+         approval id would collapse every send-back onto the first one, and the
+         first is the least informative of them. */
+      await writeTimelineEvent(tx, {
+        customerId: approval.subjectId,
+        eventType: MBOS_EVENT.distributorSentBack,
+        sourceApp: "crm",
+        sourceRecordId: `${approval.id}:sent-back:${now.toISOString()}`,
+        occurredAt: now,
+        actorUserId: ctx.user.id,
+        summary: `Sent back for correction at step ${approval.stepIndex + 1}: ${note}`,
+      });
+
+      /* THE NOTE TRAVELS IN THE MESSAGE, not behind a link. It is the entire
+         content of a send-back — the person receiving it has to go and fix
+         something, and a notification that makes them open a screen to find
+         out what is one they read later, if at all. `kind` is `warn` and not
+         `warning`: the bell colours `warn` and `danger`, and the several
+         existing callers spelling it the long way are silently drawn as
+         ordinary notifications. */
+      if (approval.requestedByUserId && approval.requestedByUserId !== ctx.user.id) {
+        await tx.insert(notifications).values({
+          id: id("notif"),
+          userId: approval.requestedByUserId,
+          title: "Distributor appointment sent back for correction",
+          body: `${candidate.name}: ${note}`,
+          kind: "warn",
+          href: `/sales/leads/${approval.subjectId}`,
+        });
+      }
+
+      await tx.insert(auditLog).values({
+        id: id("aud"),
+        actorId: ctx.user.id,
+        actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
+        action: "distributor.sent_back",
+        entityType: "mbos_approvals",
+        entityId: approval.id,
+        afterState: {
+          customerId: approval.subjectId,
+          stepIndex: approval.stepIndex,
+          routeReason: approval.routeReason,
+          note,
+          /* Said out loud on the row rather than left to be inferred from the
+             absence of a stage change, because "did this move the lead" is
+             exactly the question somebody audits this action to answer. */
+          leadStageChanged: false,
+        } as never,
+      });
+    });
+
+    refresh();
+    return ok(
+      null,
+      "Sent back. The request is still open and the stage has not moved — they have been told what to correct.",
+    );
   } catch (e) {
     return fromThrown(e);
   }

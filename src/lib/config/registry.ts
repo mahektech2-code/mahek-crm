@@ -13,6 +13,7 @@
 import { COMPLAINT_CATEGORIES } from "../constants";
 import {
   LOST_REASONS,
+  VERIFICATION_FAILURE_REASONS,
   OVERRIDE_REASONS,
   PROSPECT_REASONS,
   SAMPLE_REASONS,
@@ -2866,6 +2867,15 @@ export const SETTINGS = [
     default: LOST_REASONS.map((r) => ({ ...r })),
   },
   {
+    key: "leads.verificationFailureReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "What the verification call found",
+    description:
+      "§8. When a sales manager's verification call closes a lead, the loss reason is always 'Verification failed' - this is the second question, and it is the half anybody can act on. 'Verification failed: 18' is a number; 'customer denied the visit: 6, wrong business: 4, duplicate: 3' points at three different fixes. A customer who did not ANSWER the phone is not on this list and never should be: that is an unfinished verification, not a failed one, and folding it in would make every count here read high and mean nothing.",
+    default: VERIFICATION_FAILURE_REASONS.map((r) => ({ ...r })),
+  },
+  {
     key: "leads.overrideReasons",
     type: "structured",
     category: "mbos-leads",
@@ -3898,6 +3908,7 @@ export type Config = {
   "leads.prospectReasons": { code: string; label: string }[];
   "leads.sampleReasons": { code: string; label: string }[];
   "leads.lostReasons": { code: string; label: string }[];
+  "leads.verificationFailureReasons": { code: string; label: string }[];
   "leads.overrideReasons": { code: string; label: string }[];
   "leads.sampleReviewChaseDays": number[];
   "leads.verificationDueDays": number;

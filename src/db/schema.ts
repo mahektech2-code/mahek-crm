@@ -7488,6 +7488,46 @@ export const mbosApprovals = pgTable(
     stepIndex: integer("step_index").notNull().default(0),
     /** Why this step exists: `normal`, `over_cap`, `high_value`, ... */
     routeReason: text("route_reason"),
+    /*
+     * SENT BACK FOR CORRECTION, and the row is still `pending`.
+     *
+     * A reviewer who cannot answer yet has a third thing to say, and until
+     * these columns existed there was nowhere to say it: the only two moves
+     * were approve and reject, so a manager looking at an application missing
+     * the warehouse answer either refused it — which ends the application and
+     * makes somebody ring the candidate — or approved it and hoped. In
+     * practice he did neither and the row sat in the queue while he told the
+     * salesman over the phone, which is the version of this that leaves no
+     * record at all.
+     *
+     * IT IS NOT A FOURTH `state`, and the reasoning belongs beside the columns
+     * rather than only in the migration. Nobody has decided: the request is
+     * outstanding, which is exactly what `pending` means, and every reader of
+     * `state` goes on being right by doing nothing. The one that would have
+     * broken is the "is anything still outstanding" count inside
+     * `decideDistributorAppointment` — a sent-back step read as decided stops
+     * holding the appointment back, and management could then appoint a
+     * distributor whose own sales manager had asked for the application to be
+     * redone. The other half is mechanical: a value added to an existing enum
+     * may not be USED in the transaction that adds it, and drizzle-kit runs
+     * every pending migration in one, so that failure appears only on a
+     * database built from scratch.
+     *
+     * The marks are CLEARED when the step is next acted on. Left standing,
+     * last month's note about a missing warehouse answer sits on a row
+     * somebody has since corrected, sending the next reader to fix something
+     * that is already fixed.
+     */
+    sentBackAt: timestamp("sent_back_at", { withTimezone: true }),
+    sentBackById: text("sent_back_by_id").references(() => users.id),
+    /**
+     * Mandatory in the action, nullable in the column. A send-back with no note
+     * is "do it again" with no idea what was wrong, which is the failure the
+     * whole feature exists to prevent — so `sendBackForCorrection` refuses one.
+     * The column stays nullable because every row written before this existed
+     * carries none, and a backfilled sentence is a sentence nobody said.
+     */
+    sentBackNote: text("sent_back_note"),
   },
   (t) => [
     /** The approver's queue, and the only hot query on this table. */

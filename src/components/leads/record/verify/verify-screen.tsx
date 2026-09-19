@@ -91,7 +91,7 @@ export function VerifyScreen({
   stage,
   findings,
   priorCalls,
-  lostReasons,
+  failureReasons,
   canVerify,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
@@ -104,7 +104,8 @@ export function VerifyScreen({
   findings: Finding[];
   priorCalls: ManagerCall[];
   /** §26's configured codes, for the one outcome that closes the lead. */
-  lostReasons: { code: string; label: string }[];
+  /** §8's seven findings. NOT the loss reasons — the loss code is fixed. */
+  failureReasons: { code: string; label: string }[];
   canVerify: boolean;
 }) {
   const router = useRouter();
@@ -113,7 +114,7 @@ export function VerifyScreen({
   const [answers, setAnswers] = React.useState<Record<string, Answer>>({});
   const [questions, setQuestions] = React.useState<Record<string, string>>({});
   const [verdict, setVerdict] = React.useState<VerificationOutcome | null>(null);
-  const [lostReason, setLostReason] = React.useState("");
+  const [failureReason, setFailureReason] = React.useState("");
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -210,7 +211,7 @@ export function VerifyScreen({
      are the only record anybody will have of why a real-looking lead was
      closed. The action demands both again — a form is not a rule. */
   const needsNote = verdict !== null && verdict !== "verified" && !composedNote.trim();
-  const needsLostReason = verdict === "not_qualified" && !lostReason;
+  const needsFailureReason = verdict === "not_qualified" && !failureReason;
 
   async function submit() {
     if (!verdict) return;
@@ -230,7 +231,7 @@ export function VerifyScreen({
         answers: payload,
         outcome: verdict,
         followUpNote: composedNote.trim() || undefined,
-        lostReasonCode: verdict === "not_qualified" ? lostReason : undefined,
+        failureReasonCode: verdict === "not_qualified" ? failureReason : undefined,
       });
       if (!result.ok) {
         setError(result.error);
@@ -239,7 +240,7 @@ export function VerifyScreen({
       setAnswers({});
       setQuestions({});
       setVerdict(null);
-      setLostReason("");
+      setFailureReason("");
       setNote("");
       toast.push(result.message ?? "Call recorded.");
       router.push(leadHref(workspace, `leads/${customerId}`));
@@ -257,7 +258,7 @@ export function VerifyScreen({
     !verdict ||
     unreasonedCorrections.length > 0 ||
     needsNote ||
-    needsLostReason;
+    needsFailureReason;
 
   return (
     <div className="p-6">
@@ -456,25 +457,26 @@ export function VerifyScreen({
         {verdict === "not_qualified" ? (
           <label className="mt-3.5 block max-w-[520px]">
             <span className="mb-1 block text-[13px] text-body">
-              Why it is being closed — required
+              What the call found — required
             </span>
             <select
               className="h-9 w-full rounded-[4px] border border-line bg-surface px-2 text-[13px] text-body"
               disabled={!canVerify}
-              value={lostReason}
-              onChange={(e) => setLostReason(e.target.value)}
+              value={failureReason}
+              onChange={(e) => setFailureReason(e.target.value)}
             >
-              <option value="">Pick a reason</option>
-              {lostReasons.map((r) => (
+              <option value="">Pick what the call found</option>
+              {failureReasons.map((r) => (
                 <option key={r.code} value={r.code}>
                   {r.label}
                 </option>
               ))}
             </select>
             <span className="mt-1 block text-[12px] text-muted">
-              A code rather than a sentence, because &ldquo;how many did we lose to leads that
-              were never real&rdquo; is a question somebody asks of a code and cannot ask of a
-              grep.
+              The lead closes as <strong>Verification failed</strong> either way &mdash; that
+              code is fixed, and is deliberately not &ldquo;wrong lead&rdquo;, which means
+              something else. This is the second question, and it is the half anybody can act
+              on: denied visits are a salesman problem, duplicates are an intake problem.
             </span>
           </label>
         ) : null}
@@ -527,7 +529,7 @@ export function VerifyScreen({
                 ? "Say what the call established before recording it."
                 : unreasonedCorrections.length
                   ? "A correction has to say what the shop said and why the two differ."
-                  : needsLostReason
+                  : needsFailureReason
                   ? "Closing a lead needs one of the configured reasons."
                   : needsNote
                     ? verdict === "not_qualified"

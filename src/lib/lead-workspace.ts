@@ -121,6 +121,31 @@ export const LEAD_SECTIONS: readonly LeadSection[] = [
         label: "Board",
         hint: "The same book as columns per rung — where a book is bunching.",
       },
+      /*
+       * §8.2's seven management blocks.
+       *
+       * A TAB AND NOT AN ELEVENTH MODULE, deliberately. A module is something
+       * that can be GRANTED, and there is nothing here to grant: every figure
+       * on it is a count of rows from Qualification, Samples and Commercial,
+       * and the person who may see those counts is exactly the person who may
+       * open those screens — which the grants already say, and which the
+       * screen itself re-reads rather than assuming. A key of its own would be
+       * a second answer to a question already answered, and the one that
+       * drifts would be the one that widens.
+       *
+       * It sits under All Leads because it is a third view of the same book:
+       * the List answers "which lead", the Board answers "where is the book
+       * bunching", and this answers "what is waiting on somebody". It is NOT
+       * the first tab, though a dashboard usually would be — `path` above is
+       * what the sidebar points at and what `crm.leads`/`sales.leads` name as
+       * their href, so leading with it would move the module's own landing
+       * page and put a redirect in front of every sidebar click.
+       */
+      {
+        path: "leads/dashboard",
+        label: "Dashboard",
+        hint: "Seven queues across the funnel — what is waiting on somebody, each opening the list behind it.",
+      },
     ],
   },
   {

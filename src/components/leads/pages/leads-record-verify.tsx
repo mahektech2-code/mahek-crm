@@ -58,7 +58,7 @@ export async function Body({
    * his own wording on this radio, or the two screens that close a lead would
    * be offering two different vocabularies for one column.
    */
-  const lostReasons = (await getConfig())["leads.lostReasons"];
+  const failureReasons = (await getConfig())["leads.verificationFailureReasons"];
 
   /*
    * A finding with nothing recorded against it is still LISTED. "He did not
@@ -117,7 +117,7 @@ export async function Body({
       stage={record.stage}
       findings={findings}
       priorCalls={calls}
-      lostReasons={lostReasons}
+      failureReasons={failureReasons}
       canVerify={await canLead(user, "lead.verify")}
     />
   );

@@ -116,12 +116,18 @@ export async function managerLeadBlocks(day: string): Promise<ManagerLeadBlock[]
 
       count(*) filter (where c.lead_stage = 'negotiation')::int as "negotiationsOpen",
 
-      /* §3.4 — THE ONE THIS STRIP EXISTS FOR. A commitment on file and no real
-         order behind it is money somebody has been promised and nobody has
-         collected. It is the same fork the per-lead verb takes, counted. */
+      /* §3.4 — THE ONE THIS STRIP EXISTS FOR, and it counts the SLIPPED ones
+         rather than every commitment on file.
+         A promise whose day has not come is a plan and belongs in the block
+         below; a promise whose day CAME AND WENT with no order is money
+         somebody was told to expect and nobody collected, and it is the only
+         one of the two that wants a manager today. Counting both together
+         made the loud block loud on its calmest rows and sent whoever pressed
+         it to the same list as the quiet one. */
       count(*) filter (
         where c.lead_stage = 'negotiation'
           and c.lead_expected_order_date is not null
+          and c.lead_expected_order_date < ${day}::date
       )::int as "awaitingOrderConfirmation",
 
       /* A FORECAST, and the screen must say so. Counted over the seven days
@@ -195,10 +201,13 @@ export async function managerLeadBlocks(day: string): Promise<ManagerLeadBlock[]
     },
     {
       id: "awaiting-order",
-      label: "Waiting on the actual order",
-      hint: "A date and a quantity were promised. Until the order is confirmed it is a forecast, not a sale.",
+      label: "Promised, and the day has gone",
+      hint: "The date they gave has passed with no order against it. Until an order is confirmed it was only ever a forecast.",
       count: c.awaitingOrderConfirmation,
-      href: "leads/commercial/commitments",
+      /* The view whose rows ARE this count. Two blocks pointing at one
+         unfiltered list is a manager pressing the urgent one and landing on
+         the calm one's rows, which teaches them not to press either. */
+      href: "leads/commercial/commitments?view=slipped",
       /* The specification asks for this to be loud, and it is right: this is
          the block where money is left on the table. */
       tone: c.awaitingOrderConfirmation > 0 ? "danger" : "muted",
@@ -208,7 +217,7 @@ export async function managerLeadBlocks(day: string): Promise<ManagerLeadBlock[]
       label: "Expected in the next 7 days",
       hint: "Forecast only — what customers said they would order, not what they have.",
       count: c.expectedOrdersThisWeek,
-      href: "leads/commercial/commitments",
+      href: "leads/commercial/commitments?view=due",
       /* Deliberately NOT danger. It is a plan, and colouring a plan like a
          problem is how a strip teaches people to ignore its colours. */
       tone: "brand",

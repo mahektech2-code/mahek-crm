@@ -35,6 +35,7 @@ import {
   verificationVerdictFor,
   type LeadSalesType,
   type VerificationOutcome,
+  VERIFICATION_FAILED_CODE,
   type LeadStage,
 } from "@/lib/lead-labels";
 import { checklistFor } from "@/lib/engines/lead-gates";
@@ -1047,6 +1048,9 @@ export async function recordLeadValidationCall(
     followUpNote?: string;
     /** §26's code, required by the move rather than by this schema. */
     lostReasonCode?: string;
+    /** §8 — what the call FOUND. Required on `not_qualified`; the loss code is
+     *  fixed and is never the manager's pick. */
+    failureReasonCode?: string;
   },
 ): Promise<Result<null>> {
   try {
@@ -1056,6 +1060,11 @@ export async function recordLeadValidationCall(
         outcome: z.enum(["verified", "follow_up", "not_qualified"]),
         followUpNote: z.string().trim().max(2000).optional(),
         lostReasonCode: z.string().trim().max(80).optional(),
+        /**
+         * §8 — WHAT THE CALL ACTUALLY FOUND, and it is a second question from
+         * the loss reason rather than a restatement of it.
+         */
+        failureReasonCode: z.string().trim().max(80).optional(),
       })
       .safeParse(call);
     if (!parsed.success) return zodErr(parsed.error);
@@ -1106,14 +1115,47 @@ export async function recordLeadValidationCall(
      * reasons cannot be refused here on one spelling and accepted there on
      * another.
      */
+    /*
+     * §8 — THE LOSS REASON IS NOT PICKED, IT IS `verification_failed`.
+     *
+     * Mahek's instruction, and it is a correction of what shipped a moment ago:
+     * the manager used to choose from the ordinary loss list, and the answer
+     * everybody would reach for is "Wrong lead — should not have been raised".
+     * Those are two different situations wearing one word. `wrong_lead` is
+     * somebody at Mahek raising something that was never a lead — a duplicate
+     * typed twice, a supplier filed as a customer. This is the verification
+     * CALL finding that the opportunity the salesman reported is not there.
+     * Folded together, neither count means anything.
+     *
+     * So the code is FIXED rather than offered, and what the manager is asked
+     * for instead is the FINDING — which is the half that makes the report
+     * useful. "Verification failed: 18" is a number; "customer denied the
+     * visit: 6, wrong business: 4, duplicate: 3" is something somebody can act
+     * on, and each of those points at a different fix.
+     *
+     * Both read from CONFIGURATION rather than a literal, so a team that
+     * reworded either list is not refused here on one spelling.
+     */
+    let failureReasonCode: string | null = null;
     if (c.outcome === "not_qualified") {
-      const codes = (await getConfig())["leads.lostReasons"];
-      if (!c.lostReasonCode || !codes.some((r) => r.code === c.lostReasonCode)) {
+      const config = await getConfig();
+
+      if (!config["leads.lostReasons"].some((r) => r.code === VERIFICATION_FAILED_CODE)) {
         return err(
-          "Say why this lead is being closed. A shop that turns out not to exist is usually “Wrong lead — should not have been raised”, and the code is what makes it countable later.",
+          "This deployment has no “Verification failed” loss reason configured, so the lead cannot be closed this way. Add it under Settings → Why a lead was lost.",
           "validation",
         );
       }
+
+      const findings = config["leads.verificationFailureReasons"];
+      if (!c.failureReasonCode || !findings.some((r) => r.code === c.failureReasonCode)) {
+        return err(
+          "Say what the call actually found. A failure with no finding behind it is a number with no breakdown, and the breakdown is the half anybody can act on.",
+          "validation",
+          [{ field: "failureReasonCode", message: "What did the call find?" }],
+        );
+      }
+      failureReasonCode = c.failureReasonCode;
     }
 
     const callId = gen("lmc");
@@ -1284,11 +1326,22 @@ export async function recordLeadValidationCall(
      * again to try, and the second row would be a second conversation on a
      * history nobody had two.
      */
+    /* The finding's own words, resolved from configuration so a reworded list
+       reads back correctly on a closure recorded before it was reworded. */
+    const findingLabel = failureReasonCode
+      ? ((await getConfig())["leads.verificationFailureReasons"].find(
+          (r) => r.code === failureReasonCode,
+        )?.label ?? failureReasonCode)
+      : null;
+
     const closed = await advanceLeadStage({
       customerId,
       to: "lost",
-      reasonCode: c.lostReasonCode,
-      note: c.followUpNote,
+      /* Fixed, never the manager's pick — see the note above. The FINDING is
+         what he was asked for, and it travels in the note so the closure reads
+         as what the call found rather than as a bare code. */
+      reasonCode: VERIFICATION_FAILED_CODE,
+      note: [findingLabel, c.followUpNote].filter(Boolean).join(" — "),
     });
     if (!closed.ok) {
       return err(

@@ -211,6 +211,16 @@ export const MBOS_EVENT = {
   distributorSubmitted: "distributor_submitted",
   distributorTerms: "distributor_terms_agreed",
   distributorAgreement: "distributor_agreement",
+  /*
+   * Sent back for correction, which is neither of the two decisions either
+   * side of it. It earns a kind of its own because a record that showed only
+   * the eventual approval would say the application went through first time —
+   * and "this was turned back twice before anybody signed it" is precisely
+   * what somebody reading a distributor's history months later wants to know.
+   * The source row is the approval, and a step is sent back more than once, so
+   * the stage rides in the source id the way a sample's three dates do.
+   */
+  distributorSentBack: "distributor_sent_back",
 
   /** §14 — a file sent or a call placed from the manager's lead page. */
   leadCommunication: "lead_communication",

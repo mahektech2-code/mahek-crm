@@ -280,7 +280,8 @@ export function buildQueue(
     const hold = holdWindow(c, today);
 
     // A lead the field team is climbing a ladder with is not a prospect for
-    // the office to cold-call. Only the prospect reason goes; see `funnelHold`.
+    // the office to cold-call — and, since Mahek's own rule, not a reorder for
+    // it to chase either. See `funnelHold`.
     const funnel = funnelHold(c);
 
     // What the customer said last time somebody asked. It silences the ASK
@@ -291,7 +292,9 @@ export function buildQueue(
 
     let reasons = quiet ? all.filter((r) => !isOrderChasing(r.kind)) : all;
     if (hold) reasons = reasons.filter((r) => !isHoldableReason(r.kind));
-    if (funnel) reasons = reasons.filter((r) => r.kind !== "prospect");
+    if (funnel) {
+      reasons = reasons.filter((r) => r.kind !== "prospect" && !isReorderChasing(r.kind));
+    }
     if (outcome) reasons = reasons.filter((r) => !isOrderAsk(r.kind));
 
     // Suppression is a return value, not a filter. The interface has a strip
@@ -846,6 +849,22 @@ function formatPaise(paise: number): string {
  * chasing reasons for that second half: it does not ask for a sale, but it
  * names the same order the window is already being quiet about.
  */
+/**
+ * THE REORDER ASK — the three reasons that amount to "you are due to buy
+ * again", which is the one the lead workflow raises its own task for.
+ *
+ * Deliberately NARROWER than `isOrderChasing` below, which also carries
+ * `orderStatus`. That one names an order the customer has ALREADY placed and
+ * answers "where is it" — nobody on the funnel is raising a duplicate of that,
+ * and holding it back would leave a customer who asked about their own delivery
+ * with nobody ringing them.
+ */
+function isReorderChasing(kind: QueueReasonKind): boolean {
+  return (
+    kind === "orderDue" || kind === "routineCall" || kind === "orderOverdueFullCycle"
+  );
+}
+
 function isOrderChasing(kind: QueueReasonKind): boolean {
   return (
     kind === "orderDue" ||
@@ -1017,14 +1036,28 @@ function outcomeWindow(
  * make a telecaller's own book shrink for no visible reason, which is the one
  * thing the strip exists to prevent.
  *
- * Like the third-party mark, it silences PROSPECTING alone. A reminder
- * somebody promised, money this account owes, an order it actually placed —
- * all of those still reach the list, because none of them is the first order
- * the salesman is out asking for.
+ * IT SILENCES PROSPECTING AND REORDER CHASING, and this is a widening.
+ *
+ * It used to strip the prospect reason alone, on the reasoning that a lead the
+ * salesman is working is not a shop the office should cold-call. That reasoning
+ * was right and was not the whole of it: the same shop could sit on a
+ * telecaller's list for a reorder AND on the lead manager's task list for the
+ * same reorder in the same week, because the funnel raises its own repeat-order
+ * task from the customer's measured cycle. Two people ringing one customer
+ * about one thing, neither knowing about the other, is exactly the failure the
+ * prospect strip exists to prevent, arriving by a different door.
+ *
+ * Mahek's rule: while the lead workflow is actively managing a customer, the
+ * ordinary reorder call does not independently raise another one.
+ *
+ * WHAT STILL REACHES THE LIST is everything that is not an ask for an order. A
+ * reminder somebody promised, money this account owes, a complaint, the status
+ * of an order it actually placed — none of those is the salesman's ask, and
+ * holding them would silence the customer rather than the duplicate.
  */
 function funnelHold(c: QueueCandidate): string | null {
   if (!c.leadSalesType) return null;
-  return `On the sales team's lead funnel (${salesTypeLabel(c.leadSalesType)}) - they are asking for the first order, so the Call Log does not`;
+  return `On the sales team's lead funnel (${salesTypeLabel(c.leadSalesType)}) - they are asking for the order, so the Call Log does not`;
 }
 
 function holdWindow(c: QueueCandidate, today: BusinessDate): string | null {
