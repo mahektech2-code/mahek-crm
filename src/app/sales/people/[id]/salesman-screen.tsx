@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
+import { readAttendanceVerdict } from "@/lib/attendance-labels";
 import type { PerformanceRow, SalesmanRecord } from "@/lib/services/sales-service";
 import type { DayEvidence as DayEvidenceType } from "@/lib/services/day-evidence-service";
 import { DayCheck } from "./day-check";
@@ -417,17 +418,22 @@ export function SalesmanScreen({
                   {a.checkOutAt ? stamp(a.checkOutAt) : <span className="text-muted">Never closed</span>}
                 </Cell>
                 <Cell>
-                  <Pill
-                    tone={
-                      a.status === "present"
-                        ? "success"
-                        : a.status === "absent"
-                          ? "danger"
-                          : "warn"
-                    }
-                  >
-                    {a.status.replace(/_/g, " ")}
-                  </Pill>
+                  {(() => {
+                    /* One reading, shared with the Attendance screen — a day
+                       still open carries the column's `absent` default rather
+                       than a verdict, and only `worked_seconds` tells them
+                       apart. See `lib/attendance-labels.ts`. */
+                    const verdict = readAttendanceVerdict({
+                      status: a.status,
+                      hasCheckIn: a.checkInAt != null,
+                      workedSeconds: a.workedSeconds,
+                    });
+                    return (
+                      <span title={verdict.title ?? undefined}>
+                        <Pill tone={verdict.tone}>{verdict.word}</Pill>
+                      </span>
+                    );
+                  })()}
                 </Cell>
                 <Cell>
                   {a.withinGeofence === false ? (

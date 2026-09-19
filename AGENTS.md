@@ -2047,6 +2047,56 @@ NOT a cache: rebuilding it from the two marks is precisely the loss it exists
 to prevent. It is also the only place N photographs can live, since a day with
 two breaks carries six.
 
+**A DAY'S VERDICT IS DERIVED, AND FOR A LONG TIME NOTHING DERIVED IT.**
+`mbos_attendance_days.status` and `worked_seconds` are caches — the column
+comments have said so since the table was written, and `handleAttendance`
+declines to type either by name, correctly, because a handset that can type its
+own verdict can type its own pay. The job it defers to was never written. So
+every row ever stored read `absent` with no hours against it, including days
+carrying a check-in, a check-out and two selfies: three screens drew a red pill
+saying a man who worked was absent, `daysOnLeave` on the salary screen was a
+count of a value nothing wrote, and the two configuration keys that would have
+driven it had no consumer at all. `lib/engines/attendance.ts` is the rule and
+`recomputeAttendanceVerdicts` is the wiring, hourly for the last two days and
+nightly over everything.
+
+**The HOURS are the sessions, never the two marks.** Subtracting `check_in_at`
+from `check_out_at` on a 9-to-1-then-2-to-6 day answers nine hours, which is
+exactly the lie the `sessions` column was added to kill. An open session
+contributes nothing and is never run to `now`: a clock read when the cron fired
+is a measurement of the cron. An EMPTY session list beside two real marks is
+the one fallback, because it is a row an older handset wrote and reading it as
+zero seconds would mark a full day absent — the same bug through the back door.
+
+**WORK OUTRANKS BOTH LEAVE AND A HOLIDAY; a holiday outranks leave where
+nothing was worked.** A man who came out and sold on a public holiday worked
+that day, and a record calling it `holiday` erases the only evidence he did —
+it would also be counted twice on the salary screen, whose `daysWorked` reads
+the check-in and whose `daysOnLeave` reads this column. Between the two where
+nobody worked, the holiday wins: `leaveWorkingDays` already excludes holidays
+from a request's span, so reading it as leave taken would contradict the
+balance that was actually debited.
+
+**A DAY WITH AN OPEN SESSION GETS NO VERDICT AT ALL, and the screen says so.**
+Today's day while it is being worked, and the past day `markMissedCheckouts`
+could not close for want of any evidence of when he stopped. That job already
+refuses to invent a closing time, and inventing a verdict out of the hours it
+declined to guess would walk straight round it — so nothing is written and the
+row keeps the column's `absent` DEFAULT, which is not a judgement anybody made.
+`worked_seconds` null beside a check-in is what tells the two apart, and
+`lib/attendance-labels.ts` — pure and client-safe, like `customer-health.ts` —
+draws it as "not measured" rather than as a red "absent".
+
+**And the rebuild skips a row it would rewrite identically.** This pass sees
+every attendance day there has ever been, on a schedule, for ever, and a
+verdict that settled in March does not move in September. Both columns are
+compared with `is distinct from` — `worked_seconds` is nullable, and `null <>
+null` is null — so a converged table is rewritten nowhere. The gate is the
+OUTPUT and never a hash of the attendance row: leave approved this morning for
+last week, a holiday added afterwards and a changed threshold all reach
+backwards into days already judged, which is also why the nightly pass takes no
+window.
+
 **A check-in is never refused because a photograph is still uploading.** Media
 is a separate queue that syncs AFTER its parent — that is the whole point of
 it — so an attendance row routinely names a file whose bytes are still on the

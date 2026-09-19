@@ -222,3 +222,137 @@ test("queued fixes are deleted only on a clean answer", () => {
     "the retention window is hardcoded again — how durable somebody's day is belongs in the registry",
   );
 });
+
+/* ---------------------------------------------------------------------------
+ * AND THE MAP HAS TO REDRAW, WHICH FOR FOUR MONTHS IT DID NOT.
+ *
+ * Everything above is about the trail being CORRECT. None of it could see
+ * that the map drew it exactly once: the two drawing functions live inside an
+ * effect that runs on mount and closes over the arrays computed on the FIRST
+ * render, and they are invoked from `style.load` — mount, and a Map/Satellite
+ * switch. Never on new data. The page polls every thirty seconds and
+ * `page.tsx` keys the panel on the day and the view, neither of which changes
+ * during a day, so nothing remounted and no effect ever ran again. The team
+ * list ticked forward beside a map frozen at nine in the morning, and it was
+ * reported as "live tracking is dead".
+ *
+ * A text check, like every other check in this file and for the same reason:
+ * one side is a React component that needs a WebGL context to run at all.
+ * What CAN be asserted without one is the shape that made the bug possible.
+ * ------------------------------------------------------------------------- */
+
+test("the map draws from a ref that a poll can update, not from first render", () => {
+  const source = readFileSync(MAP, "utf8");
+
+  /* The whole of it: the drawing reads the LATEST data rather than whatever
+     the effect closed over when the component mounted. */
+  assert.ok(
+    /function drawEverything\(\) \{\s*const \{[^}]*\} = frame\.current;/.test(source),
+    "the drawing no longer reads `frame.current` — it is back to the arrays its effect closed over on the first render, and the map will freeze at first paint",
+  );
+  assert.ok(
+    /const \{ pinned, points \} = frame\.current;/.test(source),
+    "the markers no longer read `frame.current`, so a salesman who starts or stops reporting mid-day will not gain or lose his pin",
+  );
+
+  /* And something actually calls it. A redraw nothing invokes is the state
+     this was already in. */
+  assert.ok(
+    /redraw\.current\?\.\(\)/.test(source),
+    "nothing invokes the redraw any more — new data will reach the component and stop there",
+  );
+
+  /* A redraw writes into the sources that exist. Rebuilding the map instead
+     would refetch every tile from Ola Maps twice a minute and throw away the
+     camera of whoever is reading it. */
+  assert.ok(
+    /source\.setData\(data\)/.test(source),
+    "the redraw no longer updates existing sources — if it rebuilds the map instead, every poll is a fresh set of tile requests and a camera yanked back to the whole team",
+  );
+});
+
+test("the map is built the first time there is something to place, not only on mount", () => {
+  const source = readFileSync(MAP, "utf8");
+
+  /* The build effect returned early with nothing to place AND the host div
+     was not mounted in that state, so the first position arriving on a later
+     poll re-rendered a host no effect was ever going to run against again.
+     Opening the Live map before anybody checked in meant no map all day. */
+  assert.ok(
+    /\}, \[hasAnything\]\);/.test(source),
+    "the build effect no longer re-runs when the first position arrives — opening this screen before anybody has reported will leave it blank for the rest of the day",
+  );
+  assert.ok(
+    !/Frame key="empty"/.test(source),
+    "the empty state replaces the map host again, which is what made it permanent — draw it over the host instead",
+  );
+});
+
+test("a throw while drawing the day is not reported as a map that could not be drawn", () => {
+  const source = readFileSync(MAP, "utf8");
+
+  /* Two different facts. The style loading is what says the map works — the
+     one signal that does not depend on reading meaning into MapLibre's error
+     text, which fires identically for one bad layer in Ola's own style. So
+     the health mark is made either way, in a `finally`; what a throw in the
+     drawing produces is its own state, because streets with no day on them
+     read as a salesman who did not move. */
+  assert.ok(
+    /\} finally \{\s*loadedOnce\.current = true;/.test(source),
+    "the map's health mark is no longer made in a `finally` — either a bad layer will read as a map that could not be drawn, or a throw part-way will leave the streets up with the day silently missing",
+  );
+  assert.ok(
+    /setOverlaysFailed\(true\)/.test(source),
+    "a failure to draw the day has nothing saying so again",
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * AND THE THING THAT FEEDS IT IS NO LONGER A POLL, WHICH IS THE SEAM.
+ *
+ * The redraw above was written against a page that re-ran its whole Server
+ * Component every thirty seconds; what hands the map its data now is a
+ * subscription, and `mergeLiveDelta` answers on a cadence measured in seconds
+ * whether or not one fix arrived. Two rules meet here and neither file can
+ * state the pair on its own.
+ *
+ * The engine's half is asserted where it lives — an empty delta hands back the
+ * same arrays, the same Map, the same rows — and it is deliberately NOT the
+ * whole answer, because a team read legitimately replaces `rows` with a fresh
+ * array of identical content every `liveTeamSeconds`. So the map's half is that
+ * a redraw keys on what the data SAYS rather than on the identity of what it
+ * was handed. Keyed on the arrays it would repaint every marker on the screen
+ * several times a minute, on a connection whose entire point was to stop paying
+ * for ticks that brought nothing.
+ * ------------------------------------------------------------------------- */
+
+const PANEL = "src/app/sales/live/live-panel.tsx";
+
+test("a tick that brought nothing does not repaint the map", () => {
+  const source = readFileSync(MAP, "utf8");
+
+  /* The dependency is the SIGNATURE and not the arrays. Every one of them is a
+     fresh object on every render, and a team read makes `rows` a fresh object
+     even when nobody has moved. */
+  assert.ok(
+    /\}, \[dataSignature\]\);/.test(source),
+    "the redraw no longer keys on `dataSignature` — if it depends on the arrays instead, every quiet tick of the live feed repaints every marker on the map",
+  );
+
+  /* And the signature is built from CONTENT. A length or an identity would go
+     on being equal while a pin moved, which fails the other way round: the
+     frozen map this whole file exists about. */
+  assert.ok(
+    /const dataSignature = \[/.test(source) && /\$\{r\.salesmanId\}@\$\{r\.lat\},\$\{r\.lng\}/.test(source),
+    "the signature no longer names where each salesman is — a pin that moves without changing a count will not be redrawn",
+  );
+
+  /* The panel hands the map the MERGED frame rather than what the server
+     rendered once. Handing it the props again would be the poll with the cost
+     removed and the staleness kept. */
+  const panel = readFileSync(PANEL, "utf8");
+  assert.ok(
+    /rows=\{frame\.rows\}/.test(panel) && /tracks=\{frame\.tracks\}/.test(panel),
+    "the panel is handing the map its first-paint props again rather than the frame the feed has been folding deltas into",
+  );
+});

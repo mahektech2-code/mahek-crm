@@ -72,6 +72,11 @@ const files = [
   // checkable against a real database — `xmin` is the witness — so it lives
   // here, and it will regress silently the moment anything stops comparing.
   "src/lib/projection-idempotence.test.ts",
+  // The same question one layer up, in the SYNC rather than the projection:
+  // re-reading an unchanged tab must write no staging row. It also pins the
+  // three things a difference-based withdrawal could break — a real change
+  // landing, a row that left being marked, and a row the sheet takes back.
+  "src/lib/staging-idempotence.test.ts",
 ];
 
 let failed = 0;

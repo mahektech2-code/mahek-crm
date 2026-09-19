@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { sheetOrderRows, sheetPaymentRows, sheetSyncRuns } from "@/db/schema";
 import { readTab, sheetsConfigured, type SheetTable } from "@/lib/sheets";
@@ -7,6 +7,7 @@ import { PAY_COL, parseOrderRow, parsePaymentRow } from "@/lib/sheet-parse";
 import {
   hashRow,
   newSyncId,
+  notAmong,
   readWindows,
   runSync,
   watermark,
@@ -127,11 +128,16 @@ async function pullFromSheet(
   let withIssues = 0;
   let highestRow = Math.max(startRow - 1, 1);
 
+  /** Every line key this pass found in the tab, accumulated across windows.
+   *  A reconcile withdraws what is NOT in here; an append never withdraws at
+   *  all, so on that path it is gathered and unused. */
+  const seen = new Set<string>();
+
   for await (const window of readWindows(read, startRow)) {
     rowsRead += window.rows.length;
     for (const row of window.rows) highestRow = Math.max(highestRow, row.rowNumber);
 
-    const result = await writeWindow(syncId, window);
+    const result = await writeWindow(syncId, window, seen);
     created += result.created;
     updated += result.updated;
     unchanged += result.unchanged;
@@ -165,8 +171,8 @@ async function pullFromSheet(
       .set({ status: "withdrawn", updatedAt: new Date() })
       .where(
         and(
-          ne(sheetOrderRows.lastSeenSyncId, syncId),
           eq(sheetOrderRows.status, "present"),
+          notAmong(sheetOrderRows.lineKey, seen),
         ),
       )
       .returning({ id: sheetOrderRows.id });
@@ -190,7 +196,7 @@ async function pullFromSheet(
   };
 }
 
-async function writeWindow(syncId: string, window: SheetTable) {
+async function writeWindow(syncId: string, window: SheetTable, seen: Set<string>) {
   let created = 0;
   let updated = 0;
   let unchanged = 0;
@@ -220,22 +226,27 @@ async function writeWindow(syncId: string, window: SheetTable) {
       .select({
         lineKey: sheetOrderRows.lineKey,
         rowHash: sheetOrderRows.rowHash,
+        status: sheetOrderRows.status,
       })
       .from(sheetOrderRows)
       .where(inArray(sheetOrderRows.lineKey, keys));
 
     const hashByKey = new Map(existing.map((e) => [e.lineKey, e.rowHash]));
+    const statusByKey = new Map(existing.map((e) => [e.lineKey, e.status]));
 
     const changed: (typeof sheetOrderRows.$inferInsert)[] = [];
-    const untouched: string[] = [];
+    /** Unchanged rows the sheet has taken BACK — the one thing an unchanged
+     *  row can still need written. Normally empty. */
+    const returned: string[] = [];
 
     for (const { row, hash } of slice) {
       const lineKey = (row.cells["Order ID"] ?? "").trim() || `row:${row.rowNumber}`;
       const known = hashByKey.get(lineKey);
+      seen.add(lineKey);
 
       if (known === hash) {
         unchanged++;
-        untouched.push(lineKey);
+        if (statusByKey.get(lineKey) !== "present") returned.push(lineKey);
         continue;
       }
 
@@ -291,14 +302,16 @@ async function writeWindow(syncId: string, window: SheetTable) {
         });
     }
 
-    // Unchanged rows still need their "seen" stamp, or the reconcile pass
-    // would conclude every one of them had vanished from the sheet. One
-    // statement for the batch, and it writes a single column.
-    if (untouched.length) {
+    // An unchanged row that is already `present` is written NOT AT ALL: the
+    // reconcile pass reads what has gone as a difference against the keys it
+    // saw, so nothing has to be stamped to say a row is still there. What is
+    // left is the row the sheet withdrew and has now pasted back unaltered —
+    // its hash matches, so no upsert would carry it back.
+    if (returned.length) {
       await db
         .update(sheetOrderRows)
-        .set({ lastSeenSyncId: syncId, status: "present" })
-        .where(inArray(sheetOrderRows.lineKey, untouched));
+        .set({ lastSeenSyncId: syncId, status: "present", updatedAt: new Date() })
+        .where(inArray(sheetOrderRows.lineKey, returned));
     }
   }
 
@@ -458,6 +471,9 @@ export async function syncPaymentSheet(options: SyncOptions): Promise<SyncOutcom
 
     const startRow = mode === "append" ? (await watermark(source)) + 1 : 2;
 
+    /** Every order number the tab holds — see the order tab above. */
+    const seen = new Set<string>();
+
     for await (const window of readWindows(read, startRow)) {
       rowsRead += window.rows.length;
       for (const row of window.rows) highestRow = Math.max(highestRow, row.rowNumber);
@@ -475,22 +491,26 @@ export async function syncPaymentSheet(options: SyncOptions): Promise<SyncOutcom
           .select({
             orderNumber: sheetPaymentRows.orderNumber,
             rowHash: sheetPaymentRows.rowHash,
+            status: sheetPaymentRows.status,
           })
           .from(sheetPaymentRows)
           .where(inArray(sheetPaymentRows.orderNumber, keys));
         const hashByKey = new Map(existing.map((e) => [e.orderNumber, e.rowHash]));
+        const statusByKey = new Map(existing.map((e) => [e.orderNumber, e.status]));
 
         const changed: (typeof sheetPaymentRows.$inferInsert)[] = [];
-        const untouched: string[] = [];
+        /** Unchanged rows the sheet has taken back. Normally empty. */
+        const returned: string[] = [];
 
         for (const row of slice) {
           const orderNumber = row.cells[PAY_COL.orderNumber].trim();
           const hash = hashRow(row.cells);
           const known = hashByKey.get(orderNumber);
+          seen.add(orderNumber);
 
           if (known === hash) {
             unchanged++;
-            untouched.push(orderNumber);
+            if (statusByKey.get(orderNumber) !== "present") returned.push(orderNumber);
             continue;
           }
 
@@ -532,11 +552,11 @@ export async function syncPaymentSheet(options: SyncOptions): Promise<SyncOutcom
               set: paymentUpsertColumns(),
             });
         }
-        if (untouched.length) {
+        if (returned.length) {
           await db
             .update(sheetPaymentRows)
-            .set({ lastSeenSyncId: syncId, status: "present" })
-            .where(inArray(sheetPaymentRows.orderNumber, untouched));
+            .set({ lastSeenSyncId: syncId, status: "present", updatedAt: new Date() })
+            .where(inArray(sheetPaymentRows.orderNumber, returned));
         }
       }
 
@@ -553,8 +573,8 @@ export async function syncPaymentSheet(options: SyncOptions): Promise<SyncOutcom
         .set({ status: "withdrawn", updatedAt: new Date() })
         .where(
           and(
-            ne(sheetPaymentRows.lastSeenSyncId, syncId),
             eq(sheetPaymentRows.status, "present"),
+            notAmong(sheetPaymentRows.orderNumber, seen),
           ),
         )
         .returning({ id: sheetPaymentRows.id });

@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { sheetTakenOrderRows } from "@/db/schema";
 import {
@@ -14,6 +14,7 @@ import { recomputeOrderSystemHolds } from "@/lib/recompute";
 import {
   hashRow,
   newSyncId,
+  notAmong,
   runSync,
   WRITE_BATCH,
   type SheetReader,
@@ -132,23 +133,35 @@ export async function syncTakenOrderSheet(options: {
       );
       const skippedNoKey = table.rows.length - usable.length;
 
+      /** Every key the tab holds. What is NOT in here has gone — see
+       *  `notAmong` in sheet-sync-core for why that replaced a per-row stamp. */
+      const seen = new Set<string>();
+
       for (let i = 0; i < usable.length; i += WRITE_BATCH) {
         const slice = usable.slice(i, i + WRITE_BATCH);
         const keys = slice.map((r) => (r.cells[columns.lineKey!] ?? "").trim());
 
         const existing = await db
-          .select({ lineKey: sheetTakenOrderRows.lineKey, rowHash: sheetTakenOrderRows.rowHash })
+          .select({
+            lineKey: sheetTakenOrderRows.lineKey,
+            rowHash: sheetTakenOrderRows.rowHash,
+            status: sheetTakenOrderRows.status,
+          })
           .from(sheetTakenOrderRows)
           .where(inArray(sheetTakenOrderRows.lineKey, keys));
         const hashByKey = new Map(existing.map((e) => [e.lineKey, e.rowHash]));
+        const statusByKey = new Map(existing.map((e) => [e.lineKey, e.status]));
 
         const changed: (typeof sheetTakenOrderRows.$inferInsert)[] = [];
-        const untouched: string[] = [];
+        /** Unchanged rows the sheet has taken BACK, which is the one thing an
+         *  unchanged row can still need written. Normally empty. */
+        const returned: string[] = [];
 
         for (const row of slice) {
           const parsed = parseTakenOrderRow(row.cells, columns);
           const hash = hashRow(row.cells);
           const known = hashByKey.get(parsed.lineKey);
+          seen.add(parsed.lineKey);
 
           // Tallied and counted before the hash short-circuit. These describe
           // the sheet as it stands, not the rows this run happened to write —
@@ -159,7 +172,11 @@ export async function syncTakenOrderSheet(options: {
 
           if (known === hash) {
             unchanged++;
-            untouched.push(parsed.lineKey);
+            // A row that is already `present` needs nothing at all, which is
+            // the whole point. One that was withdrawn and has been pasted back
+            // unaltered is the exception: its hash matches, so no upsert will
+            // carry it, and only this puts it back on the sheet's side.
+            if (statusByKey.get(parsed.lineKey) !== "present") returned.push(parsed.lineKey);
             continue;
           }
 
@@ -213,24 +230,28 @@ export async function syncTakenOrderSheet(options: {
               set: upsertColumns(),
             });
         }
-        if (untouched.length) {
+        if (returned.length) {
           await db
             .update(sheetTakenOrderRows)
-            .set({ lastSeenSyncId: syncId, status: "present" })
-            .where(inArray(sheetTakenOrderRows.lineKey, untouched));
+            .set({ lastSeenSyncId: syncId, status: "present", updatedAt: new Date() })
+            .where(inArray(sheetTakenOrderRows.lineKey, returned));
         }
       }
 
       // A row deleted from the tab is withdrawn, not deleted here — and a
       // withdrawn row holds nobody, because the order it described is no
       // longer one the sheet claims exists.
+      //
+      // Read as a difference against the keys the tab actually holds. It used
+      // to be read off a `last_seen_sync_id` stamped onto all 21,337 rows on
+      // every pass, which is the write this file exists to have stopped.
       const gone = await db
         .update(sheetTakenOrderRows)
         .set({ status: "withdrawn", updatedAt: new Date() })
         .where(
           and(
-            ne(sheetTakenOrderRows.lastSeenSyncId, syncId),
             eq(sheetTakenOrderRows.status, "present"),
+            notAmong(sheetTakenOrderRows.lineKey, seen),
           ),
         )
         .returning({ id: sheetTakenOrderRows.id });

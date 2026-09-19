@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq, getTableName, gt, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { sheetSyncRuns } from "@/db/schema";
 import type { ReadRange, SheetTable } from "@/lib/sheets";
@@ -59,6 +59,73 @@ export const hashRow = (cells: Record<string, string>) =>
     // rewrite thirty thousand hashes and report the entire sheet as changed.
     .update(JSON.stringify(Object.entries(cells).sort(([a], [b]) => a.localeCompare(b))))
     .digest("hex");
+
+/* ---------------------------------------------------------------------------
+ * WHAT HAS GONE IS A DIFFERENCE, NOT A STAMP.
+ *
+ * Every one of these imports used to answer "which rows have left the sheet"
+ * by stamping `last_seen_sync_id` onto every row it saw and then withdrawing
+ * whatever still held an older id. It reads well and it is quadratically
+ * expensive in exactly the case that matters: on a quiet tab NOTHING has
+ * changed, so the stamp is the ONLY write the pass makes — and it makes one
+ * for every row in the table, every thirty minutes, for ever.
+ *
+ * Measured on production: `sheet_taken_order_rows` had taken 63,423,497
+ * updates against 21,348 live rows — about 2,970 rewrites per row — in cycles
+ * whose own log read "0 new, 0 changed, 21337 unchanged". Postgres has no
+ * in-place update, so each of those was a new tuple, a WAL record and a dirty
+ * page for a row whose contents did not move; on a 961 MB droplet that is what
+ * evicts the page cache and keeps autovacuum running on a table nobody wrote
+ * anything to.
+ *
+ * The pass already knows every key the sheet holds — it had to read them all
+ * to hash them. So the question is answered by asking Postgres for the
+ * difference instead: a present row whose key is not among the ones just seen
+ * is a row that has gone. Nothing is written to say a row is still there,
+ * which is right as well as cheap: "still there" is not news, and a column
+ * that moves on every pass cannot also mean "this row changed".
+ *
+ * `last_seen_sync_id` is KEPT and is still written by the upsert, so it goes
+ * on recording which run last WROTE a row. It is no longer the witness for
+ * withdrawal and nothing else in MahekOne reads it. Do not reintroduce a
+ * per-pass stamp on it: that is this bug, exactly.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Rows this pass did not see, for the WHERE of a withdrawal.
+ *
+ * ONE bind parameter, not one per key. Drizzle expands a bare JS array into a
+ * parameter list, which on the field-activity tab would be tens of thousands
+ * of placeholders against Postgres's ceiling of 65,535 — so the array is
+ * passed whole with `sql.param` and cast, and the statement stays the same
+ * size whatever the sheet grows to.
+ *
+ * `not exists` over `unnest` rather than the shorter `<> all(…)`, because the
+ * planner can turn this one into a Hash Right Anti Join and cannot turn that
+ * one into anything: `<> all` is a linear walk of the array for every row, so
+ * it is quadratic in the size of the tab. Measured on 21,348 rows against
+ * 21,337 keys, 34 ms against 110 ms, and the gap widens with the sheet.
+ *
+ * The outer column is written out QUALIFIED. That is the house rule for raw
+ * SQL and it is load-bearing exactly here: Drizzle renders a column reference
+ * as a bare `"line_key"`, which inside this correlated subquery would bind to
+ * the inner relation if it ever gained a column of that name — and the
+ * condition would silently become false, which withdraws nothing, for ever,
+ * with every type and every unit test still passing.
+ *
+ * An EMPTY set matches every row, which is the same answer the stamp gave:
+ * a pass that saw nothing withdraws everything. That is a real hazard on a
+ * tab somebody renamed or revoked a permission on, and it is why each caller
+ * guards its own withdrawal the way it already did — this function is not the
+ * place to decide that a sheet with no rows in it is impossible.
+ */
+export function notAmong(column: AnyColumn, seen: ReadonlySet<string>): SQL {
+  const outer = sql.raw(`${getTableName(column.table)}.${column.name}`);
+  return sql`not exists (
+    select 1 from unnest(${sql.param([...seen])}::text[]) as seen_key(key)
+     where seen_key.key = ${outer}
+  )`;
+}
 
 /**
  * Where an `append` run starts reading.
