@@ -6932,6 +6932,91 @@ export const mbosTasks = pgTable(
  * the same shop, and the difference between them is the only thing this call
  * produces that nothing else could.
  */
+/**
+ * §5.2 and §11.7 — a correction is a first-class, attributed record.
+ *
+ * The verification call already stores what the OFFICE was told, beside what
+ * the salesman reported, in `mbos_lead_validations` — and that rule stands:
+ * nothing here writes over a `customers` column, because the two readings
+ * disagreeing is the single most useful thing the call produces. What that
+ * table could not say is WHICH FIELD a manager corrected, what it had said
+ * before, and why.
+ *
+ * It has four fixed `confirmed_*` columns and twelve question columns, so a
+ * correction to one of the four lands in its column with the original
+ * recoverable only by reading the lead — and a correction to any of the other
+ * eight findings was being folded into one free-text note, where "he said
+ * Asian Paints, not Berger, because I asked the proprietor directly" becomes a
+ * sentence nobody can count. "How many leads had their competitor corrected
+ * last quarter, and by whom" is the question this exists to answer, and
+ * `notes ilike '%competitor%'` is not an answer to it.
+ *
+ * One row per FIELD per call, which is what makes the before/after pair
+ * countable and what lets §5.2's "every corrected field is individually
+ * appended to the timeline" be true rather than approximated by one summary
+ * line. Append-only, like `lead_stage_transitions` beside it: a correction
+ * recorded wrongly is answered by a further call, never by an edit, because
+ * the row records what somebody believed on a day and a rewrite destroys the
+ * question rather than answering it.
+ */
+export const leadVerificationCorrections = pgTable(
+  "lead_verification_corrections",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /**
+     * The call this correction was made on. A lead is routinely validated
+     * twice and the first call is usually the one that matters, so a
+     * correction that could not name its call would be undatable against the
+     * reading it corrected.
+     */
+    validationId: text("validation_id")
+      .notNull()
+      .references(() => mbosLeadValidations.id, { onDelete: "cascade" }),
+    /**
+     * WHICH finding. One of `VERIFICATION_FINDINGS` — a code and never a
+     * label, for the reason every coded list here is: a stored label stops
+     * resolving the moment somebody rewords it, and this one is meant to be
+     * counted.
+     */
+    field: text("field").notNull(),
+    /**
+     * What the salesman had reported, captured at the moment of correcting.
+     *
+     * A COPY, deliberately, and the one place this table duplicates something
+     * readable elsewhere. The lead's own column is live — a later visit
+     * legitimately overwrites it, which is the one overwrite the rules allow —
+     * so resolving "what did this correct" by reading the lead would answer
+     * with whatever the field says today and quietly mislabel the correction.
+     * Null where the salesman had recorded nothing and the manager is the
+     * first to answer.
+     */
+    original: text("original"),
+    /** What the manager was told instead. Never written onto the lead. */
+    corrected: text("corrected").notNull(),
+    /**
+     * Required by the action, not merely by the form. A correction with no
+     * reason is the manager's word against the salesman's with nothing to
+     * settle it, which is the argument this table exists to prevent rather
+     * than to record.
+     */
+    reason: text("reason").notNull(),
+    changedById: text("changed_by_id").references(() => users.id),
+    /** Readable after the account is gone. Same reasoning as `customer_am_changes`. */
+    changedByName: text("changed_by_name"),
+    changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    /* The record's own Verification Summary card: this lead, newest first. */
+    index("lead_verification_corrections_customer_idx").on(t.customerId, t.changedAt.desc()),
+    /* "Which fields get corrected most, and on whose leads" — the question. */
+    index("lead_verification_corrections_field_idx").on(t.field, t.changedAt.desc()),
+    index("lead_verification_corrections_validation_idx").on(t.validationId),
+  ],
+);
+
 export const mbosLeadValidations = pgTable(
   "mbos_lead_validations",
   {

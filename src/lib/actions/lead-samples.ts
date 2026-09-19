@@ -616,8 +616,25 @@ export async function confirmSampleReceived(
         .update(mbosSamples)
         .set({
           state: "received",
+          /*
+           * `receivedAt` ALONE, and `deliveredAt` is deliberately not stamped
+           * beside it.
+           *
+           * The three dates are three parties' words: we say it went, the
+           * carrier says it arrived, the SHOP says it is in their hands. This
+           * action is the third of those and only the third. Writing both from
+           * one instant asserts that the carrier delivered at the exact moment
+           * the shop confirmed — which nobody established, and which makes the
+           * two dates permanently indistinguishable on every screen that reads
+           * them. A sample that sat in a courier office for four days and one
+           * handed over the same afternoon then look identical, and the gap
+           * between despatch and receipt is the whole reason there are three
+           * columns rather than one.
+           *
+           * The handset's own `markReceived` has always written only this one.
+           * The console was the path that collapsed them.
+           */
           receivedAt: at,
-          deliveredAt: at,
           updatedAt: now,
           updatedById: ctx.user.id,
         })
@@ -704,6 +721,37 @@ export async function recordSampleFeedback(
       return err("Write down at least one thing they said about it.", "validation", [
         { field: "quality", message: "Something they said." },
       ]);
+    }
+
+    /*
+     * A REJECTED SAMPLE HAS TO SAY WHY, and this path was not asking.
+     *
+     * The rule is the same one a lost lead and an On Hold follow, for the same
+     * reason: the next sample goes out exactly the same otherwise. The handset
+     * enforced it from the day it shipped; the console never did, and the
+     * rejection reason here is DERIVED from whichever of three fields happens
+     * to be filled in. So a reviewer who wrote only about quality, performance,
+     * drying and application — four perfectly good answers — saved a rejection
+     * with `rejection_reason` null, and the record page then drew its "a
+     * rejected trial with no reason on it" banner about a form that had never
+     * asked.
+     *
+     * Checked against the SAME three fields the reason is derived from, because
+     * a check that passes on a field the derivation ignores would refuse the
+     * save and still store nothing.
+     */
+    if (parsed.data.trialOutcome === "rejected") {
+      const f = parsed.data.fields;
+      const why = [f.otherComments, f.priceFeedback, f.competitorComparison].some(
+        (v) => v && v.trim().length > 0,
+      );
+      if (!why) {
+        return err(
+          "A rejected trial has to say why — the price, the comparison against what they use now, or in your own words. Without it the next sample goes out exactly the same.",
+          "validation",
+          [{ field: "otherComments", message: "Why did they turn it down?" }],
+        );
+      }
     }
 
     const ctx = await requireCapability("lead.work");

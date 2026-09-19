@@ -308,6 +308,56 @@ export function labelOf(list: readonly CodedOption[], code: string | null | unde
  * reason the call exists at all — this is the check that the visit happened and
  * that Mahek was explained properly, which no amount of GPS proves.
  */
+/**
+ * §5.2 — THE SALESMAN'S FINDINGS, as a list rather than as nine literals in a
+ * page.
+ *
+ * These are the things the salesman already recorded standing in the shop, and
+ * the manager's job on the verification call is to confirm each one, correct
+ * it, or say the customer could not confirm it. They are NOT
+ * `VERIFICATION_QUESTIONS` above: those are the twelve things the call asks
+ * fresh, and these are the answers somebody else already gave.
+ *
+ * It is a constant because three things read it and they must not drift — the
+ * screen that draws the rows, the action that validates a correction arriving
+ * from one, and `lead_verification_corrections`, whose whole purpose is that
+ * "how many leads had their competitor corrected last quarter" be countable.
+ * A field code typed into a screen and not into the validator is a correction
+ * silently dropped on the way in, which reads afterwards as a manager who
+ * never bothered.
+ *
+ * `lands` names the `mbos_lead_validations` column that holds the shop's own
+ * answer, and SIX OF THE NINE HAVE NONE. That is a real gap and it is stated
+ * rather than hidden: without a column those six are kept only as words in the
+ * call's note. The corrections table is what makes the before/after pair
+ * countable for all nine regardless, which is the half that was missing.
+ */
+export const VERIFICATION_FINDINGS: readonly {
+  id: string;
+  label: string;
+  lands: string | null;
+}[] = [
+  { id: "competitor", label: "Whose product they use now", lands: "competitor" },
+  { id: "monthly_litres", label: "What they use in a month", lands: "monthly_requirement" },
+  { id: "potential", label: "What they could be worth in a month", lands: "potential" },
+  { id: "required_product", label: "Which of ours they need", lands: null },
+  { id: "contact_person", label: "Who we ask for when we ring", lands: null },
+  { id: "decision_maker", label: "Who signs off a purchase", lands: null },
+  { id: "credit_days", label: "The credit they want", lands: null },
+  { id: "application", label: "What they will use it on", lands: null },
+  { id: "customer_type", label: "What kind of business this is", lands: null },
+] as const;
+
+/** Whether a field code arriving from a screen is one of the nine. */
+export function isVerificationFinding(id: string): boolean {
+  return VERIFICATION_FINDINGS.some((f) => f.id === id);
+}
+
+/** The finding's own words, for a timeline sentence and for a summary card. */
+export function findingLabel(id: string): string {
+  return VERIFICATION_FINDINGS.find((f) => f.id === id)?.label ?? id;
+}
+
 export const VERIFICATION_QUESTIONS: readonly { id: string; ask: string }[] = [
   { id: "visited", ask: "Did our salesman actually visit?" },
   { id: "explained", ask: "Did he explain Mahek properly?" },
