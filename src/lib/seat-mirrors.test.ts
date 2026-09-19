@@ -25,7 +25,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, customers, users } from "@/db/schema";
+import { appAccess, customerAmChanges, customers, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
@@ -186,4 +186,51 @@ test("a lead's book is its owner, and its mirror follows that", async () => {
   const after = await reload(lead.id);
   assert.equal(after.ownerId, heena.id);
   assert.equal(after.salesPersonName, "Heena Doshi");
+});
+
+test("the history names whoever actually held the seat, not the stale mirror", async () => {
+  /* The remediation of this very fault wrote thirty-five rows reading
+     "Sanjay → Sanjay", because `fromName` came from the display mirror rather
+     than from the person the id pointed at. The ids were right and the
+     sentence on the record was not. */
+  const shop = await makeCustomer({
+    salesAmId: heena.id,
+    salesPersonName: "Sanjay Kumar Samantaray",
+  });
+
+  await updateAccountManagers({
+    customerIds: [shop.id],
+    salesAmId: pritesh.id,
+    sales: { reasonCode: REASON },
+  });
+
+  const [row] = await db
+    .select()
+    .from(customerAmChanges)
+    .where(eq(customerAmChanges.customerId, shop.id));
+  assert.equal(row.fromUserId, heena.id);
+  assert.equal(row.fromName, "Heena Doshi");
+  assert.equal(row.toName, "Pritesh Doshi");
+});
+
+test("a seat held by a name with no login keeps that name in the history", async () => {
+  /* There is no user to read a name from, so the mirror is the only answer
+     there is — and it is a true one. */
+  const shop = await makeCustomer({
+    salesAmId: null,
+    salesPersonName: "South Zone",
+  });
+
+  await updateAccountManagers({
+    customerIds: [shop.id],
+    salesAmId: pritesh.id,
+    sales: { reasonCode: REASON },
+  });
+
+  const [row] = await db
+    .select()
+    .from(customerAmChanges)
+    .where(eq(customerAmChanges.customerId, shop.id));
+  assert.equal(row.fromUserId, null);
+  assert.equal(row.fromName, "South Zone");
 });
