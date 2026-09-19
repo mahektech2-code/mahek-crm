@@ -94,20 +94,8 @@ export async function roadRouteBetween(from: LatLng, to: LatLng): Promise<RoadRo
     api_key: apiKey,
   });
 
-  let body: DirectionsResponse;
-  try {
-    /* POST WITH NO BODY, which is how this endpoint is specified — everything
-       it takes rides in the query string. It reads like a mistake and is not;
-       a GET here answers 405. */
-    const response = await fetch(`${DIRECTIONS_URL}?${params}`, {
-      method: "POST",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (!response.ok) return null;
-    body = (await response.json()) as DirectionsResponse;
-  } catch {
-    return null;
-  }
+  const body = await ask(`${DIRECTIONS_URL}?${params}`);
+  if (!body) return null;
 
   if (body.status && body.status !== "SUCCESS") return null;
   const route = body.routes?.[0];
@@ -148,6 +136,51 @@ function legMetres(route: NonNullable<DirectionsResponse["routes"]>[number]): nu
     if (typeof d === "number" && Number.isFinite(d)) metres += d;
   }
   return Math.round(metres);
+}
+
+/**
+ * POST FIRST, THEN GET, and the second is not belt and braces.
+ *
+ * This endpoint takes everything in its query string and is documented as a
+ * POST with no body at all, which reads like a mistake and is not. What it
+ * does to a caller is make the VERB the one thing that can be wrong while
+ * every coordinate, the key and the parsing are right — and being wrong about
+ * it fails the way this whole file fails, as a null, which is indistinguishable
+ * from a gap nobody wanted routed. The feature would simply never appear, on a
+ * deployment that had paid for it, with nothing anywhere saying why.
+ *
+ * So a refusal that is about the METHOD — 404, 405, 400 — is retried the other
+ * way round once. It costs one extra request on a route that was going to fail
+ * anyway and nothing at all on one that works, and it means a change at Ola's
+ * end is a slower map rather than a blank one. Every other status is a real
+ * failure and answers null immediately.
+ */
+async function ask(url: string): Promise<DirectionsResponse | null> {
+  const post = await attempt(url, "POST");
+  if (post.body) return post.body;
+  if (post.status === 404 || post.status === 405 || post.status === 400) {
+    const get = await attempt(url, "GET");
+    if (get.body) return get.body;
+  }
+  return null;
+}
+
+async function attempt(
+  url: string,
+  method: "GET" | "POST",
+): Promise<{ body: DirectionsResponse | null; status: number }> {
+  try {
+    const response = await fetch(url, {
+      method,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) return { body: null, status: response.status };
+    return { body: (await response.json()) as DirectionsResponse, status: response.status };
+  } catch {
+    /* A timeout or a DNS failure is not about the verb, so it is given a
+       status nothing retries on. */
+    return { body: null, status: 0 };
+  }
 }
 
 async function readCached(fromKey: string, toKey: string): Promise<RoadRoute | null> {
