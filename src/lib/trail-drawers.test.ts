@@ -306,3 +306,53 @@ test("a throw while drawing the day is not reported as a map that could not be d
     "a failure to draw the day has nothing saying so again",
   );
 });
+
+/* ---------------------------------------------------------------------------
+ * AND THE THING THAT FEEDS IT IS NO LONGER A POLL, WHICH IS THE SEAM.
+ *
+ * The redraw above was written against a page that re-ran its whole Server
+ * Component every thirty seconds; what hands the map its data now is a
+ * subscription, and `mergeLiveDelta` answers on a cadence measured in seconds
+ * whether or not one fix arrived. Two rules meet here and neither file can
+ * state the pair on its own.
+ *
+ * The engine's half is asserted where it lives — an empty delta hands back the
+ * same arrays, the same Map, the same rows — and it is deliberately NOT the
+ * whole answer, because a team read legitimately replaces `rows` with a fresh
+ * array of identical content every `liveTeamSeconds`. So the map's half is that
+ * a redraw keys on what the data SAYS rather than on the identity of what it
+ * was handed. Keyed on the arrays it would repaint every marker on the screen
+ * several times a minute, on a connection whose entire point was to stop paying
+ * for ticks that brought nothing.
+ * ------------------------------------------------------------------------- */
+
+const PANEL = "src/app/sales/live/live-panel.tsx";
+
+test("a tick that brought nothing does not repaint the map", () => {
+  const source = readFileSync(MAP, "utf8");
+
+  /* The dependency is the SIGNATURE and not the arrays. Every one of them is a
+     fresh object on every render, and a team read makes `rows` a fresh object
+     even when nobody has moved. */
+  assert.ok(
+    /\}, \[dataSignature\]\);/.test(source),
+    "the redraw no longer keys on `dataSignature` — if it depends on the arrays instead, every quiet tick of the live feed repaints every marker on the map",
+  );
+
+  /* And the signature is built from CONTENT. A length or an identity would go
+     on being equal while a pin moved, which fails the other way round: the
+     frozen map this whole file exists about. */
+  assert.ok(
+    /const dataSignature = \[/.test(source) && /\$\{r\.salesmanId\}@\$\{r\.lat\},\$\{r\.lng\}/.test(source),
+    "the signature no longer names where each salesman is — a pin that moves without changing a count will not be redrawn",
+  );
+
+  /* The panel hands the map the MERGED frame rather than what the server
+     rendered once. Handing it the props again would be the poll with the cost
+     removed and the staleness kept. */
+  const panel = readFileSync(PANEL, "utf8");
+  assert.ok(
+    /rows=\{frame\.rows\}/.test(panel) && /tracks=\{frame\.tracks\}/.test(panel),
+    "the panel is handing the map its first-paint props again rather than the frame the feed has been folding deltas into",
+  );
+});

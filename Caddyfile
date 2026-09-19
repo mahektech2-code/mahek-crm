@@ -16,7 +16,40 @@
 }
 
 {$DOMAIN} {
-	encode zstd gzip
+	# COMPRESSED, EXCEPT FOR THE ONE RESPONSE THAT IS A CONNECTION.
+	#
+	# The Live map holds an open `text/event-stream` (see
+	# `src/app/api/sales/live/stream/route.ts`), and a compressor that buffers
+	# would hold every event until it had a block worth flushing — a map that
+	# has silently stopped, on a connection that reports itself perfectly
+	# healthy, which is exactly the failure the stream was built to end. Caddy
+	# is believed to pass Flush through its encoder; this does not depend on
+	# that belief.
+	#
+	# The list below is Caddy's own default set with `text/*` spelled out as the
+	# three text types actually worth compressing, so `text/event-stream` is
+	# simply not in it. The response also sends `Content-Encoding: identity` and
+	# `Cache-Control: no-transform`, and the browser falls back to polling if
+	# nothing arrives regardless — three defences, because a buffered stream
+	# looks identical to a working one from every end.
+	encode zstd gzip {
+		match {
+			header Content-Type text/html*
+			header Content-Type text/css*
+			header Content-Type text/plain*
+			header Content-Type text/xml*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type application/xhtml+xml*
+			header Content-Type application/atom+xml*
+			header Content-Type application/rss+xml*
+			header Content-Type application/wasm*
+			header Content-Type image/svg+xml*
+			header Content-Type application/font*
+			header Content-Type application/vnd.ms-fontobject
+			header Content-Type application/x-font*
+		}
+	}
 
 	# The MBOS APK, served straight off disk. Placed at
 	# /opt/mahekone/downloads/mbos.apk by hand — never built into the app
@@ -32,6 +65,14 @@
 	reverse_proxy app:3000 {
 		# Server Actions and dictation uploads are POSTs that take a while.
 		# Two minutes of Opus audio is a slow request, not a hung one.
+		#
+		# THE LIVE MAP'S STREAM IS DELIBERATELY SHORTER THAN THIS. Whatever
+		# exactly these deadlines apply to, a response that never ends is the
+		# one shape that can run into them — so the stream closes itself after
+		# `mbos.location.liveStreamMinutes`, capped at four in the registry, and
+		# the browser opens another. A connection that ends on our own terms
+		# cannot be cut on somebody else's. Raise that cap and this is the line
+		# that has to move with it.
 		transport http {
 			read_timeout 300s
 			write_timeout 300s

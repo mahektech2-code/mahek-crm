@@ -1,9 +1,7 @@
 import Link from "next/link";
 import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
-import { dwellStops, type DwellStop } from "@/lib/engines/dwell";
 import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
-import { trailMetres } from "@/lib/engines/trail-trips";
 import { nowMs, shortDateWithYear } from "@/lib/format";
 import { trackerStalled, trailHasGaps, trailIsDead } from "@/lib/handset-health";
 import { today } from "@/lib/recompute";
@@ -46,8 +44,11 @@ export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };
  * against blank streets. A catchment and not the book: the whole book at
  * national scale answers nothing, and Territory is the screen for reading
  * it. Fetched by the map itself, from `/api/sales/book-pins`, and not handed
- * down from here: this page re-runs every thirty seconds while somebody
- * watches it, and the shops do not move.
+ * down from here. That was originally because this page re-ran every thirty
+ * seconds and re-serialised everything it handed down; it no longer does — the
+ * map is TOLD what has arrived rather than asked for the day again, see
+ * `live-panel.tsx` — and the reasoning survives the change intact: the shops do
+ * not move, so they have no business on a channel built for things that do.
  *
  * The trail is a fix every few minutes between the punch-in and the punch-out;
  * the punch-in and each visit leave one apiece regardless, so somebody whose
@@ -102,19 +103,16 @@ export default async function Page({
      same trail: a run of fixes that never drifted, held long enough to be
      more than a red light. Both are derived here, once, rather than inside
      the client map component, which redraws on every selection change. */
-  const distanceMetres = new Map<string, number>();
-  const dwells = new Map<string, DwellStop[]>();
-  for (const [id, points] of tracks) {
-    /* ONE DEFINITION, shared with the line the map draws — see `trailMetres`.
-       This loop was written out here and the map drew the TRIPS, so on a day
-       made of long jumps between places somebody stood still the panel said
-       4.1 km beside 71 metres of drawn line. */
-    distanceMetres.set(id, trailMetres(points));
-    dwells.set(
-      id,
-      dwellStops(points, config["mbos.location.dwellRadiusMeters"], config["mbos.location.dwellMinMinutes"]),
-    );
-  }
+  /* THE DISTANCE AND THE DWELL STOPS ARE DERIVED IN THE BROWSER NOW, and they
+     had to move. Both were worked out here, once per thirty-second re-render of
+     this whole component — and this component does not re-render any more: the
+     map is TOLD what has arrived rather than asked for the day again (see
+     `live-panel.tsx`). A figure derived here would sit frozen beside a line that
+     grew all afternoon, which is the same bug this change was made to fix,
+     wearing a different costume. Both are pure engines — `trailMetres` and
+     `dwellStops` — so the browser runs the same two functions over the same
+     points and gets the same answers. What this page still owns is the BANNERS
+     below, which are a reading of the team as the screen was opened. */
 
   const out = rows.filter((r) => r.checkInAt && !r.checkOutAt && !r.onLeave);
   const noSignal = rows.filter((r) => !r.seenAt && !r.onLeave);
@@ -272,10 +270,9 @@ export default async function Page({
         rows={rows}
         tracks={tracks}
         activity={activity}
-        distanceMetres={distanceMetres}
-        dwells={dwells}
         gapMetres={config["mbos.location.trailGapMeters"]}
         dwellRadiusMetres={config["mbos.location.dwellRadiusMeters"]}
+        dwellMinMinutes={config["mbos.location.dwellMinMinutes"]}
         tripBreakMinutes={config["mbos.location.tripBreakMinutes"]}
         staleAfterSeconds={config["mbos.location.activityFixMaxAgeSeconds"]}
         view={view}
@@ -291,6 +288,12 @@ export default async function Page({
           currentAppVersion: config["mbos.sync.currentAppVersion"] || null,
         }}
         nowMs={clockMs}
+        /* The point the feed carries on from, on the SERVER's clock — a browser
+           a few minutes fast would otherwise ask from an instant that has not
+           happened here yet and skip every fix that landed in the gap. */
+        cursorMs={clockMs}
+        pushSeconds={config["mbos.location.livePushSeconds"]}
+        pollSeconds={config["mbos.location.livePollSeconds"]}
       />
 
       <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">
