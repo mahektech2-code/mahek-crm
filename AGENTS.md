@@ -163,6 +163,32 @@ are a SEPARATE Ola key for the handset, revocable without taking the console's
 maps down, and a spend cap on it. It is sent only to a device already
 authenticated as a bound handset, which is the most the server side can do.
 
+**THE OLA KEY IS A POOL OF FIVE, SPENT ONE AT A TIME.** `olamaps.apiKey`
+through `olamaps.apiKey5` are five accounts' keys and MahekOne spends the first
+until Ola refuses it for quota, then the second. NOT round-robin: spreading
+constant load across several accounts of one organisation is the pattern a
+provider acts on, and it would put every account near its ceiling at once
+instead of leaving four at zero, where an exhaustion is attributable to exactly
+one of them. **Exhaustion is OBSERVED, never counted** — `classifyOlaAnswer` in
+`engines/ola-key-pool.ts` retires a key on a 429 or a 403 that SAYS it is about
+a limit, and on nothing else: a 400 is Snap-to-Road's batch ceiling, a 401 is a
+key somebody mistyped, a timeout is weather, and a local request counter that
+drifted either way would abandon a good account or keep calling with a dead
+one. **A retired key comes back** on `maps.olaKeyCooldownHours` and, whatever
+that says, from the first of the next month, because a quota is monthly — it is
+read as an earlier month's refusal rather than cleared by a job, so nothing has
+to fire on the right night. `ola_key_health` is where that is remembered, keyed
+on the credential's NAME and not on `app_secrets`, because a key may come from
+the environment and have no row there; it is not `app_settings`, because
+nobody decided this and there is nothing to audit. **A BROWSER CANNOT FAIL OVER
+MID-SESSION** and nothing pretends it can: the page is handed whichever key is
+live at RENDER, a reload picks up the change, and where every key is spent it
+is handed none and the map says THAT rather than "add a key" — two silences,
+two sentences. **ONE KEY COSTS WHAT IT ALWAYS DID**: `olaGet` short-circuits on
+a pool of one — no health read, no retry, no notification — because production
+holds one key and insurance that taxed the uninsured case would be a price paid
+daily against a risk nobody has run.
+
 **A PIN IS ONLY DRAWN WHERE THERE IS A FIX, and what could not be drawn is said
 in words.** Half this book has never been pinned. Spacing those shops out to
 fill the screen is the one thing a map of where things are must not do, and a

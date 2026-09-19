@@ -23,6 +23,8 @@ export type SettingType = "integer" | "decimal" | "text" | "boolean" | "structur
 
 export type SettingCategory =
   | "queue"
+  /** The Ola Maps pool: how long a key refused for quota rests before it is tried again. */
+  | "maps"
   | "buying-cycle"
   | "inactive-watch"
   | "escalation"
@@ -2724,6 +2726,19 @@ export const SETTINGS = [
      where he is standing is worse than no map at all. These decide what a
      handset may download to answer that, and every one of them is a trade
      between the size of the download and how much of the map survives it. */
+  /* ------------------------------------------------------------------ maps */
+  {
+    key: "maps.olaKeyCooldownHours",
+    type: "integer",
+    category: "maps",
+    label: "How long an Ola Maps key rests after Ola refuses it for quota",
+    description:
+      "Hours. MahekOne can hold several Ola Maps accounts' keys and spends them in order, moving to the next only once Ola has actually refused the one in force — never on a count kept here, which would either abandon a key with quota left on it or go on calling with one that is already dead. A refusal can mean the month is spent or merely that a burst was too fast, and the two arrive looking identical, so a refused key is tried again after this long: too short and a finished account is asked repeatedly for nothing, too long and a key that was only rate-limited for a minute sits out the rest of the day. A key refused in an earlier month is available again whatever this says, because a quota is monthly. It does nothing at all on a deployment holding one key.",
+    default: 24,
+    min: 1,
+    max: 336,
+  },
+  /* ----------------------------------------------------------- mbos-maps */
   {
     key: "mbos.maps.offlineEnabled",
     type: "boolean",
@@ -3847,6 +3862,8 @@ export type Config = {
   "mbos.maps.tileCountLimit": number;
   "mbos.maps.downloadOnWifiOnly": boolean;
   "mbos.maps.refreshAfterDays": number;
+
+  "maps.olaKeyCooldownHours": number;
 
   "leads.suspectMaxVisits": number;
   "leads.duplicateNameSimilarity": number;

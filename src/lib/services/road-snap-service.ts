@@ -1,5 +1,5 @@
 import "server-only";
-import { readSecret } from "@/lib/secrets";
+import { olaGet } from "@/lib/services/ola-key-service";
 import {
   downsampleForPath,
   OLA_MAX_POINTS_PER_REQUEST as OLAMAPS_MAX_POINTS_PER_REQUEST,
@@ -165,9 +165,10 @@ export async function snapToRoad(points: LatLng[]): Promise<LatLng[] | null> {
 async function callSnap(points: LatLng[], enhancePath: boolean): Promise<LatLng[] | null> {
   if (points.length < 2) return null;
 
-  const apiKey = await readSecret("olamaps.apiKey");
-  if (!apiKey) return null;
-
+  /* No key is not read for here any more. `olaGet` answers null without asking
+     Ola where there is nothing to ask with, so every batch fails the same way
+     and `improved` stays false — the identical answer this gave when it read
+     the secret itself. */
   const snapped: LatLng[] = [];
   /* Whether ANY batch came back from Ola. See the return below for why. */
   let improved = false;
@@ -200,7 +201,7 @@ async function callSnap(points: LatLng[], enhancePath: boolean): Promise<LatLng[
       continue;
     }
 
-    const onRoad = await snapBatch(batch, apiKey, enhancePath);
+    const onRoad = await snapBatch(batch, enhancePath);
     if (onRoad) improved = true;
 
     /* The first point of every batch after the first is the previous batch's
@@ -228,31 +229,21 @@ async function callSnap(points: LatLng[], enhancePath: boolean): Promise<LatLng[
  * says nothing about the batch before or after it, which is why it is answered
  * here rather than thrown up to abandon the whole path.
  */
-async function snapBatch(
-  batch: LatLng[],
-  apiKey: string,
-  enhancePath: boolean,
-): Promise<LatLng[] | null> {
+async function snapBatch(batch: LatLng[], enhancePath: boolean): Promise<LatLng[] | null> {
   const path = batch.map((p) => `${p.lat},${p.lng}`).join("|");
-  const url =
-    `${SNAP_URL}?points=${encodeURIComponent(path)}&api_key=${encodeURIComponent(apiKey)}` +
-    (enhancePath ? "&enhancePath=true" : "");
 
-  let response: Response;
-  try {
-    response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-  } catch {
-    return null;
-  }
-  if (!response.ok) return null;
-
-  let body: OlaMapsSnapResponse;
-  try {
-    body = (await response.json()) as OlaMapsSnapResponse;
-  } catch {
-    return null;
-  }
-  if (body.status !== "SUCCESS" || !body.snapped_points?.length) return null;
+  /* WHICH KEY THIS IS SPENT ON is `olaGet`'s to decide, and so is what to do
+     when Ola says that account has run out — see
+     `services/ola-key-service.ts`. What this file does with a failure is
+     unchanged, and it is per BATCH: null for this stretch, its own raw points
+     carried through, and the rest of the line keeps its road. */
+  const body = await olaGet<OlaMapsSnapResponse>(
+    (apiKey) =>
+      `${SNAP_URL}?points=${encodeURIComponent(path)}&api_key=${encodeURIComponent(apiKey)}` +
+      (enhancePath ? "&enhancePath=true" : ""),
+    REQUEST_TIMEOUT_MS,
+  );
+  if (!body || body.status !== "SUCCESS" || !body.snapped_points?.length) return null;
 
   return body.snapped_points.map((sp) => ({ lat: sp.location.lat, lng: sp.location.lng }));
 }

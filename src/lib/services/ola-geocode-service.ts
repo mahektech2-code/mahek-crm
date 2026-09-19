@@ -1,5 +1,5 @@
 import "server-only";
-import { readSecret } from "@/lib/secrets";
+import { olaGet } from "@/lib/services/ola-key-service";
 
 /* ---------------------------------------------------------------------------
  * Ola Maps' geocoder — an address turned into a coordinate.
@@ -78,21 +78,15 @@ export async function geocodeAddress(address: string): Promise<Geocode | null> {
   const query = address.trim().replace(/\s+/g, " ");
   if (query.length < 4) return null;
 
-  const apiKey = await readSecret("olamaps.apiKey");
-  if (!apiKey) return null;
-
-  const params = new URLSearchParams({ address: query, api_key: apiKey });
-
-  let body: GeocodeResponse;
-  try {
-    const response = await fetch(`${GEOCODE_URL}?${params}`, {
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (!response.ok) return null;
-    body = (await response.json()) as GeocodeResponse;
-  } catch {
-    return null;
-  }
+  /* WHICH KEY, AND WHAT TO DO WHEN ONE RUNS OUT, is `olaGet`'s — see
+     `services/ola-key-service.ts`. Null still covers every way this fails to
+     help, and the shop still keeps no geocoded pin. */
+  const body = await olaGet<GeocodeResponse>(
+    (apiKey) =>
+      `${GEOCODE_URL}?${new URLSearchParams({ address: query, api_key: apiKey })}`,
+    REQUEST_TIMEOUT_MS,
+  );
+  if (!body) return null;
 
   const first = body.geocodingResults?.[0];
   const location = first?.geometry?.location;
