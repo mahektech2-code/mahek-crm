@@ -3,6 +3,7 @@
 import * as React from "react";
 import { usePathname } from "next/navigation";
 import { NavLink } from "./nav-link";
+import { SHUT, openGroupFor, packChoice } from "./nav-open";
 import { cx } from "@/components/ui/primitives";
 
 /* ---------------------------------------------------------------------------
@@ -79,14 +80,6 @@ export type NavRowGroup = {
 
 const listeners = new Set<() => void>();
 
-/**
- * Shutting the group you are standing in is a thing somebody may want — the
- * column is then its headings and nothing else — and it cannot be said by
- * storing a label. It is stored as this rather than as an empty string, which
- * already means "nothing remembered" and would reopen on the next render.
- */
-const SHUT = "__none__";
-
 function subscribe(onChange: () => void): () => void {
   listeners.add(onChange);
   return () => {
@@ -120,32 +113,6 @@ export function isRowActive(item: NavRowItem, pathname: string): boolean {
   return item.exact
     ? pathname === item.href
     : pathname === item.href || pathname.startsWith(item.href + "/");
-}
-
-/**
- * Which group is open, and the four answers in their order of authority.
- *
- * The group holding the current route wins over anything remembered: a shut
- * group hiding the screen somebody is standing on reads as the sidebar having
- * lost it. Then a deliberate shut. Then a label remembered from a previous
- * session. Where none of them says anything — a first visit, or a route no
- * group claims — the first group opens, because a column of nothing but
- * headings on arrival reads as one that failed to load.
- *
- * A remembered label naming no group any more resolves to the default rather
- * than to something near it: groups get renamed and apps get narrowed by a
- * grant, and the honest answer to "the group you had open is gone" is not a
- * guess at which one replaced it.
- */
-export function openGroupFor(
-  groups: readonly NavRowGroup[],
-  activeGroup: string | null,
-  remembered: string,
-): string | null {
-  if (activeGroup) return activeGroup;
-  if (remembered === SHUT) return null;
-  if (remembered && groups.some((g) => g.label === remembered)) return remembered;
-  return groups[0]?.label ?? null;
 }
 
 export function CollapsibleNav({
@@ -196,7 +163,7 @@ export function CollapsibleNav({
 
   const activeGroup =
     groups.find((g) => g.items.some((i) => isRowActive(i, pathname)))?.label ?? null;
-  const open = openGroupFor(groups, activeGroup, remembered);
+  const open = openGroupFor(groups, activeGroup, remembered, pathname);
 
   /*
    * RAILED, EVERYTHING IS DRAWN FLAT.
@@ -270,7 +237,9 @@ export function CollapsibleNav({
           <div key={group.label} className="mt-1 first:mt-2">
             <button
               type="button"
-              onClick={() => writeOpen(storageKey, isOpen ? SHUT : group.label)}
+              onClick={() =>
+                writeOpen(storageKey, packChoice(pathname, isOpen ? SHUT : group.label))
+              }
               aria-expanded={isOpen}
               aria-controls={panelId}
               className={cx(
