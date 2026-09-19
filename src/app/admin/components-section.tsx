@@ -103,7 +103,7 @@ export function ComponentsScreen() {
       <Group title="Colour">
         <Card className="px-5 py-1">
           <Spec label="Neutral ramp" note="A number with no state. Reads --n-900.">
-            <CardGrid min={96} gap="sm">
+            <CardGrid min={96} gap="gap-3">
               <Swatch name="--color-ink" className="bg-ink" />
               <Swatch name="--color-body" className="bg-body" />
               <Swatch name="--color-muted" className="bg-muted" />
@@ -116,7 +116,7 @@ export function ComponentsScreen() {
           </Spec>
 
           <Spec label="Primary purple · lime · warm amber">
-            <CardGrid min={96} gap="sm">
+            <CardGrid min={96} gap="gap-3">
               <Swatch name="--color-brand" className="bg-brand" />
               <Swatch name="--color-brand-hover" className="bg-brand-hover" />
               <Swatch name="--color-brand-soft" className="bg-brand-soft" />
@@ -128,7 +128,7 @@ export function ComponentsScreen() {
           </Spec>
 
           <Spec label="Semantic status">
-            <CardGrid min={150} gap="sm">
+            <CardGrid min={150} gap="gap-3">
               <span>
                 <Swatch name="--color-success" className="bg-success" />
                 <span className="mt-1 block text-[13px] text-muted">
@@ -397,7 +397,7 @@ export function ComponentsScreen() {
 
       {/* -------------------------------- stat cards and worklist rows */}
       <Group title="Stat cards and worklist rows">
-        <div className="mb-3 grid grid-cols-[repeat(auto-fit,minmax(216px,1fr))] gap-4">
+        <CardGrid className="mb-3">
           <Card className="p-5">
             <SectionLabel>Calling progress</SectionLabel>
             <div className="mt-2 text-[32px] leading-9 font-semibold text-ink">
@@ -421,7 +421,7 @@ export function ComponentsScreen() {
             <Progress value={68} className="mt-2.5" />
             <div className="mt-2 text-[13px] font-medium text-danger">−11 pts</div>
           </Card>
-        </div>
+        </CardGrid>
 
         <Card className="overflow-hidden">
           <div className="flex items-center gap-4 border-b border-divider bg-brand-soft/50 px-5 py-3.5">

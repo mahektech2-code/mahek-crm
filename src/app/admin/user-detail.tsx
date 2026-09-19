@@ -10,6 +10,7 @@ import { statusTone, type AdminUser } from "./data";
 
 import { useAdmin } from "./store";
 import type { PlatformData } from "./platform-real";
+import { CardGrid } from "@/components/ui/card-grid";
 
 /* ---------------------------------------------------------------------------
  * One account, in full.
@@ -242,7 +243,7 @@ export function UserDetail({
 
 function Facts({ rows }: { rows: Array<[string, string]> }) {
   return (
-    <div className="grid gap-x-8 gap-y-3 px-5 py-4 [grid-template-columns:repeat(auto-fit,minmax(240px,1fr))]">
+    <CardGrid min={240} gap="gap-x-8 gap-y-3" className="px-5 py-4">
       {rows.map(([label, value]) => (
         <div key={label}>
           <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
@@ -251,6 +252,6 @@ function Facts({ rows }: { rows: Array<[string, string]> }) {
           <div className="mt-0.5 text-sm text-ink capitalize">{value}</div>
         </div>
       ))}
-    </div>
+    </CardGrid>
   );
 }

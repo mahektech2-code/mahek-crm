@@ -21,6 +21,7 @@ import { rebuildQueues, triggerJob } from "@/lib/actions/crm";
 import { checkAttachmentStorage, type StorageCheck } from "@/lib/actions/expenses";
 import type { QueueOwner } from "@/lib/services/admin-platform-service";
 import { stamp, shortDate } from "@/lib/format";
+import { CardGrid } from "@/components/ui/card-grid";
 import type {
   AppHealth,
   AttentionItem,
@@ -177,8 +178,8 @@ export function RegistryTab({ data }: { data: PlatformData }) {
 
 export function HealthTab({ data }: { data: PlatformData }) {
   return (
-    <div>
-      <div className="mt-5 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
+    <CardGrid min={220} className="mt-5">
+      <CardGrid min={220} className="mt-5">
         {data.health.facts.map((f) => (
           <Card key={f.label} className="p-5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
             <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
@@ -188,7 +189,7 @@ export function HealthTab({ data }: { data: PlatformData }) {
             <div className="text-[13px] text-muted">{f.sub}</div>
           </Card>
         ))}
-      </div>
+      </CardGrid>
 
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader
@@ -222,7 +223,7 @@ export function HealthTab({ data }: { data: PlatformData }) {
           </table>
         </div>
       </Card>
-    </div>
+    </CardGrid>
   );
 }
 
@@ -367,7 +368,7 @@ function IntegrationsTable({ data }: { data: PlatformData }) {
 export function UsageTab({ data }: { data: PlatformData }) {
   return (
     <div>
-      <div className="mt-5 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
+      <CardGrid min={220} className="mt-5">
         {data.usage.facts.map((f) => (
           <Card key={f.label} className="p-5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
             <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
@@ -377,7 +378,7 @@ export function UsageTab({ data }: { data: PlatformData }) {
             <div className="text-[13px] text-muted">{f.sub}</div>
           </Card>
         ))}
-      </div>
+      </CardGrid>
 
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader title="By account" hint="Calls logged in the last seven days." />

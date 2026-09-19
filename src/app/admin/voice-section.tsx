@@ -7,6 +7,7 @@ import {
   SARVAM_MAX_SECONDS,
 } from "@/lib/voice-readiness";
 import { SecretCredentialRow, type SecretMeta, type SecretRow } from "./secret-credential-row";
+import { CardGrid } from "@/components/ui/card-grid";
 
 export type { SecretRow };
 
@@ -141,7 +142,7 @@ function Wiring({ data }: { data: VoiceData }) {
   return (
     <Card>
       <CardHeader title="What dictation is wired to" />
-      <div className="grid gap-px bg-divider [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
+      <CardGrid min="panel" gap="gap-px" className="bg-divider">
         <Half
           title="Hearing the speech"
           who={sarvamFirst ? "Sarvam, then OpenAI" : "OpenAI"}
@@ -162,7 +163,7 @@ function Wiring({ data }: { data: VoiceData }) {
                 : "No key for either, so notes arrive as raw transcription and Tighten and Rewrite are left out of the modal."
           }
         />
-      </div>
+      </CardGrid>
       {!data.enabled ? (
         <div className="border-t border-divider px-4 py-3 text-[13px] text-muted">
           Dictation is switched off in CRM → Voice, so no microphone appears

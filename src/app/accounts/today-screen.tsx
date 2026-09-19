@@ -8,6 +8,7 @@ import { money, stamp } from "@/lib/format";
 import type { AccountsHome } from "@/lib/services/accounts-home-service";
 import { AccountsIcon } from "./icons";
 import { AgingStrip, Banner, Pill, plural, waitingWords } from "./parts";
+import { CardGrid } from "@/components/ui/card-grid";
 
 /* ---------------------------------------------------------------------------
  * Today.
@@ -125,7 +126,7 @@ export function TodayScreen({
           </Banner>
         ) : null}
 
-        <div className="mb-4 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
+        <CardGrid min="panel" className="mb-4">
           {cards.map((c) => (
             <Link
               key={c.href}
@@ -150,7 +151,7 @@ export function TodayScreen({
               </span>
             </Link>
           ))}
-        </div>
+        </CardGrid>
 
         <div className="grid items-start gap-4 [grid-template-columns:minmax(0,1fr)_clamp(300px,28%,400px)]">
           <div className="flex min-w-0 flex-col gap-4">
