@@ -163,6 +163,32 @@ are a SEPARATE Ola key for the handset, revocable without taking the console's
 maps down, and a spend cap on it. It is sent only to a device already
 authenticated as a bound handset, which is the most the server side can do.
 
+**THE OLA KEY IS A POOL OF FIVE, SPENT ONE AT A TIME.** `olamaps.apiKey`
+through `olamaps.apiKey5` are five accounts' keys and MahekOne spends the first
+until Ola refuses it for quota, then the second. NOT round-robin: spreading
+constant load across several accounts of one organisation is the pattern a
+provider acts on, and it would put every account near its ceiling at once
+instead of leaving four at zero, where an exhaustion is attributable to exactly
+one of them. **Exhaustion is OBSERVED, never counted** — `classifyOlaAnswer` in
+`engines/ola-key-pool.ts` retires a key on a 429 or a 403 that SAYS it is about
+a limit, and on nothing else: a 400 is Snap-to-Road's batch ceiling, a 401 is a
+key somebody mistyped, a timeout is weather, and a local request counter that
+drifted either way would abandon a good account or keep calling with a dead
+one. **A retired key comes back** on `maps.olaKeyCooldownHours` and, whatever
+that says, from the first of the next month, because a quota is monthly — it is
+read as an earlier month's refusal rather than cleared by a job, so nothing has
+to fire on the right night. `ola_key_health` is where that is remembered, keyed
+on the credential's NAME and not on `app_secrets`, because a key may come from
+the environment and have no row there; it is not `app_settings`, because
+nobody decided this and there is nothing to audit. **A BROWSER CANNOT FAIL OVER
+MID-SESSION** and nothing pretends it can: the page is handed whichever key is
+live at RENDER, a reload picks up the change, and where every key is spent it
+is handed none and the map says THAT rather than "add a key" — two silences,
+two sentences. **ONE KEY COSTS WHAT IT ALWAYS DID**: `olaGet` short-circuits on
+a pool of one — no health read, no retry, no notification — because production
+holds one key and insurance that taxed the uninsured case would be a price paid
+daily against a risk nobody has run.
+
 **A PIN IS ONLY DRAWN WHERE THERE IS A FIX, and what could not be drawn is said
 in words.** Half this book has never been pinned. Spacing those shops out to
 fill the screen is the one thing a map of where things are must not do, and a
@@ -4762,6 +4788,103 @@ The raw fixes in `mbos_positions` are never touched by any of this: the
 snapped line is a second, disposable geometry for the map's `LineString`
 only, re-derivable at any time, exactly like every other engine reading in
 this codebase.
+
+**AND ONLY WHAT IS NEW IS EVER BOUGHT, because Snap-to-Road is METERED.**
+A hundred thousand requests a month, and one salesman's full day at twenty-metre
+anchors is around thirty of them — so a team of seven, asked for in full every
+time anybody looks, spends a month's quota in a fortnight and then draws no road
+at all. The waste is structural rather than accidental: a day grows at ONE END,
+and the first eight hours of a trail have not changed since the last look.
+`lib/engines/snap-plan.ts` decides per run of fixes whether anything is owed —
+reuse, extend by the tail, hold, or buy whole — and the tail of a two-minute gap
+is ONE request whatever the day has behind it. It is an engine because the thing
+worth pinning is a COUNT, and a count is invisible to a type check, a lint and
+every assertion about the line that gets drawn; `snap-plan.test.ts` grows a
+thirty-kilometre day two minutes at a time and asserts the total.
+
+**THE SEAM IS THE SAME PROBLEM `callSnap` ALREADY SOLVES, one level up.** Two
+independently-snapped halves meet at nothing and what lands on the map is a
+notch or a little hook past a corner — which is why batches inside one request
+share their boundary point. A held head and a new tail have exactly that seam,
+so the tail request is told about the head's last fix as its FIRST point and
+drops its own snapped copy of it on the way in. `enhancePath` means the answer
+is not one point per point, so nothing may pair it back up by index: dropping
+the first point is the only positional assumption made, and it holds because
+Ola answers in the order it was asked.
+
+**The road already bought is held on the SERVER, and it is never a source of
+truth.** `lib/services/snap-cache.ts` keys it on the salesman and the day, so a
+second manager watching the same team costs nothing and a page reload costs
+nothing — the browser's own ref only ever saved the tab it lived in. It is in
+memory rather than a table deliberately: every entry is a disposable second
+geometry, re-derivable from `mbos_positions` at any time, and a table would put
+a write on a read-only request plus a sweep for rows nobody reads after
+midnight, to buy back one thing — the first look after a deploy, which costs
+exactly what EVERY look costs today. Invalidation is not a sweep either: a held
+run is rebuilt against the fixes on every read, and one whose start time, first
+fix or far-end fix no longer match is discarded and bought again. It cannot
+drift into disagreeing with the trail; it can only fail its own check.
+
+**And the refresh window NEVER SHORTENS THE LINE.**
+`mbos.location.snapRefreshSeconds` is how recently we may have asked before a
+grown run is left to draw its newest stretch as the raw fixes instead of buying
+it again — configuration, because it is a cost control with a bill attached and
+somebody has to be able to move it without a deploy. What it decides is whether
+the last stretch is drawn on the road or as the fixes themselves, which is what
+every trail looks like until its snap lands anyway. The line always reaches the
+latest fix.
+
+**A SHORT GAP FOLLOWS THE ROAD; A LONG ONE STAYS A STRAIGHT LINE.** The
+straight lines still on that map were never failures of the snap — they are
+the stretches with NO FIXES AT ALL, cut out by `mbos.location.trailGapMeters`,
+and the route deliberately never sent one to Ola. At a fix every few seconds a
+gap of a minute or two is a tunnel, a lift, a signal shadow or Android reaping
+the tracker mid-ride: the man was travelling throughout and there is very
+nearly one way he can have got from the fix before to the fix after, so a line
+through three blocks of buildings is a worse picture of that than the road is.
+Ola's Directions endpoint answers the two ends and `roadRouteBetween` caches
+it in `trail_gap_routes`, keyed on the same rounded coordinate pair
+`road_legs` uses — a gap's ends never change once the day is past, and the
+stretch from a man's house to the first shop is one question asked every
+morning of the week.
+
+**THE CEILINGS ARE WHERE THE HONESTY LIVES.** `mbos.location.gapRouteMaxMinutes`
+(8) and `mbos.location.gapRouteMaxKm` (3) both have to hold. Real days on this
+book carry single gaps of 437, 456, 498 and 999 minutes, which are days the
+handset was off, and nothing should be drawn across those at all: given twenty
+minutes somebody can park, walk somewhere, have a conversation and come back,
+and the two endpoints look exactly as they would if he had driven straight
+through. The kilometre ceiling is the check the clock cannot make — a handset
+quiet in Nagpur and speaking again in Wardha lost a signal across a batch
+upload rather than travelling — and it is reused to refuse an ANSWER that is
+not believable, a correct route round a river with no bridge for fifteen
+kilometres, rather than adding a second number that could drift from the
+first.
+
+**AND A ROUTED GAP IS NEVER PROMOTED TO EVIDENCE.** It keeps the gap's own
+colour, half opacity and absence of casing — the casing is what makes a line
+read as a route somebody took — and is DOTTED rather than dashed, which is a
+layer of its own only because `line-dasharray` is the one paint property
+MapLibre will not take an expression for. The hover says it in words, because
+a line that bends round corners says "somebody drove this" to everybody and
+that is the stronger signal. Its length is NOT added to the day: `snap-trail`
+measures a gap on the crow's flight between its two real fixes whatever it
+drew, so a beat with a dozen small dropouts cannot grow a distance because the
+map got prettier. `lib/engines/trail-gap-route.ts` is the pure half — may this
+gap be routed, is the answer believable, how does a routed stretch join the
+fixes either side — and it pins both ends to the real fixes, since Ola routes
+between the nearest points on the carriageway and a doorway is not on one.
+
+**AND DIRECTIONS IS THE ONE OLA CALLER STILL OUTSIDE THE KEY POOL, said here
+rather than discovered.** Snap-to-Road, geocoding and the distance matrix all
+go through `olaGet`, which fails over on an observed exhaustion;
+`ola-directions-service.ts` reads `olamaps.apiKey` itself, because it is a
+POST-then-GET and `olaGet` is a GET. On the shipping configuration — one key —
+that is no difference at all: both spend the same credential and both answer
+null when it stops working. On a pool it means a routed gap is the first thing
+to go quiet and the last to come back, which is the right end of the product
+to lose, and it fails the way this whole feature fails, as the straight dashed
+line the map drew before.
 
 **Map and satellite are a `setStyle` call, not two maps.** `StreetMap` swaps
 the style JSON in place rather than tearing the whole map down — the camera,

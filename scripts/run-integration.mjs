@@ -40,6 +40,7 @@ const files = [
   "src/lib/bill-paging.test.ts",
   "src/lib/feedback.test.ts",
   "src/lib/activity-location.test.ts",
+  "src/lib/positions-endpoint.test.ts",
   "src/lib/field-book.test.ts",
   "src/lib/leads-list.test.ts",
   "src/lib/outstanding-import.test.ts",

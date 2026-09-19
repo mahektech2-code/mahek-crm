@@ -5,7 +5,7 @@ import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
 import { nowMs, shortDateWithYear } from "@/lib/format";
 import { trackerStalled, trailHasGaps, trailIsDead } from "@/lib/handset-health";
 import { today } from "@/lib/recompute";
-import { readSecret } from "@/lib/secrets";
+import { liveOlaKey } from "@/lib/services/ola-key-service";
 import {
   activityPointsForDay,
   lastKnownPositions,
@@ -67,11 +67,17 @@ export default async function Page({
   const view = params.view === "today" ? "today" : "now";
   const isToday = day === now;
 
-  const [rows, config, olaMapsKey] = await Promise.all([
+  const [rows, config, olaMaps] = await Promise.all([
     lastKnownPositions(day),
     getConfig(),
-    readSecret("olamaps.apiKey"),
+    liveOlaKey(),
   ]);
+  /* WHICH key, and whether the reason there is none is that every one held has
+     run out, are answered together — a browser cannot fail over mid-session,
+     so what it gets is the live key at RENDER and, where there is none left, a
+     sentence saying which of the two silences this is. */
+  const olaMapsKey = olaMaps.key;
+  const olaKeysSpent = olaMaps.allSpent;
   const tracking = config["mbos.location.trackWhileWorking"];
   const everySeconds = config["mbos.location.trackEverySeconds"];
   const everyWords =
@@ -278,6 +284,7 @@ export default async function Page({
         view={view}
         isToday={isToday}
         olaMapsKey={olaMapsKey}
+        olaKeysSpent={olaKeysSpent}
         handsetThresholds={{
           quietMinutes: config["mbos.location.handsetQuietMinutes"],
           noTrailMinutes: config["mbos.location.noTrailMinutes"],
@@ -311,7 +318,11 @@ export default async function Page({
         the day, coloured by what the account is — zoom in for their names, click one for
         its record, or turn them off in the corner of the map. The whole book is on the
         Territory screen.
-        {!olaMapsKey ? " No key is set for it yet, so no streets are drawn below." : ""}
+        {!olaMapsKey
+          ? olaKeysSpent
+            ? " Every Ola Maps key held has reached its quota, so no streets are drawn below until one resets or another is added."
+            : " No key is set for it yet, so no streets are drawn below."
+          : ""}
         {view === "today" && olaMapsKey
           ? " A dashed stretch of a trail is a real gap — two fixes far enough apart that the road actually taken between them is not known, most often a stretch driven rather than walked, or a dropped signal."
           : ""}

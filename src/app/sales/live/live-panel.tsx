@@ -76,6 +76,7 @@ export function LivePanel({
   view,
   isToday,
   olaMapsKey,
+  olaKeysSpent,
   handsetThresholds,
   nowMs,
   cursorMs,
@@ -108,6 +109,8 @@ export function LivePanel({
   pollSeconds: number;
   /** Read once, server-side, in `page.tsx` — see `street-map.tsx`'s doc comment. */
   olaMapsKey: string | null;
+  /** With no key: whether every key held has run out, or none is set at all. */
+  olaKeysSpent: boolean;
 }) {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
@@ -168,6 +171,7 @@ export function LivePanel({
         view={view}
         selectedId={selectedId}
         apiKey={olaMapsKey}
+        keysSpent={olaKeysSpent}
       />
       <div className="flex flex-col gap-2">
         {isToday ? <FeedMode mode={mode} pollSeconds={pollSeconds} /> : null}

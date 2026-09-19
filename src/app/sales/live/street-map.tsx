@@ -188,6 +188,21 @@ function formatMinutes(minutes: number): string {
 type TripSegment = TrailSegment & {
   trip: number;
   colour: string;
+  /**
+   * A dashed stretch whose ROAD was guessed rather than recorded.
+   *
+   * Only ever true on a gap, and only where the gap was short enough that the
+   * server was willing to ask — see `lib/engines/trail-gap-route.ts`. It
+   * changes nothing about the weight of the line, deliberately: a guess must
+   * never be promoted to the solid, cased treatment that says somebody was
+   * seen here. What it changes is the DASH and the WORDS, so a manager
+   * pointing at a dashed line that follows a road is told it follows a road
+   * Ola picked rather than one anybody was seen on.
+   *
+   * Absent on the client's own first draw, which is the honest default: the
+   * browser has no key and asks nobody, so nothing it draws is ever inferred.
+   */
+  inferred?: boolean;
   /** Pixels to the right of travel — see `tripOffset`. */
   offset: number;
   /** The whole trip's figures, repeated on each of its segments — see `tripSegments`. */
@@ -261,6 +276,10 @@ function trailFeatureCollection(segments: TripSegment[]): GeoJSON.FeatureCollect
       type: "Feature",
       properties: {
         gap: s.gap,
+        /* `?? false` rather than left undefined: a MapLibre filter comparing
+           against a property that is not there is a different question to one
+           comparing against false, and the two gap layers split on it. */
+        inferred: s.inferred ?? false,
         trip: s.trip,
         colour: s.colour,
         offset: s.offset,
@@ -473,6 +492,7 @@ export function StreetMap({
   view,
   selectedId,
   apiKey,
+  keysSpent,
 }: {
   day: string;
   rows: LastKnown[];
@@ -491,6 +511,14 @@ export function StreetMap({
   selectedId: string | null;
   /** Ola Maps' key, read once server-side and handed down — see the doc comment above. */
   apiKey: string | null;
+  /**
+   * With no key: whether every key held has run out, or none is set at all.
+   *
+   * Two different silences and they need two different sentences. "Add a key"
+   * to somebody who added five of them, four of which have run out, sends them
+   * looking for a configuration mistake they did not make.
+   */
+  keysSpent: boolean;
 }) {
   const host = React.useRef<HTMLDivElement | null>(null);
   const map = React.useRef<maplibregl.Map | null>(null);
@@ -877,9 +905,25 @@ export function StreetMap({
           Number.isFinite(fromMs) && Number.isFinite(toMs)
             ? ` · ${clock(new Date(fromMs))}–${clock(new Date(toMs))}`
             : "";
+        /*
+         * A DASHED LINE THAT FOLLOWS A ROAD HAS TO SAY SO IN WORDS.
+         *
+         * The dash pattern already says "not recorded" to anybody who knows
+         * the key, and a line that bends round corners says "somebody drove
+         * this" to everybody — which is the stronger of the two signals and is
+         * the wrong one. So the stretch under the cursor names itself: the
+         * road is Ola's guess at how he got between two fixes, nobody was seen
+         * on it, and it is not in the distance quoted beside it. The figure is
+         * the trip's own, measured on the crow's flight across every gap in
+         * it, exactly as it was before this existed.
+         */
+        const inferred = f.properties?.inferred === true;
+        const what = inferred
+          ? " · estimated route, not recorded — not counted in the distance"
+          : "";
         tripPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false })
           .setLngLat(e.lngLat)
-          .setText(`Trip ${next} · ${formatDistance(metres)}${when}`)
+          .setText(`Trip ${next} · ${formatDistance(metres)}${when}${what}`)
           .addTo(built);
       });
 
@@ -1068,7 +1112,11 @@ export function StreetMap({
             id: `trail-gap-${id}`,
             type: "line",
             source: `trail-${id}`,
-            filter: ["==", ["get", "gap"], true],
+            filter: [
+              "all",
+              ["==", ["get", "gap"], true],
+              ["!=", ["get", "inferred"], true],
+            ],
             layout: { "line-cap": "round", "line-join": "round" },
             paint: {
               /* The gap keeps its trip's colour too — it is part of that
@@ -1080,6 +1128,43 @@ export function StreetMap({
               "line-width": widthByZoom(2.5),
               "line-opacity": 0.5,
               "line-dasharray": [1.5, 2],
+            },
+          }, under);
+          /*
+           * A GAP WHOSE ROAD WAS GUESSED, drawn as its own layer for one
+           * reason: `line-dasharray` is the one paint property here that
+           * MapLibre will not take a data-driven expression for, so two dash
+           * patterns is two layers or it is nothing.
+           *
+           * Everything else about it is the gap treatment above, unchanged and
+           * deliberately so — same colour, same half opacity, no casing. It is
+           * NOT closer to the recorded line for following a road; a routed gap
+           * is a plausible guess and the recorded line is a reading, and the
+           * moment those two look alike this map has started lying. The dots
+           * are finer than the dashes beside them, which reads as less certain
+           * rather than more, and the hover says which in words for anybody who
+           * does not read a dash pattern as a claim.
+           *
+           * Named `trail-gap-inferred-` and not `trail-inferred-`, because the
+           * hover handler skips every `trail-gap-` layer when it thickens the
+           * leg under the cursor — a guess must not brighten and fatten with
+           * the evidence around it.
+           */
+          built.addLayer({
+            id: `trail-gap-inferred-${id}`,
+            type: "line",
+            source: `trail-${id}`,
+            filter: [
+              "all",
+              ["==", ["get", "gap"], true],
+              ["==", ["get", "inferred"], true],
+            ],
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": trailPaint(null).colour,
+              "line-width": widthByZoom(2.5),
+              "line-opacity": 0.5,
+              "line-dasharray": [0.5, 2],
             },
           }, under);
         }
@@ -1618,10 +1703,14 @@ export function StreetMap({
     return (
       <Frame key="no-key">
         <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-          <p className="text-[15px] font-semibold text-ink">The map needs a key</p>
+          <p className="text-[15px] font-semibold text-ink">
+            {keysSpent ? "Every Ola Maps key has run out" : "The map needs a key"}
+          </p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
-            Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under
-            this. The team list beside this still shows everything that is known —
+            {keysSpent
+              ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Platform → Maps."
+              : "Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under this."}{" "}
+            The team list beside this still shows everything that is known —
             nobody&rsquo;s position is lost, only the picture of it.
           </p>
         </div>

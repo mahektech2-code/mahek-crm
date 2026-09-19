@@ -132,6 +132,10 @@ const LABELS: Record<SecretName, string> = {
   "openai.apiKey": "The OpenAI key",
   "msg91.authKey": "The MSG91 key",
   "olamaps.apiKey": "The Ola Maps key",
+  "olamaps.apiKey2": "The second Ola Maps key",
+  "olamaps.apiKey3": "The third Ola Maps key",
+  "olamaps.apiKey4": "The fourth Ola Maps key",
+  "olamaps.apiKey5": "The fifth Ola Maps key",
   "enquiries.ingestSecret": "The website enquiry ingest secret",
 };
 
@@ -148,6 +152,17 @@ const USED_FROM: Record<SecretName, string> = {
   "msg91.authKey": "WhatsApp sending uses it from the next message.",
   "olamaps.apiKey":
     "The Live map and Territory's shop map draw their streets from the next time either is opened.",
+  /* A spare is INSURANCE and the sentence has to say so, or somebody reads it
+     as capacity they have just bought. Nothing is spread across the pool: this
+     key sits at zero usage until Ola refuses the one in front of it. */
+  "olamaps.apiKey2":
+    "Nothing changes today. It is spent only once Ola refuses the first key for quota.",
+  "olamaps.apiKey3":
+    "Nothing changes today. It is spent only once Ola refuses both keys before it for quota.",
+  "olamaps.apiKey4":
+    "Nothing changes today. It is spent only once Ola refuses all three keys before it for quota.",
+  "olamaps.apiKey5":
+    "Nothing changes today. It is the last of the pool, spent only once Ola refuses all four keys before it for quota.",
   "enquiries.ingestSecret":
     "The website's next enquiry submission is accepted or refused based on this value — it must match what the website itself is configured with.",
 };

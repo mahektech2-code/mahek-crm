@@ -26,6 +26,8 @@ export type SettingType = "integer" | "decimal" | "text" | "boolean" | "structur
 
 export type SettingCategory =
   | "queue"
+  /** The Ola Maps pool: how long a key refused for quota rests before it is tried again. */
+  | "maps"
   | "buying-cycle"
   | "inactive-watch"
   | "escalation"
@@ -1836,6 +1838,40 @@ export const SETTINGS = [
     min: 50,
     max: 2000,
   },
+  {
+    key: "mbos.location.gapRouteMaxMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long a gap may be before the map stops guessing the road across it",
+    description:
+      "Minutes of silence. A gap shorter than this is drawn following the roads between its two ends rather than as a straight line through whatever buildings lie between them — still dashed, still faint, still labelled an estimate, because it is one. The reasoning is that at the sampling this app uses a fix arrives every few seconds, so a gap of a minute or two is a tunnel, a lift, a signal shadow or Android reaping the tracker mid-ride: the man was travelling the whole time and there is very nearly one way he can have got from the fix before to the fix after. Past this the guess stops being nearly determined — given twenty minutes somebody can park, walk somewhere, have a conversation and come back, and the two ends look exactly the same as if he had driven straight through. Real days on this book carry single gaps of 437, 456 and 999 minutes, which are days the handset was off and about which nothing should be drawn at all. Raise it and the map starts asserting routes across periods somebody might be asked to account for; set it to the minimum and only the shortest dropouts are filled in.",
+    default: 8,
+    min: 1,
+    max: 60,
+  },
+  {
+    key: "mbos.location.gapRouteMaxKm",
+    type: "integer",
+    category: "mbos-location",
+    label: "How far apart a gap's ends may be before the map stops guessing the road",
+    description:
+      "Kilometres, straight-line, between the two ends of a gap. The cheap second check the clock cannot make: a handset that went quiet in one town and spoke again in the next a few minutes later did not travel that road, it lost and regained a signal across a batch upload, and drawing the highway between them would put a journey on the map that nobody made. It is also what refuses an ANSWER that is not believable — a route back across a river with no bridge for fifteen kilometres is perfectly correct routing and is not what happened in ninety seconds — so the same number governs the question and the answer rather than two that could drift apart. Every gap above this keeps the straight dashed line the map has always drawn.",
+    default: 3,
+    min: 1,
+    max: 50,
+  },
+
+  {
+    key: "mbos.location.snapRefreshSeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often the Live map's road line may be bought again",
+    description:
+      "Seconds. The road line under a trail is bought from Ola Maps, which is metered — and a day grows at one end, so the first eight hours of a trail have not changed and only the walking since the last look has to be asked about. This is how recently we may have asked before a grown trail is left to draw its newest stretch as the raw fixes instead of buying it. It never shortens a line: the newest stretch is always drawn, and this decides only whether it is drawn on the road or as the fixes themselves, which is what every trail looks like anyway until its snap lands. Raise it if the monthly request quota is tight; lower it towards zero for a map that is road-matched to the last minute at a higher bill.",
+    default: 120,
+    min: 0,
+    max: 3_600,
+  },
 
   {
     key: "mbos.location.logActivityLocation",
@@ -2764,6 +2800,19 @@ export const SETTINGS = [
      where he is standing is worse than no map at all. These decide what a
      handset may download to answer that, and every one of them is a trade
      between the size of the download and how much of the map survives it. */
+  /* ------------------------------------------------------------------ maps */
+  {
+    key: "maps.olaKeyCooldownHours",
+    type: "integer",
+    category: "maps",
+    label: "How long an Ola Maps key rests after Ola refuses it for quota",
+    description:
+      "Hours. MahekOne can hold several Ola Maps accounts' keys and spends them in order, moving to the next only once Ola has actually refused the one in force — never on a count kept here, which would either abandon a key with quota left on it or go on calling with one that is already dead. A refusal can mean the month is spent or merely that a burst was too fast, and the two arrive looking identical, so a refused key is tried again after this long: too short and a finished account is asked repeatedly for nothing, too long and a key that was only rate-limited for a minute sits out the rest of the day. A key refused in an earlier month is available again whatever this says, because a quota is monthly. It does nothing at all on a deployment holding one key.",
+    default: 24,
+    min: 1,
+    max: 336,
+  },
+  /* ----------------------------------------------------------- mbos-maps */
   {
     key: "mbos.maps.offlineEnabled",
     type: "boolean",
@@ -3915,6 +3964,9 @@ export type Config = {
   "mbos.location.dwellMinMinutes": number;
   "mbos.location.tripBreakMinutes": number;
   "mbos.location.trailGapMeters": number;
+  "mbos.location.snapRefreshSeconds": number;
+  "mbos.location.gapRouteMaxMinutes": number;
+  "mbos.location.gapRouteMaxKm": number;
   "mbos.location.logActivityLocation": boolean;
   "mbos.location.activityFixMaxAgeSeconds": number;
   "mbos.location.handsetQuietMinutes": number;
@@ -4013,6 +4065,8 @@ export type Config = {
   "mbos.maps.tileCountLimit": number;
   "mbos.maps.downloadOnWifiOnly": boolean;
   "mbos.maps.refreshAfterDays": number;
+
+  "maps.olaKeyCooldownHours": number;
 
   "leads.suspectMaxVisits": number;
   "leads.duplicateNameSimilarity": number;

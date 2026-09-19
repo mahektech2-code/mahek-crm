@@ -1,5 +1,5 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { appSecrets } from "@/db/schema";
 
@@ -20,8 +20,9 @@ import { appSecrets } from "@/db/schema";
  * The console wins where both exist, because it is the one somebody edited on
  * purpose and can see the effect of.
  *
- * READING A SECRET IS A DELIBERATE ACT. `readSecret` is the only function that
- * selects the value, and it is called from the request that is about to use
+ * READING A SECRET IS A DELIBERATE ACT. `readSecret` — and `readSecrets`,
+ * which is the same act asked about a declared list in one query rather than
+ * several — are the only functions that select the value, and it is called from the request that is about to use
  * it — never to populate a screen. Screens call `secretStatus`, which selects
  * the last four characters and the timestamp and nothing else, so a query that
  * grew a `select *` could not start leaking keys onto a page.
@@ -60,7 +61,31 @@ export const SECRET_NAMES = {
   "sarvam.apiKey": "SARVAM_API_KEY",
   "openai.apiKey": "OPENAI_API_KEY",
   "msg91.authKey": "MSG91_AUTH_KEY",
+  /*
+   * FIVE OLA ACCOUNTS' KEYS, SPENT IN THIS ORDER, and four of them empty on
+   * every deployment that has not needed them.
+   *
+   * Five NAMED credentials rather than one holding a list, which was the other
+   * shape available and is worse in every direction this table already
+   * answers. `app_secrets` is keyed on the name and carries `last4` per row,
+   * so five rows give a screen five distinguishable keys for nothing; one row
+   * holding a list would give one tail for five values, and a manager could
+   * not tell which of them he was looking at. Rotating the third would mean
+   * reading the whole list back, editing it and writing it again — a
+   * read-modify-write on the one value `readSecret` exists to keep nobody
+   * reading. And `setSecretAction` / `clearSecretAction` / the console's own
+   * credential row all work on these unchanged, so the pool cost no new way
+   * of storing or setting a key at all.
+   *
+   * A deployment holding only `olamaps.apiKey` is byte-for-byte what it was
+   * before this existed. Nothing is migrated and nothing behaves differently
+   * until somebody sets a second one.
+   */
   "olamaps.apiKey": "OLAMAPS_API_KEY",
+  "olamaps.apiKey2": "OLAMAPS_API_KEY_2",
+  "olamaps.apiKey3": "OLAMAPS_API_KEY_3",
+  "olamaps.apiKey4": "OLAMAPS_API_KEY_4",
+  "olamaps.apiKey5": "OLAMAPS_API_KEY_5",
   /** What the website's own backend proves it holds when it forwards a submitted enquiry to `/api/public/enquiries`. Server-to-server only — never reaches a browser on either side. */
   "enquiries.ingestSecret": "ENQUIRY_INGEST_SECRET",
 } as const;
@@ -96,6 +121,44 @@ export async function readSecret(name: SecretName): Promise<string | null> {
 
   const fromEnv = process.env[SECRET_NAMES[name]];
   return fromEnv && fromEnv.trim() ? fromEnv.trim() : null;
+}
+
+/**
+ * Several values in ONE query, for a caller that holds a pool.
+ *
+ * The Ola Maps key is five names now, and asking `readSecret` five times to
+ * find out which of them are set would make the single-key deployment — which
+ * is the shipping one — pay four extra round trips on the hot path to support
+ * a pool it does not have. One `in` costs exactly what one `readSecret`
+ * always cost.
+ *
+ * Absent names are simply absent from the map; the caller decides what a
+ * missing credential means, exactly as it does with `readSecret`'s null.
+ */
+export async function readSecrets(
+  names: readonly SecretName[],
+): Promise<Map<SecretName, string>> {
+  const out = new Map<SecretName, string>();
+  if (!names.length) return out;
+
+  const rows = await db
+    .select({ name: appSecrets.name, value: appSecrets.value })
+    .from(appSecrets)
+    .where(inArray(appSecrets.name, names as unknown as string[]));
+
+  const stored = new Map(rows.map((r) => [r.name, r.value]));
+
+  for (const name of names) {
+    const fromConsole = stored.get(name);
+    if (fromConsole && fromConsole.trim()) {
+      out.set(name, fromConsole);
+      continue;
+    }
+    const fromEnv = process.env[SECRET_NAMES[name]];
+    if (fromEnv && fromEnv.trim()) out.set(name, fromEnv.trim());
+  }
+
+  return out;
 }
 
 /** Whether a credential exists at all, without reading it. */
