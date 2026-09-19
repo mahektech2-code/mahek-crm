@@ -1,8 +1,11 @@
 package expo.modules.locationservice
 
+import android.app.Notification
 import android.content.Context
+import android.os.Build
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequest
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequest
@@ -161,6 +164,20 @@ class LocationServiceWorker(
       }
 
     private fun enqueueRetry(context: Context) {
+      /*
+       * ONLY ON API 31 AND UP, and the reason is not caution — it is that the
+       * retry does something completely different below that line.
+       *
+       * The restriction it exists to get around arrived in Android 12. Below
+       * that there is nothing to get around, and WorkManager implements
+       * expedited work on older releases by running the worker INSIDE A
+       * FOREGROUND SERVICE OF ITS OWN — which means `getForegroundInfo` has to
+       * answer, and which means a notification and a service type to argue
+       * about with the platform. Enqueueing it there would be paying for a
+       * workaround with a second, harder problem, in order to solve a problem
+       * that does not exist on that version.
+       */
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
       try {
         WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
           RETRY_NAME,
@@ -199,5 +216,29 @@ class ExpeditedStartWorker(
       /* As above: never allowed to cost anything. */
     }
     return Result.success()
+  }
+
+  /**
+   * ANSWERED EVEN THOUGH IT SHOULD NEVER BE ASKED.
+   *
+   * `enqueueRetry` refuses to enqueue this below API 31, which is the only
+   * version range where WorkManager runs expedited work inside a foreground
+   * service and therefore the only range where this is called at all. The
+   * default implementation of it on `ListenableWorker` THROWS, and a worker
+   * that throws here is a crash in a background process on a salesman's phone.
+   *
+   * So the guard is where the decision is and this is a floor under it — the
+   * same shape as `batteryExemption`'s pre-Marshmallow branch in `phone-setup`,
+   * which also cannot be reached today and stays so that a later change cannot
+   * quietly turn an unreachable branch into a crash. It borrows the service's
+   * own notification, which is honest about what is happening: the app is
+   * about to start recording a route.
+   */
+  override fun getForegroundInfo(): ForegroundInfo {
+    val notification: Notification = ServiceNotification.build(applicationContext)
+    /* A DIFFERENT id from the service's own. The same id would have
+       WorkManager's foreground service and ours fighting over one row in the
+       shade, and whichever finished second would take the other's place. */
+    return ForegroundInfo(ServiceNotification.ID + 1, notification)
   }
 }
