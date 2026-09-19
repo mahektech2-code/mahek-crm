@@ -204,7 +204,7 @@ export function TargetsScreen({
               <tr>
                 <Th>Person</Th>
                 <Th>Status</Th>
-                <Th align="right">Revenue</Th>
+                <Th align="right">Revenue excl. GST</Th>
                 <Th align="right">From existing customers</Th>
                 <Th align="right">Volume</Th>
                 <Th align="right">New</Th>
@@ -543,7 +543,7 @@ function TargetEditorModalBody({
     >
       <div className="mb-4 grid grid-cols-2 gap-3.5">
         <Field
-          label="Revenue target"
+          label="Revenue target (excl. GST)"
           hint={[
             baseline
               ? `${money(baseline.revenuePaise)} a month over the last ${baseline.monthsCounted}`
@@ -909,7 +909,7 @@ function Scorecard({ readings }: { readings: PerformanceReading[] }) {
               <Th>Person</Th>
               <Th>Target</Th>
               <Th align="right">Score</Th>
-              <Th>Revenue</Th>
+              <Th>Revenue excl. GST</Th>
               <Th>Volume</Th>
               <Th>New customers</Th>
               <Th>Collection</Th>

@@ -4172,6 +4172,41 @@ congratulated for. It is drawn on the team dashboard, on the person's own
 screen and on the handset, because the person being congratulated is the one
 who most needs to know.
 
+**A TARGET IS SET NET OF GST, SO REVENUE IS SCORED NET OF GST — and those are
+two columns rather than one corrected one.** The order sheet states the same
+sale twice: `Final Amount = Amount × (1 − discount) × (1 + GST)`. Mahek writes a
+revenue target on the second figure and `orders.total_amount` is the first, so
+the score read ₹29.5 cr against targets written for ₹25.1 cr — everybody about
+ten points ahead of where they were, on the screen an appraisal is read off.
+Neither number was wrong; they were never the same question.
+
+`total_amount` stays what the customer owes, because the credit-limit check,
+the approvals queue, the bill it becomes and the sentence on the timeline are
+all that figure and all right. `orders.net_amount_paise` is the sale under it,
+and `netOfTaxPaise` in `lib/sheet-parse.ts` is the one definition of it —
+shared with the arithmetic check that already computed the same expression, so
+the two cannot drift.
+
+**It is Amount AFTER the discount, and that is not a detail.** 5,577 of 24,560
+lines carry one, worth ₹33 lakh: scoring on the list figure marks a salesman
+down for every discount he was authorised to give. It is not `Final Amount ÷
+1.18` either — 820 lines carry no GST at all, and a flat divisor leaves every
+one of them 18% short with nothing on any screen able to say which.
+
+**NULL MEANS NOBODY STATED ONE, and every reader coalesces back.** Only the
+sheet projection fills it, because only the sheet carries a rate and a discount
+per line; a CRM order is one total somebody typed with no tax stated near it,
+and deriving a net from it would be guessing at the convention they used. So
+`performance-service` and `baselineFor` both read `coalesce(net_amount_paise,
+total_amount)` — a typed order counts at its own value rather than falling out
+of somebody's month. The mix does the same one level down, on
+`OrderLine.netAmount`: a share is a division of revenue, so a numerator in one
+unit over a denominator in another is a share of nothing.
+
+**And the screens say which unit they are in.** What let this survive is that
+two numbers in different units were drawn identically, so "excl. GST" is on the
+target field, on both target tables and on every screen that scores the figure.
+
 **Litres are derived from the SKU's packing, and revenue is not derived from
 anything.** Quantity is cans, `products.millilitres_per_can` turns it into
 millilitres, and the value of a line is what was actually billed — the product

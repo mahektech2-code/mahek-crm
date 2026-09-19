@@ -13,7 +13,7 @@ import {
   syncConflicts,
   type OrderLine,
 } from "@/db/schema";
-import { isReceived } from "@/lib/sheet-parse";
+import { isReceived, netOfTaxPaise } from "@/lib/sheet-parse";
 import {
   recomputeAllBillPaid,
   recomputeAllBuyingCycles,
@@ -470,6 +470,10 @@ export async function projectOrders(
     // The order's value: the sum of its lines, GST and discount included, which
     // is what Final Amount is per line.
     const total = group.reduce((sum, l) => sum + (l.finalAmountPaise ?? 0), 0);
+    // And the same sale in the unit a target is written in. See
+    // `orders.net_amount_paise`, and `netOfTaxPaise` for why it is Amount AFTER
+    // the discount rather than Amount.
+    const net = group.reduce((sum, l) => sum + netOfTaxPaise(l), 0);
 
     const lineItems: OrderLine[] = group.map((l) => ({
       // The sheet's own words. Matching these to catalogue SKUs is a separate
@@ -479,6 +483,7 @@ export async function projectOrders(
       quantity: l.cans ?? 0,
       unitPrice: l.ratePaise ?? 0,
       amount: l.finalAmountPaise ?? 0,
+      netAmount: netOfTaxPaise(l),
     }));
     lineCount += lineItems.length;
 
@@ -493,6 +498,10 @@ export async function projectOrders(
       status: "dispatched" as const,
       orderedAt: istNoon(head.orderDate),
       totalAmount: total,
+      // Null rather than zero where no line of the order stated an Amount at
+      // all: "nobody said" and "it was worth nothing" are different facts, and
+      // the readers coalesce the first back to the billed total.
+      netAmountPaise: group.some((l) => l.amountPaise !== null) ? net : null,
       lineItems,
       creditDays: head.creditDays,
       expectedDispatch: head.dispatchDate,
@@ -554,6 +563,7 @@ export async function projectOrders(
                              then excluded.status else ${orders.status} end`,
             orderedAt: sql`excluded.ordered_at`,
             totalAmount: sql`excluded.total_amount`,
+            netAmountPaise: sql`excluded.net_amount_paise`,
             lineItems: sql`excluded.line_items`,
             creditDays: sql`excluded.credit_days`,
             expectedDispatch: sql`excluded.expected_dispatch`,
@@ -595,6 +605,7 @@ export async function projectOrders(
                        then excluded.status else "orders"."status" end)
             or "orders"."ordered_at" is distinct from excluded.ordered_at
             or "orders"."total_amount" is distinct from excluded.total_amount
+            or "orders"."net_amount_paise" is distinct from excluded.net_amount_paise
             or "orders"."line_items" is distinct from excluded.line_items
             or "orders"."credit_days" is distinct from excluded.credit_days
             or "orders"."expected_dispatch" is distinct from excluded.expected_dispatch

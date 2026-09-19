@@ -180,6 +180,8 @@ type LineRow = {
   line_items: unknown;
   call_id: string | null;
   total_amount: number;
+  /** Net of GST and after discount. Null where nobody stated one — see below. */
+  net_amount_paise: number | null;
   order_id: string;
 };
 
@@ -251,7 +253,8 @@ export async function actualsForPeriod(
            ${creditedToSql("c")} as user_id,
            o.line_items,
            o.call_id,
-           o.total_amount
+           o.total_amount,
+           o.net_amount_paise
       from orders o
       join customers c on c.id = o.customer_id
      where ${orderCountsSql("o")}
@@ -293,10 +296,27 @@ export async function actualsForPeriod(
     if (!row.user_id) continue; // unattributed — counted separately, never guessed at
     const actuals = forUser(row.user_id);
 
-    // Revenue is the ORDER's total, not the sum of its lines. On a sheet order
-    // they are equal by construction; where they are not, the order total is
-    // what accounts and the customer both saw.
-    actuals.revenuePaise += Number(row.total_amount ?? 0);
+    /*
+     * Revenue is the ORDER's value, not the sum of its lines. On a sheet order
+     * they are equal by construction; where they are not, the order's own
+     * figure is what accounts and the customer both saw.
+     *
+     * AND IT IS THE FIGURE NET OF GST, because that is the unit the target
+     * beside it is written in. Mahek sets a revenue target excluding tax and
+     * this was scoring it against `total_amount`, which is the sheet's Final
+     * Amount — the same sale with 18% GST added. On this book that is ₹29.5 cr
+     * read against targets written for ₹25.1 cr, so everybody came out about
+     * ten points ahead of where they were, on a screen that decides appraisals.
+     * Neither number was wrong; they were never the same question.
+     *
+     * The coalesce is the whole of the compatibility story. `net_amount_paise`
+     * is filled only by the sheet projection, so a CRM or MBOS order — one
+     * total somebody typed, with no tax stated anywhere near it — counts at
+     * that total rather than at zero. Dropping it would have been a silent
+     * subtraction from somebody's month, and there is no honest way to derive a
+     * net figure from a number whose convention nobody recorded.
+     */
+    actuals.revenuePaise += Number(row.net_amount_paise ?? row.total_amount ?? 0);
 
     const jsonLines = Array.isArray(row.line_items)
       ? (row.line_items as Record<string, unknown>[])
@@ -314,7 +334,16 @@ export async function actualsForPeriod(
           productId: typeof l.productId === "string" ? l.productId : null,
           product: typeof l.product === "string" ? l.product : "",
           quantity: Number(l.quantity ?? 0),
-          amount: Number(l.amount ?? 0),
+          /*
+           * The line net of tax, for the same reason the order's is — the mix
+           * is a division of revenue, so a numerator in one unit over a
+           * denominator in another would be a share of nothing. Falling back to
+           * the billed amount keeps a line written before `netAmount` existed,
+           * or by anything other than the sheet, inside the denominator: a
+           * share computed over a subset of the lines is wrong in a way no
+           * screen could show.
+           */
+          amount: Number(l.netAmount ?? l.amount ?? 0),
         }))
       : fallback.map((l) => ({
           productId: l.productId,

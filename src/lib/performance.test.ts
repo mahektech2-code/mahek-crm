@@ -35,6 +35,7 @@ import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { creditedTo } from "@/lib/sales-attribution";
+import { baselineFor } from "@/lib/services/sales-target-service";
 import {
   actualsForPeriod,
   readingsForPeriod,
@@ -400,6 +401,135 @@ describe("what counts as a sale", () => {
     });
     const actuals = await actualsForPeriod(PERIOD);
     assert.equal(actuals.get(rahul.id)?.revenuePaise, 10_000_00);
+  });
+});
+
+/* ============================================ the unit a target is set in */
+
+describe("revenue is scored net of GST", () => {
+  /*
+   * A target here is written EXCLUDING tax and `orders.total_amount` is the
+   * order sheet's Final Amount, which includes it — the same sale, 18% apart.
+   * Scoring one against the other put everybody about ten points ahead of where
+   * they were on the screen that decides appraisals, and neither number was
+   * wrong: they were never the same question.
+   */
+
+  test("the net figure is what counts, not the figure the customer was billed", async () => {
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 10, amountPaise: 118_000_00 }], {
+      // ₹1,18,000 billed; ₹1,00,000 of sale under it.
+      netAmountPaise: 100_000_00,
+    });
+
+    const actuals = await actualsForPeriod(PERIOD);
+    assert.equal(actuals.get(rahul.id)?.revenuePaise, 100_000_00);
+  });
+
+  test("an order nobody stated a net for counts at its own total, never at zero", async () => {
+    /*
+     * The whole compatibility story. Only the sheet projection fills
+     * `net_amount_paise`, because only the sheet carries a GST rate per line;
+     * a CRM order is one total somebody typed with no tax stated near it.
+     * Dropping those would be a silent subtraction from somebody's month.
+     */
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 10, amountPaise: 50_000_00 }], {
+      source: "crm",
+      netAmountPaise: null,
+    });
+
+    const actuals = await actualsForPeriod(PERIOD);
+    assert.equal(actuals.get(rahul.id)?.revenuePaise, 50_000_00);
+  });
+
+  test("and the two add up together rather than one of them winning", async () => {
+    // A month is routinely both. The sum has to be the net of the sheet order
+    // plus the whole of the typed one, not a choice between the two rules.
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 10, amountPaise: 118_000_00 }], {
+      netAmountPaise: 100_000_00,
+    });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 10, amountPaise: 50_000_00 }], {
+      source: "crm",
+    });
+
+    const actuals = await actualsForPeriod(PERIOD);
+    assert.equal(actuals.get(rahul.id)?.revenuePaise, 150_000_00);
+  });
+
+  test("the MIX splits on the net too, or a share is a division of two units", async () => {
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    const [row] = await db
+      .insert(orders)
+      .values({
+        id: id("ord"),
+        customerId: c.id,
+        source: "external",
+        status: "dispatched",
+        orderedAt: at(10),
+        totalAmount: 118_000_00,
+        netAmountPaise: 100_000_00,
+        lineItems: [
+          {
+            product: UNIVERSAL,
+            quantity: 10,
+            unitPrice: 11_800_00,
+            amount: 118_000_00,
+            netAmount: 100_000_00,
+          },
+        ],
+      })
+      .returning();
+    assert.ok(row);
+
+    const actuals = await actualsForPeriod(PERIOD);
+    const mine = actuals.get(rahul.id);
+    // The category bucket has to total the same money the revenue figure does,
+    // or every percentage drawn off it is a share of something else.
+    const inCategories = [...(mine?.byCategory.values() ?? [])].reduce(
+      (s, v) => s + v.valuePaise,
+      0,
+    );
+    assert.equal(mine?.revenuePaise, 100_000_00);
+    assert.equal(inCategories, 100_000_00);
+  });
+
+  test("a line written before `netAmount` existed stays inside the denominator", async () => {
+    // Falling back to the billed amount is what keeps an old line in the mix at
+    // all. A share computed over a subset of the lines is wrong in a way no
+    // screen could show.
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 10, amountPaise: 40_000_00 }]);
+
+    const actuals = await actualsForPeriod(PERIOD);
+    const mine = actuals.get(rahul.id);
+    const inCategories = [...(mine?.byCategory.values() ?? [])].reduce(
+      (s, v) => s + v.valuePaise,
+      0,
+    );
+    assert.equal(inCategories, 40_000_00);
+  });
+
+  test("and the BASELINE a manager types against is read in the same unit", async () => {
+    /*
+     * The other half, and the one nobody would look at twice. The baseline is
+     * a sentence that says "you did this much, so do this much": read
+     * GST-inclusive beside a figure typed exclusive, it asks for 18% more than
+     * the manager thinks they are asking for, and prints the growth percentage
+     * wrong by the same amount in the same breath.
+     */
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    const lastMonth = new Date(
+      new Date(`${PERIOD}-01T09:00:00+05:30`).getTime() - 10 * 86_400_000,
+    );
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 10, amountPaise: 118_000_00 }], {
+      orderedAt: lastMonth,
+      netAmountPaise: 100_000_00,
+    });
+
+    const baseline = await baselineFor(rahul.id, PERIOD, 3);
+    assert.equal(baseline.revenuePaise, 100_000_00);
   });
 });
 

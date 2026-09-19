@@ -235,6 +235,15 @@ export type Baseline = {
  * It reads ORDERS rather than `sales_performance`, deliberately: the cache
  * only holds months somebody has been scored in, and the first target ever set
  * is set before anybody has been scored at all.
+ *
+ * AND IT READS THE SAME UNIT THE TARGET IS TYPED IN — net of GST, after the
+ * discount — which is `coalesce(net_amount_paise, total_amount)`, exactly as
+ * `performance-service` scores it. A baseline is a sentence that says "you did
+ * this much, so do this much": read GST-inclusive while the figure beside it is
+ * typed exclusive, it quietly asks for 18% more than the manager thinks they
+ * are asking for, and the growth percentage on the screen is wrong by the same
+ * amount in the same breath. The two have to move together or neither is worth
+ * showing.
  */
 export async function baselineFor(
   userId: string,
@@ -255,7 +264,7 @@ export async function baselineFor(
 
   const [sales, lastYear, collected, won] = await Promise.all([
     db.execute<{ total: string; n: number }>(sql`
-      select coalesce(sum(o.total_amount), 0) as total,
+      select coalesce(sum(coalesce(o.net_amount_paise, o.total_amount)), 0) as total,
              count(distinct to_char(o.ordered_at at time zone 'Asia/Kolkata', 'YYYY-MM'))::int as n
         from orders o
         join customers c on c.id = o.customer_id
@@ -264,7 +273,7 @@ export async function baselineFor(
          and o.ordered_at >= ${w.start} and o.ordered_at < ${w.end}
     `),
     db.execute<{ total: string }>(sql`
-      select coalesce(sum(o.total_amount), 0) as total
+      select coalesce(sum(coalesce(o.net_amount_paise, o.total_amount)), 0) as total
         from orders o
         join customers c on c.id = o.customer_id
        where ${orderCountsSql("o")}

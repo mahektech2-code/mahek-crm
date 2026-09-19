@@ -1,0 +1,15 @@
+-- A sale in the unit a target is set in: net of GST, after the discount.
+--
+-- `orders.total_amount` is the order sheet's Final Amount — the customer's own
+-- figure, tax in — and it stays that, because the credit-limit check, the
+-- approvals queue and the bill raised against it are all right today. Mahek
+-- sets a revenue target on the sale EXCLUDING tax, and revenue was being scored
+-- against the inclusive figure: ₹29.5 cr read against targets written for
+-- ₹25.1 cr on this book.
+--
+-- Nullable, and NULL means nobody stated one rather than zero. Only the sheet
+-- projection fills it, because only the sheet carries a GST rate and a discount
+-- per line; every reader coalesces back to `total_amount`, so nothing changes
+-- meaning on the day this lands and no CRM order falls out of anybody's month.
+-- The existing 10,929 sheet orders fill in on the next projection pass.
+alter table "orders" add column if not exists "net_amount_paise" bigint;
