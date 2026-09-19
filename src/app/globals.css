@@ -43,6 +43,41 @@
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
   --ease-swift: cubic-bezier(0.2, 0, 0.2, 1);
+
+  /* -------------------------------------------------------------------------
+     THE DESKTOP RANGE, NAMED ONCE.
+
+     MahekOne is a desk product: the telecaller works a calling queue and the
+     manager reads dense tables, and the field team has MBOS on a handset
+     rather than a browser. So these are not a mobile-first ladder — they are
+     the three desktop sizes this suite is actually opened at, and they exist
+     so that no screen types a pixel width of its own.
+
+     `desk` is the floor of the range the layouts are designed for: the
+     1366x768 and 1440x900 laptops the office runs, with a scrollbar taken off.
+     `wide` and `ultra` are the sizes above it, where the fault is the opposite
+     one — a four-column grid pulled across a 1920 screen with a third of the
+     page empty under it.
+
+     They are ADDED beside Tailwind's own `sm`/`md`/`lg`/`xl` rather than
+     redefining them. Seventy-odd call sites already read those, and moving
+     `xl` from 1280 to something else would silently restyle every one of them
+     — a rename of a shared number is never a rename, it is a change to every
+     reader of it.
+
+     THE FLOOR IS NOT ONE OF THESE. `--container-shell-floor` is where the page
+     gives up and scrolls sideways, and it is deliberately BELOW `desk`: a
+     browser windowed to half of a 1440 screen is a thing people do all day,
+     and it is better to be cramped there than cut off. Every shell reads the
+     token, so the four different floors this suite used to carry (1000px in
+     three apps, 1100px in one, and nothing at all in three more) are one
+     number in one place.
+  ------------------------------------------------------------------------- */
+  --breakpoint-desk: 1280px;
+  --breakpoint-wide: 1600px;
+  --breakpoint-ultra: 1920px;
+
+  --container-shell-floor: 1100px;
 }
 
 :root {
