@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { employees, sheetSyncRuns } from "@/db/schema";
 import { readTab, sheetsConfigured, type SheetTable } from "@/lib/sheets";
@@ -13,6 +13,7 @@ import {
 import {
   hashRow,
   newSyncId,
+  notAmong,
   readWindows,
   runSync,
   watermark,
@@ -129,12 +130,18 @@ async function pullFromSheet(
   let withIssues = 0;
   let highestRow = Math.max(startRow - 1, 1);
 
+  /** Every employee key this pass found. A reconcile withdraws what is NOT in
+   *  here; an append never withdraws. This tab is re-read every minute while
+   *  somebody has HRMS open, so a per-row "still here" stamp on it was the
+   *  busiest write in the product against the smallest table. */
+  const seen = new Set<string>();
+
   for await (const window of readWindows(read, startRow, HR_FIRST_DATA_ROW)) {
     const rows = window.rows.filter((row) => !isLabelRow(row.cells));
     rowsRead += rows.length;
     for (const row of rows) highestRow = Math.max(highestRow, row.rowNumber);
 
-    const result = await writeWindow(syncId, { ...window, rows });
+    const result = await writeWindow(syncId, { ...window, rows }, seen);
     created += result.created;
     updated += result.updated;
     unchanged += result.unchanged;
@@ -155,7 +162,7 @@ async function pullFromSheet(
       .update(employees)
       .set({ sheetStatus: "withdrawn", updatedAt: new Date() })
       .where(
-        and(ne(employees.lastSeenSyncId, syncId), eq(employees.sheetStatus, "present")),
+        and(eq(employees.sheetStatus, "present"), notAmong(employees.employeeCode, seen)),
       )
       .returning({ id: employees.id });
     withdrawn = result.length;
@@ -189,7 +196,7 @@ async function pullFromSheet(
 const keyOf = (parsed: ParsedEmployee, rowNumber: number) =>
   parsed.employeeCode || `ROW-${rowNumber}`;
 
-async function writeWindow(syncId: string, window: SheetTable) {
+async function writeWindow(syncId: string, window: SheetTable, seen: Set<string>) {
   let created = 0;
   let updated = 0;
   let unchanged = 0;
@@ -215,19 +222,27 @@ async function writeWindow(syncId: string, window: SheetTable) {
     // One read to find out which rows actually changed. This is what keeps a
     // frequent reconcile cheap: matching rows are touched no further.
     const existing = await db
-      .select({ code: employees.employeeCode, rowHash: employees.rowHash })
+      .select({
+        code: employees.employeeCode,
+        rowHash: employees.rowHash,
+        sheetStatus: employees.sheetStatus,
+      })
       .from(employees)
       .where(inArray(employees.employeeCode, prepared.map((p) => p.code)));
     const hashByCode = new Map(existing.map((e) => [e.code, e.rowHash]));
+    const statusByCode = new Map(existing.map((e) => [e.code, e.sheetStatus]));
 
     const changed: (typeof employees.$inferInsert)[] = [];
-    const untouched: string[] = [];
+    /** Somebody who had left the sheet and is back on it unaltered. Normally
+     *  empty, and the one thing an unchanged row can still need written. */
+    const returned: string[] = [];
 
     for (const { row, parsed, hash, code } of prepared) {
       const known = hashByCode.get(code);
+      seen.add(code);
       if (known === hash) {
         unchanged++;
-        untouched.push(code);
+        if (statusByCode.get(code) !== "present") returned.push(code);
         continue;
       }
       if (parsed.issues.length) withIssues++;
@@ -291,14 +306,14 @@ async function writeWindow(syncId: string, window: SheetTable) {
         .onConflictDoUpdate({ target: employees.employeeCode, set: upsertColumns() });
     }
 
-    // Unchanged rows still need their "seen" stamp, or the reconcile pass
-    // would conclude every one of them had left the company. One statement
-    // for the batch, writing two columns.
-    if (untouched.length) {
+    // An unchanged row that is already `present` is written not at all: what
+    // has left the sheet is read as a difference against the keys this pass
+    // saw, so nothing has to be stamped to say somebody is still employed.
+    if (returned.length) {
       await db
         .update(employees)
-        .set({ lastSeenSyncId: syncId, sheetStatus: "present" })
-        .where(inArray(employees.employeeCode, untouched));
+        .set({ lastSeenSyncId: syncId, sheetStatus: "present", updatedAt: new Date() })
+        .where(inArray(employees.employeeCode, returned));
     }
   }
 
