@@ -18,6 +18,7 @@
     "jobs:prod": "tsx --conditions=react-server --env-file=.env.prod.local scripts/run-job.ts",
     "jobs:prod:sheets": "tsx --conditions=react-server --env-file=.env.local --env-file=.env.prod.local scripts/run-job.ts",
     "app:grant": "tsx --conditions=react-server --env-file=.env.local scripts/grant-app.ts",
+    "seats:from-names": "tsx --conditions=react-server --env-file=.env.local scripts/seats-from-names.ts",
     "user:password": "tsx --conditions=react-server --env-file=.env.local scripts/set-password.ts",
     "user:password:prod": "tsx --conditions=react-server --env-file=.env.prod.local scripts/set-password.ts",
     "user:role": "tsx --conditions=react-server --env-file=.env.local scripts/set-role.ts",
