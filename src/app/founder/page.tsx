@@ -7,6 +7,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { founderOverview } from "@/lib/services/founder-dashboard-service";
 import { PeriodBar } from "./period-bar";
 import { readPeriod, type FounderQuery } from "./period";
+import { CardGrid } from "@/components/ui/card-grid";
 
 export const metadata = { title: "Founder Dashboard - MahekOne" };
 
@@ -52,7 +53,7 @@ export default async function Page({
 
       <PeriodBar period={period} />
 
-      <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(216px,1fr))] gap-4">
+      <CardGrid className="mb-4">
         <StatCard
           href="/founder/crm"
           label="Company revenue"
@@ -88,7 +89,7 @@ export default async function Page({
           value={String(data.people.active)}
           foot={`${data.people.total} on the books`}
         />
-      </div>
+      </CardGrid>
 
       {priceRisk.length > 0 ? (
         <Callout tone="warn">

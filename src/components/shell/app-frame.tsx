@@ -44,6 +44,17 @@ export function AppFrame({
   sidebar,
   children,
   /**
+   * `bleed` hands the screen its full width instead of the measure.
+   *
+   * Only for an app whose content is a MAP: `--container-measure` exists
+   * because a card stretched to 420px reads worse than one at 280, and a map
+   * is the case where the opposite is true. It is a prop on the frame rather
+   * than a class a page can set, because the frame is in the layout and the
+   * page is inside it — a page cannot un-cap a wrapper that has already been
+   * drawn around it.
+   */
+  bleed = false,
+  /**
    * `fade` is the arrival animation three of these apps drew and five did not.
    * It belongs to the frame now so the suite does not open two different ways
    * depending on which app you land in.
@@ -56,6 +67,7 @@ export function AppFrame({
   /** Omitted by the apps whose navigation is in the header. */
   sidebar?: React.ReactNode;
   children: React.ReactNode;
+  bleed?: boolean;
   fade?: boolean;
   scroll?: boolean;
 }) {
@@ -71,7 +83,11 @@ export function AppFrame({
             fade && "animate-fade-in",
           )}
         >
-          {children}
+          {bleed ? (
+            children
+          ) : (
+            <div className="mx-auto w-full max-w-measure">{children}</div>
+          )}
         </main>
       </div>
     </div>

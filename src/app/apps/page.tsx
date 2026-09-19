@@ -15,6 +15,7 @@ import { FeedbackButton } from "@/components/shell/feedback-button";
 import { cx } from "@/components/ui/primitives";
 import { clock, longDate, today } from "@/lib/format";
 import { AppShortcuts } from "./app-shortcuts";
+import { CardGrid } from "@/components/ui/card-grid";
 
 export const metadata = { title: "Your apps - MahekOne" };
 
@@ -158,7 +159,7 @@ export default async function LauncherPage() {
           </div>
 
           {apps.length ? (
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-4">
+            <CardGrid min={320}>
               {apps.map((app, i) => (
                 <Link
                   key={app.id}
@@ -224,7 +225,7 @@ export default async function LauncherPage() {
                   </span>
                 </Link>
               ))}
-            </div>
+            </CardGrid>
           ) : (
             <div className="rounded-[6px] border border-line bg-surface px-6 py-14 text-center">
               <div className="text-lg font-semibold text-ink">

@@ -45,6 +45,7 @@ import {
 import { Icon } from "@/components/shell/icons";
 import { StatCard } from "@/components/ui/stat-card";
 import { DayStages } from "./day-stages";
+import { CardGrid } from "@/components/ui/card-grid";
 
 export const metadata = { title: "Dashboard - MahekOne CRM" };
 
@@ -314,7 +315,7 @@ async function DashboardFigures({
         />
       ) : (
         <>
-          <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(216px,1fr))] gap-4">
+          <CardGrid className="mb-4">
             {/* The queue is today's, whatever span the figures beside it are
                 read over — so its comparison is only drawn when the span is
                 today too. Today's worked count against the previous thirty
@@ -399,7 +400,7 @@ async function DashboardFigures({
                 />
               }
             />
-          </div>
+          </CardGrid>
 
           <div className="grid grid-cols-[minmax(0,1fr)_clamp(300px,26%,420px)] items-start gap-4">
             <Card>
@@ -649,7 +650,7 @@ function TeamView({
         ]}
       />
 
-      <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(216px,1fr))] gap-4">
+      <CardGrid className="mb-4">
         <Card className="p-5">
           <SectionLabel>Team calls {spanWord}</SectionLabel>
           <div className="mt-2 text-[32px] leading-9 font-semibold text-ink">
@@ -689,7 +690,7 @@ function TeamView({
           </div>
           <Progress value={targetPct} className="mt-2.5" />
         </Card>
-      </div>
+      </CardGrid>
 
       <Card className="overflow-hidden">
         <div className="border-b border-divider px-5 py-3.5 text-lg leading-6 font-semibold text-ink">

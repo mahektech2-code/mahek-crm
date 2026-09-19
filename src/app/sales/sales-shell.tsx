@@ -87,6 +87,13 @@ export function SalesShell({
     // frame's — see `components/shell/app-frame.tsx`. This app carried the
     // widest of the four floors the suite used to state for itself.
     <AppFrame
+      /*
+       * THE ONE APP THAT BLEEDS. Live tracking and Territory are maps, and a
+       * map is the case where wider genuinely is better — every other screen
+       * in the suite stops at `--container-measure` so its cards and its prose
+       * do not stretch across a 1920 monitor.
+       */
+      bleed
       header={
         <header className="relative z-2 flex h-14 flex-none items-center gap-4 border-b border-line bg-surface px-6">
           {/*
