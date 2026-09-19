@@ -491,7 +491,40 @@ describe("the Call Log and a lead on the funnel", () => {
     const held = r.suppressed[0];
     assert.equal(held.customerId, "c1");
     assert.match(held.reason, /funnel/i);
-    assert.match(held.reason, /first order/i);
+    /* "the order" rather than "the first order" since the hold widened to cover
+       reorder chasing: a repeat buyer the funnel is working is held back too,
+       and calling that a first order would be wrong on exactly those rows. */
+    assert.match(held.reason, /the order/i);
+  });
+
+  /*
+   * MAHEK'S CONFLICT RULE: while the lead workflow is actively managing a
+   * customer, the Call Log does not independently raise a reorder call for the
+   * same shop. The funnel raises its own repeat-order task from the customer's
+   * measured cycle, so without this the same shop sat on a telecaller's list
+   * and on the lead manager's task list in the same week, neither knowing about
+   * the other — which is the failure the prospect hold already existed to
+   * prevent, arriving by a different door.
+   */
+  test("a reorder is not chased while the funnel holds the customer", () => {
+    const due = candidate({
+      leadSalesType: "direct",
+      lastOrderDate: "2026-01-01",
+      cycleDays: 30,
+      cycleIsDefault: false,
+    });
+    const r = buildQueue([due], TODAY, C);
+    for (const e of r.entries) {
+      assert.ok(
+        !e.reasons.some(
+          (x) =>
+            x.kind === "orderDue" ||
+            x.kind === "routineCall" ||
+            x.kind === "orderOverdueFullCycle",
+        ),
+        "the funnel is chasing this order, so the Call Log must not",
+      );
+    }
   });
 
   /* Only the prospect reason goes. A promise somebody made and money this

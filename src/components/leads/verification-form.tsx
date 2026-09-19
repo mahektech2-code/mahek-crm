@@ -68,7 +68,16 @@ export function VerificationForm({
     try {
       result = await recordLeadValidationCall(customerId, {
         answers,
-        verified: verdict === "verified",
+        /*
+         * TWO OF THE THREE OUTCOMES, deliberately. The action carries a third —
+         * a verification that found the OPPORTUNITY false, which closes the
+         * lead as lost and demands a §26 code with it. That is a closure, and a
+         * closure asked for inside a modal, with the reason picker and the
+         * sentence it needs squeezed under twelve questions, is one somebody
+         * picks by accident. It lives on the full verify screen, where there is
+         * room to say what it means before the button is pressed.
+         */
+        outcome: verdict === "verified" ? "verified" : "follow_up",
         followUpNote: followUpNote.trim() || undefined,
       });
     } finally {

@@ -1107,6 +1107,43 @@ export const customerPotentialEnum = pgEnum("customer_potential", [
   "low",
 ]);
 
+/**
+ * §4.1 — HOW HARD TO PUSH, as against how much it is worth.
+ *
+ * Deliberately NOT `customerPotentialEnum` above, though the three words are
+ * the same. Potential is a judgement about the ACCOUNT — what it could spend in
+ * a month — and it is derived from figures. This is a judgement about the WORK:
+ * which of forty leads a salesman should get to first. A big shop nobody can
+ * reach this quarter is high potential and low priority, and one list cannot
+ * hold both readings.
+ *
+ * Mahek's instruction is that the MANAGER controls it, which is the whole
+ * reason it is a column rather than a sort order: a priority the person being
+ * measured can set himself is a priority that follows whatever he feels like
+ * doing. Null means nobody has judged it, and is not the same as low.
+ */
+export const leadPriorityEnum = pgEnum("lead_priority", ["high", "medium", "low"]);
+
+/**
+ * §5.3 — the sales manager's verdict on a salesman's qualification checklist.
+ *
+ * `incomplete` and `clarification` BLOCK, on Mahek's instruction, which is a
+ * reversal: the review used to be recorded and change nothing, so a manager
+ * could write "this is not finished" and watch the lead move on regardless.
+ * The checklist alone decided. That made the review a comment rather than a
+ * gate, and a comment nobody has to answer is one people stop writing.
+ *
+ * `verified` is the manager standing behind the salesman's answers. Null is a
+ * checklist nobody has reviewed yet, which does NOT block — demanding a review
+ * that nobody has been asked for would stop every lead in the book on the day
+ * it shipped.
+ */
+export const leadQualificationReviewEnum = pgEnum("lead_qualification_review", [
+  "verified",
+  "incomplete",
+  "clarification",
+]);
+
 export const customers = pgTable(
   "customers",
   {
@@ -1143,6 +1180,25 @@ export const customers = pgTable(
      */
     kind: customerKindEnum("kind").notNull().default("customer"),
     leadSource: text("lead_source"),
+    /**
+     * The sentence behind `other`, and the only source that asks for one.
+     *
+     * Mahek's instruction, and the reason is what "Other" does to a list left
+     * alone: it is the easiest answer on any dropdown, it costs the person
+     * filling the form nothing, and a year later it is the biggest bar on the
+     * chart with nothing behind it. Made to cost a sentence it is picked when
+     * it is true — and the sentences are what say which eleventh source is
+     * worth adding to `leads.sources`.
+     *
+     * Free TEXT and deliberately not a second code list: the whole point is to
+     * catch the channel nobody has thought of yet, and a coded list of the
+     * unknown is a contradiction.
+     *
+     * Kept when the source is later changed away from `other` rather than
+     * cleared, because it is a record of what somebody believed on the day
+     * they raised the lead.
+     */
+    leadSourceDetail: text("lead_source_detail"),
 
     /* ---- working a lead ----
      *
@@ -1574,6 +1630,115 @@ export const customers = pgTable(
 
     /* commercial terms */
     gstin: text("gstin"),
+    /**
+     * §11.6 — GST IS COLLECTED ONCE AND VALIDATED ONCE, AND THE TWO ARE
+     * DIFFERENT PEOPLE.
+     *
+     * Taken per the specification, which is explicit that the salesman records
+     * the number and the BACK OFFICE validates it, and that no other role's
+     * screen asks for it again. Until this column existed the qualification
+     * checklist carried a `gst_verified` TICK in `lead_qualification` — writable
+     * by anybody holding `lead.work`, which is the salesman himself. So the man
+     * who typed the number in the shop was also the man certifying it was real,
+     * and "validated once" was a sentence on a checklist rather than a fact
+     * about the account.
+     *
+     * A COLUMN and not a tick, for the reason the distributor ladder already
+     * had one (`distributor_profiles.gst_verified`): a tick says somebody
+     * pressed something, and this has to say WHO and WHEN, because it is the
+     * answer to "can we invoice this business" and it is relied on by the
+     * qualification gate.
+     *
+     * Default FALSE rather than null: an unvalidated GSTIN and no GSTIN at all
+     * are both "we cannot stand behind this number", and a nullable boolean
+     * would invite a third reading of a two-state fact.
+     */
+    gstVerified: boolean("gst_verified").notNull().default(false),
+    gstVerifiedAt: timestamp("gst_verified_at", { withTimezone: true }),
+    gstVerifiedById: text("gst_verified_by_id").references(() => users.id),
+    /**
+     * §4.2 — WHO DECIDES AND WHO ACTUALLY BUYS ARE TWO PEOPLE.
+     *
+     * `leadDecisionMaker` beside this one is who signs off a purchase; this is
+     * who places the order. On a small shop they are the same man and this
+     * stays null; on a fabricator the owner approves a supplier and a
+     * storekeeper rings it in every month, and the storekeeper is who the
+     * telecaller actually speaks to. Collapsing them loses the name of the
+     * person we are going to be dealing with weekly.
+     *
+     * Which is why the qualification condition that reads it is CONDITIONAL:
+     * the specification asks for the buyer "only if different from the
+     * Decision Maker already on record", so a shop where one man does both is
+     * not made to type his name twice.
+     */
+    leadBuyer: text("lead_buyer"),
+    /**
+     * §4.1 — the manager's judgement of how hard to push this lead.
+     *
+     * Set by a manager and by nobody else, which is checked in the action
+     * rather than by hiding the control. Null means unjudged.
+     */
+    leadPriority: leadPriorityEnum("lead_priority"),
+    /**
+     * §5.3 — WHEN THE FOUR CONVERSION FIGURES WERE LAST STOOD BEHIND.
+     *
+     * The monthly requirement, the potential, the product and the competitor
+     * are captured once, at Suspect to Prospect, and the qualification
+     * checklist deliberately stops re-asking them. That is what Mahek chose,
+     * AND he asked for the gap it leaves to be closed: a sample must not go out
+     * on a requirement that was true in March.
+     *
+     * So this is not a second copy of those figures and cannot drift from them.
+     * It is a date saying somebody looked at them and said they still hold. The
+     * gate compares it against `leads.figuresFreshDays`; confirming is one act
+     * on one screen, not four fields retyped.
+     *
+     * Null on every lead that existed before this column, which reads as "never
+     * confirmed" — correct, and deliberately not backfilled from
+     * `lead_stage_since`: a date invented here would assert that somebody
+     * checked when nobody did, on exactly the figures this exists to protect.
+     */
+    leadFiguresConfirmedAt: timestamp("lead_figures_confirmed_at", { withTimezone: true }),
+    leadFiguresConfirmedById: text("lead_figures_confirmed_by_id").references(() => users.id),
+    /**
+     * §5.3 — the manager's verdict on the qualification checklist, and the note
+     * that goes with it.
+     *
+     * `incomplete` and `clarification` hold the lead at qualification until the
+     * salesman answers and somebody reviews again. The note is what he is meant
+     * to act on, so it is required when the verdict is not `verified` — a
+     * refusal with no sentence teaches nothing.
+     */
+    leadQualificationReview: leadQualificationReviewEnum("lead_qualification_review"),
+    leadQualificationReviewNote: text("lead_qualification_review_note"),
+    leadQualificationReviewedAt: timestamp("lead_qualification_reviewed_at", {
+      withTimezone: true,
+    }),
+    leadQualificationReviewedById: text("lead_qualification_reviewed_by_id").references(
+      () => users.id,
+    ),
+    /**
+     * §— ON HOLD NOW HAS TO SAY WHEN IT COMES BACK.
+     *
+     * Parking a lead already demanded a reason. Mahek's instruction adds a
+     * RESUME DATE, and the reasoning is the failure the reason alone did not
+     * prevent: "back after Diwali" is a sentence nobody is watching, so a
+     * parked lead stayed parked until somebody happened to scroll past it. A
+     * date is a thing a list can be built from.
+     *
+     * Required by the action whenever a lead is parked, alongside the reason
+     * and the next action — all three, because a lead that comes back on a date
+     * with nothing scheduled comes back to nobody.
+     */
+    leadHoldResumeDate: date("lead_hold_resume_date"),
+    /**
+     * §4.2 — the contact's own address, and it had nowhere to live.
+     *
+     * `users.email` is a MahekOne account; this is the customer's. Nothing on
+     * the lead could hold one, so a shop that asked for its quotation by email
+     * had that address written into a note.
+     */
+    email: text("email"),
     creditTermDays: integer("credit_term_days").notNull().default(30),
     /** Shown on the information tab; falls back to the configured default. */
     creditDays: integer("credit_days"),
@@ -6960,6 +7125,91 @@ export const mbosTasks = pgTable(
  * the same shop, and the difference between them is the only thing this call
  * produces that nothing else could.
  */
+/**
+ * §5.2 and §11.7 — a correction is a first-class, attributed record.
+ *
+ * The verification call already stores what the OFFICE was told, beside what
+ * the salesman reported, in `mbos_lead_validations` — and that rule stands:
+ * nothing here writes over a `customers` column, because the two readings
+ * disagreeing is the single most useful thing the call produces. What that
+ * table could not say is WHICH FIELD a manager corrected, what it had said
+ * before, and why.
+ *
+ * It has four fixed `confirmed_*` columns and twelve question columns, so a
+ * correction to one of the four lands in its column with the original
+ * recoverable only by reading the lead — and a correction to any of the other
+ * eight findings was being folded into one free-text note, where "he said
+ * Asian Paints, not Berger, because I asked the proprietor directly" becomes a
+ * sentence nobody can count. "How many leads had their competitor corrected
+ * last quarter, and by whom" is the question this exists to answer, and
+ * `notes ilike '%competitor%'` is not an answer to it.
+ *
+ * One row per FIELD per call, which is what makes the before/after pair
+ * countable and what lets §5.2's "every corrected field is individually
+ * appended to the timeline" be true rather than approximated by one summary
+ * line. Append-only, like `lead_stage_transitions` beside it: a correction
+ * recorded wrongly is answered by a further call, never by an edit, because
+ * the row records what somebody believed on a day and a rewrite destroys the
+ * question rather than answering it.
+ */
+export const leadVerificationCorrections = pgTable(
+  "lead_verification_corrections",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /**
+     * The call this correction was made on. A lead is routinely validated
+     * twice and the first call is usually the one that matters, so a
+     * correction that could not name its call would be undatable against the
+     * reading it corrected.
+     */
+    validationId: text("validation_id")
+      .notNull()
+      .references(() => mbosLeadValidations.id, { onDelete: "cascade" }),
+    /**
+     * WHICH finding. One of `VERIFICATION_FINDINGS` — a code and never a
+     * label, for the reason every coded list here is: a stored label stops
+     * resolving the moment somebody rewords it, and this one is meant to be
+     * counted.
+     */
+    field: text("field").notNull(),
+    /**
+     * What the salesman had reported, captured at the moment of correcting.
+     *
+     * A COPY, deliberately, and the one place this table duplicates something
+     * readable elsewhere. The lead's own column is live — a later visit
+     * legitimately overwrites it, which is the one overwrite the rules allow —
+     * so resolving "what did this correct" by reading the lead would answer
+     * with whatever the field says today and quietly mislabel the correction.
+     * Null where the salesman had recorded nothing and the manager is the
+     * first to answer.
+     */
+    original: text("original"),
+    /** What the manager was told instead. Never written onto the lead. */
+    corrected: text("corrected").notNull(),
+    /**
+     * Required by the action, not merely by the form. A correction with no
+     * reason is the manager's word against the salesman's with nothing to
+     * settle it, which is the argument this table exists to prevent rather
+     * than to record.
+     */
+    reason: text("reason").notNull(),
+    changedById: text("changed_by_id").references(() => users.id),
+    /** Readable after the account is gone. Same reasoning as `customer_am_changes`. */
+    changedByName: text("changed_by_name"),
+    changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    /* The record's own Verification Summary card: this lead, newest first. */
+    index("lead_verification_corrections_customer_idx").on(t.customerId, t.changedAt.desc()),
+    /* "Which fields get corrected most, and on whose leads" — the question. */
+    index("lead_verification_corrections_field_idx").on(t.field, t.changedAt.desc()),
+    index("lead_verification_corrections_validation_idx").on(t.validationId),
+  ],
+);
+
 export const mbosLeadValidations = pgTable(
   "mbos_lead_validations",
   {
@@ -7266,6 +7516,46 @@ export const mbosApprovals = pgTable(
     stepIndex: integer("step_index").notNull().default(0),
     /** Why this step exists: `normal`, `over_cap`, `high_value`, ... */
     routeReason: text("route_reason"),
+    /*
+     * SENT BACK FOR CORRECTION, and the row is still `pending`.
+     *
+     * A reviewer who cannot answer yet has a third thing to say, and until
+     * these columns existed there was nowhere to say it: the only two moves
+     * were approve and reject, so a manager looking at an application missing
+     * the warehouse answer either refused it — which ends the application and
+     * makes somebody ring the candidate — or approved it and hoped. In
+     * practice he did neither and the row sat in the queue while he told the
+     * salesman over the phone, which is the version of this that leaves no
+     * record at all.
+     *
+     * IT IS NOT A FOURTH `state`, and the reasoning belongs beside the columns
+     * rather than only in the migration. Nobody has decided: the request is
+     * outstanding, which is exactly what `pending` means, and every reader of
+     * `state` goes on being right by doing nothing. The one that would have
+     * broken is the "is anything still outstanding" count inside
+     * `decideDistributorAppointment` — a sent-back step read as decided stops
+     * holding the appointment back, and management could then appoint a
+     * distributor whose own sales manager had asked for the application to be
+     * redone. The other half is mechanical: a value added to an existing enum
+     * may not be USED in the transaction that adds it, and drizzle-kit runs
+     * every pending migration in one, so that failure appears only on a
+     * database built from scratch.
+     *
+     * The marks are CLEARED when the step is next acted on. Left standing,
+     * last month's note about a missing warehouse answer sits on a row
+     * somebody has since corrected, sending the next reader to fix something
+     * that is already fixed.
+     */
+    sentBackAt: timestamp("sent_back_at", { withTimezone: true }),
+    sentBackById: text("sent_back_by_id").references(() => users.id),
+    /**
+     * Mandatory in the action, nullable in the column. A send-back with no note
+     * is "do it again" with no idea what was wrong, which is the failure the
+     * whole feature exists to prevent — so `sendBackForCorrection` refuses one.
+     * The column stays nullable because every row written before this existed
+     * carries none, and a backfilled sentence is a sentence nobody said.
+     */
+    sentBackNote: text("sent_back_note"),
   },
   (t) => [
     /** The approver's queue, and the only hot query on this table. */

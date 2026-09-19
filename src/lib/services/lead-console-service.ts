@@ -10,9 +10,14 @@ import {
   type LeadSalesType,
   type LeadStage,
 } from "../lead-labels";
+import type { LeadPriority } from "../lead-priority";
 import { asDate } from "../business-date";
 import { orderCountsSql } from "../order-status";
 import { leadsVisible, managerScope, onlyMine } from "./sales-service";
+/* §5.3 — ONE definition of "are these figures old enough to need standing
+   behind", shared with the server action's own assembler rather than restated
+   here. `lead-service.ts` does not import this file, so there is no cycle. */
+import { figuresAreStale } from "./lead-service";
 
 /* ---------------------------------------------------------------------------
  * Every read the funnel's OFFICE end makes.
@@ -72,6 +77,17 @@ export type LeadCapability = Extract<
   | "lead.work"
   | "lead.override"
   | "lead.verify"
+  /*
+   * §11.6 — the BACK OFFICE's check on a GST number, which is the one
+   * capability here that is not about seniority at all.
+   *
+   * It is listed beside the rest because the record page has to ask it: the
+   * gate refuses a sample on `customers.gst_verified`, and a screen that could
+   * not tell whether the person reading it may answer that question would have
+   * to draw the control for everybody and let the action refuse — after the
+   * note has been typed, which is the worst moment to be told.
+   */
+  | "lead.gstValidate"
   | "distributor.approve"
   | "distributor.terms"
   /*
@@ -500,6 +516,100 @@ export async function appointmentQueue(): Promise<AppointmentRow[]> {
   `) as unknown as AppointmentRow[];
 }
 
+/* ═════════════════════════════ the leads left behind on the distributor ladder */
+
+export type ProspectiveDistributorRow = {
+  customerId: string;
+  name: string;
+  companyName: string | null;
+  city: string | null;
+  mobile: string | null;
+  stage: LeadStage;
+  salesmanId: string | null;
+  salesmanName: string | null;
+  leadManagerId: string | null;
+  leadManagerName: string | null;
+  stageSince: string | null;
+  /** How long it has stood on this rung. What "sat there" means on the screen. */
+  stuckDays: number;
+  /** How long since anybody recorded anything at all against it. */
+  quietDays: number;
+  /** Whether §12's chain was ever started. A lead deep in it is not a stall. */
+  approvals: number;
+};
+
+/**
+ * EVERY LEAD STILL STANDING ON THE RETIRED DISTRIBUTOR LADDER.
+ *
+ * Mahek does not appoint distributors through MahekOne, so the ladder was
+ * retired for new leads and every lead already on it was deliberately left
+ * where it was — behind a two-step approval nobody in the building can give.
+ * `migrateProspectiveDistributor` is how one of them is moved onto the ladder
+ * that describes how the account is actually being sold to; this is how
+ * somebody finds out WHICH, which until now nobody could. A lead on this list
+ * is indistinguishable on every other screen in the console from a live
+ * opportunity: it has a rung, an owner and a stage date, and none of those say
+ * that the rung it is standing on leads nowhere.
+ *
+ * **`active_distributor` is absent, and that is the rule rather than a filter
+ * that happens to hold.** Mahek's own words: Prospective Distributor is a
+ * historical lead TYPE; Distributor means formally APPOINTED. A lead standing
+ * on that rung was appointed, is a distributor, and the action refuses it — so
+ * a worklist that offered it would be a list of work that cannot be done.
+ * `STILL_WORKING` already excludes it, along with the other three terminals and
+ * the archived, which is why the clause below names only the sales type: two
+ * statements of one exclusion is how the screen and the action come to disagree
+ * about one row.
+ *
+ * **`approvals` is counted rather than the lead being judged by its rung.** A
+ * lead sitting at Commercial Discussion with a chain already open is a
+ * different conversation from one at Suspect that never went anywhere, and the
+ * manager deciding where to put it down needs to see that before deciding.
+ */
+export async function prospectiveDistributors(
+  day: string,
+  { limit = 200 }: { limit?: number } = {},
+): Promise<{ rows: ProspectiveDistributorRow[]; total: number }> {
+  const scope = await managerScope();
+
+  const where = sql`
+     where ${STILL_WORKING}
+       and c.lead_sales_type = 'distributor'
+       ${leadsVisible(scope)}
+  `;
+
+  const [rows, counts] = await Promise.all([
+    db.execute<ProspectiveDistributorRow>(sql`
+      select c.id as "customerId", c.name, c.company_name as "companyName",
+             c.city, c.mobile,
+             c.lead_stage::text as stage,
+             c.owner_id as "salesmanId", u.name as "salesmanName",
+             c.lead_manager_id as "leadManagerId", m.name as "leadManagerName",
+             c.lead_stage_since::text as "stageSince",
+             coalesce(${day}::date - c.lead_stage_since, 0)::int as "stuckDays",
+             coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
+             /* The outer table's column is written out in full, never bare: a
+                bare one inside a correlated subquery binds to the INNER table
+                and the condition silently stops meaning anything. */
+             (select count(*)::int from mbos_approvals a
+               where a.subject_type = 'customers'
+                 and a.subject_id = c.id
+                 and a.type = 'distributor_appointment') as approvals
+        from customers c
+        left join users u on u.id = c.owner_id
+        left join users m on m.id = c.lead_manager_id
+        ${where}
+       order by c.lead_stage_since asc nulls first, c.id asc
+       limit ${limit}
+    `) as unknown as ProspectiveDistributorRow[],
+    db.execute<{ total: number }>(sql`
+      select count(*)::int as total from customers c ${where}
+    `),
+  ]);
+
+  return { rows, total: Number(counts[0]?.total ?? 0) };
+}
+
 /* ═══════════════════════════════════════════════════ §15 §16 the sample desk */
 
 export type SampleDeskRow = {
@@ -788,6 +898,27 @@ export type LeadTransition = {
   at: Date;
 };
 
+/**
+ * ONE FINDING THE SHOP CONTRADICTED, as the call recorded it.
+ *
+ * `original` is a COPY of what the salesman had, taken at the moment of
+ * correcting rather than read back off the lead — the schema comment on
+ * `lead_verification_corrections` carries the argument: the lead's own column
+ * is live, a later visit legitimately overwrites it, and resolving "what did
+ * this correct" through it would answer with whatever the field says today and
+ * quietly mislabel the correction. Null where the salesman had recorded
+ * nothing and the manager was the first to answer.
+ */
+export type LeadCorrection = {
+  id: string;
+  field: string;
+  original: string | null;
+  corrected: string;
+  reason: string;
+  changedByName: string | null;
+  changedAt: Date;
+};
+
 export type ManagerCall = {
   id: string;
   managerId: string;
@@ -796,6 +927,18 @@ export type ManagerCall = {
   verified: boolean | null;
   answers: Record<string, string>;
   followUpNote: string | null;
+  /**
+   * What this call CORRECTED, hung on the call rather than handed down the page
+   * as a list of its own.
+   *
+   * A correction is only readable against the call it was made on — a lead is
+   * routinely validated twice and the first call is usually the one that
+   * matters, so a flat list would say the competitor was corrected twice
+   * without saying that the second call was a different conversation. Hanging
+   * it here is also what keeps the record page's props unchanged: the panel
+   * already has the calls.
+   */
+  corrections: LeadCorrection[];
 };
 
 export type TimelineRow = {
@@ -880,13 +1023,78 @@ export type LeadRecord = {
   verifiedAt: Date | null;
   verifiedByName: string | null;
 
+  /* ---- §5.3 the manager's verdict on the checklist ----
+   *
+   * Read here as well as in `lead-service.ts`'s handset assembler because the
+   * gate refuses on it, and the console's per-lead checklist screen is where a
+   * salesman reads why his lead has stopped. Without it that screen computed a
+   * verdict from an input with the field missing — which `gateTo` reads as
+   * "nobody has reviewed this", so the one screen built to explain the block
+   * was the one screen that could never draw it. The NOTE comes with it: the
+   * refusal says a manager marked it incomplete, and what he actually wrote is
+   * the half the salesman has to act on.
+   */
+  qualificationReview: "verified" | "incomplete" | "clarification" | null;
+  qualificationReviewNote: string | null;
+  qualificationReviewedAt: Date | null;
+  qualificationReviewedByName: string | null;
+
   /* ---- §6 what the salesman established ---- */
   monthlyLitres: number | null;
   potentialPaise: number | null;
+  /**
+   * §4.1 — the MANAGER's judgement of how hard to push this one, which is a
+   * different question from the potential immediately above it and is
+   * deliberately not that enum despite the three words matching. See
+   * `lib/lead-priority.ts`. Null means nobody has judged it, which is not the
+   * same fact as somebody having judged it low, and nothing backfills one.
+   */
+  priority: LeadPriority | null;
   competitor: string | null;
   requiredProductId: string | null;
   requiredProductName: string | null;
   decisionMaker: string | null;
+  /** §4.2 — who places the order, where that is not who approves it. */
+  buyer: string | null;
+  /** §11.6 — whether the back office has checked the GSTIN. Never the
+   * salesman's own tick, which is what the gate read before this existed. */
+  gstVerified: boolean;
+  /**
+   * §11.6 — WHO LOOKED AND WHEN, which is what makes the boolean readable.
+   *
+   * `gst_verified = false` with a date and a name on it says somebody checked
+   * and refused the number; the same false with both null says nobody has
+   * looked yet. Those are different facts and they send a salesman to two
+   * different places — go back to the shop and correct the number, or go and
+   * ask the back office to check the one we already have. The record page drew
+   * neither, so from the day the gate began refusing a sample on this column,
+   * "GST verified: No" was the whole of what anybody could find out about a
+   * lead that had stopped moving.
+   */
+  gstVerifiedAt: Date | null;
+  gstVerifiedByName: string | null;
+  /**
+   * §5.3 — when somebody last said the four conversion figures still hold, and
+   * who said it.
+   *
+   * Null reads as never, which is every lead raised before the column existed
+   * and is deliberately not backfilled. It is a DATE and never a second copy of
+   * the four figures — the schema comment on the column carries that argument
+   * in full.
+   */
+  figuresConfirmedAt: Date | null;
+  figuresConfirmedByName: string | null;
+  /**
+   * The BACK OFFICE SEAT as an id, beside the name already above it.
+   *
+   * `backOfficeName` is for a person who may have no MahekOne login at all;
+   * this is the account, and it is what `validateGstin` reads to let the named
+   * seat holder check a GSTIN whether or not they hold the capability. The
+   * screen mirrors that rule rather than inventing a second one — a control
+   * drawn for somebody the action refuses is worse than no control, because the
+   * refusal arrives after they have read the number and typed the note.
+   */
+  backOfficeAmId: string | null;
   creditDaysWanted: number | null;
   application: string | null;
   customerType: string | null;
@@ -985,12 +1193,24 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
 
            c.lead_verified_at as "verifiedAt", v.name as "verifiedByName",
 
+           c.lead_qualification_review::text as "qualificationReview",
+           c.lead_qualification_review_note as "qualificationReviewNote",
+           c.lead_qualification_reviewed_at as "qualificationReviewedAt",
+           qr.name as "qualificationReviewedByName",
+
            c.lead_monthly_volume_litres as "monthlyLitres",
            c.lead_estimated_potential_paise as "potentialPaise",
+           c.lead_priority::text as priority,
            c.lead_competitor as competitor,
            c.lead_required_product_id as "requiredProductId",
            p.name as "requiredProductName",
            c.lead_decision_maker as "decisionMaker",
+           c.lead_buyer as "buyer",
+           c.gst_verified as "gstVerified",
+           c.gst_verified_at as "gstVerifiedAt", gv.name as "gstVerifiedByName",
+           c.lead_figures_confirmed_at as "figuresConfirmedAt",
+           fc.name as "figuresConfirmedByName",
+           c.back_office_am_id as "backOfficeAmId",
            c.lead_credit_days_wanted as "creditDaysWanted",
            c.lead_application as application,
            c.customer_type::text as "customerType",
@@ -1121,6 +1341,13 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
       left join users m on m.id = c.lead_manager_id
       left join users sa on sa.id = c.sales_am_id
       left join users v on v.id = c.lead_verified_by_id
+      left join users qr on qr.id = c.lead_qualification_reviewed_by_id
+      /* The two people whose names make a refusal readable: whoever checked the
+         GST number, and whoever last stood behind the four figures. Left joins
+         because both are null on almost every lead in the book and an inner one
+         would silently drop the record itself. */
+      left join users gv on gv.id = c.gst_verified_by_id
+      left join users fc on fc.id = c.lead_figures_confirmed_by_id
       left join users ro on ro.id = c.relationship_owner_id
       left join users na on na.id = c.lead_next_action_owner_id
       left join products p on p.id = c.lead_required_product_id
@@ -1141,8 +1368,19 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
  * authority on what a gate needs, and building its input inside the SQL would
  * put half the rule back in a query. Changing a condition then means editing a
  * `select`, which is exactly the second copy `lead-gates.ts` exists to prevent.
+ *
+ * §5.3 — `freshDays` IS REQUIRED, and it is required because leaving it out was
+ * a bug rather than a convenience. `figuresStale` is optional on the engine's
+ * input and `undefined` reads there as "not stale", which is the right default
+ * for a deployment with the check switched off — and it meant this function,
+ * which never passed one, drew a rail saying the sample rung was OPEN on a lead
+ * `leadGateInput` (the server action's own assembler, which DOES compute it)
+ * would then refuse. The screen promising a move the action turns down is the
+ * exact failure §28 is written against: a refusal arriving after the button,
+ * naming a condition the page never showed. A required argument is what stops
+ * the next caller reintroducing it.
  */
-export function gateInputFor(record: LeadRecord): LeadGateInput {
+export function gateInputFor(record: LeadRecord, freshDays: number): LeadGateInput {
   return {
     salesType: record.salesType,
     stage: record.stage,
@@ -1153,9 +1391,17 @@ export function gateInputFor(record: LeadRecord): LeadGateInput {
     requiredProductId: record.requiredProductId,
     contactPerson: record.contactPerson,
     decisionMaker: record.decisionMaker,
+    buyer: record.buyer,
     creditDaysWanted: record.creditDaysWanted,
     application: record.application,
     gstin: record.gstin,
+    /* §11.6 — somebody else's check, not the salesman's tick. */
+    gstVerified: record.gstVerified,
+    /* §5.3 — computed through the ONE definition of staleness, which lives in
+       `lead-service.ts` beside the column it reads. The record page and the
+       server action have to agree about the same lead on the same afternoon,
+       and a second reading typed in here is exactly how they would not. */
+    figuresStale: figuresAreStale(asDate(record.figuresConfirmedAt), freshDays),
     nextAction: record.nextAction,
     nextActionDate: record.nextActionDate,
     nextActionOwnerId: record.nextActionOwnerId,
@@ -1167,6 +1413,12 @@ export function gateInputFor(record: LeadRecord): LeadGateInput {
        transitions rather than a column is what keeps the two in step. */
     prospectReasonRecorded: Boolean(record.stageSince) && record.stage !== "suspect",
     verifiedAt: record.verifiedAt,
+    /* §5.3 — and the gate refuses on the two negatives. It was absent from this
+       assembler while `lead-service.ts` passed it, so the handset was blocked
+       and the console screen drawing the same checklist was not: two readings
+       of one lead disagreeing about whether it may move, with the console the
+       half a manager works from. */
+    qualificationReview: record.qualificationReview,
     thirdParty: record.thirdParty,
     distributorCount: record.distributorCount,
     sample: record.sample
@@ -1233,6 +1485,49 @@ export async function managerCalls(customerId: string): Promise<ManagerCall[]> {
      limit 20
   `)) as unknown as Record<string, unknown>[];
 
+  /*
+   * THE CORRECTIONS, IN ONE QUERY RATHER THAN ONE PER CALL.
+   *
+   * Twenty calls is twenty round trips if this hangs off the loop above, on a
+   * panel that is drawn on every open of the record. Asked for the CUSTOMER and
+   * grouped in JS, it is one statement whatever the history — and the index on
+   * `(customer_id, changed_at desc)` is the one the schema declares for exactly
+   * this read.
+   *
+   * Every column of the outer table is qualified, which is the house rule for
+   * raw SQL here: Drizzle renders a bare column name and a bare name inside a
+   * correlated subquery binds to the inner table, silently.
+   */
+  const correctionRows = (await db.execute(sql`
+    select v.id, v.validation_id, v.field, v.original, v.corrected,
+           v.reason, v.changed_by_name, v.changed_at
+      from lead_verification_corrections v
+     where v.customer_id = ${customerId}
+     order by v.changed_at desc, v.id desc
+     limit 200
+  `)) as unknown as Record<string, unknown>[];
+
+  const byCall = new Map<string, LeadCorrection[]>();
+  for (const r of correctionRows) {
+    const changedAt = asDate(r.changed_at);
+    /* NOT NULL in the schema, so a null here is a row the driver could not
+       parse — dropped rather than carried as an Invalid Date that throws on a
+       screen a long way from this file. */
+    if (!changedAt) continue;
+    const callId = String(r.validation_id);
+    const list = byCall.get(callId) ?? [];
+    list.push({
+      id: String(r.id),
+      field: String(r.field),
+      original: (r.original as string | null) ?? null,
+      corrected: String(r.corrected),
+      reason: String(r.reason),
+      changedByName: (r.changed_by_name as string | null) ?? null,
+      changedAt,
+    });
+    byCall.set(callId, list);
+  }
+
   return rows.flatMap((r) => {
     /* `db.execute` hands back a timestamptz as a STRING, whatever the type
        annotation says, so it comes through `asDate`. The column is NOT NULL,
@@ -1267,6 +1562,7 @@ export async function managerCalls(customerId: string): Promise<ManagerCall[]> {
         }),
         followUpNote:
           (r.verdict_reason as string | null) ?? (r.notes as string | null) ?? null,
+        corrections: byCall.get(String(r.id)) ?? [],
       },
     ];
   });

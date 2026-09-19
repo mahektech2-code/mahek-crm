@@ -24,6 +24,7 @@ import {
   gateForNext,
   gateTo,
   ladderVerdicts,
+  managementRouteReason,
   mustDecideSuspect,
   type LeadGateInput,
 } from "./lead-gates";
@@ -152,7 +153,7 @@ describe("§7 — a prospect is verified before it is qualified", () => {
 
 /* --------------------------------------------------------------------- §9 */
 
-/** The twelve, with the eight column-backed ones actually answered. */
+/** The eight, with the three column-backed ones actually answered. */
 function trialReady(over: Partial<LeadGateInput> = {}): LeadGateInput {
   const ticks: Record<string, boolean> = {};
   for (const c of QUALIFICATION_CONDITIONS) ticks[c.id] = true;
@@ -160,6 +161,9 @@ function trialReady(over: Partial<LeadGateInput> = {}): LeadGateInput {
     salesType: "direct",
     stage: "qualification",
     gstin: "27AAAPL1234C1ZV",
+    /* §11.6 — the back office's answer, which is now what the gate reads. The
+       salesman's old tick satisfies nothing. */
+    gstVerified: true,
     monthlyLitres: 400,
     potentialPaise: 15_00_000,
     requiredProductId: "p1",
@@ -173,33 +177,74 @@ function trialReady(over: Partial<LeadGateInput> = {}): LeadGateInput {
   };
 }
 
-describe("§9 — the twelve before anybody may send a sample", () => {
-  test("there are twelve of them", () => {
-    assert.equal(QUALIFICATION_CONDITIONS.length, 12);
+describe("§5 — the eight before anybody may send a sample", () => {
+  /* IT WAS TWELVE. Four were removed on the specification's own instruction:
+     the monthly requirement, the potential, the product and the competitor are
+     Section 4 CONVERSION fields, refused at Suspect → Prospect by
+     `PROSPECT_CONDITIONS`, and asking for them again here is the re-asking the
+     whole product is built to avoid. The test below asserts they are refused
+     one rung UP, which is what makes removing them safe rather than a hole. */
+  test("there are eight of them", () => {
+    assert.equal(QUALIFICATION_CONDITIONS.length, 8);
     assert.deepEqual(QUALIFICATION_CONDITIONS.map((c) => c.id), [
       "gst_verified",
-      "monthly_requirement",
-      "monthly_potential",
-      "required_product",
-      "competitor_identified",
-      "credit_days",
-      "price_discussed",
-      "delivery_discussed",
-      "decision_maker",
-      "agrees_to_test",
       "application_understood",
+      "price_discussed",
+      "credit_days",
+      "delivery_discussed",
+      "buyer_confirmed",
+      "agrees_to_test",
       "next_step_agreed",
     ]);
   });
 
-  test("all twelve answered opens the trial", () => {
+  test("the four Section 4 fields are not asked here", () => {
+    for (const id of [
+      "monthly_requirement",
+      "monthly_potential",
+      "required_product",
+      "competitor_identified",
+    ]) {
+      assert.ok(
+        !QUALIFICATION_CONDITIONS.some((c) => c.id === id),
+        `${id} is a conversion field and must not be re-asked at qualification`,
+      );
+    }
+  });
+
+  test("but a lead cannot have reached here without them", () => {
+    /* The half that makes the removal safe. Strip all four and ask for the
+       PROSPECT move: every one of them is named. */
+    const bare = gateTo(
+      {
+        salesType: "direct",
+        stage: "suspect",
+        customerType: "retailer",
+        contactPerson: "Ramesh",
+        prospectReasonRecorded: true,
+        ...NEXT_ACTION,
+      },
+      "prospect",
+    );
+    const named = bare.missing.map((m) => m.id);
+    for (const id of [
+      "monthly_litres",
+      "potential_value",
+      "required_product",
+      "competitor",
+    ]) {
+      assert.ok(named.includes(id), `${id} is refused one rung up: ${named.join(", ")}`);
+    }
+  });
+
+  test("all eight answered opens the trial", () => {
     const v = gateTo(trialReady(), "sample_trial");
     assert.deepEqual(v.missing, []);
     assert.equal(v.open, true);
   });
 
-  test("each of the twelve, taken away one at a time, is named", () => {
-    /* The four tick-only ones. */
+  test("each of the eight, taken away one at a time, is named", () => {
+    /* The tick-only ones. */
     for (const id of ["price_discussed", "delivery_discussed", "agrees_to_test", "next_step_agreed"]) {
       const ticks = { ...(trialReady().qualification as Record<string, boolean>) };
       delete ticks[id];
@@ -208,17 +253,62 @@ describe("§9 — the twelve before anybody may send a sample", () => {
     /* The column-backed ones. */
     const gaps: Array<[string, Partial<LeadGateInput>]> = [
       ["gst_verified", { gstin: null }],
-      ["monthly_requirement", { monthlyLitres: null }],
-      ["monthly_potential", { potentialPaise: null }],
-      ["required_product", { requiredProductId: null }],
-      ["competitor_identified", { competitor: null }],
+      ["gst_verified", { gstVerified: false }],
       ["credit_days", { creditDaysWanted: null }],
-      ["decision_maker", { decisionMaker: null }],
       ["application_understood", { application: null }],
     ];
     for (const [id, gap] of gaps) {
-      assert.ok(missingIds(trialReady(gap), "sample_trial").includes(id), id);
+      assert.ok(missingIds(trialReady(gap), "sample_trial").includes(id), `${id} ${JSON.stringify(gap)}`);
     }
+  });
+
+  /* §11.6 — THE VALIDATION IS SOMEBODY ELSE'S. A GST number on the record and
+     the salesman's own tick used to be the whole of it, so the man who typed
+     the number certified it. The column is the back office's answer and the
+     old tick is deliberately not read. */
+  test("a GST number the back office has not checked does not pass", () => {
+    const ticks = { ...(trialReady().qualification as Record<string, boolean>) };
+    ticks.gst_verified = true;
+    const missing = missingIds(trialReady({ gstVerified: false, qualification: ticks }), "sample_trial");
+    assert.ok(missing.includes("gst_verified"), "the salesman's tick must not stand in for the check");
+  });
+
+  /* The buyer is asked for ONLY where it is a different person, which is the
+     specification's own wording and the reason this one condition can be
+     satisfied by a fact about another field. */
+  describe("the buyer is conditional", () => {
+    test("a named buyer answers it outright", () => {
+      const ticks = { ...(trialReady().qualification as Record<string, boolean>) };
+      delete ticks.buyer_confirmed;
+      const v = missingIds(trialReady({ buyer: "Suresh", qualification: ticks }), "sample_trial");
+      assert.ok(!v.includes("buyer_confirmed"));
+    });
+
+    test("no buyer, but a decision maker confirmed as the same man, answers it", () => {
+      assert.ok(
+        !missingIds(trialReady({ buyer: null }), "sample_trial").includes("buyer_confirmed"),
+      );
+    });
+
+    test("neither does not", () => {
+      const ticks = { ...(trialReady().qualification as Record<string, boolean>) };
+      delete ticks.buyer_confirmed;
+      const v = missingIds(
+        trialReady({ buyer: null, decisionMaker: null, qualification: ticks }),
+        "sample_trial",
+      );
+      assert.ok(v.includes("buyer_confirmed"));
+    });
+
+    /* A lead qualified before the list was cut carries the OLD key. Reading
+       only the new one would un-tick finished work and send it back down. */
+    test("the old `decision_maker` tick still counts", () => {
+      const v = missingIds(
+        trialReady({ buyer: null, qualification: { ...(trialReady().qualification as Record<string, boolean>), buyer_confirmed: false, decision_maker: true } }),
+        "sample_trial",
+      );
+      assert.ok(!v.includes("buyer_confirmed"));
+    });
   });
 
   /* THE WHOLE POINT OF THE ENGINE: a tick beside an empty field is exactly the
@@ -234,27 +324,95 @@ describe("§9 — the twelve before anybody may send a sample", () => {
       ...NEXT_ACTION,
     };
     const missing = missingIds(allTicksNoValues, "sample_trial");
-    for (const id of [
-      "gst_verified",
-      "monthly_requirement",
-      "monthly_potential",
-      "required_product",
-      "competitor_identified",
-      "credit_days",
-      "decision_maker",
-      "application_understood",
-    ]) {
+    for (const id of ["gst_verified", "credit_days", "application_understood"]) {
       assert.ok(missing.includes(id), `${id} refused on the tick alone`);
     }
   });
 
   /* GST is the one that needs BOTH: the number, and somebody saying they
      checked it. A number nobody verified is not a verified GST. */
-  test("GST needs the number AND the tick", () => {
-    const ticks = { ...(trialReady().qualification as Record<string, boolean>) };
-    delete ticks.gst_verified;
-    assert.ok(missingIds(trialReady({ qualification: ticks }), "sample_trial").includes("gst_verified"));
+  /* IT USED TO BE THE NUMBER AND THE SALESMAN'S TICK. It is the number and the
+     BACK OFFICE'S COLUMN now — §11.6 gives validating it to them, and a tick
+     the collector writes himself is not a check. Both halves are still
+     required: a validated flag with no number behind it is nothing to invoice
+     against. */
+  test("GST needs the number AND somebody else's check", () => {
+    assert.ok(missingIds(trialReady({ gstVerified: false }), "sample_trial").includes("gst_verified"));
     assert.ok(missingIds(trialReady({ gstin: null }), "sample_trial").includes("gst_verified"));
+  });
+
+  /*
+   * §5.3 — the other half of cutting the checklist to eight.
+   *
+   * Four questions were removed from this gate because they are asked, and
+   * refused, one rung up. What replaces them is not a re-ask: it is one
+   * confirmation that the figures still hold, and it bites HERE, where the
+   * cost is — a stale figure costs nothing while somebody is still talking to
+   * the shop, and costs stock and a courier the moment a can leaves.
+   */
+  describe("the conversion figures have to be current", () => {
+    test("stale figures refuse the sample", () => {
+      const v = gateTo(trialReady({ figuresStale: true }), "sample_trial");
+      assert.equal(v.open, false);
+      assert.deepEqual(v.missing.map((c) => c.id), ["figures_fresh"]);
+    });
+
+    test("fresh figures pass", () => {
+      assert.equal(gateTo(trialReady({ figuresStale: false }), "sample_trial").open, true);
+    });
+
+    /* Not stated and not stale are the same answer: a deployment with the
+       check switched off must not have every lead refused. */
+    test("saying nothing is not staleness", () => {
+      assert.equal(gateTo(trialReady(), "sample_trial").open, true);
+    });
+
+    /* It refuses the SAMPLE and nothing earlier. A lead still being talked to
+       is not held up by a figure from March. */
+    test("it does not hold the rung below", () => {
+      const v = gateTo(
+        { ...trialReady({ figuresStale: true }), stage: "prospect", verifiedAt: new Date() },
+        "qualification",
+      );
+      assert.equal(v.open, true);
+    });
+  });
+
+  /*
+   * §5.3 — A MANAGER WHO SAID IT WAS NOT FINISHED IS LISTENED TO. A reversal:
+   * the review was recorded and changed nothing, so "this is not finished" was
+   * a comment the lead walked straight past.
+   */
+  describe("the manager's review holds the lead", () => {
+    for (const verdict of ["incomplete", "clarification"] as const) {
+      test(`${verdict} refuses the sample`, () => {
+        const v = gateTo(trialReady({ qualificationReview: verdict }), "sample_trial");
+        assert.equal(v.open, false);
+        assert.deepEqual(v.missing.map((c) => c.id), ["manager_review_open"]);
+      });
+    }
+
+    test("verified passes", () => {
+      assert.equal(
+        gateTo(trialReady({ qualificationReview: "verified" }), "sample_trial").open,
+        true,
+      );
+    });
+
+    /* THE ONE THAT KEEPS IT SHIPPABLE. An unreviewed checklist passes —
+       otherwise every lead in the book stops on deploy day, waiting on a
+       review nobody was ever asked for. */
+    test("an unreviewed checklist is not a refusal", () => {
+      assert.equal(gateTo(trialReady({ qualificationReview: null }), "sample_trial").open, true);
+      assert.equal(gateTo(trialReady(), "sample_trial").open, true);
+    });
+
+    test("the refusal names which of the two it was", () => {
+      const inc = gateTo(trialReady({ qualificationReview: "incomplete" }), "sample_trial");
+      const clr = gateTo(trialReady({ qualificationReview: "clarification" }), "sample_trial");
+      assert.match(inc.missing[0].says, /incomplete/);
+      assert.match(clr.missing[0].says, /clarification/);
+    });
   });
 
   /* §23 — a sample sent to a counter nobody bills is stock nobody can account
@@ -785,6 +943,109 @@ describe("approvalRouteReason", () => {
     assert.equal(
       approvalRouteReason({ specialDiscountPercent: 25, agreedCreditLimitPaise: 90_00_000 }, T),
       "over_discount",
+    );
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+
+/*
+ * THE STANDARD ROUTE, AND THE BUG IT CLOSES.
+ *
+ * `approvalRouteReason` used to decide whether management were asked at all,
+ * and `agreeCommercialTerms` wrote a `stepIndex` 1 row only where it answered
+ * something. But the gate on `distributor_approval` has always demanded
+ * `distributorApprovalApproved`, so a routine candidate — no exclusivity, both
+ * figures under the thresholds — had no row anybody could approve and could
+ * never leave `commercial_discussion`. The checklist was complete, the terms
+ * were agreed, and the refusal named a signature no screen in the product could
+ * produce.
+ *
+ * The specification settles it: "Who acts: Management only" against both
+ * `management_review` and `distributor_approval`, with "standard review" as the
+ * callout's own fallback where no trigger applies. So management always review,
+ * and `managementRouteReason` is what the row is written under.
+ */
+describe("§12 — management review every appointment, escalated or not", () => {
+  const T = { discountPercent: 10, creditLimitPaise: 5_00_000 };
+
+  test("an ordinary candidate still gets a reason to put on the row", () => {
+    assert.equal(
+      managementRouteReason({ specialDiscountPercent: 5, agreedCreditLimitPaise: 100000 }, T),
+      "standard",
+    );
+    /* Including where there is no profile at all — the row is still written,
+       because a missing step 1 is what stranded these candidates. */
+    assert.equal(managementRouteReason(null, T), "standard");
+    assert.equal(managementRouteReason(undefined, T), "standard");
+    assert.equal(managementRouteReason({}, T), "standard");
+  });
+
+  test("it never answers null, which is what makes the row unconditional", () => {
+    for (const profile of [
+      null,
+      {},
+      { specialDiscountPercent: 5 },
+      { exclusivityGranted: true },
+      { specialDiscountPercent: 40 },
+      { agreedCreditLimitPaise: 90_00_000 },
+    ]) {
+      assert.equal(typeof managementRouteReason(profile, T), "string");
+    }
+  });
+
+  test("where something IS above a threshold it says which, not 'standard'", () => {
+    assert.equal(managementRouteReason({ exclusivityGranted: true }, T), "exclusivity");
+    assert.equal(managementRouteReason({ specialDiscountPercent: 25 }, T), "over_discount");
+    assert.equal(managementRouteReason({ agreedCreditLimitPaise: 90_00_000 }, T), "over_credit_limit");
+  });
+
+  test("the two functions agree about everything except the ordinary case", () => {
+    for (const profile of [
+      { exclusivityGranted: true },
+      { specialDiscountPercent: 25 },
+      { agreedCreditLimitPaise: 90_00_000 },
+    ]) {
+      assert.equal(managementRouteReason(profile, T), approvalRouteReason(profile, T));
+    }
+    /* And the escalation callout still has its null to draw the ordinary
+       paragraph from — the two are separate functions precisely so that one
+       screen can say "nothing forced this upstairs" while the row still says
+       management have it. */
+    assert.equal(approvalRouteReason({ specialDiscountPercent: 5 }, T), null);
+  });
+
+  /*
+   * The half that was actually broken, stated as a climb: a standard candidate
+   * reaches `distributor_approval` exactly as an escalated one does, because
+   * the gate never distinguished them and now nothing upstream of it does
+   * either. What changed is that `distributorApprovalApproved` is now something
+   * a routine appointment can become.
+   */
+  test("a standard candidate can reach distributor_approval", () => {
+    const standardTerms = { specialDiscountPercent: 5, agreedCreditLimitPaise: 100000 };
+    assert.equal(approvalRouteReason(standardTerms, T), null, "nothing escalates this one");
+    assert.equal(managementRouteReason(standardTerms, T), "standard", "and it goes up anyway");
+
+    /* Terms agreed, step 1 written under `standard`, management said yes. */
+    const v = gateTo(
+      distributorAt("commercial_discussion", {
+        commercialTermsAgreed: true,
+        distributorApprovalApproved: true,
+      }),
+      "distributor_approval",
+    );
+    assert.equal(v.open, true);
+    assert.deepEqual(v.missing, []);
+  });
+
+  test("and without that signature it is still refused, which is the rule working", () => {
+    assert.deepEqual(
+      missingIds(
+        distributorAt("commercial_discussion", { commercialTermsAgreed: true }),
+        "distributor_approval",
+      ),
+      ["management_approved"],
     );
   });
 });

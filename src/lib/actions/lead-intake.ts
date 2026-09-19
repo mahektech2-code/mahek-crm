@@ -11,7 +11,7 @@ import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { err, fromThrown, ok, type Err, type FieldError, type Result } from "@/lib/result";
-import { salesTypeLabel, type LeadSalesType } from "@/lib/lead-labels";
+import { salesTypeIsOffered, salesTypeLabel, type LeadSalesType } from "@/lib/lead-labels";
 import {
   DUPLICATE_DISMISSED_ACTION,
   phoneAlreadyOnTheBook,
@@ -87,6 +87,13 @@ function zodErr(error: z.ZodError): Err {
 
 /* ═════════════════════════════════════════════ screen 5 — one lead, by hand */
 
+/*
+ * The shape the wire may carry, which is NOT the same list as the shape a new
+ * lead may be raised on. `distributor` stays here so a request naming it is
+ * refused in a sentence that says why and what to do instead, rather than by a
+ * zod enum error reading "invalid enum value" — the check is a few lines into
+ * `captureLead`.
+ */
 const SALES_TYPES = ["direct", "distributor", "third_party"] as const;
 const CUSTOMER_TYPES = ["dealer", "manufacturer", "distributor", "retailer"] as const;
 
@@ -120,6 +127,11 @@ const captureSchema = z.object({
   city: z.string().trim().min(2, "Which town?").max(120),
   address: z.string().trim().max(500).optional(),
   source: z.string().trim().min(1, "Where did this come from?").max(120),
+  /**
+   * The sentence behind `other`. Validated against the CONFIGURED list below
+   * rather than a literal, because the source list is a manager's to edit.
+   */
+  sourceDetail: z.string().trim().max(200).optional(),
   customerType: z.enum(CUSTOMER_TYPES).nullable().optional(),
 
   /*
@@ -187,6 +199,57 @@ export async function captureLead(
     const config = await getConfig();
 
     /*
+     * THE SOURCE IS ONE OF THE CONFIGURED TEN, AND "OTHER" HAS TO SAY WHAT.
+     *
+     * Checked against `leads.sources` rather than a literal, so a manager who
+     * adds an eleventh channel on the Settings screen does not have to wait for
+     * a deploy — and so a code retired there stops being accepted here on the
+     * same afternoon.
+     *
+     * Enforced in the action and not only in the form, because a server action
+     * is a URL: a stale tab and a replayed request both still reach this.
+     *
+     * The detail is required on `other` for the reason `other` exists at all:
+     * it is the easiest answer on any dropdown, it costs nothing to pick, and
+     * left free it becomes the biggest bar on the chart with nothing behind it.
+     * A sentence is what makes it get picked when it is true, and the sentences
+     * are what tell Mahek which eleventh source is worth adding to the list.
+     */
+    const sources = config["leads.sources"];
+    if (!sources.some((o) => o.code === v.source)) {
+      return err(
+        `"${v.source}" is not one of the sources we record. Pick one from the list.`,
+        "validation",
+        [{ field: "source", message: "Pick where this came from." }],
+      );
+    }
+    if (v.source === "other" && !v.sourceDetail?.trim()) {
+      return err(
+        "Say where this one actually came from. \u201cOther\u201d with nothing behind it is a source nobody can count later.",
+        "validation",
+        [{ field: "sourceDetail", message: "Where did it come from?" }],
+      );
+    }
+
+    /*
+     * A RETIRED LADDER IS REFUSED HERE AND NOT ONLY IN THE PICKER, because a
+     * server action is a URL: the intake form no longer draws a Distributor
+     * chip, and a stale tab, a replayed request or a bulk file still can name
+     * one. Mahek's decision is that distributors are not appointed through
+     * MahekOne — see `SALES_TYPES` in `lib/lead-labels.ts` for what starting a
+     * lead on that ladder cost. It says nothing about the leads already on it,
+     * which keep every rung, gate and answer they have; this door is only ever
+     * asked about a lead being raised NOW.
+     */
+    if (v.salesType && !salesTypeIsOffered(v.salesType)) {
+      return err(
+        `${salesTypeLabel(v.salesType)} is no longer a ladder a new lead can be raised on. Raise them as a direct or third-party customer — the leads already on it are untouched.`,
+        "rule_violation",
+        [{ field: "salesType", message: "No longer offered." }],
+      );
+    }
+
+    /*
      * §24, read from configuration rather than from a required field on this
      * form. A team that has turned the rule off is a team this screen must not
      * enforce it on anyway — and one that has it on must not be able to raise a
@@ -249,6 +312,9 @@ export async function captureLead(
         address: v.address || null,
         kind: "lead",
         leadSource: v.source,
+        /* Kept even where the source is later changed away from `other`: it is
+           a record of what somebody believed on the day they raised it. */
+        leadSourceDetail: v.sourceDetail?.trim() || null,
 
         /* Absent means unassigned, and unassigned is said in words on every
            team list. It is NEVER `ctx.user.id` — see the file header. */
@@ -437,9 +503,24 @@ function readSalesType(raw: string | undefined): {
   if (!raw) return { value: null, problem: null };
   const v = raw.toLowerCase().replace(/[\s_-]/g, "");
   if (v === "direct" || v === "directcustomer") return { value: "direct", problem: null };
-  if (v === "distributor") return { value: "distributor", problem: null };
   if (v === "thirdparty" || v === "thirdpartycustomer")
     return { value: "third_party", problem: null };
+  /*
+   * A word this column used to accept, and the row is REFUSED rather than read
+   * as blank. Mahek withdrew the distributor ladder for new leads — the note on
+   * `SALES_TYPES` has the reasoning — and a file written before that says
+   * "distributor" in perfectly good faith. Reading it as "nobody decided" would
+   * raise the lead on the legacy six rungs with nothing anywhere recording that
+   * a ladder somebody typed had been thrown away, which is the exact failure
+   * the unrecognised-word branch below exists to prevent.
+   */
+  if (v === "distributor") {
+    return {
+      value: null,
+      problem:
+        "Distributor is no longer a ladder a new lead can be raised on — Mahek does not appoint distributors through MahekOne. Use direct or third_party, or leave it empty. Leads already on that ladder are untouched.",
+    };
+  }
   /*
    * NOT silently null. An unrecognised word in this column is somebody having
    * MEANT a ladder, and reading it as "nobody said" would put the lead on the
@@ -448,7 +529,7 @@ function readSalesType(raw: string | undefined): {
    */
   return {
     value: null,
-    problem: `"${raw}" is not a sales type. Use direct, distributor or third_party — or leave it empty, which means nobody has decided.`,
+    problem: `"${raw}" is not a sales type. Use direct or third_party — or leave it empty, which means nobody has decided.`,
   };
 }
 

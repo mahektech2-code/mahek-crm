@@ -1,7 +1,8 @@
 import { type LeadWorkspace } from "@/lib/lead-workspace";
+import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
-import { sampleDesk } from "@/lib/services/lead-console-service";
+import { canLead, sampleDesk } from "@/lib/services/lead-console-service";
 import { SampleDeskScreen } from "@/components/samples/desk/sample-desk-screen";
 
 
@@ -24,6 +25,7 @@ export async function Body({
 }: {
   workspace: LeadWorkspace;
 }) {
+  const user = await requireUser();
   const day = await today();
   const [rows, config] = await Promise.all([sampleDesk(day), getConfig()]);
 
@@ -31,6 +33,10 @@ export async function Body({
     <SampleDeskScreen workspace={workspace}
       rows={rows}
       chaseDays={config["leads.sampleReviewChaseDays"]}
+      /* Resolved here rather than in the screen, like every other capability
+         in this module: a "use client" component cannot ask, and a control
+         drawn for somebody the action refuses is worse than no control. */
+      canWork={await canLead(user, "lead.work")}
     />
   );
 }

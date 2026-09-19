@@ -31,6 +31,7 @@
 import { addDays, type BusinessDate } from "../business-date";
 import { NURTURE_SEQUENCE, type NurtureTrigger } from "../lead-labels";
 import type { SampleState } from "../lead-labels";
+import { routineDayFor, type RoutineCallConfig } from "./queue";
 
 /* ------------------------------------------------------------------ types */
 
@@ -264,5 +265,110 @@ export function sampleChaseDue(
       chaseNumber <= 2
         ? "Have they tried it, and what did they think?"
         : `Asked ${chaseNumber - 1} times already with no answer. Worth ringing yourself.`,
+  };
+}
+
+/* --------------------------------------- §13 the repeat-order call itself */
+
+/**
+ * What the office knows about one customer's rhythm, and nothing else.
+ *
+ * Every field here is a cache `lib/recompute.ts` already maintains from real
+ * approved orders — the engine derives none of it and must not, because
+ * re-measuring the cycle here would be a second answer to a question
+ * `engines/buying-cycle.ts` has already answered, drifting from it the first
+ * time somebody changed the lookback.
+ */
+export type ReorderCandidate = {
+  customerId: string;
+  /** The day of the last order. Null on a customer who has never ordered. */
+  lastOrderOn: BusinessDate | null;
+  /** From E1, cached on the customer. */
+  cycleDays: number;
+  /** True where nobody measured it and the configured default stood in. */
+  cycleIsDefault: boolean;
+  /** How predictable that cycle is, 0–100, and null where it was guessed. */
+  cycleConfidence: number | null;
+};
+
+/**
+ * **§13'S LAST ROW, WHICH FOR AS LONG AS IT HAS EXISTED NOTHING FIRED.**
+ *
+ * `expected_reorder` has sat in `NURTURE_SEQUENCE` since the sequence
+ * shipped — a trigger, an owner, a title and a sentence — and no caller
+ * anywhere raised it. That is the worst shape a rule can be in: it is
+ * finished in the data, it reads on the Settings screen and on the lead page
+ * as part of the chasing the office does, and it has no path to a person. A
+ * declared rung nobody raises is not an unbuilt feature to whoever reads the
+ * sequence; it is a gap in a lead's history, and it is indistinguishable from
+ * one until somebody goes looking for the code that fires it and finds none.
+ *
+ * Mahek's instruction is that the repeat-order call is timed from the
+ * customer's OWN measured buying cycle, at the configured percentage of it —
+ * which is `routineDayFor`, the one place that percentage and its confidence
+ * swing live. This function is the wiring and not a second rule: it decides
+ * WHO is eligible and WHICH order's cycle is being counted, and hands the
+ * arithmetic to the queue engine's own function.
+ *
+ * **IT IS NOT THE CALL LOG'S RANKING RE-DERIVED, and the difference is what
+ * is being asked.** That engine weighs a reorder against a promise against a
+ * debt against a stock check to order four hundred names for a telecaller
+ * working down a list; this asks one question about one account — is this
+ * shop about due — and puts the answer on a named manager's task list with a
+ * date on it. Re-deriving the first here would be a scoring system drifting
+ * from a scoring system, invisible until two screens disagree about one shop.
+ *
+ * **MEASURED CYCLES ONLY.** `cycleIsDefault` means nobody measured this
+ * customer, and `buyingCycle.defaultDays` is a number somebody typed into a
+ * registry rather than anything this shop has ever done. Chasing on it would
+ * ring a quarterly buyer every thirty days — and worse, on this book most
+ * accounts carry the default, so the first pass would put the whole customer
+ * list on one lead manager's screen in a single afternoon, which is how a
+ * task list stops being read at all.
+ *
+ * **THE KEY IS THE ORDER THAT STARTED THE CYCLE, NOT THE CUSTOMER.** Keyed on
+ * the customer alone, `raiseNurtureTasks` would find the task it raised in
+ * March and every cycle after the first would go unchased for ever — one
+ * repeat-order call per shop, for the life of the shop. Keyed on the DUE DAY
+ * it would move the moment somebody edited the routine percentage on the
+ * Settings screen, and that night every outstanding repeat-order call would be
+ * raised a second time; it is the same reason `nurtureKey` is built from a
+ * row's declared `after` rather than from its effective date. The last order
+ * date is the one fact that does not move while a cycle is running and changes
+ * exactly when the next one begins, which is precisely the grain this task
+ * wants.
+ *
+ * **A CALL WHOSE DAY PASSED MONTHS AGO IS NOT A REPEAT-ORDER CALL.** It is a
+ * dormant account, and the inactivity watch already names it as one — raising
+ * "their own cycle says they are about due" against a shop that has bought
+ * nothing since spring is a sentence a manager reads once and stops believing.
+ * `lookbackDays` is the caller's, because how far back a pass reads is a fact
+ * about the pass rather than about the rule.
+ */
+export function expectedReorderEvent(
+  customer: ReorderCandidate,
+  today: BusinessDate,
+  config: RoutineCallConfig,
+  lookbackDays: number,
+): NurtureEvent | null {
+  if (customer.cycleIsDefault) return null;
+  if (!customer.lastOrderOn) return null;
+
+  const dueOn = addDays(
+    customer.lastOrderOn,
+    routineDayFor(customer.cycleDays, customer.cycleConfidence, config),
+  );
+
+  /* Nothing is produced ahead of its day, exactly as `tasksDueFor` refuses to
+     — a task dated next Tuesday sitting on a list today is one somebody either
+     does early or learns to ignore. The row's own `after` is 0, so the event's
+     day IS the task's due day. */
+  if (dueOn > today) return null;
+  if (dueOn < addDays(today, -Math.max(0, lookbackDays))) return null;
+
+  return {
+    trigger: "expected_reorder",
+    sourceId: `${customer.customerId}:${customer.lastOrderOn}`,
+    on: dueOn,
   };
 }
