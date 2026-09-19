@@ -4791,6 +4791,18 @@ map got prettier. `lib/engines/trail-gap-route.ts` is the pure half — may this
 gap be routed, is the answer believable, how does a routed stretch join the
 fixes either side — and it pins both ends to the real fixes, since Ola routes
 between the nearest points on the carriageway and a doorway is not on one.
+
+**AND DIRECTIONS IS THE ONE OLA CALLER STILL OUTSIDE THE KEY POOL, said here
+rather than discovered.** Snap-to-Road, geocoding and the distance matrix all
+go through `olaGet`, which fails over on an observed exhaustion;
+`ola-directions-service.ts` reads `olamaps.apiKey` itself, because it is a
+POST-then-GET and `olaGet` is a GET. On the shipping configuration — one key —
+that is no difference at all: both spend the same credential and both answer
+null when it stops working. On a pool it means a routed gap is the first thing
+to go quiet and the last to come back, which is the right end of the product
+to lose, and it fails the way this whole feature fails, as the straight dashed
+line the map drew before.
+
 **Map and satellite are a `setStyle` call, not two maps.** `StreetMap` swaps
 the style JSON in place rather than tearing the whole map down — the camera,
 the markers and the click handlers survive, because only what the STYLE
