@@ -80,6 +80,16 @@ const DEFAULTS: Record<string, unknown> = {
   /* How long an unsent fix survives on the phone. Configuration now, because
      it decides how durable somebody's working day is — see `retentionMs`. */
   'mbos.location.queueRetentionDays': 7,
+  /*
+   * MBOS's own location service. The three numbers it runs on, and the window
+   * they stand in is longer here than anywhere else in this file: the service
+   * can be started next by a boot receiver with no JavaScript runtime at all,
+   * so these are also mirrored into its preferences file the first time
+   * `start()` reaches it. A handset that has never pulled still records a day.
+   */
+  'mbos.location.serviceWatchdogMinutes': 15,
+  'mbos.location.serviceBufferCap': 50_000,
+  'mbos.location.serviceMaxDayHours': 16,
   /* How far behind a handset has to be before the team list mentions it. A
      queue is the design working, not a fault, so the panel stays quiet until
      there is something worth a manager's attention. */

@@ -3007,6 +3007,22 @@ export type LastKnown = {
   backgroundSyncLastRunAt: Date | null;
   trackerStalledAt: Date | null;
   /**
+   * MBOS'S OWN RECORDER — see the columns on `mbos_devices`.
+   *
+   * `running` is whether the foreground service is up and `lastFixAt` is the
+   * only evidence it means anything: a service can hold its notification and
+   * have a provider that has quietly stopped delivering, which is invisible
+   * everywhere else. `refusedAt` is the PLATFORM refusing to start it, which
+   * is a one-tap fix and a different conversation from a battery manager
+   * killing a running one. Null throughout on every handset until it is
+   * updated, and never read as "not running".
+   */
+  locationServiceRunning: boolean | null;
+  locationServiceLastFixAt: Date | null;
+  locationServiceStartsToday: number | null;
+  locationServiceRefusedAt: Date | null;
+  locationServiceRefusal: string | null;
+  /**
    * Unsent fixes still on the phone, and when that was true. Null means this
    * build does not say — never zero, which is a handset reporting itself clear.
    */
@@ -3085,7 +3101,12 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
            d.setup_unverified as "setupUnverified",
            dev.background_sync_registered as "backgroundSyncRegistered",
            dev.background_sync_last_run_at as "backgroundSyncLastRunAt",
-           dev.tracker_stalled_at as "trackerStalledAt"
+           dev.tracker_stalled_at as "trackerStalledAt",
+           dev.location_service_running as "locationServiceRunning",
+           dev.location_service_last_fix_at as "locationServiceLastFixAt",
+           dev.location_service_starts_today as "locationServiceStartsToday",
+           dev.location_service_refused_at as "locationServiceRefusedAt",
+           dev.location_service_refusal as "locationServiceRefusal"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date

@@ -1769,6 +1769,39 @@ export const SETTINGS = [
     max: 7200,
   },
   {
+    key: "mbos.location.serviceWatchdogMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often the phone checks that its own tracker is still running",
+    description:
+      "Minutes. MahekOne now runs its own recorder on the handset rather than borrowing the one the location library provides, and the recorder holds itself up once it has started. This is the safety net under it: a periodic wake-up that starts the recorder again if the phone's battery manager has force-stopped it. Fifteen is Android's own floor and anything shorter is silently rounded up by the OS, so a smaller number here would mean something different on the phone from what it says on this screen. It is a NET and not the mechanism — the same wake-up scheduler has been measured going as long as fifteen hours between runs on these handsets, which is why the recorder does not depend on it.",
+    default: 15,
+    min: 15,
+    max: 180,
+  },
+  {
+    key: "mbos.location.serviceBufferCap",
+    type: "integer",
+    category: "mbos-location",
+    label: "Fixes the recorder may hold before the oldest are dropped",
+    description:
+      "The recorder writes to its own store on the phone because it runs with the app shut, and the app moves those fixes into the upload queue the next time it is alive. This is how many may pile up in between. It only ever bites where the app has not run for a very long time while the day stayed open — at the three-second cadence 50,000 is about forty hours of somebody's route — and when it does, the OLDEST go first, which is the opposite of the upload queue's own rule: a manager looking for where somebody is now is not helped by the first hour of a week-old silence. Raising it costs storage on the handset and nothing else.",
+    default: 50_000,
+    min: 1_000,
+    max: 500_000,
+  },
+  {
+    key: "mbos.location.serviceMaxDayHours",
+    type: "integer",
+    category: "mbos-location",
+    label: "Longest a handset may record without hearing from the app again",
+    description:
+      "Hours, and it is a privacy deadline rather than a tuning knob. The route is recorded between the check-in and the check-out and not one second either side — but the recorder now survives the app being killed and the phone being rebooted, so a check-out is no longer the only way a day can end. A phone switched off at four and turned on at eleven has no check-out coming and no app running to notice; without a deadline it would start recording again and follow its owner home. The app pushes this out every few minutes for as long as it is alive and the day is open, so a genuine working day never reaches it. Set it longer than the longest day anybody actually works and shorter than an evening.",
+    default: 16,
+    min: 1,
+    max: 24,
+  },
+  {
     key: "mbos.location.startOfDayGate",
     type: "text",
     category: "mbos-location",

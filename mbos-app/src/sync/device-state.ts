@@ -57,6 +57,40 @@ export type DeviceStateReport = {
    * only that this build cannot say, and is never read as nothing waiting.
    */
   queuedPositions?: number;
+  /**
+   * MBOS'S OWN LOCATION SERVICE, which is the answer to "why did this phone go
+   * quiet" that nothing could give before.
+   *
+   * The office could see a trail with a hole in it and never what put it
+   * there. These four say it: whether the service is up at all, when it last
+   * took a fix, how many fixes it is still holding, and how many times today
+   * it has had to be STARTED — which is the number that names an OEM battery
+   * manager rather than describing its effects. One start is a check-in;
+   * twenty is a phone killing the tracker twenty times.
+   *
+   * ABSENT MEANS THIS BUILD HAS NO SUCH SERVICE, which is every handset in the
+   * field until somebody installs the next APK, and is never read as "not
+   * running". `null` on the two durations means the mark has never been
+   * written — the service has never started, the platform has never refused
+   * one — and is a different fact from a large number.
+   */
+  locationServiceRunning?: boolean;
+  locationServiceLastFixAgoSeconds?: number | null;
+  locationServiceBuffered?: number;
+  locationServiceStartsToday?: number;
+  /**
+   * WHEN THE PLATFORM ITSELF REFUSED TO START IT, which is a completely
+   * different support call from a battery manager killing a running service.
+   *
+   * Android 12 forbids starting a foreground service from the background
+   * outside a short list of exempt moments, and a phone that has not been
+   * given the battery exemption is refused there by design. Nothing is being
+   * killed; the fix is one tap on the Sync screen rather than a trip through
+   * an OEM settings tree, and the office can only tell the two apart if the
+   * phone says which happened.
+   */
+  locationServiceRefusedAgoSeconds?: number | null;
+  locationServiceRefusal?: string;
 };
 
 /**
@@ -168,6 +202,36 @@ async function backgroundState(): Promise<Partial<DeviceStateReport>> {
          field is left absent, which the server reads as "cannot say" rather
          than as a clear queue. */
     }
+    /*
+     * OUR OWN SERVICE, asked through the same two-file wrapper every caller
+     * uses — so a build without the native half answers `null` here rather
+     * than throwing, and a handset in somebody's pocket running the old APK
+     * goes on reporting exactly what it always did.
+     *
+     * Every field is OMITTED rather than nulled where there is nothing to say.
+     * That is the rule the wire already keeps in both directions: the server
+     * reads an absent key as "leave the column alone", so a partial report from
+     * an older build cannot wipe the richer answers a newer one gave for the
+     * same phone.
+     */
+    try {
+      const { ourServiceState } = await import('./trail');
+      const svc = await ourServiceState();
+      if (svc) {
+        out.locationServiceRunning = svc.running;
+        /* An explicit null is a CLEAR and an absent key is not — the same
+           distinction the stall mark below turns on. The service has never
+           taken a fix, and saying so is different from saying nothing. */
+        out.locationServiceLastFixAgoSeconds = svc.lastFixAgoSeconds;
+        if (svc.buffered !== null) out.locationServiceBuffered = svc.buffered;
+        if (svc.startsToday !== null) out.locationServiceStartsToday = svc.startsToday;
+        out.locationServiceRefusedAgoSeconds = svc.lastRefusalAgoSeconds;
+        if (svc.lastRefusal) out.locationServiceRefusal = svc.lastRefusal;
+      }
+    } catch {
+      /* Left absent, which the office reads as "this build did not say". */
+    }
+
     if (stalled !== null && stalled <= now) {
       out.trackerStalledAgoSeconds = Math.round((now - stalled) / 1000);
     } else if (stalled === null) {

@@ -92,6 +92,25 @@ export type HandsetFacts = {
   backgroundSyncLastRunAt: Date | string | null;
   /** When the handset's own watchdog last caught the tracker accepted and silent. */
   trackerStalledAt: Date | string | null;
+  /**
+   * MBOS'S OWN RECORDER, and it is OPTIONAL on this type rather than nullable.
+   *
+   * Every other field here is `| null`, because every handset reports on every
+   * one of them or reports null. These four arrived with a new APK, and a
+   * sideloaded app has no staged rollout: most of the field is running a build
+   * that has never heard of them, and so is most of the code that constructs
+   * this object. Optional says exactly that — nothing was passed, so nothing
+   * is asserted — where `| null` would have made every existing caller declare
+   * an answer it does not have.
+   *
+   * `running` false with `undefined` are therefore NOT the same, and the note
+   * below reads only the first.
+   */
+  locationServiceRunning?: boolean | null;
+  locationServiceLastFixAt?: Date | string | null;
+  locationServiceStartsToday?: number | null;
+  locationServiceRefusedAt?: Date | string | null;
+  locationServiceRefusal?: string | null;
 };
 
 export type HandsetThresholds = {
@@ -234,6 +253,70 @@ export function handsetNotes(
   nowMs: number,
 ): HandsetNote[] {
   const notes: HandsetNote[] = [];
+
+  /*
+   * THE PLATFORM REFUSED TO START THE RECORDER, and it is first because the
+   * fix is one tap and nothing below it is.
+   *
+   * This is not a battery manager killing anything. Android 12 forbids
+   * starting a foreground service from the background outside a short list of
+   * exempt moments, and a phone that has not been given the battery exemption
+   * is refused there by design. Drawn as "his phone stopped the tracker" it
+   * would send somebody hunting through an OEM settings tree for a switch that
+   * is not the problem.
+   */
+  const refused = ms(f.locationServiceRefusedAt ?? null);
+  if (refused !== null && f.dayOpen && f.locationServiceRunning === false) {
+    notes.push({
+      tone: "bad",
+      text: `His phone would not let MahekOne start recording — ${ageWords(refused, nowMs)} ago`,
+      detail:
+        "Android refuses to start a background recorder on a phone that is not exempt from battery optimisation. He fixes it in one tap on Sync → Keep tracking on, which puts up the system dialog; until he does, the route records only while the app is open.",
+    });
+  }
+
+  /*
+   * THE RECORDER IS DOWN, which is a different sentence from either of the two
+   * around it.
+   *
+   * `undefined` is a build that has never heard of the service and says
+   * nothing at all; `false` is a handset that has one and is not running it.
+   * The refusal note above is the case where we know why, so this fires only
+   * where we do not — and it is drawn as a warning rather than a fault,
+   * because the watchdog starts it again within the quarter hour and a row
+   * that shouts at every ordinary gap is a row nobody reads.
+   */
+  if (f.locationServiceRunning === false && f.dayOpen && refused === null) {
+    notes.push({
+      tone: "warn",
+      text: "Route recorder not running",
+      detail:
+        "MahekOne's own recorder is down on this handset. It starts itself again on the next wake-up, and his work is safe on the phone either way — if it stays down all day the handset needs its battery and autostart settings checked.",
+    });
+  }
+
+  /*
+   * IT IS UP AND IT IS NOT RECORDING, which is the failure no other column on
+   * this row can see.
+   *
+   * A foreground service can hold its notification, keep its process alive,
+   * and have a fused provider that has quietly stopped delivering — Play
+   * services updated under a running app, a ROM suspending the provider
+   * without touching the process. From every other angle that handset looks
+   * perfect. It is a warning rather than a fault because the service re-asks
+   * the provider on its own heartbeat and most of these recover unaided.
+   */
+  if (f.locationServiceRunning === true && f.dayOpen) {
+    const lastFix = ms(f.locationServiceLastFixAt ?? null);
+    if (lastFix !== null && nowMs - lastFix > t.noTrailMinutes * 60_000) {
+      notes.push({
+        tone: "warn",
+        text: `Recorder running but no fix for ${ageWords(lastFix, nowMs)}`,
+        detail:
+          "The recorder is up and the phone's location provider has stopped answering it — usually Play services updating underneath, or the handset's power manager suspending the provider. It re-asks every minute on its own.",
+      });
+    }
+  }
 
   /*
    * THE PHONE KILLED THE TRACKER, and it is first because it outranks every

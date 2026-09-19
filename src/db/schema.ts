@@ -5112,6 +5112,80 @@ export const mbosDevices = pgTable(
      */
     queuedPositions: integer("queued_positions"),
     queuedPositionsAt: timestamp("queued_positions_at", { withTimezone: true }),
+
+    /**
+     * MBOS'S OWN RECORDER, and the four facts that finally answer "why did
+     * this phone go quiet".
+     *
+     * The trail used to run on `expo-location`'s background task, and in
+     * production it stopped: fifty-one silences and 523 minutes lost inside
+     * one working day, single gaps of 999 and 498 minutes, on handsets
+     * reporting `location_permission = 'always'` with background granted and
+     * services on. The cause is one line in that library —
+     * `LocationTaskConsumer.maybeStartForegroundService` returns early when no
+     * Activity has been foregrounded, so a task restored into a headless
+     * process runs with no foreground service and Android 10+ throttles it to
+     * a few fixes an hour. The office could see the hole and never what made
+     * it.
+     *
+     * `location_service_running` is whether our own foreground service is up
+     * as the handset last knew. `location_service_last_fix_at` is the only
+     * evidence it means anything — a service can hold its notification and
+     * have a provider that has quietly stopped delivering, which is the second
+     * failure and looks identical from every other column.
+     *
+     * NULL ON ALL FOUR IS A BUILD THAT PREDATES THE SERVICE, which is every
+     * handset in the field until somebody installs the next APK, and is never
+     * read as "not running". An APK cannot be recalled.
+     */
+    locationServiceRunning: boolean("location_service_running"),
+    /**
+     * Stamped from a DURATION the handset sends, like the two marks above it
+     * and for the same reason: when the service last took a fix is a fact only
+     * the phone holds, and seconds-ago survives a clock that is wrong by hours
+     * where an absolute instant would not.
+     */
+    locationServiceLastFixAt: timestamp("location_service_last_fix_at", {
+      withTimezone: true,
+    }),
+    /**
+     * Fixes the recorder is still holding, not yet in the upload queue.
+     *
+     * It writes to its own store because it runs with the app shut; the app
+     * moves them across the next time it is alive. A figure here that is not
+     * draining is a phone whose JavaScript has not run for hours — which is a
+     * different fault from a phone with no signal, and until this column the
+     * two were the same silence.
+     */
+    locationServiceBuffered: integer("location_service_buffered"),
+    /**
+     * HOW MANY TIMES TODAY THE RECORDER HAD TO BE STARTED, and it is the
+     * single most useful number on this row.
+     *
+     * One start is the check-in. Twenty is a battery manager killing the
+     * tracker twenty times, which no API reports and which every other column
+     * can only describe the effects of. Counted on the handset's own local
+     * calendar day and rolled over at its midnight — overnight is when a phone
+     * is charged and when an OEM's own bookkeeping resets, so yesterday's
+     * twenty say nothing about this morning.
+     */
+    locationServiceStartsToday: integer("location_service_starts_today"),
+    /**
+     * WHEN THE PLATFORM ITSELF REFUSED TO START IT — a completely different
+     * support call from a battery manager killing a running service.
+     *
+     * Android 12 forbids starting a foreground service from the background
+     * outside a short list of exempt moments. A phone that has not been given
+     * the battery exemption is refused there BY DESIGN: nothing is being
+     * killed, and the fix is one tap on the handset's own Sync screen rather
+     * than a trip through an OEM settings tree. `location_service_refusal`
+     * carries the platform's own word for it, so a refusal nobody has seen
+     * before arrives as itself rather than as a category somebody guessed.
+     */
+    locationServiceRefusedAt: timestamp("location_service_refused_at", {
+      withTimezone: true,
+    }),
+    locationServiceRefusal: text("location_service_refusal"),
   },
   (t) => [
     uniqueIndex("mbos_devices_device_key").on(t.deviceId),
