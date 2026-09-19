@@ -585,7 +585,7 @@ export function SalesmanScreen({
           />
         ) : (
           <Table
-            minWidth={900}
+            minWidth={1040}
             head={
               <>
                 <HeadCell width={220}>Who</HeadCell>

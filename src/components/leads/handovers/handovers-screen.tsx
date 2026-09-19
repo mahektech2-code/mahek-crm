@@ -130,7 +130,7 @@ export function HandoversScreen({
         />
       ) : (
         <Table
-          minWidth={980}
+          minWidth={1180}
           head={
             <>
               <HeadCell width={260}>Account</HeadCell>

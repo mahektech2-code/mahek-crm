@@ -270,7 +270,7 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
           />
 
           <Table
-            minWidth={1120}
+            minWidth={1140}
             head={
               <>
                 <HeadCell width={320}>Course</HeadCell>

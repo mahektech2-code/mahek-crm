@@ -218,7 +218,7 @@ export default async function Page({
         />
       ) : (
         <Table
-          minWidth={1500}
+          minWidth={1600}
           head={
             <>
               {head("day", "Day", 110)}

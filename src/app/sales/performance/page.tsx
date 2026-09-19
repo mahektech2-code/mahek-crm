@@ -138,7 +138,7 @@ export default async function Page({
       ) : (
         <>
           <Table
-            minWidth={1284}
+            minWidth={1324}
             head={
               <>
                 <HeadCell width={170}>Person</HeadCell>
