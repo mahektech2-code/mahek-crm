@@ -230,6 +230,7 @@ export async function Body({
          validates what arrives against this same setting, so a picker built
          from the literal list would offer a code the server refuses. */
       lostReasons={config["leads.lostReasons"]}
+      holdReasons={config["leads.holdReasons"]}
       discountThresholdPercent={config["leads.distributorDiscountApprovalPercent"]}
       creditLimitThresholdPaise={config["leads.distributorCreditLimitApprovalPaise"]}
       canVerify={await canLead(user, "lead.verify")}

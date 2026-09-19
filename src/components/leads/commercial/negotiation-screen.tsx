@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { money, shortDate } from "@/lib/format";
 import { nextStage } from "@/lib/engines/lead-ladder";
+import { commitmentSizeLabel, commitmentState } from "@/lib/lead-commitment";
 import {
   salesTypeLabel,
   stageLabel,
@@ -311,11 +312,14 @@ export function NegotiationScreen({
           salesType={advancing.salesType}
           hint={
             advancing.forecastDate
-              ? `They said ${shortDate(advancing.forecastDate)}${
-                  advancing.forecastValuePaise
-                    ? `, about ${money(advancing.forecastValuePaise)} — a forecast`
-                    : ""
-                }.`
+              ? `They said ${shortDate(advancing.forecastDate)}, ${commitmentSizeLabel(
+                  {
+                    expectedOrderDate: advancing.forecastDate,
+                    expectedOrderCans: advancing.forecastCans,
+                    expectedOrderValuePaise: advancing.forecastValuePaise,
+                  },
+                  money,
+                ).toLowerCase()} — a forecast.`
               : "Nobody has asked when they will place it."
           }
           onClose={() => setAdvancing(null)}
@@ -352,11 +356,33 @@ export function blockersFor(r: NegotiationRow, standardTermDays: number): Blocke
     });
   }
 
-  if (!r.forecastDate) {
+  /*
+   * §3.4 — A DAY IS NOT A COMMITMENT, and the two gaps are two different
+   * conversations. "Nobody has asked" is a call to make; "he said the 25th
+   * and could not say how much" is a call to make BACK, and reading the
+   * second as no commitment at all would lose the day somebody did give us.
+   * The rule is `commitmentState`, the same function the form and the
+   * services read, so this list cannot disagree with the forecast about one
+   * lead.
+   */
+  const commitment = commitmentState({
+    expectedOrderDate: r.forecastDate,
+    expectedOrderCans: r.forecastCans,
+    expectedOrderValuePaise: r.forecastValuePaise,
+  });
+  if (commitment === "none") {
     out.push({
       key: "commitment",
       label: "No commitment",
       detail: "Nobody has asked when they will place it. That day is what the first-order gate reads.",
+      tone: "warn",
+    });
+  } else if (commitment === "expected") {
+    out.push({
+      key: "commitment",
+      label: "Day but no size",
+      detail:
+        "They named a day and nobody wrote down how much or what it is worth, so it is a follow-up rather than a commitment and no forecast counts it.",
       tone: "warn",
     });
   }

@@ -24,7 +24,7 @@ import {
   Table,
 } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
-import { NextActionModal } from "./due-screen";
+import { isBack, NextActionModal, ParkedBack } from "./due-screen";
 
 /* ---------------------------------------------------------------------------
  * Past its day, with nobody having said anything since.
@@ -60,6 +60,8 @@ export function OverdueScreen({
   candidates,
   canWork,
   requireNextAction,
+  parkedBack,
+  holdReasons,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -74,6 +76,10 @@ export function OverdueScreen({
   candidates: ActionOwnerCandidate[];
   canWork: boolean;
   requireNextAction: boolean;
+  /** Parked leads whose Hold Until Date has GONE. Late in their own way. */
+  parkedBack: number;
+  /** `leads.holdReasons`, resolved on the server. Never the literal list. */
+  holdReasons: { code: string; label: string }[];
 }) {
   const [editing, setEditing] = React.useState<NextActionRow | null>(null);
 
@@ -115,6 +121,14 @@ export function OverdueScreen({
         }
       />
 
+      {parkedBack ? (
+        <Banner
+          tone="danger"
+          title={`${plural(parkedBack, "parked lead")} past the day it was due back`}
+          body="Somebody stopped these and named a day to look again, and that day has gone. Nothing un-parked them — they are read back onto this list because their Hold Until Date is behind us — so each one is still on hold and will stay there until a person moves it or parks it again with a new day. A park that outlives its own date is the quiet death On Hold exists to be the opposite of."
+        />
+      ) : null}
+
       {worst >= 30 ? (
         <Banner
           tone="danger"
@@ -131,6 +145,11 @@ export function OverdueScreen({
             label: "Missing an answer",
             value: String(incomplete),
             tone: incomplete ? "warn" : undefined,
+          },
+          {
+            label: "Overdue off hold",
+            value: String(parkedBack),
+            tone: parkedBack ? "danger" : undefined,
           },
           { label: "Answered since", value: String(answered), tone: answered ? "success" : undefined },
         ]}
@@ -174,9 +193,17 @@ export function OverdueScreen({
                   <Link href={leadHref(workspace, `leads/${r.customerId}`)} className="no-underline">
                     {r.name}
                   </Link>
-                  <span className="block truncate text-[12px] text-muted">
-                    {stageLabel(r.stage)} · {salesTypeLabel(r.salesType)}
-                  </span>
+                  {/* A park read back here is not "On hold · Direct": it is a
+                      day that has gone, a rung it returns to and a reason it
+                      stopped. One component with the due screen, because the two
+                      lists draw the same lead in two windows. */}
+                  {isBack(r, day) ? (
+                    <ParkedBack row={r} holdReasons={holdReasons} />
+                  ) : (
+                    <span className="block truncate text-[12px] text-muted">
+                      {stageLabel(r.stage)} · {salesTypeLabel(r.salesType)}
+                    </span>
+                  )}
                 </Cell>
                 <Cell>
                   <Pill tone={r.overdueDays >= 14 ? "danger" : "warn"}>

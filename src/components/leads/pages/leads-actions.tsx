@@ -81,6 +81,12 @@ export async function Body({
         candidates={candidates}
         canWork={canWork}
         requireNextAction={config["leads.requireNextAction"]}
+        /* Counted in SQL over the whole window rather than off the rows: the
+           list is capped and a banner reading "3 back off hold" computed from
+           what happened to be drawn would say three on a morning there were
+           forty. */
+        parkedBack={due.parkedBack}
+        holdReasons={config["leads.holdReasons"]}
       />
     </div>
   );

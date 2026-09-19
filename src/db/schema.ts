@@ -1324,6 +1324,20 @@ export const customers = pgTable(
     leadExpectedOrderDate: date("lead_expected_order_date"),
     leadExpectedOrderValuePaise: bigint("lead_expected_order_value_paise", { mode: "number" }),
     /**
+     * §3.4 — HOW MUCH they said they would take, beside WHEN.
+     *
+     * Mahek's answer is that a date alone is not a commitment: it wants the day
+     * AND a quantity or a value. There was a column for the value and none for
+     * the quantity, so "500 litres around the 25th" could only be recorded by
+     * converting it into money nobody had quoted.
+     *
+     * CANS, because cans are what a customer says and what every other quantity
+     * here stores; litres are derived from the SKU's own packing. At commitment
+     * there is often no SKU yet, which is why either this or the value
+     * satisfies the rule and neither is demanded on its own.
+     */
+    leadExpectedOrderCans: integer("lead_expected_order_cans"),
+    /**
      * WHO COORDINATES THIS LEAD'S CONVERSION — a second seat, beside the owner.
      *
      * The office proposes that the sales manager over the salesman picks this
@@ -1401,6 +1415,17 @@ export const customers = pgTable(
      * is why we stopped, this is why we have not started.
      */
     leadHoldReason: text("lead_hold_reason"),
+    /**
+     * WHICH of the six, beside the remarks above.
+     *
+     * Mahek's answer: parking a lead picks from a list so "how many did we park
+     * for a plant shutdown this quarter" is a question somebody can ask. The
+     * sentence stays — it is what the person coming back on the resume date
+     * actually needs to read — and on `other` it becomes mandatory, because a
+     * code meaning "something else" with nothing after it is the row nobody can
+     * act on.
+     */
+    leadHoldReasonCode: text("lead_hold_reason_code"),
 
     /*
      * A shop we deliver to, served through a distributor.
@@ -5561,6 +5586,16 @@ export const mbosSamples = pgTable(
     lastReviewChaseAt: timestamp("last_review_chase_at", { withTimezone: true }),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     cancelReason: text("cancel_reason"),
+    /**
+     * WHICH of the eight, beside the remarks.
+     *
+     * The point of the list is that it separates three different problems that
+     * one free-text column could not tell apart: a product we could not source
+     * is a SUPPLY problem, a customer who stopped answering is a CUSTOMER
+     * problem, and a price objection is a SALES problem. Management reading
+     * "cancelled: 14" needs to know which of the three it is looking at.
+     */
+    cancelReasonCode: text("cancel_reason_code"),
     /** Set when the trial became a sale. The conversion report is this column. */
     convertedOrderId: text("converted_order_id").references(() => orders.id, {
       onDelete: "set null",
@@ -7275,6 +7310,41 @@ export const mbosCompetitorRecords = pgTable(
     productName: text("product_name"),
     /** Paise. Their rate as quoted to this customer, not a list price. */
     pricePaise: bigint("price_paise", { mode: "number" }),
+    /**
+     * What the salesman was told about that rate, beside the rate itself.
+     *
+     * A figure alone is half the answer — "₹180, but only on a full drum" and
+     * "₹180 if he pays the same day" are two different competitive positions
+     * wearing one number, and the sentence is the half somebody would act on.
+     * The handset has had a box for this since its competitor form shipped and
+     * DISPLAYS what is typed in it, so the salesman read his own note back on
+     * his own phone and the office never saw one: there was no column here and
+     * the sync schema declared no field, and a zod object strips what it does
+     * not declare — no refusal, no rejection row, nothing at either end saying
+     * a sentence had been thrown away.
+     */
+    rateNote: text("rate_note"),
+    /**
+     * Their credit terms in the shopkeeper's own words, and the reason this is
+     * TEXT rather than the integer beside it.
+     *
+     * `lead_credit_days_wanted` is an integer because that number is one we
+     * have to act on: it is what a prospect is asking US to grant, and "can we
+     * carry this account for 60 days" is a question only a figure answers.
+     * This is hearsay about somebody else's arrangement, collected standing in
+     * a paint shop, and the answer that matters most is the one no integer can
+     * hold — "90 on paper, 120 in practice". Forced into a number that
+     * sentence becomes 90, which is precisely the half the shopkeeper was
+     * warning us about. It is the reasoning `lead_requirement` already lives
+     * under: a salesman resolving what he heard into a tidy value at capture
+     * is him guessing on the customer's behalf.
+     *
+     * `credit_days` stays for a countable answer somebody at a desk may one
+     * day type, and NOTHING derives it from these words. Reading "60" out of
+     * "90 on paper, 120 in practice" is that same guess arriving by the back
+     * door, with nobody's name against it.
+     */
+    creditTerms: text("credit_terms"),
     creditDays: integer("credit_days"),
     deliveryNote: text("delivery_note"),
     strengths: text("strengths"),

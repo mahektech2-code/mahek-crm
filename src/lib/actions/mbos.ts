@@ -2314,6 +2314,60 @@ const sampleUpdateSchema = z.object({
   receivedAt: z.number().nullish(),
   trialStartedAt: z.number().nullish(),
   trialCompletedAt: z.number().nullish(),
+  /*
+   * §16 — THE DAY THE REVIEW WAS TAKEN, and without it a review taken in the
+   * field was UNDATABLE.
+   *
+   * `recordFeedback` has sent `{ state: 'reviewed', reviewedAt, trialOutcome,
+   * feedback }` since the seven questions reached the handset. This schema did
+   * not name the field, so zod dropped it, and `handleSampleUpdate` stamped
+   * nothing — `mbos_samples.reviewed_at` was only ever written by the office's
+   * own `recordSampleFeedback`. So a trial reviewed standing in the shop
+   * reached the desk as reviewed, with a verdict and seven answers on it, and
+   * nothing anywhere saying WHEN: `mbos-jobs.ts` groups reviews by that day,
+   * `lead-record-service` prints it, and `lead-board-service` puts it on the
+   * lead's timeline, so the review was simply absent from all three.
+   *
+   * It is the same shape as `cancelledAt` one field along, and it is stamped
+   * the same way — on the TRANSITION only, so an outbox retrying over a bad
+   * connection cannot move the day of a review to whenever the sync finally
+   * got through.
+   */
+  reviewedAt: z.number().nullish(),
+  /*
+   * WHY A TRIAL WAS CALLED OFF, and the rule here is the opposite of the
+   * office's on purpose.
+   *
+   * `cancelSample` demands one of the configured eight and demands a sentence
+   * after `other`, because it is a form somebody is standing in front of. This
+   * is a sync endpoint, and AN APK CANNOT BE RECALLED: handsets in the field
+   * go on sending `state: "cancelled"` with no code — the handset's own
+   * `cancelSample` sends a free sentence and always has — and every one of
+   * those is a real trial a real salesman really called off, standing in the
+   * shop that told him. Refusing them would put the
+   * cancellation in `/rejections` for ever — the sample stays open, §16 goes
+   * on chasing a review nobody will ever give, and the approvals queue keeps a
+   * decision about stock nobody is sending. The server can move first and the
+   * phone cannot, so the server accepts what the phone can say.
+   *
+   * WHAT IS NOT DONE is guessing. A cancellation with no code is stored with
+   * no code, and every screen that counts these draws it as "no reason
+   * recorded" rather than filing it under whichever of the eight sounds
+   * closest — reading a sentence into one of eight is the same invention the
+   * migration refused to do as a backfill. The code is NOT checked against the
+   * configured list either: an older build's spelling is still what somebody
+   * chose, and refusing it here would lose the cancellation to win an argument
+   * about a word.
+   *
+   * `cancelReason` is NEW HERE and fixes a silent loss the other way round:
+   * the handset has sent that sentence with every cancellation since the
+   * module shipped and this schema did not name the field, so Zod dropped it
+   * and the office stored a cancelled sample with the reason column empty. The
+   * salesman typed the answer, the app told him it was saved, and it went
+   * nowhere.
+   */
+  cancelReasonCode: z.string().max(80).nullish(),
+  cancelReason: z.string().max(500).nullish(),
   deliveredAt: z.number().nullish(),
   deliveryPhotoId: z.string().nullish(),
   followUpDate: z.string().nullish(),
@@ -2350,6 +2404,40 @@ const sampleSchema = z.object({
   followUpDate: z.string().nullish(),
   feedbackNotes: z.string().max(2000).nullish(),
   visitId: z.string().nullish(),
+  /*
+   * §10 — THE TWO ANSWERS THE HANDSET REFUSES TO SAVE WITHOUT, AND THIS SCHEMA
+   * THREW BOTH ON THE FLOOR.
+   *
+   * `requestLeadSample` will not write a sample until the salesman has said
+   * why the shop wants a trial — a code from `leads.sampleReasons` — and what
+   * they are going to put it on. Those are the two questions §10 exists to
+   * ask, and the phone asks them properly: "Say why they want a trial." and
+   * "What will they use it on? A trial nobody can judge is a can given away."
+   * Both then went into the payload, and a plain `z.object` strips what it
+   * does not declare — so the salesman answered, the app said saved, the
+   * insert succeeded, and `reason_code` and `application` were null on every
+   * sample any handset has ever raised. The desk's own `requestSample` demands
+   * the same two and writes them, and `sampleUpdateSchema` above accepts them
+   * on a later mark, so the CREATE branch was dropping exactly what both of
+   * its neighbours keep.
+   *
+   * The code is checked for LENGTH and never against the configured list, the
+   * same trade `cancelReasonCode` argues for two hundred lines above. The desk
+   * refuses an unknown code because somebody is standing in front of the form
+   * with the current list on screen; this is a sync endpoint, and AN APK
+   * CANNOT BE RECALLED — a handset built before a reason was reworded goes on
+   * sending the old spelling, and one built before this landed sends no code
+   * at all. Refusing either would put a real request from a real shop into
+   * `/rejections` and lose the product, the quantity and the conversation with
+   * it, to win an argument about a word. MARKING BEATS REFUSING: whatever
+   * arrives is stored verbatim, `labelOf` draws a code it does not recognise
+   * as itself rather than filing it under whichever of the offered reasons
+   * sounds closest, and a request that carried none reads "no reason code
+   * recorded" on the sample record — which is the true thing, and is what
+   * tells somebody the build in that pocket is old.
+   */
+  reasonCode: z.string().trim().min(1).max(60).nullish(),
+  application: z.string().trim().max(500).nullish(),
 });
 
 /**
@@ -2385,6 +2473,13 @@ async function handleSampleUpdate(
       id: mbosSamples.id,
       customerId: mbosSamples.customerId,
       salesmanId: mbosSamples.salesmanId,
+      /* Both read for one reason: a cancellation is dated on the transition
+         and never again. See the stamp below. */
+      state: mbosSamples.state,
+      cancelledAt: mbosSamples.cancelledAt,
+      /* Read for the same reason `cancelledAt` is: a review is dated once, on
+         the transition, and a re-sent item must not move the day. */
+      reviewedAt: mbosSamples.reviewedAt,
       dispatchedAt: mbosSamples.dispatchedAt,
       receivedAt: mbosSamples.receivedAt,
       trialOutcome: mbosSamples.trialOutcome,
@@ -2437,6 +2532,47 @@ async function handleSampleUpdate(
   const changed: Partial<typeof mbosSamples.$inferInsert> = { updatedAt: new Date() };
   if (p.state != null) changed.state = p.state;
   if (p.reasonCode != null) changed.reasonCode = p.reasonCode;
+  if (p.cancelReasonCode != null) changed.cancelReasonCode = p.cancelReasonCode;
+  if (p.cancelReason != null) changed.cancelReason = p.cancelReason;
+  /*
+   * A CANCELLED SAMPLE WITH NO `cancelled_at` IS ONE NO SCREEN CAN DATE, and
+   * that is what this path wrote: the handset moves `state` and the office's
+   * own `cancelSample` is what stamps the day. So a trial called off from a
+   * phone read as cancelled on the desk, with nothing anywhere saying when,
+   * and every report that groups cancellations by month simply had no row for
+   * it. Stamped only on the TRANSITION, so a re-sent item — an outbox retrying
+   * over a bad connection is the ordinary case — cannot move the day of a
+   * cancellation to whenever the sync finally got through.
+   */
+  if (p.state === "cancelled" && existing.state !== "cancelled" && !existing.cancelledAt) {
+    changed.cancelledAt = new Date();
+  }
+  /*
+   * AND A REVIEWED SAMPLE WITH NO `reviewed_at` IS THE SAME BUG, one state
+   * along — see the schema for what it cost the three readers of that column.
+   *
+   * THE PHONE'S OWN CLOCK IS PREFERRED HERE, unlike the activity figures a
+   * salesman is measured on, which read `server_created_at` because a handset's
+   * owner can set its clock. Nothing is paid on this date: it is the day
+   * somebody heard what the shop thought, the review is routinely taken in a
+   * market with no signal and synced that evening or the next morning, and the
+   * server's clock would then report the sync rather than the conversation.
+   * Where an older build sends the state and no date — or where the field is
+   * dropped for any other reason — the arrival is a worse answer than the
+   * truth and a far better one than null, which is what this wrote before.
+   *
+   * Stamped ONLY on the transition, so a retrying outbox cannot move the day,
+   * and `reviewedById` goes on beside it: a verdict with nobody behind it is
+   * the same shape as a payment nobody vouched for.
+   */
+  const reviewing =
+    (p.state === "reviewed" || (p.trialOutcome != null && p.trialOutcome !== "pending")) &&
+    existing.state !== "reviewed" &&
+    !existing.reviewedAt;
+  if (reviewing) {
+    changed.reviewedAt = p.reviewedAt != null ? new Date(p.reviewedAt) : new Date();
+    changed.reviewedById = principal.user.id;
+  }
   if (p.application != null) changed.application = p.application;
   if (p.courierName != null) changed.courierName = p.courierName;
   if (p.expectedDeliveryDate != null) changed.expectedDeliveryDate = p.expectedDeliveryDate;
@@ -2533,7 +2669,11 @@ async function handleSampleUpdate(
       customerId: customer.id,
       eventType: MBOS_EVENT.sampleReview,
       sourceRecordId: `${item.entityId}:review`,
-      occurredAt: new Date(),
+      /* The day the shop gave its verdict, not the day the outbox drained —
+         the same date the row is now stamped with, so the customer's history
+         and `mbos_samples.reviewed_at` cannot say two different things about
+         one trial. */
+      occurredAt: p.reviewedAt != null ? new Date(p.reviewedAt) : new Date(),
       actorUserId: principal.user.id,
       /* Three verdicts, not two. `more_testing` is the answer the two-value
          version could not give — a trial that happened and produced an opinion
@@ -2925,9 +3065,51 @@ async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<H
         productId: p.productId ?? null,
         quantityCans: p.quantityCans ?? null,
         requestedDate: p.requestedDate ?? null,
+        /*
+         * ANSWER 05 — MARK IT, NEVER REFUSE IT.
+         *
+         * Mahek's rule is that a sample normally wants the lead at Prospect or
+         * beyond, and the desk's own form says so before the button is pressed.
+         * This path cannot: an APK cannot be recalled, so handsets in the field
+         * go on sending sample requests a build that never heard of the rule
+         * raised — and every one of those is a salesman standing in a shop
+         * doing real work. Refusing would put the request in `/rejections` and
+         * lose the product, the quantity and the conversation behind it, which
+         * is the same trade `handleVisit` makes about the check-in radius and
+         * for the same reason: the server recomputes and never refuses.
+         *
+         * So the RUNG is recorded and the manager is the one who decides.
+         * `leadStageAtRequest` is the column the console has always written
+         * here and this path never did, so a handset sample reached the desk
+         * with nothing on it saying what the lead was — and `qualifiedForSample`
+         * reads a null as qualified, deliberately, because a sample against a
+         * real customer carries no stage either. The result was that the mark
+         * could only ever appear on samples raised at a desk, which is the half
+         * of the book it matters least for.
+         */
+        leadStageAtRequest:
+          (customer.leadStage as typeof mbosSamples.$inferInsert.leadStageAtRequest) ?? null,
         deliveredAt: p.deliveredAt ? new Date(p.deliveredAt) : null,
         deliveryPhotoId: p.deliveryPhotoId ?? null,
         followUpDate: p.followUpDate ?? null,
+        /*
+         * §10's two answers, written where the desk writes them. See the
+         * schema above for why an unrecognised code is stored rather than
+         * refused.
+         *
+         * `feedbackNotes` CARRIES THE APPLICATION AS WELL, and that duplicate
+         * is deliberate rather than overlooked. The handset sends the
+         * application in both fields because `feedback_notes` is the only one
+         * of the two the PULL carries back down — `samples.reason` on the
+         * phone is filled from it, and nothing on the wire sends `application`
+         * yet. Dropping it here would blank the "what it is for" line on the
+         * salesman's own screen on the next pull, to tidy up an office screen
+         * that has drawn it for months. The duplicate goes when the wire
+         * carries `application` down and `pull.ts` reads it; until then both
+         * columns hold one sentence and neither is derived from the other.
+         */
+        reasonCode: p.reasonCode ?? null,
+        application: p.application ?? null,
         feedbackNotes: p.feedbackNotes ?? null,
         clientCreatedAt: new Date(item.clientCreatedAt),
         createdById: principal.user.id,
@@ -4113,6 +4295,41 @@ const taskSchema = z.object({
   completionPhotoId: z.string().nullish(),
   snoozedTo: z.string().nullish(),
   snoozeReason: z.string().max(500).nullish(),
+  /*
+   * A SNOOZE, IN THE ONLY SHAPE THE HANDSET HAS EVER SENT IT.
+   *
+   * `snoozedTo` and `snoozeReason` above are written by the handler and read by
+   * the screens, and NOTHING HAS EVER SENT EITHER OF THEM. What `snoozeTask`
+   * sends is `snoozeHistory`: it asks the salesman for a reason, appends
+   * `{ at, to, reason }` to the array already on the row, and posts the whole
+   * array — which this schema did not name, so zod dropped it. The `dueDate`
+   * in the same payload landed perfectly, so the office watched the date move
+   * with nothing saying it was a snooze and nothing saying why, and the two
+   * columns sat null waiting for a payload nothing sends.
+   *
+   * IT IS FIXED ON THIS SIDE RATHER THAN THE PHONE'S, deliberately. An APK
+   * cannot be recalled and the field is sending this today, so a handset
+   * release would leave every phone already in a pocket writing the same
+   * nothing until somebody sideloaded it. The server can move first; the phone
+   * cannot.
+   *
+   * WHAT IS LOST IS THE EARLIER SNOOZES, and it is lost knowingly. The array
+   * is a history and the columns hold one value, so the LAST entry wins — it
+   * is the snooze this payload is reporting, and "when is it moved to and
+   * why" is the question the two columns were added to answer. A task pushed
+   * three times keeps the third reason on the desk and all three on the phone;
+   * making the office keep the rest means a table of its own, which is
+   * Mahek's call rather than this endpoint's.
+   */
+  snoozeHistory: z
+    .array(
+      z.object({
+        at: z.number().nullish(),
+        to: z.string().nullish(),
+        reason: z.string().max(500).nullish(),
+      }),
+    )
+    .nullish(),
 });
 
 /**
@@ -4177,6 +4394,20 @@ async function handleTaskUpdate(
   if (p.completionPhotoId != null) changed.completionPhotoId = p.completionPhotoId;
   if (p.snoozedTo != null) changed.snoozedTo = p.snoozedTo;
   if (p.snoozeReason != null) changed.snoozeReason = p.snoozeReason;
+  /*
+   * The wire's own shape, mapped onto the columns that exist — see the schema.
+   * The newest entry is the snooze being reported; the fields it names are
+   * written and the ones it does not are left alone, so a build that one day
+   * sends `snoozedTo` directly does not have its answer overwritten by an
+   * array it also sent. `to` is a plain `YYYY-MM-DD`, which is what the column
+   * is, so nothing here parses a date — a date-only string turned into an
+   * instant is the bug this codebase carries four paragraphs about.
+   */
+  const snooze = p.snoozeHistory?.at(-1);
+  if (snooze) {
+    if (p.snoozedTo == null && snooze.to != null) changed.snoozedTo = snooze.to;
+    if (p.snoozeReason == null && snooze.reason != null) changed.snoozeReason = snooze.reason;
+  }
 
   await db.update(mbosTasks).set(changed).where(eq(mbosTasks.id, item.entityId));
 
@@ -5411,11 +5642,58 @@ const competitorSchema = z.object({
   productName: z.string().max(200).nullish(),
   /** Paise. The handset's own column is `ratePaise`; the server's is `pricePaise`. */
   ratePaise: z.number().int().nonnegative().nullish(),
+  /**
+   * The sentence beside the figure, and the handset has always sent one.
+   *
+   * It had no field here and no column there, so every note a salesman typed
+   * about a competitor's rate was stripped by this very object on the way in —
+   * silently, because that is the only way a `z.object` drops anything. Worse
+   * than silent: the handset DISPLAYS it back to him, so he saw his own words
+   * on his own phone and had every reason to believe the office had them too.
+   */
+  rateNote: z.string().max(1000).nullish(),
+  /**
+   * THEIR CREDIT TERMS IN WORDS, and this is the deliberate answer to a type
+   * mismatch rather than a second field beside `creditDays`.
+   *
+   * The handset sends `comp.credit.trim()` — free text — and this schema
+   * declared `creditDays: z.number()`. A string where a number is declared is
+   * dropped exactly as an undeclared field is, so the competitor's terms went
+   * nowhere at all, and an APK cannot be recalled: whatever the eventual shape,
+   * the server has to accept what is arriving from the phones in the field
+   * TODAY. It is also the better shape. `lead_credit_days_wanted` is an
+   * integer because that figure is one WE have to act on — "can we carry this
+   * account for 60 days" wants a number — and this is hearsay about somebody
+   * else's arrangement, where the answer worth having is the one an integer
+   * destroys: "90 on paper, 120 in practice" becomes 90, and 90 is the half
+   * the shopkeeper was warning us about. Free text for the same reason
+   * `lead_requirement` is.
+   *
+   * `creditDays` is kept and stays countable for an office door that may one
+   * day type one, and nothing reads a number out of these words.
+   */
+  creditTerms: z.string().max(1000).nullish(),
   creditDays: z.number().int().nonnegative().nullish(),
   delivery: z.string().max(1000).nullish(),
   strengths: z.string().max(1000).nullish(),
   weaknesses: z.string().max(1000).nullish(),
   recordedOn: z.string().nullish(),
+  /**
+   * WHEN IT WAS HEARD, as the handset spells it: epoch milliseconds under the
+   * name `capturedAt`, which no schema here had and which is the whole reason
+   * `recorded_on` was null on every field-captured competitor record. The
+   * office's own word for the same fact is `recordedOn`, a date string, and
+   * the handset has never sent that name — so this is a RENAME rather than a
+   * missing column, and it is answered here rather than in an APK for the
+   * usual reason: the server can move and a phone in somebody's pocket cannot.
+   *
+   * It becomes a date through `calendarDate`, which names `Asia/Kolkata`.
+   * `new Date(ms).toISOString().slice(0, 10)` answers in UTC, so a competitor
+   * heard about at 2am would be filed on the previous day — the same rule the
+   * bare `::date` cast and the bare `toISOString()` slice are both grep-tested
+   * for, arriving here on the wire in a third shape.
+   */
+  capturedAt: z.number().int().positive().nullish(),
 });
 
 /**
@@ -5448,11 +5726,22 @@ async function handleCompetitor(principal: MbosPrincipal, item: SyncItem): Promi
       competitorName: p.competitorName,
       productName: p.productName ?? null,
       pricePaise: p.ratePaise ?? null,
+      rateNote: p.rateNote ?? null,
+      creditTerms: p.creditTerms ?? null,
       creditDays: p.creditDays ?? null,
       deliveryNote: p.delivery ?? null,
       strengths: p.strengths ?? null,
       weaknesses: p.weaknesses ?? null,
-      recordedOn: p.recordedOn ?? null,
+      /*
+       * The day it was heard, and the handset's own name for it is
+       * `capturedAt` — an instant in milliseconds. `recordedOn` is kept first
+       * because a caller that sends the office's word means it; `capturedAt`
+       * is what every handset in the field actually sends, and reading only
+       * the first is why this column was null on every field-captured record.
+       * `calendarDate` names Asia/Kolkata, so a note taken at 2am is filed on
+       * the day the salesman would say it was.
+       */
+      recordedOn: p.recordedOn ?? (p.capturedAt ? calendarDate(new Date(p.capturedAt)) : null),
       clientCreatedAt: new Date(item.clientCreatedAt),
       createdById: principal.user.id,
       updatedById: principal.user.id,

@@ -33,6 +33,11 @@ export async function Body({
     <SampleDeskScreen workspace={workspace}
       rows={rows}
       chaseDays={config["leads.sampleReviewChaseDays"]}
+      /* Mahek's eight, read from CONFIGURATION rather than from the literal in
+         `lead-labels.ts`. The action validates against what is configured, so
+         a picker built from the constant would offer a code the server refuses
+         on any deployment where somebody has reworded the list. */
+      cancelReasons={config["leads.sampleCancelReasons"]}
       /* Resolved here rather than in the screen, like every other capability
          in this module: a "use client" component cannot ask, and a control
          drawn for somebody the action refuses is worse than no control. */

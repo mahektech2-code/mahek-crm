@@ -16,6 +16,7 @@ import {
   SAMPLE_REASONS,
   salesTypeLabel,
   stageLabel,
+  type CodedOption,
   type LeadSalesType,
   type LeadStage,
 } from "@/lib/lead-labels";
@@ -126,6 +127,7 @@ export function TransitionsScreen({
   onFirstPage,
   day,
   ownerCandidates,
+  holdReasons,
   canWork,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
@@ -138,6 +140,8 @@ export function TransitionsScreen({
   day: string;
   /** Who the action a parked lead comes back to may be owed by. */
   ownerCandidates: ActionOwnerCandidate[];
+  /** `leads.holdReasons`, read on the server. The six the park picks from. */
+  holdReasons: CodedOption[];
   canWork: boolean;
 }) {
   return (
@@ -172,6 +176,7 @@ export function TransitionsScreen({
               stage={head.stage}
               day={day}
               candidates={ownerCandidates}
+              holdReasons={holdReasons}
               defaultOwnerId={head.ownerId}
               canWork={canWork}
             />

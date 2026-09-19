@@ -1,7 +1,9 @@
 import { type LeadWorkspace } from "@/lib/lead-workspace";
+import { getConfig } from "@/lib/config/store";
 import {
   anyTrialFeedbackExists,
   reviewedWithoutFeedback,
+  trialCancellations,
   trialFeedback,
   trialFeedbackFacets,
   trialVerdicts,
@@ -44,7 +46,7 @@ export async function Body({
     outcome: sp.outcome ?? null,
   };
 
-  const [rows, facets, verdicts, orphaned, anyAtAll] = await Promise.all([
+  const [rows, facets, verdicts, orphaned, anyAtAll, cancellations, config] = await Promise.all([
     trialFeedback(filters),
     trialFeedbackFacets(),
     /* The distribution follows the FILTER, and the chips do not. What somebody
@@ -55,6 +57,24 @@ export async function Body({
     trialVerdicts(filters),
     reviewedWithoutFeedback(),
     anyTrialFeedbackExists(),
+    /*
+     * THE TRIALS THAT DID NOT HAPPEN, and they belong on this screen rather
+     * than on one of their own.
+     *
+     * The question this page answers is "what became of our samples", and a
+     * library of the ones that produced an answer tells only the half that
+     * went well. A cancelled trial produces no `sample_feedback` row — it is
+     * by definition the trial that never ran — so no filter on the table below
+     * could ever reach one, and the whole cost of a cancellation was invisible
+     * on the only screen where anybody was looking at trials in bulk.
+     *
+     * Unfiltered, because the filters above are all properties of a trial that
+     * HAPPENED: a product that was tried, an incumbent it was tried against, a
+     * verdict somebody gave. Narrowing cancellations by them would answer a
+     * quietly different question under a heading that did not change.
+     */
+    trialCancellations(),
+    getConfig(),
   ]);
 
   return (
@@ -64,6 +84,12 @@ export async function Body({
       verdicts={verdicts}
       reviewedWithoutFeedback={orphaned}
       anyFeedbackAtAll={anyAtAll}
+      cancellations={cancellations}
+      /* The labels come from CONFIGURATION, so a reworded option reads with
+         its new words here the moment it is saved. A code the list no longer
+         carries still draws — `labelOf` falls back to the code itself — which
+         is right: the cancellations recorded under it happened. */
+      cancelReasons={config["leads.sampleCancelReasons"]}
       filters={{
         product: sp.product ?? null,
         competitor: sp.competitor ?? null,

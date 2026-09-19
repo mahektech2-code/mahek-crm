@@ -2,7 +2,8 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import Link from "next/link";
 import { shortDate, stamp } from "@/lib/format";
 import { today } from "@/lib/recompute";
-import { salesTypeLabel, stageLabel } from "@/lib/lead-labels";
+import { getConfig } from "@/lib/config/store";
+import { labelOf, salesTypeLabel, stageLabel } from "@/lib/lead-labels";
 import { parkedLeads } from "@/lib/services/lead-hold-service";
 import {
   Banner,
@@ -61,7 +62,15 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
      "how late is this" on the screen is measured against it in SQL rather than
      in the browser, so a manager in another zone reads the same number. */
   const day = await today();
-  const { rows, total, due, undated } = await parkedLeads(day);
+  /* The six, from configuration rather than from `HOLD_REASONS`: a deployment
+     that has reworded one stores its own codes, and a screen resolving them
+     against the literal would print the raw code beside every park made since
+     somebody edited the list. */
+  const [{ rows, total, due, undated }, config] = await Promise.all([
+    parkedLeads(day),
+    getConfig(),
+  ]);
+  const holdReasons = config["leads.holdReasons"];
 
   return (
     <div className="p-6">
@@ -169,9 +178,28 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
               </Cell>
 
               <Cell truncate={260}>
+                {/*
+                  THE CODE AND THE SENTENCE, IN THAT ORDER, AND NEITHER STANDS
+                  IN FOR THE OTHER. The code is which of the six — it is what
+                  makes this list countable, which is the whole reason Mahek
+                  asked for a controlled list. The sentence is what actually
+                  happened, and it is what the person going back on the resume
+                  date reads. A park made before the codes existed has only the
+                  sentence and NOTHING backfills a code onto it: reading months
+                  later which of six somebody meant is a guess, and a guess
+                  stored in the column the counting question is asked of answers
+                  that question wrongly rather than leaving it open. So a coded
+                  park and a legacy one are drawn as the two different things
+                  they are, and the row with neither says so.
+                */}
+                {r.holdReasonCode ? (
+                  <span className="block truncate font-medium">
+                    {labelOf(holdReasons, r.holdReasonCode)}
+                  </span>
+                ) : null}
                 {r.holdReason ? (
                   <span className="block truncate">{r.holdReason}</span>
-                ) : (
+                ) : r.holdReasonCode ? null : (
                   <span className="text-warn-ink">Nobody said</span>
                 )}
                 <span className="block truncate text-[12px] text-muted">

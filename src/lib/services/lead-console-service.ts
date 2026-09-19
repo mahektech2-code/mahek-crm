@@ -644,6 +644,19 @@ export type SampleDeskRow = {
   feedbackCompetitor: string | null;
   leadStage: LeadStage | null;
   salesType: LeadSalesType | null;
+  /**
+   * ANSWER 05 — the rung the lead was standing on when somebody ASKED, which
+   * is not `leadStage` above and must not be collapsed into it.
+   *
+   * `leadStage` is where the lead is now; this is where it was then, and the
+   * two are routinely weeks apart. The question a manager is answering is
+   * whether the request was reasonable when it was made, so a sample asked for
+   * on a Suspect that has since become a Prospect still wants the mark — and
+   * one asked for on a Prospect that has since gone On Hold does not. Read
+   * through `qualifiedForSample`, never compared against a rung typed into a
+   * screen.
+   */
+  leadStageAtRequest: LeadStage | null;
 };
 
 /**
@@ -692,6 +705,7 @@ export async function sampleDesk(
            f.price_feedback as "feedbackPrice",
            f.competitor_comparison as "feedbackCompetitor",
            c.lead_stage::text as "leadStage",
+           s.lead_stage_at_request::text as "leadStageAtRequest",
            c.lead_sales_type::text as "salesType"
       from mbos_samples s
       join customers c on c.id = s.customer_id
@@ -1109,6 +1123,13 @@ export type LeadRecord = {
 
   /* ---- §18 what they said about the first order ---- */
   expectedOrderDate: string | null;
+  /**
+   * §3.4 — the SIZE, in cans, beside the day. Either this or the value is
+   * what makes the date a commitment; `lib/lead-commitment.ts` is where that
+   * is decided, and the record carries all three so the panel can say which
+   * of the two it is holding.
+   */
+  expectedOrderCans: number | null;
   expectedOrderValuePaise: number | null;
 
   /* ---- §4 the suspect window ---- */
@@ -1223,6 +1244,7 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
            c.lead_next_action_outcome as "nextActionOutcome",
 
            c.lead_expected_order_date::text as "expectedOrderDate",
+           c.lead_expected_order_cans as "expectedOrderCans",
            c.lead_expected_order_value_paise as "expectedOrderValuePaise",
 
            (select count(*)::int from mbos_visits vi

@@ -94,6 +94,36 @@ export type NextActionRow = {
   quietDays: number;
   /** Zero on the due list, and the point of the overdue one. */
   overdueDays: number;
+
+  /* ── the park, where this row is one ──────────────────────────────────────
+   *
+   * Mahek's instruction is that a parked lead comes back into the salesman's
+   * Actions Due on its Hold Until Date BY ITSELF. It does that by being read
+   * here (see the windows below), which means a row on this list can be one of
+   * two things — something somebody promised, or something that has come back —
+   * and the screen has to be able to tell them apart. So the park travels with
+   * the row rather than being inferred from `stage === "on_hold"`: the rung it
+   * returns to is not on the customer row at all and the reason is not in the
+   * four answers.
+   */
+  /** The day it was parked until. Null on every row that is not a park. */
+  holdResumeDate: string | null;
+  /** The remarks somebody typed. Null where a code alone was picked. */
+  holdReason: string | null;
+  /** One of `leads.holdReasons`. Null on a park made before the codes existed. */
+  holdReasonCode: string | null;
+  /**
+   * The rung it comes back TO, read off the transition that parked it.
+   *
+   * `on_hold` DISPLACES the rung — a lead has one stage column and the park
+   * took it — so `stage` says "On hold" and cannot say where this lead was
+   * standing. Without this the salesman is handed a lead that is due back and
+   * no screen anywhere can tell him what it is due back AS, which is the one
+   * way an automatic return could still lose a lead its place on the ladder.
+   * Null is a park recorded with no rung, which is a different fact from a lead
+   * that is not parked and is drawn as one.
+   */
+  parkedFrom: LeadStage | null;
 };
 
 /** How many are owed by each person, counted in SQL rather than off the page. */
@@ -120,6 +150,18 @@ export type NextActionsPage = {
    * another tab also lists it.
    */
   incomplete: number;
+  /**
+   * How many of these are parked leads that have come back.
+   *
+   * Counted in SQL beside the total rather than off the rows, for the reason
+   * every count on this screen is: the list is capped at two hundred and a
+   * banner reading "3 leads are back off hold" computed from what happened to
+   * be drawn would say three on a morning there were forty. It is a separate
+   * sentence from the total because it is a different KIND of work — nobody
+   * promised these, a date arrived — and folding them into one number is how
+   * a salesman reads past them.
+   */
+  parkedBack: number;
 };
 
 /**
@@ -161,11 +203,43 @@ async function nextActions(
              c.lead_manager_id as "leadManagerId", m.name as "leadManagerName",
              coalesce(${day}::date - c.lead_stage_since, 0)::int as "stuckDays",
              coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
-             greatest(coalesce(${day}::date - c.lead_next_action_date, 0), 0)::int as "overdueDays"
+             /* How late THIS ROW is, whichever of the two things made it due.
+                A park read back a week after its resume date is a week late and
+                its next action date may say nothing at all — legacy parks have
+                none — so a figure taken from the promise alone would print "0
+                days" beside a lead nobody has looked at since March. The
+                greatest of the two is the honest single number, and it is one
+                number because the screen has one column. */
+             greatest(
+               coalesce(${day}::date - c.lead_next_action_date, 0),
+               case when c.lead_stage = 'on_hold'
+                    then coalesce(${day}::date - c.lead_hold_resume_date, 0) else 0 end,
+               0
+             )::int as "overdueDays",
+             c.lead_hold_resume_date::text as "holdResumeDate",
+             c.lead_hold_reason as "holdReason",
+             c.lead_hold_reason_code as "holdReasonCode",
+             p.from_stage as "parkedFrom"
         from customers c
         left join users o on o.id = c.lead_next_action_owner_id
         left join users u on u.id = c.owner_id
         left join users m on m.id = c.lead_manager_id
+        /* The rung a park came FROM, and it is the only place that fact exists
+           -- on_hold took the stage column. Guarded on the outer row actually
+           being parked, inside the subquery rather than in the join condition,
+           so this costs one indexed lookup on the handful of parked rows and
+           nothing at all on the rest. Every column of the outer table is
+           qualified: Drizzle renders a bare name, and a bare id in here would
+           bind to lead_stage_transitions and make the correlation false. */
+        left join lateral (
+          select t.from_stage::text as from_stage
+            from lead_stage_transitions t
+           where c.lead_stage = 'on_hold'
+             and t.customer_id = c.id
+             and t.to_stage = 'on_hold'
+           order by t.at desc, t.id desc
+           limit 1
+        ) p on true
         ${where}
         ${owned}
        order by
@@ -175,19 +249,26 @@ async function nextActions(
             first under twenty of the second. */
          case when c.lead_next_action_owner_id is null
                 or c.lead_next_action is null then 0 else 1 end,
-         c.lead_next_action_date asc nulls first,
+         /* A park's day is its RESUME date, and a park routinely carries a next
+            action dated the same day -- the modal defaults one to the other.
+            The coalesce is for the park whose action was dated a week either
+            side of it, and for the legacy park with no next action at all:
+            sorted on lead_next_action_date alone the second lands under a null
+            and the first sorts by a day that is not the day it came back. */
+         coalesce(c.lead_next_action_date, c.lead_hold_resume_date) asc nulls first,
          c.lead_stage_since asc nulls first,
          c.id asc
        limit ${limit}
     `) as unknown as NextActionRow[],
 
-    db.execute<{ total: number; incomplete: number }>(sql`
+    db.execute<{ total: number; incomplete: number; parkedBack: number }>(sql`
       select count(*)::int as total,
              count(*) filter (
                where c.lead_next_action is null
                   or c.lead_next_action_owner_id is null
                   or c.lead_next_action_outcome is null
-             )::int as incomplete
+             )::int as incomplete,
+             count(*) filter (where c.lead_stage = 'on_hold')::int as "parkedBack"
         from customers c
         ${where}
         ${owned}
@@ -211,8 +292,66 @@ async function nextActions(
     rows,
     total: Number(counts[0]?.total ?? 0),
     incomplete: Number(counts[0]?.incomplete ?? 0),
+    parkedBack: Number(counts[0]?.parkedBack ?? 0),
     owners,
   };
+}
+
+/* ══════════════════════════════════════ a parked lead coming back by itself */
+
+/**
+ * THE HOLD UNTIL DATE, AS A CONDITION ON THIS LIST.
+ *
+ * Mahek's instruction is one sentence: "the lead must automatically come back
+ * into the salesperson's Actions Due on the Hold Until Date". There were two
+ * ways to keep it and only one of them is honest.
+ *
+ * The one not taken is a scheduled pass that UN-PARKS the lead. It reads well
+ * in a sentence and it is wrong in three ways at once. A park displaces the
+ * rung — `lead_stage` holds `on_hold` and the rung it was parked from lives on
+ * the transition — so coming back is a move to a NAMED rung, and a job doing
+ * that writes a row into `lead_stage_transitions` saying somebody put this lead
+ * back on Qualification on a Tuesday when nobody did. That table is append-only
+ * precisely because every row on it is a decision a person made, and a machine
+ * signing one is worse than the gap it fills. Worse still, `applyLeadStageMove`
+ * CLEARS the hold reason and the resume date when a lead comes off hold — so
+ * the pass would delete the sentence explaining why the lead was stopped at the
+ * exact moment the person picking it up needs to read it. And a scheduled pass
+ * is only ever as real as its caller: this codebase shipped `runHourly` with no
+ * caller at all for months, and everything it was documented to do simply
+ * happened late or never, with nothing anywhere looking wrong.
+ *
+ * So it is the READ. The park stays a park, the lead keeps its place on the
+ * ladder, nothing is written by anybody who did not decide anything — and on
+ * the resume date the lead is simply ON the list, because the list asks. There
+ * is no cache to rebuild, no cadence to be late, and no state that can be
+ * wrong: the condition is a date comparison against the working day, so the
+ * answer is right the first morning somebody opens the screen and right again
+ * if they open it a fortnight later.
+ *
+ * **DUE IS THE DAY AND OVERDUE IS AFTER IT**, which is the same split the two
+ * windows already make about a promise, and it is what stops a park being in
+ * two places at once. A park read back on the day it names is work that falls
+ * today; one read back a week later is late, and it belongs on the screen
+ * whose whole job is saying so. Not carried on the due list for ever: a list
+ * where the oldest thing is at the top and never leaves is a list people learn
+ * to scroll past, and the overdue tab has the banner and the badge for exactly
+ * this.
+ *
+ * What it does NOT do is take the lead off the On hold tab. That screen is the
+ * parked BOOK — every park, its reason, its rung and its age — and it answers
+ * "is anybody going back to these" for a manager. This answers "what am I doing
+ * today" for the person who has to. One lead on two lists is right where the
+ * two lists are two questions.
+ *
+ * Written as one function taking the comparison rather than as two fragments,
+ * because the two windows differ by one operator and a second hand-typed copy
+ * is how the due list and the overdue list come to disagree about which day a
+ * park belongs to. `::date` on both sides throughout: these are stored DATES
+ * and nothing here casts a timestamp, so there is no midnight to name.
+ */
+function parkComesBack(cmp: SQL): SQL {
+  return sql`(c.lead_stage = 'on_hold' and c.lead_hold_resume_date ${cmp})`;
 }
 
 /**
@@ -233,7 +372,14 @@ export async function nextActionsDue(
   day: string,
   opts: { ownerId?: string; limit?: number } = {},
 ): Promise<NextActionsPage> {
-  return nextActions(day, sql`c.lead_next_action_date = ${day}::date`, opts);
+  return nextActions(
+    day,
+    sql`(
+      c.lead_next_action_date = ${day}::date
+      or ${parkComesBack(sql`= ${day}::date`)}
+    )`,
+    opts,
+  );
 }
 
 /**
@@ -251,7 +397,14 @@ export async function nextActionsOverdue(
 ): Promise<NextActionsPage> {
   return nextActions(
     day,
-    sql`c.lead_next_action_date < ${day}::date and c.lead_next_action_outcome is null`,
+    /* A park whose day has GONE is late in a way a promise is not: nobody has
+       to have recorded an outcome for it to still be waiting, because what was
+       promised was not a call — it was that somebody would look again. So the
+       `outcome is null` half deliberately does not apply to it. */
+    sql`(
+      (c.lead_next_action_date < ${day}::date and c.lead_next_action_outcome is null)
+      or ${parkComesBack(sql`< ${day}::date`)}
+    )`,
     opts,
   );
 }

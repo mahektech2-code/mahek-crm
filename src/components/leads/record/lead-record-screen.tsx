@@ -270,6 +270,7 @@ export function LeadRecordScreen({
   handoverReasons,
   sampleReasons,
   lostReasons,
+  holdReasons,
   discountThresholdPercent,
   creditLimitThresholdPaise,
   canVerify,
@@ -327,6 +328,8 @@ export function LeadRecordScreen({
   sampleReasons: { code: string; label: string }[];
   /** `leads.lostReasons`, resolved on the server. Never the literal list. */
   lostReasons: { code: string; label: string }[];
+  /** `leads.holdReasons`, the same way and for the same reason. */
+  holdReasons: { code: string; label: string }[];
   discountThresholdPercent: number;
   creditLimitThresholdPaise: number;
   canVerify: boolean;
@@ -568,15 +571,36 @@ export function LeadRecordScreen({
         <Banner
           tone="warn"
           title={
-            park.fromStage
-              ? `Parked at ${stageLabel(park.fromStage)} — not lost`
-              : "Parked — not lost"
+            /* Three facts and the day is the one somebody acts on, so it is in
+               the title rather than three lines down. A park with no day named
+               is a park nothing will ever make due — said in words here, not
+               left as an absence the reader has to notice. */
+            [
+              park.fromStage ? `Parked at ${stageLabel(park.fromStage)}` : "Parked",
+              park.resumeDate ? `back on ${shortDate(park.resumeDate)}` : "with no day named",
+            ].join(" — ")
           }
           body={
             <>
+              {/*
+                THE CODE AND THE SENTENCE ARE TWO LINES BECAUSE THEY ARE TWO
+                ANSWERS. The code is which of the six, and it is what the
+                counting question is asked of; the sentence is what actually
+                happened, and it is what somebody picking this lead up on the
+                resume date reads. Either can be absent and neither absence is
+                drawn as a blank: a park made before the codes existed has only
+                the words, a park against one of the five named codes may have
+                only the code, and a park with neither is the row On Hold exists
+                to stop — so it says so.
+              */}
+              {park.reasonCode ? (
+                <p className="m-0 font-medium">{labelOf(holdReasons, park.reasonCode)}</p>
+              ) : null}
               <p className="m-0">
                 {park.holdReason ??
-                  "Nobody has said why. On Hold asks for a reason because somebody will look again, and “back after Diwali” is what tells them when."}
+                  (park.reasonCode
+                    ? "Nothing further was written down."
+                    : "Nobody has said why. On Hold asks for a reason because somebody will look again, and “back after Diwali” is what tells them when.")}
               </p>
               <p className="m-0 mt-1 text-[12px] text-muted">
                 {park.at
@@ -748,6 +772,7 @@ export function LeadRecordScreen({
               <FirstOrderPanel
                 customerId={record.customerId}
                 expectedOrderDate={record.expectedOrderDate}
+                expectedOrderCans={record.expectedOrderCans}
                 expectedOrderValuePaise={record.expectedOrderValuePaise}
                 countingOrderCount={record.countingOrderCount}
                 disabled={!canWork}
@@ -1901,6 +1926,12 @@ function SamplesPanel({
             defaultProductId={record.requiredProductId}
             defaultProductName={record.requiredProductName}
             defaultApplication={record.application}
+            /* The rung and the ladder, so the form can say "Lead not qualified
+               — Manager approval required" BEFORE the button rather than after
+               it. `record.stage` is this lead's own current rung; the form asks
+               `qualifiedForSample` about it and restates no rule of its own. */
+            leadStage={record.stage}
+            salesType={record.salesType}
             reasons={reasons}
             canWork={canWork}
           />

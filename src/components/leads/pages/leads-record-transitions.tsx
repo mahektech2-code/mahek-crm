@@ -1,6 +1,7 @@
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { canLead } from "@/lib/services/lead-console-service";
 import { nextActionOwnerCandidates } from "@/lib/services/lead-actions-service";
@@ -94,12 +95,17 @@ export async function Body({
    * action asks `lead.work` again on the server, because a server action is a
    * URL and a disabled button is not a permission.
    */
-  const [page, parked, user, day, candidates] = await Promise.all([
+  const [page, parked, user, day, candidates, config] = await Promise.all([
     leadStream(id, { cursor }),
     parkedFrom(id),
     requireUser(),
     today(),
     nextActionOwnerCandidates(),
+    /* The six the park picks from, read from configuration rather than from
+       `HOLD_REASONS`: the action validates against the stored list, and a
+       picker built from the literal would offer a code the save refuses on any
+       deployment where somebody has reworded one. */
+    getConfig(),
   ]);
 
   return (
@@ -109,6 +115,7 @@ export async function Body({
       parked={parked}
       day={day}
       ownerCandidates={candidates}
+      holdReasons={config["leads.holdReasons"]}
       canWork={await canLead(user, "lead.work")}
       /* Whether this is the newest page, which is what decides the "back to the
          newest" link. It is asked of the cursor rather than of the rows: an

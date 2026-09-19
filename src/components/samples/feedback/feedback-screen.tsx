@@ -1,8 +1,17 @@
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import Link from "next/link";
 import { shortDate } from "@/lib/format";
-import { FEEDBACK_FIELDS, sampleStateLabel, type SampleState } from "@/lib/lead-labels";
+import {
+  FEEDBACK_FIELDS,
+  SAMPLE_CANCEL_PROBLEM_LABELS,
+  labelOf,
+  sampleCancelProblemOf,
+  sampleStateLabel,
+  type SampleCancelProblem,
+  type SampleState,
+} from "@/lib/lead-labels";
 import type {
+  TrialCancellations,
   TrialFeedbackFacets,
   TrialFeedbackRow,
   TrialVerdicts,
@@ -55,6 +64,8 @@ export function FeedbackScreen({
   verdicts,
   reviewedWithoutFeedback,
   anyFeedbackAtAll,
+  cancellations,
+  cancelReasons,
   filters,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
@@ -66,6 +77,16 @@ export function FeedbackScreen({
   reviewedWithoutFeedback: number;
   /** Whether this book has ever recorded a trial answer at all. */
   anyFeedbackAtAll: boolean;
+  /**
+   * The trials that were CALLED OFF, grouped by why.
+   *
+   * Deliberately NOT narrowed by this screen's three filters — those are all
+   * properties of a trial that happened, and a cancelled one has none of them.
+   * The section says so where it is drawn.
+   */
+  cancellations: TrialCancellations;
+  /** `leads.sampleCancelReasons` — the words, from configuration. */
+  cancelReasons: { code: string; label: string }[];
   filters: Selected;
 }) {
   const filtered = Boolean(filters.product || filters.competitor || filters.outcome);
@@ -278,6 +299,169 @@ export function FeedbackScreen({
           ])}
         </Table>
       )}
+
+      <CalledOff cancellations={cancellations} reasons={cancelReasons} />
+    </div>
+  );
+}
+
+/**
+ * THE TRIALS THAT NEVER HAPPENED, and why — the other half of this screen.
+ *
+ * The library above is every trial that produced an answer, which is the half
+ * that went well. A cancelled sample produces no `sample_feedback` row at all —
+ * it is by definition the trial that did not run — so no filter on that table
+ * could ever reach one, and until this section existed the entire cost of a
+ * cancellation was invisible on the one screen where anybody looks at trials in
+ * bulk. Stock was written off one row at a time, each with a sentence nobody
+ * could add up.
+ *
+ * **It is three problems, and that is why it is drawn in three groups.** Mahek's
+ * eight codes exist to separate a SUPPLY problem — a product we could not
+ * source — from a CUSTOMER problem — a shop that went quiet or changed its mind
+ * — from a SALES problem, which is the price. All three read as "trial
+ * cancelled" in a free-text column, each is somebody else's to fix, and
+ * "cancelled: 14" was a number that sent nobody anywhere. Grouping them is what
+ * turns the count into a destination.
+ *
+ * **It sits BELOW the library rather than beside the verdicts**, because the
+ * filters in between do not reach it and a block that ignored the filter
+ * directly under the filter row would read as a bug on every click. The heading
+ * says it is the whole book.
+ *
+ * **A cancellation with no code is drawn, counted and named.** Every one
+ * recorded before the eight existed carries none, and so does every one a
+ * handset in the field sends — an APK cannot be recalled and the sync endpoint
+ * takes a cancellation without a code rather than losing a trial somebody
+ * really called off. Nothing backfills them: reading an old sentence into one
+ * of eight is guessing which of eight somebody meant. Left out they would make
+ * the groups add up to less than the total with nothing saying why, which is
+ * the one thing a count on a reporting screen must never do.
+ */
+function CalledOff({
+  cancellations,
+  reasons,
+}: {
+  cancellations: TrialCancellations;
+  reasons: { code: string; label: string }[];
+}) {
+  const { total, uncoded } = cancellations;
+
+  /* Nothing has been called off, so there is nothing to explain. An empty
+     table under a heading about supply and sales problems would invite
+     somebody to read a book with no cancellations as a screen that lost
+     them. */
+  if (!total) return null;
+
+  const groups: {
+    key: SampleCancelProblem | "unstated";
+    label: string;
+    whose: string;
+    rows: { label: string; count: number }[];
+    count: number;
+  }[] = [
+    ...(["supply", "customer", "sales"] as const).map((key) => ({
+      key,
+      label: SAMPLE_CANCEL_PROBLEM_LABELS[key].label,
+      whose: SAMPLE_CANCEL_PROBLEM_LABELS[key].whose,
+      rows: [] as { label: string; count: number }[],
+      count: 0,
+    })),
+    {
+      key: "unstated" as const,
+      label: "Not one of the three",
+      whose:
+        "“Other”, a code nobody has grouped, and every cancellation recorded before the list existed.",
+      rows: [] as { label: string; count: number }[],
+      count: 0,
+    },
+  ];
+
+  const find = (key: SampleCancelProblem | "unstated") =>
+    groups.find((g) => g.key === key)!;
+
+  for (const r of cancellations.reasons) {
+    const group = find(sampleCancelProblemOf(r.code) ?? "unstated");
+    /* `labelOf` falls back to the code itself, which is right: a code the
+       configured list no longer carries still describes cancellations that
+       really happened, and printing the raw code is honest where inventing a
+       label would not be. */
+    group.rows.push({ label: labelOf(reasons, r.code), count: r.count });
+    group.count += r.count;
+  }
+  if (uncoded) {
+    const group = find("unstated");
+    group.rows.push({ label: "No reason recorded", count: uncoded });
+    group.count += uncoded;
+  }
+
+  return (
+    <div className="mt-8">
+      <ScreenHeader
+        title="Trials called off"
+        subtitle="Every cancelled sample in this book — not narrowed by the filters above, which describe trials that happened. A product we could not source, a shop that stopped answering and a price objection all read as “cancelled”, and each one is somebody else's to fix; this is the count that says which."
+      />
+
+      <MetricRow
+        metrics={groups
+          .filter((g) => g.count || g.key !== "unstated")
+          .map((g) => ({
+            label: g.label,
+            value: String(g.count),
+            sub: share(g.count, total),
+            tone: undefined,
+          }))}
+      />
+
+      <Table
+        minWidth={620}
+        head={
+          <>
+            <HeadCell width={220}>Whose problem</HeadCell>
+            <HeadCell width={300}>Why it was called off</HeadCell>
+            <HeadCell width={100}>Trials</HeadCell>
+          </>
+        }
+      >
+        {groups
+          .filter((g) => g.rows.length)
+          .flatMap((g, gi) =>
+            g.rows
+              .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+              .map((row, ri) => (
+                <Row key={`${g.key}-${row.label}`} striped={gi % 2 === 1}>
+                  <Cell truncate={220}>
+                    {/* The group is named once, on its first row, and the rows
+                        under it are indented by being blank rather than by a
+                        rule: repeating "Customer" four times down a column is
+                        four words nobody reads. */}
+                    {ri === 0 ? (
+                      <>
+                        <span className="block text-[13px] text-body">{g.label}</span>
+                        <span className="block text-[12px] text-muted">{g.whose}</span>
+                      </>
+                    ) : null}
+                  </Cell>
+                  <Cell truncate={300}>
+                    <span className="text-[13px] text-body">{row.label}</span>
+                  </Cell>
+                  <Cell>
+                    <span className="text-[13px] text-body">{row.count}</span>
+                  </Cell>
+                </Row>
+              )),
+          )}
+      </Table>
+
+      {uncoded ? (
+        <p className="mt-2 max-w-[760px] text-[12px] leading-[17px] text-muted">
+          {plural(uncoded, "cancellation")} {uncoded === 1 ? "carries" : "carry"} no code — every
+          one recorded before the list existed, and every one a handset sends without one, which
+          the office accepts rather than losing a trial somebody really called off. Nothing reads
+          an old sentence into one of eight: that would be guessing which of eight somebody meant
+          months later. Their remarks are still on their own records.
+        </p>
+      ) : null}
     </div>
   );
 }

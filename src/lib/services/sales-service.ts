@@ -8,6 +8,7 @@ import {
 } from "../lead-filters";
 import { stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
 import { orderCountsSql } from "../order-status";
+import { confirmedCommitmentSql } from "../lead-commitment";
 import type { LeadPriority } from "../lead-priority";
 import type { BusinessDate } from "../business-date";
 import { cache } from "react";
@@ -1399,24 +1400,47 @@ const LEAD_ROW_SELECT = sql`
             * lib/lead-labels.ts, and a pg enum arrives as a string anyway. */
            c.lead_sales_type::text as "salesType",
            c.back_office_am_id as "backOfficeAmId",
-           /* A FORECAST, not a sale. Either half of the commitment counts:
-            * a date with no value and a value with no date are both somebody
-            * having asked the question and written the answer down, and
-            * demanding both would read a half-recorded commitment as none. */
-           (c.lead_expected_order_date is not null
-             or c.lead_expected_order_value_paise is not null) as "hasCommitment",
+           /* A FORECAST, not a sale - and EITHER HALF NO LONGER COUNTS,
+            * which is a reversal. It used to read a date with no size or a
+            * size with no date as somebody having asked the question and
+            * written the answer down, on the reasoning that demanding both
+            * would read a half-recorded commitment as none. What that cost is
+            * what S3.4 is about: this column forks roleAction, and a lead
+            * where all anybody knew was "around the 25th" escalated the sales
+            * manager to Confirm actual order - an order nobody had ever
+            * agreed a quantity or a price for. The rule is date AND quantity
+            * OR value, and it is confirmedCommitmentSql in
+            * lib/lead-commitment.ts rather than typed out here, because a
+            * second copy of it is a second answer about one lead. NO
+            * BACKTICKS in this comment: it sits inside a sql template
+            * literal, and one backtick ends the literal. */
+           ${sql.raw(confirmedCommitmentSql("c"))} as "hasCommitment",
            /* What counts as a sale is PURCHASE_STATUSES through
             * orderCountsSql, never a status list typed into a query. */
            exists (select 1 from orders o
                     where o.customer_id = c.id
                       and ${orderCountsSql("o")}) as "hasOrder",
-           /* Asked for and not yet sent. The two states BEFORE dispatch are
-            * the whole of it: rejected and cancelled are somebody having
-            * decided, and everything past dispatched is out of the desk's
-            * hands - so neither is a parcel anybody is waiting on. */
+           /* APPROVED AND NOT YET SENT, AND THE FIRST HALF IS A CORRECTION.
+            * This read 'requested' as well as 'approved', on the reasoning
+            * that the two states before dispatch are both a parcel somebody is
+            * waiting on. They are not. A REQUEST is a salesman asking; nobody
+            * has agreed to give the stock away yet, and the back office cannot
+            * pack a can against it - so telling them to "Dispatch sample" on a
+            * lead whose sample no manager has looked at asks them to do the
+            * one thing the approval step exists to stop. Worse, a sample the
+            * manager REFUSES leaves the instruction standing, because a
+            * rejected sample is no longer 'requested' but the lead may carry
+            * another that still is. The desk's own worklist has always keyed
+            * on 'approved' alone (samplesAwaitingDispatch, one file over);
+            * this is the per-lead instruction catching up with it, so the two
+            * cannot say different things about one shop.
+            *
+            * Everything past 'dispatched' is out of the desk's hands, and
+            * 'rejected' and 'cancelled' are somebody having decided - none of
+            * those is a parcel anybody is waiting on either. */
            exists (select 1 from mbos_samples s
                     where s.customer_id = c.id
-                      and s.state in ('requested', 'approved')) as "sampleAwaitingDispatch"
+                      and s.state = 'approved') as "sampleAwaitingDispatch"
 `;
 
 /** Prospects each salesman is working, and how long since anybody touched one. */

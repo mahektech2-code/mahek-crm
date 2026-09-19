@@ -310,3 +310,65 @@ export function isOnTheBookAt(
   if (at === -1 || here === -1) return false;
   return here >= at;
 }
+
+/**
+ * §K ANSWER 05 — THE RUNG A SAMPLE NORMALLY WANTS, AND WHY IT IS A RUNG RATHER
+ * THAN A GATE.
+ *
+ * Mahek's own words: before stock leaves the godown we should already know the
+ * product, the approximate monthly requirement, the potential value, the
+ * competitor and the basic requirement — and those five are precisely the
+ * answers a lead gives on its way from Suspect to Prospect. A sample asked for
+ * below that rung is a trial aimed at a shop nobody has established anything
+ * about, which is the commonest way a sample becomes stock given away for
+ * nothing: there is no requirement to measure the result against, no competitor
+ * to compare it with, and no value to weigh the can against.
+ *
+ * So the threshold is PROSPECT, which is one rung up from the foot of all three
+ * funnel ladders. The legacy ladder — the six rungs a lead raised before any of
+ * this existed is still climbing — has no `prospect` on it at all, and the rung
+ * that means the same thing there is `qualified`; answering with a rung the
+ * ladder does not carry would make `indexOf` return -1 and every legacy lead
+ * would read as unqualified for ever, which is a flag on the whole of the old
+ * book rather than on the handful of shops this is about.
+ *
+ * NOTHING IS REFUSED ON THIS. It is the difference between an ordinary approval
+ * and one a manager should look twice at — a salesman who believes a can in a
+ * shopkeeper's hand is what opens the relationship may still ask, and answer 05
+ * says in as many words that the Sales Manager decides. See `requestSample`,
+ * which marks rather than blocks.
+ */
+export function sampleReadyStage(salesType: LeadSalesType | null | undefined): LeadStage {
+  return ladderFor(salesType).includes("prospect") ? "prospect" : "qualified";
+}
+
+/**
+ * Whether this lead has climbed far enough that a sample is the ordinary next
+ * thing to do.
+ *
+ * A NULL stage answers TRUE, and that is the case that would otherwise be
+ * wrong on far more rows than the one this exists for: a sample is raised
+ * against a `customers` row, and a real customer — somebody who has been buying
+ * from us for four years — carries no lead stage at all. Reading that absence
+ * as "not qualified" would put "Lead not qualified" on every sample anybody
+ * ever sent an established account, which is both false and the fastest way to
+ * teach a manager that the mark means nothing.
+ *
+ * A stage that is not on this lead's own ladder answers TRUE for the same kind
+ * of reason rather than the same reason. `won`, `customer` and
+ * `active_distributor` are past every rung; `on_hold` DISPLACES the rung, so
+ * the one it was parked from lives in `lead_stage_transitions` and cannot be
+ * read here — and a guess printed as a warning to the person deciding is worse
+ * than no warning at all. Only a rung the ladder actually carries is judged.
+ */
+export function qualifiedForSample(
+  stage: LeadStage | null | undefined,
+  salesType: LeadSalesType | null | undefined,
+): boolean {
+  if (!stage) return true;
+  const ladder = ladderFor(salesType);
+  const here = ladder.indexOf(stage);
+  const wanted = ladder.indexOf(sampleReadyStage(salesType));
+  if (here === -1 || wanted === -1) return true;
+  return here >= wanted;
+}

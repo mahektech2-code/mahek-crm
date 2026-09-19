@@ -70,6 +70,7 @@ export function SampleRecordScreen({
   approval,
   feedback,
   facts,
+  cancelReasons,
   ladder,
   chaseNumber,
   nextChaseOn,
@@ -84,6 +85,15 @@ export function SampleRecordScreen({
   approval: Approval;
   feedback: SampleFeedbackRow | null;
   facts: SampleTrialFacts;
+  /**
+   * `leads.sampleCancelReasons` — the words behind `facts.cancelReasonCode`.
+   *
+   * From configuration rather than from `SAMPLE_CANCEL_REASONS`, so a reworded
+   * option reads with its new wording. `labelOf` falls back to the raw code,
+   * which is the honest answer where the list no longer carries one: the
+   * cancellation recorded under it still happened.
+   */
+  cancelReasons: { code: string; label: string }[];
   ladder: number[];
   chaseNumber: number;
   nextChaseOn: string | null;
@@ -132,14 +142,35 @@ export function SampleRecordScreen({
         />
       ) : null}
 
+      {/*
+        THE CODE IS THE TITLE AND THE WORDS ARE THE BODY, because they answer
+        two different questions and a reader is asking the first one: which of
+        the eight — a product we could not source, a shop that went quiet, a
+        price — is what says whose problem this was, and it is legible at a
+        glance in a way a sentence never is. The remarks sit under it and carry
+        what actually happened, which no list of eight can hold.
+
+        A CANCELLATION WITH NO CODE IS DRAWN AS ONE. Every cancellation
+        recorded before the list existed carries only the words, and so does
+        every one a handset sends — nothing backfills a code, because reading
+        an old sentence into one of eight is guessing which of eight somebody
+        meant. So the remarks alone still read as a reason, and only a record
+        with neither gets the sentence about nobody having said.
+      */}
       {sample.state === "cancelled" ? (
         <Banner
           tone="warn"
-          title="This sample was cancelled"
+          title={
+            facts.cancelReasonCode
+              ? `Cancelled — ${labelOf(cancelReasons, facts.cancelReasonCode)}`
+              : "This sample was cancelled"
+          }
           body={
             facts.cancelReason?.trim()
               ? `“${facts.cancelReason.trim()}”${facts.cancelledAt ? ` — ${stamp(facts.cancelledAt)}` : ""}`
-              : "No reason was recorded. Cancelling is what ends the chase loop without an answer, so the reason is the only record of why nobody ever found out what they thought."
+              : facts.cancelReasonCode
+                ? `Nothing further was written down.${facts.cancelledAt ? ` Cancelled ${stamp(facts.cancelledAt)}.` : ""}`
+                : "No reason was recorded. Cancelling is what ends the chase loop without an answer, so the reason is the only record of why nobody ever found out what they thought."
           }
         />
       ) : null}

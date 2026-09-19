@@ -400,6 +400,17 @@ export type SampleTrialFacts = {
   approvedByName: string | null;
   dispatchedByName: string | null;
   cancelledAt: string | null;
+  /**
+   * WHICH of the eight, and the remarks beside it.
+   *
+   * Two fields rather than one because they answer two questions: the code is
+   * what a report can count — supply, customer or sales — and the words are
+   * what actually happened, which no list of eight can hold. A cancellation
+   * recorded before the list existed, or sent by a handset that does not know
+   * about it, carries the words and no code, and the record draws exactly that
+   * rather than filing it under whichever code sounds closest.
+   */
+  cancelReasonCode: string | null;
   cancelReason: string | null;
   /** The rung the lead stood on when the sample was asked for. */
   leadStageAtRequest: string | null;
@@ -451,6 +462,7 @@ export async function sampleTrialFacts(sampleId: string): Promise<SampleTrialFac
       approvedByName: sql<string | null>`(select u.name from users u where u.id = mbos_samples.approved_by_id)`,
       dispatchedByName: sql<string | null>`(select u.name from users u where u.id = mbos_samples.dispatched_by_id)`,
       cancelledAt: sql<string | null>`mbos_samples.cancelled_at`,
+      cancelReasonCode: mbosSamples.cancelReasonCode,
       cancelReason: mbosSamples.cancelReason,
       leadStageAtRequest: mbosSamples.leadStageAtRequest,
       convertedOrderId: mbosSamples.convertedOrderId,
@@ -496,4 +508,90 @@ export async function anyTrialFeedbackExists(): Promise<boolean> {
     .where(and(isNotNull(sampleFeedback.sampleId), ...(scope ? [scope] : [])))
     .limit(1);
   return Boolean(row);
+}
+
+/* --------------------------------------- §15 the trials that were called off */
+
+export type CancellationReason = {
+  /** The stored code. Never null here — the uncoded ones are counted apart. */
+  code: string;
+  count: number;
+};
+
+export type TrialCancellations = {
+  /** One row per code, biggest first. */
+  reasons: CancellationReason[];
+  /**
+   * Cancellations carrying no code at all, counted rather than dropped.
+   *
+   * Every one recorded before the eight existed, plus every one a handset in
+   * the field sends without one — an APK cannot be recalled, so the sync
+   * endpoint accepts a cancellation with no code rather than losing a trial a
+   * salesman really did call off. Nothing reads an old sentence into one of
+   * eight: that is guessing which of eight somebody meant months later, and a
+   * figure nobody can account for is worse than one that says why it is there.
+   */
+  uncoded: number;
+  total: number;
+};
+
+/**
+ * WHY TRIALS ARE BEING CALLED OFF, counted.
+ *
+ * A code nobody reports on is a code nobody fills in honestly, so the eight
+ * are only worth asking for if somebody can read them all at once — and what
+ * they are FOR is that they separate three problems which all read as "trial
+ * cancelled": a product we could not source is a SUPPLY problem, a shop that
+ * stopped answering is a CUSTOMER problem, and a price objection is a SALES
+ * problem. Each is somebody else's to fix, and one free-text column meant
+ * "cancelled: 14" sent nobody anywhere.
+ *
+ * It reads `mbos_samples` rather than `sample_feedback`, unlike everything
+ * else in this file, and that is exactly why it is its own query rather than a
+ * fourth figure on `trialVerdicts`: a cancelled trial produces no answers by
+ * definition — it is the trial that never happened — so the feedback library's
+ * own population contains none of them and no filter over it could ever reach
+ * one.
+ *
+ * Grouped in Postgres rather than in JS over every cancelled row, because the
+ * counts are the only thing wanted and this book holds thousands of samples.
+ * The column is written out QUALIFIED: Drizzle renders a bare name inside a
+ * raw template, and this query joins `customers`, which carries columns of its
+ * own that a bare name could bind to.
+ *
+ * Unfiltered, deliberately. The filters on this screen — product, competitor,
+ * verdict — are all properties of a trial that HAPPENED, and applying them to
+ * a list of trials that did not would silently answer a different question
+ * under a heading that did not change.
+ */
+export async function trialCancellations(): Promise<TrialCancellations> {
+  const scope = await visibility();
+
+  const rows = await db
+    .select({
+      code: sql<string | null>`mbos_samples.cancel_reason_code`,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(mbosSamples)
+    .innerJoin(customers, eq(customers.id, mbosSamples.customerId))
+    .where(and(eq(mbosSamples.state, "cancelled"), ...(scope ? [scope] : [])))
+    .groupBy(sql`mbos_samples.cancel_reason_code`);
+
+  const reasons: CancellationReason[] = [];
+  let uncoded = 0;
+  let total = 0;
+
+  for (const r of rows) {
+    const n = Number(r.n ?? 0);
+    total += n;
+    /* An empty string is not a code either. Nothing writes one today, and a
+       row that arrived with one from some older build must not be drawn as a
+       ninth reason with no label anybody can read. */
+    const code = r.code?.trim() ? r.code.trim() : null;
+    if (code === null) uncoded += n;
+    else reasons.push({ code, count: n });
+  }
+
+  reasons.sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
+  return { reasons, uncoded, total };
 }

@@ -55,6 +55,18 @@ export type ParkedLeadRow = {
   salesType: LeadSalesType | null;
   /** Free text — what somebody typed when they stopped it. Never a code. */
   holdReason: string | null;
+  /**
+   * WHICH of `leads.holdReasons` this park was, beside the sentence.
+   *
+   * Null is not a gap to be filled in: it is every park made before the codes
+   * existed, and every park a handset sent, and NOTHING backfills one. Reading
+   * an old park's sentence into one of six codes would be guessing months later
+   * which of them somebody meant, and a guess stored in the column the counting
+   * question is asked of is worse than the question going unanswered — it
+   * answers it wrongly, at scale, invisibly. The screens draw "nobody picked
+   * one" rather than a blank.
+   */
+  holdReasonCode: string | null;
   /** A stored DATE, carried as a string. Null on a park made before the column. */
   resumeDate: string | null;
   /**
@@ -112,6 +124,7 @@ export async function parkedLeads(day: string): Promise<ParkedLeads> {
     select c.id as "customerId", c.name, c.company_name as "companyName", c.city,
            c.lead_sales_type::text as "salesType",
            c.lead_hold_reason as "holdReason",
+           c.lead_hold_reason_code as "holdReasonCode",
            c.lead_hold_resume_date::text as "resumeDate",
            case when c.lead_hold_resume_date <= ${day}::date
                 then (${day}::date - c.lead_hold_resume_date)::int end as "overdueDays",
@@ -154,6 +167,7 @@ export async function parkedLeads(day: string): Promise<ParkedLeads> {
     city: (r.city as string | null) ?? null,
     salesType: (r.salesType as LeadSalesType | null) ?? null,
     holdReason: (r.holdReason as string | null) ?? null,
+    holdReasonCode: (r.holdReasonCode as string | null) ?? null,
     resumeDate: (r.resumeDate as string | null) ?? null,
     overdueDays: r.overdueDays === null || r.overdueDays === undefined ? null : Number(r.overdueDays),
     dueInDays: r.dueInDays === null || r.dueInDays === undefined ? null : Number(r.dueInDays),

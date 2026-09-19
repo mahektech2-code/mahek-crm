@@ -13,6 +13,8 @@
 import { COMPLAINT_CATEGORIES } from "../constants";
 import {
   LOST_REASONS,
+  HOLD_REASONS,
+  SAMPLE_CANCEL_REASONS,
   VERIFICATION_FAILURE_REASONS,
   OVERRIDE_REASONS,
   PROSPECT_REASONS,
@@ -2876,6 +2878,24 @@ export const SETTINGS = [
     default: VERIFICATION_FAILURE_REASONS.map((r) => ({ ...r })),
   },
   {
+    key: "leads.holdReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a lead was parked",
+    description:
+      "The six answers to 'why has this stopped'. Coded rather than free text so 'how many genuine opportunities are we parking a quarter, and for what' is a question somebody can ask - four of the six are the customer's doing and two are ours to chase, and that split is the value of counting them. Picking 'Other' makes the remarks mandatory: a code meaning 'something else' with nothing behind it is the one row nobody can act on.",
+    default: HOLD_REASONS.map((r) => ({ ...r })),
+  },
+  {
+    key: "leads.sampleCancelReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a trial was called off",
+    description:
+      "The eight answers, and they exist to separate THREE different problems one free-text box could not tell apart: a product we could not source is a supply problem, a customer who stopped answering is a customer problem, a price objection is a sales problem. All three read as 'trial cancelled' until somebody can count them, and each is somebody else's to fix. 'Other' makes the remarks mandatory.",
+    default: SAMPLE_CANCEL_REASONS.map((r) => ({ ...r })),
+  },
+  {
     key: "leads.overrideReasons",
     type: "structured",
     category: "mbos-leads",
@@ -3909,6 +3929,8 @@ export type Config = {
   "leads.sampleReasons": { code: string; label: string }[];
   "leads.lostReasons": { code: string; label: string }[];
   "leads.verificationFailureReasons": { code: string; label: string }[];
+  "leads.holdReasons": { code: string; label: string }[];
+  "leads.sampleCancelReasons": { code: string; label: string }[];
   "leads.overrideReasons": { code: string; label: string }[];
   "leads.sampleReviewChaseDays": number[];
   "leads.verificationDueDays": number;

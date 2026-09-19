@@ -3,6 +3,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { leadsVisible, managerScope } from "./sales-service";
+import { confirmedCommitmentSql } from "../lead-commitment";
 
 /* ---------------------------------------------------------------------------
  * §8.2 — THE SALES MANAGER'S SEVEN, and why they are these seven.
@@ -123,18 +124,31 @@ export async function managerLeadBlocks(day: string): Promise<ManagerLeadBlock[]
          somebody was told to expect and nobody collected, and it is the only
          one of the two that wants a manager today. Counting both together
          made the loud block loud on its calmest rows and sent whoever pressed
-         it to the same list as the quiet one. */
+         it to the same list as the quiet one.
+
+         AND IT COUNTS COMMITMENTS RATHER THAN DATES. S3.4 says a day with no
+         quantity and no value is a follow-up, so a lead where nobody ever
+         asked how much can no longer arrive here as money left on the table -
+         nothing was ever on the table. It is not lost: the day is still on
+         the record, the nurture sweep still raises the call on it, and the
+         commitments desk still lists it. What it does not do is set this
+         block to danger and send a manager to chase a figure that does not
+         exist. */
       count(*) filter (
         where c.lead_stage = 'negotiation'
-          and c.lead_expected_order_date is not null
+          and ${sql.raw(confirmedCommitmentSql("c"))}
           and c.lead_expected_order_date < ${day}::date
       )::int as "awaitingOrderConfirmation",
 
       /* A FORECAST, and the screen must say so. Counted over the seven days
          from the business date rather than a calendar week, because "this
-         week" on a Friday means the next seven days to the person reading it. */
+         week" on a Friday means the next seven days to the person reading it.
+
+         The same rule as the block above: a forecast made of dates nobody
+         attached a size to is a number that cannot be planned against, and
+         this is the figure somebody reads when deciding what the week holds. */
       count(*) filter (
-        where c.lead_expected_order_date is not null
+        where ${sql.raw(confirmedCommitmentSql("c"))}
           and c.lead_expected_order_date >= ${day}::date
           and c.lead_expected_order_date < ${day}::date + 7
       )::int as "expectedOrdersThisWeek"
@@ -202,7 +216,7 @@ export async function managerLeadBlocks(day: string): Promise<ManagerLeadBlock[]
     {
       id: "awaiting-order",
       label: "Promised, and the day has gone",
-      hint: "The date they gave has passed with no order against it. Until an order is confirmed it was only ever a forecast.",
+      hint: "The date they gave has passed with no order against it. Commitments only — a day with no quantity or value was never one. Until an order is confirmed it was only ever a forecast.",
       count: c.awaitingOrderConfirmation,
       /* The view whose rows ARE this count. Two blocks pointing at one
          unfiltered list is a manager pressing the urgent one and landing on
@@ -215,7 +229,7 @@ export async function managerLeadBlocks(day: string): Promise<ManagerLeadBlock[]
     {
       id: "expected-this-week",
       label: "Expected in the next 7 days",
-      hint: "Forecast only — what customers said they would order, not what they have.",
+      hint: "Forecast only — what customers committed to on a call, a day with a quantity or a value against it, and not what they have.",
       count: c.expectedOrdersThisWeek,
       href: "leads/commercial/commitments?view=due",
       /* Deliberately NOT danger. It is a plan, and colouring a plan like a

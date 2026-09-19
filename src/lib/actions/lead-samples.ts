@@ -20,7 +20,14 @@ import {
 import { getConfig } from "@/lib/config/store";
 import { businessDate } from "@/lib/business-date";
 import type { NurtureConfig } from "@/lib/engines/lead-nurture";
-import { FEEDBACK_FIELDS, type SampleState } from "@/lib/lead-labels";
+import { qualifiedForSample } from "@/lib/engines/lead-ladder";
+import {
+  FEEDBACK_FIELDS,
+  REASON_CODE_NEEDING_REMARKS,
+  type LeadSalesType,
+  type LeadStage,
+  type SampleState,
+} from "@/lib/lead-labels";
 import {
   closeNurtureTasks,
   openNurtureTaskIdsFor,
@@ -255,6 +262,39 @@ export async function requestSample(
       return err(`${product.name} is retired, so it cannot be sent as a sample.`, "rule_violation");
     }
 
+    /*
+     * ANSWER 05 — NOT QUALIFIED IS A MARK ON THE REQUEST, NEVER A REFUSAL.
+     *
+     * Mahek's rule is that a sample normally wants the lead at Prospect or
+     * beyond first, because by then we know the product, the approximate
+     * monthly requirement, the potential value, the competitor and the basic
+     * requirement — and a trial with none of those behind it has nothing to be
+     * measured against. But the same answer carries its own exception in as
+     * many words: a salesman who believes a can in a shopkeeper's hand is what
+     * opens the relationship may ask for one on a Suspect, and the Sales
+     * Manager decides.
+     *
+     * So this REFUSES NOTHING. Refusing would cost what §4's visit cap says
+     * refusing always costs — the request simply stops being recorded, and the
+     * salesman hands a can over off the books rather than being told no. What
+     * it does instead is make the difference visible to the person who is
+     * already deciding: every sample needs an approval under answer 01, so
+     * this is not a second approval, it is the SAME one carrying the fact that
+     * this lead had not answered the questions yet. Approving an unqualified
+     * sample is a different decision from approving an ordinary one, and a
+     * manager who cannot tell the two apart is not making either.
+     *
+     * NOTHING NEW IS STORED FOR IT. `leadStageAtRequest` below is the rung the
+     * lead was standing on when somebody asked, written since the column
+     * existed, and `qualifiedForSample` reads it. A second boolean beside it
+     * would be a cache of a pure function over a column already on the row —
+     * and the half that drifts is always the half somebody reads.
+     */
+    const qualified = qualifiedForSample(
+      customer.leadStage as LeadStage | null,
+      customer.salesType as LeadSalesType | null,
+    );
+
     const sampleId = id("smp");
     const now = new Date();
     const day = await today();
@@ -285,6 +325,10 @@ export async function requestSample(
         requestedByUserId: ctx.user.id,
         subjectType: "mbos_samples",
         subjectId: sampleId,
+        /* The subject in one line, for a screen that has not joined the lead.
+           The rung is NOT restated here: it is on the sample row, and a
+           sentence frozen into an approval at request time would go on saying
+           "Suspect" long after the lead had moved. */
         reason: `${parsed.data.quantityCans} can(s) of ${product.name} for ${parsed.data.application}`,
         requestedAt: now,
         /* §15 is one step. Unlike a distributor appointment there is nothing
@@ -327,7 +371,17 @@ export async function requestSample(
     });
 
     refresh();
-    return ok({ id: sampleId }, "Sample requested. It is waiting for approval.");
+    return ok(
+      { id: sampleId },
+      qualified
+        ? "Sample requested. It is waiting for approval."
+        : /* Said back the way the form said it before the button was pressed,
+             so the salesman is not told something new AFTER committing. He was
+             warned, he asked anyway, and this confirms that is what happened
+             rather than reading as a fresh objection. */
+          "Sample requested. The lead is not qualified yet, so the manager is " +
+            "asked to approve it knowing that.",
+    );
   } catch (e) {
     return fromThrown(e);
   }
@@ -886,27 +940,82 @@ export async function recordSampleFeedback(
 /* ------------------------------------------------------------ §15 cancelling */
 
 /**
- * The trial is off, and why.
+ * The trial is off, and why — A CODE NOW, with the words beside it.
  *
- * A reason is required for the same purpose §26's list serves: a sample that
- * simply disappears from the desk teaches nobody anything, and "customer moved
- * premises" and "we could not source it" are different problems with different
- * fixes. Cancelling closes every task raised for it — a chase against a sample
+ * A reason was always required here, for the purpose §26's list serves: a
+ * sample that simply disappears from the desk teaches nobody anything, and
+ * "customer moved premises" and "we could not source it" are different
+ * problems with different fixes. What it could not do was let anybody COUNT
+ * those problems, and that is what Mahek asked for.
+ *
+ * **The eight exist to separate three problems one box could not tell apart.**
+ * A product we could not source is a SUPPLY problem; a customer who stopped
+ * answering is a CUSTOMER problem; a price objection is a SALES problem. All
+ * three read as "trial cancelled" until somebody can count them, and each one
+ * is somebody else's to fix — so "cancelled: 14" was a number that sent nobody
+ * anywhere. The code says WHICH; `cancel_reason` keeps its old job and says
+ * what actually happened, which no list of eight can.
+ *
+ * **The list is read from CONFIGURATION, never from the literal.** Mahek can
+ * reword these without a deploy, and a check against `SAMPLE_CANCEL_REASONS`
+ * would refuse a code the screen had just offered — the refusal reading as the
+ * app being broken rather than as the list having moved.
+ *
+ * **`other` demands the remarks, and the action is where that holds.** A code
+ * meaning "something else" with nothing after it is the one row nobody can act
+ * on, and it is the code people reach for when a list does not fit — so it has
+ * to cost a sentence. Enforced here as well as on the form, because a server
+ * action is a URL and a required field on a screen is not a rule.
+ *
+ * Cancelling closes every task raised for the sample — a chase against a sample
  * nobody is sending is the definition of noise.
  */
-export async function cancelSample(sampleId: string, reason: string): Promise<Result<null>> {
+export async function cancelSample(
+  sampleId: string,
+  input: { reasonCode: string; remarks?: string | null },
+): Promise<Result<null>> {
   try {
-    const said = (reason ?? "").trim();
-    if (!said) {
-      return err("Say why the sample is being cancelled.", "validation", [
-        { field: "reason", message: "A reason, however short." },
+    const reasonCode = (input?.reasonCode ?? "").trim();
+    const said = (input?.remarks ?? "").trim();
+
+    const config = await getConfig();
+    const offered = config["leads.sampleCancelReasons"];
+    const chosen = offered.find((r) => r.code === reasonCode);
+    if (!chosen) {
+      return err("Pick why the trial is being called off.", "validation", [
+        {
+          field: "reasonCode",
+          message:
+            "One of the eight — a product we could not source, a shop that stopped answering and a price objection are three different problems, and only a code can tell them apart afterwards.",
+        },
       ]);
     }
+    /* The one code that costs a sentence. Everything else may carry remarks
+       and none of them has to: the code has already said which problem it is,
+       and demanding prose after an answer somebody has already given is how
+       people learn to type a full stop into the box. */
+    if (reasonCode === REASON_CODE_NEEDING_REMARKS && !said) {
+      return err("Say what happened.", "validation", [
+        {
+          field: "remarks",
+          message:
+            "“Other” with nothing behind it is the one cancellation nobody can act on. A sentence, however short.",
+        },
+      ]);
+    }
+
     const ctx = await requireCapability("lead.work");
     const loaded = await loadForTransition(sampleId, "cancelled");
     if (!loaded.ok) return loaded.error;
 
     const now = new Date();
+    /* The wording comes off the CONFIGURED option that was matched above, so a
+       reworded list reads with its new words. Only the CODE is stored on the
+       sample: a label written into the column would stop being true the day
+       somebody edited the list. What the label is used for here is prose —
+       the approval's note and the timeline line, which are records of what was
+       said at the time and are never re-read as data. */
+    const chosenLabel = chosen.label;
 
     await db.transaction(async (tx) => {
       await tx
@@ -914,7 +1023,15 @@ export async function cancelSample(sampleId: string, reason: string): Promise<Re
         .set({
           state: "cancelled",
           cancelledAt: now,
-          cancelReason: said.slice(0, 500),
+          cancelReasonCode: reasonCode,
+          /* The remarks keep their own job and are NOT made to carry the
+             code's label. A row whose remarks read "Commercial or price issue"
+             says nothing the code does not, and it would be indistinguishable
+             later from a sentence somebody actually typed — which is the half
+             of a cancellation nothing else can reconstruct. Null where nobody
+             typed one, because an empty string reads on a record as a person
+             who was asked and had nothing to say. */
+          cancelReason: said ? said.slice(0, 500) : null,
           updatedAt: now,
           updatedById: ctx.user.id,
         })
@@ -930,7 +1047,7 @@ export async function cancelSample(sampleId: string, reason: string): Promise<Re
           state: "rejected",
           approverUserId: ctx.user.id,
           decidedAt: now,
-          decisionNote: `Cancelled before a decision: ${said.slice(0, 400)}`,
+          decisionNote: `Cancelled before a decision: ${chosenLabel}${said ? ` — ${said.slice(0, 340)}` : ""}`,
           updatedAt: now,
           updatedById: ctx.user.id,
         })
@@ -950,7 +1067,11 @@ export async function cancelSample(sampleId: string, reason: string): Promise<Re
         sourceRecordId: sampleId,
         occurredAt: now,
         actorUserId: ctx.user.id,
-        summary: `Sample cancelled: ${said.slice(0, 120)}`,
+        /* The code's words FIRST and the remarks after, because a timeline is
+           read down a column: "Sample cancelled: Product not available" is
+           legible at a glance and "Sample cancelled: he said the 20L was out
+           of stock in Nagpur" takes a sentence to reach the same fact. */
+        summary: `Sample cancelled: ${chosenLabel}${said ? ` — ${said.slice(0, 120)}` : ""}`,
       });
 
       const open = await openNurtureTaskIdsFor(tx, sampleId);
@@ -964,7 +1085,10 @@ export async function cancelSample(sampleId: string, reason: string): Promise<Re
         action: "sample.cancelled",
         entityType: "mbos_samples",
         entityId: sampleId,
-        afterState: { reason: said } as never,
+        /* BOTH, and the code on its own line: "which of the eight" is the
+           question an audit is asked months later, and reading it back out of
+           a sentence is the grep this list exists to abolish. */
+        afterState: { reasonCode, remarks: said || null } as never,
       });
     });
 

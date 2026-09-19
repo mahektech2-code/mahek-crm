@@ -29,7 +29,9 @@ import {
   nextStage,
   previousStage,
   promotesToCustomerAt,
+  qualifiedForSample,
   rungOf,
+  sampleReadyStage,
 } from "./lead-ladder";
 import { gateForNext } from "./lead-gates";
 import { buildQueue, type QueueCandidate } from "./queue";
@@ -566,3 +568,46 @@ const _everySalesTypeHasALadder: Record<LeadSalesType, readonly LeadStage[]> = {
   third_party: THIRD_PARTY_LADDER,
 };
 void _everySalesTypeHasALadder;
+
+/* ---------------------------------------------------------------------------
+ * ANSWER 05 — the rung a sample normally wants.
+ *
+ * The two cases worth pinning are the two that would be WRONG ON MOST ROWS if
+ * they went the other way: a real customer carries no lead stage at all and a
+ * legacy lead climbs a ladder with no `prospect` on it. Reading either as "not
+ * qualified" would put the warning on almost the whole book, and a mark that is
+ * on everything is one a manager stops seeing.
+ * ------------------------------------------------------------------------- */
+describe("whether a lead has climbed far enough for a sample", () => {
+  test("a Suspect has not, on any of the three funnel ladders", () => {
+    for (const t of ["direct", "third_party", "distributor"] as LeadSalesType[]) {
+      assert.equal(qualifiedForSample("suspect", t), false, t);
+    }
+  });
+
+  test("a Prospect has, and so does everything above it", () => {
+    assert.equal(qualifiedForSample("prospect", "direct"), true);
+    assert.equal(qualifiedForSample("qualification", "direct"), true);
+    assert.equal(qualifiedForSample("negotiation", "direct"), true);
+  });
+
+  test("the legacy ladder is judged at `qualified`, since it has no Prospect", () => {
+    assert.equal(sampleReadyStage(null), "qualified");
+    assert.equal(qualifiedForSample("new", null), false);
+    assert.equal(qualifiedForSample("contacted", null), false);
+    assert.equal(qualifiedForSample("qualified", null), true);
+  });
+
+  test("no stage at all is a real customer, and a real customer is qualified", () => {
+    assert.equal(qualifiedForSample(null, null), true);
+    assert.equal(qualifiedForSample(undefined, "direct"), true);
+  });
+
+  test("a rung off this ladder is never guessed at", () => {
+    /* Parked displaces the rung, so the one it was parked from is in the
+       transition history and unreadable here; `won` is past every rung. A
+       guess printed as a warning to the person deciding is worse than none. */
+    assert.equal(qualifiedForSample("on_hold", "direct"), true);
+    assert.equal(qualifiedForSample("won", "direct"), true);
+  });
+});

@@ -4,7 +4,12 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { stageLabel, type LeadStage } from "@/lib/lead-labels";
+import {
+  REASON_CODE_NEEDING_REMARKS,
+  stageLabel,
+  type CodedOption,
+  type LeadStage,
+} from "@/lib/lead-labels";
 import { advanceLeadStage } from "@/lib/actions/leads";
 import type { ActionOwnerCandidate } from "@/lib/services/lead-actions-service";
 import { Button } from "@/components/console/parts";
@@ -23,14 +28,28 @@ import { Button } from "@/components/console/parts";
  * feature that was finished.
  *
  * **IT IS NOT "MARK LOST" WITH A SOFTER WORD, and the modal says so before the
- * button is pressed.** `lost` means nobody rings again, which is why its reason
- * is a CODE — "how many did we lose on credit terms this quarter" is a question
- * somebody asks of a closed book. A park is a live prospect stopped by
- * something outside the sale, and the useful thing about it is not which of
- * eight boxes it fits: it is the sentence that tells whoever picks it up in
- * March what they are walking back into. So the reason here is free text, which
- * is what the action's own schema asks for, and the coded lists are left where
- * they belong.
+ * button is pressed.** `lost` means nobody rings again; a park is a live
+ * prospect stopped by something outside the sale, and somebody is going back.
+ *
+ * **THE WHY IS A CODE AND A SENTENCE, AND THAT IS A REVERSAL.** This modal
+ * shipped asking for free text alone, on the reasoning that the useful thing
+ * about a park is not which of six boxes it fits but the words that tell
+ * whoever picks it up in March what they are walking back into. The second half
+ * of that is still true and the first half was wrong: Mahek asked for a
+ * controlled list precisely so the parks can be COUNTED — four of the six are
+ * the customer's doing and two are ours to chase, and "how many genuine
+ * opportunities are we parking a quarter, and for what" is a question nobody
+ * can ask of five hundred characters of prose. So both are asked, and the
+ * sentence is optional against five of the codes because the code now carries
+ * the WHICH. Against `other` it is mandatory, because `other` answers nothing
+ * on its own — refused here AND in the action, which is where it counts.
+ *
+ * **The list comes from configuration, never from `HOLD_REASONS`.** The server
+ * validates what arrives against `leads.holdReasons`, so a picker built from
+ * the literal would offer a code the action refuses on any deployment where
+ * somebody has reworded the list — and that refusal reads as the app being
+ * broken rather than as the list having moved. The same rule `MarkLost`
+ * follows one file along.
  *
  * **THE THREE ANSWERS ARE ONE RULE AND THE FORM TREATS THEM AS ONE.** A reason
  * with no date is a lead that sits for six months, because "back after Diwali"
@@ -61,6 +80,7 @@ export function ParkLead({
   stage,
   day,
   candidates,
+  holdReasons,
   defaultOwnerId,
   canWork,
 }: {
@@ -72,6 +92,8 @@ export function ParkLead({
   day: string;
   /** Who a next action may be owed by. A picker, never a permission. */
   candidates: ActionOwnerCandidate[];
+  /** `leads.holdReasons`, resolved on the server. Never the literal list. */
+  holdReasons: CodedOption[];
   /** The lead's own salesman, pre-selected where they are on the list. */
   defaultOwnerId: string | null;
   canWork: boolean;
@@ -80,6 +102,14 @@ export function ParkLead({
   const toast = useToast();
 
   const [open, setOpen] = React.useState(false);
+  /*
+   * NOTHING IS PRE-SELECTED, the rule every coded picker in this product
+   * follows. A default would mean "Put on hold" then "Put it on hold" records a
+   * reason nobody chose, and whichever code happens to sit at the top of the
+   * list quietly becomes the commonest reason Mahek parks leads — which is the
+   * one outcome that makes counting them worse than not counting them.
+   */
+  const [reasonCode, setReasonCode] = React.useState("");
   const [reason, setReason] = React.useState("");
   const [resumeDate, setResumeDate] = React.useState("");
   const [action, setAction] = React.useState("");
@@ -101,6 +131,7 @@ export function ParkLead({
   const parkable = !["on_hold", "lost", "won", "customer", "active_distributor"].includes(stage);
 
   function begin() {
+    setReasonCode("");
     setReason("");
     setResumeDate("");
     setAction("");
@@ -114,8 +145,13 @@ export function ParkLead({
      expression, so the two cannot differ by a keystroke nobody made. */
   const effectiveActionDate = actionDate || resumeDate;
 
+  /* `other` is the one code that demands the sentence. Derived rather than
+     held in state, so it cannot be left true by a code somebody changed. */
+  const remarksRequired = reasonCode === REASON_CODE_NEEDING_REMARKS;
+
   const missing = [
-    reason.trim() ? null : "why it is stopping",
+    reasonCode ? null : "why it is stopping",
+    remarksRequired && !reason.trim() ? "what \u201cOther\u201d actually is" : null,
     resumeDate ? null : "the day it comes back",
     action.trim() ? null : "what happens then",
     owner ? null : "who does it",
@@ -124,7 +160,7 @@ export function ParkLead({
   async function submit() {
     if (missing.length) {
       setError(
-        `On hold is a pause, not a quiet death. Still to answer: ${missing.join(", ")}. A lead parked without all four comes back to nobody.`,
+        `On hold is a pause, not a quiet death. Still to answer: ${missing.join(", ")}. A lead parked without those comes back to nobody.`,
       );
       return;
     }
@@ -135,7 +171,17 @@ export function ParkLead({
       result = await advanceLeadStage({
         customerId,
         to: "on_hold",
-        hold: { reason: reason.trim(), resumeDate },
+        /* The code goes at the TOP level rather than inside `hold`, because it
+           is what `applyLeadStageMove` writes onto the transition as well as
+           onto the customer row — one value read once, so the park's history
+           and the park's current state cannot disagree about why it stopped. */
+        reasonCode,
+        /* The remarks are sent as the transition's note too. A park ENDS: the
+           customer columns are cleared the day the lead comes back, and without
+           this the sentence somebody typed would go with them and the history
+           would record a park with a code and no words. */
+        note: reason.trim() || undefined,
+        hold: { reason: reason.trim() || undefined, resumeDate },
         nextAction: {
           action: action.trim(),
           date: effectiveActionDate,
@@ -184,21 +230,45 @@ export function ParkLead({
           nothing else remembers where it stopped.
         </p>
 
-        <label className="block">
+        <div className="mb-1 text-[13px] font-medium text-ink">Why is it stopping · required</div>
+        <div className="flex flex-col gap-0.5">
+          {holdReasons.map((r) => (
+            <label
+              key={r.code}
+              className="flex cursor-pointer items-center gap-2 rounded-[4px] px-1.5 py-1 text-[13px] text-body hover:bg-canvas"
+            >
+              <input
+                type="radio"
+                name="hold-reason"
+                value={r.code}
+                checked={reasonCode === r.code}
+                onChange={() => setReasonCode(r.code)}
+              />
+              {r.label}
+            </label>
+          ))}
+        </div>
+        <p className="mt-1.5 text-[12px] text-muted">
+          A code rather than a sentence, so &ldquo;how many genuine opportunities did we park for a
+          plant shutdown this quarter&rdquo; is a question somebody can ask rather than a grep over
+          free text.
+        </p>
+
+        <label className="mt-3 block">
           <span className="mb-1 block text-[13px] font-medium text-ink">
-            Why is it stopping · required
+            {remarksRequired ? "What it actually is · required" : "In their own words (optional)"}
           </span>
           <textarea
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             rows={3}
-            autoFocus
             placeholder="Plant shut for the monsoon rebuild; works manager back in October"
             className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand"
           />
           <span className="mt-1 block text-[12px] text-muted">
-            In words, not a code: this is what somebody picking the lead up in three months needs to
-            know, and no list of eight boxes says &ldquo;their buyer is on maternity leave&rdquo;.
+            {remarksRequired
+              ? "“Other” on its own answers nothing — it is the one row in the count that nobody can act on and nobody can fold back into one of the five above. Say what it is."
+              : "The code says which; this says what actually happened. It is what somebody picking the lead up on the day it comes back reads, and no list of six says “their buyer is on maternity leave”."}
           </span>
         </label>
 
