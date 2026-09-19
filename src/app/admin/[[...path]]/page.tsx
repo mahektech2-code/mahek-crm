@@ -204,6 +204,10 @@ export default async function Page({
       people={people}
       access={access}
       me={{ name: user.name, initials: user.initials, role: hat.label }}
+      /* The LEVEL, not the label beside it. `me.role` is what the header
+         prints and is reworded whenever `hat-labels.ts` is; authority is
+         read off the account here, once, on the server. */
+      isAdmin={user.role === "admin"}
       platform={{
         attention,
         health,

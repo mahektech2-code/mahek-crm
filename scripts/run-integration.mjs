@@ -56,6 +56,7 @@ const files = [
   "src/lib/either-identifier.test.ts",
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
+  "src/lib/seat-mirrors.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
   // The dashboard reads its four figures from `queueProgress`, which must stay
@@ -65,6 +66,11 @@ const files = [
   // The queue ranks calls by a cached median now. If the cache and the
   // subquery it replaced ever disagree, the calling list silently reorders.
   "src/lib/typical-order-cache.test.ts",
+  // The sheet projection and the cycle recompute run together every thirty
+  // minutes. That a pass over an unchanged book writes no tuple is only
+  // checkable against a real database — `xmin` is the witness — so it lives
+  // here, and it will regress silently the moment anything stops comparing.
+  "src/lib/projection-idempotence.test.ts",
 ];
 
 let failed = 0;

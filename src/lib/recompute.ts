@@ -151,7 +151,7 @@ async function writeCycle(
   rows: Array<{ orderedAt: Date; totalAmount: number }>,
   config: Config,
   placedOn: string | null,
-): Promise<void> {
+): Promise<number> {
   // In Asia/Kolkata, never UTC. These dates become the INTERVALS the cycle is
   // the median of, so an order placed at 2am read as the previous day shortens
   // one gap and lengthens its neighbour — and the cycle decides when the whole
@@ -183,19 +183,67 @@ async function writeCycle(
     new Date(),
   );
 
-  await db
+  // The latest order PLACED, which may be newer than the latest approved.
+  const lastOrder = placedOn ?? dates.at(-1) ?? null;
+
+  /*
+   * A WRITE THAT CHANGES NOTHING IS STILL A WRITE, and this one ran over the
+   * whole book every thirty minutes.
+   *
+   * `recomputeAllBuyingCycles` calls this once per customer on every sheet
+   * projection, and a median over a year of orders does not move between two
+   * passes an hour apart — so on a book of 5,925 customers roughly 5,925 rows
+   * were rewritten per cycle with identical contents. Postgres has no in-place
+   * update: every one of those wrote a new tuple, a WAL record and a dirty
+   * page, which on a 961 MB droplet is what evicts the page cache and drives
+   * the box into continuous swap.
+   *
+   * The gate is the PROJECTED VALUES against the STORED ones, never the hash
+   * of whatever the cycle was derived from. The inputs here are the order
+   * rows, the configuration and today's date, and a rule that read only the
+   * first would silently stop rewriting the book the day somebody changed
+   * `queue.orderValueLookbackDays` — a projection that skips work it needed to
+   * do is the worst failure available, because nothing anywhere looks wrong.
+   * Comparing the outputs is correct whatever they were derived from.
+   *
+   * `is distinct from` rather than `<>`: `cycle_confidence` and
+   * `last_order_date` are both nullable, and `null <> null` is null, which is
+   * not true — a `<>` chain would answer "not different" for every row
+   * carrying a null and skip exactly the rows that most need writing. The
+   * parameters are cast because an untyped parameter beside a date or a bigint
+   * is resolved by Postgres rather than by us, which this codebase has already
+   * paid for twice in the MBOS delta.
+   *
+   * `updated_at` is deliberately NOT in the comparison and moves only when
+   * something else did. It is what the MBOS pull delta cursors on, so a column
+   * that advanced on every projection meant every handset re-pulled its entire
+   * book on every pull, against a 2,000-row cap.
+   */
+  const result = await db
     .update(customers)
     .set({
       cycleDays: cycle.days,
       cycleIsDefault: cycle.isDefault,
       cycleConfidence: cycle.confidence,
-      // The latest order PLACED, which may be newer than the latest approved.
-      lastOrderDate: placedOn ?? dates.at(-1) ?? null,
+      lastOrderDate: lastOrder,
       avgOrderValue: avg,
       typicalOrderPaise: typical,
       updatedAt: new Date(),
     })
-    .where(eq(customers.id, customerId));
+    .where(
+      and(
+        eq(customers.id, customerId),
+        sql`(
+          "customers"."cycle_days" is distinct from ${cycle.days}::int
+          or "customers"."cycle_is_default" is distinct from ${cycle.isDefault}::boolean
+          or "customers"."cycle_confidence" is distinct from ${cycle.confidence}::int
+          or "customers"."last_order_date" is distinct from ${lastOrder}::date
+          or "customers"."avg_order_value" is distinct from ${avg}::bigint
+          or "customers"."typical_order_paise" is distinct from ${typical}::bigint
+        )`,
+      ),
+    );
+  return (result as unknown as { count?: number }).count ?? 0;
 }
 
 /**
@@ -238,10 +286,15 @@ export async function recomputeAllBuyingCycles(): Promise<number> {
   const placedBy = new Map(placed.map((r) => [r.customer_id, r.d]));
 
   const ids = await db.select({ id: customers.id }).from(customers);
+  // The count is customers whose cycle actually MOVED, not customers visited.
+  // Every one of these is a real tuple, and on a projection that runs every
+  // thirty minutes the difference between the two numbers is the whole point:
+  // the book is visited in full and is expected to be written almost never.
+  let written = 0;
   for (const { id } of ids) {
-    await writeCycle(id, byCustomer.get(id) ?? [], config, placedBy.get(id) ?? null);
+    written += await writeCycle(id, byCustomer.get(id) ?? [], config, placedBy.get(id) ?? null);
   }
-  return ids.length;
+  return written;
 }
 
 /* --------------------------------------------------- outstanding and bills */

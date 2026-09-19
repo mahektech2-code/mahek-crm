@@ -4,6 +4,10 @@ import * as React from "react";
 import { Modal } from "@/components/ui/modal";
 import { Button, Select, cx } from "@/components/ui/primitives";
 import { PersonPicker, type Person } from "./person-picker";
+import {
+  SALES_MANAGER_IS_REPORTING_ONLY,
+  WHERE_THE_BOOK_MOVES,
+} from "@/lib/seat-effects";
 
 /* ---------------------------------------------------------------------------
  * Setting who the salesperson answers to.
@@ -219,14 +223,29 @@ export function SalesManagerDialog({
         )
       ) : (
         <>
+          {/*
+            THIS PARAGRAPH USED TO CONTRADICT ITSELF, and the half somebody
+            acted on was the wrong one. Under a filtered scope it opened with
+            "This is the way to hand a whole book over when somebody leaves"
+            and then said, two sentences later, that it changes nothing about
+            whose book an account is in. Both were in one paragraph; the first
+            is the sentence a person handling a departure reads, and it is the
+            one that is false. It cost forty-two accounts: the salesperson's
+            book never moved, and her targets went on counting orders she was
+            no longer selling.
+
+            So the reporting line is stated FIRST, and where the reader may
+            have meant the other thing, they are told where it lives.
+          */}
+          <p className="mb-4 text-[13px] text-muted">
+            {SALES_MANAGER_IS_REPORTING_ONLY} {WHERE_THE_BOOK_MOVES}
+          </p>
           <p className="mb-4 text-[13px] text-muted">
             {scope.kind === "filters"
-              ? "Every account these filters match, including the ones on other pages. This is the way to hand a whole book over when somebody leaves."
-              : "The accounts you ticked."}{" "}
-            The sales manager is who the salesperson answers to — it does not
-            change whose book an account is in, whose queue it appears on, or
-            whose targets it counts toward. Leads are left alone: a lead answers
-            to its owner and has no salesperson for a manager to sit above.
+              ? "This sets it on every account these filters match, including the ones on other pages."
+              : "This sets it on the accounts you ticked."}{" "}
+            Leads are left alone: a lead answers to its owner and has no
+            salesperson for a manager to sit above.
           </p>
 
           <PersonPicker

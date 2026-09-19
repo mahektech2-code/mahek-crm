@@ -61,6 +61,7 @@ import {
   accountTypeLabel,
 } from "@/lib/account-types";
 import { UNASSIGNED_FILTER_VALUE } from "@/lib/am-filters";
+import { bookUnchangedNote } from "@/lib/seat-effects";
 
 export type Row = {
   id: string;
@@ -2138,6 +2139,23 @@ function CustomerFormBody({
     values.salesManagerId !== SHEET_NAME_VALUE &&
     values.salesManagerId !== openingSalesManagerValue(initial, salesManagerPeople);
 
+  /*
+   * Each seat's own answer, because the warning is about the DIFFERENCE
+   * between them — `amChanged` above is the union and cannot tell "the book
+   * moved" from "the paperwork moved".
+   */
+  const salesSeatMoving =
+    values.assignedId !== SHEET_NAME_VALUE &&
+    values.assignedId !== openingSalesValue(kind, initial, people);
+  const backOfficeSeatMoving =
+    values.backOfficeAmId !== SHEET_NAME_VALUE &&
+    values.backOfficeAmId !== openingBackOfficeValue(initial, people);
+  const bookNote = bookUnchangedNote({
+    changingSales: salesSeatMoving,
+    changingBackOffice: backOfficeSeatMoving,
+    salesHolder: initial?.salesAmName ?? null,
+  });
+
   return (
     <Modal
       open={open}
@@ -2357,6 +2375,19 @@ function CustomerFormBody({
             {values.backOfficeAmId === SHEET_NAME_VALUE ? (
               <span className="mt-1 block text-[12px] text-danger">
                 No longer on the staff list. Pick who is doing the paperwork now.
+              </span>
+            ) : null}
+            {/*
+              THE BOOK HAS NOT MOVED, SAID OUT LOUD. Changing the paperwork
+              seat and leaving the book behind is ordinary and is never
+              refused — it is also exactly what happened to forty-two accounts
+              under the reason "Salesperson left", with no screen saying the
+              salesperson still held them. The sentence is shared with the
+              record page's dialog, because two copies drift.
+            */}
+            {bookNote ? (
+              <span className="mt-2 block rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-1.5 text-[12px] text-warn-ink">
+                {bookNote}
               </span>
             ) : null}
           </Field>

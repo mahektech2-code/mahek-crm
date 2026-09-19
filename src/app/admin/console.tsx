@@ -143,6 +143,7 @@ export function AdminConsole({
   platform,
   me,
   isPlatformAdmin,
+  isAdmin,
   initial,
 }: {
   apps: AppDefinition[];
@@ -157,9 +158,30 @@ export function AdminConsole({
   access: AccessRow[];
   feedback: FeedbackData;
   platform: PlatformData;
-  /** The account actually signed in. The console shows who you ARE. */
+  /**
+   * The account actually signed in. The console shows who you ARE.
+   *
+   * `role` here is the LABEL — "Admin", "Manager", "Associate" — because this
+   * is what the header prints. It is display, never authority: see `isAdmin`.
+   */
   me: { name: string; initials: string; role: string };
   isPlatformAdmin: boolean;
+  /**
+   * Holds the `admin` LEVEL on the account, resolved on the server.
+   *
+   * It is its own prop because the thing it used to be was
+   * `me.role === "admin"` — and `me.role` became the hat LABEL when roles
+   * became levels, so the comparison has been `"Admin" === "admin"` ever
+   * since. False for everybody, silently: the one thing it guards is the
+   * "Login as …" item in the People row menu, so that item stopped being
+   * drawn for anyone at all. The whole feature behind it — the token table,
+   * the action, the audit row, the confirmation screen — was working the
+   * entire time and simply had no door.
+   *
+   * A label is a sentence somebody may reword. Nothing may be decided from
+   * one.
+   */
+  isAdmin: boolean;
   /** Where the URL says to open. */
   initial: Address;
 }) {
@@ -179,6 +201,7 @@ export function AdminConsole({
           platform={platform}
           me={me}
           isPlatformAdmin={isPlatformAdmin}
+          isAdmin={isAdmin}
           initial={initial}
         />
         <AdminDrawer />
@@ -232,6 +255,7 @@ function ConsoleShell({
   platform,
   me,
   isPlatformAdmin,
+  isAdmin,
   initial,
 }: {
   apps: AppDefinition[];
@@ -246,6 +270,8 @@ function ConsoleShell({
   platform: PlatformData;
   me: { name: string; initials: string; role: string };
   isPlatformAdmin: boolean;
+  /** Holds the `admin` level — see the note on `AdminConsole`'s own prop. */
+  isAdmin: boolean;
   initial: Address;
 }) {
   // Config writes audit themselves server-side, one row per setting.
@@ -662,7 +688,7 @@ function ConsoleShell({
                   errors={errors}
                   onDraft={(key, value) => setDrafts((d) => ({ ...d, [key]: value }))}
                   isPlatformAdmin={isPlatformAdmin}
-                  isAdmin={me.role === "admin"}
+                  isAdmin={isAdmin}
                   collections={crm.collections}
                   catalogue={catalogue}
                   expensePolicy={expensePolicy}
