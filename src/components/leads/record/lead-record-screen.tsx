@@ -53,6 +53,7 @@ import { CommunicationPanel } from "../communication-panel";
 import { FirstOrderPanel } from "../first-order-panel";
 import { VerificationForm } from "../verification-form";
 import { AdvanceStage } from "./advance-stage";
+import { MarkLost } from "./mark-lost";
 import { HandoverPanel } from "./handover-panel";
 
 /**
@@ -206,6 +207,17 @@ export const RECORD_TABS: ReadonlyArray<{
   },
 ];
 
+/**
+ * The rungs on which "Mark lost" is not a sentence anybody could mean.
+ *
+ * `lost` itself, and the three ends of a ladder — a lead standing on any of
+ * those has bought something. The action would refuse a second loss on its own
+ * (`same_stage`), and would accept the other three without complaint, which is
+ * why they are withheld here rather than left to be refused: a control that is
+ * offered and then refuses is one people press twice.
+ */
+const CLOSED_STAGES = new Set<LeadStage>(["lost", "won", "customer", "active_distributor"]);
+
 /** Which of the four ladders this is, said in words rather than implied. */
 function ladderName(salesType: LeadRecord["salesType"]): string {
   switch (salesType) {
@@ -247,6 +259,7 @@ export function LeadRecordScreen({
   nurture,
   handover,
   handoverReasons,
+  lostReasons,
   discountThresholdPercent,
   creditLimitThresholdPaise,
   canVerify,
@@ -287,6 +300,8 @@ export function LeadRecordScreen({
   nurture: NurtureSchedule;
   handover: HandoverCandidate[];
   handoverReasons: string[];
+  /** `leads.lostReasons`, resolved on the server. Never the literal list. */
+  lostReasons: { code: string; label: string }[];
   discountThresholdPercent: number;
   creditLimitThresholdPaise: number;
   canVerify: boolean;
@@ -320,12 +335,28 @@ export function LeadRecordScreen({
           </>
         }
         actions={
-          <Link
-            href={leadHref(workspace, "leads")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← All leads
-          </Link>
+          <>
+            <Link
+              href={leadHref(workspace, "leads")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← All leads
+            </Link>
+            {/* §5.10 — a lead may be closed from any active rung, by any role.
+                Withheld on the four stages where it would say something false:
+                a lost lead has nothing left to lose, and a lead that reached
+                the book has been WON, so marking it lost would overwrite the
+                record of a sale rather than record a loss. */}
+            {CLOSED_STAGES.has(record.stage) ? null : (
+              <MarkLost
+                customerId={record.customerId}
+                name={record.name}
+                stage={record.stage}
+                lostReasons={lostReasons}
+                canWork={canWork}
+              />
+            )}
+          </>
         }
       />
 

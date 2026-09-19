@@ -460,6 +460,17 @@ export const CAPABILITIES = [
   "customer.assignSalesManager",
   "customer.handOver",
   "customer.classify",
+  /**
+   * §11.6 — VALIDATING A GSTIN, which is not the same act as collecting one.
+   *
+   * The salesman writes the number down standing in the shop and somebody else
+   * checks it is a real business we can invoice. It had no capability because
+   * it had no action: the qualification checklist carried a `gst_verified`
+   * tick, and that tick was writable by anybody holding `lead.work` — which is
+   * the salesman. So the collector certified his own collection, and
+   * "validated once" was a sentence on a checklist rather than a fact.
+   */
+  "lead.gstValidate",
   /*
    * The expense policy: writing a draft, and putting one into force.
    *
@@ -681,6 +692,26 @@ const ADMIN_ONLY: ReadonlySet<Capability> = new Set<Capability>([
  */
 const ACCOUNTS_OR_MANAGER: ReadonlySet<Capability> = new Set<Capability>([
   "sheet.import",
+  /*
+   * §11.6's GST validation, and WHY IT SITS HERE rather than anywhere else.
+   *
+   * The specification gives this to the back office, and the back office is not
+   * a role in MahekOne — it is a SEAT, `customers.back_office_am_id`, held by
+   * somebody whose hat is an ordinary one. So there is no "back office"
+   * capability set to put it in, and inventing one would be inventing the fifth
+   * role this codebase deliberately does not have.
+   *
+   * What it lands on instead is the two desks that already do exactly this kind
+   * of work: accounts, who hold the ledger and are the people who find out the
+   * hard way that a GSTIN is wrong, and managers, so that a team with nobody
+   * named in the back office seat is not simply stuck. That fall-through is the
+   * same one the sample-chase task already takes, and for the same reason.
+   *
+   * The seat holder gets in WITHOUT this capability — see `validateGstin`,
+   * which admits the named back office person on the row directly. The
+   * capability is for everybody else.
+   */
+  "lead.gstValidate",
   /*
    * Setting somebody's target, publishing it, revising it, and reading the
    * coverage/customer shortfall behind it.

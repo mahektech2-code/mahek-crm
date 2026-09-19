@@ -1546,6 +1546,56 @@ export const customers = pgTable(
 
     /* commercial terms */
     gstin: text("gstin"),
+    /**
+     * §11.6 — GST IS COLLECTED ONCE AND VALIDATED ONCE, AND THE TWO ARE
+     * DIFFERENT PEOPLE.
+     *
+     * Taken per the specification, which is explicit that the salesman records
+     * the number and the BACK OFFICE validates it, and that no other role's
+     * screen asks for it again. Until this column existed the qualification
+     * checklist carried a `gst_verified` TICK in `lead_qualification` — writable
+     * by anybody holding `lead.work`, which is the salesman himself. So the man
+     * who typed the number in the shop was also the man certifying it was real,
+     * and "validated once" was a sentence on a checklist rather than a fact
+     * about the account.
+     *
+     * A COLUMN and not a tick, for the reason the distributor ladder already
+     * had one (`distributor_profiles.gst_verified`): a tick says somebody
+     * pressed something, and this has to say WHO and WHEN, because it is the
+     * answer to "can we invoice this business" and it is relied on by the
+     * qualification gate.
+     *
+     * Default FALSE rather than null: an unvalidated GSTIN and no GSTIN at all
+     * are both "we cannot stand behind this number", and a nullable boolean
+     * would invite a third reading of a two-state fact.
+     */
+    gstVerified: boolean("gst_verified").notNull().default(false),
+    gstVerifiedAt: timestamp("gst_verified_at", { withTimezone: true }),
+    gstVerifiedById: text("gst_verified_by_id").references(() => users.id),
+    /**
+     * §4.2 — WHO DECIDES AND WHO ACTUALLY BUYS ARE TWO PEOPLE.
+     *
+     * `leadDecisionMaker` beside this one is who signs off a purchase; this is
+     * who places the order. On a small shop they are the same man and this
+     * stays null; on a fabricator the owner approves a supplier and a
+     * storekeeper rings it in every month, and the storekeeper is who the
+     * telecaller actually speaks to. Collapsing them loses the name of the
+     * person we are going to be dealing with weekly.
+     *
+     * Which is why the qualification condition that reads it is CONDITIONAL:
+     * the specification asks for the buyer "only if different from the
+     * Decision Maker already on record", so a shop where one man does both is
+     * not made to type his name twice.
+     */
+    leadBuyer: text("lead_buyer"),
+    /**
+     * §4.2 — the contact's own address, and it had nowhere to live.
+     *
+     * `users.email` is a MahekOne account; this is the customer's. Nothing on
+     * the lead could hold one, so a shop that asked for its quotation by email
+     * had that address written into a note.
+     */
+    email: text("email"),
     creditTermDays: integer("credit_term_days").notNull().default(30),
     /** Shown on the information tab; falls back to the configured default. */
     creditDays: integer("credit_days"),

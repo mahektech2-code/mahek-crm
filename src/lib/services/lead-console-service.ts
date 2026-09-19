@@ -887,6 +887,11 @@ export type LeadRecord = {
   requiredProductId: string | null;
   requiredProductName: string | null;
   decisionMaker: string | null;
+  /** §4.2 — who places the order, where that is not who approves it. */
+  buyer: string | null;
+  /** §11.6 — whether the back office has checked the GSTIN. Never the
+   * salesman's own tick, which is what the gate read before this existed. */
+  gstVerified: boolean;
   creditDaysWanted: number | null;
   application: string | null;
   customerType: string | null;
@@ -991,6 +996,8 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
            c.lead_required_product_id as "requiredProductId",
            p.name as "requiredProductName",
            c.lead_decision_maker as "decisionMaker",
+           c.lead_buyer as "buyer",
+           c.gst_verified as "gstVerified",
            c.lead_credit_days_wanted as "creditDaysWanted",
            c.lead_application as application,
            c.customer_type::text as "customerType",
@@ -1153,9 +1160,12 @@ export function gateInputFor(record: LeadRecord): LeadGateInput {
     requiredProductId: record.requiredProductId,
     contactPerson: record.contactPerson,
     decisionMaker: record.decisionMaker,
+    buyer: record.buyer,
     creditDaysWanted: record.creditDaysWanted,
     application: record.application,
     gstin: record.gstin,
+    /* §11.6 — somebody else's check, not the salesman's tick. */
+    gstVerified: record.gstVerified,
     nextAction: record.nextAction,
     nextActionDate: record.nextActionDate,
     nextActionOwnerId: record.nextActionOwnerId,

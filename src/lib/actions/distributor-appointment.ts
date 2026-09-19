@@ -18,7 +18,7 @@ import {
   requireCapability,
 } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
-import { approvalRouteReason } from "@/lib/engines/lead-gates";
+import { approvalRouteReason, managementRouteReason } from "@/lib/engines/lead-gates";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
 import { advanceLeadStage } from "@/lib/actions/leads";
@@ -355,9 +355,15 @@ const termsSchema = z.object({
  * with a second copy of the thresholds is how the warning and the behaviour come
  * to disagree, and the half that drifts is always the half somebody reads.
  *
- * Where it routes, a `stepIndex` 1 row is created BESIDE the step 0 one rather
- * than replacing it: the owner is escalated TO, never substituted for. Skipping
- * the sales manager removes the only person who has actually met the candidate.
+ * The `stepIndex` 1 row is created BESIDE the step 0 one rather than replacing
+ * it: management are added TO the chain, never substituted for the sales
+ * manager, because skipping him removes the only person who has actually met
+ * the candidate.
+ *
+ * AND IT IS CREATED EVERY TIME, not only on an escalation. What the thresholds
+ * decide is the WORDS on the row, not whether management see it — the
+ * specification puts "Who acts: Management only" against `distributor_approval`
+ * and the gate has always demanded that signature. See `managementRouteReason`.
  */
 export async function agreeCommercialTerms(
   customerId: string,
@@ -393,7 +399,19 @@ export async function agreeCommercialTerms(
        write and the routing have to describe the same set of numbers, and
        reading back after the update would answer for whatever a concurrent
        save happened to leave there. */
-    const routeReason = approvalRouteReason(terms, thresholds);
+    /* TWO ANSWERS FROM ONE SET OF NUMBERS, AND THEY ARE NOT THE SAME QUESTION.
+       `escalation` is null where nothing was above a threshold and no
+       exclusivity was granted — it is what the record screen's callout reads,
+       and it is the only thing that still cares about the §12 triggers. The
+       step 1 ROW is written either way, under `managementRouteReason`, because
+       the specification puts "Who acts: Management only" against
+       `distributor_approval` and the gate has always demanded a management
+       signature there. Writing the row only on an escalation is what stranded
+       every ordinary candidate in `commercial_discussion` for good: the gate
+       asked for an approval that nothing in the product could create, so the
+       refusal named a step that did not exist. */
+    const escalation = approvalRouteReason(terms, thresholds);
+    const routeReason = managementRouteReason(terms, thresholds);
     const now = new Date();
 
     await db.transaction(async (tx) => {
@@ -417,50 +435,53 @@ export async function agreeCommercialTerms(
           },
         });
 
-      if (routeReason) {
-        const [existing] = await tx
-          .select({ id: mbosApprovals.id })
-          .from(mbosApprovals)
-          .where(
-            and(
-              eq(mbosApprovals.type, "distributor_appointment"),
-              eq(mbosApprovals.subjectType, SUBJECT_TYPE),
-              eq(mbosApprovals.subjectId, customerId),
-              eq(mbosApprovals.stepIndex, 1),
-              eq(mbosApprovals.state, "pending"),
-            ),
-          );
+      /* THE STEP 1 ROW IS WRITTEN WHATEVER THE NUMBERS SAY. It used to be
+         written only on an escalation, which meant an ordinary candidate had
+         nobody to approve it and could never leave this rung — see
+         `managementRouteReason`, which holds the argument and the
+         specification's own fallback wording. */
+      const [existing] = await tx
+        .select({ id: mbosApprovals.id })
+        .from(mbosApprovals)
+        .where(
+          and(
+            eq(mbosApprovals.type, "distributor_appointment"),
+            eq(mbosApprovals.subjectType, SUBJECT_TYPE),
+            eq(mbosApprovals.subjectId, customerId),
+            eq(mbosApprovals.stepIndex, 1),
+            eq(mbosApprovals.state, "pending"),
+          ),
+        );
 
-        if (existing) {
-          /* Terms renegotiated while management were still looking at them.
-             The row stays — a second one would put the same candidate in the
-             queue twice — and its reason is restated, because what management
-             are being asked to allow has changed. */
-          await tx
-            .update(mbosApprovals)
-            .set({
-              routeReason,
-              reason: termsSentence(parsed.data),
-              requestedAt: now,
-              updatedAt: now,
-              updatedById: ctx.user.id,
-            })
-            .where(eq(mbosApprovals.id, existing.id));
-        } else {
-          await tx.insert(mbosApprovals).values({
-            id: id("apr"),
-            type: "distributor_appointment",
-            requestedByUserId: ctx.user.id,
-            subjectType: SUBJECT_TYPE,
-            subjectId: customerId,
+      if (existing) {
+        /* Terms renegotiated while management were still looking at them.
+           The row stays — a second one would put the same candidate in the
+           queue twice — and its reason is restated, because what management
+           are being asked to allow has changed. */
+        await tx
+          .update(mbosApprovals)
+          .set({
+            routeReason,
             reason: termsSentence(parsed.data),
             requestedAt: now,
-            stepIndex: 1,
-            routeReason,
-            createdById: ctx.user.id,
+            updatedAt: now,
             updatedById: ctx.user.id,
-          });
-        }
+          })
+          .where(eq(mbosApprovals.id, existing.id));
+      } else {
+        await tx.insert(mbosApprovals).values({
+          id: id("apr"),
+          type: "distributor_appointment",
+          requestedByUserId: ctx.user.id,
+          subjectType: SUBJECT_TYPE,
+          subjectId: customerId,
+          reason: termsSentence(parsed.data),
+          requestedAt: now,
+          stepIndex: 1,
+          routeReason,
+          createdById: ctx.user.id,
+          updatedById: ctx.user.id,
+        });
       }
 
       await writeTimelineEvent(tx, {
@@ -470,9 +491,14 @@ export async function agreeCommercialTerms(
         sourceRecordId: customerId,
         occurredAt: now,
         actorUserId: ctx.user.id,
-        summary: routeReason
-          ? `Terms agreed and sent to management: ${termsSentence(parsed.data)}`
-          : `Terms agreed: ${termsSentence(parsed.data)}`,
+        /* Both sentences say it went to management, because both did. What
+           `escalation` changes is WHY, and that is worth the extra clause on a
+           record somebody reads months later — "sent up because exclusivity was
+           granted" and "sent up because everything is" are different stories
+           about the same row. */
+        summary: escalation
+          ? `Terms agreed and sent to management (${escalation.replace(/_/g, " ")}): ${termsSentence(parsed.data)}`
+          : `Terms agreed and sent to management: ${termsSentence(parsed.data)}`,
       });
 
       await tx.insert(auditLog).values({
@@ -483,16 +509,20 @@ export async function agreeCommercialTerms(
         action: "distributor.terms.agreed",
         entityType: "distributor_profiles",
         entityId: customerId,
-        afterState: { ...terms, routeReason } as never,
+        afterState: { ...terms, routeReason, escalation } as never,
       });
     });
 
     refresh();
+    /* It never says "Terms recorded." on its own any more. That full stop was
+       the whole of what an ordinary candidate was told, and it read as the end
+       of the work when in fact it was the start of a wait nobody had been told
+       about. Management see every appointment; the sentence says so. */
     return ok(
       null,
-      routeReason
-        ? "Terms recorded. These need management's approval, so it has gone up."
-        : "Terms recorded.",
+      escalation
+        ? "Terms recorded. These are above what a sales manager may allow, so management have them."
+        : "Terms recorded. Management have the appointment for its standard review.",
     );
   } catch (e) {
     return fromThrown(e);
@@ -530,6 +560,17 @@ const decisionSchema = z.object({
  * step 0 approval on a candidate with an outstanding step 1 advances nothing —
  * it records that the sales manager is content, which is a real fact and not
  * an appointment.
+ *
+ * WHICH RUNG A YES MOVES THE LEAD TO DEPENDS ON WHICH STEP SAID IT, and for a
+ * long time it did not. `to` was the literal `distributor_approval` whatever
+ * had just been decided, so a step 0 yes — which happens while the lead is
+ * still at `management_review` — asked the ladder to jump a rung, skipping
+ * `commercial_discussion` entirely. `advanceLeadStage` refused it on the shared
+ * gate, exactly as it should, and the refusal came back as a warning nobody
+ * reads: the approval row then said the sales manager had put them forward
+ * while `customers.leadStage` had not moved at all, and the salesman's next
+ * screen still asked him to get a recommendation he already had. Step 0 opens
+ * the commercial conversation; step 1 is the appointment.
  */
 export async function decideDistributorAppointment(
   approvalId: string,
@@ -606,7 +647,14 @@ export async function decideDistributorAppointment(
             eq(mbosApprovals.state, "pending"),
           ),
         );
-      appointed = approve && stillPending.length === 0;
+      /* AND THE HIGHEST STEP IS MANAGEMENT'S, WHICH HAS TO BE SAID RATHER THAN
+         INFERRED FROM AN EMPTY QUEUE. Step 1 is written when the terms are
+         agreed, which is after step 0 has been answered — so at the moment a
+         step 0 yes is recorded there is genuinely nothing outstanding, and
+         "nothing pending" alone would have read that as an appointment. It is
+         not one: the sales manager has recommended them and nobody has
+         appointed anybody. */
+      appointed = approve && approval.stepIndex >= 1 && stillPending.length === 0;
 
       await writeTimelineEvent(tx, {
         customerId: approval.subjectId,
@@ -656,34 +704,50 @@ export async function decideDistributorAppointment(
 
     refresh();
 
-    if (!appointed) {
-      return ok(
-        null,
-        approve
-          ? "Recorded. It still needs management's approval."
-          : "Refused, and the reason is on the record.",
-      );
+    if (!approve) {
+      return ok(null, "Refused, and the reason is on the record.");
     }
 
     /*
-     * Appointed — and the ladder is moved by the action that owns the ladder.
+     * A yes moves the ladder, and WHICH RUNG depends on which step said it.
      *
-     * `advanceLeadStage` holds the gate engine, the transition row and the
-     * `kind` flip; re-implementing any of that here would be a second copy of
-     * §28 that drifts. A refusal from it does NOT undo the decision: the
-     * appointment is recorded and true, and the stage is a projection of it —
-     * so it comes back as a warning naming what the gate is still waiting on,
-     * which is something somebody can act on.
+     * The move is made by the action that owns the ladder. `advanceLeadStage`
+     * holds the gate engine, the transition row and the `kind` flip;
+     * re-implementing any of that here would be a second copy of §28 that
+     * drifts. A refusal from it does NOT undo the decision: the signature is
+     * recorded and true, and the stage is a projection of it — so it comes back
+     * as a warning naming what the gate is still waiting on, which is something
+     * somebody can act on.
+     *
+     * A step 1 yes on a candidate whose step 0 is somehow still outstanding
+     * moves nothing at all. That ordering should not happen — step 1 is written
+     * after step 0 is answered — but an approval queue is a screen two people
+     * can be looking at, and appointing somebody no sales manager has
+     * recommended is the one outcome the two-step chain exists to prevent.
      */
+    const to = appointed
+      ? "distributor_approval"
+      : approval.stepIndex === 0
+        ? "commercial_discussion"
+        : null;
+
+    if (!to) {
+      return ok(null, "Recorded. The sales manager has still to put them forward.");
+    }
+
     const moved = await advanceLeadStage({
       customerId: approval.subjectId,
-      to: "distributor_approval",
-      note: "Appointment approved",
+      to,
+      note: appointed ? "Appointment approved" : "Put forward by the sales manager",
     });
 
+    const done = appointed
+      ? "Appointed. They are billable from here."
+      : "Recorded. The commercial terms can be agreed now, and management have the last word.";
+
     return moved.ok
-      ? ok(null, "Appointed. They are billable from here.")
-      : ok(null, "Appointed. The ladder did not move: " + moved.error, [moved.error]);
+      ? ok(null, done)
+      : ok(null, done + " The ladder did not move: " + moved.error, [moved.error]);
   } catch (e) {
     return fromThrown(e);
   }

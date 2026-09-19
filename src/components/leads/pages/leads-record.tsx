@@ -183,6 +183,10 @@ export async function Body({
       nurture={nurture}
       handover={handover}
       handoverReasons={config["people.amChangeReasons"]}
+      /* §26's ten codes as a MANAGER may have reworded them. The action
+         validates what arrives against this same setting, so a picker built
+         from the literal list would offer a code the server refuses. */
+      lostReasons={config["leads.lostReasons"]}
       discountThresholdPercent={config["leads.distributorDiscountApprovalPercent"]}
       creditLimitThresholdPaise={config["leads.distributorCreditLimitApprovalPaise"]}
       canVerify={await canLead(user, "lead.verify")}

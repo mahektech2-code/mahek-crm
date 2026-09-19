@@ -87,6 +87,10 @@ const LEAD_COLUMNS = {
   leadCompetitor: customers.leadCompetitor,
   leadRequiredProductId: customers.leadRequiredProductId,
   leadDecisionMaker: customers.leadDecisionMaker,
+  /* §4.2 / §11.6 — the buyer, and somebody else's check on the GST number.
+     Both are read by the qualification gate. */
+  leadBuyer: customers.leadBuyer,
+  gstVerified: customers.gstVerified,
   leadCreditDaysWanted: customers.leadCreditDaysWanted,
   leadApplication: customers.leadApplication,
   leadQualification: customers.leadQualification,
@@ -252,9 +256,16 @@ export async function leadGateInput(customerId: string): Promise<LeadGateInput |
     requiredProductId: lead.leadRequiredProductId,
     contactPerson: lead.contactPerson,
     decisionMaker: lead.leadDecisionMaker,
+    /* §4.2 — who PLACES the order, where that is somebody other than who
+       approves it. The qualification gate asks for it only in that case. */
+    buyer: lead.leadBuyer,
     creditDaysWanted: lead.leadCreditDaysWanted,
     application: lead.leadApplication,
     gstin: lead.gstin,
+    /* §11.6 — the back office's own answer, and NOT the salesman's checklist
+       tick, which is what the gate used to read. The number and the check are
+       two different people's statements and the gate wants both. */
+    gstVerified: lead.gstVerified,
 
     nextAction: lead.leadNextAction,
     nextActionDate: lead.leadNextActionDate,

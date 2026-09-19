@@ -34,11 +34,28 @@ const GROUP_TITLES: Record<string, string> = {
   commitment: "Commitment",
 };
 
-/** The three things §12 names, said in the words the stored code means. */
+/**
+ * The three things §12 names, said in the words the stored code means — and the
+ * fourth, which names nothing.
+ *
+ * `standard` is what a step 1 row carries when none of the three triggers
+ * applied. Management review every appointment, so the row exists either way;
+ * what the triggers decide is whether there was a reason BEYOND the ordinary
+ * one. The specification's own wording for the fallback is "standard review",
+ * and it is spelled out here rather than left to the `replace(/_/g, " ")`
+ * default underneath, which would print the bare word "standard" against a
+ * label reading "Why this step" and answer nothing.
+ *
+ * `normal` is the step 0 row's, written by `submitForManagementReview` since
+ * the module shipped. It is included so the sales manager's own step does not
+ * fall through to the raw code either.
+ */
 const ROUTE_REASON_WORDS: Record<string, string> = {
   exclusivity: "Territory exclusivity is being granted",
   over_discount: "The discount is above what a sales manager may allow",
   over_credit_limit: "The credit limit is above what a sales manager may allow",
+  standard: "Standard review — management sign every appointment",
+  normal: "The sales manager's own step, which every candidate has",
 };
 
 type Acting =
@@ -264,7 +281,12 @@ export function AppointmentRecordScreen({
           {
             label: "Signatures",
             value: `${steps.filter((s) => s.state !== "pending").length} / 2`,
-            sub: routeReason ? "management required" : "manager may be enough",
+            /* It used to read "manager may be enough" where nothing was above a
+               threshold, and that promised a path the gate never had: the
+               `distributor_approval` rung has always demanded management's
+               signature, so an ordinary candidate told a manager could settle
+               it was a candidate nobody could appoint. Both steps, always. */
+            sub: routeReason ? "management, and above a threshold" : "management sign every one",
           },
           {
             label: "Their salesmen",
@@ -374,10 +396,12 @@ export function AppointmentRecordScreen({
             </p>
           ) : (
             <p className="mt-1 text-[13px] text-body">
-              <b>Ordinary.</b> Nothing here is above a threshold and no exclusivity is being
-              granted, so the sales manager&rsquo;s own signature settles it — a discount at or
-              under {discountThreshold}% and a credit limit at or under{" "}
-              {money(creditLimitThresholdPaise)}.
+              <b>Standard review.</b> Nothing here is above a threshold and no exclusivity is
+              being granted — a discount at or under {discountThreshold}% and a credit limit at or
+              under {money(creditLimitThresholdPaise)} — so this is in front of management as an
+              ordinary appointment rather than an escalated one. It is still in front of them:
+              only management appoint a distributor, whatever the numbers say, and the sales
+              manager&rsquo;s step is a recommendation.
             </p>
           )}
           <p className="mt-2 text-[12px] text-muted">
