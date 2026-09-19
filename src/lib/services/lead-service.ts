@@ -91,6 +91,14 @@ const LEAD_COLUMNS = {
      Both are read by the qualification gate. */
   leadBuyer: customers.leadBuyer,
   gstVerified: customers.gstVerified,
+  /* §5.3 — read by the gate through `figuresAreStale` and by the record page,
+     which prints the date so somebody can see how old the figures are rather
+     than only being refused by them. */
+  leadFiguresConfirmedAt: customers.leadFiguresConfirmedAt,
+  leadQualificationReview: customers.leadQualificationReview,
+  leadQualificationReviewNote: customers.leadQualificationReviewNote,
+  leadPriority: customers.leadPriority,
+  leadHoldResumeDate: customers.leadHoldResumeDate,
   leadCreditDaysWanted: customers.leadCreditDaysWanted,
   leadApplication: customers.leadApplication,
   leadQualification: customers.leadQualification,
@@ -140,9 +148,35 @@ export async function leadRow(customerId: string): Promise<LeadRow | null> {
  * gate is about the second. Counting the first would walk a lead onto the book
  * on the strength of an order accounts were about to decline.
  */
+/**
+ * §5.3 — are the four conversion figures old enough to need standing behind?
+ *
+ * ONE definition, because three different screens ask it and a second reading
+ * would let the lead record and the gate disagree about the same shop on the
+ * same afternoon. It is computed HERE rather than in the engine for the reason
+ * every engine here takes precomputed facts: the engine is pure and has no
+ * clock, and whether sixty days have passed is a question about the calendar.
+ *
+ * A window of 0 switches the check off entirely, which is what the setting's
+ * own minimum is for. Never confirmed and past the window are the SAME answer
+ * — stale — because a figure nobody has ever stood behind is exactly the case
+ * this exists to catch, and it is every lead raised before the column existed.
+ */
+export function figuresAreStale(
+  confirmedAt: Date | null | undefined,
+  freshDays: number,
+  now: Date = new Date(),
+): boolean {
+  if (!freshDays || freshDays <= 0) return false;
+  if (!confirmedAt) return true;
+  const age = now.getTime() - confirmedAt.getTime();
+  return age > freshDays * 24 * 60 * 60 * 1000;
+}
+
 export async function leadGateInput(customerId: string): Promise<LeadGateInput | null> {
   const lead = await leadRow(customerId);
   if (!lead) return null;
+  const gateConfig = await getConfig();
 
   const [
     visitCount,
@@ -266,6 +300,14 @@ export async function leadGateInput(customerId: string): Promise<LeadGateInput |
        tick, which is what the gate used to read. The number and the check are
        two different people's statements and the gate wants both. */
     gstVerified: lead.gstVerified,
+    /* §5.3 — the two halves of what replaced the four questions that were cut
+       out of the qualification checklist: the figures still holding, and a
+       manager who said the checklist was not finished being listened to. */
+    figuresStale: figuresAreStale(
+      lead.leadFiguresConfirmedAt,
+      gateConfig["leads.figuresFreshDays"],
+    ),
+    qualificationReview: lead.leadQualificationReview,
 
     nextAction: lead.leadNextAction,
     nextActionDate: lead.leadNextActionDate,

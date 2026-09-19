@@ -341,6 +341,80 @@ describe("§5 — the eight before anybody may send a sample", () => {
     assert.ok(missingIds(trialReady({ gstin: null }), "sample_trial").includes("gst_verified"));
   });
 
+  /*
+   * §5.3 — the other half of cutting the checklist to eight.
+   *
+   * Four questions were removed from this gate because they are asked, and
+   * refused, one rung up. What replaces them is not a re-ask: it is one
+   * confirmation that the figures still hold, and it bites HERE, where the
+   * cost is — a stale figure costs nothing while somebody is still talking to
+   * the shop, and costs stock and a courier the moment a can leaves.
+   */
+  describe("the conversion figures have to be current", () => {
+    test("stale figures refuse the sample", () => {
+      const v = gateTo(trialReady({ figuresStale: true }), "sample_trial");
+      assert.equal(v.open, false);
+      assert.deepEqual(v.missing.map((c) => c.id), ["figures_fresh"]);
+    });
+
+    test("fresh figures pass", () => {
+      assert.equal(gateTo(trialReady({ figuresStale: false }), "sample_trial").open, true);
+    });
+
+    /* Not stated and not stale are the same answer: a deployment with the
+       check switched off must not have every lead refused. */
+    test("saying nothing is not staleness", () => {
+      assert.equal(gateTo(trialReady(), "sample_trial").open, true);
+    });
+
+    /* It refuses the SAMPLE and nothing earlier. A lead still being talked to
+       is not held up by a figure from March. */
+    test("it does not hold the rung below", () => {
+      const v = gateTo(
+        { ...trialReady({ figuresStale: true }), stage: "prospect", verifiedAt: new Date() },
+        "qualification",
+      );
+      assert.equal(v.open, true);
+    });
+  });
+
+  /*
+   * §5.3 — A MANAGER WHO SAID IT WAS NOT FINISHED IS LISTENED TO. A reversal:
+   * the review was recorded and changed nothing, so "this is not finished" was
+   * a comment the lead walked straight past.
+   */
+  describe("the manager's review holds the lead", () => {
+    for (const verdict of ["incomplete", "clarification"] as const) {
+      test(`${verdict} refuses the sample`, () => {
+        const v = gateTo(trialReady({ qualificationReview: verdict }), "sample_trial");
+        assert.equal(v.open, false);
+        assert.deepEqual(v.missing.map((c) => c.id), ["manager_review_open"]);
+      });
+    }
+
+    test("verified passes", () => {
+      assert.equal(
+        gateTo(trialReady({ qualificationReview: "verified" }), "sample_trial").open,
+        true,
+      );
+    });
+
+    /* THE ONE THAT KEEPS IT SHIPPABLE. An unreviewed checklist passes —
+       otherwise every lead in the book stops on deploy day, waiting on a
+       review nobody was ever asked for. */
+    test("an unreviewed checklist is not a refusal", () => {
+      assert.equal(gateTo(trialReady({ qualificationReview: null }), "sample_trial").open, true);
+      assert.equal(gateTo(trialReady(), "sample_trial").open, true);
+    });
+
+    test("the refusal names which of the two it was", () => {
+      const inc = gateTo(trialReady({ qualificationReview: "incomplete" }), "sample_trial");
+      const clr = gateTo(trialReady({ qualificationReview: "clarification" }), "sample_trial");
+      assert.match(inc.missing[0].says, /incomplete/);
+      assert.match(clr.missing[0].says, /clarification/);
+    });
+  });
+
   /* §23 — a sample sent to a counter nobody bills is stock nobody can account
      for. */
   test("a third-party shop with no distributor cannot be sent a sample", () => {

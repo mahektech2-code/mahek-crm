@@ -182,6 +182,30 @@ export type LeadGateInput = {
    */
   buyer?: string | null;
   /**
+   * §5.3 — TRUE where the four conversion figures are older than
+   * `leads.figuresFreshDays` and nobody has said they still hold.
+   *
+   * A BOOLEAN the caller works out, not a date and a threshold and a clock
+   * handed to an engine that is pure and means to stay that way. It is the same
+   * shape as `prospectReasonRecorded` below, and for the same reason: the
+   * engine answers "may this move", and whether sixty days have passed is a
+   * question about the calendar rather than about the lead.
+   *
+   * `false` and `undefined` are the same answer here — not stale — because a
+   * deployment with the check switched off, and one where somebody confirmed
+   * the figures this morning, should both simply pass.
+   */
+  figuresStale?: boolean;
+  /**
+   * §5.3 — the sales manager's verdict on the qualification checklist.
+   *
+   * `incomplete` and `clarification` HOLD the lead, on Mahek's instruction.
+   * Undefined is a checklist nobody has reviewed, which passes: demanding a
+   * review nobody was ever asked for would stop every lead in the book on the
+   * day it shipped.
+   */
+  qualificationReview?: "verified" | "incomplete" | "clarification" | null;
+  /**
    * §11.6 — the BACK OFFICE's answer, not the salesman's tick. `gstin` above
    * is the number somebody wrote down; this is whether anybody checked it.
    */
@@ -396,6 +420,52 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
           }),
         );
       }
+      /*
+       * §5.3 — THE FIGURES HAVE TO BE CURRENT, which is the other half of
+       * cutting the checklist from twelve questions to eight.
+       *
+       * Those four — the monthly requirement, the potential, the product and
+       * the competitor — are captured once at Suspect to Prospect and
+       * deliberately not re-asked here. Mahek chose that AND asked for the gap
+       * it leaves to be closed: a sample must not go out on a requirement that
+       * was true in March. So nothing is re-asked and one thing is confirmed.
+       *
+       * It refuses the SAMPLE rather than the stage below it, because that is
+       * where the cost is. A stale figure costs nothing while somebody is
+       * still talking to the shop; it costs stock, a courier and a review
+       * nobody can interpret the moment a can leaves the godown.
+       */
+      if (i.figuresStale) {
+        out.push({
+          id: "figures_fresh",
+          says: "Confirm the monthly requirement, the potential, the product and the competitor still hold",
+        });
+      }
+
+      /*
+       * §5.3 — AND A MANAGER WHO SAID IT WAS NOT FINISHED IS NOW LISTENED TO.
+       *
+       * This is a reversal. The manager's review was recorded and changed
+       * nothing: the checklist alone decided, so he could write "this is not
+       * finished, go back and ask him about the credit" and watch the lead
+       * move to a sample regardless. A verdict nobody has to answer is a
+       * comment, and people stop writing comments nobody answers.
+       *
+       * Only the two NEGATIVE verdicts hold. An unreviewed checklist passes —
+       * demanding a review that nobody has been asked for would stop the whole
+       * book on the day this shipped, which is the one way to make a new gate
+       * hated before anybody understands it.
+       */
+      if (i.qualificationReview === "incomplete" || i.qualificationReview === "clarification") {
+        out.push({
+          id: "manager_review_open",
+          says:
+            i.qualificationReview === "incomplete"
+              ? "Your sales manager marked this checklist incomplete — answer his note and ask him to look again"
+              : "Your sales manager asked for a clarification — answer it and ask him to look again",
+        });
+      }
+
       /* §23 — a shop we do not invoice has to say who does, before it is given
          anything. A sample sent to a counter nobody bills is stock nobody can
          account for. */

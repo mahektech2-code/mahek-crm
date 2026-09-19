@@ -2895,6 +2895,37 @@ export const SETTINGS = [
     max: 30,
   },
   {
+    key: "leads.figuresFreshDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Conversion figures go stale after",
+    description:
+      "Days. The monthly requirement, the potential, the product and the competitor are captured once when a suspect becomes a prospect and the qualification checklist deliberately stops re-asking them. Past this many days somebody has to say they still hold before a sample may be sent - one confirmation on one screen, not four fields retyped. 0 switches the check off.",
+    default: 60,
+    min: 0,
+    max: 365,
+  },
+  {
+    key: "leads.sources",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Where a lead came from",
+    description:
+      "The only answers to 'how did we find this one'. A CODE and a label, like every other list here, so a source can be reworded without every lead raised before today losing its answer - and so 'which sources actually produce customers' is a question somebody can ask, which free text could never answer. Editing this list is how Mahek adds a channel; nothing in the code names a source.",
+    default: [
+      { code: "salesman_visit", label: "Found by a salesman on his beat" },
+      { code: "telecalling", label: "Telecalling - cold" },
+      { code: "website", label: "Website enquiry" },
+      { code: "customer_referral", label: "Referred by an existing customer" },
+      { code: "dealer_referral", label: "Referred by a dealer or distributor" },
+      { code: "exhibition", label: "Exhibition or trade fair" },
+      { code: "walk_in", label: "Walked in to the office or godown" },
+      { code: "phone_enquiry", label: "Rang us themselves" },
+      { code: "online", label: "Social media or an online listing" },
+      { code: "other", label: "Other" },
+    ],
+  },
+  {
     key: "leads.distributorDiscountApprovalPercent",
     type: "integer",
     category: "mbos-leads",
@@ -3846,6 +3877,8 @@ export type Config = {
   "leads.overrideReasons": { code: string; label: string }[];
   "leads.sampleReviewChaseDays": number[];
   "leads.verificationDueDays": number;
+  "leads.figuresFreshDays": number;
+  "leads.sources": { code: string; label: string }[];
   "leads.distributorDiscountApprovalPercent": number;
   "leads.distributorCreditLimitApprovalPaise": number;
 

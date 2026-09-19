@@ -1079,6 +1079,43 @@ export const customerPotentialEnum = pgEnum("customer_potential", [
   "low",
 ]);
 
+/**
+ * §4.1 — HOW HARD TO PUSH, as against how much it is worth.
+ *
+ * Deliberately NOT `customerPotentialEnum` above, though the three words are
+ * the same. Potential is a judgement about the ACCOUNT — what it could spend in
+ * a month — and it is derived from figures. This is a judgement about the WORK:
+ * which of forty leads a salesman should get to first. A big shop nobody can
+ * reach this quarter is high potential and low priority, and one list cannot
+ * hold both readings.
+ *
+ * Mahek's instruction is that the MANAGER controls it, which is the whole
+ * reason it is a column rather than a sort order: a priority the person being
+ * measured can set himself is a priority that follows whatever he feels like
+ * doing. Null means nobody has judged it, and is not the same as low.
+ */
+export const leadPriorityEnum = pgEnum("lead_priority", ["high", "medium", "low"]);
+
+/**
+ * §5.3 — the sales manager's verdict on a salesman's qualification checklist.
+ *
+ * `incomplete` and `clarification` BLOCK, on Mahek's instruction, which is a
+ * reversal: the review used to be recorded and change nothing, so a manager
+ * could write "this is not finished" and watch the lead move on regardless.
+ * The checklist alone decided. That made the review a comment rather than a
+ * gate, and a comment nobody has to answer is one people stop writing.
+ *
+ * `verified` is the manager standing behind the salesman's answers. Null is a
+ * checklist nobody has reviewed yet, which does NOT block — demanding a review
+ * that nobody has been asked for would stop every lead in the book on the day
+ * it shipped.
+ */
+export const leadQualificationReviewEnum = pgEnum("lead_qualification_review", [
+  "verified",
+  "incomplete",
+  "clarification",
+]);
+
 export const customers = pgTable(
   "customers",
   {
@@ -1588,6 +1625,65 @@ export const customers = pgTable(
      * not made to type his name twice.
      */
     leadBuyer: text("lead_buyer"),
+    /**
+     * §4.1 — the manager's judgement of how hard to push this lead.
+     *
+     * Set by a manager and by nobody else, which is checked in the action
+     * rather than by hiding the control. Null means unjudged.
+     */
+    leadPriority: leadPriorityEnum("lead_priority"),
+    /**
+     * §5.3 — WHEN THE FOUR CONVERSION FIGURES WERE LAST STOOD BEHIND.
+     *
+     * The monthly requirement, the potential, the product and the competitor
+     * are captured once, at Suspect to Prospect, and the qualification
+     * checklist deliberately stops re-asking them. That is what Mahek chose,
+     * AND he asked for the gap it leaves to be closed: a sample must not go out
+     * on a requirement that was true in March.
+     *
+     * So this is not a second copy of those figures and cannot drift from them.
+     * It is a date saying somebody looked at them and said they still hold. The
+     * gate compares it against `leads.figuresFreshDays`; confirming is one act
+     * on one screen, not four fields retyped.
+     *
+     * Null on every lead that existed before this column, which reads as "never
+     * confirmed" — correct, and deliberately not backfilled from
+     * `lead_stage_since`: a date invented here would assert that somebody
+     * checked when nobody did, on exactly the figures this exists to protect.
+     */
+    leadFiguresConfirmedAt: timestamp("lead_figures_confirmed_at", { withTimezone: true }),
+    leadFiguresConfirmedById: text("lead_figures_confirmed_by_id").references(() => users.id),
+    /**
+     * §5.3 — the manager's verdict on the qualification checklist, and the note
+     * that goes with it.
+     *
+     * `incomplete` and `clarification` hold the lead at qualification until the
+     * salesman answers and somebody reviews again. The note is what he is meant
+     * to act on, so it is required when the verdict is not `verified` — a
+     * refusal with no sentence teaches nothing.
+     */
+    leadQualificationReview: leadQualificationReviewEnum("lead_qualification_review"),
+    leadQualificationReviewNote: text("lead_qualification_review_note"),
+    leadQualificationReviewedAt: timestamp("lead_qualification_reviewed_at", {
+      withTimezone: true,
+    }),
+    leadQualificationReviewedById: text("lead_qualification_reviewed_by_id").references(
+      () => users.id,
+    ),
+    /**
+     * §— ON HOLD NOW HAS TO SAY WHEN IT COMES BACK.
+     *
+     * Parking a lead already demanded a reason. Mahek's instruction adds a
+     * RESUME DATE, and the reasoning is the failure the reason alone did not
+     * prevent: "back after Diwali" is a sentence nobody is watching, so a
+     * parked lead stayed parked until somebody happened to scroll past it. A
+     * date is a thing a list can be built from.
+     *
+     * Required by the action whenever a lead is parked, alongside the reason
+     * and the next action — all three, because a lead that comes back on a date
+     * with nothing scheduled comes back to nobody.
+     */
+    leadHoldResumeDate: date("lead_hold_resume_date"),
     /**
      * §4.2 — the contact's own address, and it had nowhere to live.
      *
