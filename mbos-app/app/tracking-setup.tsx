@@ -1,5 +1,5 @@
 import React from 'react';
-import { View } from 'react-native';
+import { AppState, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
@@ -11,6 +11,8 @@ import {
   requestBatteryExemption,
   thisOem,
 } from '../src/native/keepalive';
+import { batteryExemption } from '../src/native/phone-setup';
+import type { BatteryExemption } from '../src/engines/phone-readiness';
 import { useStore } from '../src/state/store';
 import { color as C, radius, weight } from '../src/theme/tokens';
 
@@ -44,13 +46,50 @@ export default function TrackingSetupScreen() {
   const notify = useStore((s) => s.notify);
   const [steps, setSteps] = React.useState<KeepAliveStep[]>([]);
   const [opened, setOpened] = React.useState<Record<string, boolean>>({});
+  /*
+   * WHAT THE PHONE ACTUALLY SAYS ABOUT THE BATTERY STEP.
+   *
+   * This screen drew a number in a circle for "we opened that screen for you"
+   * and nothing whatever for "and did it work" — on the ONE step of the two
+   * where Android will answer the question. So a salesman who tapped Allow and
+   * one who dismissed the dialog left this screen looking identical, which is
+   * the same two-kinds-of-day failure the attendance selfie's skip button
+   * produced.
+   *
+   * `unknown` stays silent rather than guessing: iOS, a build without the
+   * native module, a ROM that refuses. Silence is what "we could not check"
+   * looks like, and it is never drawn as a tick.
+   */
+  const [exemption, setExemption] = React.useState<BatteryExemption>('unknown');
+
+  const reread = React.useCallback(() => {
+    void batteryExemption()
+      .then(setExemption)
+      .catch(() => setExemption('unknown'));
+  }, []);
 
   useFocusEffect(
     React.useCallback(() => {
       setSteps(keepAliveSteps(thisOem()));
       void markAsked();
-    }, []),
+      reread();
+    }, [reread]),
   );
+
+  /*
+   * ASKED AGAIN WHEN HE COMES BACK FROM SETTINGS, which is the only moment the
+   * answer can have changed. The system dialog puts MBOS in the background, so
+   * reading straight after the button press would read the state as it was
+   * before he had answered — and a screen still saying "battery saving is on"
+   * after he has just switched it off is how somebody concludes the app is
+   * wrong about his phone and stops believing the rest of it.
+   */
+  React.useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') reread();
+    });
+    return () => sub.remove();
+  }, [reread]);
 
   const run = async (step: KeepAliveStep) => {
     const ok =
@@ -115,6 +154,23 @@ export default function TrackingSetupScreen() {
               style={{ borderRadius: radius.xl }}
             />
           )}
+
+          {/* THE ONE STEP THE PHONE WILL ANSWER, and the answer said plainly.
+              `exempt` is not a claim about the tracker working — autostart is
+              still unreadable and still matters — so it states only what was
+              asked and what the phone said back. */}
+          {step.grantable && exemption !== 'unknown' ? (
+            <T
+              style={{
+                fontSize: 13,
+                lineHeight: 18,
+                color: exemption === 'exempt' ? C.muted : C.danger,
+              }}>
+              {exemption === 'exempt'
+                ? 'Your phone says battery saving is off for MahekOne. That part is done.'
+                : 'Your phone still has battery saving switched on for MahekOne — it can stop your route being recorded at any time.'}
+            </T>
+          ) : null}
 
           {opened[step.key] && !step.grantable ? (
             /* NOT A TICK. The phone cannot learn what was tapped on an OEM's

@@ -5043,6 +5043,31 @@ export const mbosDevices = pgTable(
     /** On charge at the same moment: 20% climbing is not 20% falling. */
     batteryCharging: boolean("battery_charging"),
     /**
+     * WHETHER THE PHONE'S OWN BATTERY MANAGER WILL LET MBOS KEEP RUNNING.
+     *
+     * `exempt` or `optimised`, and null for never reported. Every other column
+     * on this row answers "was the app allowed to" — the permission, the
+     * services toggle, the background grant — and this is the only one that
+     * answers "and did the phone let it", which on the handsets this field
+     * force actually carries is the question that decides the day.
+     *
+     * Three live handsets report `tracker_stalled_at` with
+     * `location_permission = 'always'`, location services on and the background
+     * permission genuinely held. A vivo V2333 on the current build stalled two
+     * minutes after check-in with every one of those reading correct. Funtouch
+     * kills the foreground service the trail runs in and tells the app nothing,
+     * and until this column existed the office could see that a phone had
+     * stopped and never why — so a manager rang a salesman and asked him to
+     * read out his own settings screen, which is exactly the loop
+     * `location_permission` was added to close one layer up.
+     *
+     * NULL IS NOT "fine". It is iOS, an APK built before the native module, or
+     * a ROM that would not answer. The handset omits the field entirely in all
+     * three rather than sending a third word, so a report that cannot check
+     * leaves a real earlier answer standing instead of erasing it.
+     */
+    batteryExemption: text("battery_exemption"),
+    /**
      * WHEN THE THREE READINGS ABOVE WERE TAKEN, and the reason they are
      * useless without it.
      *

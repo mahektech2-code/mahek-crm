@@ -150,3 +150,30 @@ describe("how far behind the phone is", () => {
     }
   });
 });
+
+describe("whether the phone let the app run", () => {
+  test("both words are stored", () => {
+    assert.equal(readDeviceState({ batteryExemption: "exempt" }).batteryExemption, "exempt");
+    assert.equal(readDeviceState({ batteryExemption: "optimised" }).batteryExemption, "optimised");
+  });
+
+  test("an unchecked phone leaves the column alone rather than erasing it", () => {
+    /* iOS, an APK built before the native module, a ROM that would not answer:
+       the handset omits the field in all three, and absent-is-not-null is what
+       keeps a real earlier answer standing. A third word meaning "could not
+       check" would overwrite it with the absence of one. */
+    const state = readDeviceState({ batteryPercent: 44 });
+    assert.ok(!("batteryExemption" in state));
+  });
+
+  test("a word nobody recognises is dropped, not stored for a screen to draw", () => {
+    for (const v of ["unknown", "EXEMPT", "", 1, null]) {
+      const state = readDeviceState({ batteryExemption: v });
+      assert.ok(!("batteryExemption" in state), `${String(v)} must not reach the column`);
+    }
+  });
+
+  test("it dates itself like every other reading", () => {
+    assert.ok(readDeviceState({ batteryExemption: "optimised" }).deviceStateAt instanceof Date);
+  });
+});
