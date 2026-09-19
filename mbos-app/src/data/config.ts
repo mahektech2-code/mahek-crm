@@ -90,6 +90,18 @@ const DEFAULTS: Record<string, unknown> = {
   'mbos.location.serviceWatchdogMinutes': 15,
   'mbos.location.serviceBufferCap': 50_000,
   'mbos.location.serviceMaxDayHours': 16,
+  /*
+   * HOW OFTEN THE RECORDER SENDS, which is a different number from how often
+   * it takes — see the registry's own description. Six seconds rather than the
+   * three capture runs at: every captured fix still goes, so the trail is
+   * identical either way, and what the extra three seconds buys is half the
+   * radio wakes over an eight-hour day.
+   *
+   * Zero here would mean the recorder never sends and the fixes wait for the
+   * app, which is the behaviour that made this module only half a fix — so the
+   * default a handset runs on before it has ever pulled is the working one.
+   */
+  'mbos.location.serviceUploadEverySeconds': 6,
   /* How far behind a handset has to be before the team list mentions it. A
      queue is the design working, not a fault, so the panel stays quiet until
      there is something worth a manager's attention. */

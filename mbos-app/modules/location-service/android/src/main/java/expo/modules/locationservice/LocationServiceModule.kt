@@ -61,6 +61,8 @@ class LocationServiceModule : Module() {
       wantedForSeconds: Int,
       watchdogMinutes: Int,
       periodChanged: Boolean,
+      uploadEverySeconds: Int,
+      retentionDays: Int,
       ->
       try {
         val store = FixStore.of(context())
@@ -69,12 +71,63 @@ class LocationServiceModule : Module() {
           keepEveryMs = seconds(keepEverySeconds, FLOOR_SECONDS),
           bufferCap = if (bufferCap < 1) 1 else bufferCap,
         )
+        /*
+         * ZERO IS PASSED THROUGH RATHER THAN FLOORED, unlike everything else
+         * that crosses this bridge.
+         *
+         * The three numbers above are floored because a zero there is a typo
+         * with a flat battery behind it — a request for every fix the chip can
+         * produce. A zero HERE is a decision: the recorder does not send and
+         * the app does, which is what this module did before the uploader
+         * existed, and it is the only way back to that from a screen rather
+         * than from a sideloaded APK. Flooring it would take the escape hatch
+         * away in the name of protecting somebody from using it.
+         */
+        store.setUpload(
+          uploadEveryMs = if (uploadEverySeconds <= 0) 0L else seconds(uploadEverySeconds, 1),
+          retentionMs = seconds(if (retentionDays < 1) 1 else retentionDays, 1) * 86_400L,
+        )
         store.setWanted(
           wanted = true,
           untilMs = System.currentTimeMillis() + seconds(wantedForSeconds, 1),
         )
         LocationServiceWorker.schedule(context(), watchdogMinutes, periodChanged)
         ServiceLauncher.launch(context(), ServiceLauncher.REASON_APP)
+      } catch (e: Throwable) {
+        false
+      }
+    }
+
+    /**
+     * WHAT THE RECORDER SIGNS ITS POSTS WITH.
+     *
+     * The service posts positions itself, because the whole point of it is
+     * that it is alive when JavaScript is not — and a post needs a credential.
+     * It cannot read the app's own, which lives in `expo-secure-store` behind
+     * a cipher and a keystore alias belonging to another package, so the pair
+     * is MIRRORED here. `FixStore.setCredentials` carries the argument and
+     * states the cost rather than hiding it.
+     *
+     * It is its own call rather than six more arguments on `start`, because
+     * the two are written at different moments: the numbers change when the
+     * office changes them, and the tokens change every time the app refreshes
+     * them, which is hourly and has nothing to do with tracking. `setTokens`
+     * in `sync/api.ts` is the one place the app ever writes a token, so it is
+     * the one place this is called from besides `start`.
+     *
+     * ALL FOUR EMPTY IS A SIGN-OUT, and it clears rather than storing blanks —
+     * a handset that has been released must not go on posting for somebody who
+     * has left.
+     */
+    AsyncFunction("credentials") {
+      baseUrl: String,
+      deviceId: String,
+      accessToken: String,
+      refreshToken: String,
+      ->
+      try {
+        FixStore.of(context()).setCredentials(baseUrl, deviceId, accessToken, refreshToken)
+        true
       } catch (e: Throwable) {
         false
       }
@@ -134,6 +187,12 @@ class LocationServiceModule : Module() {
     AsyncFunction("release") {
       try {
         FixStore.of(context()).setWanted(wanted = false, untilMs = 0L)
+        /* THE CREDENTIAL GOES WITH THE SIGN-OUT. A released handset holding a
+           refresh token is a handset that could still post for somebody who
+           has left the company, and the buffer outliving the account is the
+           other half of the same objection. */
+        FixStore.of(context()).setCredentials("", "", "", "")
+        FixStore.of(context()).clear()
         ServiceLauncher.stop(context())
         LocationServiceWorker.cancel(context())
         true
@@ -160,6 +219,11 @@ class LocationServiceModule : Module() {
         mapOf(
           "running" to store.running(),
           "wanted" to store.wanted(now),
+          /* WHO IS SENDING. The app reads this through `chooseSender` and
+             drains the buffer itself wherever it is false — see
+             `FixStore.uploads` for the five things behind it. */
+          "uploads" to store.uploads(),
+          "lastUploadAgoSeconds" to ago(store.lastUploadAt(), now),
           "lastFixAgoSeconds" to ago(lastFix, now),
           "buffered" to store.buffered(),
           "startsToday" to store.startsToday(now),
@@ -173,6 +237,13 @@ class LocationServiceModule : Module() {
         mapOf(
           "running" to false,
           "wanted" to false,
+          /* FALSE IS THE SAFE DIRECTION HERE, and it is the opposite of the
+             direction the counts below take. A state read that failed must not
+             leave the app believing somebody else is draining the queue: worst
+             case the two both send, which costs a round trip, where the other
+             way round is a buffer nobody empties. */
+          "uploads" to false,
+          "lastUploadAgoSeconds" to -1,
           "lastFixAgoSeconds" to -1,
           "buffered" to -1,
           "startsToday" to -1,

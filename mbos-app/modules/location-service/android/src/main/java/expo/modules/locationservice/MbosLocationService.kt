@@ -75,10 +75,38 @@ class MbosLocationService : Service() {
   private val beat = Handler(Looper.getMainLooper())
   private var beating = false
 
+  /**
+   * THE THING THAT SENDS, and the reason it is INSIDE the service.
+   *
+   * Capture without delivery is a recorder nobody empties, which from a desk
+   * in Nagpur looks exactly like a recorder that never ran — see `Uploader`'s
+   * own header. It is created with the service and dies with it: its
+   * HandlerThread cannot be restarted once quit, and a service being recreated
+   * is precisely the moment a fresh one is wanted.
+   */
+  private var uploader: Uploader? = null
+
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onCreate() {
     super.onCreate()
+    /*
+     * THE UPLOADER FIRST, AND `RUNNING` SECOND. The order is load-bearing in
+     * one direction only: `FixStore.uploads()` asks `isRunning()` to decide
+     * whether the APP should take the queue back, so a window where the service
+     * reads as up with no uploader in it would have the app draining rows the
+     * uploader is about to send. A duplicate costs a round trip and never a
+     * fix, but there is no reason to leave the window open.
+     */
+    uploader = try {
+      Uploader(this)
+    } catch (e: Throwable) {
+      /* A HandlerThread that would not start. The service still records, and
+         the app drains the buffer the next time it is alive — which is exactly
+         the behaviour this module shipped with. */
+      Log.w(TAG, "could not start the uploader: ${e.javaClass.simpleName}")
+      null
+    }
     RUNNING.set(true)
   }
 
@@ -149,6 +177,12 @@ class MbosLocationService : Service() {
     store.recordStart(now)
     requestUpdates(store)
     startBeating()
+    /* IDEMPOTENT, and re-armed here on purpose: this is the one method the OS,
+       the watchdog and the boot receiver all reach, so it is also where a
+       handler that has somehow stopped ticking gets going again. `start()`
+       removes the pending tick before posting a new one, so re-arming can
+       never leave two chains running. */
+    uploader?.start()
 
     /*
      * START_STICKY and not START_REDELIVER_INTENT: there is nothing in the
@@ -162,6 +196,12 @@ class MbosLocationService : Service() {
 
   override fun onDestroy() {
     stopBeating()
+    try {
+      uploader?.stop()
+    } catch (e: Throwable) {
+      /* The process is going anyway. */
+    }
+    uploader = null
     try {
       callback?.let { client?.removeLocationUpdates(it) }
     } catch (e: Throwable) {

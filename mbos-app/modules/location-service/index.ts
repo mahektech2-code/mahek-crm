@@ -3,7 +3,7 @@ import { requireOptionalNativeModule } from 'expo';
 /**
  * The bridge, and nothing else.
  *
- * This file is the native module as it actually is: six functions, any of
+ * This file is the native module as it actually is: seven functions, any of
  * which can be absent. Everything a caller should touch — the never-reject
  * promises, the platform guard, the `null` that means "this build has nothing
  * to say" — lives one file over in `src/native/location-service.ts`. Two files
@@ -39,6 +39,10 @@ export type NativeFix = {
 export type NativeServiceState = {
   running: boolean;
   wanted: boolean;
+  /** Is the SERVICE the one posting positions? See `chooseSender`. */
+  uploads: boolean;
+  /** `-1` for "nothing to say" — never a duration. See the module's own note. */
+  lastUploadAgoSeconds: number;
   /** `-1` for "nothing to say" — never a duration. See the module's own note. */
   lastFixAgoSeconds: number;
   buffered: number;
@@ -55,6 +59,19 @@ export type NativeLocationServiceModule = {
     wantedForSeconds: number,
     watchdogMinutes: number,
     periodChanged: boolean,
+    /** 0 means the service does not post at all and the app does. */
+    uploadEverySeconds: number,
+    retentionDays: number,
+  ): Promise<boolean>;
+  /**
+   * The credential the service posts with, mirrored where a dead bundle cannot
+   * be asked for it. All four empty is a sign-out.
+   */
+  credentials(
+    baseUrl: string,
+    deviceId: string,
+    accessToken: string,
+    refreshToken: string,
   ): Promise<boolean>;
   touch(wantedForSeconds: number): Promise<boolean>;
   stop(): Promise<boolean>;

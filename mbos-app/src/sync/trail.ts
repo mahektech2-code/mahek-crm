@@ -11,12 +11,21 @@ import {
   drainFixes,
   forgetFixes,
   serviceState,
+  setServiceCredentials,
   startService,
   stopService,
   touchService,
   type ServiceState,
 } from '../native/location-service';
-import { postPositions, reportLocationPermission } from './api';
+import { chooseSender } from '../engines/upload';
+import {
+  BASE,
+  accessToken,
+  deviceId,
+  postPositions,
+  refreshToken,
+  reportLocationPermission,
+} from './api';
 
 /**
  * The trail.
@@ -451,9 +460,35 @@ async function startOurService(everyMs: number): Promise<boolean> {
     const hours = await getConfig<number>('mbos.location.serviceMaxDayHours', 16);
     const watchdogMinutes = await getConfig<number>('mbos.location.serviceWatchdogMinutes', 15);
 
+    const uploadSeconds = await getConfig<number>(
+      'mbos.location.serviceUploadEverySeconds',
+      6,
+    );
+    const retentionDays = await getConfig<number>('mbos.location.queueRetentionDays', 7);
+
     const periodChanged =
       watchdogMinutesInForce !== 0 && watchdogMinutesInForce !== watchdogMinutes;
     watchdogMinutesInForce = watchdogMinutes;
+
+    /*
+     * THE CREDENTIAL GOES FIRST, BEFORE THE SERVICE IS ASKED TO START.
+     *
+     * The service posts for itself, and a service started without one would
+     * spend its first cadence discovering it has nothing to sign with, mark
+     * itself blocked, and sit at the backoff ceiling for five minutes on the
+     * one morning the salesman is watching. Written first, its very first tick
+     * can send.
+     *
+     * It is also written from `setTokens` in `sync/api.ts`, which is the one
+     * place the app ever mints a token, so the mirror follows a refresh
+     * without waiting for the next `start()`.
+     */
+    await setServiceCredentials({
+      baseUrl: BASE,
+      deviceId: await deviceId(),
+      accessToken: (await accessToken()) ?? '',
+      refreshToken: (await refreshToken()) ?? '',
+    });
 
     return await startService({
       askEverySeconds: Math.max(3, Math.round(everyMs / 1000)),
@@ -462,6 +497,11 @@ async function startOurService(everyMs: number): Promise<boolean> {
       wantedForSeconds: trackingDeadlineSeconds(hours),
       watchdogMinutes: Math.max(15, watchdogMinutes),
       periodChanged,
+      /* NOT FLOORED, unlike everything beside it. Zero is a decision — the
+         recorder does not send and this app does, which is what it did before
+         the uploader existed — and flooring it would take that answer away. */
+      uploadEverySeconds: Math.max(0, Math.round(uploadSeconds)),
+      retentionDays: Math.max(1, Math.round(retentionDays)),
     });
   } catch {
     /* Configuration could not be read, which on a handset that has never
@@ -492,6 +532,29 @@ async function startOurService(everyMs: number): Promise<boolean> {
  */
 async function drainService(): Promise<number> {
   if (!serviceAvailable()) return 0;
+
+  /*
+   * ONE OWNER, AND IT IS THE SERVICE WHENEVER THE SERVICE CAN SEND.
+   *
+   * The recorder posts for itself now — that is what made this module a whole
+   * fix rather than half of one — so moving its rows into `positions` here
+   * while it is also sending them would have two queues draining the same
+   * fixes. Nothing is lost by that (the id of a position is its own reading,
+   * and both the local insert and the server's are conflict-ignore) and it is
+   * still two phones' worth of data spent to deliver one.
+   *
+   * `uploads` is the service's own answer about five things it knows and this
+   * side does not — the office's cadence, whether it holds a usable
+   * credential, whether the server has refused that credential, whether the
+   * day is still open and whether the service is even running. Every one of
+   * those going false hands the queue back here, which is what makes the
+   * handover unambiguous in BOTH directions: the check-out clears the deadline
+   * and the flush that follows it picks up the last few minutes of the day.
+   */
+  const state = await serviceState();
+  if (chooseSender({ serviceAvailable: true, nativeUploads: state.uploads }) === 'native') {
+    return 0;
+  }
 
   let moved = 0;
   /* Bounded, so a buffer that somehow grew past every cap cannot spin here for

@@ -4367,6 +4367,56 @@ separate uploads. The id is `at|lat|lng` now, and `mbos_positions_fix_key` is
 the half that does not depend on which build is in somebody's pocket: an old
 APK cannot reintroduce the damage while it waits to be updated.
 
+**CAPTURE WITHOUT DELIVERY IS A RECORDER NOBODY EMPTIES, which from a desk in
+Nagpur looks exactly like a recorder that never ran.** MBOS's own Android
+foreground service fixed the half of the trail that stops when Android kills
+the app — it goes on taking fixes with no JavaScript anywhere in the process —
+and then the fixes sat in its own buffer, because the only thing that had ever
+posted a position was `flush()`, which is JavaScript. Same silence, same burst
+when somebody opens the app. So the uploader is in the SERVICE now, in Kotlin,
+posting to the same `/api/mbos/positions` with the same bearer token: one
+`HandlerThread`, the next attempt scheduled by the one that just finished so
+there is never a second post in flight, `HttpURLConnection` for its
+process-wide keep-alive pool rather than a second copy of OkHttp beside React
+Native's, and `ConnectivityManager` asked before the radio is.
+
+**AND THERE IS EXACTLY ONE OWNER OF SENDING AT ANY INSTANT.** Two queues
+draining the same fixes costs nothing in correctness — a position's id is its
+own reading and every insert is conflict-ignore — and it is still two phones'
+worth of data to deliver one, and the failure of a queue with two owners is
+never the duplicate: it is the day nobody drains because each side believed
+the other was. `FixStore.uploads()` is the whole answer, computed natively
+from five things the app cannot see — the office's cadence, whether the
+handset holds a usable credential, whether the server has refused it, whether
+the day is still open, whether the service is running — and `chooseSender` in
+`engines/upload.ts` is the rule that reads it. Any of the five going false
+hands the queue straight back to `flush()`, which is what makes the check-out
+pick up the last few minutes of a day rather than leaving them until morning.
+
+**THE CADENCE IT SENDS AT IS NOT THE CADENCE IT RECORDS AT.**
+`mbos.location.serviceUploadEverySeconds` is six and `trackEverySeconds` is
+three, and every captured fix goes up either way — so the drawn route is
+identical and what the second three seconds buys is half the radio wakes over
+an eight-hour day. `checkConsistency` refuses a send interval BELOW the take
+interval, because a post with nothing new in it is a wake spent on an empty
+batch. Zero is the escape hatch rather than a tuning value: the recorder stops
+sending and the app does it, which is what this app did before the service
+could send for itself, reachable from the Admin Console rather than from a
+sideloaded APK.
+
+**THE SERVICE CANNOT READ THE KEYCHAIN, so the token is MIRRORED.** The app's
+tokens live in `expo-secure-store`, whose values are encrypted under a keystore
+alias belonging to another package — reimplementing that format inside a
+background service on a phone that cannot be recalled is a bet, not a
+credential store. So `setTokens` in `sync/api.ts`, the one place this app ever
+mints a token, writes the pair into the service's own preferences as well. The
+cost is stated rather than hidden: app-private storage protected by the sandbox
+and not by hardware key wrapping. What buys it back is that both tokens rotate,
+the access token lives an hour, and the alternative is not a safer uploader but
+no uploader. The service refreshes for itself on a 401 and the app's own copy
+goes on working — the refresh endpoint is a stateless JWT with no denylist, so
+rotating one copy does not sign the other out.
+
 **A QUEUE DRAINED OLDEST-FIRST, ONE BATCH PER TICK, CANNOT CATCH UP.** `flush()`
 sent exactly one batch of five hundred, and the sync tick that calls it is a
 `setInterval` that only advances while the app is open — a drain with a fixed

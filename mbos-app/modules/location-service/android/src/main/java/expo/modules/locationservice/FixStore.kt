@@ -228,6 +228,32 @@ internal class FixStore private constructor(context: Context) {
       if (c.moveToFirst()) c.getInt(0) else 0
     }
 
+  /**
+   * A fix nobody is ever going to be able to file, let go of.
+   *
+   * The mirror of `flush()`'s own age-out, and it fires on the same one answer:
+   * `no-session-yet`, which means the server has no working day these fixes
+   * could belong to. Almost always that is a check-in still in the outbox and
+   * the wait is minutes; a fix a WEEK past that is one whose check-in is never
+   * coming, and keeping it for ever is how a queue becomes a queue that only
+   * grows.
+   *
+   * It is deliberately NOT run on an ordinary failure. No signal loses nothing
+   * and must lose nothing — that is the whole promise the buffer makes.
+   */
+  fun ageOut(beforeMs: Long): Int =
+    helper.writableDatabase.delete("fixes", "at < ?", arrayOf(beforeMs.toString()))
+
+  /**
+   * Everything, gone — the office turned tracking off.
+   *
+   * The one answer where holding on to fixes would be storing something nobody
+   * asked for. `flush()` does exactly this on the same word.
+   */
+  fun clear() {
+    helper.writableDatabase.delete("fixes", null, null)
+  }
+
   /* ---------------------------------------------------- what the office set */
 
   /**
@@ -254,6 +280,174 @@ internal class FixStore private constructor(context: Context) {
   fun askEveryMs(): Long = prefs.getLong(ASK_EVERY_MS, DEFAULT_EVERY_MS)
 
   fun keepEveryMs(): Long = prefs.getLong(KEEP_EVERY_MS, DEFAULT_EVERY_MS)
+
+  /**
+   * HOW OFTEN THE RECORDER SENDS, which is a different number from how often
+   * it takes.
+   *
+   * Zero is a real and load-bearing value: it means the recorder does not send
+   * at all and the app does the uploading, which is what this module did
+   * before it could send for itself. It is the escape hatch for a build whose
+   * uploader turns out to be wrong in the field, reachable from the Admin
+   * Console rather than from a sideloaded APK — which matters more here than
+   * anywhere else in this directory, because an APK cannot be recalled and
+   * this is the one piece of it that spends a salesman's data.
+   */
+  fun setUpload(uploadEveryMs: Long, retentionMs: Long) {
+    prefs.edit()
+      .putLong(UPLOAD_EVERY_MS, uploadEveryMs)
+      .putLong(RETENTION_MS, retentionMs)
+      .apply()
+  }
+
+  fun uploadEveryMs(): Long = prefs.getLong(UPLOAD_EVERY_MS, DEFAULT_UPLOAD_EVERY_MS)
+
+  fun retentionMs(): Long = prefs.getLong(RETENTION_MS, DEFAULT_RETENTION_MS)
+
+  /* ------------------------------------------------------- the credential */
+
+  /**
+   * WHAT THE RECORDER SIGNS ITS POSTS WITH, and why it is HERE rather than in
+   * the keychain where the app keeps it.
+   *
+   * The app's tokens live in `expo-secure-store`, which on Android is a
+   * SharedPreferences file whose VALUES are encrypted with a key wrapped in the
+   * AndroidKeyStore. Reading that from here would mean reimplementing another
+   * package's storage format — its cipher, its key alias, its envelope, its
+   * version prefix — and being right about it in a background service on a
+   * phone that cannot be recalled, for ever, across every upgrade of that
+   * package. That is not a credential store, it is a bet.
+   *
+   * So the app MIRRORS the pair here, exactly as it mirrors the office's
+   * numbers above and for the same reason: something that runs with no
+   * JavaScript anywhere in the process cannot ask JavaScript for anything. It
+   * is written by `start` and by every token refresh the app itself performs,
+   * and cleared on sign-out.
+   *
+   * **THE COST IS STATED RATHER THAN HIDDEN.** This file is app-private
+   * (`MODE_PRIVATE`) and unreadable by another app on an unrooted phone, and it
+   * is NOT the keychain: a refresh token here is protected by the sandbox
+   * alone, where the app's own copy is protected by hardware-backed key
+   * wrapping as well. What buys that back is that the refresh token rotates on
+   * every use and the access token lives an hour — and that the alternative is
+   * not "a safer uploader", it is no uploader, which is the failure this whole
+   * module exists to end.
+   */
+  fun setCredentials(
+    baseUrl: String,
+    deviceId: String,
+    accessToken: String,
+    refreshToken: String,
+  ) {
+    val edit = prefs.edit()
+    if (accessToken.isEmpty() && refreshToken.isEmpty()) {
+      /* SIGN-OUT. Removed rather than written empty, so `credentials()` answers
+         null and the uploader stops rather than posting an empty bearer and
+         collecting a 401 every cadence. The base URL and the device id go with
+         them: neither is a secret, and leaving them behind would have the next
+         person to sign in on this handset momentarily posting under the last
+         one's device id. */
+      edit.remove(BASE_URL).remove(DEVICE_ID).remove(ACCESS_TOKEN).remove(REFRESH_TOKEN)
+    } else {
+      /* EACH FIELD IS WRITTEN ONLY IF IT ARRIVED, the same rule the wire keeps
+         in both directions: a caller that can say three of the four must not
+         wipe the fourth. */
+      if (baseUrl.isNotEmpty()) edit.putString(BASE_URL, baseUrl)
+      if (deviceId.isNotEmpty()) edit.putString(DEVICE_ID, deviceId)
+      if (accessToken.isNotEmpty()) edit.putString(ACCESS_TOKEN, accessToken)
+      if (refreshToken.isNotEmpty()) edit.putString(REFRESH_TOKEN, refreshToken)
+    }
+    /*
+     * A NEW CREDENTIAL IS THE ONE THING THAT UNBLOCKS A BLOCKED UPLOADER.
+     *
+     * `blocked` means the server would not take what this handset held, and
+     * nothing about waiting changes that — so the uploader stops asking and
+     * waits for exactly this. Clearing it here, rather than on a timer, is what
+     * makes recovery immediate and makes "blocked" mean what it says.
+     */
+    edit.putBoolean(AUTH_BLOCKED, false).apply()
+  }
+
+  /** Everything a post needs, or null where any part of it is missing. */
+  data class Credentials(
+    val baseUrl: String,
+    val deviceId: String,
+    val accessToken: String,
+    val refreshToken: String,
+  )
+
+  fun credentials(): Credentials? {
+    val base = prefs.getString(BASE_URL, null) ?: return null
+    val device = prefs.getString(DEVICE_ID, null) ?: return null
+    val access = prefs.getString(ACCESS_TOKEN, null) ?: return null
+    val refresh = prefs.getString(REFRESH_TOKEN, null) ?: return null
+    if (base.isEmpty() || device.isEmpty() || access.isEmpty() || refresh.isEmpty()) return null
+    return Credentials(base, device, access, refresh)
+  }
+
+  /**
+   * The rotated pair, written back by the uploader's own refresh.
+   *
+   * This is the ONE thing the native side writes that the app also holds, and
+   * it does not write back across the bridge. Both refresh tokens go on
+   * working: the server's refresh is a stateless JWT with no denylist, so
+   * rotating one copy does not invalidate the other, and each side simply
+   * carries its own until it expires. Keeping them in step would mean the
+   * service reaching into the keychain, which is the thing this whole section
+   * exists to avoid.
+   */
+  fun setTokens(accessToken: String, refreshToken: String) {
+    prefs.edit()
+      .putString(ACCESS_TOKEN, accessToken)
+      .putString(REFRESH_TOKEN, refreshToken)
+      .putBoolean(AUTH_BLOCKED, false)
+      .apply()
+  }
+
+  /** The server would not take this handset's credential. Only a fresh one helps. */
+  fun blockAuth() {
+    prefs.edit().putBoolean(AUTH_BLOCKED, true).apply()
+  }
+
+  fun authBlocked(): Boolean = prefs.getBoolean(AUTH_BLOCKED, false)
+
+  /**
+   * IS THE RECORDER THE ONE SENDING, answered for the app rather than for
+   * itself.
+   *
+   * `chooseSender` in `engines/upload.ts` is the rule and this is the fact it
+   * reads. It is computed HERE, from the same values the uploader itself
+   * reads, rather than inferred on the other side of the bridge from settings
+   * that might mean something else by the time they get there.
+   *
+   * FIVE THINGS, and the last two are the ones that keep a queue from being
+   * stranded. The office has asked for it, this handset holds something it can
+   * sign a post with, and the server has not refused that — those are about
+   * whether the uploader WOULD send. The other two are about whether it is
+   * there to: a service the OEM has just killed, or a day that has ended, is a
+   * buffer with nobody sending it, and the app has to take the queue back. The
+   * check-out is the ordinary case of that: `stop()` clears the deadline and
+   * then flushes, and this is what makes that flush actually pick up the last
+   * few minutes of the day rather than leaving them for the next check-in.
+   *
+   * `isRunning()` is per PROCESS, which is exactly right here: the service has
+   * no `android:process` of its own, so the process asking is the process that
+   * would be running it.
+   */
+  fun uploads(): Boolean =
+    uploadEveryMs() > 0L &&
+      !authBlocked() &&
+      credentials() != null &&
+      wanted(System.currentTimeMillis()) &&
+      MbosLocationService.isRunning()
+
+  /* ------------------------------------------ what the uploader has managed */
+
+  fun recordUpload(nowMs: Long) {
+    prefs.edit().putLong(LAST_UPLOAD_AT, nowMs).apply()
+  }
+
+  fun lastUploadAt(): Long = prefs.getLong(LAST_UPLOAD_AT, 0L)
 
   /* ------------------------------------------------------- is a day open */
 
@@ -386,6 +580,14 @@ internal class FixStore private constructor(context: Context) {
     private const val STARTS_DAY = "startsDay"
     private const val LAST_REFUSAL_AT = "lastRefusalAt"
     private const val LAST_REFUSAL = "lastRefusal"
+    private const val UPLOAD_EVERY_MS = "uploadEveryMs"
+    private const val RETENTION_MS = "retentionMs"
+    private const val BASE_URL = "baseUrl"
+    private const val DEVICE_ID = "deviceId"
+    private const val ACCESS_TOKEN = "accessToken"
+    private const val REFRESH_TOKEN = "refreshToken"
+    private const val AUTH_BLOCKED = "authBlocked"
+    private const val LAST_UPLOAD_AT = "lastUploadAt"
 
     /**
      * The numbers that stand between a fresh install and its first pull.
@@ -398,6 +600,24 @@ internal class FixStore private constructor(context: Context) {
      */
     private const val DEFAULT_EVERY_MS = 3_000L
     private const val DEFAULT_BUFFER_CAP = 50_000
+
+    /**
+     * Six seconds, and it is deliberately not three.
+     *
+     * The capture cadence and the send cadence are two questions — one decides
+     * what the trail LOOKS like and the other only how fresh the live pin is —
+     * and every captured fix is sent either way, so six sends two fixes per
+     * post rather than one and draws exactly the same route. What it buys is
+     * half the radio wakes over an eight-hour day, for a difference on a map
+     * nobody watching it can perceive.
+     *
+     * Like the two above, this stands only between a fresh install and its
+     * first pull; `mbos.location.serviceUploadEverySeconds` is the authority.
+     */
+    private const val DEFAULT_UPLOAD_EVERY_MS = 6_000L
+
+    /** The same seven days `mbos.location.queueRetentionDays` states. */
+    private const val DEFAULT_RETENTION_MS = 7L * 24 * 60 * 60 * 1_000
 
     /**
      * ONE INSTANCE PER PROCESS, and that is the whole of the concurrency

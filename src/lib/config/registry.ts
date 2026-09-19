@@ -1802,6 +1802,17 @@ export const SETTINGS = [
     max: 24,
   },
   {
+    key: "mbos.location.serviceUploadEverySeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often the recorder sends what it has taken",
+    description:
+      "Seconds, and it is a SEPARATE question from how often a position is taken. Capture decides what the trail LOOKS like; this decides only how fresh the pin on the Live map is and how often the radio wakes. Every fix that is captured is sent either way, so the drawn route is identical at any value here — a longer interval simply sends two or three fixes in one go instead of one at a time. Six is the default rather than three because it is roughly half the radio wakes for a difference on the map nobody watching it can perceive, on a phone that has to survive a full field day. Below about three there is nothing new to send between one post and the next and the radio is spent for an empty batch, which is why the floor is the capture cadence itself and `checkConsistency` refuses a value under it. Longer than a minute and 'where is he now' stops being a live answer. ZERO turns the recorder's own sending off entirely: the fixes then wait for the app to be alive and are uploaded by it, which is exactly what this app did before the recorder could send for itself — the escape hatch, not a tuning value, because a phone Android has killed has no app to do that with.",
+    default: 6,
+    min: 0,
+    max: 120,
+  },
+  {
     key: "mbos.location.startOfDayGate",
     type: "text",
     category: "mbos-location",
@@ -3184,6 +3195,31 @@ export function checkConsistency(config: Config): string[] {
   }
 
   /*
+   * SENDING FASTER THAN WE CAPTURE IS A RADIO WAKE FOR AN EMPTY BATCH.
+   *
+   * The two are deliberately independent — one decides what the trail looks
+   * like, the other only how fresh the live pin is — and they are independent
+   * in one direction only. Posting every two seconds while a fix is taken
+   * every six spends two thirds of its wakes on a batch with nothing new in
+   * it, on the battery of a phone that has to last a field day, and buys not
+   * one point on the map.
+   *
+   * ZERO IS EXEMPT, because zero is not a fast cadence: it is the recorder's
+   * sending switched off altogether, which leaves the app to upload exactly as
+   * it did before the recorder could. Folding that into the comparison would
+   * refuse the one setting that means "do not do this at all".
+   */
+  if (
+    config["mbos.location.serviceUploadEverySeconds"] > 0 &&
+    config["mbos.location.serviceUploadEverySeconds"] <
+      config["mbos.location.trackEverySeconds"]
+  ) {
+    problems.push(
+      `Trail: sending every ${config["mbos.location.serviceUploadEverySeconds"]}s when a position is only taken every ${config["mbos.location.trackEverySeconds"]}s wakes the radio for batches with nothing new in them. Set the send interval at or above the take interval, or 0 to let the app do the sending.`,
+    );
+  }
+
+  /*
    * Sarvam's synchronous endpoint refuses audio over 30 seconds. With the
    * fallback on, a longer recording simply goes to OpenAI instead and the
    * limit can be whatever suits a telecaller. With it off, a limit above 30
@@ -3743,6 +3779,13 @@ export type Config = {
   "mbos.location.trailKeepEverySeconds": number;
   "mbos.location.trailStalledAfterMisses": number;
   "mbos.location.queueRetentionDays": number;
+  /**
+   * How often the handset's own recorder posts what it has taken. Named here,
+   * unlike its three `service*` siblings, because `checkConsistency` reads it
+   * against the capture cadence and a key the type does not carry cannot be
+   * read at all.
+   */
+  "mbos.location.serviceUploadEverySeconds": number;
   "mbos.location.queuedPositionsWorthSaying": number;
   "mbos.location.trailStalledMinSilenceSeconds": number;
   "mbos.location.nearbyBookRadiusKm": number;

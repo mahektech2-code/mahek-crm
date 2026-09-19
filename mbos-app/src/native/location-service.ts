@@ -35,6 +35,16 @@ export type ServiceState = {
   running: boolean;
   /** Does the handset still believe the office wants tracking? */
   wanted: boolean;
+  /**
+   * IS THE SERVICE THE ONE SENDING? `chooseSender` is the rule; this is the
+   * fact. False covers the office switching it off, a handset with no usable
+   * credential, a service that is not running and a day that has ended — four
+   * different reasons with one consequence, which is that the app has to drain
+   * the buffer itself.
+   */
+  uploads: boolean;
+  /** Seconds since the service last had a batch accepted. Null: never. */
+  lastUploadAgoSeconds: number | null;
   /** Seconds since the last fix the SERVICE took. Null: it has never taken one. */
   lastFixAgoSeconds: number | null;
   /** Fixes held natively and not yet in `positions`. Null: cannot say. */
@@ -51,6 +61,10 @@ export type ServiceState = {
 const NOTHING: ServiceState = {
   running: false,
   wanted: false,
+  /* FALSE, so a build with no service in it reads as "the app is sending" —
+     which is exactly what it is. */
+  uploads: false,
+  lastUploadAgoSeconds: null,
   lastFixAgoSeconds: null,
   buffered: null,
   startsToday: null,
@@ -69,6 +83,15 @@ export type StartOptions = {
    */
   wantedForSeconds: number;
   watchdogMinutes: number;
+  /**
+   * How often the SERVICE posts what it has taken, which is a different
+   * question from how often it takes one. ZERO means it does not post at all
+   * and the app does — the escape hatch, reachable from the Admin Console
+   * rather than from a sideloaded APK.
+   */
+  uploadEverySeconds: number;
+  /** How long a fix the server cannot yet file is kept. See `retentionMs`. */
+  retentionDays: number;
   /**
    * TRUE ONLY ON THE CALL WHERE THE OFFICE'S NUMBER CHANGED.
    *
@@ -92,6 +115,8 @@ export async function startService(opts: StartOptions): Promise<boolean> {
       opts.wantedForSeconds,
       opts.watchdogMinutes,
       opts.periodChanged,
+      opts.uploadEverySeconds,
+      opts.retentionDays,
     );
   } catch {
     /* The native half answers rather than throwing, so reaching this is the
@@ -99,6 +124,40 @@ export async function startService(opts: StartOptions): Promise<boolean> {
        JS bundle, which happens on an over-the-air update. Falling back is the
        same answer as a refused start. */
     return false;
+  }
+}
+
+/**
+ * WHAT THE SERVICE SIGNS ITS POSTS WITH, handed over rather than fetched.
+ *
+ * The service cannot read `expo-secure-store` — that is another package's
+ * cipher and another package's keystore alias, and being wrong about either
+ * inside a background service on a phone that cannot be recalled is not a
+ * thing to build. So the app mirrors the pair across, on every sign-in, every
+ * refresh and every start.
+ *
+ * Empty strings are a SIGN-OUT and clear the mirror. Passing them is how
+ * `clearTokens` reaches the native side.
+ */
+export async function setServiceCredentials(args: {
+  baseUrl: string;
+  deviceId: string;
+  accessToken: string;
+  refreshToken: string;
+}): Promise<void> {
+  if (!on) return;
+  try {
+    await LocationService!.credentials(
+      args.baseUrl,
+      args.deviceId,
+      args.accessToken,
+      args.refreshToken,
+    );
+  } catch {
+    /* The uploader then holds whatever it had. An access token it can no
+       longer refresh blocks it, `uploads` goes false, and the app takes the
+       queue back — which is the same outcome as this build having no service
+       at all, and is why nothing here is worth reporting. */
   }
 }
 
@@ -143,6 +202,8 @@ export async function serviceState(): Promise<ServiceState> {
     return {
       running: raw.running === true,
       wanted: raw.wanted === true,
+      uploads: raw.uploads === true,
+      lastUploadAgoSeconds: agoOrNull(raw.lastUploadAgoSeconds),
       lastFixAgoSeconds: agoOrNull(raw.lastFixAgoSeconds),
       buffered: countOrNull(raw.buffered),
       startsToday: countOrNull(raw.startsToday),
