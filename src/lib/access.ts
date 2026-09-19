@@ -97,6 +97,39 @@ export async function requireModule(userId: string, key: string): Promise<void> 
   redirect(allowed[0]?.href ?? "/apps");
 }
 
+/**
+ * MAY THIS PERSON OPEN THIS MODULE — GRANT INCLUDED. For routes, which have no
+ * layout above them to have asked the first half.
+ *
+ * `listUserModules` answers about MODULES and deliberately knows nothing about
+ * whether the app was granted at all: "no module rows means every module" is
+ * what makes a grant from a terminal open an app whole rather than open it
+ * empty, and it means that function answers with the full module list for
+ * somebody who holds none of the app. That is correct where it is called — a
+ * layout has already run `listUserApps` and redirected — and it is a LEAK
+ * anywhere else.
+ *
+ * Anywhere else was three API routes under `/api/sales`, each of which checked
+ * the modules, each of whose own comments said the grant was asked first, and
+ * none of which asked it. A telecaller holding only the CRM could read the
+ * shops around the team and any salesman's full trail by URL, because
+ * `managerScope` behind them is vacuous for anybody with no `region` row and
+ * answers "national". It failed OPEN, which is this codebase's named dangerous
+ * direction, and it failed open silently: every screen worked.
+ *
+ * So the two halves are asked together, in one function, once — the same
+ * reasoning `feedback-access.ts` gives for its own pair. A route that wants a
+ * module asks this; nothing else has to remember the order.
+ */
+export async function canOpenModule(userId: string, key: string): Promise<boolean> {
+  const mod = getModule(key);
+  if (!mod) return false;
+  /* THE GRANT FIRST. A module is a narrowing of an app, and a narrowing of an
+     app nobody holds is not a permission. */
+  if (!(await canOpen(userId, mod.app))) return false;
+  return (await listUserModules(userId, mod.app)).some((m) => m.key === key);
+}
+
 export async function canOpen(userId: string, app: AppId): Promise<boolean> {
   const rows = await db
     .select({ id: appAccess.id })
