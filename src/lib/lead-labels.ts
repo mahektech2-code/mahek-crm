@@ -384,6 +384,115 @@ export const VERIFICATION_FAILURE_REASONS: readonly CodedOption[] = [
   { code: "other", label: "Other" },
 ] as const;
 
+/**
+ * §— WHY A LEAD WAS PARKED. Mahek's six.
+ *
+ * Parking already demanded a sentence, and a sentence cannot answer "how many
+ * genuine opportunities are we parking a quarter, and for what" — which is the
+ * question that tells Mahek whether the pipeline is stalling on its customers
+ * or on itself. Four of these six are the customer's doing and two are ours to
+ * chase, and that split is the whole value of counting them.
+ *
+ * `other` demands the remarks. A code meaning "something else" with nothing
+ * behind it is the one row nobody can act on, and it is the code people reach
+ * for when a list does not fit — so it has to cost a sentence.
+ */
+export const HOLD_REASONS: readonly CodedOption[] = [
+  { code: "customer_decision_delayed", label: "Customer decision delayed" },
+  { code: "budget_issue", label: "Budget or financial issue" },
+  { code: "shutdown", label: "Plant or business shutdown" },
+  { code: "decision_maker_away", label: "Decision maker unavailable" },
+  { code: "requirement_inactive", label: "Requirement temporarily not active" },
+  { code: "other", label: "Other" },
+] as const;
+
+/**
+ * §— WHY A TRIAL WAS CALLED OFF. Mahek's eight.
+ *
+ * The reason for coding this one is sharper than for most: these eight
+ * separate THREE DIFFERENT PROBLEMS that a free-text box could not tell apart.
+ * A product we could not source is a supply problem; a customer who stopped
+ * answering is a customer problem; a price objection is a sales problem. All
+ * three read as "trial cancelled" until somebody can count them, and each one
+ * is somebody else's to fix.
+ *
+ * `other` demands the remarks, for the reason above.
+ */
+export const SAMPLE_CANCEL_REASONS: readonly CodedOption[] = [
+  { code: "product_unavailable", label: "Product not available" },
+  { code: "requirement_cancelled", label: "Customer cancelled the requirement" },
+  { code: "customer_delayed", label: "Customer delayed the trial" },
+  { code: "not_required", label: "Sample not required any more" },
+  { code: "wrong_product", label: "Wrong product or wrong requirement" },
+  { code: "commercial", label: "Commercial or price issue" },
+  { code: "no_response", label: "Customer not responding" },
+  { code: "other", label: "Other" },
+] as const;
+
+/** The one code in either list that demands a sentence after it. */
+export const REASON_CODE_NEEDING_REMARKS = "other";
+
+/**
+ * WHOSE PROBLEM EACH OF THE EIGHT IS — which is the whole reason there are
+ * eight rather than a box.
+ *
+ * Counting cancellations by code is only half of what the list buys. Eight
+ * numbers on a screen is a list; the ANSWER is that they fall into three
+ * groups, and each group is a different person's morning — a product we could
+ * not source sends somebody to the factory, a shop that stopped answering
+ * sends the salesman back to the door, and a price objection is a conversation
+ * about the price list. "Trials cancelled: 14" named none of those three,
+ * which is exactly what one free-text column cost.
+ *
+ * It is a map from CODE to group rather than a fourth field on each option,
+ * because the list itself is configuration — Mahek may reword "Commercial or
+ * price issue" tomorrow without a deploy — while the grouping is a statement
+ * about what a code MEANS, and a reworded label still means the same thing.
+ *
+ * A code nobody has grouped answers null and is counted on its own rather than
+ * folded into whichever group sorted first: `other` is deliberately ungrouped,
+ * since its whole definition is that it is none of these, and a code somebody
+ * adds to the configured list later must not be quietly filed under a
+ * department nobody chose for it.
+ */
+export type SampleCancelProblem = "supply" | "customer" | "sales";
+
+export const SAMPLE_CANCEL_PROBLEM: Readonly<Record<string, SampleCancelProblem>> = {
+  product_unavailable: "supply",
+  wrong_product: "supply",
+  requirement_cancelled: "customer",
+  customer_delayed: "customer",
+  not_required: "customer",
+  no_response: "customer",
+  commercial: "sales",
+};
+
+/** What each group is called on a screen, and what it points at. */
+export const SAMPLE_CANCEL_PROBLEM_LABELS: Readonly<
+  Record<SampleCancelProblem, { label: string; whose: string }>
+> = {
+  supply: {
+    label: "Supply",
+    whose: "We could not put the right stock in their hands.",
+  },
+  customer: {
+    label: "Customer",
+    whose: "The shop went quiet, delayed it, or no longer wants it.",
+  },
+  sales: {
+    label: "Sales",
+    whose: "The commercial conversation is what stopped it.",
+  },
+};
+
+/** Which of the three a code belongs to, or null where nobody has said. */
+export function sampleCancelProblemOf(
+  code: string | null | undefined,
+): SampleCancelProblem | null {
+  if (!code) return null;
+  return SAMPLE_CANCEL_PROBLEM[code] ?? null;
+}
+
 /* ---------------------------------------- why a manager overrode a gate */
 
 /**

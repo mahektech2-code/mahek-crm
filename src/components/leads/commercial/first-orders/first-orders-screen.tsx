@@ -341,6 +341,7 @@ export function FirstOrdersScreen({
             <FirstOrderPanel
               customerId={selected.customerId}
               expectedOrderDate={selected.forecastDate}
+              expectedOrderCans={selected.forecastCans}
               expectedOrderValuePaise={selected.forecastValuePaise}
               countingOrderCount={selected.countingOrders}
               disabled={!canWork}

@@ -1051,6 +1051,20 @@
       "when": 1789770695402,
       "tag": "0150_the_recorder_that_only_believes_it_sends",
       "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1789771295402,
+      "tag": "0151_a_reason_is_a_code",
+      "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "7",
+      "when": 1789771895402,
+      "tag": "0152_the_words_behind_the_rate",
+      "breakpoints": true
     }
   ]
 }

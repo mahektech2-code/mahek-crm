@@ -12,9 +12,12 @@ import {
   SAMPLE_REASONS,
   labelOf,
   sampleStateLabel,
+  stageLabel,
+  type LeadStage,
   type SampleState,
 } from "@/lib/lead-labels";
 import type { SampleDeskRow } from "@/lib/services/lead-console-service";
+import { qualifiedForSample } from "@/lib/engines/lead-ladder";
 import {
   confirmSampleReceived,
   decideSample,
@@ -67,6 +70,7 @@ export function SampleDeskScreen({
   workspace,
   rows,
   chaseDays,
+  cancelReasons,
   canWork,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
@@ -74,6 +78,15 @@ export function SampleDeskScreen({
   rows: SampleDeskRow[];
   /** The ladder the review chase climbs — 2, then 4, then 6. */
   chaseDays: number[];
+  /**
+   * `leads.sampleCancelReasons`, resolved on the server and passed down.
+   *
+   * A "use client" component cannot read configuration, and building the
+   * picker from the literal instead would offer a code the action refuses
+   * wherever Mahek has reworded the list — a refusal that reads as the app
+   * being broken rather than as the list having moved.
+   */
+  cancelReasons: { code: string; label: string }[];
   /**
    * `lead.work`, resolved on the server and passed down.
    *
@@ -158,7 +171,27 @@ export function SampleDeskScreen({
     router.refresh();
   }
 
-  const awaitingApproval = rows.filter((r) => r.approvalState === "pending");
+  /*
+   * ANSWER 01 — WAITING ON A MANAGER, AND A HANDSET REQUEST IS ONE OF THOSE.
+   *
+   * This read the approval row alone, which is right for anything raised from
+   * a desk — `requestSample` writes the sample and its `mbos_approvals` row in
+   * one transaction, so the two cannot disagree. It is NOT right for a sample
+   * the handset sent: `handleSample` inserts the sample at `requested` and
+   * writes no approval row, because an APK in somebody's pocket knows nothing
+   * about the approval step and cannot be made to. So those rows had a null
+   * approval state, fell straight past this filter and past the Approve /
+   * Refuse buttons below, and offered "Record dispatch" instead — a salesman's
+   * ask going out of the godown with nobody having said yes, which is the one
+   * thing the approval step exists to stop.
+   *
+   * The sample's own `requested` is the honest second reading of the same
+   * fact, and `decideSample` writes the missing approval row when it lands, so
+   * answering it here costs nothing and loses nothing.
+   */
+  const pendingApproval = (r: SampleDeskRow) =>
+    r.approvalState === "pending" || r.state === "requested";
+  const awaitingApproval = rows.filter(pendingApproval);
   const late = rows.filter((r) => r.lateByDays != null);
   const awaitingReview = rows.filter(
     (r) => !r.feedbackRecorded && (r.state === "received" || r.state === "trial_done"),
@@ -345,7 +378,7 @@ export function SampleDeskScreen({
               </Cell>
               <Cell align="right">
                 <span className="flex flex-wrap items-center justify-end gap-1.5">
-                  {r.approvalState === "pending" ? (
+                  {pendingApproval(r) ? (
                     <>
                       <Button
                         size="sm"
@@ -362,6 +395,28 @@ export function SampleDeskScreen({
                         Refuse
                       </Button>
                     </>
+                  ) : r.state === "rejected" ? (
+                    /*
+                     * ANSWER 01 — A REFUSED SAMPLE IS NOT DISPATCH WORK.
+                     *
+                     * It fell through to "Record dispatch" here, because the
+                     * only question this chain asked before was whether a
+                     * dispatch date had been written down — and a sample the
+                     * manager turned down yesterday has none, exactly like one
+                     * he approved this morning. So the desk offered to send
+                     * stock against a decision that had already said no, and
+                     * the row sat in the worklist for ever, since nothing that
+                     * follows a refusal ever fills a dispatch date in. The
+                     * desk's own `samplesAwaitingDispatch` query has always
+                     * keyed on `approved`; this is the screen catching up.
+                     */
+                    <span className="text-[12px] text-muted">Refused — nothing to send</span>
+                  ) : r.state !== "approved" && !r.dispatchedAt ? (
+                    /* Cancelled is filtered out upstream and `requested` is
+                       caught above, so what reaches here is a state nobody has
+                       taught this screen about. Saying so beats offering an
+                       action that does not follow from it. */
+                    <span className="text-[12px] text-muted">Nothing outstanding</span>
                   ) : !r.dispatchedAt ? (
                     <Button size="sm" onClick={() => begin({ kind: "dispatch", row: r })}>
                       Record dispatch
@@ -394,6 +449,7 @@ export function SampleDeskScreen({
                     <CancelSample
                       sampleId={r.id}
                       what={`${r.quantityCans ? `${plural(r.quantityCans, "can")} of ` : ""}${r.productName ?? "a product nobody named"} for ${r.customerName}`}
+                      reasons={cancelReasons}
                       canWork={canWork}
                     />
                   )}
@@ -633,6 +689,27 @@ function Subject({ row }: { row: SampleDeskRow }) {
           Asked {plural(row.reviewChaseCount, "time")} already.
         </div>
       ) : null}
+      {/*
+       * ANSWER 05 — SAID TO THE PERSON DECIDING, which is the whole of the
+       * exception.
+       *
+       * Approving a sample for a lead nobody has qualified is a different
+       * decision from approving an ordinary one: there is no recorded monthly
+       * requirement to weigh the cans against, no competitor the trial is meant
+       * to beat and no potential value to justify the stock. The salesman is
+       * allowed to ask — he may well be right that a can in the shopkeeper's
+       * hand is what opens this one — but a manager who cannot see which of the
+       * two he is answering is making neither decision.
+       *
+       * Read off `leadStageAtRequest`, the rung at the moment of asking, so a
+       * lead that has moved since does not quietly erase the mark.
+       */}
+      {qualifiedForSample(row.leadStageAtRequest, row.salesType) ? null : (
+        <div className="mt-1 text-[12px] text-warn-ink">
+          Lead not qualified — this was asked for at{" "}
+          {stageLabel(row.leadStageAtRequest as LeadStage)}.
+        </div>
+      )}
     </div>
   );
 }

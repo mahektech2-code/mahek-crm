@@ -5,6 +5,7 @@ import { APP_TIMEZONE } from "../business-date";
 import { orderCountsSql } from "../order-status";
 import type { LeadSalesType, LeadStage } from "../lead-labels";
 import { leadsVisible, managerScope } from "./sales-service";
+import { commitmentRecordedSql, confirmedCommitmentSql } from "../lead-commitment";
 
 /* ---------------------------------------------------------------------------
  * Group 5 — the COMMERCIAL end of the funnel, and the three questions it asks.
@@ -26,11 +27,21 @@ import { leadsVisible, managerScope } from "./sales-service";
  * table would be a fourth place the same facts live, and the one that drifts
  * is always the one somebody is reading.
  *
- * **A commitment is not an order.** `lead_expected_order_date` and
- * `lead_expected_order_value_paise` are what a customer SAID on a phone call.
- * They are named `forecast…` on the way out of here, they are totalled
- * separately from anything real, and no caller may add the two together — see
- * the comment over `forecastValuePaise` in `commitments()`.
+ * **A commitment is not an order.** `lead_expected_order_date`,
+ * `lead_expected_order_cans` and `lead_expected_order_value_paise` are what a
+ * customer SAID on a phone call. They are named `forecast…` on the way out of
+ * here, they are totalled separately from anything real, and no caller may
+ * add the two together — see the comment over `forecastValuePaise` in
+ * `commitments()`.
+ *
+ * **AND A DAY ON ITS OWN IS NOT A COMMITMENT EITHER.** §3.4: an expected
+ * order date AND a quantity or a value. The rule is
+ * `confirmedCommitmentSql` in `lib/lead-commitment.ts`, read here rather than
+ * spelled into four queries, and the three screens differ in what they do
+ * with the answer rather than in what the answer is. The desk still LISTS a
+ * day nobody put a size against — it is a real follow-up and losing it off
+ * the only screen that watches these would be worse than counting it wrongly
+ * — but it is marked, it is counted separately, and no total includes it.
  *
  * **Order status is READ and never written** — §20. `orders.status` comes from
  * the sheet projection and from accounts' approval, and what counts as a sale
@@ -90,8 +101,13 @@ export type NegotiationRow = {
   /** §G's commercial terms: what they asked for against what we give. */
   creditDaysWanted: number | null;
   standingTermDays: number;
-  /** The commitment, if anybody has asked. A FORECAST — see `commitments()`. */
+  /**
+   * The commitment, if anybody has asked. A FORECAST — see `commitments()`.
+   * All three columns travel, because §3.4's rule is a day AND a size and a
+   * screen handed only two of them would have to guess at the third.
+   */
   forecastDate: string | null;
+  forecastCans: number | null;
   forecastValuePaise: number | null;
   /** §24 — an active lead may not sit with nothing owed by anybody. */
   nextAction: string | null;
@@ -149,6 +165,7 @@ export async function negotiationDesk(
              customers.lead_credit_days_wanted as "creditDaysWanted",
              customers.credit_term_days as "standingTermDays",
              customers.lead_expected_order_date::text as "forecastDate",
+             customers.lead_expected_order_cans as "forecastCans",
              customers.lead_expected_order_value_paise as "forecastValuePaise",
              customers.lead_next_action as "nextAction",
              customers.lead_next_action_date::text as "nextActionDate",
@@ -183,8 +200,13 @@ export async function negotiationDesk(
                where customers.lead_next_action_date is null
                   or customers.lead_next_action_date < ${day}::date
              )::int as stalled,
+             /* NOT "no date": §3.4 says a day with no quantity and no value
+                is a follow-up, and this metric is what a manager reads to
+                decide which of these conversations has produced nothing yet.
+                A lead where all anybody wrote down was "around the 25th"
+                belongs in it. */
              count(*) filter (
-               where customers.lead_expected_order_date is null
+               where not ${sql.raw(confirmedCommitmentSql("customers"))}
              )::int as "noCommitment"
         from customers
         ${where}
@@ -232,7 +254,15 @@ export type CommitmentRow = {
    * order, so an estimate nobody gave is not zero.
    */
   forecastDate: string;
+  /** CANS, and either this or the value is what makes the day a commitment. */
+  forecastCans: number | null;
   forecastValuePaise: number | null;
+  /**
+   * §3.4 — a day with a size against it. FALSE is a row that stays on this
+   * desk and out of every total on it: an expected order somebody has to ring
+   * back about, not a promise anybody made.
+   */
+  confirmed: boolean;
   /** Negative once the day has gone past. */
   daysUntil: number;
   /** The ledger's own answer, and the only real money on this screen. */
@@ -278,6 +308,12 @@ export async function commitments(
   forecastValuePaise: number;
   /** A named gap: commitments with nobody's estimate against them. */
   unvalued: number;
+  /**
+   * §3.4 — rows on this view that are an EXPECTED ORDER rather than a
+   * commitment: a day, and nobody ever asked how much. They are in `rows` and
+   * in `counts`, and in none of the money.
+   */
+  unconfirmed: number;
 }> {
   const scope = await managerScope();
 
@@ -290,7 +326,13 @@ export async function commitments(
    * will look at again is not a forecast, it is history.
    */
   const population = sql`
-      customers.lead_expected_order_date is not null
+      /* WHAT IS ON THE DESK is every day somebody wrote down, commitment or
+         not - the weaker of the two rules, named rather than spelled, so the
+         next reader can tell which question was being asked. S3.4's rule
+         decides what is COUNTED, a few lines down, and dropping the rest here
+         would take the follow-ups off the only screen that watches their days
+         go past. */
+      ${sql.raw(commitmentRecordedSql("customers"))}
       and customers.lead_archived = false
       and customers.lead_stage is not null
       and customers.lead_stage <> 'lost'
@@ -313,6 +355,12 @@ export async function commitments(
     select customers.id as cid,
            customers.lead_expected_order_date as expected,
            customers.lead_expected_order_value_paise as forecast,
+           /* S3.4, computed ONCE here for the same reason the ordered flag
+              below is: the four views are counted and drawn from this table,
+              and a rule asked twice is a rule that can answer twice. NO
+              BACKTICKS in here - this sits inside a sql template literal and
+              one backtick ends the literal. */
+           ${sql.raw(confirmedCommitmentSql("customers"))} as confirmed,
            (${COUNTING_ORDERS}) > 0 as ordered
       from customers
      where ${population}
@@ -336,7 +384,9 @@ export async function commitments(
              customers.owner_id as "salesmanId", u.name as "salesmanName",
              m.name as "leadManagerName",
              customers.lead_expected_order_date::text as "forecastDate",
+             customers.lead_expected_order_cans as "forecastCans",
              customers.lead_expected_order_value_paise as "forecastValuePaise",
+             b.confirmed,
              (customers.lead_expected_order_date - ${day}::date)::int as "daysUntil",
              (${COUNTING_ORDERS}) as "countingOrders",
              /* The first counting order on the account, which for a lead is
@@ -374,9 +424,15 @@ export async function commitments(
              count(*) filter (where ${viewClause.converted})::int as converted
         from (${base}) b
     `),
-    db.execute<{ forecast: number; unvalued: number }>(sql`
+    db.execute<{ forecast: number; unvalued: number; unconfirmed: number }>(sql`
       select coalesce(sum(b.forecast), 0)::bigint as forecast,
-             count(*) filter (where b.forecast is null)::int as unvalued
+             count(*) filter (where b.forecast is null)::int as unvalued,
+             /* §3.4 — listed, never totalled. The sum above is untouched by
+                these rows because a day with no size has no value to add;
+                what the screen needs is the COUNT, so it can say how much of
+                the view is a plan and how much is a phone call somebody still
+                owes. */
+             count(*) filter (where not b.confirmed)::int as unconfirmed
         from (${base}) b
        where ${viewClause[view]}
     `),
@@ -392,6 +448,7 @@ export async function commitments(
     },
     forecastValuePaise: Number(totals[0]?.forecast ?? 0),
     unvalued: Number(totals[0]?.unvalued ?? 0),
+    unconfirmed: Number(totals[0]?.unconfirmed ?? 0),
   };
 }
 
@@ -431,9 +488,17 @@ export type FirstOrderRow = {
   kind: string;
   /** The commitment that was asked for. A forecast; see `commitments()`. */
   forecastDate: string | null;
+  forecastCans: number | null;
   forecastValuePaise: number | null;
-  /** Whether anybody has ever run the eight questions. */
+  /**
+   * Whether anybody has ever run the eight questions — a DATE on file, and
+   * deliberately not §3.4's commitment rule. "Nobody has asked" and "he could
+   * not say how much" are different facts about a lead, and this column is
+   * the first one; `confirmedCommitment` beside it is the second.
+   */
   asked: boolean;
+  /** §3.4 — the day has a quantity or a value against it. */
+  confirmedCommitment: boolean;
   /* ---- READ OFF THE LEDGER, and never written by this module (§20) ---- */
   countingOrders: number;
   pendingOrders: number;
@@ -515,8 +580,10 @@ export async function firstOrderDesk(
              m.name as "leadManagerName",
              customers.kind::text as kind,
              customers.lead_expected_order_date::text as "forecastDate",
+             customers.lead_expected_order_cans as "forecastCans",
              customers.lead_expected_order_value_paise as "forecastValuePaise",
-             (customers.lead_expected_order_date is not null) as asked,
+             ${sql.raw(commitmentRecordedSql("customers"))} as asked,
+             ${sql.raw(confirmedCommitmentSql("customers"))} as "confirmedCommitment",
              (${COUNTING_ORDERS}) as "countingOrders",
              (${pending}) as "pendingOrders",
              (select count(*)::int from orders o

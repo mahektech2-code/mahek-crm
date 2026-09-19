@@ -68,9 +68,19 @@ export type ParkDetail = {
   fromStage: LeadStage | null;
   at: Date | null;
   actorName: string | null;
+  /** One of `leads.holdReasons`. Null on a park made before the codes existed. */
   reasonCode: string | null;
   note: string | null;
   holdReason: string | null;
+  /**
+   * The day it comes back, off the customer row rather than off the transition.
+   *
+   * The transition records the DECISION and the row records the park as it now
+   * stands — and the two differ the moment somebody parks a lead again with a
+   * new date, which is the ordinary way a hold is extended. The banner is a
+   * statement about now, so it reads the row.
+   */
+  resumeDate: string | null;
 };
 
 export async function parkedFrom(customerId: string): Promise<ParkDetail | null> {
@@ -81,7 +91,8 @@ export async function parkedFrom(customerId: string): Promise<ParkDetail | null>
            u.name as "actorName",
            t.reason_code as "reasonCode",
            t.note,
-           c.lead_hold_reason as "holdReason"
+           c.lead_hold_reason as "holdReason",
+           c.lead_hold_resume_date::text as "resumeDate"
       from customers c
       left join lateral (
         select t2.from_stage, t2.at, t2.reason_code, t2.note, t2.actor_id

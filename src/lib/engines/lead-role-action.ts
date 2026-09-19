@@ -101,13 +101,38 @@ export type LeadActionFacts = {
    * §3.4 — a forecast somebody recorded, NOT a sale. Its presence is what
    * escalates the sales manager's verb in Negotiation from supporting the
    * conversation to closing it, and it is the whole reason that stage forks.
+   *
+   * A COMMITMENT IS A DAY AND A SIZE, and that is a reversal: either half
+   * used to count, so a lead where all anybody had written down was "around
+   * the 25th" escalated the manager to "Confirm actual order" — an order
+   * nobody had agreed a quantity or a price for. `lib/lead-commitment.ts` is
+   * the one place the rule lives and `LEAD_ROW_SELECT` reads it from there;
+   * this engine takes the answer rather than the columns, like every other
+   * fact here, which is what lets the handset compile it.
    */
   hasCommitment: boolean;
   /** A real order exists against this lead. Ends the asking. */
   hasOrder: boolean;
   /**
-   * A sample is out and has not been reviewed. What lights the back office up
-   * at `sample_trial`: the dispatch is theirs and the review is not.
+   * A sample a manager has APPROVED and nobody has sent yet. What lights the
+   * back office up at `sample_trial`: the dispatch is theirs and the review is
+   * not.
+   *
+   * THE WORD "APPROVED" IN THAT SENTENCE IS LOAD BEARING, and it used to be
+   * missing. The fact was computed over `state in ('requested', 'approved')`,
+   * on the reasoning that both are states before dispatch and therefore both
+   * are a parcel somebody is waiting on. A REQUEST is not: it is a salesman
+   * asking, and until the Sales Manager says yes there is nothing to pack —
+   * so this told the back office to "Dispatch sample" on a lead whose sample
+   * nobody had approved, which is the one thing the approval step exists to
+   * stop. It also outlived a refusal, because a lead can carry a rejected
+   * sample and a fresh request at once.
+   *
+   * The sample desk's own worklist has always keyed on `approved` alone, so
+   * the two screens disagreed about one shop; they no longer can. Where the
+   * request is still waiting on a manager, the sales manager's own line at
+   * this rung is what says so, and the back office is told the truth instead:
+   * nothing has been dispatched, and nothing is theirs to dispatch yet.
    */
   sampleAwaitingDispatch: boolean;
 };
@@ -287,6 +312,14 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "management":
           return NO_APPROVAL_PENDING;
         case "back_office":
+          /*
+           * The false arm reads "dispatched — track it" and stays true of a
+           * sample still waiting on its approval, which is the one case this
+           * fork gained when the fact narrowed to `approved`. Tracking a
+           * parcel that was never sent is a wasted minute; being told to SEND
+           * one nobody approved is stock out of the godown on nobody's say-so,
+           * and the two are not the same size of mistake.
+           */
           return facts.sampleAwaitingDispatch
             ? { label: "Dispatch sample", tone: "danger", actionable: true }
             : { label: "Sample dispatched — track it", tone: "warn", actionable: true };

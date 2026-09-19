@@ -29,7 +29,7 @@ import {
   type Condition,
   type LeadGateInput,
 } from "../engines/lead-gates";
-import { directionOf, isOnTheBookAt } from "../engines/lead-ladder";
+import { directionOf, isOnTheBookAt, isParked } from "../engines/lead-ladder";
 import {
   stageLabel,
   verificationAnswers,
@@ -714,6 +714,35 @@ export async function evaluateLeadStageMove(input: {
     };
   }
 
+  /*
+   * §— A PARK IS NOT A MOVE ALONG A LADDER, so the ladder is not asked about it.
+   *
+   * `on_hold` is on no ladder — `lead-ladder.ts` says so in as many words, and
+   * `isParked` exists because of it — so `directionOf` answers `off_ladder` for
+   * every park ever attempted, and the refusal below reads "On hold is not a
+   * rung on this lead's ladder". Which is true and is the wrong question: a
+   * pause displaces the rung rather than being one. Every park through the
+   * console was refused on it for as long as the control existed, and the
+   * salesman recording a genuine plant shutdown was told the app disagreed.
+   *
+   * It is answered HERE rather than by teaching `directionOf` a fifth
+   * direction, because that function is a pure statement about ladders and a
+   * park is the thing that is not on one.
+   *
+   * **NO REASON CODE IS DEMANDED HERE, and that is deliberate rather than an
+   * omission.** This function is shared with the HANDSET — `dispatchItem` runs
+   * the same evaluation over a payload a phone queued — and an APK cannot be
+   * recalled. A build in somebody's pocket parks a lead with its own free-text
+   * reason and no code, and rejecting that would put a real plant shutdown in
+   * `/rejections` and lose the sentence with it. `advanceLeadStage` demands the
+   * code from the console door, where the picker that offers it is on the
+   * screen: the same split the resume date and the next action already live
+   * under, two blocks down in that file.
+   */
+  if (isParked(to)) {
+    return { ok: true, kind: "passed", overriddenConditions: [] };
+  }
+
   const direction = directionOf(from, to, salesType);
 
   /* Walking a lead back DOWN undoes work somebody recorded, which is why the
@@ -892,7 +921,7 @@ export async function applyLeadStageMove(
      * act on. The handset has always demanded its own reason; the resume date
      * is asked where it can be asked.
      */
-    hold?: { reason: string; resumeDate: string } | null;
+    hold?: { reason?: string; resumeDate: string } | null;
     /** The business date, resolved by the caller — engines read no clock. */
     day: string;
   },
@@ -965,8 +994,28 @@ export async function applyLeadStageMove(
      * date is what this exists to end.
      */
     if (to === "on_hold" && o.hold) {
-      set.leadHoldReason = o.hold.reason;
+      set.leadHoldReason = o.hold.reason ?? null;
       set.leadHoldResumeDate = o.hold.resumeDate;
+      /*
+       * WHICH of the six, beside the sentence — and read off `o.reasonCode`
+       * rather than out of the hold object, so the code on the customer row
+       * and the code on the transition row this same transaction writes are
+       * ONE value read once. Two fields would be two answers to "why was this
+       * parked" about one park, and the half that drifts is whichever the
+       * screen somebody is reading happens to use.
+       *
+       * The customer column is the CURRENT park and the transition is the
+       * history, which is exactly the split `leadLostReason` lives under two
+       * blocks up. It matters more here than there, because a park ENDS: the
+       * block below clears these columns when the lead comes back, and the
+       * transition is then the only surviving statement that this lead was
+       * ever stopped for a plant shutdown.
+       *
+       * A handset park arrives with no code at all and writes null rather than
+       * being refused — see the option's own note above. Null here is "nobody
+       * picked one", which every screen draws as itself rather than guessing.
+       */
+      set.leadHoldReasonCode = o.reasonCode ?? null;
     }
 
     /*
@@ -979,6 +1028,12 @@ export async function applyLeadStageMove(
     if (from === "on_hold" && to !== "on_hold") {
       set.leadHoldReason = null;
       set.leadHoldResumeDate = null;
+      /* The code goes with the sentence and for the same reason: it answered
+         "why is this stopped" about a lead that is no longer stopped. Left
+         behind it would be the one column on the row that still describes a
+         park somebody ended, and the counting question this list exists for is
+         asked of the transitions, which keep every park this lead ever had. */
+      set.leadHoldReasonCode = null;
     }
 
     if (promoted) {

@@ -46,6 +46,7 @@ export async function Body({
       counts={board.counts}
       forecastValuePaise={board.forecastValuePaise}
       unvalued={board.unvalued}
+      unconfirmed={board.unconfirmed}
       day={day}
       people={people}
       canWork={await canLead(user, "lead.work")}

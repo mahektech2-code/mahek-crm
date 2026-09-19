@@ -78,6 +78,10 @@ export async function Body({
       approval={detail.approval}
       feedback={detail.feedback}
       facts={facts}
+      /* The words behind the cancellation code, read from configuration so a
+         reworded option reads with its new wording rather than with whatever
+         the literal in `lead-labels.ts` happened to say when this shipped. */
+      cancelReasons={config["leads.sampleCancelReasons"]}
       ladder={[...ladder]}
       chaseNumber={chaseNumber}
       nextChaseOn={nextChaseOn}

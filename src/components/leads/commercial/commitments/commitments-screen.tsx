@@ -4,6 +4,7 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
 import { money, shortDate } from "@/lib/format";
+import { commitmentSizeLabel } from "@/lib/lead-commitment";
 import { salesTypeLabel, stageLabel } from "@/lib/lead-labels";
 import type { HandoverCandidate } from "@/lib/services/lead-console-service";
 import type { CommitmentRow, CommitmentView } from "@/lib/services/lead-commercial-service";
@@ -28,8 +29,9 @@ import { NextActionModal } from "../negotiation-screen";
 /* ---------------------------------------------------------------------------
  * 17 — A COMMITMENT IS NOT AN ORDER, AND THIS SCREEN EXISTS TO KEEP THEM APART.
  *
- * `lead_expected_order_date` and `lead_expected_order_value_paise` are what a
- * customer said on a phone call when somebody ran the eight questions. They
+ * `lead_expected_order_date`, `lead_expected_order_cans` and
+ * `lead_expected_order_value_paise` are what a customer said on a phone call
+ * when somebody ran the eight questions. They
  * are worth chasing and they are not revenue: nothing has been billed, nothing
  * has been approved by accounts, and the product master cannot price an order
  * at all — `canValueOrders()` still answers no — so even the figure is
@@ -45,6 +47,13 @@ import { NextActionModal } from "../negotiation-screen";
  * is the view that earns the screen, because it is the only one nobody can see
  * anywhere else: an unkept promise leaves no row of its own anywhere in
  * MahekOne.
+ *
+ * AND A DAY WITH NO SIZE IS LISTED HERE AND COUNTED IN NOTHING. §3.4 says a
+ * commitment is an expected date AND a quantity or a value; "he said the 25th
+ * and could not say how much" is a follow-up. It stays on this screen because
+ * this is the only screen that watches these days go past, and dropping it
+ * would hide the very row somebody has to ring back about — it is marked on
+ * its row, counted in its own metric, and in none of the money.
  * ------------------------------------------------------------------------- */
 
 export function CommitmentsScreen({
@@ -54,6 +63,7 @@ export function CommitmentsScreen({
   counts,
   forecastValuePaise,
   unvalued,
+  unconfirmed,
   day,
   people,
   canWork,
@@ -67,6 +77,8 @@ export function CommitmentsScreen({
   forecastValuePaise: number;
   /** Commitments with no estimate against them. Not zero; nobody said. */
   unvalued: number;
+  /** §3.4 — rows on this view that are an expected order rather than one. */
+  unconfirmed: number;
   day: string;
   people: HandoverCandidate[];
   canWork: boolean;
@@ -144,6 +156,17 @@ export function CommitmentsScreen({
             tone: unvalued ? "warn" : undefined,
           },
           {
+            /* NOT folded into "No estimate given": that one is a commitment
+               whose VALUE nobody guessed, which is still a commitment because
+               the quantity carries it. This is a row where neither half was
+               given, so there is nothing to forecast at all. Two different
+               phone calls to make. */
+            label: "Not a commitment yet",
+            value: String(unconfirmed),
+            sub: unconfirmed ? "A day, and nobody asked how much" : undefined,
+            tone: unconfirmed ? "warn" : undefined,
+          },
+          {
             label: "Slipped, all views",
             value: String(counts.slipped),
             tone: counts.slipped ? "danger" : undefined,
@@ -208,16 +231,33 @@ export function CommitmentsScreen({
                     Null is a named gap — nobody estimated it, which is not
                     the same as nothing being expected.
                   */}
-                  {r.forecastValuePaise != null ? (
+                  {r.confirmed ? (
                     <>
-                      <span className="tabular-nums">{money(r.forecastValuePaise)}</span>
+                      <span className="tabular-nums">
+                        {commitmentSizeLabel(
+                          {
+                            expectedOrderDate: r.forecastDate,
+                            expectedOrderCans: r.forecastCans,
+                            expectedOrderValuePaise: r.forecastValuePaise,
+                          },
+                          money,
+                        )}
+                      </span>
                       <span className="block text-[12px] text-muted">forecast</span>
                     </>
                   ) : (
+                    /*
+                      §3.4 SAID ON THE ROW, because this is where somebody
+                      decides which name to ring. "Not estimated" was the old
+                      words and they were too kind: they read as a figure
+                      nobody bothered to guess, when what is actually true is
+                      that nobody knows whether this day is worth anything at
+                      all.
+                    */
                     <span className="text-muted">
-                      Not estimated
+                      Not a commitment
                       <span className="block text-[12px]">
-                        Nothing here can price an order
+                        No quantity or value — ask, and it counts
                       </span>
                     </span>
                   )}
@@ -299,9 +339,16 @@ export function CommitmentsScreen({
                 <div className="text-sm font-semibold text-ink">{confirming.name}</div>
                 <p className="mt-0.5 text-[13px] text-muted">
                   Last time they said <strong>{shortDate(confirming.forecastDate)}</strong>
-                  {confirming.forecastValuePaise != null
-                    ? `, about ${money(confirming.forecastValuePaise)}`
-                    : ", with no figure given"}{" "}
+                  {confirming.confirmed
+                    ? `, about ${commitmentSizeLabel(
+                        {
+                          expectedOrderDate: confirming.forecastDate,
+                          expectedOrderCans: confirming.forecastCans,
+                          expectedOrderValuePaise: confirming.forecastValuePaise,
+                        },
+                        money,
+                      )}`
+                    : ", with no quantity or value given, so not a commitment"}{" "}
                   — a forecast, and the only thing on this screen that is not.{" "}
                   {confirming.countingOrders
                     ? "A real order has since arrived on the account."
@@ -316,6 +363,7 @@ export function CommitmentsScreen({
           <FirstOrderPanel
             customerId={confirming.customerId}
             expectedOrderDate={confirming.forecastDate}
+            expectedOrderCans={confirming.forecastCans}
             expectedOrderValuePaise={confirming.forecastValuePaise}
             countingOrderCount={confirming.countingOrders}
             disabled={!canWork}

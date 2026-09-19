@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { shortDate } from "@/lib/format";
-import { salesTypeLabel, stageLabel } from "@/lib/lead-labels";
+import { labelOf, salesTypeLabel, stageLabel } from "@/lib/lead-labels";
 import { setLeadNextAction } from "@/lib/actions/leads";
 import type {
   ActionOwnerCandidate,
@@ -65,6 +65,8 @@ export function DueScreen({
   candidates,
   canWork,
   requireNextAction,
+  parkedBack,
+  holdReasons,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -81,6 +83,10 @@ export function DueScreen({
   canWork: boolean;
   /** `leads.requireNextAction`. Whether all four answers are mandatory. */
   requireNextAction: boolean;
+  /** How many of these rows are parked leads whose Hold Until Date is today. */
+  parkedBack: number;
+  /** `leads.holdReasons`, resolved on the server. Never the literal list. */
+  holdReasons: { code: string; label: string }[];
 }) {
   const [editing, setEditing] = React.useState<NextActionRow | null>(null);
 
@@ -134,6 +140,14 @@ export function DueScreen({
         />
       ) : null}
 
+      {parkedBack ? (
+        <Banner
+          tone="warn"
+          title={`${plural(parkedBack, "parked lead")} back off hold today`}
+          body="Nobody promised these — a day somebody named has arrived, and the lead is on this list because the list asks rather than because a job un-parked it. Each one is still ON HOLD until somebody puts it back on a named rung, so its stage says On hold and the row says which rung it comes back to. Open it and either move it, or park it again with a new day and a reason."
+        />
+      ) : null}
+
       {overdueTotal ? (
         <Banner
           tone="warn"
@@ -149,6 +163,11 @@ export function DueScreen({
             label: "Missing an answer",
             value: String(incomplete),
             tone: incomplete ? "danger" : undefined,
+          },
+          {
+            label: "Back off hold",
+            value: String(parkedBack),
+            tone: parkedBack ? "warn" : undefined,
           },
           { label: "People holding one", value: String(owners.filter((o) => o.ownerId).length) },
           { label: "The day", value: shortDate(day) },
@@ -172,10 +191,12 @@ export function DueScreen({
           {groups.map((g) => (
             <OwnerGroup workspace={workspace}
               key={g.ownerId ?? "nobody"}
+              day={day}
               ownerName={g.ownerName}
               ownerId={g.ownerId}
               rows={g.rows}
               canWork={canWork}
+              holdReasons={holdReasons}
               onEdit={setEditing}
             />
           ))}
@@ -195,17 +216,22 @@ export function DueScreen({
 
 function OwnerGroup({
   workspace,
+  day,
   ownerId,
   ownerName,
   rows,
   canWork,
+  holdReasons,
   onEdit,
 }: {
   workspace: LeadWorkspace;
+  /** The working day, for telling a park that has come back from one that has not. */
+  day: string;
   ownerId: string | null;
   ownerName: string | null;
   rows: NextActionRow[];
   canWork: boolean;
+  holdReasons: { code: string; label: string }[];
   onEdit: (row: NextActionRow) => void;
 }) {
   return (
@@ -254,8 +280,16 @@ function OwnerGroup({
               </span>
             </Cell>
             <Cell>
-              {stageLabel(r.stage)}
-              <span className="block text-[12px] text-muted">{salesTypeLabel(r.salesType)}</span>
+              {isBack(r, day) ? (
+                <ParkedBack row={r} holdReasons={holdReasons} />
+              ) : (
+                <>
+                  {stageLabel(r.stage)}
+                  <span className="block text-[12px] text-muted">
+                    {salesTypeLabel(r.salesType)}
+                  </span>
+                </>
+              )}
             </Cell>
             <Cell truncate={230}>
               {r.action ? (
@@ -312,6 +346,88 @@ function OwnerGroup({
         ))}
       </Table>
     </section>
+  );
+}
+
+/* ----------------------------------------------- a parked lead, come back */
+
+/**
+ * Is this row here because a park's day arrived, rather than because somebody
+ * promised something?
+ *
+ * Asked of the resume date as well as the stage, because a lead can be parked
+ * AND owe a next action dated today — the park modal defaults one to the other,
+ * so that is the ordinary case rather than an edge — and `on_hold` alone would
+ * not distinguish a lead that came back from one that simply is parked. It is
+ * one function so the row, the cell and anything added beside them cannot come
+ * to three different answers about one lead.
+ */
+export function isBack(row: NextActionRow, day: string): boolean {
+  /* The day is COMPARED and not merely checked for existence, because a parked
+     lead is routinely on this list for the other reason: somebody parked it
+     until November and owes it a call on Thursday. Drawing "back off hold"
+     against that row would tell a salesman a lead has returned three months
+     before it has. Two ISO dates compare as strings, which is why this can stay
+     pure — the day is the working date read on the server and passed down, and
+     nothing here reads a clock during a render. */
+  return row.stage === "on_hold" && row.holdResumeDate !== null && row.holdResumeDate <= day;
+}
+
+/**
+ * WHAT A PARKED LEAD'S STAGE CELL SAYS, which is not "On hold" and stop.
+ *
+ * Mahek's instruction is that a parked lead returns to the salesman's Actions
+ * Due by itself on the Hold Until Date. It does that by being READ back onto
+ * this list rather than by anything un-parking it — see the long note in
+ * `lead-actions-service.ts` for why nothing writes — and the consequence lands
+ * exactly here: the lead is genuinely still at `on_hold`, so the column that
+ * says where a lead is standing says the one thing that is no use to the person
+ * about to work it.
+ *
+ * So three things are drawn and they are three different facts. That it is back
+ * off hold today, which is why it is on the screen. WHICH RUNG it comes back
+ * to, read off the transition that parked it, because the stage column was
+ * taken by the park and that transition is the only place the rung survives —
+ * without it a salesman is handed a lead that is due and no screen in the
+ * product can tell him what it is due as, which is the one way an automatic
+ * return could still lose a lead its place on the ladder. And WHY it stopped,
+ * which is what he needs before he rings.
+ *
+ * A park with no rung recorded says so rather than drawing a blank: it is a
+ * real state — every park made before the rung was written down — and it is a
+ * thing a manager has to decide rather than read.
+ *
+ * ONE COPY, imported by the overdue screen beside it, exactly as the next-action
+ * modal below is. The two screens draw the same lead in two windows, and a
+ * second copy typed into the other file is the half that drifts.
+ */
+export function ParkedBack({
+  row,
+  holdReasons,
+}: {
+  row: NextActionRow;
+  holdReasons: { code: string; label: string }[];
+}) {
+  return (
+    <>
+      {/* Late or landed today are two different sentences, and the number is
+          the one the reader acts on. `overdueDays` already carries the park's
+          own lateness — the service takes the greater of the promise and the
+          resume date for exactly this. */}
+      {row.overdueDays > 0 ? (
+        <Pill tone="danger">{plural(row.overdueDays, "day")} late back</Pill>
+      ) : (
+        <Pill tone="warn">Back off hold</Pill>
+      )}
+      <span className="block truncate text-[12px] text-muted">
+        {row.parkedFrom ? `back to ${stageLabel(row.parkedFrom)}` : "no rung recorded"}
+      </span>
+      <span className="block truncate text-[12px] text-muted">
+        {row.holdReasonCode
+          ? labelOf(holdReasons, row.holdReasonCode)
+          : (row.holdReason ?? "no reason recorded")}
+      </span>
+    </>
   );
 }
 

@@ -67,6 +67,10 @@ export async function Body({
         candidates={candidates}
         canWork={canWork}
         requireNextAction={config["leads.requireNextAction"]}
+        /* Parked leads whose Hold Until Date has GONE, counted in SQL over the
+           whole window rather than off a capped page. */
+        parkedBack={overdue.parkedBack}
+        holdReasons={config["leads.holdReasons"]}
       />
     </div>
   );

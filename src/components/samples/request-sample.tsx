@@ -8,6 +8,8 @@ import { Input, Select, Textarea } from "@/components/ui/primitives";
 import { Button } from "@/components/console/parts";
 import { ProductField } from "@/components/products/product-field";
 import { requestSample } from "@/lib/actions/lead-samples";
+import { qualifiedForSample, sampleReadyStage } from "@/lib/engines/lead-ladder";
+import { stageLabel, type LeadSalesType, type LeadStage } from "@/lib/lead-labels";
 
 /* ---------------------------------------------------------------------------
  * §15 — ASKING FOR A SAMPLE FROM A DESK, which until now nobody could do.
@@ -52,6 +54,18 @@ import { requestSample } from "@/lib/actions/lead-samples";
  * the hover**, this product's rule for something somebody might reasonably
  * expect to hold. The action checks the capability too — a disabled button is
  * a fact about a component, not about the system.
+ *
+ * **AND A LEAD BELOW PROSPECT IS SAID OUT LOUD, BEFORE THE BUTTON.** Mahek's
+ * answer 05 is that a sample normally wants the lead qualified first — the
+ * product, the monthly requirement, the potential, the competitor and the
+ * basic requirement are all answered on the way to Prospect, and a trial with
+ * none of them behind it has nothing to be measured against. It is emphatically
+ * not a refusal: a salesman who believes a can in a shopkeeper's hand is what
+ * opens the relationship may ask anyway, and the Sales Manager decides. So the
+ * form stays submittable and the sentence appears where he can still read it —
+ * "Lead not qualified — Manager approval required." Drawn only after the save
+ * it would be an objection to a decision already made, which is the mistake the
+ * check-in override was written the other way round to avoid.
  * ------------------------------------------------------------------------- */
 
 export function RequestSample({
@@ -62,6 +76,12 @@ export function RequestSample({
   defaultProductName,
   /** §9's answer — what they are going to use it on. */
   defaultApplication,
+  /* The rung this lead is standing on, and which ladder it is climbing — the
+     two answers `qualifiedForSample` needs. Null on an account that is not a
+     lead at all, which answers qualified, because a shop that has been buying
+     for four years plainly has nothing left to establish. */
+  leadStage,
+  salesType,
   reasons,
   canWork,
 }: {
@@ -70,6 +90,8 @@ export function RequestSample({
   defaultProductId: string | null;
   defaultProductName: string | null;
   defaultApplication: string | null;
+  leadStage: LeadStage | null;
+  salesType: LeadSalesType | null;
   reasons: ReadonlyArray<{ code: string; label: string }>;
   canWork: boolean;
 }) {
@@ -105,6 +127,8 @@ export function RequestSample({
           defaultProductId={defaultProductId}
           defaultProductName={defaultProductName}
           defaultApplication={defaultApplication}
+          leadStage={leadStage}
+          salesType={salesType}
           reasons={reasons}
           onClose={() => setOpen(false)}
         />
@@ -119,6 +143,8 @@ function RequestForm({
   defaultProductId,
   defaultProductName,
   defaultApplication,
+  leadStage,
+  salesType,
   reasons,
   onClose,
 }: {
@@ -127,6 +153,8 @@ function RequestForm({
   defaultProductId: string | null;
   defaultProductName: string | null;
   defaultApplication: string | null;
+  leadStage: LeadStage | null;
+  salesType: LeadSalesType | null;
   reasons: ReadonlyArray<{ code: string; label: string }>;
   onClose: () => void;
 }) {
@@ -144,6 +172,12 @@ function RequestForm({
   const [reasonCode, setReasonCode] = React.useState(reasons[0]?.code ?? "");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  /* Pure, and the SAME function the action reads on the way in — the rule is
+     not restated here, only rendered. A second copy typed into a screen drifts
+     inside a release and the half that drifts is the half somebody reads. */
+  const unqualified = !qualifiedForSample(leadStage, salesType);
+  const wantedStage = sampleReadyStage(salesType);
 
   const quantity = Number(cans);
   const quantityOk = Number.isInteger(quantity) && quantity > 0 && quantity <= 10000;
@@ -182,6 +216,24 @@ function RequestForm({
           Nothing leaves the godown on this. It is a request, and a manager approves it before
           anybody packs a can.
         </div>
+        {/*
+         * The warning sits INSIDE the same block as the subject rather than in
+         * a banner of its own, because it is a fact about this lead and not an
+         * error about this form — a warn-toned strip across the top of a dialog
+         * reads as something having gone wrong, and nothing has.
+         */}
+        {unqualified ? (
+          <div className="mt-1.5 border-t border-line pt-1.5 text-warn-ink">
+            Lead not qualified — Manager approval required.
+            <span className="block text-muted">
+              It is at {stageLabel(leadStage as LeadStage)}, and a sample normally waits for{" "}
+              {stageLabel(wantedStage)}: the product, the monthly requirement, the potential, the
+              competitor and what they actually need are all answered by then. Ask anyway if a can
+              in their hand is what opens this one — the manager decides, and is told this was the
+              rung.
+            </span>
+          </div>
+        ) : null}
       </div>
 
       <label className="mb-1 block text-[13px] font-medium text-ink">

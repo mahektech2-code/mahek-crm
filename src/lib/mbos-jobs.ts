@@ -930,7 +930,15 @@ export async function runNurturePass(): Promise<Counted> {
 
   /* The day the customer said they would place the order. §18's whole point is
      that "interested" is not a report, and this is the task that goes and
-     collects the answer on the day that was named. */
+     collects the answer on the day that was named.
+
+     A DATE IS ENOUGH HERE, deliberately, and it is the one reader of these
+     columns that does not apply §3.4's commitment rule. Everything that
+     COUNTS a commitment demands a quantity or a value beside the day — see
+     `lib/lead-commitment.ts` — but this raises the follow-up CALL, and a lead
+     where nobody could say how much is precisely the one somebody has to ring
+     back about. Skipping it here would take the uncounted promises off every
+     screen at once, which is the opposite of what keeping them was for. */
   const expected = await db
     .select({ id: customers.id, on: customers.leadExpectedOrderDate })
     .from(customers)

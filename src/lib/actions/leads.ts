@@ -30,6 +30,7 @@ import {
   FIRST_ORDER_QUESTIONS,
   isVerificationFinding,
   findingLabel as verificationFindingLabel,
+  REASON_CODE_NEEDING_REMARKS,
   salesTypeIsOffered,
   salesTypeLabel,
   stageLabel,
@@ -42,7 +43,8 @@ import {
   type LeadStage,
 } from "@/lib/lead-labels";
 import { checklistFor } from "@/lib/engines/lead-gates";
-import { ladderFor, rungOf } from "@/lib/engines/lead-ladder";
+import { commitmentGap, commitmentState } from "@/lib/lead-commitment";
+import { isParked, ladderFor, rungOf } from "@/lib/engines/lead-ladder";
 import {
   applyLeadStageMove,
   evaluateLeadStageMove,
@@ -142,12 +144,25 @@ const advanceSchema = z.object({
     .optional(),
   nextAction: nextActionSchema.optional(),
   /**
-   * §— the two facts that make On Hold a pause. Demanded below when the move
-   * is a park, and meaningless on any other move.
+   * §— the facts that make On Hold a pause. Demanded below when the move is a
+   * park, and meaningless on any other move.
+   *
+   * **THE REMARKS ARE NO LONGER MANDATORY BY THEMSELVES, and that is Mahek's
+   * answer rather than a loosening.** They used to be the only answer to "why
+   * has this stopped", so they had to be there or a park said nothing at all.
+   * The WHICH has moved onto `reasonCode` — one of six, from
+   * `leads.holdReasons`, validated below — and that is what makes "how many
+   * genuine opportunities did we park for a plant shutdown this quarter" a
+   * question somebody can ask rather than a grep over five hundred characters
+   * of free text. The sentence stays, because no list of six says "their buyer
+   * is on maternity leave until October" and that is what the person picking
+   * the lead up on the resume date actually reads. It becomes mandatory again
+   * on `other`: a code meaning "something else" with nothing behind it is the
+   * one row in the count nobody can act on and nobody can explain.
    */
   hold: z
     .object({
-      reason: z.string().trim().min(1, "Why is it stopping?").max(500),
+      reason: z.string().trim().max(500).optional(),
       resumeDate: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/, "Give the day it should come back as a date."),
@@ -191,7 +206,7 @@ export async function advanceLeadStage(input: {
    * `LeadStage` rather than a string here). That is worth having, and the cost
    * is exactly this: a field added to one and not the other.
    */
-  hold?: { reason: string; resumeDate: string };
+  hold?: { reason?: string; resumeDate: string };
 }): Promise<Result<{ stage: LeadStage; promoted: boolean }>> {
   try {
     const parsed = advanceSchema.safeParse(input);
@@ -204,7 +219,23 @@ export async function advanceLeadStage(input: {
     const lead = found.lead;
 
     const to = p.to as LeadStage;
-    if (!ladderFor(lead.leadSalesType as LeadSalesType | null).includes(to) && to !== "lost") {
+    /*
+     * `lost` AND `on_hold` are the two destinations that are not rungs, and
+     * leaving the second out of this guard is what made parking impossible from
+     * this door for as long as the door existed. A park is a PAUSE — it
+     * displaces the rung rather than being one, which is exactly why
+     * `lead-ladder.ts` puts `on_hold` on no ladder and why `isParked` exists —
+     * so asking whether it is on this lead's ladder is asking the wrong
+     * question and getting the wrong answer: every park was refused with "On
+     * hold is not a rung on this lead's ladder", which reads as the app being
+     * broken because it is. Asked through `isParked` rather than by name, so a
+     * second parked-like stage cannot be added to the enum and quietly miss it.
+     */
+    if (
+      !ladderFor(lead.leadSalesType as LeadSalesType | null).includes(to) &&
+      to !== "lost" &&
+      !isParked(to)
+    ) {
       return err(
         `${stageLabel(to)} is not a rung on this lead's ladder.`,
         "rule_violation",
@@ -244,11 +275,36 @@ export async function advanceLeadStage(input: {
      *
      * §24 already demands a next action on every upward move, and a park is
      * not one — so it is demanded again, by name, rather than assumed.
+     *
+     * **THE WHY IS NOW A CODE, and it is validated against CONFIGURATION.**
+     * Mahek asked for a controlled list so the parks can be counted: four of
+     * the six are the customer's doing and two are ours to chase, and that
+     * split is the whole value of counting them. The list is
+     * `leads.holdReasons` and it is read from `getConfig()` rather than from
+     * `HOLD_REASONS`, for the reason `MarkLost` states one control along — a
+     * deployment that has reworded the list would otherwise have its own
+     * codes refused here while the picker went on offering them, and the
+     * refusal reads as the app being broken rather than as the list having
+     * moved.
+     *
+     * **`other` DEMANDS THE SENTENCE.** It is the only code that answers
+     * nothing on its own, so a park carrying it and no remarks is a row in the
+     * count that nobody can act on, nobody can explain and nobody can fold
+     * back into one of the other five later. Refused by name so the message
+     * lands under the remarks box rather than under the list.
      */
     if (to === "on_hold") {
       const missing: FieldError[] = [];
-      if (!p.hold?.reason?.trim()) {
-        missing.push({ field: "holdReason", message: "Why is it stopping?" });
+      const holdCodes = (await getConfig())["leads.holdReasons"];
+      const code = p.reasonCode ?? "";
+      if (!code || !holdCodes.some((r) => r.code === code)) {
+        missing.push({ field: "reasonCode", message: "Why is it stopping?" });
+      }
+      if (code === REASON_CODE_NEEDING_REMARKS && !p.hold?.reason?.trim()) {
+        missing.push({
+          field: "holdReason",
+          message: "You picked Other — say in words what it actually is.",
+        });
       }
       if (!p.hold?.resumeDate) {
         missing.push({ field: "holdResumeDate", message: "When should it come back?" });
@@ -260,7 +316,7 @@ export async function advanceLeadStage(input: {
         return {
           ok: false,
           error:
-            "On hold is a pause, not a quiet death. Say why it stopped, the day it should come back, and what happens when it does — otherwise it comes back to nobody.",
+            "On hold is a pause, not a quiet death. Pick why it stopped, name the day it comes back, and say what happens when it does — otherwise it comes back to nobody.",
           code: "validation",
           fieldErrors: missing,
         };
@@ -1676,19 +1732,42 @@ export async function recordCommunication(
  *
  * Each of them has an answer the customer can give on a phone call, and the
  * last four are the four things that actually stop an order. What comes out of
- * it is a DATE and a value, which is what §18's gate on `first_order` reads —
- * so this is the action that opens that rung, and a manager who rang and wrote
- * "keen" has opened nothing.
+ * it is a DAY and a SIZE, and §3.4 is explicit that the day alone is not a
+ * commitment: the salesman records an expected order date AND an expected
+ * quantity or an expected value. `lib/lead-commitment.ts` is the one place
+ * that rule lives, and every screen that counts one reads it from there.
  *
- * The expected VALUE is optional and the date is not. A customer who will not
- * name a number will still name a week, and refusing the whole record for want
- * of the figure loses the date as well.
+ * **A DATE ALONE IS STILL RECORDED, AND THAT IS THE POINT OF THE SHAPE.**
+ * Mahek's words are that a customer who says "around the 25th" with no
+ * quantity is kept as a follow-up and simply does not count as a confirmed
+ * commitment — so this action does not refuse it. It writes what it was given
+ * and SAYS which of the two it just recorded, because the alternative is a
+ * form that throws away the one answer the salesman did come back with. He
+ * would then either type a figure nobody gave him or stop recording the call
+ * at all, and both of those are worse than an uncounted forecast.
+ *
+ * **What it DOES refuse is a size with no day**, which is the one shape that
+ * cannot be recorded honestly: "two hundred cans" with nothing saying when is
+ * a sentence nobody can chase, no sweep can date a task from and no view can
+ * put in a week.
+ *
+ * **`quantity` stopped being a mandatory ANSWER when the column arrived.** It
+ * was one of the two the action demanded, which made "he could not say how
+ * much" impossible to record at all — the exact state §3.4 asks us to keep.
+ * The question stays in the eight and stays free text, because it is the
+ * customer's own words in whatever unit he used ("about five hundred litres",
+ * "a drum a month"); `expectedCans` is the countable figure beside it, in
+ * cans, and only a number can be added up. `product` is still demanded: which
+ * product they want is not a quantity nobody knows, it is the half of the
+ * report that makes the rest of it mean anything.
  */
 export async function askForFirstOrder(
   customerId: string,
   input: {
     answers: Record<string, string>;
     expectedDate: string;
+    /** CANS — the unit the customer speaks in. See the schema. */
+    expectedCans?: number;
     expectedValuePaise?: number;
   },
 ): Promise<Result<null>> {
@@ -1696,8 +1775,19 @@ export async function askForFirstOrder(
     const parsed = z
       .object({
         answers: z.record(z.string(), z.string().trim().max(1000)),
-        expectedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Give the day as a date."),
-        expectedValuePaise: z.number().int().nonnegative().optional(),
+        /* Allowed to be absent so ONE thing refuses it — see below. A regex
+           that rejected the empty string here would answer "give the day as a
+           date" to somebody who gave no day at all, and §3.4's sentence about
+           what a commitment needs would never be the one anybody read. */
+        expectedDate: z
+          .string()
+          .regex(/^(\d{4}-\d{2}-\d{2})?$/, "Give the day as a date.")
+          .optional(),
+        /* Positive, because zero is a customer declining rather than
+           committing, and a commitment of nothing on the forecast board is
+           worse than no commitment at all. */
+        expectedCans: z.number().int().positive().optional(),
+        expectedValuePaise: z.number().int().positive().optional(),
       })
       .safeParse(input);
     if (!parsed.success) return zodErr(parsed.error);
@@ -1714,19 +1804,42 @@ export async function askForFirstOrder(
       if (known.has(id) && value.trim()) answers[id] = value.trim();
     }
 
-    /* The first two are the report. Without how much and which product, this is
-       the "customer interested" the specification is explicit about refusing —
-       and it would set an expected order date behind nothing. */
-    const owed = ["quantity", "product"].filter((id) => !answers[id]);
-    if (owed.length) {
+    /* Which product, and it is the one answer still demanded. Without it this
+       is the "customer interested" the specification is explicit about
+       refusing, and it would set an expected order date behind nothing. */
+    if (!answers.product) {
       return {
         ok: false,
-        error: "How much, and which product. Those two are what makes this a report rather than a feeling.",
+        error: "Which product. That is what makes this a report rather than a feeling.",
         code: "validation",
-        fieldErrors: owed.map<FieldError>((id) => ({
-          field: id,
-          message: FIRST_ORDER_QUESTIONS.find((q) => q.id === id)!.ask,
-        })),
+        fieldErrors: [
+          {
+            field: "product",
+            message: FIRST_ORDER_QUESTIONS.find((q) => q.id === "product")!.ask,
+          },
+        ],
+      };
+    }
+
+    /*
+     * §3.4 CHECKED HERE AND NOT ONLY IN THE FORM, because a server action is
+     * a URL and a disabled button is not a rule. The engine answers with the
+     * STATE rather than a yes or no, since two of its three answers are
+     * recordable and only the third is not — and the message is the engine's
+     * own sentence, so the form and the save cannot phrase one rule two ways.
+     */
+    const facts = {
+      expectedOrderDate: p.expectedDate || null,
+      expectedOrderCans: p.expectedCans ?? null,
+      expectedOrderValuePaise: p.expectedValuePaise ?? null,
+    };
+    const state = commitmentState(facts);
+    if (state === "none" || !p.expectedDate) {
+      return {
+        ok: false,
+        error: commitmentGap({ ...facts, expectedOrderDate: null })!,
+        code: "validation",
+        fieldErrors: [{ field: "expectedDate", message: "Ask when they will place it." }],
       };
     }
 
@@ -1737,6 +1850,14 @@ export async function askForFirstOrder(
         .update(customers)
         .set({
           leadExpectedOrderDate: p.expectedDate,
+          /*
+           * BOTH HALVES ARE WRITTEN EVERY TIME, including as null. This is
+           * what the customer said on THIS call, so a figure he gave last
+           * month and did not repeat is not still his commitment — leaving
+           * the old one standing would let a lead keep a quantity nobody has
+           * confirmed since, and the forecast would go on counting it.
+           */
+          leadExpectedOrderCans: p.expectedCans ?? null,
           leadExpectedOrderValuePaise: p.expectedValuePaise ?? null,
           leadLastActivityDate: await today(),
           updatedAt: new Date(),
@@ -1750,7 +1871,22 @@ export async function askForFirstOrder(
         sourceRecordId: eventId,
         occurredAt: new Date(),
         actorUserId: ctx.user.id,
-        summary: `Asked ${lead.name} for the first order — ${answers.quantity} of ${answers.product}, expected ${p.expectedDate}.`,
+        /* The size in the words it was recorded in, and the state said out
+           loud: a record that reads "expected 25 Sep" months later cannot
+           tell anybody whether that was a promise or a guess. */
+        summary:
+          `Asked ${lead.name} for the first order — ` +
+          [
+            answers.quantity ? `${answers.quantity} of ${answers.product}` : answers.product,
+            `expected ${p.expectedDate}`,
+            p.expectedCans != null ? `${p.expectedCans} cans` : null,
+            p.expectedValuePaise != null
+              ? `about ${Math.round(p.expectedValuePaise / 100)} rupees`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(", ") +
+          (state === "confirmed" ? "." : " — no size given, so not a commitment."),
       });
 
       await tx.insert(auditLog).values({
@@ -1761,12 +1897,23 @@ export async function askForFirstOrder(
         entityId: customerId,
         actorRole: ctx.authorisedBy,
         actorApp: ctx.authorisedIn,
-        afterState: { answers, expectedDate: p.expectedDate, expectedValuePaise: p.expectedValuePaise ?? null },
+        afterState: {
+          answers,
+          expectedDate: p.expectedDate,
+          expectedCans: p.expectedCans ?? null,
+          expectedValuePaise: p.expectedValuePaise ?? null,
+          commitment: state,
+        },
       });
     });
 
     refresh(customerId);
-    return ok(null, "Recorded. The first-order rung is open once the order arrives.");
+    return ok(
+      null,
+      state === "confirmed"
+        ? "Recorded as a commitment. The first-order rung is open once the order arrives."
+        : "Recorded as an expected order. With no quantity or value it is a follow-up rather than a commitment, so it is not counted in the forecast.",
+    );
   } catch (e) {
     return fromThrown(e);
   }
