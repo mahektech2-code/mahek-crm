@@ -78,6 +78,20 @@
   --breakpoint-ultra: 1920px;
 
   --container-shell-floor: 1100px;
+
+  /*
+     THE MEASURE, which is the other end of the same question.
+
+     Past about 1600px the fault reverses: nothing is cramped, everything is
+     stretched. A figure card pulled to 420px is a number adrift in a box, and
+     a sentence set across 1700px is one the eye loses on the way back. The
+     content stops growing here and the rest of a 1920 or 2560 screen becomes
+     margin, which is the honest use of it.
+
+     A map is the exception and says so where it opts out: a map is one of the
+     few things on a screen that is genuinely better for being bigger.
+  */
+  --container-measure: 1600px;
 }
 
 :root {

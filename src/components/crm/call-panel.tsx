@@ -38,6 +38,7 @@ import { addLabel, dropLabel } from "@/lib/notes";
 import { ImagePicker } from "@/components/crm/image-picker";
 import { outcomeFieldRequired, outcomeFieldsVisible } from "@/lib/call-outcomes";
 import type { ReasonField } from "@/lib/call-reasons";
+import { CardGrid } from "@/components/ui/card-grid";
 import {
   CALLER_ROLES,
   CALL_REASONS,
@@ -3139,9 +3140,9 @@ function InfoSection({
       {plain ? (
         children
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] items-start gap-4">
+        <CardGrid min={150} className="items-start">
           {children}
-        </div>
+        </CardGrid>
       )}
     </div>
   );
