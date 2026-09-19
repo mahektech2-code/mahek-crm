@@ -45,6 +45,7 @@ import { assignSalesManager } from "@/lib/actions/sales-manager";
 import { SalesManagerDialog } from "@/components/crm/sales-manager-dialog";
 import { HandoverDialog } from "@/components/crm/handover-dialog";
 import { handOverRelationships } from "@/lib/actions/relationship-handover";
+import { bookUnchangedNote } from "@/lib/seat-effects";
 import {
   SHEET_NAME_VALUE,
   StaffDot,
@@ -1422,6 +1423,11 @@ function AccountManagerDialogBody({
   const backOfficeMoved =
     backOfficeId !== SHEET_NAME_VALUE && backOfficeId !== backOfficeBefore;
   const changed = salesMoved || backOfficeMoved;
+  const bookNote = bookUnchangedNote({
+    changingSales: salesMoved,
+    changingBackOffice: backOfficeMoved,
+    salesHolder: customer.salesAmName ?? null,
+  });
 
   return (
     <Modal
@@ -1537,6 +1543,19 @@ function AccountManagerDialogBody({
           </span>
         ) : null}
       </Field>
+      {/*
+        THE BOOK HAS NOT MOVED, SAID OUT LOUD. Moving the paperwork seat and
+        leaving the book behind is an ordinary thing to do and is never
+        refused — but it is also exactly what happened on forty-two accounts
+        under the reason "Salesperson left", with nothing on this form saying
+        the salesperson still had them. The sentence is shared, because there
+        are three dialogs that can do this.
+      */}
+      {bookNote ? (
+        <p className="mt-3 rounded-[4px] border border-warn-line bg-warn-soft px-3 py-2 text-[12px] text-warn-ink">
+          {bookNote}
+        </p>
+      ) : null}
       {changed ? (
         <Field label="Why this is changing" className="mt-3">
           <Select

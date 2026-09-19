@@ -285,6 +285,25 @@ export async function updateAccountManagers(
     if (!rows.length) return err("Those customers no longer exist.", "not_found");
 
     /*
+     * THE NAMES OF WHOEVER ALREADY HOLDS A SEAT, so a mirror can be put back in
+     * step with an id this call is not moving. See `reconcile` below.
+     */
+    const heldIds = [
+      ...new Set(
+        rows
+          .flatMap((r) => [r.salesAmId, r.ownerId, r.backOfficeAmId])
+          .filter((v): v is string => typeof v === "string"),
+      ),
+    ].filter((id) => !nameById.has(id));
+    if (heldIds.length) {
+      const held = await db
+        .select({ id: users.id, name: users.name })
+        .from(users)
+        .where(inArray(users.id, heldIds));
+      for (const u of held) nameById.set(u.id, u.name);
+    }
+
+    /*
      * Who the account answers to TODAY, which is not one column.
      * `ASSIGNED_TO_SQL` reads `owner_id` for a lead and `sales_am_id` for a
      * customer, so the sales manager has to be read — and written — from the
@@ -404,6 +423,55 @@ export async function updateAccountManagers(
          * change and never by the projection — `recomputeSalesPeople()` skips
          * a decided account, name included, and `--reassign` leaves it alone.
          */
+        /*
+         * A NAME MAY NOT CONTRADICT THE ID BESIDE IT — and this is where the
+         * contradiction used to be created.
+         *
+         * `salesPersonName` and `backOfficeName` are the sheet's own words,
+         * and the screens read them FIRST, falling through to the linked
+         * account only where the sheet is silent. That is right while the
+         * sheet is still in charge. It stops being right the moment
+         * `amDecidedAt` is stamped below, because from then on
+         * `recomputeSalesPeople` skips this account entirely and nothing will
+         * ever bring the two back into step.
+         *
+         * So a back-office-only change used to freeze a sales NAME against a
+         * sales ID it disagreed with. On MAA PAINT that left every screen
+         * showing "Sanjay Kumar Samantaray" while the Call Log, the
+         * collections list and the target that counted its orders all belonged
+         * to the person the account had supposedly been taken away from. It
+         * was true of forty-two accounts, and nobody could have found it from
+         * any one screen: each of them was reporting a column correctly.
+         *
+         * Reconciling is deliberately one-directional — the ID decides. Where
+         * a seat is held by an ACCOUNT, the mirror becomes that account's
+         * name. Where it is held by nobody, or by a name with no login (which
+         * `salesEmployeeId` exists to record), the mirror is left exactly as
+         * it stands: that name is then the only statement of who works the
+         * account, and overwriting it would destroy the answer rather than
+         * correct it.
+         */
+        const finalSalesId =
+          row.kind === "lead"
+            ? (values.ownerId !== undefined ? values.ownerId : row.ownerId)
+            : (values.salesAmId !== undefined ? values.salesAmId : row.salesAmId);
+        if (finalSalesId && values.salesPersonName === undefined) {
+          const trueName = nameById.get(finalSalesId) ?? null;
+          if (trueName && trueName !== row.salesPersonName) {
+            values.salesPersonName = trueName;
+          }
+        }
+        const finalBackOfficeId =
+          values.backOfficeAmId !== undefined
+            ? values.backOfficeAmId
+            : row.backOfficeAmId;
+        if (finalBackOfficeId && values.backOfficeName === undefined) {
+          const trueName = nameById.get(finalBackOfficeId) ?? null;
+          if (trueName && trueName !== row.backOfficeName) {
+            values.backOfficeName = trueName;
+          }
+        }
+
         values.amDecidedAt = now;
         values.updatedAt = now;
         await tx.update(customers).set(values).where(eq(customers.id, row.id));
