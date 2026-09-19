@@ -30,10 +30,39 @@ import {
   HEALTH_BUCKETS,
   NEXT_BUCKETS,
   POTENTIAL_BUCKETS,
+  PRIORITY_BUCKETS,
   type FilterOption,
 } from "@/lib/lead-filters";
+import {
+  LEAD_PRIORITIES,
+  priorityLabel,
+  prioritySentence,
+  priorityTone,
+  type LeadPriority,
+} from "@/lib/lead-priority";
+import { setLeadPriority } from "@/lib/actions/lead-priority";
 import type { LeadRow } from "@/lib/services/sales-service";
-import { ALL_LEAD_STAGES, stageLabel, type LeadStage } from "@/lib/lead-labels";
+import {
+  ALL_LEAD_STAGES,
+  stageLabel,
+  type LeadSalesType,
+  type LeadStage,
+} from "@/lib/lead-labels";
+import {
+  isOnQueueFor,
+  roleAction,
+  type LeadAction,
+  type LeadActionFacts,
+  type LeadVantage,
+} from "@/lib/engines/lead-role-action";
+import {
+  LEAD_VANTAGES,
+  primaryVantage,
+  vantageAsYou,
+  vantagesFor,
+  vantageLabel,
+  type VantageViewer,
+} from "@/lib/lead-vantage";
 import {
   Button,
   Cell,
@@ -49,18 +78,23 @@ import {
 } from "@/components/console/parts";
 
 /**
- * THE SEVEN COLUMNS THAT CAN BE NARROWED, in the order they appear in the
+ * THE EIGHT COLUMNS THAT CAN BE NARROWED, in the order they appear in the
  * table — so the filter bar reads left to right exactly like the header under
  * it, and "which control filters which column" is never a question.
  *
  * Declared once and iterated: the URL parameter, the ticked state, the clear
- * action and the bar itself all walk this list, which is what stops an eighth
+ * action and the bar itself all walk this list, which is what stops a ninth
  * filter being added to the bar and quietly not being cleared by "Clear all".
  */
 const FILTER_COLUMNS = [
   "owner",
   "source",
   "potential",
+  /* §4.1 — the manager's own judgement, sitting immediately after the
+     salesman's estimate because the pair is only readable together: the whole
+     point of the field is that a shop can be worth a great deal and still not
+     be this fortnight's work. */
+  "priority",
   "stage",
   "next",
   "age",
@@ -74,7 +108,13 @@ const PER_PAGE = [15, 25, 50, 100] as const;
 type Acting =
   | { kind: "reassign"; lead: LeadRow }
   | { kind: "archive"; lead: LeadRow }
-  | { kind: "restore"; lead: LeadRow };
+  | { kind: "restore"; lead: LeadRow }
+  /* §4.1 — setting the priority from the list, which is where a manager is
+     actually standing when they form the judgement: fifteen leads in front of
+     them, with the potential, the stage and the age of each one on the row.
+     Offering it only on the record would mean opening four hundred records to
+     use the field once, which is how a field nobody fills in happens. */
+  | { kind: "priority"; lead: LeadRow };
 
 /** The five things a selection can be put through. */
 type Bulk = "reassign" | "stage" | "archive" | "restore" | "chase";
@@ -107,6 +147,8 @@ export function LeadsScreen({
   healthStrongAtOrAbove,
   team,
   desks,
+  canPrioritise,
+  viewer,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -146,6 +188,33 @@ export function LeadsScreen({
     noNextAction: number;
     appointments: number;
   };
+  /**
+   * §4.1 — whether this person may say how hard to push a lead.
+   *
+   * It decides whether the row menu's item is DISABLED WITH A REASON rather
+   * than whether it is drawn at all, which is the choice this product makes
+   * for a control somebody might reasonably expect to hold: a menu item that
+   * is simply missing reads as the screen being broken, and the sentence on
+   * the hover is what tells a telecaller whose job it is. The BADGE is drawn
+   * for everybody — reading the manager's judgement is the whole point of it,
+   * and the person working the lead is who most needs to have read it.
+   *
+   * The action checks the same capability. A server action is a URL, and a
+   * disabled menu item is a fact about a component.
+   */
+  canPrioritise: boolean;
+  /**
+   * §7 — WHOSE JOB THIS READER IS DOING, resolved once on the server and
+   * applied here per row.
+   *
+   * Four booleans rather than a vantage, because two of the five are read off
+   * SEATS ON THE ROW and there are four hundred rows: the same person is the
+   * back office on one lead and the sales manager on the next, and one vantage
+   * computed on the server would have to be wrong about one of them. It
+   * decides WORDS only — `lib/lead-vantage.ts` carries the argument at length,
+   * and every action on this screen goes on checking its own capability.
+   */
+  viewer: VantageViewer;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -234,6 +303,16 @@ export function LeadsScreen({
   const [salesmanId, setSalesmanId] = React.useState("");
   const [stage, setStage] = React.useState<LeadStage>("contacted");
   const [reason, setReason] = React.useState("");
+  /*
+   * §4.1 — what the priority dialog currently has picked, and "" IS an answer.
+   *
+   * The empty string is null, which is a manager taking a judgement back off a
+   * lead rather than the absence of one — null and `low` are different facts
+   * and `lead-priority.ts` carries the argument. A select whose empty option
+   * meant "leave it alone" would make clearing impossible from the one screen
+   * that offers setting.
+   */
+  const [priority, setPriority] = React.useState<LeadPriority | "">("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -340,6 +419,12 @@ export function LeadsScreen({
     setActing({ lead, kind } as Acting);
     setSalesmanId(team.find((t) => t.id !== lead.salesmanId)?.id ?? "");
     setReason("");
+    /* Opened on what the lead ALREADY carries, unlike the lost-reason picker
+       beside it which deliberately pre-selects nothing. The difference is what
+       a default would assert: there, it would record a coded reason nobody
+       chose; here it is the current answer being shown so somebody can change
+       it, which is what an edit is. */
+    setPriority(lead.priority ?? "");
     setError(null);
   }
 
@@ -363,7 +448,17 @@ export function LeadsScreen({
           ? await reassignLead({ leadId: acting.lead.id, salesmanId })
           : acting.kind === "archive"
             ? await archiveLead({ leadId: acting.lead.id, reason })
-            : await restoreLead({ leadId: acting.lead.id });
+            : acting.kind === "priority"
+              ? await setLeadPriority({
+                  customerId: acting.lead.id,
+                  /* "" is the cleared answer, and it has to reach the server as
+                     null rather than as an omitted field — the action treats a
+                     missing value as a validation failure precisely so that
+                     "unjudged" is something somebody typed rather than
+                     something that fell off a form. */
+                  priority: priority === "" ? null : priority,
+                })
+              : await restoreLead({ leadId: acting.lead.id });
 
       if (!result.ok) {
         setError(result.error);
@@ -449,6 +544,8 @@ export function LeadsScreen({
         <>
           {!showArchived ? <DeskLine workspace={workspace} desks={desks} /> : null}
 
+          {!showArchived ? <NeedsYouLine leads={leads} viewer={viewer} /> : null}
+
           {/* Counted over the FILTERED list in SQL, not over the ten rows this
               page happens to hold — see `leadsPage`. Before pagination the two
               were the same number; they are not any more, and the one worth
@@ -503,7 +600,7 @@ export function LeadsScreen({
 
           <Table
             chrome={false}
-            minWidth={1336}
+            minWidth={1636}
             head={
               <>
                 {/* PINNED. The row's name and its actions are the two cells
@@ -543,7 +640,35 @@ export function LeadsScreen({
                 <HeadCell width={160}>Owner</HeadCell>
                 <HeadCell width={140}>Source</HeadCell>
                 <HeadCell align="right" width={130}>Potential</HeadCell>
+                {/* §4.1 — IMMEDIATELY AFTER THE POTENTIAL, because the two are
+                    only readable as a pair. "₹3,00,000 · Low" is a manager
+                    saying the big shop is not this fortnight's work, which is
+                    the sentence the field exists to let them write; the same
+                    two facts a column apart is two numbers nobody connects.
+                    It also keeps the filter bar and the header in the same
+                    left-to-right order, which is the rule FILTER_COLUMNS
+                    states above. */}
+                <HeadCell width={120}>Priority</HeadCell>
                 <HeadCell width={110}>Stage</HeadCell>
+                {/* §7 — IMMEDIATELY AFTER THE STAGE, because the stage is
+                    where a lead IS and this is what that means for the person
+                    reading it. "Negotiation" on its own is a noun somebody has
+                    to translate into a morning's work, and the translation is
+                    different for each of the five jobs — so the two belong side
+                    by side and the verb belongs in the reader's own voice. The
+                    header names the vantage rather than saying "Action",
+                    because a column of instructions with no subject reads as
+                    instructions for everybody.
+
+                    IT IS HEADED "For you" AND NOT WITH A JOB TITLE, though the
+                    job is what the cell is answering from. The vantage is
+                    resolved per ROW — two of the five come off seats on the
+                    lead — so the same person genuinely reads this column as the
+                    back office on one line and as the sales manager on the next,
+                    and a single title over all of them would be wrong about
+                    some. Which job produced a given sentence rides on the
+                    cell's own hover, where it is asked rather than asserted. */}
+                <HeadCell width={180}>For you</HeadCell>
                 <HeadCell width={130}>Next</HeadCell>
                 <HeadCell width={110}>Age</HeadCell>
                 <HeadCell width={190}>Health &amp; metrics</HeadCell>
@@ -625,6 +750,17 @@ export function LeadsScreen({
                       )}
                     </Cell>
                     <Cell>
+                      {/* UNJUDGED IS SAID IN WORDS, not left as an empty cell.
+                          It is most of the book and it is the answer a manager
+                          is looking for; a blank reads as data that failed to
+                          load. The hover carries what the word means, because
+                          "Low" on its own invites being read as "this lead is
+                          no good" rather than as "not this fortnight". */}
+                      <span title={prioritySentence(l.priority)}>
+                        <Pill tone={priorityTone(l.priority)}>{priorityLabel(l.priority)}</Pill>
+                      </span>
+                    </Cell>
+                    <Cell>
                       <Pill
                         tone={
                           l.stage === "won" ? "success" : l.stage === "lost" ? "danger" : "brand"
@@ -632,6 +768,9 @@ export function LeadsScreen({
                       >
                         {stageLabel(l.stage as LeadStage)}
                       </Pill>
+                    </Cell>
+                    <Cell truncate={180}>
+                      <ActionCell lead={l} viewer={viewer} />
                     </Cell>
                     <Cell>
                       {l.nextFollowUpDate ? (
@@ -664,6 +803,20 @@ export function LeadsScreen({
                             { label: "Open the record", href: leadHref(workspace, `leads/${l.id}`) },
                             { label: "Reassign the lead", run: () => begin(l, "reassign") },
                             {
+                              /* Named for what it is rather than "Set the
+                                 priority", so the menu says which of the two
+                                 high/medium/low fields on this shop is about
+                                 to be written — the potential beside it is the
+                                 salesman's estimate and is not editable here
+                                 at all. */
+                              label: "How hard to push it",
+                              run: () => begin(l, "priority"),
+                              disabled: !canPrioritise,
+                              title: canPrioritise
+                                ? undefined
+                                : "Deciding which leads the team pushes is a manager's. Yours is not one of the hats that carries it.",
+                            },
+                            {
                               label: "Chase the owner",
                               run: () => void chase(l),
                               disabled: !l.salesmanId,
@@ -682,8 +835,8 @@ export function LeadsScreen({
                       className={i % 2 === 1 ? "bg-canvas" : "bg-surface"}
                       onClick={() => toggleExpanded(l.id)}
                     >
-                      <td colSpan={9} className="cursor-pointer border-b border-divider px-4 pb-3.5">
-                        <DetailPanel lead={l} hasDetail={hasDetail} />
+                      <td colSpan={11} className="cursor-pointer border-b border-divider px-4 pb-3.5">
+                        <DetailPanel lead={l} hasDetail={hasDetail} viewer={viewer} />
                       </td>
                     </tr>
                   ) : null}
@@ -843,7 +996,11 @@ export function LeadsScreen({
         title={acting?.kind === "reassign" ? "Reassign the lead" : "Restore this lead"}
         width={460}
       >
-        {acting && acting.kind !== "archive" ? (
+        {/* The two kinds this modal is FOR, named rather than taken as
+            "anything that is not an archive" — that shape was already one
+            unnamed kind away from drawing the restore sentence over a dialog
+            about something else, and the priority dialog below made it two. */}
+        {acting && (acting.kind === "reassign" || acting.kind === "restore") ? (
           <>
             <div className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[13px]">
               <div className="font-medium text-ink">{acting.lead.name}</div>
@@ -891,6 +1048,73 @@ export function LeadsScreen({
                 onClick={() => void submit()}
               >
                 {busy ? "Saving…" : acting.kind === "reassign" ? "Reassign" : "Restore"}
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </Modal>
+
+      {/* ------------------------------------------------- §4.1 the priority */}
+
+      <Modal
+        open={acting?.kind === "priority"}
+        onClose={() => setActing(null)}
+        title="How hard to push this lead"
+        width={460}
+      >
+        {acting?.kind === "priority" ? (
+          <>
+            <div className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[13px]">
+              <div className="font-medium text-ink">{acting.lead.name}</div>
+              <div className="text-muted">
+                {[acting.lead.companyName, acting.lead.city].filter(Boolean).join(" · ") || "—"}
+              </div>
+              {/* THE POTENTIAL IS QUOTED BACK, because the judgement is made
+                  against it and not instead of it. A manager marking a shop
+                  worth three lakh as low priority should be looking at the
+                  three lakh while they do it — that pairing is the whole
+                  reason the two fields are not one. */}
+              <div className="mt-1 text-[12px] text-muted">
+                {Number(acting.lead.estimatedPotentialPaise)
+                  ? `${money(Number(acting.lead.estimatedPotentialPaise))} a month, the salesman reckons`
+                  : "Nobody has estimated what this shop could spend"}
+              </div>
+            </div>
+
+            <label className="block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">Priority</span>
+              <select
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as LeadPriority | "")}
+                className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+              >
+                {/* FIRST AND ALWAYS OFFERED, because taking the judgement back
+                    off has to be as easy as making it — a manager who cannot
+                    undo one stops making them. It is not the same answer as
+                    Low: this says nobody has judged the lead, which is what
+                    every row in the book says until somebody does. */}
+                <option value="">{priorityLabel(null)} — nobody has judged it</option>
+                {LEAD_PRIORITIES.map((v) => (
+                  <option key={v} value={v}>
+                    {priorityLabel(v)}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-[12px] text-muted">
+                {prioritySentence(priority === "" ? null : priority)} It says how hard to push this
+                one, never what the shop is worth — that is the potential above, and it is the
+                salesman&rsquo;s.
+              </span>
+            </label>
+
+            {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <Button tone="quiet" onClick={() => setActing(null)}>
+                Cancel
+              </Button>
+              <Button tone="primary" disabled={busy} onClick={() => void submit()}>
+                {busy ? "Saving…" : "Save"}
               </Button>
             </div>
           </>
@@ -989,12 +1213,201 @@ function HealthCell({
   );
 }
 
-function DetailPanel({ lead, hasDetail }: { lead: LeadRow; hasDetail: boolean }) {
-  if (!hasDetail) {
+/* ═══════════════════════════════════════════════════════ §7, on a row */
+
+/**
+ * A `LeadRow` read as the five facts the engine asks for.
+ *
+ * Written once, here, because the row cell and the cross-vantage panel both
+ * need it and two readings of "what is true of this lead" is how one screen
+ * comes to tell two people different things about one shop. The stage is cast
+ * for the same reason every other read of it on this screen is: the column
+ * arrives from the database as a plain string and `LeadRow` types it as one.
+ */
+function factsOf(lead: LeadRow): LeadActionFacts {
+  return {
+    stage: lead.stage as LeadStage,
+    salesType: lead.salesType as LeadSalesType | null,
+    hasCommitment: lead.hasCommitment,
+    hasOrder: lead.hasOrder,
+    sampleAwaitingDispatch: lead.sampleAwaitingDispatch,
+  };
+}
+
+/** The seats this row carries, as `vantagesFor` wants them. */
+function seatsOf(lead: LeadRow) {
+  /* `salesmanId` IS `owner_id` — the list names the column for the person
+     rather than for the foreign key, which is the right word on a screen and
+     the wrong one here, where the seat is what is being matched. */
+  return {
+    ownerId: lead.salesmanId,
+    backOfficeAmId: lead.backOfficeAmId,
+    leadManagerId: lead.leadManagerId,
+  };
+}
+
+/**
+ * How the tones the engine returns are drawn.
+ *
+ * MUTED IS NOT A PILL, and that is the whole of the mapping's judgement.
+ * `lead-role-action.ts` says in its own header that "Nothing operational
+ * pending" drawn at the weight of "Payment follow-up" would be read as a task,
+ * and a pill is exactly that weight — it is the shape this console uses for
+ * something worth noticing. So the three live tones get the house pill and the
+ * fourth gets plain muted text, which is the absence of one rather than a
+ * fourth colour. No new skin, and nothing outside the tokens.
+ */
+function ActionPill({ action }: { action: LeadAction }) {
+  if (action.tone === "muted") {
+    return <span className="text-[13px] text-muted">{action.label}</span>;
+  }
+  return <Pill tone={action.tone}>{action.label}</Pill>;
+}
+
+/**
+ * §7 for the person reading the screen.
+ *
+ * The vantage is resolved per row and the FIRST one is what the cell prints —
+ * `vantagesFor` orders them most specific first, and the argument for that
+ * ordering is in `lib/lead-vantage.ts`. The hover names which job produced the
+ * sentence, because the same reader legitimately reads this column as two
+ * different people down one page and a sentence with no subject is one nobody
+ * can check.
+ *
+ * NO VANTAGE IS SAID IN WORDS rather than left blank. It is a real answer —
+ * somebody holding the leads module through an app that gives them no job on
+ * this particular shop — and a blank cell in a column of instructions reads as
+ * data that failed to load, which is the rule the priority cell two columns
+ * along already follows.
+ */
+function ActionCell({ lead, viewer }: { lead: LeadRow; viewer: VantageViewer }) {
+  const vantage = primaryVantage(viewer, seatsOf(lead));
+  if (!vantage) {
     return (
-      <p className="pt-1 text-[13px] text-muted">
-        Nothing more recorded — no notes, no pin, and this shop has not converted.
-      </p>
+      <span
+        className="text-[13px] text-muted"
+        title="Nobody has put you on this lead and none of your apps gives you a job on it. Open the row to see what it reads as to the people who do."
+      >
+        No job on this one
+      </span>
+    );
+  }
+  const action = roleAction(factsOf(lead), vantage);
+  return (
+    <span title={`${vantageAsYou(vantage)}. ${action.label}.`}>
+      <ActionPill action={action} />
+    </span>
+  );
+}
+
+/**
+ * THE SAME LEAD READ BY ALL FIVE, which is the affordance §7 is actually for.
+ *
+ * A manager's question about a stuck lead is not "what do I do" — his own verb
+ * is already on the row — it is "what is owed, and by whom". Five sentences
+ * side by side answer it in one glance: a lead in Negotiation where the
+ * manager reads "Confirm actual order" and the salesman reads "Negotiation
+ * visit" is a lead where two people are each waiting for the other, and there
+ * is nowhere else in the product that fact is visible.
+ *
+ * It is in the EXPANDED ROW and not on the row itself, because five
+ * instructions where one is wanted is how a worklist becomes a report. The row
+ * carries the reader's own; opening it asks the second question.
+ *
+ * The reader's own vantages are MARKED rather than removed from the list. A
+ * table with one row quietly missing is one nobody can count against the
+ * specification, and "this one is yours" is the useful mark anyway.
+ */
+function RoleReadings({ lead, viewer }: { lead: LeadRow; viewer: VantageViewer }) {
+  /* EVERY vantage the reader holds, not just the one the row printed. A sales
+     manager who is also the named back office person on this lead is being
+     asked for two different things by two of these five rows, and the panel
+     exists precisely to show that. */
+  const mine = new Set<LeadVantage>(vantagesFor(viewer, seatsOf(lead)));
+  const facts = factsOf(lead);
+  return (
+    <div className="col-span-3 border-t border-divider pt-2">
+      <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+        What this lead reads as
+      </div>
+      {/* Wraps rather than scrolls: five short phrases fit one line on a desk
+          and stack on a phone, and a sideways scroll inside an expanded row is
+          a thing nobody finds. */}
+      <div className="mt-1 flex flex-wrap gap-x-6 gap-y-1.5">
+        {LEAD_VANTAGES.map((v) => {
+          const action = roleAction(facts, v);
+          return (
+            <span key={v} className="flex items-baseline gap-1.5 text-[13px]">
+              <span className="text-muted">
+                {vantageLabel(v)}
+                {mine.has(v) ? " · you" : ""}
+              </span>
+              <ActionPill action={action} />
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Four of these fifteen need you" — §7's `isOnQueueFor`, counted.
+ *
+ * The engine's own header says the actionable flag is what decides whether a
+ * lead counts towards somebody's "needs you today", and this is that sentence.
+ * It is deliberately NOT a second reading of the ladder: it asks `roleAction`
+ * through `isOnQueueFor` and believes the answer, so the count above the table
+ * and the verbs in it cannot disagree about one shop.
+ *
+ * IT SAYS WHAT IT IS A SLICE OF, because it is counted over the PAGE and not
+ * over the filtered book. Everything else measured around this table is
+ * counted in SQL — the stale strip says so in its own comment — and this one
+ * cannot be, because two of the five vantages are read off seats and the
+ * arithmetic is per person. A bare "4 need you" over a list of four hundred
+ * would be read as four in the whole book, which is the capped-list mistake
+ * the timeline's filter pills are a paragraph about. So it names the page.
+ *
+ * Nothing is drawn where the answer is none: a line reading "0 need you" is
+ * furniture on the screen somebody opens to find work, and the table beneath
+ * it already says which leads are whose.
+ */
+function NeedsYouLine({ leads, viewer }: { leads: LeadRow[]; viewer: VantageViewer }) {
+  const mine = leads.filter((l) => {
+    const vantage = primaryVantage(viewer, seatsOf(l));
+    return vantage !== null && isOnQueueFor(factsOf(l), vantage);
+  });
+  if (mine.length === 0) return null;
+  return (
+    <div className="mb-3 text-[13px] text-body">
+      <span className="font-semibold text-ink">{plural(mine.length, "lead")}</span> on this page{" "}
+      {mine.length === 1 ? "is" : "are"} waiting on you — the{" "}
+      <span className="text-muted">For you</span> column says what each one wants.
+    </div>
+  );
+}
+
+function DetailPanel({
+  lead,
+  hasDetail,
+  viewer,
+}: {
+  lead: LeadRow;
+  hasDetail: boolean;
+  viewer: VantageViewer;
+}) {
+  if (!hasDetail) {
+    /* The five readings are drawn even here. "Nothing more recorded" is about
+       what somebody has TYPED on this lead, and §7's instructions are derived
+       from where it stands — which is exactly as true of a lead with no notes
+       and no pin, and is the only thing an otherwise empty panel has to say. */
+    return (
+      <div className="grid grid-cols-3 gap-x-8 gap-y-2 pt-1 text-[13px]">
+        <p className="col-span-3 text-[13px] text-muted">
+          Nothing more recorded — no notes, no pin, and this shop has not converted.
+        </p>
+        <RoleReadings lead={lead} viewer={viewer} />
+      </div>
     );
   }
   return (
@@ -1038,6 +1451,7 @@ function DetailPanel({ lead, hasDetail }: { lead: LeadRow; hasDetail: boolean })
           Converted {stamp(lead.convertedAt)}.
         </div>
       ) : null}
+      <RoleReadings lead={lead} viewer={viewer} />
     </div>
   );
 }
@@ -1218,6 +1632,14 @@ function FilterBar({
         selected={filters.potential}
         onChange={pick("potential")}
         title="Somebody's estimate of what the shop could spend in a month. Not estimated is not the same as nothing."
+      />
+      <MultiSelect
+        label="Priority"
+        placeholder="Any priority"
+        options={[...PRIORITY_BUCKETS]}
+        selected={filters.priority}
+        onChange={pick("priority")}
+        title="How hard a manager has asked for this one to be pushed — not what it is worth. Not set is the one most of the book sits on, and it is a real answer rather than a gap."
       />
       <MultiSelect
         label="Stage"

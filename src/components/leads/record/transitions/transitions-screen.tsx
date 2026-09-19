@@ -26,7 +26,9 @@ import type {
   TransitionPayload,
   TransitionsHead,
 } from "@/lib/services/lead-board-service";
+import type { ActionOwnerCandidate } from "@/lib/services/lead-actions-service";
 import { Empty, Pill, ScreenHeader, plural } from "@/components/console/parts";
+import { ParkLead } from "../park-lead";
 
 /* ---------------------------------------------------------------------------
  * §25, read.
@@ -122,6 +124,9 @@ export function TransitionsScreen({
   page,
   parked,
   onFirstPage,
+  day,
+  ownerCandidates,
+  canWork,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -129,6 +134,11 @@ export function TransitionsScreen({
   page: StreamPage;
   parked: ParkedFrom | null;
   onFirstPage: boolean;
+  /** The business's own working date, read on the server. Never `new Date()`. */
+  day: string;
+  /** Who the action a parked lead comes back to may be owed by. */
+  ownerCandidates: ActionOwnerCandidate[];
+  canWork: boolean;
 }) {
   return (
     <div className="p-6">
@@ -145,12 +155,33 @@ export function TransitionsScreen({
           </>
         }
         actions={
-          <Link
-            href={leadHref(workspace, `leads/${head.customerId}`)}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            Back to the lead
-          </Link>
+          <>
+            {/*
+              THE ONE CONTROL ON AN OTHERWISE READ-ONLY SCREEN, and that is not
+              a contradiction. Nothing in this stream can be EDITED — a
+              transition recorded wrongly is corrected by a further transition —
+              and parking is exactly that: a further transition, appended,
+              leaving every row below it standing. It sits here because this is
+              the screen that already explains what a park DOES to a lead's
+              stage column, in the panel underneath, and the place that explains
+              the consequence is the place to offer the act.
+            */}
+            <ParkLead
+              customerId={head.customerId}
+              name={head.name}
+              stage={head.stage}
+              day={day}
+              candidates={ownerCandidates}
+              defaultOwnerId={head.ownerId}
+              canWork={canWork}
+            />
+            <Link
+              href={leadHref(workspace, `leads/${head.customerId}`)}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              Back to the lead
+            </Link>
+          </>
         }
       />
 

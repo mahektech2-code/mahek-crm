@@ -8,7 +8,7 @@ import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens'
 import { createLead, leadThresholds, listLeads, visitCapThresholds, type Lead } from '../src/data/leads';
 import { takePhoto } from '../src/native/capture';
 import { CUSTOMER_TYPES, LEAD_FILTERS, LEAD_SOURCES, leadAlert, visitCapLabel, visitCapState, type DuplicateMatch, type LeadFilter, type LeadThresholds, type VisitCapThresholds } from '../src/engines/leads';
-import { SALES_TYPES, salesTypeLabel, type LeadSalesType } from '../src/engines/funnel';
+import { offeredSalesTypes, salesTypeLabel, type LeadSalesType } from '../src/engines/funnel';
 import { dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
@@ -344,7 +344,11 @@ export default function LeadsScreen() {
         <View style={{ marginTop: 14 }}>
           <SectionLabel style={{ marginBottom: 6 }}>What kind of sale is this?</SectionLabel>
           <View style={{ gap: 8 }}>
-            {SALES_TYPES.map((t) => (
+            {/* OFFERED, not all three. Mahek does not appoint distributors
+                through MahekOne, so that ladder is withdrawn for new leads —
+                the note on `SALES_TYPES` in the funnel engine has the whole of
+                it. The leads already on it keep everything they have. */}
+            {offeredSalesTypes().map((t) => (
               <Choice
                 key={t.code}
                 label={t.label}

@@ -1,0 +1,21 @@
+-- The sentence behind "Other", and the only source that asks for one.
+--
+-- Mahek's own instruction, and the reason is what "Other" does to a coded list
+-- left alone: it is the easiest answer on any dropdown, it costs the person
+-- filling the form nothing, and a year later it is the biggest bar on the chart
+-- with nothing behind it. Made to cost a sentence it gets picked when it is
+-- true — and the sentences are what say which eleventh source is worth adding
+-- to `leads.sources`.
+--
+-- Free text and deliberately not a second code list: the point is to catch the
+-- channel nobody has thought of yet, and a coded list of the unknown is a
+-- contradiction.
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_source_detail" text;
+
+-- NOTHING IS BACKFILLED AND NO EXISTING SOURCE IS REWRITTEN.
+--
+-- `lead_source` has always been free text and the book carries whatever was
+-- typed into it. The ten codes are what a picker OFFERS from today; they are
+-- not a constraint on the column, and mapping old values onto them would be
+-- guessing which of ten channels somebody meant years later. An old lead keeps
+-- its own word and reads exactly as it always has.

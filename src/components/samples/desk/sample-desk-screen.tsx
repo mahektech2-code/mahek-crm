@@ -34,6 +34,7 @@ import {
   Table,
 } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
+import { CancelSample } from "@/components/samples/cancel-sample";
 
 type Acting =
   | { kind: "decide"; row: SampleDeskRow; approve: boolean }
@@ -66,12 +67,24 @@ export function SampleDeskScreen({
   workspace,
   rows,
   chaseDays,
+  canWork,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
   rows: SampleDeskRow[];
   /** The ladder the review chase climbs — 2, then 4, then 6. */
   chaseDays: number[];
+  /**
+   * `lead.work`, resolved on the server and passed down.
+   *
+   * It gates the CANCEL control alone, which is the only one this screen draws
+   * that was not here before. The four beside it — approve, dispatch, confirm,
+   * review — are left exactly as they shipped: adding a gate to a control
+   * people have been using would be a different change with a different
+   * argument, and one somebody should make deliberately rather than as a side
+   * effect of wiring up a fifth button.
+   */
+  canWork: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -331,7 +344,7 @@ export function SampleDeskScreen({
                 )}
               </Cell>
               <Cell align="right">
-                <span className="flex justify-end gap-1.5">
+                <span className="flex flex-wrap items-center justify-end gap-1.5">
                   {r.approvalState === "pending" ? (
                     <>
                       <Button
@@ -367,6 +380,22 @@ export function SampleDeskScreen({
                     </Button>
                   ) : (
                     <span className="text-[12px] text-muted">Nothing outstanding</span>
+                  )}
+                  {/*
+                   * CANCEL SITS BESIDE WHATEVER THE ROW IS OWED, rather than
+                   * replacing it, because calling a trial off is not a step on
+                   * the journey — it is leaving the journey, and it is available
+                   * at every point up to the review. `ALLOWED` in the action is
+                   * the authority on which those are; this draws the same three
+                   * terminal states out and the action refuses anything the
+                   * screen gets wrong, because a menu is not a rule.
+                   */}
+                  {r.state === "reviewed" || r.state === "rejected" || r.state === "cancelled" ? null : (
+                    <CancelSample
+                      sampleId={r.id}
+                      what={`${r.quantityCans ? `${plural(r.quantityCans, "can")} of ` : ""}${r.productName ?? "a product nobody named"} for ${r.customerName}`}
+                      canWork={canWork}
+                    />
                   )}
                 </span>
               </Cell>

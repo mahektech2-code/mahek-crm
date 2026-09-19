@@ -19,6 +19,7 @@ import type {
 import {
   agreeCommercialTerms,
   decideDistributorAppointment,
+  sendBackForCorrection,
 } from "@/lib/actions/distributor-appointment";
 import { Banner, Button, Empty, MetricRow, Pill, ScreenHeader } from "@/components/console/parts";
 import { waitingWords } from "@/components/console/words";
@@ -34,15 +35,41 @@ const GROUP_TITLES: Record<string, string> = {
   commitment: "Commitment",
 };
 
-/** The three things §12 names, said in the words the stored code means. */
+/**
+ * The three things §12 names, said in the words the stored code means — and the
+ * fourth, which names nothing.
+ *
+ * `standard` is what a step 1 row carries when none of the three triggers
+ * applied. Management review every appointment, so the row exists either way;
+ * what the triggers decide is whether there was a reason BEYOND the ordinary
+ * one. The specification's own wording for the fallback is "standard review",
+ * and it is spelled out here rather than left to the `replace(/_/g, " ")`
+ * default underneath, which would print the bare word "standard" against a
+ * label reading "Why this step" and answer nothing.
+ *
+ * `normal` is the step 0 row's, written by `submitForManagementReview` since
+ * the module shipped. It is included so the sales manager's own step does not
+ * fall through to the raw code either.
+ */
 const ROUTE_REASON_WORDS: Record<string, string> = {
   exclusivity: "Territory exclusivity is being granted",
   over_discount: "The discount is above what a sales manager may allow",
   over_credit_limit: "The credit limit is above what a sales manager may allow",
+  standard: "Standard review — management sign every appointment",
+  normal: "The sales manager's own step, which every candidate has",
 };
 
+/*
+ * `sendBack` is a third thing to do with a step and deliberately not a third
+ * shade of `decide`. Approving and refusing are two answers to one question;
+ * sending back declines to answer it, leaves the row pending and leaves the
+ * sales stage exactly where it is. Folding it into the decide branch as a
+ * third boolean is how the two would come to share a code path and, eventually,
+ * a stage move — which is the one thing Mahek asked this not to do.
+ */
 type Acting =
   | { kind: "decide"; step: AppointmentStep; approve: boolean }
+  | { kind: "sendBack"; step: AppointmentStep }
   | { kind: "terms" };
 
 /**
@@ -135,6 +162,8 @@ export function AppointmentRecordScreen({
               approve: acting.approve,
               note: note.trim(),
             })
+          : acting.kind === "sendBack"
+          ? await sendBackForCorrection(acting.step.approvalId, { note: note.trim() })
           : await agreeCommercialTerms(candidate.customerId, {
               discountPercent: Number(discount) || 0,
               creditLimitPaise: parseRupees(creditLimit) ?? 0,
@@ -181,6 +210,16 @@ export function AppointmentRecordScreen({
       const at = new Date(s.requestedAt).valueOf();
       return Number.isFinite(at) ? Math.max(n, Math.floor((nowMs - at) / 3_600_000)) : n;
     }, 0);
+
+  /* The send-backs that are still outstanding, which is a different question
+     from "has this ever been sent back". The marks are cleared the moment the
+     step is acted on, so anything still here is work somebody owes RIGHT NOW —
+     and it is drawn at the top of the record rather than only on the step card,
+     because a note that only exists three sections down is one the salesman
+     scrolls past on his way to the thirty conditions he is about to re-read for
+     no reason. The history of what was sent back and when lives on the
+     customer's timeline, which is where a record of the past belongs. */
+  const outstandingSendBacks = steps.filter((s) => s.state === "pending" && s.sentBackNote);
 
   const rung = DISTRIBUTOR_LADDER.indexOf(candidate.stage);
   const approvalRung = DISTRIBUTOR_LADDER.indexOf("distributor_approval");
@@ -234,6 +273,23 @@ export function AppointmentRecordScreen({
         />
       ) : null}
 
+      {outstandingSendBacks.map((s) => (
+        <Banner
+          key={s.approvalId}
+          tone="warn"
+          title={`Step ${s.stepIndex + 1} has been sent back for correction`}
+          body={
+            <>
+              <b>&ldquo;{s.sentBackNote}&rdquo;</b>
+              {s.sentBackByName ? ` — ${s.sentBackByName}` : ""}
+              {s.sentBackAt ? `, ${stamp(s.sentBackAt)}` : ""}. The request is still open and
+              nothing has been decided: the rung below has not moved and does not move for this.
+              Correct what it names and the reviewer can answer.
+            </>
+          }
+        />
+      ))}
+
       {waitingHours >= 24 ? (
         <Banner
           tone="warn"
@@ -264,7 +320,12 @@ export function AppointmentRecordScreen({
           {
             label: "Signatures",
             value: `${steps.filter((s) => s.state !== "pending").length} / 2`,
-            sub: routeReason ? "management required" : "manager may be enough",
+            /* It used to read "manager may be enough" where nothing was above a
+               threshold, and that promised a path the gate never had: the
+               `distributor_approval` rung has always demanded management's
+               signature, so an ordinary candidate told a manager could settle
+               it was a candidate nobody could appoint. Both steps, always. */
+            sub: routeReason ? "management, and above a threshold" : "management sign every one",
           },
           {
             label: "Their salesmen",
@@ -374,10 +435,12 @@ export function AppointmentRecordScreen({
             </p>
           ) : (
             <p className="mt-1 text-[13px] text-body">
-              <b>Ordinary.</b> Nothing here is above a threshold and no exclusivity is being
-              granted, so the sales manager&rsquo;s own signature settles it — a discount at or
-              under {discountThreshold}% and a credit limit at or under{" "}
-              {money(creditLimitThresholdPaise)}.
+              <b>Standard review.</b> Nothing here is above a threshold and no exclusivity is
+              being granted — a discount at or under {discountThreshold}% and a credit limit at or
+              under {money(creditLimitThresholdPaise)} — so this is in front of management as an
+              ordinary appointment rather than an escalated one. It is still in front of them:
+              only management appoint a distributor, whatever the numbers say, and the sales
+              manager&rsquo;s step is a recommendation.
             </p>
           )}
           <p className="mt-2 text-[12px] text-muted">
@@ -413,6 +476,7 @@ export function AppointmentRecordScreen({
               canDecide
               disabledReason={undefined}
               onDecide={(step, approve) => begin({ kind: "decide", step, approve })}
+              onSendBack={(step) => begin({ kind: "sendBack", step })}
             />
             <StepCard
               title="Step 1 · Management"
@@ -427,6 +491,7 @@ export function AppointmentRecordScreen({
                     : undefined
               }
               onDecide={(step, approve) => begin({ kind: "decide", step, approve })}
+              onSendBack={(step) => begin({ kind: "sendBack", step })}
             />
           </div>
         )}
@@ -619,6 +684,60 @@ export function AppointmentRecordScreen({
                 onClick={() => void submit()}
               >
                 {busy ? "Saving…" : acting.approve ? "Approve" : "Refuse"}
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </Modal>
+
+      {/* -------------------------------------------------- send it back */}
+
+      <Modal
+        open={acting?.kind === "sendBack"}
+        onClose={() => setActing(null)}
+        title="Send back for correction"
+        width={520}
+      >
+        {acting?.kind === "sendBack" ? (
+          <>
+            <p className="mb-3 text-[13px] text-body">
+              This is not a decision. The request stays open, it stays in the queue, and{" "}
+              <b>the rung does not move</b> — the candidate is exactly where they were, with the
+              application incomplete. It goes back to whoever raised it, carrying what you write
+              here.
+            </p>
+            <label className="block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">
+                What has to be corrected · required
+              </span>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={3}
+                placeholder="Name the thing that is missing or wrong. This is the whole message they get."
+                className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand"
+              />
+              <span className="mt-1 block text-[12px] text-muted">
+                A send-back with no note is &ldquo;do it again&rdquo; with nothing to act on, which
+                is worse than the phone call it replaces — so it is refused.
+              </span>
+            </label>
+            {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button tone="quiet" onClick={() => setActing(null)}>
+                Cancel
+              </Button>
+              <Button
+                tone="primary"
+                disabled={busy || !note.trim()}
+                title={
+                  !note.trim()
+                    ? "Say what has to be fixed. Without it they are being asked to guess."
+                    : undefined
+                }
+                onClick={() => void submit()}
+              >
+                {busy ? "Sending…" : "Send back"}
               </Button>
             </div>
           </>
@@ -936,6 +1055,7 @@ function StepCard({
   canDecide,
   disabledReason,
   onDecide,
+  onSendBack,
 }: {
   title: string;
   why: string;
@@ -943,8 +1063,16 @@ function StepCard({
   canDecide: boolean;
   disabledReason?: string;
   onDecide: (step: AppointmentStep, approve: boolean) => void;
+  onSendBack: (step: AppointmentStep) => void;
 }) {
   const decided = step && step.state !== "pending";
+  /* A sent-back step is still `pending`, so the pill above goes on saying
+     "waiting" and is right to. What it cannot say is who it is waiting ON, and
+     that is the difference between chasing the reviewer and chasing the
+     salesman — so the note is drawn as its own block rather than folded in
+     beside the decision note, which is a different sentence about a decision
+     that has not been taken. */
+  const sentBack = step && !decided && step.sentBackNote ? step : null;
   return (
     <div className="rounded-[6px] border border-line bg-surface px-4 py-3">
       <div className="flex items-start justify-between gap-3">
@@ -970,6 +1098,19 @@ function StepCard({
         </p>
       ) : (
         <>
+          {sentBack ? (
+            <div className="mt-2 rounded-[6px] border-l-[3px] border-warn bg-warn-soft px-3 py-2">
+              <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                Sent back for correction
+              </div>
+              <p className="mt-1 text-[13px] text-ink">{sentBack.sentBackNote}</p>
+              <p className="mt-1 text-[12px] text-muted">
+                {sentBack.sentBackByName ? `${sentBack.sentBackByName}, ` : ""}
+                {sentBack.sentBackAt ? stamp(sentBack.sentBackAt) : "date not recorded"} — still
+                waiting, and the rung has not moved.
+              </p>
+            </div>
+          ) : null}
           <dl className="mt-2 space-y-1.5">
             <Line label="Asked" value={`${stamp(step.requestedAt)}${step.requestedByName ? ` by ${step.requestedByName}` : ""}`} />
             <Line
@@ -993,7 +1134,7 @@ function StepCard({
           </dl>
 
           {!decided ? (
-            <div className="mt-3 flex gap-1.5">
+            <div className="mt-3 flex flex-wrap gap-1.5">
               <Button
                 size="sm"
                 tone="primary"
@@ -1011,6 +1152,24 @@ function StepCard({
                 onClick={() => onDecide(step, false)}
               >
                 Refuse
+              </Button>
+              {/* Sending back holds the decision, so it takes the same
+                  capability as taking it — which is why it shares `canDecide`
+                  rather than being offered more widely. A weaker hat able to
+                  turn management's step back would be a way to stall an
+                  appointment without the authority to refuse one. */}
+              <Button
+                size="sm"
+                tone="quiet"
+                disabled={!canDecide}
+                title={
+                  canDecide
+                    ? "Returns it to whoever raised it with a note saying what to fix. Nothing is decided and the rung does not move."
+                    : disabledReason
+                }
+                onClick={() => onSendBack(step)}
+              >
+                {sentBack ? "Send back again" : "Send back"}
               </Button>
             </div>
           ) : null}

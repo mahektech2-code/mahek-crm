@@ -8,6 +8,7 @@ import {
   nextActionsDue,
   nextActionsOverdue,
 } from "@/lib/services/lead-actions-service";
+import { parkedLeadsDueCount } from "@/lib/services/lead-hold-service";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { DueScreen } from "@/components/leads/actions/due-screen";
 
@@ -47,9 +48,15 @@ export async function Body({
     getConfig(),
   ]);
 
-  const [due, overdue, candidates, canWork] = await Promise.all([
+  /* `parked` is fetched for its BADGE alone, the same trade the overdue total
+     makes one line up: a parked lead whose day has come is work nobody is
+     looking at, and a tab with no number on it is a tab people stop opening.
+     It is the DUE count rather than the total, because a team that has parked
+     forty leads correctly would otherwise carry a permanent forty. */
+  const [due, overdue, parked, candidates, canWork] = await Promise.all([
     nextActionsDue(day, { ownerId: params.owner }),
     nextActionsOverdue(day, { limit: 1 }),
+    parkedLeadsDueCount(day),
     nextActionOwnerCandidates(),
     canLead(user, "lead.work"),
   ]);
@@ -60,6 +67,7 @@ export async function Body({
         counts={{
           [leadHref(workspace, "leads/actions")]: due.total,
           [leadHref(workspace, "leads/actions/overdue")]: overdue.total,
+          [leadHref(workspace, "leads/actions/parked")]: parked,
         }}
       />
       <DueScreen workspace={workspace}
