@@ -62,11 +62,11 @@ export type DeviceStateReport = {
    * quiet" that nothing could give before.
    *
    * The office could see a trail with a hole in it and never what put it
-   * there. These four say it: whether the service is up at all, when it last
-   * took a fix, how many fixes it is still holding, and how many times today
-   * it has had to be STARTED — which is the number that names an OEM battery
-   * manager rather than describing its effects. One start is a check-in;
-   * twenty is a phone killing the tracker twenty times.
+   * there. These say it: whether the service is up at all, when it last took a
+   * fix, when a batch of them was last ACCEPTED, how many it is still holding,
+   * and how many times today it has had to be STARTED — which is the number
+   * that names an OEM battery manager rather than describing its effects. One
+   * start is a check-in; twenty is a phone killing the tracker twenty times.
    *
    * ABSENT MEANS THIS BUILD HAS NO SUCH SERVICE, which is every handset in the
    * field until somebody installs the next APK, and is never read as "not
@@ -76,6 +76,31 @@ export type DeviceStateReport = {
    */
   locationServiceRunning?: boolean;
   locationServiceLastFixAgoSeconds?: number | null;
+  /**
+   * WHEN A BATCH WAS LAST ACCEPTED, which is a different question from whether
+   * the recorder BELIEVES it is sending.
+   *
+   * `FixStore.uploads()` answers the second — a cadence is set, there is a
+   * credential, the server has not refused it, the day is open and the service
+   * is up. All five can be true of an uploader that is wedged: a post that
+   * times out for ever against a proxy, a body the server keeps refusing for
+   * a reason that is not auth. Nothing about that phone looks wrong. The
+   * buffer climbs towards `serviceBufferCap` while JavaScript, reading
+   * `uploads` as true, politely leaves the queue to the recorder — and the
+   * office sees one number rising with nothing saying why.
+   *
+   * This is the only reading that can tell the two apart, because it is the
+   * only one taken at the far end: the mark is written where the server said
+   * yes. It rides the same device-state channel as everything else here and
+   * opens nothing of its own.
+   *
+   * `null` means THIS RECORDER HAS NEVER HAD A BATCH ACCEPTED — the commonest
+   * reason being that the office has turned its sending off entirely, which is
+   * `serviceUploadEverySeconds` at zero and the app doing the posting. It is
+   * never an accusation and the office draws no note on it, because there is
+   * no age to print beside one.
+   */
+  locationServiceLastUploadAgoSeconds?: number | null;
   locationServiceBuffered?: number;
   locationServiceStartsToday?: number;
   /**
@@ -223,6 +248,12 @@ async function backgroundState(): Promise<Partial<DeviceStateReport>> {
            distinction the stall mark below turns on. The service has never
            taken a fix, and saying so is different from saying nothing. */
         out.locationServiceLastFixAgoSeconds = svc.lastFixAgoSeconds;
+        /* Same shape, same reason: an explicit null says "I can report this
+           and there is nothing to report", which is a recorder that has never
+           had a batch taken — and it has to be able to CLEAR a stored mark,
+           because a handset reinstalled or handed to somebody else starts
+           again from nothing. */
+        out.locationServiceLastUploadAgoSeconds = svc.lastUploadAgoSeconds;
         if (svc.buffered !== null) out.locationServiceBuffered = svc.buffered;
         if (svc.startsToday !== null) out.locationServiceStartsToday = svc.startsToday;
         out.locationServiceRefusedAgoSeconds = svc.lastRefusalAgoSeconds;

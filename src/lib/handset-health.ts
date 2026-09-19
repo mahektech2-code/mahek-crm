@@ -108,6 +108,18 @@ export type HandsetFacts = {
    */
   locationServiceRunning?: boolean | null;
   locationServiceLastFixAt?: Date | string | null;
+  /**
+   * WHEN A BATCH WAS LAST ACCEPTED, and it is the only reading on this row
+   * taken at OUR end.
+   *
+   * The recorder can say whether it BELIEVES it is sending — a cadence is set,
+   * it holds a credential, the server has not refused that credential, the day
+   * is open and the service is up. Every one of those is true of an uploader
+   * that is wedged, and the app reads the same belief and leaves the queue to
+   * it, so the buffer climbs towards its cap with nothing saying why. This is
+   * the one fact that tells the two apart.
+   */
+  locationServiceLastUploadAt?: Date | string | null;
   locationServiceStartsToday?: number | null;
   locationServiceRefusedAt?: Date | string | null;
   locationServiceRefusal?: string | null;
@@ -119,7 +131,41 @@ export type HandsetThresholds = {
   lowBatteryPercent: number;
   /** Unsent fixes worth saying out loud. See the note where it is read. */
   queuedPositionsWorthSaying: number;
+  /**
+   * How often the recorder is configured to POST — `serviceUploadEverySeconds`
+   * as the office set it. ZERO is the escape hatch: the recorder does not send
+   * at all and the app does, so there is no channel of its own to be silent on
+   * and the note below never fires.
+   *
+   * It is not a threshold in its own right. It is here because a silence is
+   * only meaningful against the interval it is a silence in — see
+   * `uploaderSilenceMs`.
+   */
+  serviceUploadEverySeconds: number;
 };
+
+/**
+ * HOW LONG THE RECORDER'S OWN CHANNEL MAY BE SILENT — derived, never a third
+ * number somebody typed.
+ *
+ * `quietMinutes` is the office's own answer to "how long may a working handset
+ * go silent on a channel before this panel says so", and this asks exactly
+ * that question of one channel rather than of the phone as a whole. A second
+ * setting beside it would be a second answer to one question, invisible on the
+ * screen that sets the first — which is the thing this codebase spends a
+ * paragraph refusing everywhere else.
+ *
+ * The send cadence is a FLOOR under it and not a multiplier. At the defaults
+ * it never binds — thirty minutes is three hundred six-second intervals — and
+ * it exists for the corner where an office has set quiet to its five-minute
+ * minimum and the send interval to its two-minute maximum, where a note could
+ * otherwise fire on two ordinary posts going astray.
+ */
+export function uploaderSilenceMs(
+  t: Pick<HandsetThresholds, "quietMinutes" | "serviceUploadEverySeconds">,
+): number {
+  return Math.max(t.quietMinutes * 60_000, t.serviceUploadEverySeconds * 1_000);
+}
 
 const ms = (at: Date | string | null): number | null => {
   if (!at) return null;
@@ -314,6 +360,53 @@ export function handsetNotes(
         text: `Recorder running but no fix for ${ageWords(lastFix, nowMs)}`,
         detail:
           "The recorder is up and the phone's location provider has stopped answering it — usually Play services updating underneath, or the handset's power manager suspending the provider. It re-asks every minute on its own.",
+      });
+    }
+
+    /*
+     * IT IS SENDING AND NOTHING IS BEING TAKEN, which nothing could see.
+     *
+     * `uploads()` on the handset answers whether the recorder BELIEVES it is
+     * posting — cadence set, credential held, server not refusing it, day
+     * open, service up. All five survive a post that times out for ever
+     * against a captive portal, or a body the far end keeps refusing for a
+     * reason that is not auth. And the app reads that same belief through
+     * `chooseSender` and leaves the queue alone, so the only visible symptom
+     * is the buffer climbing towards `serviceBufferCap` — at which point the
+     * OLDEST fixes are dropped, and a morning of somebody's route is gone.
+     *
+     * THE GAP IS MEASURED AT THE PHONE'S END, NOT AGAINST NOW, and that is the
+     * half that makes this safe to draw. Both marks are stamped on our clock
+     * inside one request, so their difference is exactly the silence the
+     * handset reported and carries no drift at all. Measured against `nowMs`
+     * instead it would fire on every phone whose app has simply not run for a
+     * while — a recorder doing all the posting does not refresh this report,
+     * so a healthy handset would accuse itself the moment its owner stopped
+     * opening the app. It also means a phone out of signal cannot trip it: the
+     * last thing it told us was said while it was online, when the gap was
+     * small, and silence since freezes the figure rather than growing it.
+     * Silence has its own line, further down, and one fact gets one sentence.
+     *
+     * The reading's own age is printed beside it for the reason the battery's
+     * is: it is what the phone last said, never a live number.
+     */
+    const lastUpload = ms(f.locationServiceLastUploadAt ?? null);
+    const said = ms(f.deviceStateAt);
+    /* NULL IS NEVER AN ACCUSATION. A recorder that has never had a batch taken
+       is the ordinary state wherever the office posts from the app instead —
+       `serviceUploadEverySeconds` at zero — and there is no age to print
+       beside one either way. */
+    if (
+      t.serviceUploadEverySeconds > 0 &&
+      lastUpload !== null &&
+      said !== null &&
+      said - lastUpload > uploaderSilenceMs(t)
+    ) {
+      notes.push({
+        tone: "warn",
+        text: `Recorder holding its fixes — nothing sent for ${ageWords(lastUpload, said)}, read ${ageWords(said, nowMs)} ago`,
+        detail:
+          "The recorder is up and taking fixes, and its own sending has stopped being accepted — a captive wifi that answers every request, or a credential this handset can no longer refresh. His work is not lost: it is held on the phone and goes up whenever he opens the app. What it costs is the live map while the app is shut, and if it runs all day the oldest fixes are eventually dropped. Ask him to open MahekOne on mobile data rather than wifi; if it persists, signing out and back in is what replaces the credential.",
       });
     }
   }

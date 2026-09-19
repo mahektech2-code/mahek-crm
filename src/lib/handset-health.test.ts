@@ -5,6 +5,7 @@ import {
   handsetNotes,
   trailHasGaps,
   trailIsDead,
+  uploaderSilenceMs,
   type HandsetFacts,
 } from "@/lib/handset-health";
 
@@ -14,6 +15,10 @@ const T = {
   noTrailMinutes: 90,
   lowBatteryPercent: 20,
   queuedPositionsWorthSaying: 200,
+  /* The shipped default. It is not a threshold — `uploaderSilenceMs` reads
+     `quietMinutes` and uses this only as a floor — but it is what turns the
+     recorder's own silence note on at all, and zero turns it off. */
+  serviceUploadEverySeconds: 6,
 };
 
 const facts = (over: Partial<HandsetFacts> = {}): HandsetFacts => ({
@@ -480,5 +485,144 @@ describe("how far behind a handset is", () => {
         /still on his phone/.test(n.text),
       ),
     );
+  });
+});
+
+/*
+ * THE RECORDER THAT ONLY BELIEVES IT IS SENDING.
+ *
+ * Every one of these is a handset whose recorder is up and taking fixes. What
+ * varies is whether its own posts are being accepted, and the panel's whole
+ * discipline is that only the one that is actually stuck says anything.
+ */
+describe("a wedged uploader is named, and nothing else is", () => {
+  /* Up, taking fixes, and its last accepted batch was six seconds before the
+     phone last spoke. A healthy recorder, and the default for the tests below
+     that are about something else. */
+  const sending = (over: Partial<HandsetFacts> = {}): HandsetFacts =>
+    facts({
+      locationServiceRunning: true,
+      locationServiceLastFixAt: new Date(NOW - 10_000),
+      deviceStateAt: new Date(NOW - 60_000),
+      locationServiceLastUploadAt: new Date(NOW - 66_000),
+      ...over,
+    });
+
+  test("says nothing about a recorder whose posts are being taken", () => {
+    assert.deepEqual(texts(sending()), []);
+  });
+
+  test("names the silence where nothing has been accepted", () => {
+    /* The phone spoke a minute ago and said its last accepted batch was two
+       hours before that — which is a recorder holding a queue nobody is
+       taking. The app is not draining it either, because it reads the same
+       belief the recorder does. */
+    const stuck = sending({
+      deviceStateAt: new Date(NOW - 60_000),
+      locationServiceLastUploadAt: new Date(NOW - 60_000 - 2 * 3_600_000),
+    });
+    const note = handsetNotes(stuck, T, NOW).find((n) => /nothing sent for/.test(n.text));
+    assert.ok(note, "the wedged uploader has to be named");
+    assert.equal(note.tone, "warn");
+    /* BOTH AGES, and they are two different facts: how long the recorder had
+       been silent, and how long ago the phone told us that. A figure without
+       the second reads as live, which is the mistake the battery line was
+       written to avoid. */
+    assert.match(note.text, /nothing sent for 2 hr/);
+    assert.match(note.text, /read 1 min ago/);
+  });
+
+  test("measures the gap at the PHONE's end, so an old report is not an accusation", () => {
+    /* The same handset, heard from four hours ago instead of one minute. The
+       silence it reported is unchanged — six seconds — and reading the gap
+       against `now` instead would turn every phone whose owner has not opened
+       the app into a fault. */
+    const oldReport = sending({
+      deviceStateAt: new Date(NOW - 4 * 3_600_000),
+      locationServiceLastUploadAt: new Date(NOW - 4 * 3_600_000 - 6_000),
+    });
+    assert.ok(!texts(oldReport).some((x) => /nothing sent for/.test(x)));
+  });
+
+  test("null is never an accusation", () => {
+    /* A recorder that has never had a batch taken. On a deployment posting
+       from the app rather than from the service that is every handset, and
+       there is no age to print beside one either way. */
+    const never = sending({ locationServiceLastUploadAt: null });
+    assert.deepEqual(texts(never), []);
+  });
+
+  test("says nothing where the recorder does no posting at all", () => {
+    /* `serviceUploadEverySeconds` at zero is the escape hatch: the app does
+       the sending, so the recorder has no channel of its own to be silent on
+       and a stale mark says nothing about anything. */
+    const stuck = sending({
+      deviceStateAt: new Date(NOW - 60_000),
+      locationServiceLastUploadAt: new Date(NOW - 60_000 - 2 * 3_600_000),
+    });
+    const off = { ...T, serviceUploadEverySeconds: 0 };
+    assert.ok(!handsetNotes(stuck, off, NOW).some((n) => /nothing sent for/.test(n.text)));
+  });
+
+  test("says nothing where the recorder is down — that has its own sentence", () => {
+    /* One fact, one sentence. A recorder that is not running is not sending
+       either, and saying both would send somebody to look for a network fault
+       on a phone whose service the battery manager stopped. */
+    const down = sending({
+      locationServiceRunning: false,
+      deviceStateAt: new Date(NOW - 60_000),
+      locationServiceLastUploadAt: new Date(NOW - 60_000 - 2 * 3_600_000),
+    });
+    const said = texts(down);
+    assert.ok(said.some((x) => /Route recorder not running/.test(x)));
+    assert.ok(!said.some((x) => /nothing sent for/.test(x)));
+  });
+
+  test("says nothing on a closed day", () => {
+    const shut = sending({
+      dayOpen: false,
+      deviceStateAt: new Date(NOW - 60_000),
+      locationServiceLastUploadAt: new Date(NOW - 60_000 - 2 * 3_600_000),
+    });
+    assert.ok(!texts(shut).some((x) => /nothing sent for/.test(x)));
+  });
+});
+
+describe("the silence window is derived, never a number of its own", () => {
+  test("is the office's own quiet window", () => {
+    assert.equal(
+      uploaderSilenceMs({ quietMinutes: 30, serviceUploadEverySeconds: 6 }),
+      30 * 60_000,
+    );
+  });
+
+  test("the send cadence is a floor under it and never a second answer", () => {
+    /* The corner it exists for: quiet at its five-minute minimum against a
+       send interval at its two-minute maximum. Even there the quiet window
+       still wins, which is the point — the floor only ever stops a note
+       firing on a couple of ordinary posts going astray. */
+    assert.equal(
+      uploaderSilenceMs({ quietMinutes: 5, serviceUploadEverySeconds: 120 }),
+      5 * 60_000,
+    );
+    /* And it binds where a cadence is somehow longer than the window. */
+    assert.equal(
+      uploaderSilenceMs({ quietMinutes: 5, serviceUploadEverySeconds: 600 }),
+      600_000,
+    );
+  });
+
+  test("moving the quiet window moves this with it", () => {
+    /* The whole reason it is derived: an office that decides ten minutes of
+       silence is worth saying gets that answer on this channel too, without
+       a second setting to find and keep in step. */
+    const stuck = facts({
+      locationServiceRunning: true,
+      deviceStateAt: new Date(NOW - 60_000),
+      locationServiceLastUploadAt: new Date(NOW - 60_000 - 15 * 60_000),
+    });
+    assert.ok(!texts(stuck).some((x) => /nothing sent for/.test(x)));
+    const loud = { ...T, quietMinutes: 10 };
+    assert.ok(handsetNotes(stuck, loud, NOW).some((n) => /nothing sent for/.test(n.text)));
   });
 });

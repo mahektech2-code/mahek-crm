@@ -5149,6 +5149,30 @@ export const mbosDevices = pgTable(
       withTimezone: true,
     }),
     /**
+     * WHEN A BATCH OF THEM WAS LAST ACCEPTED, and it is the only reading on
+     * this row taken at OUR end rather than reported by the phone.
+     *
+     * The recorder can say whether it BELIEVES it is sending — a cadence is
+     * set, it holds a credential, the server has not refused that credential,
+     * the day is open and the service is up. Every one of those can be true of
+     * an uploader that is wedged: a post timing out for ever against a captive
+     * proxy, a body the far end keeps refusing for a reason that is not auth.
+     * Nothing about that handset looks wrong from any other column, and the
+     * app — reading the same belief — leaves the queue to it, so
+     * `location_service_buffered` climbs towards its cap with nothing anywhere
+     * saying why. This mark is written where the server actually said yes,
+     * which is what makes it the one thing that separates the two.
+     *
+     * Stamped from a DURATION, like the marks around it and for the same
+     * reason. NULL is a recorder that has never had a batch taken, which is
+     * every handset on a deployment that posts from the app rather than from
+     * the service — `mbos.location.serviceUploadEverySeconds` at zero — and is
+     * never read as a fault.
+     */
+    locationServiceLastUploadAt: timestamp("location_service_last_upload_at", {
+      withTimezone: true,
+    }),
+    /**
      * Fixes the recorder is still holding, not yet in the upload queue.
      *
      * It writes to its own store because it runs with the app shut; the app

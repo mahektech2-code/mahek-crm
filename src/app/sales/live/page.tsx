@@ -264,6 +264,11 @@ export default async function Page({
           noTrailMinutes: config["mbos.location.noTrailMinutes"],
           lowBatteryPercent: config["mbos.location.lowBatteryPercent"],
           queuedPositionsWorthSaying: config["mbos.location.queuedPositionsWorthSaying"],
+          /* NOT A THRESHOLD OF ITS OWN. `uploaderSilenceMs` reads the office's
+             own quiet window and uses this only as a floor under it — and as
+             the switch that turns the note off entirely where the recorder
+             does no posting, which is what zero here means. */
+          serviceUploadEverySeconds: config["mbos.location.serviceUploadEverySeconds"],
         }}
         nowMs={clockMs}
       />

@@ -60,6 +60,16 @@ export type DeviceState = {
    */
   locationServiceRunning?: boolean;
   locationServiceLastFixAt?: Date | null;
+  /**
+   * WHEN A BATCH WAS LAST ACCEPTED — the only reading here taken at OUR end.
+   *
+   * Everything else on this row is the phone's account of itself. This mark is
+   * written where the server said yes, which is what makes it the one thing
+   * that can tell a recorder that IS sending from one that merely believes it
+   * is. Null is a recorder that has never had one taken, which on a deployment
+   * that posts from the app rather than from the service is every handset.
+   */
+  locationServiceLastUploadAt?: Date | null;
   locationServiceBuffered?: number;
   locationServiceStartsToday?: number;
   locationServiceRefusedAt?: Date | null;
@@ -231,6 +241,18 @@ export function readDeviceState(body: Record<string, unknown>): DeviceState {
   if (fixAgo) state.locationServiceLastFixAt = fixAgo;
   else if (isPresentNull(body, "locationServiceLastFixAgoSeconds")) {
     state.locationServiceLastFixAt = null;
+  }
+
+  /* THE SAME RULE AS THE FIX MARK ABOVE, and it matters here for the same
+     reason: a handset reinstalled, or handed to somebody else, starts with a
+     recorder that has never had a batch taken — and a mark nobody can clear is
+     a standing figure on a panel whose whole discipline is that a healthy phone
+     says nothing. An absent key still leaves the column alone, so an older
+     build that has never heard of this cannot wipe it. */
+  const uploadAgo = instantFromAgo(body.locationServiceLastUploadAgoSeconds);
+  if (uploadAgo) state.locationServiceLastUploadAt = uploadAgo;
+  else if (isPresentNull(body, "locationServiceLastUploadAgoSeconds")) {
+    state.locationServiceLastUploadAt = null;
   }
 
   if (

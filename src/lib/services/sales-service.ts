@@ -3019,6 +3019,13 @@ export type LastKnown = {
    */
   locationServiceRunning: boolean | null;
   locationServiceLastFixAt: Date | null;
+  /**
+   * WHEN A BATCH WAS LAST ACCEPTED — the one reading here taken at our end,
+   * and the only thing that separates a recorder that is sending from one that
+   * merely believes it is. Read against `deviceStateAt` rather than against
+   * now; see `handsetNotes`.
+   */
+  locationServiceLastUploadAt: Date | null;
   locationServiceStartsToday: number | null;
   locationServiceRefusedAt: Date | null;
   locationServiceRefusal: string | null;
@@ -3104,6 +3111,7 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
            dev.tracker_stalled_at as "trackerStalledAt",
            dev.location_service_running as "locationServiceRunning",
            dev.location_service_last_fix_at as "locationServiceLastFixAt",
+           dev.location_service_last_upload_at as "locationServiceLastUploadAt",
            dev.location_service_starts_today as "locationServiceStartsToday",
            dev.location_service_refused_at as "locationServiceRefusedAt",
            dev.location_service_refusal as "locationServiceRefusal"

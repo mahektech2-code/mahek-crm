@@ -158,6 +158,34 @@ describe("MBOS's own location service", () => {
     assert.ok(!("locationServiceLastFixAt" in state));
     assert.ok(!("locationServiceBuffered" in state));
     assert.ok(!("locationServiceStartsToday" in state));
+    assert.ok(!("locationServiceLastUploadAt" in state));
+  });
+
+  test("when a batch was last ACCEPTED is its own fact", () => {
+    /* `uploads()` on the handset says whether the recorder believes it is
+       posting, from five things that are all true of an uploader wedged
+       against a captive portal. This is the only reading taken at our end, and
+       the only one that can tell the two apart. */
+    const state = readDeviceState({
+      locationServiceRunning: true,
+      locationServiceLastFixAgoSeconds: 3,
+      locationServiceLastUploadAgoSeconds: 2 * 60 * 60,
+    });
+    const at = state.locationServiceLastUploadAt as Date;
+    assert.ok(at instanceof Date);
+    assert.ok(Date.now() - at.getTime() > 90 * 60 * 1000);
+  });
+
+  test("an explicit null clears the upload mark, and an absent key does not", () => {
+    /* A handset reinstalled, or handed to somebody else, starts with a
+       recorder that has never had a batch taken — and a mark nobody can clear
+       is a standing figure on a panel built on a healthy phone saying nothing.
+       An older build that has never heard of the key still leaves it alone. */
+    assert.equal(
+      readDeviceState({ locationServiceLastUploadAgoSeconds: null }).locationServiceLastUploadAt,
+      null,
+    );
+    assert.ok(!("locationServiceLastUploadAt" in readDeviceState({ batteryPercent: 50 })));
   });
 
   test("running, and when it last actually took a fix", () => {

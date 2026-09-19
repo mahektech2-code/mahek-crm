@@ -1,0 +1,35 @@
+-- WHEN THE RECORDER LAST HAD A BATCH ACCEPTED, which is not the same question
+-- as whether it thinks it is sending.
+--
+-- `FixStore.uploads()` answers the second, from five things: a send cadence is
+-- configured, the handset holds a credential, the server has not refused that
+-- credential, the day is open, and the service is up. All five are true of an
+-- uploader that is WEDGED — a post timing out for ever against a captive
+-- portal or a proxy, a body the far end keeps refusing for a reason that is
+-- not auth — and nothing about that handset looks wrong from any other column
+-- on this row. Worse, the app reads the same belief through `chooseSender` and
+-- politely leaves the queue to the recorder, so the only visible symptom is
+-- `location_service_buffered` climbing towards `mbos.location.serviceBufferCap`
+-- with nothing anywhere saying why.
+--
+-- This is the one reading here taken at OUR end. Everything else on the row is
+-- the phone's account of itself; this mark is written where the server said
+-- yes, which is exactly what makes it able to tell a recorder that IS sending
+-- from one that merely believes it. The value already existed on the native
+-- bridge as `lastUploadAgoSeconds` and was left off the device report; nothing
+-- new is asked of the handset and no endpoint was added — it rides the same
+-- device-state channel the battery and the buffer already ride.
+--
+-- NULLABLE AND DEFAULTING TO NULL, like every column beside it. An APK cannot
+-- be recalled, so null means "this build did not say" rather than "nothing has
+-- been accepted" — and a recorder that genuinely has never had a batch taken
+-- is the ordinary state of a deployment where `serviceUploadEverySeconds` is
+-- zero and the app does the posting. The office draws no note on a null for
+-- that reason: there is no age to print beside one, and a panel whose whole
+-- discipline is that a healthy phone says nothing must not accuse a handset of
+-- something nobody has measured.
+--
+-- Stamped from a DURATION the handset sends rather than an instant it claims,
+-- like `location_service_last_fix_at` beside it: a phone's clock is its
+-- owner's to set, and seconds-ago survives a clock wrong by hours.
+alter table "mbos_devices" add column if not exists "location_service_last_upload_at" timestamp with time zone;
