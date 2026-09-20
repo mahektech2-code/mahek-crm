@@ -3244,6 +3244,55 @@ describe("The business day is Asia/Kolkata, whatever the database thinks", () =>
     );
   });
 
+  test("no query pulls a year or a month out of a stored timestamp without a zone", async () => {
+    /*
+     * THE FOURTH SPELLING, and the one the three guards beside it could not
+     * see. They watch for `::date`; this watches `extract(month from …)`, which
+     * is the same mistake with different syntax — `extract` reads a timestamptz
+     * in the SESSION's zone, so a 1am IST order on the 1st is counted into the
+     * previous month on any database not set to Asia/Kolkata.
+     *
+     * It reached five places, all of them answering "what has this customer
+     * bought this month" for the monthly targets. `monthWindowSql` is the way:
+     * a half-open range of instants, which also lets the index be used.
+     *
+     * DATE columns are exempt and are why this names the columns rather than
+     * matching `extract` outright — `extract(year from h.on_date)` has no
+     * instant to lose and is correct as written.
+     */
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (full.endsWith(".ts") && !full.includes(".test.")) files.push(full);
+      }
+    };
+    walk("src/lib");
+
+    const EXTRACT_FROM_TIMESTAMP =
+      /extract\s*\(\s*(year|month|day|quarter|week)\s+from\s+[^)]*(started_at|ordered_at|orderedAt|startedAt|created_at|createdAt|updated_at|updatedAt|checked_in_at|received_at|confirmed_sent_at|attempted_at)/i;
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      for (const [i, line] of readFileSync(file, "utf8").split("\n").entries()) {
+        const code = line.trim();
+        if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) continue;
+        if (line.includes("time zone")) continue;
+        if (EXTRACT_FROM_TIMESTAMP.test(line)) offenders.push(`${file}:${i + 1}`);
+      }
+    }
+
+    assert.deepEqual(
+      offenders,
+      [],
+      "use `monthWindowSql` — a half-open instant range in APP_TIMEZONE — rather than extracting a part in whatever zone the session is in",
+    );
+  });
+
   test("no query turns a stored DATE into an instant without saying which zone", async () => {
     /*
      * The same rule, read backwards. The two guards beside this one watch

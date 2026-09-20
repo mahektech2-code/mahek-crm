@@ -470,6 +470,32 @@ export function businessDateSql(expr: string): string {
   return `((${expr}) at time zone '${APP_TIMEZONE}')::date`;
 }
 
+/**
+ * A MONTH, AS A HALF-OPEN RANGE OF INSTANTS IN THE ZONE WE WORK IN.
+ *
+ * `extract(month from o.ordered_at)` is the bare `::date` cast wearing
+ * different clothes, and it is the spelling the §11 grep guard could not see:
+ * `ordered_at` is a timestamptz, so Postgres extracts it in the SESSION's zone,
+ * and the session's zone is not a property of the row. On a database not set to
+ * Asia/Kolkata a 1am IST order on the 1st is counted into the previous month —
+ * and local Postgres runs in Asia/Kolkata and agrees with itself, so it is
+ * invisible in development and wrong in production.
+ *
+ * Half-open — `>= start and < end` — because a month has no last instant worth
+ * naming, and because a range on the column itself can use its index, which two
+ * `extract`s per row never could.
+ *
+ * Returns SQL text rather than a fragment so the caller can interpolate it with
+ * whichever builder it is already using; both spellings appear in this code.
+ */
+export function monthWindowSql(key: string): { start: string; end: string } {
+  const offset = zoneOffset(APP_TIMEZONE);
+  return {
+    start: `'${key}-01 00:00:00${offset}'::timestamptz`,
+    end: `'${addMonths(key, 1)}-01 00:00:00${offset}'::timestamptz`,
+  };
+}
+
 /** Fixed offsets for the zones this product runs in. */
 const ZONE_OFFSETS: Record<string, string> = {
   "Asia/Kolkata": "+05:30",

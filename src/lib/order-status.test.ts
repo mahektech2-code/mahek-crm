@@ -5,6 +5,7 @@ import {
   NON_PURCHASE_STATUSES,
   countsAsPurchase,
   orderCountsSql,
+  orderValueSql,
 } from "@/lib/order-status";
 import { orderStatusEnum } from "@/db/schema";
 
@@ -49,6 +50,15 @@ test("nothing is in both lists", () => {
  * one helper fails loudly instead of six assertions passing vacuously against
  * an empty string.
  */
+function render(fragment: unknown): string {
+  const chunks = (fragment as {
+    queryChunks?: { value?: unknown }[];
+  }).queryChunks;
+  const text = chunks?.map((c) => (Array.isArray(c.value) ? c.value.join("") : "")).join("") ?? "";
+  assert.ok(text.length > 0, "could not read the fragment's SQL — Drizzle's shape has moved");
+  return text;
+}
+
 function renderedSql(alias: string): string {
   const chunks = (orderCountsSql(alias) as unknown as {
     queryChunks?: { value?: unknown }[];
@@ -98,4 +108,32 @@ test("the alias is qualified, because an unqualified column binds inward", () =>
   assert.ok(rendered.startsWith("o.status in ("), rendered);
   /* And it really does take the alias rather than ignoring it. */
   assert.ok(renderedSql("orders").startsWith("orders.status in ("));
+});
+
+/* ------------------------------------- and what that sale was WORTH */
+
+test("an order's value is the net figure, falling back to what was billed", () => {
+  // A target is written excluding GST; `total_amount` includes it. The two are
+  // 18% apart on nearly every row of this book, so which one a query reads is
+  // the difference between a month met and a month missed.
+  assert.equal(
+    render(orderValueSql("o")),
+    "coalesce(o.net_amount_paise, o.total_amount)",
+  );
+});
+
+test("the fallback is the point — a typed order has no net and must still count", () => {
+  // Only the sheet fills `net_amount_paise`, because only the sheet states a
+  // GST rate and a discount per line. Without the coalesce a CRM order would
+  // be worth null, and `sum` would quietly drop it out of somebody's month.
+  const rendered = render(orderValueSql("o"));
+  assert.ok(rendered.startsWith("coalesce("), rendered);
+  assert.ok(rendered.includes("total_amount"), rendered);
+});
+
+test("it takes the alias too, for the same reason its neighbour does", () => {
+  assert.equal(
+    render(orderValueSql("orders")),
+    "coalesce(orders.net_amount_paise, orders.total_amount)",
+  );
 });

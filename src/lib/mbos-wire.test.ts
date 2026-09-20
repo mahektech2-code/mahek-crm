@@ -555,6 +555,14 @@ const ENGINE_COPIES: { server: string; handset: string }[] = [
     server: "src/lib/engines/lead-role-action.ts",
     handset: "mbos-app/src/engines/funnel/lead-role-action.ts",
   },
+  /*
+   * The words for the two components that are a SHARE. It imports nothing at
+   * all, deliberately — money is rendered by a function the caller passes in —
+   * so this copy is byte-identical rather than merely equivalent, and needs no
+   * normalising. A drift here is a manager and the salesman he manages reading
+   * two different sentences about one month.
+   */
+  { server: "src/lib/performance-labels.ts", handset: "mbos-app/src/engines/performance-labels.ts" },
 ];
 
 /** The import lines are the one difference allowed, so they are normalised. */

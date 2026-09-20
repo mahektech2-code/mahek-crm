@@ -6,6 +6,7 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Card, T } from '../src/components/ui/primitives';
 import { color as C, radius, weight, tabular } from '../src/theme/tokens';
 import { inrFromPaise, plural } from '../src/lib/format';
+import { activitySub, collectionSub } from '../src/engines/performance-labels';
 import {
   listPerformance,
   litres,
@@ -188,6 +189,7 @@ export default function PerformanceScreen() {
               target={
                 current.collectionTargetPaise ? inrFromPaise(current.collectionTargetPaise) : null
               }
+              base={collectionBaseLine(current)}
               bp={null}
             />
             <Figure
@@ -195,6 +197,7 @@ export default function PerformanceScreen() {
               label="Visits and calls"
               value={String(current.activityActual)}
               target={current.activityTarget ? String(current.activityTarget) : null}
+              base={activityBaseLine(current)}
               bp={null}
             />
             <Figure
@@ -327,12 +330,23 @@ function Figure({
   label,
   value,
   target,
+  base,
   bp,
   half,
 }: {
   label: string;
   value: string;
   target: string | null;
+  /*
+   * WHAT THE FIGURE IS A SHARE OF, for the two components where it is one.
+   *
+   * Collection is old debt worked down and activity is tasks completed out of
+   * tasks set, and both were drawn as a bare number against an implied target.
+   * "₹2.4L of ₹4.86L" told him the target and never what the target was 60% of
+   * — so the one figure that explains his own number was on no screen he can
+   * open. Null where the office sent none, which an older row legitimately is.
+   */
+  base?: string | null;
   bp: number | null;
   half?: boolean;
 }) {
@@ -359,8 +373,29 @@ function Figure({
         {target ? `of ${target}` : 'nothing asked'}
         {bp === null ? '' : ` · ${(bp / 100).toFixed(0)}%`}
       </T>
+      {base ? <T s="micro">{base}</T> : null}
     </View>
   );
+}
+
+/**
+ * The base under each of the two share components, in the phone's own words.
+ *
+ * `performance-labels` is the office's file, mirrored here and compared as text
+ * by `mbos-wire.test.ts` — so the sentence a salesman reads on the handset is
+ * the one his manager reads on the console, character for character. It renders
+ * money through whatever the caller passes, which is why it can be shared at
+ * all: `inrFromPaise` here, `money` there.
+ */
+function collectionBaseLine(month: PerformanceMonth): string {
+  return collectionSub(
+    { done: month.collectionActualPaise, base: month.collectionBasePaise },
+    inrFromPaise,
+  );
+}
+
+function activityBaseLine(month: PerformanceMonth): string {
+  return activitySub({ done: month.activityActual, base: month.activityAssigned });
 }
 
 function toneFor(bp: number): string {

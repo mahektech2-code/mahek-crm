@@ -10,6 +10,7 @@ import {
   eodPeriodRange,
   isDashboardPeriod,
   isEodPeriod,
+  monthWindowSql,
   asDate,
   localMinutesSince,
   type CalendarDate,
@@ -339,4 +340,36 @@ describe("localMinutesSince", () => {
     assert.equal(asDate(new Date("nonsense")), null);
     assert.ok(asDate("2026-09-07T02:00:00Z") instanceof Date);
   });
+});
+
+/* ------------------------------------------------- a month, as instants */
+
+test("monthWindowSql spans the month in the zone we work in, half-open", () => {
+  const w = monthWindowSql("2026-08");
+  assert.equal(w.start, "'2026-08-01 00:00:00+05:30'::timestamptz");
+  assert.equal(w.end, "'2026-09-01 00:00:00+05:30'::timestamptz");
+});
+
+test("and it rolls the year over rather than producing month 13", () => {
+  assert.equal(
+    monthWindowSql("2026-12").end,
+    "'2027-01-01 00:00:00+05:30'::timestamptz",
+  );
+});
+
+test("the offset is named, because that is the whole point", () => {
+  // A window without it is read in the session's zone, which is exactly the
+  // bug `extract(month from …)` had: a 1am IST order lands in the month before.
+  for (const key of ["2026-01", "2026-02", "2026-11"]) {
+    const w = monthWindowSql(key);
+    assert.match(w.start, /\+05:30/);
+    assert.match(w.end, /\+05:30/);
+  }
+});
+
+test("February is not assumed to be 28 days — the end is the NEXT first", () => {
+  // Half-open on the first of the following month means leap years, 30-day and
+  // 31-day months all need no arithmetic at all.
+  assert.equal(monthWindowSql("2028-02").end, "'2028-03-01 00:00:00+05:30'::timestamptz");
+  assert.equal(monthWindowSql("2026-02").end, "'2026-03-01 00:00:00+05:30'::timestamptz");
 });

@@ -827,6 +827,77 @@ describe("collection", () => {
     assert.equal(a?.overdueAtStartPaise ?? 0, 0, "nothing was overdue at the start");
     assert.equal(a?.collectionPaise ?? 0, 0, "paid on time is not this component's business");
   });
+
+  test("THE BASE IS CACHED AND REACHES THE HANDSET, or the phone has half a fraction", async () => {
+    /*
+     * The web computes both figures live; the phone reads `sales_performance`
+     * and nothing else. Before these two columns it was sent the numerator and
+     * the implied target and never the base, so it drew "₹2.4L · 73%" with no
+     * way to say 73% of what — and had `activityAssigned` sitting on the
+     * office's own record all along.
+     */
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    const bill = await makeBill(c.id, { amount: 90_000_00 });
+    await payAgainst(c.id, bill.id, "confirmed", 30_000_00);
+    await recomputeSalesPerformance(PERIOD, TODAY);
+
+    const [cached] = await db.execute<{
+      collection_base_paise: string | null;
+      collection_actual_paise: string | null;
+      activity_assigned: number | null;
+    }>(sql`
+      select collection_base_paise, collection_actual_paise, activity_assigned
+        from sales_performance
+       where user_id = ${rahul.id} and period = ${PERIOD}
+    `);
+    assert.ok(cached, "the recompute wrote no row to read");
+    assert.equal(Number(cached.collection_base_paise), 90_000_00);
+    assert.equal(Number(cached.collection_actual_paise), 30_000_00);
+    // Nobody was set a task, so the base is zero — which is a fact about the
+    // month, and different from the null a row written before this carried.
+    assert.equal(cached.activity_assigned, 0);
+
+    const deviceId = `base-probe-${randomUUID().slice(0, 8)}`;
+    await db
+      .insert(mbosDevices)
+      .values({ id: id("dev"), userId: rahul.id, deviceId, active: true });
+
+    const payload = await buildBootstrap({
+      user: rahul,
+      deviceId,
+      role: "associate",
+      scope: { kind: "own", userIds: [rahul.id] },
+    } as MbosPrincipal);
+
+    const month = (
+      payload.performance as {
+        period: string;
+        collectionBasePaise: number | null;
+        activityAssigned: number | null;
+      }[]
+    ).find((p) => p.period === PERIOD);
+    assert.ok(month, "the month he is judged on has to be on the payload");
+    assert.equal(Number(month.collectionBasePaise), 90_000_00);
+    assert.equal(Number(month.activityAssigned), 0);
+  });
+
+  test("and the base is REBUILT, not accumulated — the cache is a reading", async () => {
+    // `sales_performance` is a cache and the recompute rebuilds it. A base that
+    // summed across runs would grow every hour and make everybody's collection
+    // share fall all day.
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    const bill = await makeBill(c.id, { amount: 50_000_00 });
+    await payAgainst(c.id, bill.id, "confirmed", 10_000_00);
+
+    await recomputeSalesPerformance(PERIOD, TODAY);
+    await recomputeSalesPerformance(PERIOD, TODAY);
+
+    const [cached] = await db.execute<{ collection_base_paise: string | null }>(sql`
+      select collection_base_paise from sales_performance
+       where user_id = ${rahul.id} and period = ${PERIOD}
+    `);
+    assert.equal(Number(cached?.collection_base_paise), 50_000_00);
+  });
 });
 
 /* ================================================== the reading, and cache */

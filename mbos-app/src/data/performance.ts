@@ -37,8 +37,17 @@ export type PerformanceMonth = {
   newCustomerActual: number;
   collectionTargetPaise: number | null;
   collectionActualPaise: number;
+  /**
+   * WHAT THAT MONEY WAS A SHARE OF — the old debt on his book when the month
+   * opened. NULL means the office did not send one, which is not zero: zero is
+   * the claim that nothing was overdue, and a row pulled by an older build
+   * would be making it.
+   */
+  collectionBasePaise: number | null;
   activityTarget: number | null;
   activityActual: number;
+  /** And how many tasks were ASKED of him. Same rule about null. */
+  activityAssigned: number | null;
   totalScoreBp: number | null;
   rating: string | null;
   unmatchedRevenuePaise: number;
@@ -80,8 +89,8 @@ export async function listPerformance(): Promise<PerformanceMonth[]> {
     `SELECT period, revenueTargetPaise, revenueActualPaise, revenueAchievementBp,
             volumeTargetMl, volumeActualMl, volumeAchievementBp, mixAchievementBp,
             newCustomerTarget, newCustomerActual,
-            collectionTargetPaise, collectionActualPaise,
-            activityTarget, activityActual,
+            collectionTargetPaise, collectionActualPaise, collectionBasePaise,
+            activityTarget, activityActual, activityAssigned,
             totalScoreBp, rating, untargeted, unmatchedRevenuePaise,
             categories, computedAt
        FROM performance
