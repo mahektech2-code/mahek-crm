@@ -52,6 +52,22 @@ import { relations, sql } from "drizzle-orm";
  */
 export const roleEnum = pgEnum("role", ["associate", "manager", "admin"]);
 
+/**
+ * §9's three answers about one field somebody already wrote down.
+ *
+ * `confirmed` is "we asked again and got the same answer" — evidence, and the
+ * whole of what a second visit buys. `corrected` is the before/after pair.
+ * `unverified` is "we asked and could not establish it", which leaves the
+ * value where it is exactly as a confirmation does and means the opposite
+ * thing; folding the two together is what destroys the only reason to record
+ * the third at all.
+ */
+export const fieldCheckVerdictEnum = pgEnum("field_check_verdict", [
+  "confirmed",
+  "corrected",
+  "unverified",
+]);
+
 /** How a login code reached somebody's phone. */
 export const otpChannelEnum = pgEnum("otp_channel", ["sms", "whatsapp"]);
 
@@ -7375,14 +7391,22 @@ export const leadVerificationCorrections = pgTable(
       .notNull()
       .references(() => customers.id, { onDelete: "cascade" }),
     /**
-     * The call this correction was made on. A lead is routinely validated
-     * twice and the first call is usually the one that matters, so a
-     * correction that could not name its call would be undatable against the
-     * reading it corrected.
+     * The call this check was made on, and NULL where it was made in the shop.
+     *
+     * A lead is routinely validated twice and the first call is usually the
+     * one that matters, so a correction made ON a call that could not name it
+     * would be undatable against the reading it corrected. That is still true
+     * and is why the column exists.
+     *
+     * What changed is that §9's Confirm / Correct / Unable-to-verify row is
+     * reused verbatim on the salesman's own second visit, where nobody rang
+     * anybody — so demanding a call made the second door impossible. Null IS
+     * the answer to which door: a second column saying the same thing is a
+     * column that can contradict this one.
      */
-    validationId: text("validation_id")
-      .notNull()
-      .references(() => mbosLeadValidations.id, { onDelete: "cascade" }),
+    validationId: text("validation_id").references(() => mbosLeadValidations.id, {
+      onDelete: "cascade",
+    }),
     /**
      * WHICH finding. One of `VERIFICATION_FINDINGS` — a code and never a
      * label, for the reason every coded list here is: a stored label stops
@@ -7390,6 +7414,18 @@ export const leadVerificationCorrections = pgTable(
      * counted.
      */
     field: text("field").notNull(),
+    /**
+     * WHICH of the three answers, and all three are kept.
+     *
+     * The table held only corrections, because on a validation call a figure
+     * the shop agreed with was not worth a row. On a second visit it is: a
+     * confirmation is the evidence that somebody asked again and got the same
+     * answer, which is the whole of what that visit buys, and `unverified` —
+     * we asked and could not establish it — is a third fact that is neither.
+     * Folding it into either of the other two destroys the only reason to
+     * record it at all.
+     */
+    verdict: fieldCheckVerdictEnum("verdict").notNull(),
     /**
      * What the salesman had reported, captured at the moment of correcting.
      *
@@ -7402,15 +7438,25 @@ export const leadVerificationCorrections = pgTable(
      * first to answer.
      */
     original: text("original"),
-    /** What the manager was told instead. Never written onto the lead. */
-    corrected: text("corrected").notNull(),
     /**
-     * Required by the action, not merely by the form. A correction with no
-     * reason is the manager's word against the salesman's with nothing to
-     * settle it, which is the argument this table exists to prevent rather
-     * than to record.
+     * What he was told instead. Never written onto the lead.
+     *
+     * Null under the other two verdicts, which assert no new value at all —
+     * that is the whole difference between them and a correction. A CHECK
+     * constraint keeps it NOT NULL where the verdict IS `corrected`, so the
+     * guarantee that mattered is exactly where it was.
      */
-    reason: text("reason").notNull(),
+    corrected: text("corrected"),
+    /**
+     * Why the two differ. Required by the action and by a CHECK constraint,
+     * not merely by the form — a correction with no reason is one person's
+     * word against another's with nothing to settle it, which is the argument
+     * this table exists to prevent rather than to record.
+     *
+     * Offered and not demanded under `unverified`, where "we asked and could
+     * not establish it" is frequently the whole of what anybody knows.
+     */
+    reason: text("reason"),
     changedById: text("changed_by_id").references(() => users.id),
     /** Readable after the account is gone. Same reasoning as `customer_am_changes`. */
     changedByName: text("changed_by_name"),
@@ -7422,6 +7468,16 @@ export const leadVerificationCorrections = pgTable(
     /* "Which fields get corrected most, and on whose leads" — the question. */
     index("lead_verification_corrections_field_idx").on(t.field, t.changedAt.desc()),
     index("lead_verification_corrections_validation_idx").on(t.validationId),
+    /* "What did the field itself check, and what came back" — the question the
+       second door exists to answer, which no other index here serves. */
+    index("lead_verification_corrections_verdict_idx").on(t.verdict, t.changedAt.desc()),
+    /* A CORRECTION still has to carry both. See the two columns above: the
+       NOT NULLs were relaxed for the two verdicts that genuinely assert no new
+       value, and this is where the guarantee they used to give is kept. */
+    check(
+      "lead_verification_corrections_corrected_says_why",
+      sql`${t.verdict} <> 'corrected' or (${t.corrected} is not null and ${t.reason} is not null)`,
+    ),
   ],
 );
 

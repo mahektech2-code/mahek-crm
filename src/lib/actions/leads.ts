@@ -1385,6 +1385,13 @@ export async function recordLeadValidationCall(
           customerId,
           validationId: callId,
           field,
+          /* This door only ever produces corrections: on a validation call a
+             figure the shop agreed with was not worth a row, which is why the
+             table had no verdict column until the salesman's own second visit
+             needed one. Stated rather than defaulted — the column's default
+             was dropped in `0154` so that a writer has to SAY which of the
+             three it means instead of inheriting the historical one. */
+          verdict: "corrected" as const,
           original: entry.original,
           corrected: entry.corrected,
           reason: entry.reason,
