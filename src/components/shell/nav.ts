@@ -147,6 +147,7 @@ export const NAV: NavGroup[] = [
         icon: "warning",
         badge: "complaints",
       },
+      { href: at("/price-lists"), label: "Price lists", icon: "rupee" },
       {
         href: at("/status-requests"),
         label: "Close/Reopen",

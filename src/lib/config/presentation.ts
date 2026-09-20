@@ -211,6 +211,15 @@ export const PRESENTATION: Record<string, Presentation> = {
   "products.searchOnOrderForms": { tab: "Products", group: "How the order form offers them" },
   "products.priceSource": { tab: "Products", group: "What a line is worth", control: "choice" },
 
+  /* --------------------------------------------------------------- pricing */
+  "pricing.gstBp": { tab: "Pricing", group: "The list itself", unit: "basis points" },
+  "pricing.defaultValidityDays": { tab: "Pricing", group: "The list itself", unit: "days" },
+  "pricing.useListForOrderValue": { tab: "Pricing", group: "On the order form" },
+  "pricing.associateMaxDiscountBp": { tab: "Pricing", group: "Discount authority", unit: "basis points" },
+  "pricing.managerMaxDiscountBp": { tab: "Pricing", group: "Discount authority", unit: "basis points" },
+  "pricing.parseConfidenceFloor": { tab: "Pricing", group: "Reading a document", unit: "out of 100" },
+  "pricing.derivationTolerancePaise": { tab: "Pricing", group: "Reading a document", unit: "paise" },
+
   /* -------------------------------------------------------------- whatsapp */
   "whatsapp.mode": { tab: "WhatsApp", group: "Connection", control: "choice", adminOnly: true },
   "whatsapp.contactsPerWeekLimit": { tab: "WhatsApp", group: "Limits", unit: "per week" },

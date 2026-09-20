@@ -14,7 +14,7 @@ import {
   mbosTravelLegs,
   paymentReceipts,
 } from "@/db/schema";
-import { resolveScope, assertCustomerInScope } from "../access-control";
+import { resolveScope, assertCustomerInScope, canFor } from "../access-control";
 import { canSeeFeedback, feedbackBehindMessage } from "./feedback-access";
 import { getConfig } from "../config/store";
 import { fileStorage } from "../storage";
@@ -53,7 +53,9 @@ export type ParentType =
   /** The document library: a price sheet, a policy, one customer's agreement. */
   | "mbos_document"
   /** Training material — a slide deck, a product sheet, a safety brief. */
-  | "mbos_course";
+  | "mbos_course"
+  /** A price list somebody uploaded to be parsed: the PDF, scan or photograph itself. */
+  | "price_list_document";
 
 export type AttachmentView = {
   id: string;
@@ -82,6 +84,7 @@ export async function limitFor(parentType: ParentType): Promise<number> {
       return config["attachments.maxPerFeedback"];
     case "mbos_document":
     case "mbos_course":
+    case "price_list_document":
       /* A document IS its file. Two would make "open the price list"
        * ambiguous on a handset, and the row carries one `attachment_id`
        * anyway — a second could never be found. */
@@ -305,6 +308,15 @@ export async function canRead(attachmentId: string): Promise<boolean> {
   // answered by a customer's scope. The two sides of the thread may see the
   // screenshot and nobody else — the same rule that decides who may read the
   // words it was attached to, asked in one place.
+  /* A price list document has no customer behind it either: whoever may read
+   * price lists may open the file the list was read from, and nobody else.
+   * Asked through the capability rather than the app, so the same rule answers
+   * under /crm, /sales and the API. */
+  if (row.parentType === "price_list_document") {
+    const ctx = await resolveScope();
+    return canFor(ctx.user, "pricelist.read");
+  }
+
   if (row.parentType === "feedback" || row.parentType === "feedback_message") {
     const ctx = await resolveScope();
     const feedbackId =

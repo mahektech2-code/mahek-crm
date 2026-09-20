@@ -171,6 +171,12 @@ export const APP_MODULES: AppModule[] = [
   crm("bills", "Sales Bills", "Collections"),
   crm("customers", "Customers", "Customer records", "The customer list and every customer record behind it."),
   crm("complaints", "Complaints", "Customer records"),
+  crm(
+    "price-lists",
+    "Price lists",
+    "Customer records",
+    "What each customer pays: the lists in force, the one that applies to a shop and why, and a special price asked for on a call. Reading is every telecaller's; importing, publishing and scoping need the manage capability.",
+  ),
   // WRITTEN OUT LONGHAND, because the key and the route have to disagree.
   //
   // The `crm()` helper derives both from one slug, which is right for every
@@ -433,6 +439,12 @@ export const APP_MODULES: AppModule[] = [
   sales("payments", "Payments", "Commercial", "Money collected, and cash still in somebody's pocket."),
   sales("invoices", "Invoices", "Commercial", "What has been billed and what is overdue."),
   sales("catalogue", "Catalogue & rates", "Commercial", "What is sold and at what price."),
+  sales(
+    "price-lists",
+    "Price lists",
+    "Commercial",
+    "Mahek's price lists end to end: import a PDF, review what it read, publish, say who it applies to, compare months, and see who is billed off-list.",
+  ),
 
   /* ------------------------------------------------- Lead Management, the ten
    *

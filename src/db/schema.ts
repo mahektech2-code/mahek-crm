@@ -607,6 +607,12 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
    * resolves straight through the customer's own scope.
    */
   "mbos_lead",
+  /**
+   * A price list somebody uploaded to be parsed — the PDF, scan or photograph
+   * itself. No customer behind it: who may open one is whoever may read price
+   * lists at all, asked in `canRead` under its own branch.
+   */
+  "price_list_document",
 ]);
 
 /**
@@ -2171,6 +2177,19 @@ export const customers = pgTable(
      * exists on the list, and nothing joined the two until this column did.
      */
     priceTag: text("price_tag"),
+    /**
+     * WHO PAYS THE FREIGHT, which is the second half of which price list
+     * applies. The Sales Party tab's `Payment type` is "Paid" or "To Pay" —
+     * transport paid by us and built into the price, or paid by the shop on
+     * delivery — and the office issues one list per answer: "Odisha Paid" is
+     * "Odisha To Pay" plus twelve rupees a litre. Mirrored from
+     * `sheet_party_rows.paymentType` by the same projection that fills
+     * `priceTag`; null means the sheet never said, and the resolution engine
+     * then accepts a list of either term.
+     */
+    freightTerm: text("freight_term"),
+    /** "Door Delivery" or "Godown Delivery", as the party sheet spells it. Mirrored, never typed. */
+    deliveryType: text("delivery_type"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2805,6 +2824,23 @@ export const interactionProductLines = pgTable(
      * make "six" unrecoverable the moment a pack size changed.
      */
     quantity: integer("quantity").notNull(),
+    /**
+     * WHAT THE LIST SAID THIS CAN WAS WORTH on the day the line was taken,
+     * ex-GST in paise, and the discount the telecaller gave against it in
+     * basis points. Written once at capture from the customer's resolved
+     * price list and never rebuilt: a revision published next month must not
+     * rewrite what was quoted this month. Null on every line taken before
+     * price lists existed, and on a line priced by hand where no list
+     * resolved — which is not zero, and reads on screen as "no list rate".
+     */
+    listRateExGstPaise: bigint("list_rate_ex_gst_paise", { mode: "number" }),
+    discountBp: integer("discount_bp"),
+    /**
+     * Who allowed a discount above the caller's own authority. Null means it
+     * was inside what the person taking the order may give on their own —
+     * see `pricing.associateMaxDiscountBp` and `pricing.managerMaxDiscountBp`.
+     */
+    discountAuthorisedById: text("discount_authorised_by_id").references(() => users.id),
   },
   (t) => [index("interaction_lines_idx").on(t.interactionId)],
 );
@@ -2933,6 +2969,15 @@ export const orders = pgTable(
     status: orderStatusEnum("status").notNull().default("captured"),
     callId: text("call_id"),
     lineItems: jsonb("line_items").$type<OrderLine[]>(),
+    /**
+     * WHICH PRICE LIST PRICED THIS ORDER, resolved for the customer on the day
+     * it was taken and written once. The same discipline as
+     * `calls.next_step_*`: it records what was quoted, and a list published
+     * later does not rewrite it. Null on every order before lists existed, on
+     * every order the sheet wrote, and on an order for a customer no list
+     * resolved for — which the screen says in words rather than leaving blank.
+     */
+    priceListId: text("price_list_id"),
     /**
      * The payment term agreed when the order was taken, in days from the bill
      * date. Null means nobody stated one, and the customer's own term — then
@@ -9344,3 +9389,402 @@ export const trailGapRoutes = pgTable(
   },
   (t) => [uniqueIndex("trail_gap_routes_pair_key").on(t.fromKey, t.toKey)],
 );
+
+
+/* ---------------------------------------------------------------------------
+ * PRICE LISTS — MahekOne's own, for every app.
+ *
+ * Mahek issues a price list per region, per freight term and per negotiated
+ * account: "MP & CG", "Odisha To Pay", "Odisha Paid", "S M Distributor", and
+ * a few dozen more, each a PDF of one grid — products down, pack sizes across,
+ * a GST-inclusive price per can in every cell — under a header naming the
+ * reference, the effective date, the tax basis and who pays the transport.
+ *
+ * It is GLOBAL rather than a field-app table. `mbos_price_list` above is
+ * keyed on a party-sheet tag and holds zero rows; it stays only until the
+ * handset reads from here. A lead converted at a desk, a telecaller pricing
+ * an order on the phone and a salesman standing in a shop all ask the same
+ * question — what does THIS shop pay for THIS can today — and one answer is
+ * the whole point.
+ *
+ * What the four sample lists established, and the shape follows from it:
+ *
+ * - The sheet's Rate is ex-GST and the PDF is inclusive. Times 1.18 lands on
+ *   the PDF to the rupee across every list, so rates are STORED ex-GST and the
+ *   inclusive figure is derived beside them.
+ * - "Paid" is "To Pay" plus twelve rupees a litre, on every product. A list
+ *   can therefore be DERIVED from a parent by a rule rather than typed, and a
+ *   derived list cannot drift from its parent.
+ * - Which list applies is a HIERARCHY, narrowest wins: a named customer over a
+ *   salesman over a beat over an area over a city over a district over a
+ *   state over a customer type over everybody, then the freight term.
+ * - A document is parsed into STAGING first and published by a person, exactly
+ *   as the catalogue import and the sheet projections work: raw text beside
+ *   the normalised value, an unmatched product held rather than guessed.
+ * ------------------------------------------------------------------------- */
+
+/** Where a list's prices are measured from. */
+export const PRICE_DELIVERY_BASES = ["for_mumbai", "for_godown", "door_delivery", "ex_factory"] as const;
+export type PriceDeliveryBasis = (typeof PRICE_DELIVERY_BASES)[number];
+/** Who pays the transport. `not_stated` is a list whose header said neither. */
+export const PRICE_FREIGHT_TERMS = ["to_pay", "paid", "not_stated"] as const;
+export type PriceFreightTerm = (typeof PRICE_FREIGHT_TERMS)[number];
+export const PRICE_LIST_STATUSES = ["draft", "published", "superseded", "withdrawn"] as const;
+export type PriceListStatus = (typeof PRICE_LIST_STATUSES)[number];
+export const PRICE_SCOPE_KINDS = [
+  "everybody",
+  "state",
+  "district",
+  "city",
+  "area",
+  "beat",
+  "customer_type",
+  "salesman",
+  "customer",
+] as const;
+export type PriceScopeKind = (typeof PRICE_SCOPE_KINDS)[number];
+export const PRICE_DOCUMENT_STATUSES = [
+  "queued",
+  "extracting",
+  "classifying",
+  "normalising",
+  "matching",
+  "validating",
+  "parsed",
+  "needs_review",
+  "published",
+  "rejected",
+  "failed",
+] as const;
+export type PriceDocumentStatus = (typeof PRICE_DOCUMENT_STATUSES)[number];
+export const PRICE_MATCH_STATUSES = ["matched", "alias", "suggested", "held", "skipped", "manual"] as const;
+export type PriceMatchStatus = (typeof PRICE_MATCH_STATUSES)[number];
+export const PRICE_DISCOUNT_KINDS = ["advance_payment", "quantity", "prompt_payment", "other"] as const;
+export type PriceDiscountKind = (typeof PRICE_DISCOUNT_KINDS)[number];
+
+/**
+ * How a derived list is computed from its parent. `per_litre_paise` is the
+ * freight rule the Odisha pair follows; `percent_bp` is a margin or a revision;
+ * `per_can_paise` is a flat container premium such as the tin can's 200.
+ */
+export type PriceDerivation =
+  | { kind: "per_litre_paise"; paise: number }
+  | { kind: "percent_bp"; bp: number }
+  | { kind: "per_can_paise"; paise: number };
+
+/** What the filename said before anybody read the file. Proposals, never facts. */
+export type PriceFilenameHints = {
+  region: string | null;
+  freightTerm: PriceFreightTerm | null;
+  monthIso: string | null;
+  customer: string | null;
+  tokens: string[];
+};
+
+/** Where a parsed cell sits in the source, so a reviewer can open it. */
+export type PriceSourceRef = { page: number; row: number; col: number };
+
+export type PriceParsedHeader = {
+  refNo: string | null;
+  effectiveFrom: string | null;
+  taxBasis: "inclusive" | "exclusive" | null;
+  gstBp: number | null;
+  deliveryBasis: PriceDeliveryBasis | null;
+  freightTerm: PriceFreightTerm | null;
+  validityDays: number | null;
+  signatory: string | null;
+};
+
+/**
+ * The file, and what became of reading it.
+ *
+ * One row per upload, deduplicated on the bytes: the same PDF sent twice is
+ * one document. `parseStatus` walks the pipeline's stages in order so a screen
+ * can draw where a file is, and `extractedText` keeps what the reader saw so
+ * a changed rule re-parses what is stored without touching the bytes.
+ */
+export const priceListDocuments = pgTable(
+  "price_list_documents",
+  {
+    id: text("id").primaryKey(),
+    attachmentId: text("attachment_id").references(() => attachments.id),
+    fileHash: text("file_hash").notNull(),
+    filename: text("filename").notNull(),
+    /** `pdf_text` | `pdf_scan` | `image` — decided from the bytes, never the name. */
+    sourceKind: text("source_kind").notNull().default("pdf_text"),
+    byteSize: integer("byte_size"),
+    pageCount: integer("page_count"),
+    filenameHints: jsonb("filename_hints").$type<PriceFilenameHints>(),
+    parseStatus: text("parse_status").notNull().default("queued"),
+    stageStartedAt: timestamp("stage_started_at", { withTimezone: true }),
+    stageNote: text("stage_note"),
+    /** Bumped when the reading rule changes; a lower number is a document worth re-parsing. */
+    parserVersion: integer("parser_version"),
+    /** Null for the deterministic reader. Named where a model read a scan. */
+    modelUsed: text("model_used"),
+    /** `grid` | `long` | `unknown`. */
+    layout: text("layout"),
+    /** 0 to 100. Below `pricing.parseConfidenceFloor` the document waits for a person. */
+    confidence: integer("confidence"),
+    extractedText: text("extracted_text"),
+    header: jsonb("header").$type<PriceParsedHeader>(),
+    problems: jsonb("problems").$type<string[]>().notNull().default([]),
+    /** The list this document was published as. Text, not a key, because the two tables point at each other. */
+    priceListId: text("price_list_id"),
+    uploadedById: text("uploaded_by_id").references(() => users.id),
+    parsedAt: timestamp("parsed_at", { withTimezone: true }),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    rejectedById: text("rejected_by_id").references(() => users.id),
+    rejectReason: text("reject_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("price_list_documents_hash_key").on(t.fileHash),
+    index("price_list_documents_status_idx").on(t.parseStatus, t.createdAt),
+  ],
+);
+
+/**
+ * The list itself. A new month is a new row pointing at the old one through
+ * `supersedesId`; publishing the new one dates the old one out and marks it
+ * `superseded`. Nothing here is deleted — an order priced in March has to
+ * stay explainable in September.
+ */
+export const priceLists = pgTable(
+  "price_lists",
+  {
+    id: text("id").primaryKey(),
+    /** As printed — "PL0105". Not unique: Mahek's own numbering repeats. */
+    refNo: text("ref_no"),
+    name: text("name").notNull(),
+    version: integer("version").notNull().default(1),
+    supersedesId: text("supersedes_id").references((): AnyPgColumn => priceLists.id),
+    documentId: text("document_id").references(() => priceListDocuments.id),
+    effectiveFrom: date("effective_from").notNull(),
+    /** Null means open-ended. Set by the list that supersedes it, or by withdrawal. */
+    effectiveTo: date("effective_to"),
+    validityDays: integer("validity_days"),
+    /** `inclusive` | `exclusive` — what the DOCUMENT printed. Rates are always stored ex-GST. */
+    taxBasis: text("tax_basis").notNull().default("inclusive"),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    deliveryBasis: text("delivery_basis"),
+    freightTerm: text("freight_term").notNull().default("not_stated"),
+    /** Freight in paise per litre where the header states one; informational beside `derivation`. */
+    freightPerLitrePaise: bigint("freight_per_litre_paise", { mode: "number" }),
+    parentListId: text("parent_list_id").references((): AnyPgColumn => priceLists.id),
+    derivation: jsonb("derivation").$type<PriceDerivation>(),
+    /** `per_can` | `per_litre`. Every sample is per can; the second exists for the exception. */
+    unitBasis: text("unit_basis").notNull().default("per_can"),
+    status: text("status").notNull().default("draft"),
+    termsText: text("terms_text"),
+    signatory: text("signatory"),
+    notes: text("notes"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    withdrawnAt: timestamp("withdrawn_at", { withTimezone: true }),
+    withdrawnById: text("withdrawn_by_id").references(() => users.id),
+    withdrawReason: text("withdraw_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("price_lists_status_idx").on(t.status, t.effectiveFrom),
+    index("price_lists_supersedes_idx").on(t.supersedesId),
+    index("price_lists_parent_idx").on(t.parentListId),
+  ],
+);
+
+/**
+ * One row per list per SKU, and per slab where a list has them.
+ *
+ * `rateExGstPaise` is the stored number; the inclusive figure is derived on
+ * write and kept beside it so the screen prints what the PDF printed without
+ * rounding twice. The raw texts are what the document said and stay on the
+ * row after publishing, because "why is this 643" is asked months later.
+ */
+export const priceListRates = pgTable(
+  "price_list_rates",
+  {
+    id: text("id").primaryKey(),
+    priceListId: text("price_list_id")
+      .notNull()
+      .references(() => priceLists.id, { onDelete: "cascade" }),
+    productId: text("product_id")
+      .notNull()
+      .references(() => products.id),
+    rateExGstPaise: bigint("rate_ex_gst_paise", { mode: "number" }).notNull(),
+    rateInclGstPaise: bigint("rate_incl_gst_paise", { mode: "number" }).notNull(),
+    /** Slab bounds in cans. Both null is a flat price, which is every sample. */
+    minCans: integer("min_cans"),
+    maxCans: integer("max_cans"),
+    /** False where the document printed a dash: listed, and not for sale on this list. */
+    offered: boolean("offered").notNull().default(true),
+    rawProductText: text("raw_product_text"),
+    rawPackText: text("raw_pack_text"),
+    rawPriceText: text("raw_price_text"),
+    sourceRef: jsonb("source_ref").$type<PriceSourceRef>(),
+    matchStatus: text("match_status").notNull().default("manual"),
+    matchConfidence: integer("match_confidence"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("price_list_rates_slab_key").on(t.priceListId, t.productId, sql`coalesce(${t.minCans}, 0)`),
+    index("price_list_rates_product_idx").on(t.productId),
+  ],
+);
+
+/**
+ * WHO A LIST APPLIES TO. A list with no scope rows applies to nobody until
+ * somebody says otherwise — the opposite default from modules, and on purpose:
+ * a price reaching a shop by accident is a price somebody quoted.
+ *
+ * `scopeValue` is a place KEY for the four geography kinds (`places.key`, the
+ * same fold the territory picker uses, so "Mira Road" and "mira road" are one
+ * scope), a beat's text, a `customer_type` enum value, a user id or a customer
+ * id. `parentKey` says what the place sits under, exactly as
+ * `mbos_user_territories.parent` does — an Aurangabad in Maharashtra and one
+ * in Bihar are two scopes.
+ */
+export const priceListScopes = pgTable(
+  "price_list_scopes",
+  {
+    id: text("id").primaryKey(),
+    priceListId: text("price_list_id")
+      .notNull()
+      .references(() => priceLists.id, { onDelete: "cascade" }),
+    scopeKind: text("scope_kind").notNull(),
+    scopeValue: text("scope_value").notNull().default(""),
+    /** As shown to a person — the place name, the salesman, the shop. */
+    scopeLabel: text("scope_label"),
+    parentKey: text("parent_key").notNull().default(""),
+    /** `any` | `to_pay` | `paid` — which customers, by who pays the freight. */
+    freightTermMatch: text("freight_term_match").notNull().default("any"),
+    /** Higher wins on a tie at the same kind. */
+    priority: integer("priority").notNull().default(0),
+    validFrom: date("valid_from"),
+    validTo: date("valid_to"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("price_list_scopes_list_idx").on(t.priceListId),
+    index("price_list_scopes_lookup_idx").on(t.scopeKind, t.scopeValue),
+  ],
+);
+
+/** The discount sentences a list prints: "3% off for advance payment". */
+export const priceListDiscountTerms = pgTable(
+  "price_list_discount_terms",
+  {
+    id: text("id").primaryKey(),
+    priceListId: text("price_list_id")
+      .notNull()
+      .references(() => priceLists.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    percentBp: integer("percent_bp").notNull(),
+    thresholdLitres: integer("threshold_litres"),
+    thresholdPaise: bigint("threshold_paise", { mode: "number" }),
+    rawText: text("raw_text"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("price_list_discount_terms_list_idx").on(t.priceListId)],
+);
+
+/**
+ * THE STAGING TABLE — one row per cell the parser read, raw beside
+ * normalised, with the SKU it matched or the candidates it could not choose
+ * between. Publishing moves these into `price_list_rates`; the rows stay so
+ * the review can be reopened.
+ */
+export const priceListParseRows = pgTable(
+  "price_list_parse_rows",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => priceListDocuments.id, { onDelete: "cascade" }),
+    page: integer("page").notNull().default(1),
+    rowIndex: integer("row_index").notNull(),
+    colIndex: integer("col_index").notNull(),
+    rawProductText: text("raw_product_text").notNull(),
+    rawPackText: text("raw_pack_text"),
+    rawPriceText: text("raw_price_text"),
+    millilitres: integer("millilitres"),
+    cansPerBox: integer("cans_per_box"),
+    /** `can` | `tin` | `drum` | `loose` | null. */
+    container: text("container"),
+    rateInclGstPaise: bigint("rate_incl_gst_paise", { mode: "number" }),
+    rateExGstPaise: bigint("rate_ex_gst_paise", { mode: "number" }),
+    offered: boolean("offered").notNull().default(true),
+    matchedProductId: text("matched_product_id").references(() => products.id, { onDelete: "set null" }),
+    matchStatus: text("match_status").notNull().default("held"),
+    matchConfidence: integer("match_confidence"),
+    candidates: jsonb("candidates").$type<Array<{ productId: string; name: string; score: number }>>().notNull().default([]),
+    problem: text("problem"),
+    /** A person chose the SKU, or chose to skip the cell. Never overwritten by a re-parse. */
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("price_list_parse_rows_document_idx").on(t.documentId, t.rowIndex, t.colIndex),
+    index("price_list_parse_rows_status_idx").on(t.documentId, t.matchStatus),
+  ],
+);
+
+/**
+ * A SPECIAL PRICE, asked for and decided.
+ *
+ * A telecaller or a salesman may not change what a shop pays; they may ask.
+ * Approving writes a customer-scoped list of one rate with the customer's
+ * resolved list as its parent, so everything else the shop buys stays at the
+ * ordinary price — the same "the rest falls through" the scope hierarchy
+ * already promises.
+ */
+export const priceRequests = pgTable(
+  "price_requests",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    productId: text("product_id")
+      .notNull()
+      .references(() => products.id),
+    requestedRateExGstPaise: bigint("requested_rate_ex_gst_paise", { mode: "number" }).notNull(),
+    currentRateExGstPaise: bigint("current_rate_ex_gst_paise", { mode: "number" }),
+    currentListId: text("current_list_id"),
+    reason: text("reason").notNull(),
+    /** `pending` | `approved` | `refused` | `withdrawn`. */
+    status: text("status").notNull().default("pending"),
+    requestedById: text("requested_by_id")
+      .notNull()
+      .references(() => users.id),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    resultingListId: text("resulting_list_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("price_requests_status_idx").on(t.status, t.createdAt),
+    index("price_requests_customer_idx").on(t.customerId),
+  ],
+);
+
+export type PriceListDocument = typeof priceListDocuments.$inferSelect;
+export type PriceList = typeof priceLists.$inferSelect;
+export type PriceListRate = typeof priceListRates.$inferSelect;
+export type PriceListScope = typeof priceListScopes.$inferSelect;
+export type PriceListDiscountTerm = typeof priceListDiscountTerms.$inferSelect;
+export type PriceListParseRow = typeof priceListParseRows.$inferSelect;
+export type PriceRequest = typeof priceRequests.$inferSelect;

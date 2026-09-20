@@ -43,6 +43,8 @@ export type SettingCategory =
   | "reminders"
   | "complaints"
   | "products"
+  /** Price lists: GST, validity, discount authority and the parser's thresholds. */
+  | "pricing"
   | "attachments"
   | "interactions"
   | "whatsapp"
@@ -1403,6 +1405,83 @@ export const SETTINGS = [
     default: 2,
     min: 1,
     max: 5,
+  },
+
+  /* --------------------------------------------------------------- pricing */
+  {
+    key: "pricing.gstBp",
+    type: "integer",
+    category: "pricing",
+    label: "GST on a price list, in basis points",
+    description:
+      "1800 is 18%. A list is stored ex-GST and printed inclusive, and this is the rate between the two where a document does not state its own. Every list Mahek has issued prints 18%; change this only if the law does.",
+    default: 1800,
+    min: 0,
+    max: 5000,
+  },
+  {
+    key: "pricing.defaultValidityDays",
+    type: "integer",
+    category: "pricing",
+    label: "How long a list is valid, where the list does not say",
+    description:
+      "Mahek's own terms say 30 days from the effective date or until the next revision, whichever is earlier. A list past this is drawn as expired on every screen rather than silently used.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "pricing.associateMaxDiscountBp",
+    type: "integer",
+    category: "pricing",
+    label: "Discount a telecaller or salesman may give on their own",
+    description:
+      "Basis points: 300 is 3%. Above this the order form asks for a manager to authorise the discount and records who did. Zero, the shipped default, means every discount is somebody senior's decision - the sample lists state 3% and 2% under named conditions and nothing else, and the order sheet shows 10% being given with nobody's name against it.",
+    default: 0,
+    min: 0,
+    max: 5000,
+  },
+  {
+    key: "pricing.managerMaxDiscountBp",
+    type: "integer",
+    category: "pricing",
+    label: "Discount a manager may authorise",
+    description:
+      "Basis points: 1000 is 10%. Above this only an admin may authorise. It has to sit at or above the associate ceiling, or an associate could give what a manager could not sign off.",
+    default: 1000,
+    min: 0,
+    max: 10000,
+  },
+  {
+    key: "pricing.parseConfidenceFloor",
+    type: "integer",
+    category: "pricing",
+    label: "Confidence below which a parsed list waits for a person",
+    description:
+      "0 to 100. The parser scores how sure it is of a document - a clean text PDF in Mahek's own layout scores in the nineties, a photograph read by a model scores lower. Below this the document is marked as needing review rather than ready, and it is never published without somebody opening it either way.",
+    default: 80,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "pricing.derivationTolerancePaise",
+    type: "integer",
+    category: "pricing",
+    label: "How far a derived list may drift from its rule, per can",
+    description:
+      "Paise. A list derived from a parent by a rule is checked against that rule on publish; a cell further out than this is flagged. 100 is one rupee, which is the rounding the office prints at.",
+    default: 100,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "pricing.useListForOrderValue",
+    type: "boolean",
+    category: "pricing",
+    label: "Price CRM order lines from the customer's list",
+    description:
+      "On, the order form fills each line's rate from the list that resolves for the customer and shows the order's worth; the telecaller can still change a rate inside their discount authority. Off, the form shows the list rate for reference and values nothing. It is separate from the products.priceSource switch on purpose - that one decides what the reports count an order as worth, and flipping it is a deliberate act that should follow, not precede, the lists being complete.",
+    default: true,
   },
 
   /* ---------------------------------------------------------- interactions */
@@ -3862,9 +3941,9 @@ export function checkConsistency(config: Config): string[] {
     }
   }
 
-  if (config["products.priceSource"] === "pricelist") {
+  if (config["pricing.associateMaxDiscountBp"] > config["pricing.managerMaxDiscountBp"]) {
     problems.push(
-      "Prices are set to come from a customer price list, but no price list exists yet - nothing is keyed on a pricelist tag. Until one is built, order value has to stay manual.",
+      `Pricing: an associate may give ${config["pricing.associateMaxDiscountBp"] / 100}% on their own, which is more than the ${config["pricing.managerMaxDiscountBp"] / 100}% a manager may authorise. An associate would be able to give what a manager could not sign off.`,
     );
   }
 
@@ -4018,6 +4097,13 @@ export type Config = {
   "products.priceSource": "unset" | "manual" | "product" | "pricelist";
   "products.searchOnOrderForms": boolean;
   "products.searchMinChars": number;
+  "pricing.gstBp": number;
+  "pricing.defaultValidityDays": number;
+  "pricing.associateMaxDiscountBp": number;
+  "pricing.managerMaxDiscountBp": number;
+  "pricing.parseConfidenceFloor": number;
+  "pricing.derivationTolerancePaise": number;
+  "pricing.useListForOrderValue": boolean;
   "interactions.singleSelectOutcomes": string[];
 
   "whatsapp.mode": "manual" | "automatic";
