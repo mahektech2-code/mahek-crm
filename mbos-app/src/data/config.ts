@@ -290,6 +290,21 @@ const DEFAULTS: Record<string, unknown> = {
   'leads.overrideReasons': OVERRIDE_REASONS.map((r) => ({ ...r })),
   'leads.sampleReviewChaseDays': [2, 4, 6],
   'leads.verificationDueDays': 2,
+  /*
+   * §5.3 — WHEN THE FOUR CONVERSION FIGURES STOP COUNTING AS CURRENT.
+   *
+   * The key was read in `data/lead-funnel.ts` and had no entry here, so the
+   * only thing standing between a handset that has never bootstrapped and a
+   * freshness check that does not run was a fallback argument spelled out at
+   * one call site. That is the arrangement this table exists to replace: a
+   * number a caller happens to remember is a number the next caller gets
+   * wrong, and `getConfig` reaching `DEFAULTS` is what makes the answer the
+   * same wherever it is asked from.
+   *
+   * 60 is `lib/config/registry.ts`'s own default, copied like everything else
+   * here — not policy, just what a phone runs on until the office tells it.
+   */
+  'leads.figuresFreshDays': 60,
   /* WHERE A LEAD CAME FROM — the ten codes, and the third list that was read
      on a phone and published nowhere. The handset had five LABELS of its own
      compiled into `engines/leads.ts` and translated them down to four codes,

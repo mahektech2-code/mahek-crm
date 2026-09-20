@@ -791,6 +791,16 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
       satisfaction?: string | null;
       additionalRequirement?: string | null;
       rejectionReason?: string | null;
+      /* §16 — the chase, as the office counts it. It did not cross the wire
+         until now, so `chaseCountOf` answered null on every handset and a
+         screen could not say "asked three times". Optional here for the same
+         reason it is nullable in the schema: a build of the SERVER that
+         predates the columns sends neither, and reading a field nothing sends
+         writes `undefined` — which the `ON CONFLICT` clause below would then
+         put over whatever was there. That is `upsertTasks` erasing completion
+         notes, and it is why the SELECT and this list have to land together. */
+      reviewChaseCount?: number | null;
+      lastReviewChaseAt?: string | number | null;
     };
     await run(
       `INSERT INTO samples (id, customerId, productId, productName, cans, reason,
@@ -799,8 +809,9 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
                             dispatchedAt, courierName, trackingNumber, receivedAt,
                             trialStartedAt, trialCompletedAt, satisfaction,
                             additionalRequirement, rejectionReason,
+                            reviewChaseCount, lastReviewChaseAt,
                             clientCreatedAt, serverCreatedAt, deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          productId = excluded.productId, productName = excluded.productName,
          cans = excluded.cans, reason = excluded.reason, state = excluded.state,
@@ -813,7 +824,9 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
          trialCompletedAt = excluded.trialCompletedAt,
          satisfaction = excluded.satisfaction,
          additionalRequirement = excluded.additionalRequirement,
-         rejectionReason = excluded.rejectionReason
+         rejectionReason = excluded.rejectionReason,
+         reviewChaseCount = excluded.reviewChaseCount,
+         lastReviewChaseAt = excluded.lastReviewChaseAt
        WHERE samples.syncState = 'synced'`,
       [
         s.id,
@@ -846,6 +859,8 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
         s.satisfaction ?? null,
         s.additionalRequirement ?? null,
         s.rejectionReason ?? null,
+        s.reviewChaseCount ?? null,
+        s.lastReviewChaseAt ? localInstant(s.lastReviewChaseAt) : null,
         now,
         now,
       ],

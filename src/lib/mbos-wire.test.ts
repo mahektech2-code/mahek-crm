@@ -1595,3 +1595,220 @@ test("no queued row hand-converts a boolean to 0/1", () => {
       offenders.join(" | "),
   );
 });
+
+/* ---------------------------------------------------------------------------
+ * §16 — THE CHASE COUNT, AND THE ONE CHANNEL THIS FILE'S FIRST TEST CANNOT
+ * SEE.
+ *
+ * `samples` is not in `WIRE` and never can be. `upsertSamples` in
+ * `sync/pull.ts` is one of the three HAND-ROLLED handlers — it types its
+ * column list out, because almost nothing on that row is the same word on both
+ * sides: `quantityCans` lands in `cans`, `feedbackNotes` lands in `reason`,
+ * `requestedDate` becomes an instant, and `state` is derived where the office
+ * did not send one. The column-name check above compares a payload's keys
+ * against a table's columns and would report every one of those as a fault.
+ *
+ * What it buys in flexibility it pays for in silence, and the bill is the
+ * shape `upsertTasks` already sent once: a typed list CANNOT FAIL on a field
+ * the server does not send. It reads `undefined`, the `ON CONFLICT` clause
+ * writes that `undefined` over whatever was on the row, and a note the
+ * salesman typed is gone with nothing logged at either end.
+ *
+ * So the chase count is pinned at all five links by hand: the office SELECTS
+ * it, the handset READS it, INSERTS it, KEEPS it on conflict, and has a column
+ * for it to land in. Four of the five passing and one failing is the state
+ * that loses data rather than the state that throws.
+ * ------------------------------------------------------------------------- */
+
+const CHASE_COLUMNS = ["reviewChaseCount", "lastReviewChaseAt"] as const;
+
+const PULL = "mbos-app/src/sync/pull.ts";
+
+function upsertSamplesBlock(): string {
+  const src = readFileSync(PULL, "utf8");
+  const at = src.indexOf("async function upsertSamples");
+  assert.ok(at > -1, "upsertSamples is gone from sync/pull.ts — this test needs updating with it");
+  const end = src.indexOf("\n  return rows.length;", at);
+  assert.ok(end > at, "upsertSamples no longer ends the way this test reads it");
+  return src.slice(at, end);
+}
+
+test("the sample chase count is sent, read, inserted and kept", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  const samplesQuery = service.slice(service.indexOf("async function openSamples"));
+  const select = samplesQuery.slice(0, samplesQuery.indexOf("from mbos_samples"));
+  const block = upsertSamplesBlock();
+  const tables = handsetTables();
+  const local = tables.get("samples");
+  assert.ok(local, "the handset has no `samples` table");
+
+  const faults: string[] = [];
+  for (const column of CHASE_COLUMNS) {
+    if (!select.includes(`as "${column}"`)) {
+      faults.push(`${column}: openSamples does not select it, so the handset reads undefined`);
+    }
+    if (!block.includes(`${column}?:`)) {
+      faults.push(`${column}: upsertSamples does not declare it on the payload`);
+    }
+    /* The INSERT's own column list, which is the half that decides whether a
+       first pull of a sample carries the number at all. */
+    if (!new RegExp(`INSERT INTO samples[\\s\\S]*?\\b${column}\\b[\\s\\S]*?VALUES`).test(block)) {
+      faults.push(`${column}: upsertSamples does not insert it`);
+    }
+    /* AND THE HALF THAT LOSES IT. Without this line every later pull writes
+       the column's previous value back unchanged — or, where the payload key
+       is missing, writes `undefined` over a number the office raised. */
+    if (!block.includes(`${column} = excluded.${column}`)) {
+      faults.push(`${column}: upsertSamples does not keep it on conflict, so it never updates`);
+    }
+    if (!local.has(column)) {
+      faults.push(`${column}: the handset's samples table has no column for it`);
+    }
+  }
+
+  assert.deepEqual(
+    faults,
+    [],
+    "§16's chase count joins the office to the phone through five links and " +
+      "every one of them is a spelling:\n  " + faults.join("\n  "),
+  );
+});
+
+test("the handset's chase columns carry no default", () => {
+  const schema = readFileSync(HANDSET_SCHEMA, "utf8");
+  for (const column of CHASE_COLUMNS) {
+    const line = schema
+      .split("\n")
+      .find((l) => l.includes(`ADD COLUMN ${column} `));
+    assert.ok(line, `${column} is not added by any migration`);
+    /*
+     * NULLABLE AND UNDEFAULTED, and this is the whole reason the migration is
+     * written the way it is. `DEFAULT 0` backfills every sample already on the
+     * phone with the one value that means "nobody has asked" — which is
+     * exactly the fact a screen must not assert about a sample the office has
+     * chased three times and has not yet told this handset about. Null says
+     * the true thing: nothing has told us. `chaseCountOf` answers null for it
+     * and no caller may default it back.
+     */
+    assert.ok(
+      !/DEFAULT/i.test(line) && !/NOT NULL/i.test(line),
+      `${column} must stay nullable with no default — zero chases and "this phone ` +
+        `has not been told" are different facts, and a default destroys the second`,
+    );
+  }
+});
+
+/* ---------------------------------------------------------------------------
+ * §9 — A FIELD CHECKED IN THE SHOP, and the quietest failure on this wire.
+ *
+ * `leadSchema` is a plain `z.object`, and a plain `z.object` STRIPS what it
+ * does not declare — no refusal, no log, nothing named in a rejection. So a
+ * handset that posts `fieldChecks` against a schema that has never heard of
+ * them gets `accepted` back, the salesman's nine answers are gone by the time
+ * the handler reads `parsed.data`, and the office has a lead nobody appears to
+ * have checked.
+ *
+ * This belongs HERE rather than beside the column checks above because
+ * `fieldChecks` has no handset COLUMN — it is an upward payload written into
+ * `lead_verification_corrections`, which is a table the phone does not hold.
+ * ------------------------------------------------------------------------- */
+
+test("§9's field checks survive the wire in both directions", () => {
+  const actions = readFileSync(SYNC_ACTIONS, "utf8");
+  const schema = actions.slice(actions.indexOf("const leadSchema = z.object("));
+  const declared = schema.slice(0, schema.indexOf("\n});"));
+
+  assert.ok(
+    /\bfieldChecks:\s*z\s*$|\bfieldChecks:\s*z/m.test(declared),
+    "leadSchema no longer declares `fieldChecks`, so every check a salesman " +
+      "makes standing in a shop is stripped by safeParse and the sync still " +
+      "answers accepted",
+  );
+
+  /* The handset's own shape, so the two cannot drift into different words for
+     one answer. `field-check.ts` is pure and compiled by both projects' test
+     runners; what is NOT shared is this schema, and a key renamed at one end
+     is a field silently dropped at the other. */
+  const engine = readFileSync("mbos-app/src/engines/field-check.ts", "utf8");
+  const type = engine.slice(engine.indexOf("export type FieldCheck = {"));
+  const keys = [...type.slice(0, type.indexOf("\n};")).matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
+  assert.ok(keys.length >= 5, "FieldCheck has almost no fields — the scan is broken, not the code");
+
+  /* `changedById` and `changedByName` are deliberately NOT read off the
+     payload: a device somebody owns may name anybody, and the row is read back
+     months later as "who checked this". The server writes the principal. */
+  const fromThePhone = keys.filter((k) => k !== "changedById" && k !== "changedByName");
+  const missing = fromThePhone.filter((k) => !new RegExp(`\\b${k}:`).test(declared));
+  assert.deepEqual(
+    missing,
+    [],
+    "the handset puts these on a field check and leadSchema does not name them, " +
+      `so safeParse removes them without a word: ${missing.join(", ")}`,
+  );
+
+  /* AND THE REFUSAL, which is the server half of the screen's own. A
+     correction with no value or no reason is one person's word against
+     another's with nothing to settle it — refused here as well as on the
+     handset, because a sync endpoint accepts a payload from a device somebody
+     owns and a form is not a rule. The database says the same thing in
+     `lead_verification_corrections_corrected_says_why`; what this adds is a
+     sentence somebody can act on instead of a constraint violation. */
+  assert.match(
+    actions,
+    /for \(const c of p\.fieldChecks \?\? \[\]\) \{[\s\S]*?c\.verdict !== "corrected"[\s\S]*?kind: "rejected"/,
+    "handleLeadUpdate no longer refuses a correction carrying no value or no reason",
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * AND THE LIST THAT ANSWERS "WHERE DID THIS ONE COME FROM".
+ *
+ * `leads.sources` is a configured list the office publishes and the handset's
+ * new-lead form draws a picker from, joined — like `mbos.ai.dictation` above —
+ * by a spelling and nothing else. It is NOT covered by the `mbos.*` scan
+ * further up this file, which matches on that prefix alone, and the funnel's
+ * settings were deliberately named for the FEATURE rather than for the app.
+ *
+ * Get any of the three links wrong and NOTHING FAILS. `getConfig` falls
+ * through to the handset's compiled copy, the picker draws five codes the
+ * office does not have, and every lead a salesman raises is filed under a
+ * channel nothing can count — which is the bug that list's own comment in
+ * `data/config.ts` records having already happened once.
+ * ------------------------------------------------------------------------- */
+
+test("the lead sources list is spelled the same on both sides", () => {
+  const KEY = "leads.sources";
+
+  const registry = readFileSync("src/lib/config/registry.ts", "utf8");
+  assert.ok(
+    registry.includes(`key: "${KEY}"`),
+    `${KEY} is not in the registry, so no office can edit it and every handset ` +
+      "runs on a compiled list",
+  );
+
+  /*
+   * THE PREFIX IS THE LINK, and it is the half that is easy to lose. This loop
+   * sent `mbos.*` alone once, so not one funnel setting ever reached a phone —
+   * silently, because a defaulted value is a plausible value.
+   */
+  const service = readFileSync(SERVICE, "utf8");
+  const payload = service.slice(service.indexOf("export async function mbosConfigPayload"));
+  assert.match(
+    payload.slice(0, payload.indexOf("\n}")),
+    /key\.startsWith\("leads\."\)/,
+    "mbosConfigPayload no longer publishes the `leads.` prefix — every funnel " +
+      "setting falls back to the handset's compiled default and nothing says so",
+  );
+
+  const config = readFileSync("mbos-app/src/data/config.ts", "utf8");
+  assert.ok(
+    config.includes(`getConfig<LeadSource[]>('${KEY}')`),
+    `the handset no longer reads ${KEY}, so its picker draws codes the office ` +
+      "has never heard of and every lead is filed under a channel nobody can count",
+  );
+  assert.ok(
+    config.includes(`'${KEY}':`),
+    `${KEY} has no entry in the handset's DEFAULTS, so a handset that has not ` +
+      "bootstrapped offers no sources at all",
+  );
+});

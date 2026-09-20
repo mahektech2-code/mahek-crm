@@ -95,11 +95,13 @@ export type FunnelSample = {
    * `mbos_samples.review_chase_count` is a real server column, raised by the
    * hourly pass, and it is what lets a screen say "asked three times" — the
    * number that tells somebody to stop waiting and ring the shop themselves.
-   * It does not travel on the wire and the handset's `samples` table has no
-   * place for it, so `SELECT *` does not produce the key at all and this reads
-   * `undefined` on every handset today.
+   * It crossed no wire for the life of the module — `openSamples` did not name
+   * it, so `SELECT *` here did not produce the key and this read `undefined`
+   * on every handset — and it does now, in the same change that gave the
+   * `samples` table a column for it to land in.
    *
-   * It is declared OPTIONAL rather than `number | null` deliberately. Zero
+   * It stays OPTIONAL rather than `number | null` deliberately, and not merely
+   * because an APK cannot be recalled while a server can move first. Zero
    * chases and "this phone has not been told" are different facts, and the
    * moment one is defaulted to the other on the way to a screen the difference
    * is gone and a salesman is quietly reassured that nothing has been chased on
@@ -107,7 +109,8 @@ export type FunnelSample = {
    * place the states are read, and it answers null rather than zero.
    */
   reviewChaseCount?: number | null;
-  /** The day of the last ask. The same story: a server column, not on the wire. */
+  /** The day of the last ask, an instant like every other on this wire. The
+      same story and the same nullability as the count above it. */
   lastReviewChaseAt?: number | null;
   syncState: string;
 };
@@ -284,10 +287,14 @@ export async function reviewChaseDays(): Promise<number[]> {
 /**
  * How many times the office has asked, or NULL where nobody has told us.
  *
- * The column is not on the wire, so `SELECT *` does not produce the key and
- * this answers null on every handset today. It will answer a number the moment
- * the field lands, with nothing on any screen needing to change — which is the
- * point of asking the question here rather than at each call site.
+ * Both states are real and stay real now the column travels. The migration
+ * that added it is deliberately nullable with NO DEFAULT: `DEFAULT 0` would
+ * have backfilled every sample already on the phone with the one value meaning
+ * "nobody has asked", which is exactly the fact this function exists not to
+ * assert about a sample the office has chased three times and has not yet told
+ * this handset about. A row this phone raised and has not synced reads null
+ * for the same reason, and one arriving from a server built before the columns
+ * existed reads null too.
  *
  * A row this handset raised and has not yet synced answers null too, and that
  * is right rather than merely convenient: the office cannot have chased a

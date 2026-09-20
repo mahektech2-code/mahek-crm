@@ -26,6 +26,7 @@ import {
   mbosJourneyStops,
   mbosCompetitorRecords,
   mbosInternalNotes,
+  leadVerificationCorrections,
   mbosLeadValidations,
   mbosLeaveRequests,
   mbosTours,
@@ -53,6 +54,7 @@ import {
   leadGateInput,
   leadRow,
 } from "../services/lead-service";
+import { isVerificationFinding } from "../lead-labels";
 import type { LeadSalesType, LeadStage } from "../lead-labels";
 import { getConfig } from "../config/store";
 import { financialYearOf } from "../financial-year";
@@ -3372,6 +3374,43 @@ const leadSchema = z.object({
   archived: wireBoolean.nullish(),
   /** The shop this lead became, so the two records stay joined up. */
   convertedCustomerId: z.string().nullish(),
+  /*
+   * §9 — CONFIRM · CORRECT · UNABLE TO VERIFY, made in the shop rather than
+   * on a call.
+   *
+   * The same three-answer row the manager's validation call produces, arriving
+   * through the other door: the salesman's own second visit, where nobody rang
+   * anybody. That is what `validation_id` being NULL means on the row this
+   * writes, and it is the only thing separating the two doors — a second
+   * column saying which would be a column that can contradict the first.
+   *
+   * ALL THREE VERDICTS TRAVEL, not only the corrections. A confirmation is the
+   * evidence that somebody asked again and got the same answer, which is the
+   * whole of what the second visit buys; keeping only disagreements would
+   * leave a record in which nothing was ever checked and found right.
+   *
+   * `nullish` because an APK cannot be recalled and every build already in a
+   * pocket sends none — and CAPPED, because this is a list a device somebody
+   * owns can make as long as it likes. Forty is far above the nine findings
+   * a screen can actually answer, so the cap refuses only a payload nothing
+   * legitimate produces.
+   */
+  fieldChecks: z
+    .array(
+      z.object({
+        field: z.string().min(1).max(80),
+        verdict: z.enum(["confirmed", "corrected", "unverified"]),
+        original: z.string().max(2000).nullish(),
+        corrected: z.string().max(2000).nullish(),
+        reason: z.string().max(2000).nullish(),
+        /* Epoch milliseconds, like every other instant on this wire. It is the
+           moment he answered, standing in the shop, and not the moment the
+           outbox drained — which on a beat with no signal is days later. */
+        at: z.number().nullish(),
+      }),
+    )
+    .max(40)
+    .nullish(),
 });
 
 /**
@@ -3492,6 +3531,41 @@ async function handleLeadUpdate(
         `${existing.name} was put on hold with no reason. Say what you are waiting for — that is what tells anybody when to pick it up again.`,
       ),
     };
+  }
+
+  /*
+   * §9 — A CORRECTION STILL HAS TO CARRY BOTH, and that is checked here as
+   * well as on the screen.
+   *
+   * `engines/field-check.ts` refuses the save on the handset before the button
+   * is pressed, which is where the refusal is worth making: being told
+   * afterwards loses whatever the salesman had in mind, and on that form it
+   * would lose the other eight answers with it. This is the other half — a
+   * sync endpoint accepts a payload from a device somebody owns, a form is not
+   * a rule, and a build made before the refusal existed sends whatever it
+   * likes.
+   *
+   * It is the same guarantee `lead_verification_corrections_corrected_says_why`
+   * keeps in the database, said in words a salesman can act on rather than as
+   * a constraint violation. Without it the item would be refused anyway, by
+   * Postgres, with a message nobody can read and AFTER the lead's own answers
+   * had landed.
+   *
+   * Refused BEFORE the write, beside the other three, because this is a
+   * payload the app cannot produce: unlike the eight prospect answers, there
+   * is nothing here worth keeping out of a request that is malformed.
+   */
+  for (const c of p.fieldChecks ?? []) {
+    if (c.verdict !== "corrected") continue;
+    if (!c.corrected?.trim() || !c.reason?.trim()) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `A correction on ${existing.name} arrived with no ${c.corrected?.trim() ? "reason" : "new value"}. A correction nobody explained is one person's word against another's with nothing to settle it — say what it actually is and why it changed.`,
+        ),
+      };
+    }
   }
 
   /*
@@ -3671,6 +3745,61 @@ async function handleLeadUpdate(
      restriction. The entry says one was written and where to find it. */
 
   await db.update(customers).set(changed).where(eq(customers.id, item.entityId));
+
+  /*
+   * §9 — WHAT THE FIELD ITSELF CHECKED, as rows rather than as a note.
+   *
+   * `validationId: null` is the whole of what says this was made standing in
+   * the shop rather than on the manager's call, and it is the reason `0154`
+   * relaxed three NOT NULLs: the table was written for the call, where the only
+   * thing worth a row was a figure the shop contradicted. One table and not
+   * two, because the question people ask is "when did this figure change, and
+   * why" about one shop, and two tables is two answers that can disagree.
+   *
+   * NOTHING HERE TOUCHES A `customers` COLUMN, which is the rule the table
+   * exists to keep. What the salesman reported and what he found when he asked
+   * again are two readings of one shop, and the two disagreeing is the only
+   * thing this visit produces that nothing else could — writing the corrected
+   * value onto the lead would destroy exactly that.
+   *
+   * APPEND-ONLY, so a retried sync would write a second copy. That is the
+   * honest failure of the two available: the alternative is a natural key over
+   * a free-text field and a millisecond, which would fold two genuine checks of
+   * one figure onto one row — and a lead is routinely checked twice, with the
+   * first usually the one that matters.
+   *
+   * The AUTHOR is the principal and never the id the payload carries. A device
+   * somebody owns may name anybody, and this row is read back months later as
+   * "who corrected it"; the name is stored beside the id for the reason
+   * `customer_am_changes` stores one, so the history stays readable after the
+   * account is gone.
+   *
+   * A field this office does not recognise is DROPPED rather than refusing the
+   * item: the code is meant to be counted, a row nobody can count is worse than
+   * an absent one, and the salesman is long gone from the shop by the time the
+   * outbox drains.
+   */
+  for (const c of p.fieldChecks ?? []) {
+    if (!isVerificationFinding(c.field)) continue;
+    await db.insert(leadVerificationCorrections).values({
+      id: `lvc_${randomUUID().slice(0, 12)}`,
+      customerId: item.entityId,
+      validationId: null,
+      field: c.field,
+      verdict: c.verdict,
+      original: c.original?.trim() || null,
+      corrected: c.verdict === "corrected" ? (c.corrected?.trim() ?? null) : null,
+      reason: c.reason?.trim() || null,
+      changedById: principal.user.id,
+      changedByName: principal.user.name,
+      /* The moment he answered, not the moment the outbox drained — on a beat
+         with no signal those are days apart, and the second would date every
+         check on the phone to whenever it next found a bar. Nonsense falls
+         back to the column's own default rather than storing a date nobody
+         could have been standing in a shop on. */
+      ...(c.at && Number.isFinite(c.at) ? { changedAt: new Date(c.at) } : {}),
+    });
+  }
 
   /*
    * §11 — the thirty answers MERGE into the profile rather than replace it.

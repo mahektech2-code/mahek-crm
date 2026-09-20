@@ -1778,6 +1778,25 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE leads ADD COLUMN hasCommitment INTEGER;`,
     `ALTER TABLE leads ADD COLUMN hasOrder INTEGER;`,
     `ALTER TABLE leads ADD COLUMN backOfficeAmId TEXT;`,
+
+    /*
+     * §16 — HOW MANY TIMES THE OFFICE HAS ASKED, and the day it last asked.
+     *
+     * `mbos_samples.review_chase_count` has been raised by the hourly pass
+     * since the lifecycle shipped, and it never crossed the wire — so the one
+     * number that tells a salesman to stop waiting and ring the shop himself
+     * existed on the server and nowhere he could read it.
+     *
+     * NULLABLE, WITH NO DEFAULT, deliberately. `DEFAULT 0` would backfill
+     * every row already on this phone with the one value that means "nobody
+     * has asked" — which is precisely the fact the screen must not assert on
+     * a sample the office has chased three times and has not yet told this
+     * handset about. Null says the honest thing: nothing has told us. That is
+     * the state `chaseCountOf` answers for, and it is why it answers null
+     * rather than zero.
+     */
+    `ALTER TABLE samples ADD COLUMN reviewChaseCount INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN lastReviewChaseAt INTEGER;`,
   ],
 
 ];

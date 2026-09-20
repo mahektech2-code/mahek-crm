@@ -46,7 +46,7 @@ import { listBills } from "./payment-service";
 /* What "did we sell anything" means, everywhere. See lib/order-status.ts: the
    eight money queries read it and a status list typed into a query is the half
    that drifts. */
-import { orderCountsSql } from "../order-status";
+import { orderCountsSql, orderDeliveredSql } from "../order-status";
 /* §3.4 — a commitment is a day AND a size, in one place. */
 import { confirmedCommitmentSql } from "../lead-commitment";
 
@@ -1381,6 +1381,24 @@ async function openSamples(userId: string, customerIds: string[], since?: string
            s.follow_up_date::text as "followUpDate",
            s.feedback_notes as "feedbackNotes",
            s.converted_order_id as "convertedOrderId",
+           -- §16 -- HOW MANY TIMES WE HAVE ASKED, and the day we last asked.
+           --
+           -- The hourly pass has raised this since the lifecycle shipped and
+           -- it crossed no wire, so the one number that tells a salesman to
+           -- stop waiting and ring the shop himself lived on the server and
+           -- nowhere he could read it. chaseCountOf on the handset answered
+           -- null for every sample, because a select that does not name the
+           -- column does not produce the key at all.
+           --
+           -- IT LANDS WITH THE COLUMN, not before it and not after.
+           -- upsertSamples on the handset is hand-rolled: it types its column
+           -- list out, so it cannot fail on a field it does not know, and a
+           -- field it READS and the server does not send arrives undefined --
+           -- which its conflict clause then writes over whatever was there.
+           -- That is how upsertTasks erased completion notes, and it is why
+           -- these two lines and the two handset migrations are one change.
+           s.review_chase_count as "reviewChaseCount",
+           s.last_review_chase_at as "lastReviewChaseAt",
            s.updated_at as "updatedAt"
       from mbos_samples s
       left join products pr on pr.id = s.product_id
@@ -1521,9 +1539,18 @@ async function openLeads(userId: string, since?: string | null) {
            (select count(*)::int from orders o
              where o.customer_id = c.id
                and ${orderCountsSql("o")}) as "countingOrderCount",
+           -- DERIVED FROM THE LIST, never retyped -- the same reason
+           -- orderCountsSql above it is. This read dispatched alone, and
+           -- dispatched stopped being the last word the day §N added
+           -- in_transit and delivered to the enum: a lead whose order the
+           -- shop had confirmed arrived did not satisfy a gate whose own
+           -- refusal reads "the material has not reached them yet". Both ends
+           -- of this figure move together -- this one and ledgerCounts in
+           -- lead-service.ts -- because a handset drawing the rung open and a
+           -- server refusing it is the disagreement §28 exists to prevent.
            (select count(*)::int from orders od
              where od.customer_id = c.id
-               and od.status = 'dispatched') as "deliveredOrderCount",
+               and ${orderDeliveredSql("od")}) as "deliveredOrderCount",
            (select count(*)::int from payment_receipts pr
              where pr.customer_id = c.id
                and pr.status = 'confirmed') as "confirmedPaymentCount",
