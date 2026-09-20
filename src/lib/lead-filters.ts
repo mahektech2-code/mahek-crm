@@ -44,6 +44,29 @@ export function splitFilter(value: string | undefined): string[] {
  */
 export const UNASSIGNED = "__unassigned__";
 
+/**
+ * A lead with no sales type, which is a population and not a gap.
+ *
+ * Nothing backfills one, deliberately: guessing which of three ladders somebody
+ * was on is a decision dressed up as a migration, and the ladder decides which
+ * GATES apply — so a wrong guess would not merely mislabel a record, it would
+ * block the salesman working it. These leads climb the six rungs this product
+ * shipped with and they are still somebody's book, so they have to be askable
+ * for. Its own sentinel rather than an empty string because `in (…)` never
+ * matches NULL and the clause has to be written the other way round.
+ */
+export const LEGACY_SALES_TYPE = "__legacy__";
+
+export const SALES_TYPE_BUCKETS = [
+  { value: "direct", label: "Direct customer" },
+  { value: "third_party", label: "Third-party shop" },
+  /* Retired for NEW leads — `offeredSalesTypes()` no longer offers it — and
+     still offered HERE, because the leads already on that ladder are still
+     climbing it and are exactly what somebody opens this filter to find. */
+  { value: "distributor", label: "Distributor appointment" },
+  { value: LEGACY_SALES_TYPE, label: "No ladder (raised before the funnel)" },
+] as const satisfies readonly FilterOption[];
+
 export const POTENTIAL_BUCKETS = [
   { value: "none", label: "Not estimated" },
   { value: "under50k", label: "Under ₹50,000" },
@@ -135,6 +158,21 @@ export type LeadFilters = {
   owner?: string;
   source?: string;
   stage?: string;
+  /**
+   * §3.2's three ladders, and the fourth answer that is not one.
+   *
+   * A rung is NOT a track: `suspect` is the foot of all three, so `stage=suspect`
+   * alone answers with direct, third-party and distributor leads at once. The
+   * pipeline's own segments each count ONE track, so without this the bar a
+   * manager presses opens a list larger than the bar said — a figure nobody can
+   * get behind, which is the whole thing that screen exists to avoid.
+   *
+   * `LEGACY_SALES_TYPE` is the fourth: a lead raised before the funnel existed
+   * carries no sales type at all and climbs the six rungs this product shipped
+   * with. It is a real population — it must be askable for, and `in (…)` never
+   * matches NULL, so it cannot ride on the same clause as the other three.
+   */
+  salesType?: string;
   potential?: string;
   /** §4.1 — the manager's own. See `PRIORITY_BUCKETS` and `lead-priority.ts`. */
   priority?: string;

@@ -110,6 +110,7 @@ export async function Body({
     owner: params.owner,
     source: params.source,
     stage: params.stage,
+    salesType: params.salesType,
     potential: params.potential,
     priority: params.priority,
     next: params.next,

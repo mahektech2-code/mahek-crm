@@ -1,6 +1,7 @@
 import "server-only";
 import { bandFor, type HealthBand } from "../engines/inactivity";
 import {
+  LEGACY_SALES_TYPE,
   splitFilter,
   UNASSIGNED,
   type FilterOption,
@@ -1574,6 +1575,23 @@ export function leadFilterClause(
         sql`, `,
       )})`,
     );
+  }
+
+  const tracks = splitFilter(filters.salesType);
+  if (tracks.length) {
+    const named = tracks.filter((t) => t !== LEGACY_SALES_TYPE);
+    const clauses: ReturnType<typeof sql>[] = [];
+    if (named.length) {
+      clauses.push(
+        sql`c.lead_sales_type::text in (${sql.join(named.map((v) => sql`${v}`), sql`, `)})`,
+      );
+    }
+    /* The same shape the owner filter uses one block up, and for the same
+       reason: `in (…)` never matches NULL, so a track filter that only listed
+       the three enum values could never find the leads that carry none — and
+       those are a real population, not an absence. */
+    if (named.length !== tracks.length) clauses.push(sql`c.lead_sales_type is null`);
+    parts.push(sql`and (${sql.join(clauses, sql` or `)})`);
   }
 
   const stages = splitFilter(filters.stage);

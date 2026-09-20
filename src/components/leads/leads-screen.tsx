@@ -40,6 +40,7 @@ import {
   NEXT_BUCKETS,
   POTENTIAL_BUCKETS,
   PRIORITY_BUCKETS,
+  SALES_TYPE_BUCKETS,
   type FilterOption,
 } from "@/lib/lead-filters";
 import {
@@ -1854,6 +1855,14 @@ function FilterBar({
         selected={filters.priority}
         onChange={pick("priority")}
         title="How hard a manager has asked for this one to be pushed — not what it is worth. Not set is the one most of the book sits on, and it is a real answer rather than a gap."
+      />
+      <MultiSelect
+        label="Sales type"
+        placeholder="All ladders"
+        options={[...SALES_TYPE_BUCKETS]}
+        selected={filters.salesType}
+        onChange={pick("salesType")}
+        title="Which of the three ladders this lead climbs, and the fourth answer that is not one. A RUNG is not a track — Suspect is the foot of all three — so narrowing by stage alone answers with every ladder at once."
       />
       <MultiSelect
         label="Stage"
