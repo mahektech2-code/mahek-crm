@@ -7563,7 +7563,7 @@ export const mbosLeadValidations = pgTable(
 
     /* ---- §5.2's sections C and D, which had nowhere to land at all ----
      *
-     * `0156`. Of the PRD's five objections this row carried three — price,
+     * `0157`. Of the PRD's five objections this row carried three — price,
      * quality and dispatch — so a shop perfectly happy with the price and stuck
      * on the credit terms said so into `salesman_feedback`, a free-text
      * impression, where it is a sentence and not something anybody can count.

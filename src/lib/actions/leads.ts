@@ -1197,7 +1197,7 @@ export async function recordLeadValidationCall(
     const lead = found.lead;
 
     /* Only the DECLARED questions are stored — seventeen now, across four
-       sections, since `0156` added §5.2's C and D. The number is not written
+       sections, since `0157` added §5.2's C and D. The number is not written
        down here on purpose: it was "the twelve" in this comment and in the one
        below, and both went stale the moment five were appended, which is the
        argument for reading the list rather than counting it. An answer to a
@@ -1320,7 +1320,7 @@ export async function recordLeadValidationCall(
      * exists to produce is a count of those answers.
      *
      * The `values` call below is the one place in this path that still names
-     * columns one at a time, and that is where `0156`'s five went missing:
+     * columns one at a time, and that is where `0157`'s five went missing:
      * the schema, the `known` set and `columns` all take their shape from
      * `VERIFICATION_QUESTIONS` and picked them up for nothing, so the form
      * accepted the answers, the manager watched the call save, and five
@@ -1354,7 +1354,7 @@ export async function recordLeadValidationCall(
         qualityFeedback: columns.qualityFeedback,
         dispatchFeedback: columns.dispatchFeedback,
         genuineInterest: columns.genuineInterest,
-        /* §5.2's C and D, from `0156`. Five answers that had nowhere to
+        /* §5.2's C and D, from `0157`. Five answers that had nowhere to
            land: two objections the PRD names, and the whole of what the shop
            said it was ready for — which is the answer §5.4 decides a sample
            on. Spelled out because this insert is the ONE place in the path
@@ -1416,7 +1416,7 @@ export async function recordLeadValidationCall(
              figure the shop agreed with was not worth a row, which is why the
              table had no verdict column until the salesman's own second visit
              needed one. Stated rather than defaulted — the column's default
-             was dropped in `0154` so that a writer has to SAY which of the
+             was dropped in `0155` so that a writer has to SAY which of the
              three it means instead of inheriting the historical one. */
           verdict: "corrected" as const,
           original: entry.original,

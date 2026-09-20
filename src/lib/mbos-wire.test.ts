@@ -1843,7 +1843,7 @@ test("the lead sources list is spelled the same on both sides", () => {
  *
  * `recordExpectedOrder` has collected all four since the commitment sheet
  * shipped and could send only two. There was no column on `customers` for the
- * quantity until `0151` and none for the blocker until `0155`, no field on
+ * quantity until `0151` and none for the blocker until `0156`, no field on
  * `leadSchema` for either, and no column on the handset — so the two it could
  * not send were kept in `kv` under `lead.commitment.<id>`, where no sync
  * touches them. That was the RIGHT answer while it held, and the reason is the

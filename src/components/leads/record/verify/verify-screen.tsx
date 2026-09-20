@@ -374,7 +374,7 @@ export function VerifyScreen({
             verificationResultOf(
               priorCalls[0].verified,
               /* Every row this door writes is a CORRECTION — a confirmation on a
-                 validation call was never worth a row, which is what `0154`'s
+                 validation call was never worth a row, which is what `0155`'s
                  own comment says. The day `LeadCorrection` starts carrying the
                  other two verdicts this has to count only the corrected ones,
                  and it will be a filter here rather than a second definition. */
