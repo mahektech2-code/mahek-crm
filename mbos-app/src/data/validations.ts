@@ -2,6 +2,11 @@ import { all, run } from '../db';
 import { enqueue } from '../sync/queue';
 import { stamp } from './write';
 import { getConfig } from './config';
+import {
+  VERIFICATION_COLUMNS,
+  questionsInSection,
+  type VerificationSection,
+} from '../engines/funnel/lead-labels';
 
 /**
  * §E — the Prospect validation call.
@@ -31,6 +36,58 @@ export type ValidationScript = { heading: string; lines: string[] }[];
 export async function validationScript(): Promise<ValidationScript> {
   const cfg = await getConfig<{ sections: ValidationScript }>('mbos.leads.validationScript');
   return cfg?.sections ?? [];
+}
+
+/**
+ * WHICH OF §8's ANSWERS THIS HANDSET CAN ACTUALLY CARRY, and it is five of
+ * seventeen.
+ *
+ * The questions themselves are one list, mirrored from MahekOne's own
+ * `lead-labels.ts`, and the screen draws them from it — which is the whole
+ * point: the phone and the office ask one shop one set of questions, in one
+ * wording, under one set of headings. What is NOT one list is where an answer
+ * lands. `mbos_lead_validations` has a column for every one of the seventeen,
+ * and the WIRE between the two ends declares five of them: everything else a
+ * payload carries is stripped by zod in silence, and a pull sends the same
+ * five back down.
+ *
+ * So this is the handset's half of that contract, written down rather than
+ * discovered. A question whose column is not on this list has nowhere to go —
+ * not the office's row and not this phone's own table, which has the same five
+ * columns — and a box that saves nothing is worse than a question the screen
+ * does not ask: the caller believes it was recorded, and nobody finds out
+ * until somebody goes looking for the answer months later.
+ *
+ * It is a LIST rather than a filter written into the screen because the day
+ * the wire widens, adding a column here is the whole of adding the question:
+ * the form grows by itself and cannot grow a box the payload will drop.
+ */
+export type CarriedColumn =
+  | 'salesmanFeedback'
+  | 'qualityFeedback'
+  | 'dispatchFeedback'
+  | 'confirmedRequirement'
+  | 'confirmedCompetitor';
+
+const CARRIED: ReadonlySet<string> = new Set<CarriedColumn>([
+  'salesmanFeedback',
+  'qualityFeedback',
+  'dispatchFeedback',
+  'confirmedRequirement',
+  'confirmedCompetitor',
+]);
+
+/** The questions of one section that have somewhere to land, in asking order. */
+export function answerableQuestions(
+  section: VerificationSection,
+): readonly { id: string; ask: string }[] {
+  return questionsInSection(section).filter((q) => CARRIED.has(VERIFICATION_COLUMNS[q.id] ?? ''));
+}
+
+/** The column a question's answer belongs in, where this handset carries it. */
+export function carriedColumnFor(questionId: string): CarriedColumn | null {
+  const column = VERIFICATION_COLUMNS[questionId];
+  return column && CARRIED.has(column) ? (column as CarriedColumn) : null;
 }
 
 export type ValidationAnswers = {

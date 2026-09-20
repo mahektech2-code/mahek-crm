@@ -200,7 +200,7 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
        unsynced visit itself, so the counter moves on its own. */
     if (args.suspectDecision) {
       const stays = args.suspectDecision === 'still_suspect';
-      const { legacyStageFor, localStage, wireFunnelStage } = await import('../lib/wire');
+      const { legacyStageFor, wireFunnelStage } = await import('../lib/wire');
       if (!stays) {
         /*
          * BOTH COLUMNS, because the funnel reads the one this never wrote.
@@ -237,19 +237,26 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
               ? lead.salesType
               : null;
           /*
-           * `legacyStageFor` is what a funnel move writes, and the two answers
-           * differ on exactly one of the four: it reads `on_hold` as `New`,
-           * because a parked lead is in no band at all. That is right for a
-           * bar chart and wrong for a chip — a held lead filed as New loses
-           * the one word that explains the hold reason printed under it, and
-           * `localStage` is what the pull writes for a lead the OFFICE parked,
-           * so taking its word here is what keeps a lead parked on a visit and
-           * a lead parked at a desk reading the same thing.
+           * `legacyStageFor` alone, which it has not always been.
+           *
+           * A park used to fall through that function's band switch to `New`,
+           * because `bandOf('on_hold')` is null on purpose — a parked lead
+           * belongs in no funnel band, the rung it was parked FROM living in
+           * the transition history. So this call site carried a ternary that
+           * sent `on_hold` to `localStage` instead, to keep a lead parked in a
+           * shop and a lead parked at a desk on one chip rather than two.
+           *
+           * `legacyStageFor` answers `On hold` from `isParked` now, above the
+           * band switch and in the same spelling, so the two agree on all four
+           * decisions and the fork it was written for no longer exists. A
+           * comment describing a fork that is gone is worse than none: this
+           * file is read while somebody is chasing a stage that landed wrong,
+           * and it would send them looking for a difference to blame.
            */
           const day = isoDate(new Date());
           await run('UPDATE leads SET funnelStage = ?, stage = ?, stageSince = ?, lastActivityDate = ? WHERE id = ?', [
             funnel,
-            funnel === 'on_hold' ? localStage(funnel) : legacyStageFor(funnel, salesType),
+            legacyStageFor(funnel, salesType),
             day,
             day,
             args.customerId,
