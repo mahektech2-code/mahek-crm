@@ -104,6 +104,22 @@ export type RungFunnel = {
   lost: number;
   /** `won`, `customer`, `active_distributor` — arrived rather than waiting. */
   arrived: number;
+  /**
+   * THE SAME LEADS, KEPT APART BY WHICH RUNG THEY ARRIVED ON.
+   *
+   * `arrived` is a sum of three stages and a sum cannot be drawn as a rung.
+   * `customer` is the top of the direct and third-party ladders and
+   * `active_distributor` is the top of the distributor one — they are rungs
+   * that a screen laying a ladder out has to be able to put a number against —
+   * and `won` is on neither, reachable only on the legacy six. Folding them
+   * into one figure meant a ladder either drew its own last rung at zero,
+   * which is a lie on every book that has ever converted anybody, or reached
+   * for `arrived` and quietly counted `won` leads onto it.
+   *
+   * It is additive and nothing that read `arrived` had to change: this says
+   * WHICH, and that one goes on saying HOW MANY.
+   */
+  arrivedByStage: Partial<Record<LeadStage, number>>;
 };
 
 /**
@@ -161,6 +177,7 @@ export async function funnelByRung(day: string): Promise<RungFunnel[]> {
     parked: 0,
     lost: 0,
     arrived: 0,
+    arrivedByStage: {},
   });
 
   for (const r of rows) {
@@ -188,6 +205,7 @@ export async function funnelByRung(day: string): Promise<RungFunnel[]> {
     }
     if (r.stage === "won" || r.stage === "customer" || r.stage === "active_distributor") {
       f.arrived += cell.count;
+      f.arrivedByStage[r.stage] = (f.arrivedByStage[r.stage] ?? 0) + cell.count;
       continue;
     }
     measured.get(k)!.set(r.stage, cell);

@@ -4,6 +4,9 @@ import { moneyShort } from "@/lib/format";
 import { REPORT_PERIOD_LABELS, type ReportPeriod } from "@/lib/business-date";
 import { salesTypeLabel, stageLabel } from "@/lib/lead-labels";
 import type { Cohort, RungFunnel } from "@/lib/services/lead-funnel-service";
+import type { SharedFunnel, StepLadder } from "@/lib/engines/lead-funnel-shape";
+import { SharedBarFunnel } from "./shared-bar-funnel";
+import { DistributorStepLadder } from "./distributor-step-ladder";
 import { LeadTabs } from "../lead-tabs";
 import { Banner, FilterChips, MetricRow, Pill, ScreenHeader } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
@@ -32,13 +35,23 @@ const PERIODS: ReportPeriod[] = ["month", "last-month", "quarter", "last-quarter
 export function FunnelScreen({
   workspace,
   funnels,
+  shared,
+  distributor,
+  unpictured,
   cohort,
   period,
   day,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
+  /** Every ladder as the service counted it — read only for the four totals. */
   funnels: RungFunnel[];
+  /** §8.3a — direct and third-party in one funnel, shaped by the engine. */
+  shared: SharedFunnel;
+  /** §8.3b — the appointment track, as steps rather than bars. */
+  distributor: StepLadder;
+  /** Ladders neither picture covers. The legacy six, in practice. */
+  unpictured: RungFunnel[];
   cohort: Cohort;
   period: ReportPeriod;
   /** The business date every "days on this rung" figure is measured against. */
@@ -86,17 +99,41 @@ export function FunnelScreen({
       />
 
       {/*
-        One card per sales type rather than three columns side by side. The
-        ladders are nine, eleven and twelve rungs long and a distributor's
-        rungs are not a shorter version of a shop's — laying them out as
-        parallel columns invites reading across a row, and row four is
-        "sample_trial" on one ladder and "management_review" on another.
+        §8.3 ASKS FOR TWO PICTURES AND THEY ARE DRAWN DIFFERENTLY, which is the
+        whole of the section. The two shop tracks are one sale and are measured
+        in one funnel, split by who holds the invoice; the appointment track is
+        a sequence of approvals and is drawn as a ladder, because the gap
+        between two approvals is a queue and a bar chart of it would read as a
+        drop-off rate that does not exist.
+
+        Side by side rather than stacked, and NOT as parallel columns of one
+        table: row four would be "sample_trial" on one and "management_review"
+        on the other, and a row you can read across is an invitation to treat
+        them as the same distance up the same climb.
       */}
       <div className="grid gap-4 xl:grid-cols-2">
-        {funnels.map((f) => (
-          <Ladder workspace={workspace} key={f.salesType ?? "legacy"} funnel={f} />
-        ))}
+        <SharedBarFunnel workspace={workspace} funnel={shared} />
+        <DistributorStepLadder workspace={workspace} ladder={distributor} />
       </div>
+
+      {/*
+        AND THE LADDERS NEITHER PICTURE COVERS, which is the legacy six.
+
+        The specification names two visualisations and there are four
+        populations: nothing backfills a sales type — guessing which of three
+        ladders somebody was on is a decision dressed up as a migration — so
+        every lead raised before the funnel existed is still climbing the
+        original six rungs. Drawing only what §8.3 named would leave them off
+        every picture on the screen, and a pipeline that omits a population is
+        the same bug `bandOf` exists to prevent, arriving through the layout.
+      */}
+      {unpictured.length > 0 ? (
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          {unpictured.map((f) => (
+            <Ladder workspace={workspace} key={f.salesType ?? "legacy"} funnel={f} />
+          ))}
+        </div>
+      ) : null}
 
       <div className="mt-8">
         <h2 className="text-lg font-semibold text-ink">Cohort conversion</h2>
