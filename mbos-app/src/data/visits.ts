@@ -142,7 +142,17 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       if (mediaId) await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [base.id, mediaId]);
     }
 
-    /* The records punched from inside the visit now depend on it. */
+    /* The records punched from inside the visit now depend on it.
+     *
+     * This stays a LOCAL update and is no longer the whole of the link. The
+     * office's copy is filled by `carryVisitId` below, which writes the same
+     * id into the queued payload — without it the phone knew which visit
+     * produced an order, a payment, a complaint or a sample and the office
+     * never did, because every one of these records is raised BEFORE the visit
+     * is saved and therefore before the visit has an id to name. The local
+     * write is what the record screens read the moment the sheet closes, so
+     * removing it would leave the link invisible on the phone until the next
+     * pull — on a handset that may not sync for a day. */
     for (const [table, id] of [
       ['orders', args.linkedOrderId],
       ['payments', args.linkedPaymentId],
@@ -190,12 +200,61 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
        unsynced visit itself, so the counter moves on its own. */
     if (args.suspectDecision) {
       const stays = args.suspectDecision === 'still_suspect';
-      const { localStage } = await import('../lib/wire');
+      const { legacyStageFor, localStage, wireFunnelStage } = await import('../lib/wire');
       if (!stays) {
-        await run('UPDATE leads SET stage = ? WHERE id = ?', [
-          localStage(args.suspectDecision),
-          args.customerId,
-        ]);
+        /*
+         * BOTH COLUMNS, because the funnel reads the one this never wrote.
+         *
+         * `funnelStage` is where a lead actually stands and `stage` is the six
+         * words the list draws and the chips filter on — the pair is kept in
+         * step in `lead-funnel.ts` and nowhere else, and this door wrote the
+         * second alone. So a Suspect answered on the visit that demanded the
+         * answer moved on the chips and moved nowhere on the ladder: the rung
+         * was unchanged, the gates went on asking for what the decision had
+         * just settled, and nothing on any funnel screen showed that a
+         * decision had been taken at all.
+         *
+         * The four decisions are four rungs MahekOne already holds, which is
+         * why there is no mapping to invent: `handleVisit` writes
+         * `leadStage: p.suspectDecision` verbatim into `customers.lead_stage`,
+         * and that column is the same twenty-three-rung enum `funnelStage`
+         * mirrors. `wireFunnelStage` is asked rather than trusted, so a word
+         * this build does not recognise leaves the rung where it was rather
+         * than writing a stage no screen has a branch for.
+         *
+         * `still_suspect` moves neither column. It is the one answer that is
+         * not a move — it records why the lead is staying where it is, which
+         * is the reason written below.
+         */
+        const funnel = wireFunnelStage(args.suspectDecision);
+        if (funnel) {
+          const lead = await one<{ salesType: string | null }>(
+            'SELECT salesType FROM leads WHERE id = ?',
+            [args.customerId],
+          );
+          const salesType =
+            lead?.salesType === 'direct' || lead?.salesType === 'distributor' || lead?.salesType === 'third_party'
+              ? lead.salesType
+              : null;
+          /*
+           * `legacyStageFor` is what a funnel move writes, and the two answers
+           * differ on exactly one of the four: it reads `on_hold` as `New`,
+           * because a parked lead is in no band at all. That is right for a
+           * bar chart and wrong for a chip — a held lead filed as New loses
+           * the one word that explains the hold reason printed under it, and
+           * `localStage` is what the pull writes for a lead the OFFICE parked,
+           * so taking its word here is what keeps a lead parked on a visit and
+           * a lead parked at a desk reading the same thing.
+           */
+          const day = isoDate(new Date());
+          await run('UPDATE leads SET funnelStage = ?, stage = ?, stageSince = ?, lastActivityDate = ? WHERE id = ?', [
+            funnel,
+            funnel === 'on_hold' ? localStage(funnel) : legacyStageFor(funnel, salesType),
+            day,
+            day,
+            args.customerId,
+          ]);
+        }
       }
       if (args.suspectReason?.trim()) {
         const column = args.suspectDecision === 'lost' ? 'lostReason' : 'holdReason';
@@ -253,14 +312,17 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
     },
   });
 
-  /* Anything punched inside the visit must not reach the server before it. */
+  /* Anything punched inside the visit must not reach the server before it —
+     and must tell the office which visit it came from when it gets there. */
   for (const [type, id] of [
     ['order', args.linkedOrderId],
     ['payment', args.linkedPaymentId],
     ['complaint', args.linkedComplaintId],
     ['sample', args.linkedSampleId],
   ] as const) {
-    if (id) await addDependency(type, id, base.id);
+    if (!id) continue;
+    await addDependency(type, id, base.id);
+    await carryVisitId(type, id, base.id);
   }
 
   if (!args.verified) {
@@ -293,6 +355,41 @@ async function addDependency(entityType: string, entityId: string, dependsOnId: 
   if (deps.includes(dependsOnId)) return;
   deps.push(dependsOnId);
   await run('UPDATE sync_queue SET dependsOn = ? WHERE id = ?', [JSON.stringify(deps), row.id]);
+}
+
+/**
+ * Tell the office which visit a record was punched from.
+ *
+ * Every handler that takes one of these four — `handleOrder`, `handlePayment`,
+ * `handleComplaint`, `handleSample` — reads `visitId` off the payload and
+ * points the visit at the record it produced. Nothing was ever putting one
+ * there: the order, the payment, the complaint and the sample are all raised
+ * from inside a visit that has not been saved yet, so at the moment they were
+ * enqueued there was no visit id in existence to send. The phone learned the
+ * link a few minutes later, in the local update above, and the office never
+ * did — so a sample requested on a visit arrived at the desk as a sample
+ * somebody asked for from nowhere in particular.
+ *
+ * The payload is amended rather than a second item enqueued, because a second
+ * item is a second record as far as the create branch is concerned. It is safe
+ * to amend precisely because the item has not gone: `idempotencyKey` was hashed
+ * at enqueue time and is left alone, so the key the server remembers is the key
+ * it is offered. An item already sent is left alone for the same reason it
+ * cannot be corrected here at all — the link it is missing has to come from a
+ * later update, and the local column above is what the phone reads meanwhile.
+ */
+async function carryVisitId(entityType: string, entityId: string, visitId: string): Promise<void> {
+  const row = await one<{ id: string; payload: string }>(
+    `SELECT id, payload FROM sync_queue
+       WHERE entityType = ? AND entityId = ? AND state NOT IN ('syncing', 'synced')
+       ORDER BY createdAt DESC LIMIT 1`,
+    [entityType, entityId],
+  );
+  if (!row) return;
+  const payload = JSON.parse(row.payload) as Record<string, unknown>;
+  if (payload.visitId) return;
+  payload.visitId = visitId;
+  await run('UPDATE sync_queue SET payload = ? WHERE id = ?', [JSON.stringify(payload), row.id]);
 }
 
 /* ----------------------------------------------------------------- reads */
