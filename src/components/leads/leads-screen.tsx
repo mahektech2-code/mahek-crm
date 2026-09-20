@@ -54,10 +54,16 @@ import { setLeadPriority } from "@/lib/actions/lead-priority";
 import type { LeadRow } from "@/lib/services/sales-service";
 import {
   ALL_LEAD_STAGES,
+  SALES_TYPES,
+  salesTypeLabel,
   stageLabel,
   type LeadSalesType,
   type LeadStage,
 } from "@/lib/lead-labels";
+/* §8.4's due-date tone, and the three days behind it. Pure and client-safe, so
+   this table and the record's own strip can read one answer — see
+   `lib/lead-owed.ts` for why it is not decided in either screen. */
+import { leadOwed, owedSentence, owedTone, owedWord } from "@/lib/lead-owed";
 import {
   isOnQueueFor,
   roleAction,
@@ -150,6 +156,7 @@ type Bulk = "reassign" | "stage" | "archive" | "restore" | "chase";
  */
 export function LeadsScreen({
   workspace,
+  day,
   leads,
   pageInfo,
   stale,
@@ -169,6 +176,16 @@ export function LeadsScreen({
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
+  /**
+   * The business date, resolved ONCE on the server and handed down.
+   *
+   * The Next column has to know whether a day has gone, which is a question
+   * about today — and the React Compiler rules forbid reading the clock during
+   * render. It is also the same `day` the service filtered and sorted on, so a
+   * row drawn overdue and the dropdown that found it cannot be measuring
+   * against two different todays across a midnight.
+   */
+  day: string;
   /** ONE PAGE of them. Everything counted around the table comes from SQL. */
   leads: LeadRow[];
   pageInfo: {
@@ -703,7 +720,7 @@ export function LeadsScreen({
 
           <Table
             chrome={false}
-            minWidth={1636}
+            minWidth={1900}
             head={
               <>
                 {/* PINNED. The row's name and its actions are the two cells
@@ -742,7 +759,29 @@ export function LeadsScreen({
                 </HeadCell>
                 <HeadCell width={160}>Owner</HeadCell>
                 <HeadCell width={140}>Source</HeadCell>
-                <HeadCell align="right" width={130}>Potential</HeadCell>
+                {/* §8.4's PRODUCT AND MONTHLY REQUIREMENT, in ONE column and
+                    NOT two.
+
+                    They are one question asked twice — what this shop buys, and
+                    how much of it — and neither is worth a column of its own on
+                    a table that already scrolls sideways. Together they are the
+                    thing the Potential beside them has been standing in for:
+                    "Nano Thinner · 400 L a month" is a fact somebody recorded,
+                    and "₹3,00,000" is a figure somebody guessed.
+
+                    IT SITS BEFORE THE POTENTIAL, because it is what the
+                    potential is an estimate OF. Read the other way round the
+                    money comes first and the thing being valued reads as a
+                    footnote to it.
+
+                    THE UNITS ARE NAMED ON EVERY LINE AND ARE NEVER ADDED UP. A
+                    lead's requirement is LITRES — §L: there is no SKU at
+                    capture, so cans would be a unit nobody agreed the size of —
+                    while the commitment under Potential is CANS. Nothing here
+                    converts between them, because `products.priceSource` is
+                    still `unset` and there is no packing to read. */}
+                <HeadCell width={170}>Wants</HeadCell>
+                <HeadCell align="right" width={160}>Potential</HeadCell>
                 {/* §4.1 — IMMEDIATELY AFTER THE POTENTIAL, because the two are
                     only readable as a pair. "₹3,00,000 · Low" is a manager
                     saying the big shop is not this fortnight's work, which is
@@ -752,7 +791,21 @@ export function LeadsScreen({
                     left-to-right order, which is the rule FILTER_COLUMNS
                     states above. */}
                 <HeadCell width={120}>Priority</HeadCell>
-                <HeadCell width={110}>Stage</HeadCell>
+                {/* §8.4's SALES TYPE RIDES IN THIS CELL rather than taking a
+                    column of its own, and the pairing is the argument
+                    FILTER_COLUMNS already makes one screen up: a RUNG IS NOT A
+                    TRACK. "Negotiation" answers nothing on its own, because
+                    `suspect` is the foot of all three ladders and the rungs
+                    above it mean different work on each — so the ladder and the
+                    rung are one fact read together, and a column between them
+                    would be a column read across.
+
+                    It was FILTERABLE AND NOT READABLE before this, which is the
+                    worst of the two halves to have: "which of these are
+                    distributor leads" was a filter round trip and a page
+                    reload, on a screen where the answer was already on the
+                    row. */}
+                <HeadCell width={152}>Stage</HeadCell>
                 {/* §7 — IMMEDIATELY AFTER THE STAGE, because the stage is
                     where a lead IS and this is what that means for the person
                     reading it. "Negotiation" on its own is a noun somebody has
@@ -772,7 +825,10 @@ export function LeadsScreen({
                     some. Which job produced a given sentence rides on the
                     cell's own hover, where it is asked rather than asserted. */}
                 <HeadCell width={180}>For you</HeadCell>
-                <HeadCell width={130}>Next</HeadCell>
+                {/* §8.4 — RED IF IT IS PAST, AMBER IF IT FALLS TODAY. See
+                    `NextCell`: the tone is `owedTone`'s and the date is the
+                    earliest of the three days a lead can be carrying. */}
+                <HeadCell width={150}>Next</HeadCell>
                 <HeadCell width={110}>Age</HeadCell>
                 <HeadCell width={190}>Health &amp; metrics</HeadCell>
                 {/* Wide enough for the menu trigger AND the cell's own padding: at the
@@ -845,12 +901,11 @@ export function LeadsScreen({
                       )}
                     </Cell>
                     <Cell className="capitalize">{l.source.replace(/_/g, " ")}</Cell>
+                    <Cell truncate={170}>
+                      <WantsCell lead={l} />
+                    </Cell>
                     <Cell align="right">
-                      {Number(l.estimatedPotentialPaise) ? (
-                        money(Number(l.estimatedPotentialPaise))
-                      ) : (
-                        <span className="text-muted">Not estimated</span>
-                      )}
+                      <PotentialCell lead={l} />
                     </Cell>
                     <Cell>
                       {/* UNJUDGED IS SAID IN WORDS, not left as an empty cell.
@@ -863,7 +918,7 @@ export function LeadsScreen({
                         <Pill tone={priorityTone(l.priority)}>{priorityLabel(l.priority)}</Pill>
                       </span>
                     </Cell>
-                    <Cell>
+                    <Cell truncate={152}>
                       <Pill
                         tone={
                           l.stage === "won" ? "success" : l.stage === "lost" ? "danger" : "brand"
@@ -871,16 +926,23 @@ export function LeadsScreen({
                       >
                         {stageLabel(l.stage as LeadStage)}
                       </Pill>
+                      {/* Which ladder the rung belongs to, under it rather than
+                          beside it: at this width a second pill on one line
+                          would wrap anyway, and the ladder is the quieter of
+                          the two facts — it says what the rung above it MEANS
+                          rather than where the lead is. */}
+                      <span
+                        className="mt-0.5 block truncate text-[12px] text-muted"
+                        title={salesTypeSentence(l.salesType)}
+                      >
+                        {salesTypeLabel(l.salesType)}
+                      </span>
                     </Cell>
                     <Cell truncate={180}>
                       <ActionCell lead={l} viewer={viewer} />
                     </Cell>
-                    <Cell>
-                      {l.nextFollowUpDate ? (
-                        shortDate(l.nextFollowUpDate)
-                      ) : (
-                        <span className="text-muted">None promised</span>
-                      )}
+                    <Cell truncate={150}>
+                      <NextCell lead={l} day={day} />
                     </Cell>
                     <Cell>
                       {plural(l.ageDays, "day")} old
@@ -938,7 +1000,7 @@ export function LeadsScreen({
                       className={i % 2 === 1 ? "bg-canvas" : "bg-surface"}
                       onClick={() => toggleExpanded(l.id)}
                     >
-                      <td colSpan={11} className="cursor-pointer border-b border-divider px-4 pb-3.5">
+                      <td colSpan={12} className="cursor-pointer border-b border-divider px-4 pb-3.5">
                         <DetailPanel lead={l} hasDetail={hasDetail} viewer={viewer} />
                       </td>
                     </tr>
@@ -1225,6 +1287,216 @@ export function LeadsScreen({
       </Modal>
     </div>
   );
+}
+
+/**
+ * §8.4 — THE DUE DATE, AND IT CARRIED NO URGENCY WHATEVER.
+ *
+ * This cell printed `shortDate(nextFollowUpDate)` in the same ink as every
+ * other cell on the row. On four hundred leads that means a promise somebody
+ * broke a fortnight ago is drawn exactly like one due next month, on the
+ * default screen of the whole workspace — the list sorts the urgent work to the
+ * top and then says nothing whatever about it, and a manager scanning down has
+ * to read and subtract every date to find out which ones are bleeding.
+ *
+ * TWO THINGS ARE FIXED HERE AND THE SECOND IS THE ONE NOBODY WOULD LOOK FOR.
+ *
+ * The tone is the first: `owedTone` — red past its day, amber on the day, plain
+ * ahead of it. It is not decided here, because the record's own strip has to be
+ * able to agree with it: one lead may not read urgent on one screen and
+ * ordinary on the other, which is what `lib/customer-health.ts` was written
+ * about on the day "at risk" meant two things in two places.
+ *
+ * THE COLUMN IT READS IS THE SECOND. `lead_next_follow_up_date` is the
+ * salesman's own diary; §24's action is not in it and neither is a parked
+ * lead's resume day — so the cell was silent about two of the three ways a lead
+ * can owe somebody a morning, and silent in the direction that HIDES work.
+ * `leadOwed` answers with the EARLIEST of the three and names which one it is,
+ * which is what the handset already settled for the same question (`LEAD_WHENS`
+ * in `mbos-app/src/engines/leads.ts`) and what the CRM already answers about a
+ * customer's next step. The Next dropdown above the table and the order the
+ * list is drawn in read the same three columns through `OWED_DATE_SQL`, so the
+ * bar, the header and the row cannot disagree about one lead.
+ *
+ * NAMING WHICH DAY IT IS, IS WHAT PAYS FOR THE WIDTH. "Promised", "Off hold"
+ * and "Next action" are three different mornings, and one date standing for all
+ * three is a figure nobody can act on.
+ *
+ * A LEAD OWING NOTHING IS SAID IN WORDS AND DRAWN PLAIN. It is a real failure —
+ * §24 says an active lead may not sit like this — but it is a DIFFERENT one
+ * from a missed promise, and the desk that chases it is a link at the top of
+ * this very screen. Colouring it here would claim the two are the same size of
+ * problem and, on a fresh book where most leads have nothing owed, would fill
+ * the column with a colour that then means nothing anywhere.
+ */
+function NextCell({ lead, day }: { lead: LeadRow; day: string }) {
+  const owed = leadOwed(lead, day);
+  if (!owed) {
+    return <span className="text-muted">Nothing owed</span>;
+  }
+
+  const tone = owedTone(owed);
+  return (
+    <span title={owedSentence(owed, shortDate)}>
+      <span
+        className={cx(
+          "block truncate",
+          tone === "danger"
+            ? "font-semibold text-danger"
+            : tone === "warn"
+              ? "font-semibold text-warn-ink"
+              : "text-body",
+        )}
+      >
+        {shortDate(owed.date)}
+        {/* How late, on the row rather than only on the hover: "12 Sep" in red
+            says something is wrong and leaves a manager to subtract to find out
+            how wrong. */}
+        {owed.daysLate > 0 ? ` · ${plural(owed.daysLate, "day")} late` : null}
+        {owed.isToday ? " · today" : null}
+      </span>
+      <span className="block truncate text-[12px] text-muted">{owedWord(owed)}</span>
+    </span>
+  );
+}
+
+/**
+ * §8.4's PRODUCT AND MONTHLY REQUIREMENT — the two answers that say how big a
+ * lead actually is, as against how big somebody guessed it might be.
+ *
+ * The product is the SKU resolved at qualification and never the free-text
+ * `lead_requirement`: the requirement is a shop describing a job in its own
+ * words ("thinner for a spray booth"), which is the right thing to store and
+ * the wrong thing to put in a 170px column, where it would print four words and
+ * cut the sentence off mid-clause. The record draws both; a column somebody
+ * SCANS draws the one that is a name.
+ *
+ * LITRES, SAID OUT LOUD, EVERY TIME. §L: there is no SKU at capture, so a
+ * lead's monthly requirement is the one quantity in MahekOne that is not cans —
+ * and the commitment one column along IS cans. Two units on one screen is
+ * survivable only while no cell is ever ambiguous about which it is holding,
+ * and nothing anywhere adds them together, because nothing can:
+ * `products.priceSource` is still `unset` and there is no packing to convert
+ * through.
+ *
+ * NOTHING RECORDED IS SAID IN WORDS rather than left blank, the same rule the
+ * priority badge follows. It is most of an imported book, and a blank cell
+ * reads as a value that failed to load rather than as a question nobody asked.
+ */
+function WantsCell({ lead }: { lead: LeadRow }) {
+  const litres = lead.monthlyVolumeLitres;
+  return (
+    <span>
+      <span
+        className={cx("block truncate", lead.requiredProductName ? "text-body" : "text-muted")}
+        title={
+          lead.requiredProductName ??
+          "Nobody has named a product on this lead. It is asked at qualification."
+        }
+      >
+        {lead.requiredProductName ?? "No product named"}
+      </span>
+      <span
+        className="block truncate text-[12px] text-muted"
+        title={
+          litres
+            ? "What this shop gets through in a month, in litres — a lead has no SKU yet, so it is the one quantity here that is not cans."
+            : "Nobody has recorded how much this shop uses in a month."
+        }
+      >
+        {litres ? `${litres.toLocaleString("en-IN")} L a month` : "No monthly figure"}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * WHAT SOMEBODY GUESSED, AND WHAT SOMEBODY WAS ACTUALLY PROMISED.
+ *
+ * The potential is an ESTIMATE typed by whoever raised the lead, and it has
+ * stood alone in this column since the list shipped. §8.4 asks for the expected
+ * sales value beside it, and the pair is the point: a shop guessed at three
+ * lakhs with the customer's own promise of eighty thousand against it is a lead
+ * somebody is converting, and the same shop with nothing promised is a number
+ * nobody has tested. A column apart, those two facts are never connected — the
+ * same argument that put the manager's priority immediately after the estimate
+ * rather than three columns along.
+ *
+ * §3.4 IS DRAWN RATHER THAN RESTATED. A commitment is a day AND a size, and
+ * `hasCommitment` is the one answer to that — `confirmedCommitmentSql` in the
+ * read, `commitmentState` on the record — so this cell reads the flag rather
+ * than re-deciding it from the three columns beside it. A day with no size is
+ * still SHOWN and says so: "around the 25th" is a follow-up somebody owes and
+ * is deliberately not counted, and hiding it would hide the fact that nobody
+ * asked how much.
+ *
+ * THE QUANTITY IS CANS, said on the line, because the requirement in the column
+ * to its left is litres and nothing converts between them.
+ */
+function PotentialCell({ lead }: { lead: LeadRow }) {
+  const potential = Number(lead.estimatedPotentialPaise);
+  const value = Number(lead.expectedOrderValuePaise);
+  const cans = lead.expectedOrderCans;
+
+  /* What the customer actually said, in the order it is worth reading: the
+     money where there is any, the cans where there is not, and the bare day
+     where nobody asked either. */
+  const promised = lead.expectedOrderDate
+    ? value
+      ? `${money(value)} by ${shortDate(lead.expectedOrderDate)}`
+      : cans
+        ? `${plural(cans, "can")} by ${shortDate(lead.expectedOrderDate)}`
+        : `Due ${shortDate(lead.expectedOrderDate)} — no size asked`
+    : null;
+
+  return (
+    <span>
+      <span className={cx("block truncate", potential ? "text-body" : "text-muted")}>
+        {potential ? money(potential) : "Not estimated"}
+      </span>
+      {promised ? (
+        <span
+          className={cx(
+            "block truncate text-[12px]",
+            lead.hasCommitment ? "text-body" : "text-muted",
+          )}
+          title={
+            lead.hasCommitment
+              ? "What the customer committed to: a day and a size. §3.4 counts this one."
+              : "A day with no quantity and no value against it. §3.4 keeps it as a follow-up and deliberately does not count it as a commitment, because nobody has asked how much."
+          }
+        >
+          {promised}
+        </span>
+      ) : (
+        <span
+          className="block truncate text-[12px] text-muted"
+          title="Nobody has asked this shop for a first order yet."
+        >
+          Nothing promised
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The hover under the stage, saying what the ladder means.
+ *
+ * `salesTypeLabel` is the only vocabulary — a second set of words for the same
+ * three codes typed into a screen is how one shop comes to read two ways — and
+ * the hints come off `SALES_TYPES` for the same reason. The fourth answer gets
+ * the one sentence that is genuinely about this screen rather than about the
+ * code: a lead raised before the funnel existed climbs the six rungs this
+ * product shipped with, and nothing backfills a ladder onto it, because
+ * guessing which of three somebody was on decides which GATES apply.
+ */
+function salesTypeSentence(type: LeadSalesType | null): string {
+  if (!type) {
+    return "Raised before the funnel, so it is on no ladder — it climbs the six original rungs. Nothing guesses one for it, because the ladder decides which gates apply.";
+  }
+  const hint = SALES_TYPES.find((s) => s.code === type)?.hint;
+  return hint ? `${salesTypeLabel(type)} — ${hint}` : salesTypeLabel(type);
 }
 
 /**

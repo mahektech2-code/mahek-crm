@@ -173,6 +173,12 @@ export async function Body({
 
   return (
     <LeadsScreen workspace={workspace}
+      /* The SAME business date the reads above were narrowed and sorted by.
+         The Next column has to know whether a day has gone, and a second
+         reading of "today" taken in the browser would both break the React
+         Compiler rules and let a row drawn overdue disagree across a midnight
+         with the dropdown that found it. */
+      day={day}
       leads={page.rows}
       pageInfo={{
         page: page.page,

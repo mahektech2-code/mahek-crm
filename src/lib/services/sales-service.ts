@@ -14,7 +14,7 @@ import { confirmedCommitmentSql } from "../lead-commitment";
 import type { LeadPriority } from "../lead-priority";
 import type { BusinessDate } from "../business-date";
 import { cache } from "react";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
@@ -1257,7 +1257,28 @@ export type LeadRow = {
   holdReason: string | null;
   /** How many times anybody has stood in this shop. Counted, never cached. */
   visitCount: number;
+  /**
+   * THE THREE DAYS A LEAD CAN BE CARRYING AT ONCE, and the screen answers with
+   * the earliest of them.
+   *
+   * `nextFollowUpDate` is the salesman's own diary and is what this row has
+   * always had. `nextActionDate` is §24's — the action, the day, the person and
+   * what that person is expected to come back with, written together, and what
+   * every upward move since the funnel landed has demanded. `holdResumeDate` is
+   * a park somebody deliberately set, and counts only while the rung still says
+   * `on_hold`: the column outlives the resume, so a lead unparked in March
+   * would otherwise go on being owed for ever on a day it already honoured.
+   *
+   * All three are selected rather than collapsed into one in SQL, because the
+   * cell has to say WHICH day it is drawing — "you said you would go back on
+   * the 14th" and "back off hold since the 14th" are two different mornings.
+   * `lib/lead-owed.ts` is the one place the earliest is picked; the sort and
+   * the filter below reach the same answer through `OWED_DATE_SQL` rather than
+   * through a second reading of it.
+   */
   nextFollowUpDate: string | null;
+  nextActionDate: string | null;
+  holdResumeDate: string | null;
   lastActivityDate: string | null;
   /** Days since anything happened. What "stale" is measured from. */
   quietDays: number;
@@ -1319,6 +1340,43 @@ export type LeadRow = {
    * exactly those leads the danger tone has to surface out of four hundred.
    */
   hasCommitment: boolean;
+  /**
+   * §8.4's EXPECTED SALES VALUE, and the two columns beside it that say whether
+   * it is a commitment at all.
+   *
+   * `hasCommitment` above answers §3.4's question — a day AND a size — and it
+   * is what every counter reads. These three are what the SCREEN has to print,
+   * because "expected" with no figure on it is the state §3.4 exists to stop
+   * anybody counting and is still worth seeing: a lead where all anybody knows
+   * is "around the 25th" is a lead nobody has asked how much, and that is a
+   * question with somebody's name on it rather than an empty cell.
+   *
+   * THE QUANTITY IS CANS and the lead's own requirement is LITRES. Two units on
+   * one screen, and they are not convertible: there is no SKU at commitment, so
+   * nothing here can turn one into the other, and a cell that printed them as
+   * one number would be worse than either. Every place they are drawn says
+   * which.
+   */
+  expectedOrderDate: string | null;
+  expectedOrderCans: number | null;
+  expectedOrderValuePaise: number | null;
+  /**
+   * §8.4's PRODUCT and MONTHLY REQUIREMENT — the commercial size of a lead, and
+   * the two answers `estimatedPotentialPaise` has been standing in for.
+   *
+   * The product is the SKU somebody resolved at qualification
+   * (`lead_required_product_id`), not the free-text `lead_requirement`: the
+   * requirement is what a shop said in its own words and routinely describes a
+   * job rather than a can, so drawing it in a 170px column would print half a
+   * sentence and cut the rest off. The record shows both; a scannable column
+   * shows the one that is a name.
+   *
+   * The requirement is LITRES, always — §L: there is no SKU at capture, a
+   * prospect says "about two hundred litres a month" long before anybody knows
+   * what pack it comes in, and cans would be a unit nobody agreed the size of.
+   */
+  requiredProductName: string | null;
+  monthlyVolumeLitres: number | null;
   /** A counting order exists — `PURCHASE_STATUSES`, never three statuses typed here. */
   hasOrder: boolean;
   /** A sample somebody asked for and nobody has sent. What lights the back office up. */
@@ -1377,7 +1435,14 @@ const LEAD_ROW_SELECT = sql`
             * somebody has been to a shop. */
            (select count(*)::int from mbos_visits v
              where v.customer_id = c.id) as "visitCount",
+           /* The three days a lead can owe somebody. See the note on LeadRow -
+            * the cell draws the EARLIEST and says which of the three it is, so
+            * all three are selected rather than collapsed here. NO BACKTICKS in
+            * this comment: it sits inside a sql template literal, and one
+            * backtick ends the literal. */
            c.lead_next_follow_up_date::text as "nextFollowUpDate",
+           c.lead_next_action_date::text as "nextActionDate",
+           c.lead_hold_resume_date::text as "holdResumeDate",
            c.lead_last_activity_date::text as "lastActivityDate",
            c.lead_notes as notes,
            (c.gps_lat is not null and c.gps_lng is not null) as "hasGps",
@@ -1418,6 +1483,22 @@ const LEAD_ROW_SELECT = sql`
             * BACKTICKS in this comment: it sits inside a sql template
             * literal, and one backtick ends the literal. */
            ${sql.raw(confirmedCommitmentSql("c"))} as "hasCommitment",
+           /* S8.4's expected sales value, and the day and the size that decide
+            * whether it is a commitment at all. The quantity is CANS and the
+            * requirement two lines down is LITRES; nothing converts between
+            * them, because there is no SKU at commitment and
+            * products.priceSource is still unset. NO BACKTICKS in this comment:
+            * it sits inside a sql template literal, and one backtick ends the
+            * literal. */
+           c.lead_expected_order_date::text as "expectedOrderDate",
+           c.lead_expected_order_cans as "expectedOrderCans",
+           c.lead_expected_order_value_paise as "expectedOrderValuePaise",
+           /* S8.4's product and monthly requirement. The product is the SKU
+            * somebody resolved at qualification rather than the free-text
+            * lead_requirement, which is a sentence and not a name - the record
+            * draws both and a scannable column draws the one that fits. */
+           rp.name as "requiredProductName",
+           c.lead_monthly_volume_litres as "monthlyVolumeLitres",
            /* What counts as a sale is PURCHASE_STATUSES through
             * orderCountsSql, never a status list typed into a query. */
            exists (select 1 from orders o
@@ -1456,15 +1537,62 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
       from customers c
       left join users u on u.id = c.owner_id
       left join users lm on lm.id = c.lead_manager_id
+      /* The one product somebody named at qualification. A LEFT join, because
+         most of the book has never been asked - and an inner one here would
+         silently shorten the leads list to the leads that had answered. */
+      left join products rp on rp.id = c.lead_required_product_id
      where c.lead_stage is not null
        and c.lead_archived = false
        ${onlyMine(scope, "c.owner_id")}
-     order by c.lead_next_follow_up_date asc nulls last, c.lead_last_activity_date asc nulls last
+     ${LEADS_ORDER_SQL}
      limit 400
   `) as unknown as LeadRow[]);
 }
 
 /* ═════════════════════════════════════════════ narrowing the leads list */
+
+/**
+ * THE DAY THIS LEAD NEXT WANTS SOMEBODY, IN SQL — the counterpart of
+ * `leadOwed` in `lib/lead-owed.ts`, and the reasoning lives there.
+ *
+ * The earliest of §24's action, the salesman's own promise and a park coming
+ * back. `least` ignores nulls and answers null only when all three are, which
+ * is what keeps `nulls last` meaning "owes nobody anything" in the sort below.
+ * The park is wrapped in a `case` rather than read bare, because
+ * `lead_hold_resume_date` outlives the resume and a lead unparked in March
+ * would otherwise sort for ever against a day it already honoured — the same
+ * guard `parkComesBack` keeps in `lead-action-window.ts`.
+ *
+ * IT IS ONE EXPRESSION FOR THREE READERS: the filter bar's Next dropdown, the
+ * order the table is drawn in, and the order `leadIdsMatching` walks so "select
+ * everything this filter reaches" names the rows somebody is looking at. Those
+ * three sorted and cut on `lead_next_follow_up_date` alone while the cell they
+ * describe now draws the earliest of three, which is a table disagreeing with
+ * the bar above it about the word "overdue".
+ *
+ * IT IS DELIBERATELY WIDER THAN `overdueWindow`, and the two name each other.
+ * `lead-action-window.ts` answers about §24's action and the park ALONE, and it
+ * is right to: the Today and Overdue VIEWS are §24's own worklist, and a
+ * salesman's diary entry is not something §24 ever demanded. This is the BOOK,
+ * and the book has to show a promise somebody broke whichever column it was
+ * written in. The handset settled the same split for the same reason — see
+ * `LEAD_WHENS` in `mbos-app/src/engines/leads.ts`. What neither may do is use
+ * one word for two populations without saying so, which is why `lead-views.ts`
+ * spells the difference out on the view itself.
+ */
+const OWED_DATE_SQL: SQL = sql`least(
+  c.lead_next_action_date,
+  c.lead_next_follow_up_date,
+  case when c.lead_stage = 'on_hold' then c.lead_hold_resume_date end
+)`;
+
+/**
+ * The order every read of this list is drawn in: what is owed soonest first,
+ * then whatever has been quiet longest, then the id so a page boundary cannot
+ * put one lead on two pages.
+ */
+const LEADS_ORDER_SQL: SQL = sql`order by ${OWED_DATE_SQL} asc nulls last,
+                     c.lead_last_activity_date asc nulls last, c.id desc`;
 
 /**
  * WHAT THE FILTER BAR MEANS, IN SQL — one clause, built from the same option
@@ -1636,8 +1764,28 @@ export function leadFilterClause(
     }
   });
 
+  /*
+   * §8.4's NEXT DROPDOWN, AND IT USED TO READ ONE OF THREE COLUMNS.
+   *
+   * It was `c.lead_next_follow_up_date` alone — the salesman's own diary — so
+   * "Overdue" missed every lead whose only commitment is §24's next action,
+   * which is every lead anybody has moved up a rung since the funnel landed,
+   * and every parked lead sitting past the day it was supposed to come back.
+   * Nothing on the screen said so: the dropdown answered confidently and the
+   * population it named was a fraction of the one it claimed.
+   *
+   * It reads `OWED_DATE_SQL` now — the same earliest-of-three the cell beneath
+   * it draws and the same expression the list is sorted by — so the bar, the
+   * column and the row order cannot answer differently about one lead. "None
+   * promised" is a stronger claim than it was: nothing owed on ANY of the
+   * three, which is exactly §24's exception desk.
+   *
+   * It stays WIDER than the Today and Overdue VIEWS on this same screen, and
+   * that is a decision rather than a leftover — `OWED_DATE_SQL` carries the
+   * argument, and `lead-views.ts` says it on the view itself.
+   */
   anyOf(splitFilter(filters.next), (v) => {
-    const d = sql`c.lead_next_follow_up_date`;
+    const d = OWED_DATE_SQL;
     switch (v) {
       case "overdue": return sql`${d} is not null and ${d} < ${day}::date`;
       case "today": return sql`${d} = ${day}::date`;
@@ -1809,6 +1957,10 @@ export async function leadsPage(
       from customers c
       left join users u on u.id = c.owner_id
       left join users lm on lm.id = c.lead_manager_id
+      /* The one product somebody named at qualification. A LEFT join, because
+         most of the book has never been asked - and an inner one here would
+         silently shorten the leads list to the leads that had answered. */
+      left join products rp on rp.id = c.lead_required_product_id
       ${where}
       ${narrowed}
      /*
@@ -1832,8 +1984,7 @@ export async function leadsPage(
       */
      ${archived
        ? sql`order by c.lead_archived_at desc nulls last, c.id desc`
-       : sql`order by c.lead_next_follow_up_date asc nulls last,
-                     c.lead_last_activity_date asc nulls last, c.id desc`}
+       : LEADS_ORDER_SQL}
      limit ${perPage} offset ${(page - 1) * perPage}
   `) as unknown as LeadRow[];
 
@@ -1900,8 +2051,7 @@ export async function leadIdsMatching(
        })}
      ${archived
        ? sql`order by c.lead_archived_at desc nulls last, c.id desc`
-       : sql`order by c.lead_next_follow_up_date asc nulls last,
-                     c.lead_last_activity_date asc nulls last, c.id desc`}
+       : LEADS_ORDER_SQL}
      limit ${cap + 1}
   `);
   return { ids: rows.slice(0, cap).map((r) => r.id), capped: rows.length > cap };

@@ -107,15 +107,32 @@ export const VIEW_TEXT: Record<LeadView, { title: string; subtitle: string }> = 
     subtitle:
       "Leads carrying one of your seats — the book you own, the ones you coordinate as lead manager, and the ones whose paperwork is yours. Whether a seat is asking you for something today is the For you column.",
   },
+  /*
+   * THESE TWO ARE NARROWER THAN THE NEXT COLUMN ON THE SAME SCREEN, and both
+   * subtitles say so.
+   *
+   * §24's windows — `dueTodayWindow` and `overdueWindow` — read the next action
+   * and a park coming back, and nothing else. The table's own Next column and
+   * the Next dropdown above it read `OWED_DATE_SQL`, which is those two plus
+   * the salesman's own diary entry, because the BOOK has to show a promise
+   * somebody broke whichever column it was written in.
+   *
+   * So a lead can be drawn "3 days overdue" in the Next column and be absent
+   * from this view, and that is correct: §24 never demanded a diary entry, and
+   * a worklist for a rule should hold the rule's own population. What is not
+   * allowed is the two using one word for two populations without saying so,
+   * which is the whole of why these sentences name the difference. The handset
+   * settled the same split — see `LEAD_WHENS` in `mbos-app/src/engines/leads.ts`.
+   */
   today: {
     title: "Today's actions",
     subtitle:
-      "What §24 says is owed today: a next action falling due, and a parked lead whose day has come. The same window the Actions screen reads.",
+      "What §24 says is owed today: a next action falling due, and a parked lead whose day has come. The same window the Actions screen reads — narrower than the Next column, which counts a salesman's own follow-up promise too.",
   },
   overdue: {
     title: "Overdue",
     subtitle:
-      "Past its day with nobody having answered it, and parks read back late. The same window the Overdue screen reads.",
+      "Past its day with nobody having answered it, and parks read back late. The same window the Overdue screen reads — narrower than the Next column, which counts a salesman's own follow-up promise too.",
   },
   expected: {
     title: "Expected orders",
