@@ -1,5 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import { sql, type SQL } from "drizzle-orm";
 import { timelineEvents } from "@/db/schema";
 import type { db } from "@/db";
 
@@ -261,6 +262,40 @@ export const MBOS_EVENT = {
    */
   verificationCorrection: "lead_verification_correction",
 } as const;
+
+/**
+ * THE SOURCE ID IS A COLON-SEPARATED LIST, AND FIELD TWO IS THE STAGE.
+ *
+ * Several kinds above put more than a record id in `sourceRecordId`, because
+ * one record legitimately produces several events and the natural key is
+ * (app, kind, source row) — a sample writes `<id>:dispatched`, a
+ * communication writes `<id>:<action code>`, a verification call writes
+ * `<id>:correction:<field>`. Reading that back is a thing two services do, and
+ * they had grown two readings of it: `split_part(id, ':', 2)` in one and
+ * "everything after the first colon" in JS in the other.
+ *
+ * FIELD TWO IS THE READING, and the third example above is why rather than a
+ * coin toss. Everything-after-the-first-colon answers `correction:competitor`
+ * on a correction row, which is not a stage, is not a field, and is not
+ * anything a caller asked for — it is two fields glued together, and it looks
+ * right until the day somebody counts by it. Field two is the same answer on
+ * all three shapes. A generated id contains no colon, which is what makes
+ * field one the record and field two the stage in every case.
+ *
+ * `nullif` is not decoration: `split_part` answers an empty string rather than
+ * null where there is no such field, and a row written before a kind grew its
+ * suffix is an UNKNOWN stage and not a blank one. Every caller draws those
+ * apart, and an empty string would quietly fold them in with the rest.
+ *
+ * `column` is a qualified column name from the call site — `e.source_record_id`
+ * — rather than a Drizzle column, for the house reason: Drizzle renders
+ * `${timelineEvents.sourceRecordId}` as a bare `"source_record_id"`, which
+ * inside a correlated subquery binds to the inner table and silently answers
+ * about the wrong row.
+ */
+export function sourceIdField(column: string, field: number): SQL {
+  return sql`nullif(split_part(${sql.raw(column)}, ':', ${sql.raw(String(Math.trunc(field)))}), '')`;
+}
 
 /**
  * What each outcome is called on a screen. There is no other label map for

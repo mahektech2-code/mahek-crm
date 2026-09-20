@@ -541,15 +541,52 @@ export async function listSamples(): Promise<Sample[]> {
   return all<Sample>('SELECT * FROM samples ORDER BY requestedAt DESC');
 }
 
+/**
+ * §10 — the sample asked for from inside a visit, with the same three answers
+ * the samples screen asks for.
+ *
+ * This used to take a free-text `reason` and nothing else, so a trial raised
+ * standing in the shop reached the office as one sentence in `feedbackNotes`
+ * with `reason_code` and `application` null and the quantity hardcoded to a
+ * single can. `requestLeadSample` in `data/lead-samples.ts` has asked all
+ * three properly since the funnel shipped, and the office reads the same three
+ * columns whichever door the request came through — so one door answering §10
+ * and the other not is one door's worth of samples nobody can count, compare
+ * or judge.
+ *
+ * The CODE is why they want a trial and the APPLICATION is what they will put
+ * it on, and neither substitutes for the other: the code is what somebody
+ * counts at the end of a quarter, and the application is what makes the trial
+ * judgeable at all. `reason` keeps carrying the application, exactly as
+ * `requestLeadSample` writes it — it is the note MahekOne has always kept
+ * against a sample, and the code now says the why beside it.
+ *
+ * It is NOT validated here beyond being present. The screen asks the three
+ * questions and refuses before it calls this; asking twice would be two
+ * readings of one rule, and it is the screen's a salesman would be looking at
+ * when they disagreed.
+ */
 export async function requestSample(args: {
   customerId: string;
   productId: string | null;
   productName: string;
   cans: number;
-  reason: string;
+  /** §10's coded answer — one of `leads.sampleReasons`. */
+  reasonCode: string;
+  /** What they will put it on, in his own words. */
+  application: string;
   followUpDate: string;
+  /*
+   * The visit this was punched from, where there is one.
+   *
+   * It is routinely ABSENT at this point and that is not a bug: the sample is
+   * raised from inside a visit that has not been saved yet, so the visit has
+   * no id to name. `saveVisit` carries it into this row and into this queue
+   * item once it has one — see `carryVisitId` there.
+   */
   visitId?: string | null;
 }): Promise<string> {
+  const application = args.application.trim();
   const base = await stamp('sample');
   const id = await insertAndQueue({
     table: 'samples',
@@ -560,7 +597,12 @@ export async function requestSample(args: {
       productId: args.productId,
       productName: args.productName,
       cans: args.cans,
-      reason: args.reason,
+      reasonCode: args.reasonCode,
+      application,
+      /* The same column `requestLeadSample` fills, with the same value and for
+         the same reason: the code says why and the application says what it is
+         for, so the free-text note carries the second. */
+      reason: application,
       requestedAt: Date.now(),
       state: 'Requested',
       followUpDate: args.followUpDate,
@@ -572,13 +614,18 @@ export async function requestSample(args: {
     payloadExtras: {
       quantityCans: args.cans,
       requestedDate: isoDate(new Date()),
-      feedbackNotes: args.reason || undefined,
+      feedbackNotes: application || undefined,
+      reasonCode: args.reasonCode,
+      application,
       visitId: args.visitId ?? undefined,
     },
     dependsOn: args.visitId ? [args.visitId] : [],
   });
 
-  await raiseApproval({ type: 'sample', subjectType: 'sample', subjectId: id, reason: args.reason, deviceId: base.deviceId });
+  /* The approval names the CODE rather than the sentence: it is what the desk
+     sorts a morning's requests by, and `requestLeadSample` raises its own the
+     same way. */
+  await raiseApproval({ type: 'sample', subjectType: 'sample', subjectId: id, reason: args.reasonCode, deviceId: base.deviceId });
   return id;
 }
 

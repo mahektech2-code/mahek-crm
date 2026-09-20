@@ -1662,6 +1662,324 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE performance ADD COLUMN activityAssigned INTEGER;`,
   ],
 
+  /* ---- v32 · the GST is somebody else's answer, and it had to reach here --- */
+  [
+    /*
+     * THE ONE FACT THE GATE READ AND THE PHONE NEVER HELD.
+     *
+     * `lead-gates.ts` answers §11.6 with `has(i.gstin) && i.gstVerified ===
+     * true` — the number somebody wrote down AND somebody else saying they
+     * checked it, which is the whole point of the column: on the web,
+     * `validateGstin` exists precisely so the salesman who collected the
+     * number is not the man who certifies it. That column is on `customers`
+     * and was on no wire and in no table here, so `i.gstVerified` was
+     * `undefined` on every handset, `undefined === true` is false, and a shop
+     * lead could NEVER reach Sample/Trial from the phone. The refusal read
+     * "Get their GST number — the back office checks it" for ever, over a
+     * number the salesman had already typed and the office had already
+     * verified. Nothing failed, nothing logged: the gate was working exactly
+     * as written against a fact that never arrived.
+     *
+     * PULL-ONLY, and that is the point rather than an omission. Nothing on
+     * this handset writes it and the office's inbound lead schema does not
+     * name it, so a payload claiming it is stripped without a word. A control
+     * here that set it would hand the certification back to the man collecting
+     * the number, which is the arrangement this column exists to end.
+     *
+     * NULLABLE and not `NOT NULL DEFAULT 0`, because null is a real answer:
+     * this phone has not heard from the office about this lead yet. The gate
+     * reads all three the same way — only an explicit true opens it — so the
+     * distinction costs nothing there and keeps a screen from saying "not
+     * verified" about a lead nobody has sent us an answer on.
+     */
+    `ALTER TABLE leads ADD COLUMN gstVerified INTEGER;`,
+  ],
+
+  /* ---- v33 · the facts the gates read, which never once reached a phone ---- */
+  [
+    /*
+     * EVERY RUNG ABOVE NEGOTIATION WAS STRUCTURALLY UNREACHABLE FROM A HANDSET,
+     * and these columns are the whole of why.
+     *
+     * `engines/funnel/lead-gates.ts` is a byte-for-byte copy of the server's,
+     * so this phone has known all twenty-three rungs and every condition on
+     * them since the funnel shipped. What it has never held is the FACTS those
+     * conditions read. `countingOrderCount` was `undefined`, `undefined >= 1`
+     * is false, and First order refused itself in the words "There is no order
+     * on this account yet" — on a shop that had ordered three times, with the
+     * office's own screen showing the rung open. Nothing failed at either end:
+     * the gate was working exactly as written against facts that never
+     * arrived, which is the same shape as `gstVerified` one block above and as
+     * every other bug on this wire.
+     *
+     * They arrive in the SAME change that adds them to `openLeads` and to
+     * `upsertLeads`, never ahead of either. A column the server sends that this
+     * table has nowhere to put throws inside `applyPull`, and `applyPull` is
+     * one transaction — so it rolls back the whole pull, not the leads: the
+     * customers, the products, the price list, the journey, the configuration,
+     * all of it.
+     */
+
+    /* §18–§22 — what the ledger says, counted by the office over the whole
+       account rather than derived here from the orders this phone happens to
+       hold. A handset that counted its own outbox would tell a salesman a rung
+       was open and watch the save refuse it. */
+    `ALTER TABLE leads ADD COLUMN countingOrderCount INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN deliveredOrderCount INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN confirmedPaymentCount INTEGER;`,
+
+    /* §23 — HOW MANY distributors invoice this shop, which is the question the
+       gate asks. `distributorCustomerId` beside it has been a column since the
+       funnel landed and was filled by nothing, so the count was derived from an
+       id that reached no handset and a third-party lead the office had already
+       given a distributor was refused its sample. */
+    `ALTER TABLE leads ADD COLUMN distributorCount INTEGER;`,
+
+    /* §12 — the two approval steps, the terms and the signed agreement. None of
+       the four is this phone's to assert and nothing here writes one; they come
+       down so the salesman is told which of them he is waiting on rather than
+       being shown a disabled button over a list he cannot act on. */
+    `ALTER TABLE leads ADD COLUMN managementReviewApproved INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN distributorApprovalApproved INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN commercialTermsAgreed INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN agreementOnFile INTEGER;`,
+
+    /*
+     * §5.3 — WHEN somebody last said the four conversion figures still hold,
+     * and deliberately not WHETHER they are stale.
+     *
+     * The threshold is `leads.figuresFreshDays`, which already rides down with
+     * the rest of the `leads.*` keys, so the phone answers the question itself
+     * against its own clock. A boolean computed in the office would be a
+     * verdict about the moment of the pull — right for a phone syncing through
+     * the day and a week out of date on one that has been in a district with no
+     * signal, which is exactly the handset this rule is about.
+     */
+    `ALTER TABLE leads ADD COLUMN figuresConfirmedAt INTEGER;`,
+
+    /* §5.3 — the sales manager's verdict on the checklist. Only `incomplete`
+       and `clarification` hold the lead; null is a checklist nobody has been
+       asked to review and passes, which is what let the rule ship without
+       stopping the whole book on the day it landed. */
+    `ALTER TABLE leads ADD COLUMN qualificationReview TEXT;`,
+
+    /* §4.2 — who PLACES the order, where that is not who approves it. The
+       eighth qualification condition is satisfied by this OR by a confirmed
+       decision maker, so a shop where one man does both is never asked twice. */
+    `ALTER TABLE leads ADD COLUMN buyer TEXT;`,
+
+    /* The office's own marks, which the phone has never been given: what a lead
+       is worth ranking against, the day a parked one comes back, the coded
+       reason it was parked — `holdReason` beside it is the sentence and this is
+       the code, and only a code can be counted — and where it came from in more
+       words than "manual". */
+    `ALTER TABLE leads ADD COLUMN priority TEXT;`,
+    `ALTER TABLE leads ADD COLUMN holdResumeDate TEXT;`,
+    `ALTER TABLE leads ADD COLUMN holdReasonCode TEXT;`,
+    `ALTER TABLE leads ADD COLUMN sourceDetail TEXT;`,
+
+    /*
+     * §7 — the three facts the ROLE INSTRUCTION forks on.
+     *
+     * `roleAction` is what turns a rung noun into the verb somebody is supposed
+     * to act on, and the sales manager's line in Negotiation forks on a
+     * commitment with no order behind it. A commitment is a day AND a size —
+     * `lib/lead-commitment.ts` on the server is the one place that rule lives,
+     * and the answer comes down rather than the columns, so this phone cannot
+     * hold a second opinion about it.
+     *
+     * `backOfficeAmId` is a SEAT and not a role: MahekOne has three levels and
+     * per-app grants and deliberately no `back_office` role, so the vantage is
+     * resolved by comparing this id with the signed-in user, exactly as the
+     * lead manager beside it already is.
+     */
+    `ALTER TABLE leads ADD COLUMN hasCommitment INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN hasOrder INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN backOfficeAmId TEXT;`,
+
+    /*
+     * §16 — HOW MANY TIMES THE OFFICE HAS ASKED, and the day it last asked.
+     *
+     * `mbos_samples.review_chase_count` has been raised by the hourly pass
+     * since the lifecycle shipped, and it never crossed the wire — so the one
+     * number that tells a salesman to stop waiting and ring the shop himself
+     * existed on the server and nowhere he could read it.
+     *
+     * NULLABLE, WITH NO DEFAULT, deliberately. `DEFAULT 0` would backfill
+     * every row already on this phone with the one value that means "nobody
+     * has asked" — which is precisely the fact the screen must not assert on
+     * a sample the office has chased three times and has not yet told this
+     * handset about. Null says the honest thing: nothing has told us. That is
+     * the state `chaseCountOf` answers for, and it is why it answers null
+     * rather than zero.
+     */
+    `ALTER TABLE samples ADD COLUMN reviewChaseCount INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN lastReviewChaseAt INTEGER;`,
+  ],
+
+  /* ----------------------------------------------------------------------
+   * §5.5 — THE COMMITMENT'S OTHER TWO THIRDS, AND TWO FACTS A LEAD ARRIVED
+   * WITHOUT.
+   * -------------------------------------------------------------------- */
+  [
+    /*
+     * §5.5 — HOW MUCH, and WHAT IS IN THE WAY.
+     *
+     * Mahek's answer is that a commitment is a date AND a quantity, with the
+     * blocker recorded beside it. `expectedOrderDate` and
+     * `expectedOrderValuePaise` have had columns since the funnel shipped and
+     * these two had none — so `recordExpectedOrder` kept them in `kv` under
+     * `lead.commitment.<id>`, where no sync could reach them and no screen but
+     * the record page could read them. Both ends landed together: the server
+     * column, the wire, this table and the schema that accepts them coming
+     * back up.
+     *
+     * The blocker is a CODE from `leads.orderBlockers` and never a label. Null
+     * is not `no_blocker`: that code is somebody being asked and saying
+     * nothing is stopping the order, and null is nobody having been asked.
+     */
+    `ALTER TABLE leads ADD COLUMN expectedOrderQuantityCans INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN expectedOrderBlockerCode TEXT;`,
+
+    /*
+     * WHEN THE LEAD WAS ACTUALLY RAISED, which this table could not say and
+     * looked as though it could.
+     *
+     * `upsertLeads` binds `now` into `clientCreatedAt` and `serverCreatedAt`,
+     * and both mean exactly what they say for a lead the salesman raised on
+     * this phone — the moment he typed it in, and the moment the office
+     * accepted it. For a lead the OFFICE raised they mean the moment this
+     * handset first pulled the row, which is a different fact wearing a name
+     * that reads like the right one. An age computed off it says "today" on a
+     * four-year-old lead, and says something else again after a reinstall.
+     *
+     * So it is a COLUMN OF ITS OWN rather than a better binding for
+     * `clientCreatedAt`: that one is what the outbox reasons about, it is
+     * honest for every lead authored here, and one column cannot carry two
+     * facts. Epoch milliseconds, like every other instant in this database.
+     *
+     * It is why the book draws "N days on this rung" off `stageSince` and has
+     * no counterpart to the web's age buckets — there was nothing to compute
+     * one from that would not have been a lie.
+     */
+    `ALTER TABLE leads ADD COLUMN createdAt INTEGER;`,
+
+    /*
+     * WHO HOLDS THE BACK OFFICE SEAT, in words.
+     *
+     * `backOfficeAmId` arrived with §7 and an id is not a person: this app
+     * holds no user table, so a screen could say the seat was filled and never
+     * who filled it. `leadManagerName` has ridden down beside its own id since
+     * the funnel shipped for exactly this reason, and §7 gives the back office
+     * real work at several rungs — "somebody at the office is holding this" is
+     * a worse sentence than a name, when the name exists.
+     */
+    `ALTER TABLE leads ADD COLUMN backOfficeAmName TEXT;`,
+  ],
+
+  /* ---- the office's own reading of the shop, arriving --------------------
+   *
+   * Three channels that went UP and never came back, and each of them breaks
+   * something on the record this phone draws.
+   */
+  [
+    /*
+     * WHO MADE THE CALL, in words.
+     *
+     * `lead_validations` has carried `calledAt` and a verdict since §E shipped
+     * and no name for the person behind either, because every row in it was
+     * written on THIS phone by the man holding it — asking who made it was
+     * asking who he was. The office's own calls change that: "the office rang
+     * them" is a sentence about somebody, and a card that cannot say who is one
+     * a salesman cannot act on, because the answer to a figure he disagrees
+     * with is to ring that person back.
+     *
+     * Resolved by the office rather than looked up here, for the reason
+     * `leadManagerName` already rides beside its id: this app holds no user
+     * table.
+     */
+    `ALTER TABLE lead_validations ADD COLUMN calledByName TEXT;`,
+
+    /*
+     * §5.2 — WHO CHANGED WHAT ON THIS LEAD, AND WHY.
+     *
+     * The corrected VALUES have always reached the phone, on the lead itself.
+     * The record of the correction never has — so a salesman opened a shop he
+     * had answered for last week and found his figure quietly replaced, with
+     * nothing anywhere saying who replaced it or on what grounds. That is the
+     * SILENT OVERWRITE the whole verification mechanism exists to prevent,
+     * kept honestly on the web and broken here.
+     *
+     * REFERENCE and not owned: nothing on this phone writes this table. A
+     * salesman's own Confirm/Correct/Unable-to-verify answers wait in `kv`
+     * until a lead save carries them up as `fieldChecks`, and they come back
+     * here as rows once the office has them. So a plain upsert is right, with
+     * no `syncState` guard to keep — there is no local answer for a pull to
+     * write over.
+     *
+     * All three verdicts, because they are three different facts. A
+     * confirmation is evidence somebody asked again and got the same answer;
+     * `unverified` is we asked and could not establish it. Folding either into
+     * the other is how a figure nobody could check comes to look checked.
+     *
+     * `validationId` is NULLABLE and the null is the answer to WHICH DOOR: a
+     * check made on the office's call names one, a check made standing in the
+     * shop names none. A second column saying the same thing is a column that
+     * can contradict this one.
+     *
+     * `changedAt` is epoch milliseconds like every other instant here.
+     */
+    `CREATE TABLE IF NOT EXISTS lead_field_checks (
+      id TEXT PRIMARY KEY,
+      customerId TEXT NOT NULL,
+      validationId TEXT,
+      field TEXT NOT NULL,
+      verdict TEXT NOT NULL,
+      original TEXT,
+      corrected TEXT,
+      reason TEXT,
+      changedById TEXT,
+      changedByName TEXT,
+      changedAt INTEGER NOT NULL
+    );`,
+    /* The record draws these one field at a time, newest first, for one lead.
+       That is the only question asked of this table and it is the index. */
+    `CREATE INDEX IF NOT EXISTS idx_lead_checks_cust ON lead_field_checks(customerId, changedAt DESC);`,
+  ],
+
+  /* ---- §8's other twelve answers, which had nowhere to land here ---------
+   *
+   * `mbos_lead_validations` has a column for each of §8's seventeen questions;
+   * this table had five of them, the wire declared the same five, and
+   * `app/validate.tsx` filtered its own form down to match. So the one call
+   * that authorises a sample could not record whether the SHOP said it was
+   * ready for a trial — §5.4 turns on that answer — and a call made from a car
+   * recorded a third of the conversation a call made at a desk did, into one
+   * table, with nothing on either row saying which it was.
+   *
+   * TEXT and not INTEGER, exactly as the office's own columns are: "he came but
+   * only for five minutes" and "ready once the season turns" are the answers
+   * worth having and a tick cannot hold either. NULL stays "nobody asked" and a
+   * filled box stays "asked, including where the answer was no" — no default
+   * turns one into the other at either end.
+   *
+   * Adding the block IS adding the migration: `SCHEMA_VERSION` counts them.
+   */
+  [
+    `ALTER TABLE lead_validations ADD COLUMN salesmanVisited TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN mahekExplained TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN productUnderstood TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN currentProduct TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN growthPotential TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN priceConcern TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN genuineInterest TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN creditConcern TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN competitorConcern TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN readyForTrial TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN readyForCommercial TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN readyForOrder TEXT;`,
+  ],
+
 ];
 
 /**
@@ -1690,6 +2008,10 @@ export const OWNED_TABLES = [
      salesman recorded about a shop is the record even where the office's own
      copy disagrees about a stage. */
   'lead_events', 'sample_feedback',
+  /* The validation call is his work when he makes it and the office's when
+     they do, and both land here under one id — so it is owned in the same
+     sense `leads` is, and a pull writes it only under `syncState = 'synced'`. */
+  'lead_validations',
   /* The day and its legs are his work, not the office's — a pull must never
      delete a leg he recorded in a market and has not sent yet. */
   'expense_days', 'travel_legs',
@@ -1701,6 +2023,10 @@ export const REFERENCE_TABLES = [
   'journey_stops', 'leave_balances', 'holidays', 'documents', 'courses',
   'notifications', 'performance', 'salary',
   'customer_orders', 'customer_payments', 'customer_bills',
+  /* The record of who checked a finding and what came of it. Written only by
+     the office — a salesman's own checks go up through the lead save and come
+     back here — so there is never a local answer for a pull to lose. */
+  'lead_field_checks',
   /* The policy and the modes are the office's, wholly. `expense_exceptions`
      is too: they are the office's questions about his day, and a question he
      has already answered comes back answered rather than being kept here. */

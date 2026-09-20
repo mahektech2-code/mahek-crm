@@ -6,7 +6,10 @@ import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, Secon
 import { VoiceField } from '../src/components/ui/dictate';
 import { Icon } from '../src/components/ui/Icon';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
+import { CommitmentCard } from '../src/components/leads/commitment-card';
+import { CommitmentSheet } from '../src/components/leads/commitment-sheet';
 import { NextActionSheet } from '../src/components/leads/next-action-sheet';
+import { RelationshipChain } from '../src/components/leads/relationship-chain';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
@@ -17,7 +20,14 @@ import {
   touchLead,
   type Lead,
 } from '../src/data/leads';
-import { validationsFor } from '../src/data/validations';
+import { validationsFor, verificationChecksFor, type VerificationCheck } from '../src/data/validations';
+import { FieldCheckNote, checksByField, valueFromChecks } from '../src/components/leads/field-check-note';
+import { CommunicationPanel } from '../src/components/leads/communication-panel';
+import {
+  communicationLog,
+  recordCommunication,
+  type CommunicationLog,
+} from '../src/data/lead-communication';
 import { callNumber } from '../src/lib/messaging';
 import {
   addLeadNote,
@@ -27,6 +37,8 @@ import {
   leadEvents,
   leadFunnelView,
   markLost,
+  putOnHold,
+  recordExpectedOrder,
   setLeadParties,
   setNextAction,
   setSalesType,
@@ -37,14 +49,19 @@ import {
 import { currentSession } from '../src/data/session';
 import { leadAlert, type LeadThresholds } from '../src/engines/leads';
 import {
+  findingLabel,
   gateTo,
   isParked,
   isTerminal,
+  labelOf,
   ladderFor,
   offeredSalesTypes,
+  REASON_CODE_NEEDING_REMARKS,
   salesTypeLabel,
   stageLabel,
   stageSentence,
+  VERIFICATION_COLUMNS,
+  VERIFICATION_QUESTIONS,
   type LeadSalesType,
   type LeadStage,
 } from '../src/engines/funnel';
@@ -79,6 +96,33 @@ const STAGE_TONE: Record<string, BadgeTone> = {
   Lost: 'danger',
 };
 
+/**
+ * §4.1 — the manager's three, in a colour and a word.
+ *
+ * `high` is `danger` rather than `amber` deliberately: it is the one that has
+ * to survive being glanced at beside a stage badge, and amber is already what a
+ * blocked commitment and a parked lead use. `low` is drawn plainly — somebody
+ * has judged it and said "not first", which is information, and colouring it
+ * would make a screen of low-priority leads look like a screen of problems.
+ */
+const PRIORITY_TONE: Record<string, BadgeTone> = {
+  high: 'danger',
+  medium: 'amber',
+  low: 'neutral',
+};
+
+/** The stored word, in one somebody would say. Anything unrecognised is drawn
+    as it arrived rather than swallowed: a fourth value added at a desk should
+    read as itself on an older handset, not vanish. */
+function priorityWord(p: string): string {
+  switch (p) {
+    case 'high': return 'High priority';
+    case 'medium': return 'Medium priority';
+    case 'low': return 'Low priority';
+    default: return p;
+  }
+}
+
 export default function LeadRecord() {
   const params = useLocalSearchParams<{ id?: string }>();
   const id = params.id ?? '';
@@ -109,8 +153,53 @@ export default function LeadRecord() {
      screen suggesting he move it. */
   const [returning, setReturning] = React.useState(false);
 
+  /*
+   * PARKING IS THREE QUESTIONS AND THEY ARE ASKED ONE AT A TIME.
+   *
+   * Why it stopped, the day it comes back, and what happens when it does —
+   * none of them optional, because a park missing any one of the three is the
+   * state the whole thing exists to prevent. They are three sheets rather than
+   * one long form for the reason the rest of this app is built: each is a
+   * question somebody can answer standing in a shop, and the two that already
+   * have a component here — `ReasonSheet` and `NextActionSheet` — are the same
+   * two questions the funnel asks everywhere else, in the same words.
+   *
+   * ONE piece of state and not three booleans. Three would let two sheets be
+   * open at once and would let the second be reached with the first unanswered
+   * — and what the second and third ask depends on what the first said, so the
+   * answers travel WITH the step rather than in three fields that can be
+   * cleared independently.
+   */
+  const [hold, setHold] = React.useState<
+    | null
+    | { step: 'why' }
+    | { step: 'until'; code: string; note: string }
+    | { step: 'next'; code: string; note: string; until: string }
+  >(null);
+  /*
+   * A `ref` and not `useState`, and this is earned rather than stylistic: a
+   * state flag is read from the closure of the render that drew the button, so
+   * a second press landing before React has re-rendered sees the old `false`
+   * and parks the lead twice. It has already cost this app duplicate visits,
+   * complaints and samples.
+   */
+  const parking = React.useRef(false);
+
+  const [commitOpen, setCommitOpen] = React.useState(false);
+  /* A ref rather than state, for the reason `parking` beside it gives: a
+     second press lands before React has re-rendered and records the promise
+     twice. */
+  const committing = React.useRef(false);
+
   const [checks, setChecks] = React.useState<Awaited<ReturnType<typeof validationsFor>>>([]);
+  const [fieldChecks, setFieldChecks] = React.useState<VerificationCheck[]>([]);
   const [photo, setPhoto] = React.useState<{ uri: string | null } | null>(null);
+  /* §10.4 — the eleven ways of reaching out, what each of them would send, and
+     what has already gone. Null until the first read: an empty log and a log
+     nobody has read yet are different things, and drawing eleven buttons all
+     reading "nothing sent" over a record that has had six would be worse than
+     drawing nothing for a moment. */
+  const [comms, setComms] = React.useState<CommunicationLog | null>(null);
 
   const load = React.useCallback(() => {
     let live = true;
@@ -125,15 +214,23 @@ export default function LeadRecord() {
          produces that nothing else could — the office's answer beside the
          salesman's — was written down and never shown to either of them. */
       validationsFor(id),
+      /* §5.2 — WHO CHANGED WHAT ON THIS LEAD, AND WHY. The corrected values
+         have always reached this phone, on the lead itself; the record of the
+         correction reached it on no channel at all, so a figure a salesman
+         answered for last week came back silently replaced. */
+      verificationChecksFor(id),
       shopPhoto(id),
-    ]).then(([v, e, t, s, calls, shot]) => {
+      communicationLog(id),
+    ]).then(([v, e, t, s, calls, verifications, shot, reach]) => {
       if (!live) return;
       setView(v);
       setEvents(e);
       setCfg(t);
       setMe(s ? { id: s.user.id, name: s.user.name } : null);
       setChecks(calls);
+      setFieldChecks(verifications);
       setPhoto(shot);
+      setComms(reach);
     });
     return () => {
       live = false;
@@ -171,13 +268,36 @@ export default function LeadRecord() {
      which is how a salesman learns not to fill them. Only what was actually
      answered is drawn: a column of "Not recorded" rows would be an invitation
      to fill boxes this screen has nowhere to open. */
-  const learned: { label: string; value: string }[] = [];
+  const learned: { label: string; value: string; finding?: string }[] = [];
   if (lead.address?.trim()) learned.push({ label: 'Where it is', value: lead.address.trim() });
-  if (lead.requirement?.trim()) learned.push({ label: 'What they want', value: lead.requirement.trim() });
+  if (lead.requirement?.trim()) {
+    learned.push({ label: 'What they want', value: lead.requirement.trim(), finding: 'required_product' });
+  }
   const litres = lead.monthlyLitres ?? lead.monthlyVolumeLitres;
-  if (litres != null) learned.push({ label: 'Gets through', value: plural(litres, 'litre') + ' a month' });
+  if (litres != null) {
+    learned.push({ label: 'Gets through', value: plural(litres, 'litre') + ' a month', finding: 'monthly_litres' });
+  }
   const onNow = lead.competitor?.trim() || lead.competitorName?.trim();
-  if (onNow) learned.push({ label: 'Buys from now', value: onNow });
+  if (onNow) learned.push({ label: 'Buys from now', value: onNow, finding: 'competitor' });
+
+  /* §5.2 — EVERY CHECK IS BESIDE THE FIELD IT IS ABOUT, and that is what
+     decides the shape of this list rather than a panel further down.
+     A "Corrections" section under the timeline is one a salesman has to match
+     against the values above it by eye, one field code at a time, standing in
+     the shop the disagreement is about. Under the value there is nothing to
+     match: what the record says and how it came to say it are one thing.
+
+     Six of the nine findings have no line up there — who we ask for, who signs
+     off, the credit they want and the rest — so a check on one of those would
+     have nothing to sit under and would fall off the screen in silence. They
+     get a line of their own, labelled in the finding's own words and carrying
+     whatever the checks themselves say the value is. */
+  const byFinding = checksByField(fieldChecks);
+  const drawn = new Set(learned.map((l) => l.finding).filter(Boolean));
+  for (const [field, rows] of byFinding) {
+    if (drawn.has(field)) continue;
+    learned.push({ label: findingLabel(field), value: valueFromChecks(rows) ?? '—', finding: field });
+  }
 
   /* --------------------------------------------------------- §4 the window
    *
@@ -274,7 +394,27 @@ export default function LeadRecord() {
               {[lead.company?.trim() ? lead.name : null, lead.city, lead.source].filter(Boolean).join(' · ')}
             </T>
           </View>
-          <Badge tone={STAGE_TONE[lead.stage] ?? 'neutral'}>{stageLabel(stage)}</Badge>
+          <View style={{ alignItems: 'flex-end', gap: 6 }}>
+            <Badge tone={STAGE_TONE[lead.stage] ?? 'neutral'}>{stageLabel(stage)}</Badge>
+            {/* §4.1 — HOW HARD TO PUSH, and it is READ-ONLY on this phone.
+                It is the manager's judgement about the WORK — which of forty
+                leads to get to first — as against the potential below, which is
+                a judgement about the account. A priority the person being
+                measured could set himself would follow whatever he felt like
+                doing, which is why `lead.verify` gates it and why there is no
+                control here. It has ridden down on every pull since the wire
+                change and was drawn by nothing, so a manager marking forty
+                leads high was talking to himself.
+
+                Null is nobody having judged it and is NOT the same as low, so
+                nothing is drawn at all — a "Low" badge on an unjudged lead is a
+                verdict the screen invented. */}
+            {lead.priority ? (
+              <Badge tone={PRIORITY_TONE[lead.priority] ?? 'neutral'}>
+                {priorityWord(lead.priority)}
+              </Badge>
+            ) : null}
+          </View>
         </View>
 
         <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 8 }}>{stageSentence(stage)}</T>
@@ -333,6 +473,15 @@ export default function LeadRecord() {
             label="Might buy"
             value={lead.estimatedPotentialPaise ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month' : 'Not estimated'}
           />
+          {/* Where it actually came from, in more words than "manual". The
+              subtitle above carries the SOURCE, which on a real book is one of
+              eight codes; this is the sentence behind it — which exhibition,
+              whose referral — and it is the half somebody opens the record for.
+              Drawn only where there is one: an empty row labelled "Came from"
+              is an invitation to fill a box this screen cannot open. */}
+          {lead.sourceDetail?.trim() ? (
+            <Line label="Came from" value={lead.sourceDetail.trim()} />
+          ) : null}
           <Line label="Visits" value={plural(visits, 'visit')} />
           <Line label="Next follow-up" value={lead.nextFollowUpDate ? pretty(lead.nextFollowUpDate) : 'None set'} />
         </View>
@@ -391,7 +540,14 @@ export default function LeadRecord() {
             {learned.length > 0 ? (
               <View style={{ gap: 8 }}>
                 {learned.map((l) => (
-                  <Line key={l.label} label={l.label} value={l.value} />
+                  <View key={l.label}>
+                    <Line label={l.label} value={l.value} />
+                    {/* Under the value, never in a list of its own — see
+                        `field-check-note.tsx`. A field nobody has checked
+                        draws nothing at all, which is the ordinary case and
+                        has to stay silent. */}
+                    <FieldCheckNote checks={l.finding ? (byFinding.get(l.finding) ?? []) : []} />
+                  </View>
                 ))}
               </View>
             ) : null}
@@ -501,8 +657,54 @@ export default function LeadRecord() {
                 <T style={{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 8 }}>
                   {lead.holdReason
                     ? 'Waiting: ' + lead.holdReason
-                    : 'Nobody wrote down what it is waiting for.'}
+                    : lead.holdReasonCode
+                      ? 'Waiting: ' + labelOf(config.holdReasons, lead.holdReasonCode)
+                      : 'Nobody wrote down what it is waiting for.'}
                 </T>
+                {/* THE CODE AS WELL AS THE SENTENCE, where there are both.
+                    `holdReason` is what somebody typed and this is the coded
+                    answer beside it — the one that can be counted, and the one
+                    the office's own reports read. It has come down on the wire
+                    since that change landed and was drawn nowhere, so a lead
+                    parked from a desk under a named reason read on this phone
+                    as one parked for nothing. The label is resolved from the
+                    configured list, never printed raw: `budget_issue` on a
+                    card is the database talking. */}
+                {lead.holdReasonCode && lead.holdReason ? (
+                  <T s="caption" style={{ marginTop: 4 }}>
+                    {labelOf(config.holdReasons, lead.holdReasonCode)}
+                  </T>
+                ) : null}
+                {/* WHEN IT COMES BACK, said on the record rather than left to
+                    the diary field further down the page. A park with a reason
+                    and no end date is the state this exists to prevent, so the
+                    day it ends belongs beside the reason it started — and a
+                    parked lead whose card says nothing about a date reads as
+                    one nobody is watching, which is exactly what it would then
+                    be. It is `nextFollowUpDate` because that is the one column
+                    this phone brings a lead back on: `listLeads` orders by it
+                    and `leadAlert` measures lateness from it. */}
+                {/* THE OFFICE'S OWN RESUME DATE WINS where it has one.
+                    `holdResumeDate` is the day the park was set to end when it
+                    was set at a desk, and it now reaches this phone; the
+                    follow-up date beside it is the column this app brings a
+                    lead back on, which `putOnHold` fills in from the same
+                    answer when the park was made here. Where the two disagree
+                    the office's is the one somebody decided, so it is the one
+                    said out loud — and where only the follow-up exists nothing
+                    is lost, because that is how every park made on this phone
+                    is stored. */}
+                {lead.holdResumeDate ?? lead.nextFollowUpDate ? (
+                  <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 6 }, weight(500)]}>
+                    {(lead.holdResumeDate ?? lead.nextFollowUpDate!) <= today
+                      ? 'It was due back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!) + ' — pick it up'
+                      : 'Comes back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!)}
+                  </T>
+                ) : (
+                  <T style={{ fontSize: 15, lineHeight: 21, color: C.warnInk, marginTop: 6 }}>
+                    No day was set for it to come back. Nothing will bring it back to you.
+                  </T>
+                )}
                 <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
                   It is not lost and nothing about it has been given up on. Nothing climbs until somebody says
                   which rung it comes back to.
@@ -591,10 +793,54 @@ export default function LeadRecord() {
         </View>
       )}
 
+      {/* ------------------------------------------- §5.9 the chain --------
+
+          Drawn only on a shop somebody else invoices, because that is the only
+          shape it is true of. See `RelationshipChain` for why it is four boxes
+          and why the sentence about commercial authority sits under them. */}
+      {lead.thirdParty ? (
+        <View style={{ marginTop: 20 }}>
+          <SectionLabel style={{ marginBottom: 10 }}>Who this shop goes through</SectionLabel>
+          <RelationshipChain
+            shopName={title}
+            distributorSalesmanName={lead.distributorSalesmanName}
+            distributorName={lead.distributorName}
+            distributorCount={lead.distributorCount}
+            /* The Mahek end of the chain is the lead manager — the seat that
+               picks a qualified lead up and runs the conversion. It is the
+               person the distributor's own side actually deals with, and it is
+               already on the row with its name beside its id, because this
+               phone holds no user table to resolve one. */
+            salesManagerName={lead.leadManagerName}
+          />
+        </View>
+      ) : null}
+
       {/* -------------------------------------------------------- the forms */}
       {settled ? null : (
         <View style={{ marginTop: 20, gap: 10 }}>
           <SectionLabel style={{ marginBottom: 0 }}>The work</SectionLabel>
+
+          {/* §5.5 — THE COMMITMENT, and it sits at the TOP of the work.
+              It is the one condition in front of `first_order` that is this
+              salesman's to satisfy; everything under it on this list is a form
+              he fills in earlier on the ladder. Drawn only where the ladder he
+              is on actually has that rung: a legacy lead climbs the six this
+              app shipped with and a first order is not one of them, so a card
+              about it would be a question nobody asked. */}
+          {ladder.includes('first_order') ? (
+            <CommitmentCard
+              date={lead.expectedOrderDate}
+              valuePaise={lead.expectedOrderValuePaise}
+              quantityCans={lead.expectedOrderQuantityCans}
+              blockerCode={lead.expectedOrderBlockerCode}
+              blockers={config.orderBlockers}
+              hasOrder={lead.hasOrder === 1}
+              countingOrderCount={lead.countingOrderCount}
+              today={today}
+              onRecord={() => setCommitOpen(true)}
+            />
+          ) : null}
 
           <SecondaryButton
             label="Prospect details — the eight answers"
@@ -645,6 +891,41 @@ export default function LeadRecord() {
         </View>
       )}
 
+      {/* ------------------------------------------------ §10.4 reaching out --
+
+          It sits under the work and above the follow-up date deliberately: it
+          is what he DOES between today and the day he goes back, and a panel
+          of eleven contact buttons above the qualification forms would read as
+          the app suggesting a brochure where it should be asking for answers.
+
+          Drawn only on a live lead, like everything else in this half of the
+          screen. Sending a price list to a shop somebody wrote off last month
+          is not a thing to make one tap away. */}
+      {settled || !comms ? null : (
+        <CommunicationPanel
+          log={comms}
+          onDial={
+            lead.mobile
+              ? () => {
+                  void callNumber(lead.mobile!).then((out) => {
+                    if (out.status === 'failed') notify(out.reason);
+                  });
+                }
+              : undefined
+          }
+          onRecord={(args) => {
+            void recordCommunication({ customerId: lead.id, ...args }).then((r) => {
+              if (!r.ok) return notify(r.message);
+              /* The clock moves on this exactly as it does on a ring from the
+                 header: reaching out IS work on the lead, and a record that
+                 aged while somebody was working it is how a live shop reaches
+                 the staleness sweep. */
+              void touchLead(lead.id, today).then(load);
+            });
+          }}
+        />
+      )}
+
       {/* --------------------------------------------------- follow-up */}
       {settled ? null : (
         <View style={{ marginTop: 20 }}>
@@ -679,7 +960,22 @@ export default function LeadRecord() {
 
           `confirmedRequirement` is the point of the whole exercise: what the
           office was told on the phone, kept apart from what the salesman was
-          told standing in the shop, precisely so the two can disagree. */}
+          told standing in the shop, precisely so the two can disagree.
+
+          AND THE OFFICE'S OWN CALLS ARRIVE HERE NOW. This list was every call
+          made on THIS PHONE and nothing else — `mbos_lead_validations` went up
+          and never came back — so a salesman could not see that the office had
+          rung his customer, what they were told, or the one that matters, that
+          the requirement he reported had been contradicted. It is the same
+          table either way, under the same row id, which is what keeps a call
+          made here from appearing twice.
+
+          ALL FOUR FIGURES ARE DRAWN, not the requirement alone. The other
+          three are a volume, a competitor and a potential, and each of them is
+          a number somebody will quote back at him. Where one disagrees with
+          what he has, the disagreement is SAID: it is the single most useful
+          thing this call produces, and a screen that prints both figures and
+          leaves the reader to notice is a screen that produces it for nobody. */}
       {checks.length ? (
         <View style={{ marginTop: 20 }}>
           <SectionLabel style={{ marginBottom: 10 }}>The office rang them</SectionLabel>
@@ -705,14 +1001,58 @@ export default function LeadRecord() {
                     <Badge tone={tone}>{verdictWord(v.verdict)}</Badge>
                   </View>
                   <T s="caption" style={{ marginTop: 3 }}>
-                    {pretty(isoDate(new Date(v.calledAt)))}
+                    {[
+                      pretty(isoDate(new Date(v.calledAt))),
+                      /* An id is not a person, and the answer to a figure he
+                         disagrees with is to ring whoever wrote it down. */
+                      v.calledByName,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                     {v.syncState === 'queued' ? ' · not sent yet' : ''}
                   </T>
-                  {v.confirmedRequirement ? (
-                    <T style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
-                      {'They told the office: ' + v.confirmedRequirement}
+                  {told(v, lead).map((t) => (
+                    <View key={t.label} style={{ marginTop: 6 }}>
+                      <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>
+                        {t.label + ': ' + t.said}
+                      </T>
+                      {/* Drawn only where the two readings differ. A shop that
+                          told the office the same thing it told him is a
+                          confirmation and reads as one; printing "you had the
+                          same" under every agreeing figure is four lines of
+                          furniture over the one that is not furniture. */}
+                      {t.differsFrom ? (
+                        <T s="caption" style={{ marginTop: 1, color: C.muted }}>
+                          {'You have: ' + t.differsFrom}
+                        </T>
+                      ) : null}
+                    </View>
+                  ))}
+                  {v.salesmanFeedback?.trim() ? (
+                    <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 6 }}>
+                      {'About the visit: ' + v.salesmanFeedback.trim()}
                     </T>
                   ) : null}
+                  {/* §8's OTHER ANSWERS, in §8's own words. The call asks
+                      seventeen questions and this card drew five, because five
+                      was all the wire carried — so the office's own reading of
+                      the shop arrived a third told. The ones that decide the
+                      next move are among the twelve: whether the SHOP said it
+                      was ready for a trial, which is what §5.4 sends a sample
+                      on, and whether the objection is the price or the credit,
+                      which is what decides what we offer.
+
+                      An unanswered question is LEFT OUT rather than drawn
+                      blank. Null is nobody having asked, and a line reading
+                      "Any concern about price? —" asserts the shop said no. */}
+                  {alsoSaid(v).map((a) => (
+                    <View key={a.id} style={{ marginTop: 6 }}>
+                      <T s="caption">{a.ask}</T>
+                      <T style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 1 }}>
+                        {a.said}
+                      </T>
+                    </View>
+                  ))}
                   {v.verdictReason ? (
                     <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>
                       {v.verdictReason}
@@ -772,6 +1112,18 @@ export default function LeadRecord() {
         {settled ? null : (
           <>
             <PrimaryButton label="Convert to customer" onPress={convert} />
+            {/* ON HOLD SITS BESIDE LOST, AND THAT PLACEMENT IS THE POINT.
+                This is the moment a salesman is standing in front of the two
+                answers — the plant is shut for two months, or they are never
+                buying — and until now only one of them was on the screen. A
+                park drawn anywhere else is a park nobody finds at the moment
+                they are reaching for Lost, and Lost is the one that cannot be
+                taken back in the reader's mind. It is offered only where the
+                lead is still being worked: a parked lead has the card above
+                with "Bring it back" on it, and parking a park says nothing. */}
+            {parked ? null : (
+              <SecondaryButton label="Put it on hold" onPress={() => setHold({ step: 'why' })} />
+            )}
             <SecondaryButton label="Mark lost" onPress={() => setLost(true)} />
           </>
         )}
@@ -826,6 +1178,107 @@ export default function LeadRecord() {
 
       {suspectSheet()}
 
+      {/* ------------------------------------------------- §— the park, in three
+
+          Each sheet hands its answers to the next one in `hold`, and the write
+          happens once, at the end of the third — so a salesman who backs out
+          half way has parked nothing, which is right: two of three answers is
+          the park this whole flow exists to refuse. Every one of them is keyed
+          on the step it belongs to, so it remounts with fresh state rather
+          than being reset in an effect, which the React Compiler rules forbid
+          and which is how a second park would arrive carrying the first's
+          answers. */}
+      <ReasonSheet
+        key={hold?.step === 'why' ? 'hold-why-open' : 'hold-why-shut'}
+        open={hold?.step === 'why'}
+        onClose={() => setHold(null)}
+        title="Put this lead on hold?"
+        body={
+          title +
+          ' stops being chased until the day you name. It is not lost, it stays on your list, and nothing about it is given up on.'
+        }
+        options={config.holdReasons}
+        confirmLabel="Next — when does it come back?"
+        noteLabel="What they actually said"
+        /* Only "Other" costs a sentence. A code meaning "something else" with
+           nothing behind it is the one row nobody can act on afterwards, and
+           it is the code people reach for when the list does not fit. */
+        noteRequiredForCode={REASON_CODE_NEEDING_REMARKS}
+        onConfirm={(code, said) => setHold({ step: 'until', code, note: said })}
+      />
+
+      <BottomSheet open={hold?.step === 'until'} onClose={() => setHold(null)} scroll>
+        <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
+          When does it come back?
+        </T>
+        <T s="caption" style={{ marginTop: 2 }}>
+          {/* The sentence says what the date DOES, because a date on a screen
+              that does nothing is how "back after Diwali" became a lead nobody
+              looked at for six months. */}
+          On this day it returns to your list with the action you set next.
+        </T>
+        <View style={{ marginTop: 14 }}>
+          <Calendar
+            key={hold?.step === 'until' ? 'hold-cal-open' : 'hold-cal-shut'}
+            selected=""
+            /* Today is refused rather than merely past days: a hold that ends
+               on the day it is made is not a hold, and the screen saying so is
+               kinder than a park that quietly means nothing. */
+            disabledReason={(iso) =>
+              iso <= today ? 'A hold has to end after today, or it is not a hold.' : null
+            }
+            onPick={(iso) =>
+              setHold((h) => (h?.step === 'until' ? { step: 'next', code: h.code, note: h.note, until: iso } : h))
+            }
+          />
+        </View>
+        <SecondaryButton
+          label="Cancel"
+          onPress={() => setHold(null)}
+          style={{ minHeight: 48, height: 48, marginTop: 10, borderRadius: radius.xl }}
+        />
+      </BottomSheet>
+
+      <NextActionSheet
+        key={hold?.step === 'next' ? 'hold-next-open' : 'hold-next-shut'}
+        open={hold?.step === 'next'}
+        onClose={() => setHold(null)}
+        meId={me?.id ?? ''}
+        meName={me?.name ?? 'You'}
+        managerId={lead.leadManagerId}
+        managerName={lead.leadManagerName}
+        /* Pre-filled with the day the park ends, because that is the ordinary
+           answer — the action is what happens WHEN it comes back. He can move
+           it, and the lead still returns to his list on the resume date rather
+           than on whatever he moved it to: `putOnHold` says why. */
+        current={{
+          action: lead.nextAction,
+          date: hold?.step === 'next' ? hold.until : null,
+          ownerId: lead.nextActionOwnerId,
+        }}
+        onSave={(n) => {
+          if (hold?.step !== 'next') return;
+          if (parking.current) return;
+          parking.current = true;
+          const until = hold.until;
+          setHold(null);
+          void putOnHold(lead.id, {
+            reasonCode: hold.code,
+            note: hold.note,
+            resumeDate: until,
+            next: n,
+          })
+            .then((r) => {
+              if (!r.ok) return notify(r.message);
+              load();
+              notify('On hold until ' + dmy(until));
+            })
+            .finally(() => {
+              parking.current = false;
+            });
+        }}
+      />
+
       <NextActionSheet
         key={nextOpen ? 'next-open' : 'next-shut'}
         open={nextOpen}
@@ -855,6 +1308,46 @@ export default function LeadRecord() {
             load();
             notify(salesTypeLabel(t) + ' — back to the foot of that ladder');
           });
+        }}
+      />
+
+      {/* §5.5 §9 — what they said they would order. Keyed like every other
+          sheet here so it remounts with the record's own answers rather than
+          being reset in an effect. */}
+      <CommitmentSheet
+        key={commitOpen ? 'commit-open' : 'commit-shut'}
+        open={commitOpen}
+        today={today}
+        productName={lead.requiredProductName}
+        blockers={config.orderBlockers}
+        current={{
+          date: lead.expectedOrderDate,
+          quantityCans: lead.expectedOrderQuantityCans,
+          valuePaise: lead.expectedOrderValuePaise,
+          blockerCode: lead.expectedOrderBlockerCode,
+        }}
+        onClose={() => setCommitOpen(false)}
+        onSave={(c) => {
+          if (committing.current) return;
+          committing.current = true;
+          setCommitOpen(false);
+          void recordExpectedOrder(lead.id, {
+            expectedDate: c.date,
+            expectedQuantityCans: c.quantityCans,
+            expectedValuePaise: c.valuePaise,
+            blockerCode: c.blockerCode,
+          })
+            .then((r) => {
+              if (!r.ok) return notify(r.message);
+              load();
+              /* The confirmation says what it DID and, in the same breath, what
+                 it did not: a salesman who has just written down a promise will
+                 reasonably look for the ladder to have moved. */
+              notify(plural(c.quantityCans, 'can') + ' expected ' + dmy(c.date) + ' — noted, not ordered');
+            })
+            .finally(() => {
+              committing.current = false;
+            });
         }}
       />
 
@@ -1111,6 +1604,110 @@ function PartiesSheet({
  * falls through to "Waiting" rather than being printed raw — a verdict added
  * at a desk should read as pending on an older handset, not as an enum.
  */
+/**
+ * §8 — WHAT THE SHOP TOLD THE OFFICE, beside what it told him.
+ *
+ * The four `confirmed*` figures are never written over the lead's own columns,
+ * at either end, and the schema says why at length: what the salesman was told
+ * standing in the shop and what the office was told on the phone are two
+ * readings of one shop, and the whole value of the call is that they can
+ * disagree. This is the reading back — the half that had no screen.
+ *
+ * The second line is drawn ONLY WHERE THEY DIFFER. A figure the shop repeated
+ * is a confirmation and reads as one; printing "you have the same" under all
+ * four would bury the one row that is not furniture, which is the same mistake
+ * the microphone made when it was drawn at the weight of the resize grip.
+ *
+ * A figure the office did not ask about is left out entirely rather than drawn
+ * as a blank. Null here is nobody having asked, not the shop having said
+ * nothing — and a row saying "Gets through: —" asserts the second.
+ */
+function told(
+  v: Awaited<ReturnType<typeof validationsFor>>[number],
+  lead: Lead,
+): { label: string; said: string; differsFrom: string | null }[] {
+  const rows: { label: string; said: string; differsFrom: string | null }[] = [];
+
+  const differs = (a: string | null | undefined, b: string | null | undefined) => {
+    const mine = (b ?? '').trim();
+    /* Nothing to disagree WITH is not a disagreement. A lead the salesman
+       never answered for is one the office has just filled in, and calling
+       that a contradiction would put an accusation on an empty field. */
+    if (!mine) return null;
+    return mine.toLowerCase() === (a ?? '').trim().toLowerCase() ? null : mine;
+  };
+
+  if (v.confirmedRequirement?.trim()) {
+    rows.push({
+      label: 'What they want',
+      said: v.confirmedRequirement.trim(),
+      differsFrom: differs(v.confirmedRequirement, lead.requirement),
+    });
+  }
+  if (v.confirmedMonthlyVolumeLitres != null) {
+    const mine = lead.monthlyLitres ?? lead.monthlyVolumeLitres;
+    rows.push({
+      label: 'Gets through',
+      said: plural(v.confirmedMonthlyVolumeLitres, 'litre') + ' a month',
+      differsFrom:
+        mine != null && mine !== v.confirmedMonthlyVolumeLitres ? plural(mine, 'litre') + ' a month' : null,
+    });
+  }
+  if (v.confirmedCompetitor?.trim()) {
+    rows.push({
+      label: 'Buys from now',
+      said: v.confirmedCompetitor.trim(),
+      differsFrom: differs(v.confirmedCompetitor, lead.competitor ?? lead.competitorName),
+    });
+  }
+  if (v.confirmedPotentialPaise != null) {
+    const mine = lead.estimatedPotentialPaise;
+    rows.push({
+      label: 'Could be worth',
+      said: inrFromPaise(v.confirmedPotentialPaise) + ' a month',
+      differsFrom: mine != null && mine !== v.confirmedPotentialPaise ? inrFromPaise(mine) + ' a month' : null,
+    });
+  }
+
+  return rows;
+}
+
+/**
+ * WHAT ELSE THE OFFICE ASKED, AND WHAT THEY SAID TO IT.
+ *
+ * `told` above is the four CONFIRMED figures, which are drawn as a comparison
+ * because their whole value is that they can disagree with what the salesman
+ * wrote down. These are the rest of §8's seventeen, which are answers and not
+ * figures: nothing on this lead contradicts them, so they are drawn as the
+ * question and the sentence under it, in the wording the caller read out.
+ *
+ * The question comes from `VERIFICATION_QUESTIONS` and the column it lands in
+ * from `VERIFICATION_COLUMNS` — the same two lists the form on this phone draws
+ * from and the office's own form writes through. A label typed in here would be
+ * the copy that drifts, and the half that drifts is the half somebody reads.
+ *
+ * The three drawn ABOVE are left out rather than repeated: `confirmedRequirement`
+ * and `confirmedCompetitor` are two of `told`'s four, and `salesmanFeedback` is
+ * the "About the visit" line. One answer printed twice on one card reads as the
+ * shop having said it twice.
+ */
+const DRAWN_ABOVE = new Set(['confirmedRequirement', 'confirmedCompetitor', 'salesmanFeedback']);
+
+function alsoSaid(
+  v: Awaited<ReturnType<typeof validationsFor>>[number],
+): { id: string; ask: string; said: string }[] {
+  const row = v as unknown as Record<string, unknown>;
+  return VERIFICATION_QUESTIONS.flatMap((q) => {
+    const column = VERIFICATION_COLUMNS[q.id];
+    if (!column || DRAWN_ABOVE.has(column)) return [];
+    const said = row[column];
+    /* A blank is nobody having asked, which is a different fact from the shop
+       having nothing to say — and only the second is worth a line. */
+    if (typeof said !== 'string' || !said.trim()) return [];
+    return [{ id: q.id, ask: q.ask, said: said.trim() }];
+  });
+}
+
 function verdictWord(v: string): string {
   switch (v) {
     case 'confirmed': return 'Confirmed';

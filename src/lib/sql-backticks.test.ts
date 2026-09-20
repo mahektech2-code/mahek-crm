@@ -66,6 +66,33 @@ function unterminatedComment(body: string): boolean {
   return depth > 0;
 }
 
+/**
+ * The OTHER shape, and the one that got through.
+ *
+ * `unterminatedComment` is exact for a `/* … *\/` comment cut in half: the
+ * block is left open and no real query contains one. It is blind to the
+ * commoner case, because SQL's own line comment is `--` and that is what the
+ * house style uses inside these templates. A backtick there ends the slice
+ * mid-sentence with nothing unclosed — the JavaScript parses, `tsc` says
+ * nothing, and the template silently stops early.
+ *
+ * That is worse than the loud version rather than better. `mbos-wire.test.ts`
+ * reads these templates AS TEXT to check which columns the server sends,
+ * slicing to the first closing backtick exactly as this file does. A truncated
+ * one made it report twenty columns as missing that were in fact sent — a
+ * guard lying in the direction of "broken", which costs an afternoon chasing a
+ * bug that is not there.
+ *
+ * The tell is exact too: a template cannot legitimately END inside a `--`
+ * comment. A real one closes on its own line or after whitespace, so the final
+ * line of the slice never begins with `--`. If it does, the backtick that
+ * closed it was sitting in that comment.
+ */
+function endsInsideLineComment(body: string): boolean {
+  const last = body.slice(body.lastIndexOf("\n") + 1).trim();
+  return last.startsWith("--");
+}
+
 describe("no backtick inside a sql template", () => {
   it("every sql`…` closes outside its own comments", () => {
     const offenders: string[] = [];
@@ -82,7 +109,7 @@ describe("no backtick inside a sql template", () => {
         const close = text.indexOf("`", from);
         if (close === -1) continue;
         const body = text.slice(from, close);
-        if (!unterminatedComment(body)) continue;
+        if (!unterminatedComment(body) && !endsInsideLineComment(body)) continue;
 
         const line = text.slice(0, from).split("\n").length;
         offenders.push(`${path.replace(process.cwd() + "/", "")}:${line}`);
@@ -103,5 +130,11 @@ describe("no backtick inside a sql template", () => {
     assert.equal(unterminatedComment("select 1 /* fine */ from t"), false);
     assert.equal(unterminatedComment("select 1 /* quoting "), true);
     assert.equal(unterminatedComment("select 1 -- fine\n from t"), false);
+
+    // The second tell, which the first one cannot see at all.
+    assert.equal(endsInsideLineComment("select 1\n  -- reads "), true);
+    assert.equal(endsInsideLineComment("select 1 -- fine\n  from t"), false);
+    assert.equal(endsInsideLineComment("select 1\n  -- a whole comment\n"), false);
+    assert.equal(unterminatedComment("select 1\n  -- reads "), false);
   });
 });

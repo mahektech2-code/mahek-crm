@@ -46,17 +46,18 @@ test('a stage nobody knows is left undefined rather than guessed at', () => {
 /* -------------------------------------------------------- the lead source */
 
 /**
- * Every one of these was a rejected lead in production.
+ * Every one of these was a rejected lead in production, and then every one of
+ * them was filed under a channel Mahek cannot count.
  *
- * `LEAD_SOURCES` in `engines/leads.ts` is what the salesman actually taps, and
- * the FIRST of them is the default — so this is not an edge case reachable by
- * an unusual pick, it is what happens when somebody fills the form in and
- * presses save without touching the source at all.
+ * These five are no longer what the salesman taps — the picker reads
+ * `leads.sources` off the pull — but they are still what an older APK has
+ * sitting in its `leads.source` column, and an edit re-sends exactly that.
+ * They keep the codes they have always mapped to rather than being promoted
+ * into the configured ten, because the office already holds those leads under
+ * the legacy code and re-sending a different one would split one lead's source
+ * across two bars of the report.
  */
-test('every source the screen offers maps to a value MahekOne holds', () => {
-  /* Kept in step with LEAD_SOURCES by hand rather than imported: importing it
-     would make the test pass by construction, and what is being asserted is
-     precisely that the two lists agree. */
+test('every source the old builds offer maps to a value MahekOne holds', () => {
   assert.equal(wireSource('Walked past'), 'cold_call');
   assert.equal(wireSource('Referral'), 'referral');
   assert.equal(wireSource('Market enquiry'), 'manual');
@@ -64,17 +65,45 @@ test('every source the screen offers maps to a value MahekOne holds', () => {
   assert.equal(wireSource('Office'), 'manual');
 });
 
-test("MahekOne's own words go back out unchanged, so an edit is not refused for being right", () => {
-  for (const v of ['manual', 'website', 'referral', 'exhibition', 'cold_call', 'whatsapp', 'campaign']) {
+/**
+ * THE CONFIGURED LIST IS NOT COMPILED IN HERE, and this is what says so.
+ *
+ * `leads.sources` arrives on a pull and a manager may add an eleventh channel
+ * this afternoon; a handset compiled last year must not silently strip it.
+ * Membership is checked on the server, where the list lives — `handleLead` —
+ * and all this end asks is whether the value is code-shaped.
+ */
+test('a code goes out untouched, including one this build has never heard of', () => {
+  for (const v of [
+    'salesman_prospecting',
+    'telecalling',
+    'customer_reference',
+    'dealer_reference',
+    'website',
+    'whatsapp',
+    'phone',
+    'exhibition',
+    'walk_in',
+    'other',
+    /* The four the old builds wrote — retained, never orphaned. */
+    'manual',
+    'referral',
+    'cold_call',
+    'campaign',
+    /* The eleventh, added by a manager after this APK shipped. */
+    'architect_reference',
+  ]) {
     assert.equal(wireSource(v), v, v + ' should survive a round trip');
   }
 });
 
 test('a source nobody knows is left undefined rather than guessed at', () => {
-  /* The same rule as the stage above, and for the same reason: the server
-     refuses the WHOLE lead over one bad enum value, so a lead that arrives
-     with no source beats a lead that never arrives. */
+  /* The same rule as the stage above, except that the lead SURVIVES: the
+     server drops an unrecognised source rather than refusing the record, so a
+     lead that arrives with no source beats one that never arrives. A word with
+     a space in it is not a code and was never one of the five labels. */
   assert.equal(wireSource('Walked pastt'), undefined);
+  assert.equal(wireSource('Some Channel'), undefined);
   assert.equal(wireSource(''), undefined);
   assert.equal(wireSource(null), undefined);
   assert.equal(wireSource(undefined), undefined);

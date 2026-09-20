@@ -19,7 +19,7 @@ import {
   sampleFeedback,
   users,
 } from "@/db/schema";
-import { orderCountsSql } from "../order-status";
+import { orderCountsSql, orderDeliveredSql } from "../order-status";
 import { getConfig } from "../config/store";
 import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
 import type { Hat } from "../access-control";
@@ -374,9 +374,15 @@ async function ledgerCounts(customerId: string): Promise<{
       (select count(*)::int from orders
         where orders.customer_id = ${customerId}
           and ${orderCountsSql("orders")}) as counting_orders,
+      /* DERIVED, never retyped. dispatched alone was the whole of this, and
+         §N's in_transit and delivered are exactly the statuses a lead reaches
+         AFTER it -- so an order the shop had confirmed arrived did not satisfy
+         a gate refusing with "the material has not reached them yet". See
+         DELIVERY_STATUSES; orderCountsSql two lines up is the precedent, and
+         the reason is the same one it gives. */
       (select count(*)::int from orders
         where orders.customer_id = ${customerId}
-          and orders.status = 'dispatched') as delivered_orders,
+          and ${orderDeliveredSql("orders")}) as delivered_orders,
       (select count(*)::int from payment_receipts
         where payment_receipts.customer_id = ${customerId}
           and payment_receipts.status = 'confirmed') as confirmed_payments

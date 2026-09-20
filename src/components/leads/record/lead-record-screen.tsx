@@ -33,12 +33,12 @@ import type {
   LeadOrderRow,
   LeadReceiptRow,
   LeadRecord,
+  LeadCommunications,
   LeadCorrection,
   LeadTransition,
   ManagerCall,
   NurtureSchedule,
   PublishedDocument,
-  TimelineRow,
 } from "@/lib/services/lead-console-service";
 import type {
   ApprovalStep,
@@ -64,6 +64,14 @@ import { ConfirmFigures } from "./confirm-figures";
 import { ValidateGst } from "./validate-gst";
 import { SetSalesType } from "./set-sales-type";
 import { AssignLeadManager, type LeadManagerCandidate } from "./assign-lead-manager";
+import { NextActionBand } from "./next-action-band";
+import { RoleReadings } from "./where-it-stands";
+import { timelineActor, type TimelineActorKind } from "./timeline-actor";
+import { RelationshipChain } from "./relationship-chain";
+import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
+import type { LeadGateActionFacts } from "@/lib/engines/lead-gate-action";
+import { MoveForward } from "./move-forward";
+import type { VantageSeats, VantageViewer } from "@/lib/lead-vantage";
 
 /**
  * One lead's whole record, in the order somebody reads it.
@@ -286,6 +294,9 @@ export function LeadRecordScreen({
   figuresStale,
   figuresFreshDays,
   overrideAllowed,
+  viewer,
+  actionFacts,
+  gateFacts,
   nowMs,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
@@ -307,7 +318,7 @@ export function LeadRecordScreen({
   calls: ManagerCall[];
   timeline: TimelinePage;
   timelineKind: string | null;
-  communications: TimelineRow[];
+  communications: LeadCommunications;
   orders: LeadOrderRow[];
   receipts: LeadReceiptRow[];
   samples: LeadSampleRow[];
@@ -398,6 +409,31 @@ export function LeadRecordScreen({
   /** `leads.figuresFreshDays`, so the panel can say how long the window is. */
   figuresFreshDays: number;
   overrideAllowed: boolean;
+  /**
+   * §7 — WHO IS READING, as four booleans off their hats.
+   *
+   * `vantageViewer` resolves it once on the server, because the hats are a
+   * read and this is a client component. It decides WORDS and nothing else:
+   * which of the five jobs this person is doing on this lead, and therefore
+   * which sentence `roleAction` puts in front of them. Every control on this
+   * page goes on asking its own capability — a sentence is not a permission.
+   */
+  viewer: VantageViewer;
+  /**
+   * The five facts `roleAction` reads, resolved on the server from the same
+   * three rules the leads list resolves them from in SQL. Handed down rather
+   * than derived here, because two of them — is there a confirmed commitment,
+   * is there an approved sample nobody has sent — are rules with a single
+   * home, and a screen re-reading either would be the second copy that drifts.
+   */
+  actionFacts: LeadActionFacts;
+  /**
+   * §5 — the five facts `gateAction` reads, to answer which control this
+   * rung's work is done through. Two of them are §7's; `mustDecide` is
+   * `mustDecideSuspect`'s single answer, shared with the banner above the
+   * record so the cap cannot be read two ways on one page.
+   */
+  gateFacts: LeadGateActionFacts;
   /** The clock, read once on the server. A client may not read it in render. */
   nowMs: number;
 }) {
@@ -654,6 +690,21 @@ export function LeadRecordScreen({
         <Banner tone="danger" title="This lead is closed" body={record.lostReason} />
       ) : null}
 
+      {/* --------------------------------------------- what happens next */}
+
+      {/* §24 ABOVE THE FOLD AND ACROSS THE PAGE, because it is the question
+          the rest of this record is evidence for. It used to be a panel third
+          down the rail, under the gate and under a twelve-rung ladder, which
+          on a laptop is a scroll — so the line saying what happens next sat
+          below the screen somebody opened to find out. `mustDecide` and the
+          park banner sit above it deliberately: both are things that have to
+          be answered before a next action means anything. */}
+      <NextActionBand
+        record={record}
+        active={!CLOSED_STAGES.has(record.stage) && !park}
+        nowMs={nowMs}
+      />
+
       {/* ------------------------------------------ the body and the rail */}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,380px)]">
@@ -689,7 +740,41 @@ export function LeadRecordScreen({
 
           {here === "overview" ? (
             <>
+              {/* §8.5 — the one place "what do I do next on this lead"
+                  collapses to a single verb. It sits FIRST on the tab, above
+                  the seats and the visits, because those are who and what
+                  happened and this is what to do. The rail beside it still
+                  answers the other half — which rung, and what it is waiting
+                  on — and both read the same verdict, so neither can promise a
+                  move the other refuses. */}
+              <MoveForward
+                workspace={workspace}
+                base={base}
+                customerId={record.customerId}
+                facts={gateFacts}
+                verdict={nextVerdict}
+                nextRung={nextRung}
+                canWork={canWork}
+                canOverride={canOverride}
+                overrideAllowed={overrideAllowed}
+              />
               <SeatsPanel record={record} leadManagers={leadManagers} canWork={canWork} />
+              {/* §5.9 — the chain, and only where there is one. The seats panel
+                  above already holds two of its links, four cells apart and
+                  each reading as a fact of its own; this is the same facts in
+                  the order the goods and the money travel in, which is the
+                  order somebody uses them. `thirdParty` is the whole of when it
+                  is true — a direct customer is an account we invoice, so we
+                  are the far end of the chain rather than a link in it, and a
+                  shortened version drawn for one would invent a relationship
+                  nobody recorded. */}
+              {record.thirdParty ? (
+                <RelationshipChain
+                  shopName={record.name}
+                  links={record.distributorLinks}
+                  salesManagerName={record.salesManagerName}
+                />
+              ) : null}
               <VisitsPanel visits={visits} total={counts.visits} record={record} />
               <HandoverPanel
                 customerId={record.customerId}
@@ -836,8 +921,18 @@ export function LeadRecordScreen({
             byStage={byStage}
             salesType={record.salesType}
             parked={Boolean(park)}
+            facts={actionFacts}
+            viewer={viewer}
+            seats={{
+              /* `salesmanId` IS `owner_id` — the record names the column for
+                 the person rather than for the foreign key, which is the right
+                 word on a screen and the wrong one here, where the seat is
+                 what is being matched. */
+              ownerId: record.salesmanId,
+              backOfficeAmId: record.backOfficeAmId,
+              leadManagerId: record.leadManagerId,
+            }}
           />
-          <NextActionPanel record={record} nowMs={nowMs} />
         </div>
       </div>
 
@@ -1133,28 +1228,48 @@ function GateRail({
  * and a salesman learns the process from seeing the rungs above him rather than
  * from being refused at each one in turn.
  */
+/**
+ * §8.5 item 7 — "Where this lead stands", which is TWO answers and one section.
+ *
+ * The rung is where it stands; the readings are what that rung ASKS OF WHOM.
+ * They are one panel rather than two because a reader asking the first
+ * question is always about to ask the second, and a ladder on its own answers
+ * only a noun — the record page drew that noun and no verb at all until this
+ * landed, on the one screen where somebody is deciding what to do.
+ *
+ * The readings sit ABOVE the rungs deliberately. The instruction is what the
+ * reader came for; the twelve rungs underneath are the evidence for it, and a
+ * verb printed below a twelve-item list is a verb below the fold.
+ */
 function LadderPanel({
   ladder,
   rung,
   byStage,
   salesType,
   parked,
+  facts,
+  viewer,
+  seats,
 }: {
   ladder: readonly LeadStage[];
   rung: number;
   byStage: Map<LeadStage, GateVerdict>;
   salesType: LeadRecord["salesType"];
   parked: boolean;
+  facts: LeadActionFacts;
+  viewer: VantageViewer;
+  seats: VantageSeats;
 }) {
   return (
     <Panel
-      title="The climb"
+      title="Where this lead stands"
       hint={
         parked
           ? `${ladderName(salesType)}. This lead is parked, so it stands on none of these — the highlight is off the ladder rather than missing from it.`
           : ladderName(salesType)
       }
     >
+      <RoleReadings facts={facts} viewer={viewer} seats={seats} />
       <ol className="m-0 list-none p-0">
         {ladder.map((stage, i) => {
           const v = byStage.get(stage);
@@ -1653,59 +1768,6 @@ function GstPanel({
   );
 }
 
-/**
- * §24 — what happens next, on what day, and who is doing it.
- *
- * All three parts or none: a date with nobody against it is how a lead sits for
- * six weeks with everyone assuming somebody else has it. An outcome that is
- * still empty past the date is drawn as overdue rather than as a plan.
- */
-function NextActionPanel({ record, nowMs }: { record: LeadRecord; nowMs: number }) {
-  const complete =
-    Boolean(record.nextAction) &&
-    Boolean(record.nextActionDate) &&
-    Boolean(record.nextActionOwnerId);
-  const overdue =
-    Boolean(record.nextActionDate) &&
-    !record.nextActionOutcome &&
-    /* The day boundary is named — a bare `new Date("2026-09-08")` is read as
-       UTC and lands five and a half hours before the day it names, which is
-       invisible in IST and wrong the moment anything compares it to a local
-       one. */
-    new Date(`${record.nextActionDate}T00:00:00+05:30`).getTime() < nowMs;
-
-  return (
-    <Panel
-      title="Next action"
-      hint="An active lead may not sit with nothing owed by anybody. That is the standing rule, not a field on a form."
-    >
-      {!complete ? (
-        <p className="text-[13px] text-warn-ink">
-          Nothing is planned. This lead is on the exception list until somebody names an action, a
-          day and a person.
-        </p>
-      ) : (
-        <>
-          <div className="text-[14px] text-ink">{record.nextAction}</div>
-          <div className="mt-0.5 text-[13px] text-body">
-            {shortDate(record.nextActionDate!)} · {record.nextActionOwnerName ?? "somebody"}
-            {overdue ? (
-              <span className="ml-1.5">
-                <Pill tone="warn">Past its day</Pill>
-              </span>
-            ) : null}
-          </div>
-          {record.nextActionOutcome ? (
-            <div className="mt-1.5 text-[13px] text-muted">
-              Outcome: {record.nextActionOutcome}
-            </div>
-          ) : null}
-        </>
-      )}
-    </Panel>
-  );
-}
-
 /** §8 — what the manager asked and what the customer said, kept in full. */
 function VerificationPanel({
   record,
@@ -1823,20 +1885,48 @@ function Corrections({ rows }: { rows: LeadCorrection[] }) {
   if (!rows.length) return null;
   return (
     <div className="mt-2 rounded-[4px] border border-divider bg-canvas px-3 py-2">
+      {/* "CHECKED", not "corrected", since `0155`. The table carried only
+          corrections when this panel was written, because on a validation call
+          a figure the shop agreed with was not worth a row. A field check made
+          in the shop is a row for all three answers, and two of them assert no
+          new value — so a heading promising corrections over a confirmation is
+          the screen telling somebody their own answer was overruled when it was
+          upheld. The three are drawn together on purpose: a confirmation is the
+          evidence that somebody asked again and got the same answer, which is
+          the whole of what a second visit buys. */}
       <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-        What the call corrected
+        What was checked
       </div>
       <p className="mb-2 max-w-[560px] text-[12px] text-pretty text-muted">
-        The lead still carries the salesman&rsquo;s own answer. These are what the shop said
-        instead, kept beside his rather than written over it &mdash; this is not an edit history.
+        The lead still carries the salesman&rsquo;s own answer. These are what came back when
+        somebody asked again, kept beside his rather than written over it &mdash; this is not an
+        edit history.
       </p>
       <div className="flex flex-col gap-2">
         {rows.map((r) => (
           /* One column on a phone, two once there is room. A before/after side
              by side at 360px is two words a line and unreadable. */
-          <div key={r.id} className="border-l-[3px] border-warn pl-2.5">
+          <div
+            key={r.id}
+            className={
+              r.verdict === "corrected"
+                ? "border-l-[3px] border-warn pl-2.5"
+                : "border-l-[3px] border-divider pl-2.5"
+            }>
             <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
               {findingLabel(r.field)}
+              {/* The verdict in WORDS beside the field, never carried by the
+                  rule's colour alone: only a correction changed anything, and
+                  which of the other two it was is the difference between "we
+                  asked and it stood up" and "we asked and could not establish
+                  it". Those are opposite facts about the same unchanged value. */}
+              <span className="ml-1.5 normal-case tracking-normal text-body">
+                {r.verdict === "corrected"
+                  ? "· corrected"
+                  : r.verdict === "confirmed"
+                    ? "· confirmed"
+                    : "· could not be verified"}
+              </span>
             </div>
             <div className="mt-0.5 grid grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-2">
               <div className="min-w-0 text-[12px]">
@@ -1845,12 +1935,19 @@ function Corrections({ rows }: { rows: LeadCorrection[] }) {
                   {r.original ?? <span className="text-muted">he recorded nothing</span>}
                 </span>
               </div>
-              <div className="min-w-0 text-[12px]">
-                <span className="text-muted">The shop says: </span>
-                <span className="text-ink">{r.corrected}</span>
-              </div>
+              {/* Only a correction asserts a new value. Drawing an empty "The
+                  shop says" under a confirmation would read as the shop having
+                  said nothing when it agreed. */}
+              {r.verdict === "corrected" ? (
+                <div className="min-w-0 text-[12px]">
+                  <span className="text-muted">The shop says: </span>
+                  <span className="text-ink">{r.corrected}</span>
+                </div>
+              ) : null}
             </div>
-            <div className="mt-0.5 text-[12px] text-pretty text-body">{r.reason}</div>
+            {r.reason ? (
+              <div className="mt-0.5 text-[12px] text-pretty text-body">{r.reason}</div>
+            ) : null}
             <div className="mt-0.5 text-[12px] text-muted">
               {r.changedByName ?? "a manager"} · {stamp(r.changedAt)}
             </div>
@@ -2638,6 +2735,28 @@ function HistoryPanel({
 }
 
 /**
+ * §8.5 — the three actor marks, in one place rather than a ternary at the row.
+ *
+ * It is an inset SHADOW and not `border-l`, because the row already carries
+ * `border-b border-divider` — a shorthand that sets the colour of all four
+ * sides — and a left border would then be two declarations arguing over one
+ * property, settled by whichever utility Tailwind happens to emit last. A
+ * shadow answers the same question and is nobody else's property.
+ *
+ * The weights run the way the distinction matters: the field is the brand's own
+ * purple, the office a mid grey, and MahekOne's own hand the faintest rule on
+ * the list — so system against person, which is the one worth buying, is the
+ * one visible from furthest away. None of the three is `success`, `warn` or
+ * `danger`: all three mean something else on this very screen, and a green
+ * visit would read as a good visit.
+ */
+const ACTOR_MARK: Record<TimelineActorKind, { rule: string; name: string }> = {
+  field: { rule: "shadow-[inset_3px_0_0_var(--color-brand)]", name: "text-body" },
+  office: { rule: "shadow-[inset_3px_0_0_var(--color-line-strong)]", name: "text-body" },
+  system: { rule: "shadow-[inset_3px_0_0_var(--color-divider)]", name: "text-muted italic" },
+};
+
+/**
  * §25 — the shared timeline, paged with a KEYSET and saying what it is a slice
  * of.
  *
@@ -2655,6 +2774,14 @@ function HistoryPanel({
  * moment anything is written — so a reader sees one entry twice and another
  * never. The cursor is `(occurred_at, id)`, a position in the sort rather than
  * a distance from the top.
+ *
+ * **§8.5 — EVERY ROW IS COLOURED BY WHO DID IT.** They were identical: one
+ * neutral pill each and the actor as muted text at the end of a line nobody
+ * reads, so on a two-hundred-entry account a salesman's visit, the office's
+ * call and a nurture task nothing human touched looked the same on the one
+ * screen built for reading what happened. `timelineActor` beside this file
+ * works out the kind and says what it can and cannot know; see its header for
+ * why two thirds of that answer is a proxy and one third is exact.
  */
 function TimelinePanel({
   page,
@@ -2714,18 +2841,28 @@ function TimelinePanel({
       ) : (
         <>
           <ul className="m-0 list-none p-0">
-            {page.rows.map((e) => (
-              <li key={e.id} className="border-b border-divider py-1.5 last:border-b-0">
-                <span className="flex flex-wrap items-baseline gap-2">
-                  <Pill tone="neutral">{e.eventType.replace(/_/g, " ")}</Pill>
-                  <span className="text-[13px] text-body">{e.summary}</span>
-                </span>
-                <span className="block text-[12px] text-muted">
-                  {stamp(e.occurredAt)}
-                  {e.actorName ? ` · ${e.actorName}` : ""}
-                </span>
-              </li>
-            ))}
+            {page.rows.map((e) => {
+              const who = timelineActor(e);
+              const mark = ACTOR_MARK[who.kind];
+              return (
+                <li
+                  key={e.id}
+                  className={cx(
+                    "border-b border-divider py-1.5 pl-2.5 last:border-b-0",
+                    mark.rule,
+                  )}
+                >
+                  <span className="flex flex-wrap items-baseline gap-2">
+                    <Pill tone="neutral">{e.eventType.replace(/_/g, " ")}</Pill>
+                    <span className="text-[13px] text-body">{e.summary}</span>
+                  </span>
+                  <span className="block text-[12px] text-muted">
+                    {stamp(e.occurredAt)} · <span className={mark.name}>{who.name}</span> ·{" "}
+                    {who.what}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
 
           {page.next ? (

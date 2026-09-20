@@ -13,6 +13,7 @@ import {
 import type { LeadPriority } from "../lead-priority";
 import { asDate } from "../business-date";
 import { orderCountsSql } from "../order-status";
+import { MBOS_EVENT, sourceIdField } from "../timeline";
 import { leadsVisible, managerScope, onlyMine } from "./sales-service";
 /* §5.3 — ONE definition of "are these figures old enough to need standing
    behind", shared with the server action's own assembler rather than restated
@@ -923,12 +924,36 @@ export type LeadTransition = {
  * quietly mislabel the correction. Null where the salesman had recorded
  * nothing and the manager was the first to answer.
  */
+/**
+ * ONE FIELD, CHECKED — and WHICH of the three answers it came back with.
+ *
+ * `0155` gave `lead_verification_corrections` a verdict of `confirmed`,
+ * `corrected` or `unverified`, because the same row is now written by a second
+ * door: a salesman re-asking on his own visit, where a figure the shop AGREED
+ * with is the whole of what that visit buys. Carrying only the row was safe
+ * exactly while one door existed and wrote nothing but corrections, and a
+ * screen counting `corrections.length` as "how many things the shop
+ * contradicted" was right by accident rather than by rule. The verdict is
+ * carried so the count can be a filter rather than a coincidence, and the day
+ * a field check arrives naming a validation call the caller is already asking
+ * the question it means.
+ *
+ * `corrected` and `reason` are NULLABLE here because they are nullable in the
+ * table: the other two verdicts assert no new value at all, and that is the
+ * whole difference between them and a correction. They were read through
+ * `String()`, which turns a null into the four letters "null" and prints them
+ * on a record as though the shop had said them.
+ */
 export type LeadCorrection = {
   id: string;
   field: string;
+  /** `confirmed`, `corrected` or `unverified` — `field_check_verdict`. */
+  verdict: string;
   original: string | null;
-  corrected: string;
-  reason: string;
+  /** What the shop said instead. Null under the two verdicts that assert none. */
+  corrected: string | null;
+  /** Why the two differ. Null where there is no difference to explain. */
+  reason: string | null;
   changedByName: string | null;
   changedAt: Date;
 };
@@ -989,6 +1014,31 @@ export type LeadReceiptRow = {
   reference: string | null;
   status: string;
   confirmedAt: Date | null;
+};
+
+/**
+ * §5.9 §23 — one arrangement: who bills this shop, and who of theirs calls on
+ * it.
+ *
+ * **THE SALESMAN IS A NAME AND NOT AN ACCOUNT.** Rahul works for the
+ * distributor, has no MahekOne login and never will — `distributor_salesmen`
+ * exists precisely so the chain can be recorded from the first visit without
+ * putting him in every person picker in the product. So this is a string or
+ * nothing, and "nothing" is the ordinary case: a distributor with one counter
+ * and no sales team is not a gap in the data.
+ *
+ * **A LIST BECAUSE A SHOP ON A TERRITORY BOUNDARY HAS TWO.** One column would
+ * make the second unrecordable, which is wrong for exactly the accounts that
+ * most need it recorded — and a card drawing one of two is confidently wrong
+ * rather than incomplete.
+ */
+export type LeadDistributorLink = {
+  distributorId: string;
+  distributorName: string;
+  /** Who serves it usually. At most one per shop, and possibly none. */
+  isPrimary: boolean;
+  /** The distributor's own man, where somebody has written him down. */
+  salesmanName: string | null;
 };
 
 export type LeadRecord = {
@@ -1139,6 +1189,27 @@ export type LeadRecord = {
   /* ---- §23 who invoices this shop ---- */
   distributorCount: number;
   distributorNames: string | null;
+  /**
+   * §5.9 — the same arrangements one row at a time, for the chain card.
+   *
+   * `distributorNames` is a `string_agg` and answers the seats panel's
+   * question, which is one line saying who bills this shop. The chain asks a
+   * different one: each distributor carries its OWN salesman, and flattening
+   * that into a second comma-joined string would leave the reader pairing two
+   * lists by position and hoping.
+   */
+  distributorLinks: LeadDistributorLink[];
+  /**
+   * §5.9 — Mahek's end of the chain, which is the THIRD seat.
+   *
+   * Not `salesAmName`: that is whose book the account is in and whose targets
+   * it counts toward, and on a shop somebody else invoices there is frequently
+   * no such seat at all. The chain's last box is who our side of the
+   * arrangement answers to, which is `sales_manager_id` — the seat AGENTS.md
+   * describes as driving nothing, which is exactly why it is safe to draw here
+   * and would be wrong to derive anything from.
+   */
+  salesManagerName: string | null;
 
   /* ---- §11 §12 the distributor application ---- */
   distributorProfile: Record<string, unknown> | null;
@@ -1257,6 +1328,49 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
               from customer_distributors cd
               join customers dc on dc.id = cd.distributor_customer_id
              where cd.customer_id = c.id) as "distributorNames",
+
+           /*
+            * §5.9 — the same rows unflattened, each carrying the distributor's
+            * OWN salesman, for the relationship chain.
+            *
+            * A coalesce onto an empty array rather than a null, because a shop with no
+            * distributor is the ordinary state of every lead that is not a
+            * third-party one and the card must not have to guard an absence
+            * the query can answer. The left join onto distributor_salesmen is
+            * a left join for the reason the column itself is optional: a
+            * distributor with one counter and no sales team is ordinary, and an
+            * inner join would silently drop the arrangement rather than draw it
+            * with the link unnamed.
+            *
+            * Primary first, then alphabetical: at most one row can be primary,
+            * so this is "who usually serves this shop" at the head of the list
+            * rather than an order the planner chose.
+            */
+           (select coalesce(
+                     json_agg(
+                       json_build_object(
+                         'distributorId', dc.id,
+                         'distributorName', dc.name,
+                         'isPrimary', cd.is_primary,
+                         'salesmanName', ds.name
+                       ) order by cd.is_primary desc, dc.name
+                     ),
+                     '[]'::json)
+              from customer_distributors cd
+              join customers dc on dc.id = cd.distributor_customer_id
+              left join distributor_salesmen ds on ds.id = cd.distributor_salesman_id
+             where cd.customer_id = c.id) as "distributorLinks",
+
+           /* §5.9 — the third seat, read the way SALES_MANAGER_NAME_SQL in
+              queries.ts reads it: the live account first, and the plain name
+              where the person holding the seat has no login. It is spelled out
+              here rather than reused because that constant qualifies its
+              columns onto the customers table by name, and this query aliases
+              it c. */
+           coalesce(
+             (select name from users smu where smu.id = c.sales_manager_id),
+             c.sales_manager_person_name
+           ) as "salesManagerName",
 
            /*
             * THE KEYS HAVE TO BE camelCase, AND to_jsonb(dp.*) GIVES THEM
@@ -1521,10 +1635,20 @@ export async function managerCalls(customerId: string): Promise<ManagerCall[]> {
    * correlated subquery binds to the inner table, silently.
    */
   const correctionRows = (await db.execute(sql`
-    select v.id, v.validation_id, v.field, v.original, v.corrected,
+    select v.id, v.validation_id, v.field, v.verdict::text as verdict,
+           v.original, v.corrected,
            v.reason, v.changed_by_name, v.changed_at
       from lead_verification_corrections v
      where v.customer_id = ${customerId}
+       /* Hung on the CALL, so a check with no call to hang on has no place in
+          this panel. Since 0155 the same table carries what a salesman
+          re-asked on his own second visit, where nobody rang anybody and
+          validation_id is null — those were read, grouped under the string
+          "null", matched no call and were thrown away, having first spent
+          rows of the cap below. On a lead checked in the shop more often than
+          it was rung, that is a call losing its corrections to rows that
+          could never have been drawn. */
+       and v.validation_id is not null
      order by v.changed_at desc, v.id desc
      limit 200
   `)) as unknown as Record<string, unknown>[];
@@ -1541,9 +1665,10 @@ export async function managerCalls(customerId: string): Promise<ManagerCall[]> {
     list.push({
       id: String(r.id),
       field: String(r.field),
+      verdict: String(r.verdict),
       original: (r.original as string | null) ?? null,
-      corrected: String(r.corrected),
-      reason: String(r.reason),
+      corrected: (r.corrected as string | null) ?? null,
+      reason: (r.reason as string | null) ?? null,
       changedByName: (r.changed_by_name as string | null) ?? null,
       changedAt,
     });
@@ -1678,23 +1803,86 @@ export async function leadReceipts(customerId: string): Promise<LeadReceiptRow[]
  * history. That is the same mistake the CRM's timeline pills made before their
  * counts came from SQL.
  *
- * The event type is `lead_communication` and it is what `recordCommunication`
- * writes. It is spelled out rather than pattern-matched on a prefix: a `like`
- * would quietly pick up whatever the next kind of lead event is called.
+ * **AND THE SAME MISTAKE WAS STILL HERE, one level down.** The list is capped
+ * at thirty and the panel above it draws a "Sent ×3" badge on each of the
+ * eleven buttons — derived, until now, from the rows the browser happened to
+ * hold. So on a lead rung more than thirty times every badge counted within
+ * the newest thirty and undercounted with nothing on the screen saying so,
+ * which is worse than no badge at all: the whole point of the mark is to stop
+ * somebody sending the price list twice, and a badge that reads "Sent" when it
+ * has gone five times is the one that sends the sixth.
+ *
+ * So the COUNTS come from SQL and the LIST stays capped, beside it rather than
+ * instead of it. The list carries when and by whom, which a count cannot, and
+ * thirty of that is plenty for a panel somebody skims; the counts are over the
+ * whole history, which is the only number a badge can honestly show.
+ *
+ * `total` is what makes the cap sayable — a capped list says what it is a
+ * slice of — and it is the sum of the group rather than a third statement of
+ * the same population, because two `count(*)`s over one predicate is two
+ * places for that predicate to drift.
+ *
+ * The event type is `MBOS_EVENT.leadCommunication` and it is what
+ * `recordCommunication` writes. It is named rather than pattern-matched on a
+ * prefix: a `like` would quietly pick up whatever the next kind of lead event
+ * is called. It is the CONSTANT and not the literal it used to be, which is
+ * the rule every timeline kind here follows — a literal that drifts by one
+ * character reads on a record as a history that has gone quiet.
  */
-export async function leadCommunications(customerId: string): Promise<TimelineRow[]> {
-  return db.execute<TimelineRow>(sql`
-    select e.id, e.event_type as "eventType", e.source_app::text as "sourceApp",
-           e.source_record_id as "sourceRecordId",
-           e.occurred_at as "occurredAt",
-           u.name as "actorName", e.summary
-      from timeline_events e
-      left join users u on u.id = e.actor_user_id
-     where e.customer_id = ${customerId}
-       and e.event_type = 'lead_communication'
-     order by e.occurred_at desc, e.id desc
-     limit 30
-  `) as unknown as TimelineRow[];
+export type LeadCommunications = {
+  /** The newest, capped. When and by whom, which no count can carry. */
+  rows: TimelineRow[];
+  /** How often each of the eleven has gone, over the WHOLE history. */
+  countByAction: Record<string, number>;
+  /**
+   * Communications with no action code on them, counted apart and never
+   * folded in. Rows written before the code rode in the source id are
+   * contacts that genuinely happened and cannot be attributed to one of the
+   * eleven — putting them on the nearest button would be inventing which, and
+   * dropping them would make the badges undercount on exactly the oldest
+   * leads, where the history matters most.
+   */
+  unattributed: number;
+  /** Every communication on this lead, however far past the cap. */
+  total: number;
+};
+
+export async function leadCommunications(customerId: string): Promise<LeadCommunications> {
+  const [rows, tally] = await Promise.all([
+    db.execute<TimelineRow>(sql`
+      select e.id, e.event_type as "eventType", e.source_app::text as "sourceApp",
+             e.source_record_id as "sourceRecordId",
+             e.occurred_at as "occurredAt",
+             u.name as "actorName", e.summary
+        from timeline_events e
+        left join users u on u.id = e.actor_user_id
+       where e.customer_id = ${customerId}
+         and e.event_type = ${MBOS_EVENT.leadCommunication}
+       order by e.occurred_at desc, e.id desc
+       limit 30
+    `) as unknown as TimelineRow[],
+
+    db.execute<{ actionCode: string | null; n: number }>(sql`
+      select ${sourceIdField("e.source_record_id", 2)} as "actionCode",
+             count(*)::int as n
+        from timeline_events e
+       where e.customer_id = ${customerId}
+         and e.event_type = ${MBOS_EVENT.leadCommunication}
+       group by 1
+    `),
+  ]);
+
+  const countByAction: Record<string, number> = {};
+  let unattributed = 0;
+  let total = 0;
+  for (const r of tally) {
+    const n = Number(r.n ?? 0);
+    total += n;
+    if (r.actionCode) countByAction[r.actionCode] = n;
+    else unattributed += n;
+  }
+
+  return { rows, countByAction, unattributed, total };
 }
 
 /* ═══════════════════════════════════════════════════════ §22 the handover */

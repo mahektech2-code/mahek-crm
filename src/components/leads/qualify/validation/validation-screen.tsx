@@ -4,7 +4,13 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
-import { salesTypeLabel, stageLabel, VERIFICATION_QUESTIONS } from "@/lib/lead-labels";
+import {
+  questionsInSection,
+  salesTypeLabel,
+  stageLabel,
+  VERIFICATION_QUESTIONS,
+  VERIFICATION_SECTIONS,
+} from "@/lib/lead-labels";
 import type {
   ValidationCallRow,
   ValidationDisagreement,
@@ -351,24 +357,45 @@ function Verdict({ row }: { row: ValidationCallRow }) {
   );
 }
 
-/** The twelve answers and the comparison, in the order the call asked them. */
+/**
+ * Every answer and the comparison, in the order the call asked them, UNDER THE
+ * SECTION EACH QUESTION BELONGS TO.
+ *
+ * This cut the list with `slice(0, 2)` and `slice(2)` — the first two are
+ * about the salesman, the rest about the sale — and that was already wrong
+ * before anything was added to it: "How did you find our man?" is the third
+ * salesman question and sits at index seven, so it had been drawn under "About
+ * the opportunity" since the day it landed. §5.2 then took the list to
+ * seventeen in four sections, and a slice put the five new ones — the two
+ * objections and all three readiness questions — under a heading that was
+ * about neither, with the two headings this screen knows about silently
+ * covering four.
+ *
+ * A section is a PROPERTY of the question and never a position in the array:
+ * the order is what the conversation takes and the heading is what the
+ * question is about, and those move independently. `VERIFICATION_SECTIONS` and
+ * `questionsInSection` are the shape, read here exactly as the form that
+ * writes these reads them — the headings are in `lead-labels.ts` for the
+ * reason every list in that file is, that two screens draw them and the half
+ * that drifts is the half somebody reads.
+ *
+ * A section with nothing answered is still DRAWN, because `Answer` already
+ * draws an unanswered question as unanswered rather than leaving it out: a
+ * call where the shop had plenty to say about price and nothing about credit
+ * is the ordinary case, and a panel that dropped the empty half would read as
+ * a shorter call than the one that happened.
+ */
 function CallDetail({ row }: { row: ValidationCallRow }) {
-  const salesmanQs = VERIFICATION_QUESTIONS.slice(0, 2);
-  const customerQs = VERIFICATION_QUESTIONS.slice(2);
-
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
       <div>
-        <Section title="About our man — this is why the call exists">
-          {salesmanQs.map((q) => (
-            <Answer key={q.id} ask={q.ask} said={row.answers[q.id]} />
-          ))}
-        </Section>
-        <Section title="About the opportunity">
-          {customerQs.map((q) => (
-            <Answer key={q.id} ask={q.ask} said={row.answers[q.id]} />
-          ))}
-        </Section>
+        {VERIFICATION_SECTIONS.map((s) => (
+          <Section key={s.id} title={s.title} says={s.says}>
+            {questionsInSection(s.id).map((q) => (
+              <Answer key={q.id} ask={q.ask} said={row.answers[q.id]} />
+            ))}
+          </Section>
+        ))}
         {row.verdictReason || row.notes ? (
           <div className="mt-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5">
             <div className="text-[12px] text-muted">What the caller added</div>
@@ -451,10 +478,29 @@ function Compare({ d }: { d: ValidationDisagreement }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * One section, with the sentence that says why it is asked at all.
+ *
+ * `says` is carried rather than dropped because two of the four headings mean
+ * nothing on their own: "What they are ready for" reads as a fourth batch of
+ * questions until somebody knows §5.4 decides whether a sample goes out on the
+ * answer. It is the same sentence the form that writes these puts above the
+ * same questions, from the same constant, so the manager reading a call back
+ * is reading what the caller was reading.
+ */
+function Section({
+  title,
+  says,
+  children,
+}: {
+  title: string;
+  says?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="mb-3">
       <div className="mb-1 text-[11px] tracking-[0.04em] text-muted uppercase">{title}</div>
+      {says ? <p className="mt-0 mb-1 max-w-[560px] text-[12px] text-pretty text-muted">{says}</p> : null}
       <div className="rounded-[6px] border border-line bg-surface">{children}</div>
     </div>
   );

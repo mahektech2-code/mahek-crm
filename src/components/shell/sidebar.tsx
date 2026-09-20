@@ -23,6 +23,34 @@ import type { User } from "@/db/schema";
  * away rather than a different one.
  * ------------------------------------------------------------------------- */
 
+/**
+ * The five numbers this column can draw, read once in the layout and handed
+ * down. Named rather than keyed by href — see the note on `NavItem.badge` —
+ * and a type rather than an inline shape because three files pass it along and
+ * a sixth badge should fail in all three at once.
+ */
+export type SidebarBadges = {
+  reminders: number;
+  complaints: number;
+  statusRequests: number;
+  /** §24 — what is owed on a lead today. */
+  leadsDueToday: number;
+  /** §24 — past its day with nobody having answered it. */
+  leadsOverdue: number;
+};
+
+/**
+ * WHICH QUEUE IS RED, rather than how big a number is.
+ *
+ * One unanswered complaint is not a lighter version of five, and neither is
+ * one lead sitting past the day somebody promised — §24 exists because exactly
+ * that lead is the one everybody assumes somebody else is holding. Everything
+ * else on this column is amber whatever it counts. Rolled up onto a shut
+ * heading the shared component uses amber, which is right: a group is not one
+ * queue.
+ */
+const DANGER_BADGES = new Set<NavItem["badge"]>(["complaints", "leadsOverdue"]);
+
 export function Sidebar({
   collapsed,
   user,
@@ -36,7 +64,7 @@ export function Sidebar({
   user: User;
   /** Who this person is in THIS app — see `lib/hat-labels.ts`. */
   hat: { label: string; sentence: string };
-  badges: { reminders: number; complaints: number; statusRequests: number };
+  badges: SidebarBadges;
   groups?: NavGroup[];
   pinned?: NavItem[];
 }) {
@@ -51,6 +79,8 @@ export function Sidebar({
     if (badge === "reminders") return badges.reminders;
     if (badge === "complaints") return badges.complaints;
     if (badge === "statusRequests") return badges.statusRequests;
+    if (badge === "leadsDueToday") return badges.leadsDueToday;
+    if (badge === "leadsOverdue") return badges.leadsOverdue;
     return 0;
   };
 
@@ -69,16 +99,9 @@ export function Sidebar({
         countFor={countFor}
         railed={collapsed}
         renderIcon={(name, size) => <Icon name={name} size={size} className="flex-none" />}
-        /*
-         * The CRM's own rule about WHICH queue rather than about how big a
-         * number is: a complaint is red at one, because one unanswered
-         * complaint is not a lighter version of five. Everything else is amber
-         * whatever it counts. Rolled up onto a shut heading the shared
-         * component uses amber, which is right — a group is not one queue.
-         */
-        badgeToneFor={(item) =>
-          (item as NavItem).badge === "complaints" ? "danger" : "warn"
-        }
+        /* WHICH queue is red, rather than how big a number is. See
+           `DANGER_BADGES` — the list outgrew being expressible as a ternary. */
+        badgeToneFor={(item) => (DANGER_BADGES.has((item as NavItem).badge) ? "danger" : "warn")}
       />
 
       {/*

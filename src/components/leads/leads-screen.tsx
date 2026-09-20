@@ -24,13 +24,23 @@ import {
 import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
 import { healthView } from "@/lib/customer-health";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { cx } from "@/components/ui/primitives";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
+import {
+  VIEW_CHIPS,
+  VIEW_TEXT,
+  retiredLadderNote,
+  type LeadTileId,
+  type LeadView,
+} from "@/lib/lead-views";
+import { TileStrip } from "@/components/leads/tile-strip";
 import {
   AGE_BUCKETS,
   HEALTH_BUCKETS,
   NEXT_BUCKETS,
   POTENTIAL_BUCKETS,
   PRIORITY_BUCKETS,
+  SALES_TYPE_BUCKETS,
   type FilterOption,
 } from "@/lib/lead-filters";
 import {
@@ -44,10 +54,16 @@ import { setLeadPriority } from "@/lib/actions/lead-priority";
 import type { LeadRow } from "@/lib/services/sales-service";
 import {
   ALL_LEAD_STAGES,
+  SALES_TYPES,
+  salesTypeLabel,
   stageLabel,
   type LeadSalesType,
   type LeadStage,
 } from "@/lib/lead-labels";
+/* §8.4's due-date tone, and the three days behind it. Pure and client-safe, so
+   this table and the record's own strip can read one answer — see
+   `lib/lead-owed.ts` for why it is not decided in either screen. */
+import { leadOwed, owedSentence, owedTone, owedWord } from "@/lib/lead-owed";
 import {
   isOnQueueFor,
   roleAction,
@@ -95,6 +111,11 @@ const FILTER_COLUMNS = [
      point of the field is that a shop can be worth a great deal and still not
      be this fortnight's work. */
   "priority",
+  /* Which ladder, drawn immediately before the rung and read before it for a
+     reason: a RUNG IS NOT A TRACK. `suspect` is the foot of all three, so a
+     stage ticked on its own answers with every ladder at once — which is how
+     a bar on the pipeline reading 40 opened a list of 140 before this existed. */
+  "salesType",
   "stage",
   "next",
   "age",
@@ -135,11 +156,14 @@ type Bulk = "reassign" | "stage" | "archive" | "restore" | "chase";
  */
 export function LeadsScreen({
   workspace,
+  day,
   leads,
   pageInfo,
   stale,
   filters,
   options,
+  view,
+  tiles,
   showArchived,
   archivedCount,
   staleDays,
@@ -152,6 +176,16 @@ export function LeadsScreen({
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
+  /**
+   * The business date, resolved ONCE on the server and handed down.
+   *
+   * The Next column has to know whether a day has gone, which is a question
+   * about today — and the React Compiler rules forbid reading the clock during
+   * render. It is also the same `day` the service filtered and sorted on, so a
+   * row drawn overdue and the dropdown that found it cannot be measuring
+   * against two different todays across a midnight.
+   */
+  day: string;
   /** ONE PAGE of them. Everything counted around the table comes from SQL. */
   leads: LeadRow[];
   pageInfo: {
@@ -173,6 +207,26 @@ export function LeadsScreen({
     sources: Array<FilterOption & { count: number }>;
     stages: Array<FilterOption & { count: number }>;
   };
+  /**
+   * §8.4 — WHICH CUT OF THE BOOK THIS IS, off the URL.
+   *
+   * One screen parameterised by a view rather than five screens: All Leads, My
+   * Leads, Today's Actions, Overdue and the Distributors & Third-Party
+   * register are one table, one filter bar, one pager and one set of row
+   * actions, and the specification says so in as many words. Five copies of
+   * this file would be five places to add a ninth filter to.
+   */
+  view: LeadView;
+  /**
+   * §8.2's nine, counted in SQL over the filtered set — null on the archived
+   * book, where a cut of the working list means nothing.
+   *
+   * It is a COUNT PER TILE and not a list of tiles, because what a tile IS
+   * lives in `lead-views.ts` where the tone and the destination carry their
+   * own reasoning. A service handing down labels would be a second place to
+   * reword one.
+   */
+  tiles: Record<LeadTileId, number> | null;
   showArchived: boolean;
   archivedCount: number;
   staleDays: number;
@@ -237,6 +291,42 @@ export function LeadsScreen({
       router.push(`?${next.toString()}`, { scroll: false });
     },
     [router, search],
+  );
+
+  /*
+   * A TILE'S DESTINATION, AND IT ADDS RATHER THAN REPLACES.
+   *
+   * The whole point of the strip recounting against the filters is that the
+   * tiles are a cut OF WHAT IS IN FRONT OF YOU. A href built from scratch
+   * would throw away the search somebody typed the moment they pressed one,
+   * and the number on the tile — which was counted with that search applied —
+   * would be right about a list they can no longer reach.
+   *
+   * `view=all` is written as the ABSENCE of the parameter rather than as the
+   * word, so the whole book keeps the address it has always had and a link
+   * somebody pasted last year still opens the same screen. The page is
+   * dropped for the reason `navigate` drops it: page 7 of a list just narrowed
+   * to eleven rows is an empty table that reads as a broken filter.
+   */
+  const hrefFor = React.useCallback(
+    (params: Record<string, string>) => {
+      const next = new URLSearchParams(search.toString());
+      /* A tile carrying `stage` must not leave a different `view` standing
+         over it, and a tile carrying `view` must not leave the previous view's
+         `stage` — either way the reader would land somewhere neither tile
+         counted. The two parameters the tiles write are cleared together and
+         then set from the tile alone. */
+      next.delete("view");
+      next.delete("stage");
+      next.delete("page");
+      for (const [k, v] of Object.entries(params)) {
+        if (v === "all") next.delete(k);
+        else next.set(k, v);
+      }
+      const q = next.toString();
+      return q ? `?${q}` : leadHref(workspace, "leads");
+    },
+    [search, workspace],
   );
 
   /*
@@ -353,6 +443,10 @@ export function LeadsScreen({
   async function selectEverything() {
     const result = await leadIdsForSelection({
       archived: showArchived,
+      /* "Select everything" means everything on THIS list. Without the view
+         the button's count and the set it selects are two different numbers,
+         and the one people trust is the one on the button. */
+      view,
       filters: {
         ...Object.fromEntries(FILTER_COLUMNS.map((c) => [c, filters[c].join(",") || undefined])),
         search: urlQ || undefined,
@@ -475,13 +569,18 @@ export function LeadsScreen({
 
   return (
     <div className="p-6">
+      {/*
+        THE HEADING CHANGES WITH THE VIEW, and it has to.
+        A page still calling itself "Leads" over a table of eleven overdue
+        promises is one somebody reads as the whole book having collapsed —
+        and unlike the eight filters, a view is not something the reader can
+        see ticked anywhere. The words are in `lead-views.ts` beside the view
+        itself, so the sentence that admits what is being shown cannot drift
+        from the clause that shows it.
+      */}
       <ScreenHeader
-        title={showArchived ? "Archived leads" : "Leads"}
-        subtitle={
-          showArchived
-            ? "Filed out of the way, newest first. Nothing here is deleted — restore one to put it back on the working list."
-            : "Prospects each salesman is working. Anything untouched for 30 days is tagged stale."
-        }
+        title={VIEW_TEXT[view].title}
+        subtitle={VIEW_TEXT[view].subtitle}
         actions={
           showArchived ? (
             <Link
@@ -501,6 +600,11 @@ export function LeadsScreen({
                 fetchRows={async () => {
                   const res = await exportLeadRows({
                     archived: showArchived,
+                    /* The file holds the VIEW as well as the filters. A CSV
+                       downloaded from Overdue that quietly carried the whole
+                       book is the capped-list mistake in reverse, and whoever
+                       it is forwarded to has no way of noticing. */
+                    view,
                     filters: {
                       ...Object.fromEntries(
                         FILTER_COLUMNS.map((c) => [c, filters[c].join(",") || undefined]),
@@ -531,13 +635,29 @@ export function LeadsScreen({
         }
       />
 
+      {/*
+        THE VIEW CHIPS AND THE STRIP SIT ABOVE THE EMPTY STATE, deliberately.
+        An empty Overdue list with no way back to the whole book is a dead end
+        — the reader has to guess that the URL is what put them there — and it
+        is the one moment the strip is worth most, because every other tile on
+        it still carries a number. Drawn inside the `leads.length` branch they
+        would vanish exactly when they are needed.
+      */}
+      {!showArchived ? (
+        <>
+          <ViewChips view={view} hrefFor={hrefFor} />
+          {tiles ? <TileStrip counts={tiles} view={view} hrefFor={hrefFor} /> : null}
+          {view === "register" ? <RegisterNote /> : null}
+        </>
+      ) : null}
+
       {leads.length === 0 ? (
         <Empty
-          title={showArchived ? "Nothing archived" : "No leads"}
+          title={showArchived ? "Nothing archived" : emptyTitleFor(view)}
           body={
             showArchived
               ? "Nobody has filed a lead away — archiving is a manager's own call, on top of what the nightly sweep already does for anything left untouched."
-              : "A lead is a shop that is not on the book yet. They are raised on the handset, and the duplicate check reads customers as well as leads — the number somebody is about to type is quite often already an account."
+              : emptyBodyFor(view)
           }
         />
       ) : (
@@ -600,7 +720,7 @@ export function LeadsScreen({
 
           <Table
             chrome={false}
-            minWidth={1636}
+            minWidth={1900}
             head={
               <>
                 {/* PINNED. The row's name and its actions are the two cells
@@ -639,7 +759,29 @@ export function LeadsScreen({
                 </HeadCell>
                 <HeadCell width={160}>Owner</HeadCell>
                 <HeadCell width={140}>Source</HeadCell>
-                <HeadCell align="right" width={130}>Potential</HeadCell>
+                {/* §8.4's PRODUCT AND MONTHLY REQUIREMENT, in ONE column and
+                    NOT two.
+
+                    They are one question asked twice — what this shop buys, and
+                    how much of it — and neither is worth a column of its own on
+                    a table that already scrolls sideways. Together they are the
+                    thing the Potential beside them has been standing in for:
+                    "Nano Thinner · 400 L a month" is a fact somebody recorded,
+                    and "₹3,00,000" is a figure somebody guessed.
+
+                    IT SITS BEFORE THE POTENTIAL, because it is what the
+                    potential is an estimate OF. Read the other way round the
+                    money comes first and the thing being valued reads as a
+                    footnote to it.
+
+                    THE UNITS ARE NAMED ON EVERY LINE AND ARE NEVER ADDED UP. A
+                    lead's requirement is LITRES — §L: there is no SKU at
+                    capture, so cans would be a unit nobody agreed the size of —
+                    while the commitment under Potential is CANS. Nothing here
+                    converts between them, because `products.priceSource` is
+                    still `unset` and there is no packing to read. */}
+                <HeadCell width={170}>Wants</HeadCell>
+                <HeadCell align="right" width={160}>Potential</HeadCell>
                 {/* §4.1 — IMMEDIATELY AFTER THE POTENTIAL, because the two are
                     only readable as a pair. "₹3,00,000 · Low" is a manager
                     saying the big shop is not this fortnight's work, which is
@@ -649,7 +791,21 @@ export function LeadsScreen({
                     left-to-right order, which is the rule FILTER_COLUMNS
                     states above. */}
                 <HeadCell width={120}>Priority</HeadCell>
-                <HeadCell width={110}>Stage</HeadCell>
+                {/* §8.4's SALES TYPE RIDES IN THIS CELL rather than taking a
+                    column of its own, and the pairing is the argument
+                    FILTER_COLUMNS already makes one screen up: a RUNG IS NOT A
+                    TRACK. "Negotiation" answers nothing on its own, because
+                    `suspect` is the foot of all three ladders and the rungs
+                    above it mean different work on each — so the ladder and the
+                    rung are one fact read together, and a column between them
+                    would be a column read across.
+
+                    It was FILTERABLE AND NOT READABLE before this, which is the
+                    worst of the two halves to have: "which of these are
+                    distributor leads" was a filter round trip and a page
+                    reload, on a screen where the answer was already on the
+                    row. */}
+                <HeadCell width={152}>Stage</HeadCell>
                 {/* §7 — IMMEDIATELY AFTER THE STAGE, because the stage is
                     where a lead IS and this is what that means for the person
                     reading it. "Negotiation" on its own is a noun somebody has
@@ -669,7 +825,10 @@ export function LeadsScreen({
                     some. Which job produced a given sentence rides on the
                     cell's own hover, where it is asked rather than asserted. */}
                 <HeadCell width={180}>For you</HeadCell>
-                <HeadCell width={130}>Next</HeadCell>
+                {/* §8.4 — RED IF IT IS PAST, AMBER IF IT FALLS TODAY. See
+                    `NextCell`: the tone is `owedTone`'s and the date is the
+                    earliest of the three days a lead can be carrying. */}
+                <HeadCell width={150}>Next</HeadCell>
                 <HeadCell width={110}>Age</HeadCell>
                 <HeadCell width={190}>Health &amp; metrics</HeadCell>
                 {/* Wide enough for the menu trigger AND the cell's own padding: at the
@@ -742,12 +901,11 @@ export function LeadsScreen({
                       )}
                     </Cell>
                     <Cell className="capitalize">{l.source.replace(/_/g, " ")}</Cell>
+                    <Cell truncate={170}>
+                      <WantsCell lead={l} />
+                    </Cell>
                     <Cell align="right">
-                      {Number(l.estimatedPotentialPaise) ? (
-                        money(Number(l.estimatedPotentialPaise))
-                      ) : (
-                        <span className="text-muted">Not estimated</span>
-                      )}
+                      <PotentialCell lead={l} />
                     </Cell>
                     <Cell>
                       {/* UNJUDGED IS SAID IN WORDS, not left as an empty cell.
@@ -760,7 +918,7 @@ export function LeadsScreen({
                         <Pill tone={priorityTone(l.priority)}>{priorityLabel(l.priority)}</Pill>
                       </span>
                     </Cell>
-                    <Cell>
+                    <Cell truncate={152}>
                       <Pill
                         tone={
                           l.stage === "won" ? "success" : l.stage === "lost" ? "danger" : "brand"
@@ -768,16 +926,23 @@ export function LeadsScreen({
                       >
                         {stageLabel(l.stage as LeadStage)}
                       </Pill>
+                      {/* Which ladder the rung belongs to, under it rather than
+                          beside it: at this width a second pill on one line
+                          would wrap anyway, and the ladder is the quieter of
+                          the two facts — it says what the rung above it MEANS
+                          rather than where the lead is. */}
+                      <span
+                        className="mt-0.5 block truncate text-[12px] text-muted"
+                        title={salesTypeSentence(l.salesType)}
+                      >
+                        {salesTypeLabel(l.salesType)}
+                      </span>
                     </Cell>
                     <Cell truncate={180}>
                       <ActionCell lead={l} viewer={viewer} />
                     </Cell>
-                    <Cell>
-                      {l.nextFollowUpDate ? (
-                        shortDate(l.nextFollowUpDate)
-                      ) : (
-                        <span className="text-muted">None promised</span>
-                      )}
+                    <Cell truncate={150}>
+                      <NextCell lead={l} day={day} />
                     </Cell>
                     <Cell>
                       {plural(l.ageDays, "day")} old
@@ -835,7 +1000,7 @@ export function LeadsScreen({
                       className={i % 2 === 1 ? "bg-canvas" : "bg-surface"}
                       onClick={() => toggleExpanded(l.id)}
                     >
-                      <td colSpan={11} className="cursor-pointer border-b border-divider px-4 pb-3.5">
+                      <td colSpan={12} className="cursor-pointer border-b border-divider px-4 pb-3.5">
                         <DetailPanel lead={l} hasDetail={hasDetail} viewer={viewer} />
                       </td>
                     </tr>
@@ -1125,6 +1290,216 @@ export function LeadsScreen({
 }
 
 /**
+ * §8.4 — THE DUE DATE, AND IT CARRIED NO URGENCY WHATEVER.
+ *
+ * This cell printed `shortDate(nextFollowUpDate)` in the same ink as every
+ * other cell on the row. On four hundred leads that means a promise somebody
+ * broke a fortnight ago is drawn exactly like one due next month, on the
+ * default screen of the whole workspace — the list sorts the urgent work to the
+ * top and then says nothing whatever about it, and a manager scanning down has
+ * to read and subtract every date to find out which ones are bleeding.
+ *
+ * TWO THINGS ARE FIXED HERE AND THE SECOND IS THE ONE NOBODY WOULD LOOK FOR.
+ *
+ * The tone is the first: `owedTone` — red past its day, amber on the day, plain
+ * ahead of it. It is not decided here, because the record's own strip has to be
+ * able to agree with it: one lead may not read urgent on one screen and
+ * ordinary on the other, which is what `lib/customer-health.ts` was written
+ * about on the day "at risk" meant two things in two places.
+ *
+ * THE COLUMN IT READS IS THE SECOND. `lead_next_follow_up_date` is the
+ * salesman's own diary; §24's action is not in it and neither is a parked
+ * lead's resume day — so the cell was silent about two of the three ways a lead
+ * can owe somebody a morning, and silent in the direction that HIDES work.
+ * `leadOwed` answers with the EARLIEST of the three and names which one it is,
+ * which is what the handset already settled for the same question (`LEAD_WHENS`
+ * in `mbos-app/src/engines/leads.ts`) and what the CRM already answers about a
+ * customer's next step. The Next dropdown above the table and the order the
+ * list is drawn in read the same three columns through `OWED_DATE_SQL`, so the
+ * bar, the header and the row cannot disagree about one lead.
+ *
+ * NAMING WHICH DAY IT IS, IS WHAT PAYS FOR THE WIDTH. "Promised", "Off hold"
+ * and "Next action" are three different mornings, and one date standing for all
+ * three is a figure nobody can act on.
+ *
+ * A LEAD OWING NOTHING IS SAID IN WORDS AND DRAWN PLAIN. It is a real failure —
+ * §24 says an active lead may not sit like this — but it is a DIFFERENT one
+ * from a missed promise, and the desk that chases it is a link at the top of
+ * this very screen. Colouring it here would claim the two are the same size of
+ * problem and, on a fresh book where most leads have nothing owed, would fill
+ * the column with a colour that then means nothing anywhere.
+ */
+function NextCell({ lead, day }: { lead: LeadRow; day: string }) {
+  const owed = leadOwed(lead, day);
+  if (!owed) {
+    return <span className="text-muted">Nothing owed</span>;
+  }
+
+  const tone = owedTone(owed);
+  return (
+    <span title={owedSentence(owed, shortDate)}>
+      <span
+        className={cx(
+          "block truncate",
+          tone === "danger"
+            ? "font-semibold text-danger"
+            : tone === "warn"
+              ? "font-semibold text-warn-ink"
+              : "text-body",
+        )}
+      >
+        {shortDate(owed.date)}
+        {/* How late, on the row rather than only on the hover: "12 Sep" in red
+            says something is wrong and leaves a manager to subtract to find out
+            how wrong. */}
+        {owed.daysLate > 0 ? ` · ${plural(owed.daysLate, "day")} late` : null}
+        {owed.isToday ? " · today" : null}
+      </span>
+      <span className="block truncate text-[12px] text-muted">{owedWord(owed)}</span>
+    </span>
+  );
+}
+
+/**
+ * §8.4's PRODUCT AND MONTHLY REQUIREMENT — the two answers that say how big a
+ * lead actually is, as against how big somebody guessed it might be.
+ *
+ * The product is the SKU resolved at qualification and never the free-text
+ * `lead_requirement`: the requirement is a shop describing a job in its own
+ * words ("thinner for a spray booth"), which is the right thing to store and
+ * the wrong thing to put in a 170px column, where it would print four words and
+ * cut the sentence off mid-clause. The record draws both; a column somebody
+ * SCANS draws the one that is a name.
+ *
+ * LITRES, SAID OUT LOUD, EVERY TIME. §L: there is no SKU at capture, so a
+ * lead's monthly requirement is the one quantity in MahekOne that is not cans —
+ * and the commitment one column along IS cans. Two units on one screen is
+ * survivable only while no cell is ever ambiguous about which it is holding,
+ * and nothing anywhere adds them together, because nothing can:
+ * `products.priceSource` is still `unset` and there is no packing to convert
+ * through.
+ *
+ * NOTHING RECORDED IS SAID IN WORDS rather than left blank, the same rule the
+ * priority badge follows. It is most of an imported book, and a blank cell
+ * reads as a value that failed to load rather than as a question nobody asked.
+ */
+function WantsCell({ lead }: { lead: LeadRow }) {
+  const litres = lead.monthlyVolumeLitres;
+  return (
+    <span>
+      <span
+        className={cx("block truncate", lead.requiredProductName ? "text-body" : "text-muted")}
+        title={
+          lead.requiredProductName ??
+          "Nobody has named a product on this lead. It is asked at qualification."
+        }
+      >
+        {lead.requiredProductName ?? "No product named"}
+      </span>
+      <span
+        className="block truncate text-[12px] text-muted"
+        title={
+          litres
+            ? "What this shop gets through in a month, in litres — a lead has no SKU yet, so it is the one quantity here that is not cans."
+            : "Nobody has recorded how much this shop uses in a month."
+        }
+      >
+        {litres ? `${litres.toLocaleString("en-IN")} L a month` : "No monthly figure"}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * WHAT SOMEBODY GUESSED, AND WHAT SOMEBODY WAS ACTUALLY PROMISED.
+ *
+ * The potential is an ESTIMATE typed by whoever raised the lead, and it has
+ * stood alone in this column since the list shipped. §8.4 asks for the expected
+ * sales value beside it, and the pair is the point: a shop guessed at three
+ * lakhs with the customer's own promise of eighty thousand against it is a lead
+ * somebody is converting, and the same shop with nothing promised is a number
+ * nobody has tested. A column apart, those two facts are never connected — the
+ * same argument that put the manager's priority immediately after the estimate
+ * rather than three columns along.
+ *
+ * §3.4 IS DRAWN RATHER THAN RESTATED. A commitment is a day AND a size, and
+ * `hasCommitment` is the one answer to that — `confirmedCommitmentSql` in the
+ * read, `commitmentState` on the record — so this cell reads the flag rather
+ * than re-deciding it from the three columns beside it. A day with no size is
+ * still SHOWN and says so: "around the 25th" is a follow-up somebody owes and
+ * is deliberately not counted, and hiding it would hide the fact that nobody
+ * asked how much.
+ *
+ * THE QUANTITY IS CANS, said on the line, because the requirement in the column
+ * to its left is litres and nothing converts between them.
+ */
+function PotentialCell({ lead }: { lead: LeadRow }) {
+  const potential = Number(lead.estimatedPotentialPaise);
+  const value = Number(lead.expectedOrderValuePaise);
+  const cans = lead.expectedOrderCans;
+
+  /* What the customer actually said, in the order it is worth reading: the
+     money where there is any, the cans where there is not, and the bare day
+     where nobody asked either. */
+  const promised = lead.expectedOrderDate
+    ? value
+      ? `${money(value)} by ${shortDate(lead.expectedOrderDate)}`
+      : cans
+        ? `${plural(cans, "can")} by ${shortDate(lead.expectedOrderDate)}`
+        : `Due ${shortDate(lead.expectedOrderDate)} — no size asked`
+    : null;
+
+  return (
+    <span>
+      <span className={cx("block truncate", potential ? "text-body" : "text-muted")}>
+        {potential ? money(potential) : "Not estimated"}
+      </span>
+      {promised ? (
+        <span
+          className={cx(
+            "block truncate text-[12px]",
+            lead.hasCommitment ? "text-body" : "text-muted",
+          )}
+          title={
+            lead.hasCommitment
+              ? "What the customer committed to: a day and a size. §3.4 counts this one."
+              : "A day with no quantity and no value against it. §3.4 keeps it as a follow-up and deliberately does not count it as a commitment, because nobody has asked how much."
+          }
+        >
+          {promised}
+        </span>
+      ) : (
+        <span
+          className="block truncate text-[12px] text-muted"
+          title="Nobody has asked this shop for a first order yet."
+        >
+          Nothing promised
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The hover under the stage, saying what the ladder means.
+ *
+ * `salesTypeLabel` is the only vocabulary — a second set of words for the same
+ * three codes typed into a screen is how one shop comes to read two ways — and
+ * the hints come off `SALES_TYPES` for the same reason. The fourth answer gets
+ * the one sentence that is genuinely about this screen rather than about the
+ * code: a lead raised before the funnel existed climbs the six rungs this
+ * product shipped with, and nothing backfills a ladder onto it, because
+ * guessing which of three somebody was on decides which GATES apply.
+ */
+function salesTypeSentence(type: LeadSalesType | null): string {
+  if (!type) {
+    return "Raised before the funnel, so it is on no ladder — it climbs the six original rungs. Nothing guesses one for it, because the ladder decides which gates apply.";
+  }
+  const hint = SALES_TYPES.find((s) => s.code === type)?.hint;
+  return hint ? `${salesTypeLabel(type)} — ${hint}` : salesTypeLabel(type);
+}
+
+/**
  * What "health" means for a row here.
  *
  * A lead that has never ordered is in NO health band — inventing one would be
@@ -1349,6 +1724,123 @@ function RoleReadings({ lead, viewer }: { lead: LeadRow; viewer: VantageViewer }
       </div>
     </div>
   );
+}
+
+/**
+ * §8.4's views as a chip strip, which is the one control that says this screen
+ * has more than one list in it.
+ *
+ * Chips rather than tabs, and above the filter bar rather than in it, because
+ * a view changes what the list IS while a filter narrows what it already is —
+ * the same argument the handset's Everything / Customers / Leads chips carry.
+ * A view hidden inside the filter menu is one people misread as a filter they
+ * forgot to clear.
+ *
+ * Every chip is a plain link, so a view survives a bookmark, a refresh and a
+ * link pasted into WhatsApp. `hrefFor` keeps the filters, which is the whole
+ * point: "everything Rakesh has, and of those the overdue ones" is two clicks
+ * and neither undoes the other.
+ */
+function ViewChips({
+  view,
+  hrefFor,
+}: {
+  view: LeadView;
+  hrefFor: (params: Record<string, string>) => string;
+}) {
+  return (
+    <nav aria-label="Lead views" className="mb-4 flex flex-wrap items-center gap-1.5">
+      {VIEW_CHIPS.map((v) => {
+        const active = v === view;
+        return (
+          <Link
+            key={v}
+            href={hrefFor({ view: v })}
+            aria-current={active ? "page" : undefined}
+            title={VIEW_TEXT[v].subtitle}
+            className={cx(
+              "inline-flex h-8 items-center rounded-[4px] border px-3 text-[13px] no-underline hover:no-underline",
+              active
+                ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                : "border-line bg-surface text-body hover:bg-canvas",
+            )}
+          >
+            {VIEW_TEXT[v].title}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+/**
+ * THE REGISTER SAYS THAT HALF OF IT IS NO LONGER BEING FED.
+ *
+ * A list headed "Distributors & third-party" with a distributor column and no
+ * sentence reads as a book somebody is still filling, and the leads on that
+ * ladder read as work in progress — which is exactly what they are not. Mahek
+ * withdrew the distributor track because nobody in the building had the
+ * authority to complete its appointment approval, so the leads on it were
+ * parked half way up a ladder with no end, indistinguishable on every screen
+ * from leads somebody was working. That is the failure this paragraph exists
+ * to stop happening a second time on the one screen that gathers them.
+ *
+ * The words come from `retiredLadderNote`, which reads the `retired` flag on
+ * `SALES_TYPES` rather than asserting anything: deleting that single line
+ * turns the ladder back on everywhere at once, and this sentence off with it.
+ * A note typed into this file would go on telling people the track was closed
+ * for as long as it took somebody to notice.
+ */
+function RegisterNote() {
+  const note = retiredLadderNote();
+  if (!note) return null;
+  return (
+    <div className="mb-4 rounded-[6px] border-l-[3px] border-line-strong bg-canvas px-4 py-3">
+      <div className="text-sm font-semibold text-ink">The distributor ladder is closed</div>
+      <div className="mt-0.5 text-[13px] text-pretty text-body">{note}</div>
+    </div>
+  );
+}
+
+/**
+ * AN EMPTY LIST HAS TO SAY WHICH KIND OF EMPTY IT IS.
+ *
+ * "No leads" under a view is a sentence about the whole book, and on Overdue
+ * it is the opposite of the truth — an empty Overdue list is the rule working,
+ * and drawing it as an absence of data is how somebody concludes the screen is
+ * broken and stops opening it. The same distinction the Overdue screen already
+ * makes with its answered count, made here with words because this view has no
+ * second figure to make it with.
+ */
+function emptyTitleFor(view: LeadView): string {
+  switch (view) {
+    case "mine": return "Nothing with your name on it";
+    case "today": return "Nothing owed today";
+    case "overdue": return "Nothing overdue";
+    case "expected": return "Nobody has committed to an order";
+    case "lost30": return "Nothing lost this month";
+    case "register": return "Nobody on this register";
+    default: return "No leads";
+  }
+}
+
+function emptyBodyFor(view: LeadView): string {
+  switch (view) {
+    case "mine":
+      return "No lead here carries your seat — not as its owner, not as its lead manager and not as its back office person. That is a fact about the seats rather than about your work: the For you column says what a lead wants from whoever is reading it.";
+    case "today":
+      return "No next action falls today and no parked lead comes back today, under these filters. §24 is the rule that stops a lead sitting with nothing owed by anybody — an empty day here is that rule working rather than a screen with nothing in it.";
+    case "overdue":
+      return "Every promise on this book has either been kept or is still in the future. This is the one list that is supposed to empty itself.";
+    case "expected":
+      return "§3.4 counts a commitment as a day AND a size. A day on its own is a follow-up somebody has to make and is deliberately not counted here — so an empty list can mean nobody was asked how much, rather than nobody promised anything.";
+    case "lost30":
+      return "Nothing has been closed as lost in the last thirty days. A lead with no recorded day at the rung it is on is left out rather than dated from a guess.";
+    case "register":
+      return "No lead is marked as a distributor or as a third-party shop. The third-party mark is what says the goods go here and somebody else holds the invoice; nobody has made that call on this book yet.";
+    default:
+      return "A lead is a shop that is not on the book yet. They are raised on the handset, and the duplicate check reads customers as well as leads — the number somebody is about to type is quite often already an account.";
+  }
 }
 
 /**
@@ -1640,6 +2132,14 @@ function FilterBar({
         selected={filters.priority}
         onChange={pick("priority")}
         title="How hard a manager has asked for this one to be pushed — not what it is worth. Not set is the one most of the book sits on, and it is a real answer rather than a gap."
+      />
+      <MultiSelect
+        label="Sales type"
+        placeholder="All ladders"
+        options={[...SALES_TYPE_BUCKETS]}
+        selected={filters.salesType}
+        onChange={pick("salesType")}
+        title="Which of the three ladders this lead climbs, and the fourth answer that is not one. A RUNG is not a track — Suspect is the foot of all three — so narrowing by stage alone answers with every ladder at once."
       />
       <MultiSelect
         label="Stage"

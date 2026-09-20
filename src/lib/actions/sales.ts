@@ -41,6 +41,9 @@ import {
   onlyMine,
 } from "@/lib/services/sales-service";
 import type { LeadFilters } from "@/lib/lead-filters";
+import { salesTypeLabel } from "@/lib/lead-labels";
+import { leadOwed, owedWord } from "@/lib/lead-owed";
+import type { LeadView } from "@/lib/lead-views";
 import { today } from "@/lib/recompute";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
@@ -1719,6 +1722,11 @@ export async function reassignLead(input: {
 export async function exportLeadRows(input: {
   archived?: boolean;
   filters?: LeadFilters;
+  /* §8.4 — WHICH VIEW THE BUTTON WAS PRESSED IN. A file downloaded from
+     Overdue that quietly held the whole book is worse than no export: it is
+     the capped-list mistake in reverse, and the person who sends it on has no
+     way of knowing. The name is resolved server-side by `leadsPage`. */
+  view?: LeadView;
 }): Promise<Result<{ rows: Array<Array<string | number>> }>> {
   try {
     await requireSales();
@@ -1726,18 +1734,27 @@ export async function exportLeadRows(input: {
     const first = await leadsPage(day, {
       archived: input.archived,
       filters: input.filters,
+      view: input.view,
       page: 1,
       perPage: 1,
     });
     const all = await leadsPage(day, {
       archived: input.archived,
       filters: input.filters,
+      view: input.view,
       page: 1,
       // The cap is `leadsPage`'s own, so a book that outgrows it is cut in one
       // place rather than two — and the count beside the button is the total,
       // so a truncated file is visible rather than silent.
       perPage: Math.max(first.total, 1),
     });
+
+    /* Rupees from paise, the way this file has always written them — and blank
+       rather than a nought where there is no figure at all, because a column of
+       zeroes in a spreadsheet reads as "nothing expected" on exactly the rows
+       where the honest answer is that nobody has asked. */
+    const rupees = (paise: number | null) =>
+      Number(paise) ? Math.round(Number(paise) / 100) : "";
 
     return ok({
       rows: [
@@ -1747,26 +1764,63 @@ export async function exportLeadRows(input: {
           "City",
           "Owner",
           "Source",
-          "Potential (₹)",
+          "Sales type",
           "Stage",
-          "Next follow-up",
+          "Wants",
+          "Monthly requirement (litres)",
+          "Potential (₹)",
+          "Expected order (₹)",
+          "Expected order (cans)",
+          "Expected order by",
+          /* Two columns for one cell, because the screen's Next column is a
+             date with the promise it came from named underneath it, and a
+             spreadsheet row has nowhere to put a second line. */
+          "Next due",
+          "What that day is",
           "Age (days)",
           "Notes",
         ],
-        ...all.rows.map((l) => [
-          l.name,
-          l.companyName ?? "",
-          l.city ?? "",
-          l.salesmanName ?? "Nobody",
-          l.source.replace(/_/g, " "),
-          Number(l.estimatedPotentialPaise)
-            ? Math.round(Number(l.estimatedPotentialPaise) / 100)
-            : "",
-          l.stage,
-          l.nextFollowUpDate ?? "",
-          l.ageDays,
-          l.notes ?? "",
-        ]),
+        ...all.rows.map((l) => {
+          /*
+           * THE SAME DAY THE SCREEN DREW, from the same function.
+           *
+           * This column used to be `nextFollowUpDate` alone — the salesman's
+           * own diary — while the list has moved to the EARLIEST of three:
+           * §24's next action, that diary, and a park read back while the lead
+           * is still parked. So a manager who filtered to Overdue and exported
+           * it got a file whose dates disagreed with the screen they had just
+           * been reading. Its header named the column it read, so it was not
+           * lying — and an export is what somebody takes into a meeting, where
+           * a date that differs from the one they filtered on is worse than no
+           * date at all.
+           */
+          const owed = leadOwed(l, day);
+          return [
+            l.name,
+            l.companyName ?? "",
+            l.city ?? "",
+            l.salesmanName ?? "Nobody",
+            l.source.replace(/_/g, " "),
+            salesTypeLabel(l.salesType),
+            l.stage,
+            /* The SKU somebody resolved at qualification, not the free-text
+               requirement: the requirement describes a job rather than a can,
+               and the record is where a sentence belongs. */
+            l.requiredProductName ?? "",
+            /* LITRES on a lead, and CANS three columns along on a commitment.
+               There is no SKU at capture, so nothing converts between them and
+               nothing here adds them up — each column names its own unit. */
+            l.monthlyVolumeLitres ?? "",
+            rupees(l.estimatedPotentialPaise),
+            rupees(l.expectedOrderValuePaise),
+            l.expectedOrderCans ?? "",
+            l.expectedOrderDate ?? "",
+            owed?.date ?? "",
+            owed ? owedWord(owed) : "",
+            l.ageDays,
+            l.notes ?? "",
+          ];
+        }),
       ],
     });
   } catch (e) {
@@ -1981,12 +2035,21 @@ function bulkMessage(outcome: BulkOutcome, verb: string): string {
 export async function leadIdsForSelection(input: {
   archived?: boolean;
   filters?: LeadFilters;
+  /* The view is part of what the screen is showing, so "Select everything"
+     has to mean everything on THIS list. Without it the count on the button
+     and the set the button selects are two different numbers, and the one
+     people trust is the one on the button. */
+  view?: LeadView;
 }): Promise<Result<{ ids: string[]; capped: boolean }>> {
   try {
     await requireSales();
     const day = await today();
     return ok(
-      await leadIdsMatching(day, { archived: input.archived, filters: input.filters }),
+      await leadIdsMatching(day, {
+        archived: input.archived,
+        filters: input.filters,
+        view: input.view,
+      }),
     );
   } catch (e) {
     return fromThrown(e);

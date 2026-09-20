@@ -35,6 +35,11 @@ const testUrl = dev.replace(/\/[^/?]+(\?|$)/, "/mahekone_test$1");
  * stopping at the first hides which one you have.
  */
 const files = [
+  /* FIRST, because it is the cheapest and it explains the others. A table whose
+     declared columns are not in the database takes down every test that touches
+     it with "column … does not exist", and eleven journey failures is a worse
+     place to start reading than one sentence naming the table. */
+  "src/lib/mbos-columns.test.ts",
   "src/lib/journeys.test.ts",
   "src/lib/accounts.test.ts",
   "src/lib/bill-paging.test.ts",

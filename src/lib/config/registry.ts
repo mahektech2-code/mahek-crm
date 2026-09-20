@@ -17,6 +17,7 @@ import {
   SAMPLE_CANCEL_REASONS,
   VERIFICATION_FAILURE_REASONS,
   OVERRIDE_REASONS,
+  ORDER_BLOCKERS,
   PROSPECT_REASONS,
   SAMPLE_REASONS,
 } from "../lead-labels";
@@ -3071,6 +3072,15 @@ export const SETTINGS = [
     default: SAMPLE_CANCEL_REASONS.map((r) => ({ ...r })),
   },
   {
+    key: "leads.orderBlockers",
+    type: "structured",
+    category: "mbos-leads",
+    label: "What is stopping the first order",
+    description:
+      "§5.5. Asked as the commitment is taken, beside the day and the size. A forecast with no blocker on it is a number; one with a blocker on it is a number and somebody's work - and coded rather than typed so 'how much are we forecasting behind credit terms this quarter' is a question somebody can ask. 'No blocker' is first and is the default, because it is the ordinary answer and a list whose default is an obstacle teaches a salesman to record one.",
+    default: ORDER_BLOCKERS.map((r) => ({ ...r })),
+  },
+  {
     key: "leads.overrideReasons",
     type: "structured",
     category: "mbos-leads",
@@ -4166,6 +4176,7 @@ export type Config = {
   "leads.holdReasons": { code: string; label: string }[];
   "leads.sampleCancelReasons": { code: string; label: string }[];
   "leads.overrideReasons": { code: string; label: string }[];
+  "leads.orderBlockers": { code: string; label: string }[];
   "leads.sampleReviewChaseDays": number[];
   "leads.verificationDueDays": number;
   "leads.figuresFreshDays": number;

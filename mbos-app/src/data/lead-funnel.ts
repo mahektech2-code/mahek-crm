@@ -2,12 +2,16 @@ import { all, newId, one, run } from '../db';
 import { getConfig } from './config';
 import { getLead, notesOf, type Lead, type LeadResult } from './leads';
 import { updateAndQueue } from './write';
-import { isoDate } from '../lib/format';
+import { isoDate, plural } from '../lib/format';
 import { legacyStageFor, stageOf, wireFunnelStage, wireNotes } from '../lib/wire';
+import type { FieldCheck } from '../engines/field-check';
 import {
   gateForNext,
   gateTo,
+  labelOf,
   mustDecideSuspect,
+  ORDER_BLOCKERS,
+  REASON_CODE_NEEDING_REMARKS,
   type CodedOption,
   type GateVerdict,
   type LeadGateInput,
@@ -41,14 +45,17 @@ import {
  * differ. `stage` is always one of those: the local column holds this app's
  * six words and the wire carries the specification's rung.
  *
- * TODO(integration): four things this file records have no home on that schema
- * yet and are stripped by zod on arrival — `distributorProfile` (§11's thirty),
- * `thirdParty` with its distributor and that distributor's own salesman (§23),
- * and `expectedOrderDate`/`expectedOrderValuePaise` (§18). Workstream A owns
- * `leadSchema`; workstream B owns `saveDistributorProfile` and the third-party
- * link. Until they land the handset's own record is complete and the office
- * hears nothing about them — nothing is refused, which is the safe direction
- * and the silent one.
+ * TODO(integration): what this file records and the office cannot yet hear.
+ * `distributorProfile` (§11's thirty) and the third-party link (§23) are
+ * workstream B's. §5.5's commitment is struck off with the two before it: the
+ * QUANTITY and the BLOCKER had no column on this phone and no field on
+ * `leadSchema`, so they were kept in `kv` and deliberately not sent — a field
+ * the office has not promised to hold must not be put on the wire on the
+ * chance that it one day will, because zod strips an undeclared one in silence
+ * and the salesman sees "saved" over a column that stays null for ever. Both
+ * ends landed together, so they are now ordinary fields on the patch and the
+ * `kv` key is gone. There was nothing to migrate: a commitment is RESTATED
+ * rather than accumulated, and the next one written is the whole answer.
  */
 
 /* ------------------------------------------------------------- the config */
@@ -59,25 +66,50 @@ export type FunnelConfig = {
   prospectReasons: CodedOption[];
   sampleReasons: CodedOption[];
   lostReasons: CodedOption[];
+  /* Why a lead stopped. Published by the office since the funnel shipped and
+     read by nothing here — see the note in `data/config.ts`. */
+  holdReasons: CodedOption[];
+  /* §5.5 — what is stopping the first order. Configured for the same reason
+     every other list here is: a manager rewords one without a deploy, and on
+     this app without an APK nobody can recall. */
+  orderBlockers: CodedOption[];
 };
 
 /**
- * The four coded lists and the suspect window, fetched together.
+ * The coded lists and the suspect window, fetched together.
  *
- * Together rather than five deep, because every screen in the funnel needs at
- * least two of them and a form that renders its options one await at a time
- * flickers its way onto the screen while somebody is standing in a shop.
+ * Together rather than one await at a time, because every screen in the funnel
+ * needs at least two of them and a form that renders its options one await at
+ * a time flickers its way onto the screen while somebody is standing in a
+ * shop.
  */
 export async function funnelConfig(): Promise<FunnelConfig> {
-  const [suspectMaxVisits, requireNextAction, prospectReasons, sampleReasons, lostReasons] =
-    await Promise.all([
-      getConfig<number>('leads.suspectMaxVisits'),
-      getConfig<boolean>('leads.requireNextAction'),
-      getConfig<CodedOption[]>('leads.prospectReasons'),
-      getConfig<CodedOption[]>('leads.sampleReasons'),
-      getConfig<CodedOption[]>('leads.lostReasons'),
-    ]);
-  return { suspectMaxVisits, requireNextAction, prospectReasons, sampleReasons, lostReasons };
+  const [
+    suspectMaxVisits,
+    requireNextAction,
+    prospectReasons,
+    sampleReasons,
+    lostReasons,
+    holdReasons,
+    orderBlockers,
+  ] = await Promise.all([
+    getConfig<number>('leads.suspectMaxVisits'),
+    getConfig<boolean>('leads.requireNextAction'),
+    getConfig<CodedOption[]>('leads.prospectReasons'),
+    getConfig<CodedOption[]>('leads.sampleReasons'),
+    getConfig<CodedOption[]>('leads.lostReasons'),
+    getConfig<CodedOption[]>('leads.holdReasons'),
+    getConfig<CodedOption[]>('leads.orderBlockers'),
+  ]);
+  return {
+    suspectMaxVisits,
+    requireNextAction,
+    prospectReasons,
+    sampleReasons,
+    lostReasons,
+    holdReasons,
+    orderBlockers,
+  };
 }
 
 /* ------------------------------------------------------------------ reads */
@@ -139,7 +171,7 @@ export async function visitCount(leadId: string): Promise<number> {
  * three readings of "may this move" is how two of them come to disagree.
  */
 export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
-  const [visits, sample] = await Promise.all([
+  const [visits, sample, figuresFreshDays] = await Promise.all([
     visitCount(lead.id),
     one<{ state: string; trialOutcome: string | null; feedback: number }>(
       `SELECT s.state, s.trialOutcome,
@@ -150,6 +182,10 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
         LIMIT 1`,
       [lead.id],
     ),
+    /* §5.3 — the window, off the same `leads.*` keys the suspect cap reads.
+       It reaches this phone on every pull, so the staleness verdict is made
+       here against this phone's clock rather than sent as somebody else's. */
+    getConfig<number>('leads.figuresFreshDays'),
   ]);
 
   return {
@@ -176,6 +212,10 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
     creditDaysWanted: lead.creditDaysWanted,
     application: lead.application,
     gstin: lead.gstin,
+    /* §11.6 — the OFFICE's verdict, pulled down and settable by nothing here.
+       The gate reads the number AND this, so while it was on no wire it was
+       undefined on every handset and no shop lead ever reached Sample/Trial. */
+    gstVerified: lead.gstVerified === 1,
 
     nextAction: lead.nextAction,
     nextActionDate: lead.nextActionDate,
@@ -189,7 +229,18 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
     verifiedAt: lead.verifiedAt ? new Date(lead.verifiedAt) : null,
 
     thirdParty: Boolean(lead.thirdParty),
-    distributorCount: lead.distributorCustomerId ? 1 : 0,
+    /* THE OFFICE'S COUNT, and it used to be an id this phone never received.
+       `distributorCustomerId` reached no handset, so a third-party lead the
+       office had already given a distributor answered zero here and was refused
+       its sample in the words "Say which distributor invoices this shop" — over
+       an arrangement that was on the record. The id comes down now too, and the
+       count is still the count, because a shop on a territory boundary has two
+       and one column could only ever name one of them. */
+    distributorCount: lead.distributorCount ?? (lead.distributorCustomerId ? 1 : 0),
+    /* §4.2 — who PLACES the order. The eighth qualification condition takes
+       this OR a confirmed decision maker, so the ordinary shop where one man
+       does both is never asked for a second name. */
+    buyer: lead.buyer,
 
     /* The state words differ on the two sides — this app keeps the design's
        `Awaiting feedback` and MahekOne keeps `dispatched`/`received`. The gate
@@ -204,9 +255,78 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
       : null,
 
     distributorProfile: distributorProfileOf(lead),
+    /* §12 — the two approval steps, the commercial terms and the signed
+       agreement. None of the four is this phone's to assert and nothing here
+       writes one; they arrive so a salesman on the distributor ladder is told
+       which of them he is waiting on instead of being shown a disabled button
+       over a list with nothing on it he can do. 1 is the office's yes; 0 and
+       null both leave the rung shut, which is what the gate already does. */
+    managementReviewApproved: lead.managementReviewApproved === 1,
+    distributorApprovalApproved: lead.distributorApprovalApproved === 1,
+    commercialTermsAgreed: lead.commercialTermsAgreed === 1,
+    agreementOnFile: lead.agreementOnFile === 1,
+
+    /* §18–§22 — what the LEDGER says, counted by the office over the whole
+       account. Deliberately not counted from this phone's own orders table: the
+       handset holds what it has been sent and what is still in its outbox, and
+       a count that included the outbox would tell a salesman a rung was open
+       and let the server refuse the move a minute later. */
+    countingOrderCount: lead.countingOrderCount ?? undefined,
+    deliveredOrderCount: lead.deliveredOrderCount ?? undefined,
+    confirmedPaymentCount: lead.confirmedPaymentCount ?? undefined,
+    /* §21 — the initial stock order a distributor committed to IS an order on
+       their account. There is no separate flag on either side and there should
+       not be one: a boolean somebody ticks beside an order book that disagrees
+       with it is how the two come apart. Derived from the count rather than
+       sent, for the same reason — one fact, one number. */
+    initialStockOrderPlaced: (lead.countingOrderCount ?? 0) >= 1,
+
+    /*
+     * §5.3 — THE FIGURES, JUDGED HERE against this phone's own clock.
+     *
+     * The office sends the DAY somebody last confirmed them and this works out
+     * whether that is stale, rather than the office sending the verdict. A
+     * verdict is about the moment of the pull, which is right for a phone
+     * syncing through the day and a week out of date on one that has been in a
+     * district with no signal — which is exactly the handset a gate answered
+     * offline is for. `leads.figuresFreshDays` rides down with the rest of the
+     * `leads.*` keys; a threshold of zero switches the check off, and never
+     * having confirmed them is stale, which is `figuresAreStale` on the server
+     * said in the same order.
+     */
+    figuresStale: figuresAreStale(lead.figuresConfirmedAt, figuresFreshDays),
+    /* §5.3 — and a manager who said the checklist was not finished is listened
+       to. Only `incomplete` and `clarification` hold it; an unreviewed
+       checklist passes, which is what let the rule ship without stopping the
+       whole book on the day it landed. */
+    qualificationReview:
+      lead.qualificationReview === 'incomplete' ||
+      lead.qualificationReview === 'clarification' ||
+      lead.qualificationReview === 'verified'
+        ? lead.qualificationReview
+        : null,
 
     expectedOrderDate: lead.expectedOrderDate,
   };
+}
+
+/**
+ * §5.3 — are the four conversion figures older than we are willing to send a
+ * sample on?
+ *
+ * The SERVER's copy is `figuresAreStale` in `lib/services/lead-service.ts`,
+ * which is `server-only` and cannot be imported here — so this is four lines
+ * saying the same thing rather than a mirror file, and they are written in the
+ * same order so the two can be read side by side. Never confirmed is STALE:
+ * the question is whether anybody has said the figures still hold, and nobody
+ * having said so is the answer the rule exists for. A threshold of zero
+ * switches the check off, which is how a team that does not want it turns it
+ * off from the Settings screen rather than from a deploy.
+ */
+function figuresAreStale(confirmedAtMs: number | null, freshDays: number): boolean {
+  if (!freshDays || freshDays <= 0) return false;
+  if (!confirmedAtMs) return true;
+  return Date.now() - confirmedAtMs > freshDays * 24 * 60 * 60 * 1000;
 }
 
 /**
@@ -464,6 +584,19 @@ export async function saveProspectFields(
     gstin?: string | null;
     prospectReasonCode?: string | null;
   },
+  /*
+   * §9 — CONFIRM § CORRECT § UNABLE TO VERIFY, as rows rather than as columns.
+   *
+   * They ride with the save and are NOT part of the patch, which is the whole
+   * distinction: the lead's own columns hold what the shop says TODAY, and
+   * these hold who asked, what the record said at the time and why the two
+   * differ. Folding them into the patch would try to write six columns that do
+   * not exist; folding them into the note would make them a sentence nobody
+   * can count, which is the argument `verify-field-row.tsx` already sets out.
+   *
+   * `payloadExtras` and not `patch` for exactly that reason.
+   */
+  fieldChecks?: FieldCheck[],
 ): Promise<LeadResult<null>> {
   const lead = await getLead(id);
   if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
@@ -489,6 +622,10 @@ export async function saveProspectFields(
     payloadExtras: {
       reasonCode: fields.prospectReasonCode ?? undefined,
       requiredProductName: undefined,
+      /* Omitted rather than sent empty: an absent field is a screen that asked
+         nothing, and `[]` on the wire would read at the office as six questions
+         somebody declined to answer. */
+      fieldChecks: fieldChecks?.length ? fieldChecks : undefined,
     },
   });
 
@@ -832,6 +969,161 @@ export async function markLost(
 }
 
 /**
+ * §— ON HOLD IS A PAUSE, AND THE PHONE COULD NOT EVEN ASK FOR ONE.
+ *
+ * `on_hold` has been on the wire, in the gate engine and on the record's own
+ * badge since the funnel shipped, and every route into it went through a desk
+ * or through a visit's suspect decision: a salesman standing in a shop being
+ * told the plant is shut for two months could mark the lead LOST, which is
+ * wrong and irreversible in the reader's mind, or leave it alone and let the
+ * staleness sweep archive a live prospect. The record screen could READ a park
+ * and offer to end one. Nothing on it could start one.
+ *
+ * So this asks the three things Mahek asked for, and all three are required
+ * for the same reason §24 demands a next action: a park with no end date is
+ * the exact state it exists to prevent — "back after Diwali" is a sentence
+ * nobody is watching, and a lead carrying one sits until somebody happens to
+ * scroll past it.
+ *
+ *   - the CODE, from `leads.holdReasons`, because four of the six are the
+ *     customer's doing and two are ours to chase, and that split is the whole
+ *     value of counting them. `other` costs a sentence: a code meaning
+ *     "something else" with nothing behind it is the one row nobody can act on.
+ *   - the DAY it comes back, which is the difference between a pause and a
+ *     quiet death.
+ *   - WHAT HAPPENS when it does, and who is doing it — because a lead that
+ *     comes back to nobody has not come back.
+ *
+ * It writes `funnelStage` and not only `stage`. `stageOf` reads `funnelStage`
+ * first for any lead carrying a sales type, so a park written into the legacy
+ * column alone would leave the record reading Negotiation, the gate offering
+ * the next rung, and the parked card never drawn — the lead would be on hold
+ * in the office and nowhere on the phone. The legacy column takes `On hold`
+ * rather than `legacyStageFor('on_hold', …)`, which answers `New`: a park
+ * DISPLACES the rung rather than lowering it, `bandOf` returns null for
+ * exactly that reason, and filing a parked Negotiation lead under New would be
+ * a guess printed on a chip. `On hold` is a chip the list already has.
+ *
+ * TODO(schema): the handset's `leads` table has `holdReason` and no
+ * `holdReasonCode` or `holdResumeDate` — both exist on the office side
+ * (`0151`) and neither has a column here or a place on the pull. So the CODE
+ * travels up and is not kept down here, and the local sentence carries the
+ * picked reason's LABEL where the salesman wrote no remark of his own. That is
+ * a sentence in a sentence column and not a label where a code belongs — the
+ * countable answer goes to `lead_hold_reason_code` — but it does mean a park
+ * made on this phone reads back in the words the list used ON THE DAY, and a
+ * park made at a desk arrives with no code the phone can resolve at all. The
+ * resume date rides `nextFollowUpDate`, which is the honest half of the trade:
+ * see below.
+ */
+export async function putOnHold(
+  id: string,
+  hold: {
+    reasonCode: string;
+    note?: string | null;
+    resumeDate: string;
+    next: { action: string; date: string; ownerId: string; outcome?: string | null };
+  },
+): Promise<LeadResult<null>> {
+  const lead = await getLead(id);
+  if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
+
+  const said = hold.note?.trim() || null;
+  const code = hold.reasonCode.trim();
+  const { holdReasons } = await funnelConfig();
+
+  /* Checked here as well as in the sheet, because a sheet is a screen and this
+     is the function every caller reaches — the same reason the server checks
+     it again after both of them. */
+  if (!code) return { ok: false, message: 'Pick why it is stopping — it is what gets counted afterwards.' };
+  if (code === REASON_CODE_NEEDING_REMARKS && !said) {
+    return { ok: false, message: 'You picked Other — say in words what it actually is.' };
+  }
+  if (!hold.resumeDate) return { ok: false, message: 'Name the day it comes back.' };
+  if (!hold.next.action.trim() || !hold.next.date || !hold.next.ownerId) {
+    return { ok: false, message: 'Say what happens when it comes back, on what day, and who is doing it.' };
+  }
+
+  const today = isoDate(new Date());
+  const from = stageOf(lead);
+  /* The sentence the record reads back. The remark where he wrote one, and the
+     list's own words where he did not — see the TODO above for why this column
+     carries words rather than the code. */
+  const sentence = said ?? labelOf(holdReasons, code);
+  const notes = notesOf(lead);
+  notes.push({ at: Date.now(), text: 'On hold until ' + hold.resumeDate + ' — ' + sentence });
+
+  await updateAndQueue({
+    table: 'leads',
+    entityType: 'lead',
+    id,
+    patch: {
+      funnelStage: 'on_hold',
+      /* Not `legacyStageFor` — see the header. */
+      stage: 'On hold',
+      stageSince: today,
+      holdReason: sentence,
+      notes,
+      nextAction: hold.next.action.trim(),
+      nextActionDate: hold.next.date,
+      nextActionOwnerId: hold.next.ownerId,
+      nextActionOutcome: hold.next.outcome?.trim() || null,
+      /*
+       * THE RESUME DATE IS THE DIARY DATE, and that is deliberate rather than
+       * a shortcut around the missing column.
+       *
+       * `setNextAction` already makes these one date and says why: two dates
+       * meaning almost the same thing disagreed on every lead where somebody
+       * set one and not the other. A park is the case where the distinction
+       * would bite hardest — a lead parked until the 20th whose diary still
+       * says the 3rd is a lead the list surfaces for a fortnight of mornings
+       * on which nothing can be done about it, which is how a salesman learns
+       * to ignore the list.
+       *
+       * It is the RESUME date and not the action's, where the salesman moved
+       * the action later: `listLeads` orders on this column and `leadAlert`
+       * measures lateness from it, so this is the one thing that brings a
+       * parked lead back to him on the day the park ends. The office's own
+       * resume worklist is fed by `lead_hold_resume_date`, sent below.
+       */
+      nextFollowUpDate: hold.resumeDate,
+      lastActivityDate: today,
+    },
+    payloadExtras: {
+      stage: wireFunnelStage('on_hold'),
+      /* The code is what gets counted; the sentence is what gets read. The
+         server writes the first to `lead_hold_reason_code` and the second to
+         `lead_hold_reason`, and accepts the park on either — an older build
+         sends no code at all and a park refused for want of one would be a
+         plant shutdown lost to an argument about a word. */
+      reasonCode: code,
+      holdReason: sentence,
+      holdResumeDate: hold.resumeDate,
+      notes: wireNotes(notes),
+      /* THREE LOCAL COLUMNS, ONE WIRE FIELD — `nextAction` is a string here
+         and an object on `leadSchema`, and sending the string would fail
+         validation and take the park down with it. */
+      nextAction: {
+        action: hold.next.action.trim(),
+        date: hold.next.date,
+        ownerId: hold.next.ownerId,
+        outcome: hold.next.outcome?.trim() || undefined,
+      },
+    },
+  });
+
+  await addEvent({
+    leadId: id,
+    kind: 'hold',
+    summary: 'On hold — ' + labelOf(holdReasons, code),
+    detail: [said, 'Back on ' + hold.resumeDate].filter(Boolean).join(' · '),
+    fromStage: from,
+    toStage: 'on_hold',
+  });
+  return ok;
+}
+
+/**
  * §23 — who invoices this shop, and who at the distributor calls on it.
  *
  * The mark and the distributor are written TOGETHER, exactly as
@@ -890,33 +1182,85 @@ export async function setLeadParties(
  * A date and, where they gave one, a figure. "Interested" is not an answer and
  * there is nowhere on this form to type it.
  */
+/**
+ * §5.5 §9 — THE COMMITMENT: a day, a size, and what is stopping it.
+ *
+ * IT IS A FORECAST AND NOT A SALE, and that is the whole shape of it: nothing
+ * here moves the lead a rung. §9 says so in as many words and it is the right
+ * rule — a salesman writing down what a shopkeeper said over a counter has not
+ * been given an order, and a screen that advanced the ladder on his say-so
+ * would put "First order" against a shop that has bought nothing. What the
+ * date DOES do is open the gate in front of `first_order`, which still wants an
+ * actual order behind it before it will let the lead through. The card and this
+ * function both say that in words rather than leaving it to be discovered.
+ *
+ * A COMMITMENT NEEDS A DATE AND A QUANTITY, which is Mahek's own answer and
+ * overrules §9 where the two differ. "They will order some time next week" is
+ * not a commitment anybody can plan a godown around, and a promise with no size
+ * on it cannot be compared against the order that eventually answers it.
+ *
+ * THE QUANTITY IS IN CANS, and this is the one place §L's argument for litres
+ * does NOT apply. That argument is about CAPTURE: a prospect says "about two
+ * hundred litres a month" long before anybody knows what pack they will buy it
+ * in, so cans would be a unit nobody had agreed the size of. By the time a lead
+ * is being asked for a first order it has been through qualification, which
+ * demands `requiredProductId` — there IS a SKU, and the pack size with it. Cans
+ * are what the customer says when ordering and what every order in MahekOne is
+ * stored in, so a commitment in litres could not be held against the order that
+ * answers it without a conversion nobody performed. The screen shows the SKU
+ * beside the box so the unit is never ambiguous.
+ *
+ * THE VALUE IS OPTIONAL and the quantity is not. `products.priceSource` is
+ * still `unset`, so nothing here can derive what a number of cans is worth; a
+ * rupee figure on this record is somebody's estimate and a figure nobody
+ * estimated must read as absent rather than as zero.
+ *
+ * THE BLOCKER IS A CODE, from the configured list — the same rule as a lost
+ * lead, a park and a prospect. It defaults to `no_blocker` at the screen, and
+ * that is a real answer rather than an empty field: a commitment nobody was
+ * asked about and one somebody said was clear are different facts.
+ */
 export async function recordExpectedOrder(
   id: string,
-  args: { expectedDate: string; expectedValuePaise?: number | null },
+  args: {
+    expectedDate: string;
+    expectedQuantityCans: number;
+    expectedValuePaise?: number | null;
+    blockerCode?: string | null;
+  },
 ): Promise<LeadResult<null>> {
   if (!args.expectedDate) return { ok: false, message: 'Ask when they will place it.' };
+  if (!args.expectedQuantityCans || args.expectedQuantityCans <= 0) {
+    return { ok: false, message: 'Ask how many cans. A promise with no size on it cannot be planned around.' };
+  }
   const today = isoDate(new Date());
+  const blocker = args.blockerCode?.trim() || 'no_blocker';
 
+  /* ALL FOUR IN THE PATCH, which two of them were not.
+     The size and the blocker had no column here and no field on `leadSchema`,
+     so they sat in `kv` where no sync could reach them — a commitment the
+     office heard as a day with no size on it. Both ends landed together, and
+     the rule that kept them out is the reason they are in: a field this app
+     sends is a field the office has promised to hold, and now it has. One
+     write, so a commitment is never half-recorded. */
   await updateAndQueue({
     table: 'leads',
     entityType: 'lead',
     id,
     patch: {
       expectedOrderDate: args.expectedDate,
+      expectedOrderQuantityCans: args.expectedQuantityCans,
       expectedOrderValuePaise: args.expectedValuePaise ?? null,
+      expectedOrderBlockerCode: blocker,
       lastActivityDate: today,
     },
-    /* TODO(integration): §18's two columns are not on `leadSchema` yet. The
-       gate in front of `first_order` reads `expectedOrderDate`, so until they
-       land a lead can pass that rung on the phone and be refused at the
-       office — which is the right way round, and it is written down here so
-       nobody is surprised by it. */
   });
 
   await addEvent({
     leadId: id,
     kind: 'expected_order',
-    summary: 'Order expected ' + args.expectedDate,
+    summary: plural(args.expectedQuantityCans, 'can') + ' expected ' + args.expectedDate,
+    detail: blocker === 'no_blocker' ? null : 'Blocked on ' + labelOf(ORDER_BLOCKERS, blocker),
   });
   return ok;
 }

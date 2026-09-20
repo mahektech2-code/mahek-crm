@@ -3,7 +3,11 @@ import Link from "next/link";
 import { moneyShort } from "@/lib/format";
 import { REPORT_PERIOD_LABELS, type ReportPeriod } from "@/lib/business-date";
 import { salesTypeLabel, stageLabel } from "@/lib/lead-labels";
+import { LEGACY_SALES_TYPE } from "@/lib/lead-filters";
 import type { Cohort, RungFunnel } from "@/lib/services/lead-funnel-service";
+import type { SharedFunnel, StepLadder } from "@/lib/engines/lead-funnel-shape";
+import { SharedBarFunnel } from "./shared-bar-funnel";
+import { DistributorStepLadder } from "./distributor-step-ladder";
 import { LeadTabs } from "../lead-tabs";
 import { Banner, FilterChips, MetricRow, Pill, ScreenHeader } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
@@ -32,13 +36,23 @@ const PERIODS: ReportPeriod[] = ["month", "last-month", "quarter", "last-quarter
 export function FunnelScreen({
   workspace,
   funnels,
+  shared,
+  distributor,
+  unpictured,
   cohort,
   period,
   day,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
+  /** Every ladder as the service counted it — read only for the four totals. */
   funnels: RungFunnel[];
+  /** §8.3a — direct and third-party in one funnel, shaped by the engine. */
+  shared: SharedFunnel;
+  /** §8.3b — the appointment track, as steps rather than bars. */
+  distributor: StepLadder;
+  /** Ladders neither picture covers. The legacy six, in practice. */
+  unpictured: RungFunnel[];
   cohort: Cohort;
   period: ReportPeriod;
   /** The business date every "days on this rung" figure is measured against. */
@@ -86,17 +100,41 @@ export function FunnelScreen({
       />
 
       {/*
-        One card per sales type rather than three columns side by side. The
-        ladders are nine, eleven and twelve rungs long and a distributor's
-        rungs are not a shorter version of a shop's — laying them out as
-        parallel columns invites reading across a row, and row four is
-        "sample_trial" on one ladder and "management_review" on another.
+        §8.3 ASKS FOR TWO PICTURES AND THEY ARE DRAWN DIFFERENTLY, which is the
+        whole of the section. The two shop tracks are one sale and are measured
+        in one funnel, split by who holds the invoice; the appointment track is
+        a sequence of approvals and is drawn as a ladder, because the gap
+        between two approvals is a queue and a bar chart of it would read as a
+        drop-off rate that does not exist.
+
+        Side by side rather than stacked, and NOT as parallel columns of one
+        table: row four would be "sample_trial" on one and "management_review"
+        on the other, and a row you can read across is an invitation to treat
+        them as the same distance up the same climb.
       */}
       <div className="grid gap-4 xl:grid-cols-2">
-        {funnels.map((f) => (
-          <Ladder workspace={workspace} key={f.salesType ?? "legacy"} funnel={f} />
-        ))}
+        <SharedBarFunnel workspace={workspace} funnel={shared} />
+        <DistributorStepLadder workspace={workspace} ladder={distributor} />
       </div>
+
+      {/*
+        AND THE LADDERS NEITHER PICTURE COVERS, which is the legacy six.
+
+        The specification names two visualisations and there are four
+        populations: nothing backfills a sales type — guessing which of three
+        ladders somebody was on is a decision dressed up as a migration — so
+        every lead raised before the funnel existed is still climbing the
+        original six rungs. Drawing only what §8.3 named would leave them off
+        every picture on the screen, and a pipeline that omits a population is
+        the same bug `bandOf` exists to prevent, arriving through the layout.
+      */}
+      {unpictured.length > 0 ? (
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          {unpictured.map((f) => (
+            <Ladder workspace={workspace} key={f.salesType ?? "legacy"} funnel={f} />
+          ))}
+        </div>
+      ) : null}
 
       <div className="mt-8">
         <h2 className="text-lg font-semibold text-ink">Cohort conversion</h2>
@@ -133,12 +171,46 @@ function Ladder({
   workspace: LeadWorkspace;
   funnel: RungFunnel;
 }) {
+  /*
+   * A RUNG THAT HAS ARRIVED STILL CARRIES ITS OWN COUNT.
+   *
+   * `funnelByRung` files `won`, `customer` and `active_distributor` under
+   * `arrived`, because a lead that has got there has left the funnel — which is
+   * right for the four headline figures and wrong for a ladder that has to put
+   * a number against its own last rung. Read off `rungs` alone, `won` drew 0 on
+   * a book that had converted forty shops, which is the kind of wrong that gets
+   * believed rather than reported: nothing on the screen says the figure is a
+   * figure about something else.
+   *
+   * `arrivedByStage` says WHICH, so the rung takes its own arrivals and nobody
+   * else's. Reaching for `arrived` instead would put every `won` lead onto
+   * whichever terminal rung happened to be drawn first. The pill above is
+   * untouched and goes on saying how many arrived in total.
+   */
+  const rungs = funnel.rungs.map((r) => {
+    const arrived = funnel.arrivedByStage[r.stage];
+    return arrived ? { ...arrived, count: r.count + arrived.count } : r;
+  });
+
   /* Every bar is measured against the FULLEST RUNG of this ladder, not against
      the total and not against the other ladders. The question a funnel answers
      is where the book is bunching relative to itself; scaling a nine-lead
      distributor ladder against a four-hundred-lead direct one draws nine
      invisible bars and says nothing about either. */
-  const widest = funnel.rungs.reduce((n, r) => Math.max(n, r.count), 0);
+  const widest = rungs.reduce((n, r) => Math.max(n, r.count), 0);
+
+  /*
+   * A LINK OPENS EXACTLY WHAT ITS ROW COUNTS, which takes the track as well as
+   * the rung. `negotiation` is on this ladder and on both shop ladders, so
+   * `stage` alone would open three populations under one number — see the note
+   * on `segmentHref` in the bar funnel, which this is the other half of.
+   * `LEGACY_SALES_TYPE` is the sentinel for a lead carrying none, because
+   * `in (…)` never matches NULL and an empty parameter is indistinguishable
+   * from an absent one.
+   */
+  const track = funnel.salesType ?? LEGACY_SALES_TYPE;
+  const rungHref = (stage: string) =>
+    leadHref(workspace, `leads?salesType=${track}&stage=${stage}`);
 
   return (
     <section className="rounded-[6px] border border-line bg-surface">
@@ -166,10 +238,10 @@ function Ladder({
       </header>
 
       <ol className="px-5 py-4">
-        {funnel.rungs.map((rung, i) => (
+        {rungs.map((rung, i) => (
           <li key={rung.stage} className="mb-2 last:mb-0">
             <Link
-              href={leadHref(workspace, `leads?stage=${rung.stage}`)}
+              href={rungHref(rung.stage)}
               title={`Open the ${plural(rung.count, "lead")} standing on ${stageLabel(rung.stage)}`}
               className="group block rounded-[4px] px-2 py-1.5 no-underline hover:bg-canvas hover:no-underline"
             >
@@ -233,7 +305,7 @@ function Ladder({
           {funnel.offLadder.map((r, i) => (
             <span key={r.stage}>
               {i > 0 ? ", " : ""}
-              <Link href={leadHref(workspace, `leads?stage=${r.stage}`)} className="text-[#5223E0]">
+              <Link href={rungHref(r.stage)} className="text-[#5223E0]">
                 {stageLabel(r.stage)} ({r.count})
               </Link>
             </span>

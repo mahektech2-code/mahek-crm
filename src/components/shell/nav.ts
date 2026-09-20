@@ -14,7 +14,7 @@ export type NavItem = {
    * and it was worth renaming: it read `deactivations` on a screen that also
    * handles reopening, which is the same half-a-name the route had.
    */
-  badge?: "reminders" | "complaints" | "statusRequests";
+  badge?: "reminders" | "complaints" | "statusRequests" | "leadsDueToday" | "leadsOverdue";
   /**
    * Hidden from anybody who is not a manager or an admin, on top of the module
    * grant.
@@ -176,14 +176,47 @@ export const NAV: NavGroup[] = [
     label: "Lead Management",
     icon: "target",
     items: [
-      { href: at("/leads"), label: "All Leads", icon: "target", exact: true },
+      /*
+       * §8.1 — THE TWO LEAD BADGES, AND WHY THEY ARE NOT THE SIZE OF THE BOOK.
+       *
+       * A badge is a queue, never a population. The three above decide the
+       * same way — Reminders counts what is pending AND due, Complaints counts
+       * the open ones — and a number that is never zero is furniture, read as
+       * often as the resize grip. "412 leads" against All Leads would have sat
+       * there every working day of the year and taught everybody to stop
+       * looking at this column, taking the count beside it down too.
+       *
+       * So All Leads carries what is owed TODAY, which is the first thing the
+       * nine tiles on that screen cut it by; Next actions carries what has gone
+       * PAST its day, which is the tab inside it. Both come from
+       * `lead-action-window.ts` — the same two windows the screens behind them
+       * read — because a badge is the half nobody checks: nobody presses a
+       * sidebar number and counts the rows it opened, so one derived beside its
+       * screen would be wrong for months in front of everybody.
+       */
+      {
+        href: at("/leads"),
+        label: "All Leads",
+        icon: "target",
+        exact: true,
+        badge: "leadsDueToday",
+      },
       { href: at("/leads/funnel"), label: "Funnel & conversion", icon: "chart" },
       { href: at("/leads/intake"), label: "Intake", icon: "plus" },
       { href: at("/leads/qualify"), label: "Qualification", icon: "check" },
       { href: at("/samples"), label: "Samples & trials", icon: "doc" },
       { href: at("/leads/commercial"), label: "Commercial", icon: "rupee" },
       { href: at("/leads/appointments"), label: "Distributor appointments", icon: "people" },
-      { href: at("/leads/actions"), label: "Next actions & nurture", icon: "clipboard" },
+      {
+        href: at("/leads/actions"),
+        label: "Next actions & nurture",
+        icon: "clipboard",
+        /* Red at one, like Complaints and unlike everything else on this
+           column. §24 exists because a lead sits for six weeks with everybody
+           assuming somebody else is holding it, and one of these is already
+           that — a single overdue promise is not a lighter version of five. */
+        badge: "leadsOverdue",
+      },
       { href: at("/leads/handovers"), label: "Handovers", icon: "arrowRight" },
       { href: at("/leads/oversight"), label: "Oversight", icon: "lock" },
     ],
