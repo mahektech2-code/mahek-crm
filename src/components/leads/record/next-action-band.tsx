@@ -31,18 +31,31 @@ import type { LeadRecord } from "@/lib/services/lead-console-service";
  * nobody anything.
  *
  * The tone follows the STATUS and not the mood of the sentence, which is the
- * same discipline `roleAction` keeps one file over. `missing` is the danger
- * case deliberately: a lead nobody has committed to is the failure §24 is
- * written against, and drawing it warn beside an overdue action would say the
- * two are the same size of problem. They are not — an overdue action has
- * somebody's name on it and will be chased; an absent one has nobody's and
- * will not.
+ * same discipline `roleAction` keeps one file over.
+ *
+ * `missing` and `overdue` BOTH draw danger, and that is a change. This band
+ * used to rank them — missing danger, overdue warn — on the reasoning that a
+ * lead nobody has committed to is the failure §24 is written against, while an
+ * overdue action at least has somebody's name on it and will be chased. That
+ * reasoning is sound and it ranked two things NOBODY EVER SEES TOGETHER: this
+ * strip draws exactly one status, so the comparison it was making happens in
+ * no reader's eye. What a reader does see is the same lead red in the leads
+ * table's Next column and amber here, and the conclusion they draw from that
+ * is that one of the two screens is wrong.
+ *
+ * So consistency about one lead beats a ranking that has to be inferred from
+ * two screens nobody holds side by side. §8.4 names the table's hues — red
+ * past its day, amber on the day — and this follows them.
+ *
+ * Nothing is lost by it, because the ranking never travelled in the colour
+ * anyway: `missing` says "Nothing is owed by anybody" in words, which is
+ * unmistakable at any hue, and it is the one state with a prompt attached.
  */
 type Status = "missing" | "overdue" | "planned";
 
 const SKIN: Record<Status, string> = {
   missing: "border-danger bg-danger-soft",
-  overdue: "border-warn bg-warn-soft",
+  overdue: "border-danger bg-danger-soft",
   planned: "border-brand bg-brand-soft",
 };
 

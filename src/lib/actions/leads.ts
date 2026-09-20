@@ -1196,10 +1196,13 @@ export async function recordLeadValidationCall(
     if (!found.ok) return found.refusal;
     const lead = found.lead;
 
-    /* Only the twelve are stored. A thirteenth arriving from a screen somebody
-       edited is dropped rather than saved, because the record is read back
-       against `VERIFICATION_QUESTIONS` and an answer to a question nobody can
-       see is worse than no answer. */
+    /* Only the DECLARED questions are stored — seventeen now, across four
+       sections, since `0156` added §5.2's C and D. The number is not written
+       down here on purpose: it was "the twelve" in this comment and in the one
+       below, and both went stale the moment five were appended, which is the
+       argument for reading the list rather than counting it. An answer to a
+       question nobody can see is worse than no answer, so one arriving from a
+       screen somebody edited is dropped rather than saved. */
     const known = new Set(VERIFICATION_QUESTIONS.map((q) => q.id));
     const answers: Record<string, string> = {};
     for (const [id, value] of Object.entries(c.answers)) {
@@ -1309,12 +1312,20 @@ export async function recordLeadValidationCall(
     const day = await today();
 
     /*
-     * ALL TWELVE ONTO COLUMNS, through the shared mapping rather than spelled
-     * out here — the record page reads it back the same way, so the form and
-     * the screen cannot disagree about which column holds the price answer.
-     * Seven of the twelve are `0116`'s: they spent an afternoon as labelled
-     * lines inside `notes`, which is unqueryable, and the report §8 exists to
-     * produce is a count of those answers.
+     * EVERY ANSWER ONTO ITS OWN COLUMN, through the shared mapping rather
+     * than spelled out here — the record page reads it back the same way, so
+     * the form and the screen cannot disagree about which column holds the
+     * price answer. Seven of them are `0116`'s: they spent an afternoon as
+     * labelled lines inside `notes`, which is unqueryable, and the report §8
+     * exists to produce is a count of those answers.
+     *
+     * The `values` call below is the one place in this path that still names
+     * columns one at a time, and that is where `0156`'s five went missing:
+     * the schema, the `known` set and `columns` all take their shape from
+     * `VERIFICATION_QUESTIONS` and picked them up for nothing, so the form
+     * accepted the answers, the manager watched the call save, and five
+     * columns stayed null. A list that has to be extended by hand beside three
+     * that do not is the half that gets forgotten.
      */
     const columns: Record<string, string | null> = {};
     for (const column of Object.values(VERIFICATION_COLUMNS)) columns[column] = null;
@@ -1343,6 +1354,20 @@ export async function recordLeadValidationCall(
         qualityFeedback: columns.qualityFeedback,
         dispatchFeedback: columns.dispatchFeedback,
         genuineInterest: columns.genuineInterest,
+        /* §5.2's C and D, from `0156`. Five answers that had nowhere to
+           land: two objections the PRD names, and the whole of what the shop
+           said it was ready for — which is the answer §5.4 decides a sample
+           on. Spelled out because this insert is the ONE place in the path
+           that names columns: the Zod schema is a `z.record`, the `known` set
+           is built from `VERIFICATION_QUESTIONS` and `columns` is built from
+           `VERIFICATION_COLUMNS`, so all three picked these up for free and
+           only this list did not. Which is the whole failure: the form takes
+           the answer, the manager watches it save, and the column stays null. */
+        creditConcern: columns.creditConcern,
+        competitorConcern: columns.competitorConcern,
+        readyForTrial: columns.readyForTrial,
+        readyForCommercial: columns.readyForCommercial,
+        readyForOrder: columns.readyForOrder,
         /*
          * `pending` on a follow-up and `not_qualified` only on the third
          * outcome, and the difference is the whole of why there are three.
