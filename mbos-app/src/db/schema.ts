@@ -1677,6 +1677,109 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE leads ADD COLUMN gstVerified INTEGER;`,
   ],
 
+  /* ---- v32 · the facts the gates read, which never once reached a phone ---- */
+  [
+    /*
+     * EVERY RUNG ABOVE NEGOTIATION WAS STRUCTURALLY UNREACHABLE FROM A HANDSET,
+     * and these columns are the whole of why.
+     *
+     * `engines/funnel/lead-gates.ts` is a byte-for-byte copy of the server's,
+     * so this phone has known all twenty-three rungs and every condition on
+     * them since the funnel shipped. What it has never held is the FACTS those
+     * conditions read. `countingOrderCount` was `undefined`, `undefined >= 1`
+     * is false, and First order refused itself in the words "There is no order
+     * on this account yet" — on a shop that had ordered three times, with the
+     * office's own screen showing the rung open. Nothing failed at either end:
+     * the gate was working exactly as written against facts that never
+     * arrived, which is the same shape as `gstVerified` one block above and as
+     * every other bug on this wire.
+     *
+     * They arrive in the SAME change that adds them to `openLeads` and to
+     * `upsertLeads`, never ahead of either. A column the server sends that this
+     * table has nowhere to put throws inside `applyPull`, and `applyPull` is
+     * one transaction — so it rolls back the whole pull, not the leads: the
+     * customers, the products, the price list, the journey, the configuration,
+     * all of it.
+     */
+
+    /* §18–§22 — what the ledger says, counted by the office over the whole
+       account rather than derived here from the orders this phone happens to
+       hold. A handset that counted its own outbox would tell a salesman a rung
+       was open and watch the save refuse it. */
+    `ALTER TABLE leads ADD COLUMN countingOrderCount INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN deliveredOrderCount INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN confirmedPaymentCount INTEGER;`,
+
+    /* §23 — HOW MANY distributors invoice this shop, which is the question the
+       gate asks. `distributorCustomerId` beside it has been a column since the
+       funnel landed and was filled by nothing, so the count was derived from an
+       id that reached no handset and a third-party lead the office had already
+       given a distributor was refused its sample. */
+    `ALTER TABLE leads ADD COLUMN distributorCount INTEGER;`,
+
+    /* §12 — the two approval steps, the terms and the signed agreement. None of
+       the four is this phone's to assert and nothing here writes one; they come
+       down so the salesman is told which of them he is waiting on rather than
+       being shown a disabled button over a list he cannot act on. */
+    `ALTER TABLE leads ADD COLUMN managementReviewApproved INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN distributorApprovalApproved INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN commercialTermsAgreed INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN agreementOnFile INTEGER;`,
+
+    /*
+     * §5.3 — WHEN somebody last said the four conversion figures still hold,
+     * and deliberately not WHETHER they are stale.
+     *
+     * The threshold is `leads.figuresFreshDays`, which already rides down with
+     * the rest of the `leads.*` keys, so the phone answers the question itself
+     * against its own clock. A boolean computed in the office would be a
+     * verdict about the moment of the pull — right for a phone syncing through
+     * the day and a week out of date on one that has been in a district with no
+     * signal, which is exactly the handset this rule is about.
+     */
+    `ALTER TABLE leads ADD COLUMN figuresConfirmedAt INTEGER;`,
+
+    /* §5.3 — the sales manager's verdict on the checklist. Only `incomplete`
+       and `clarification` hold the lead; null is a checklist nobody has been
+       asked to review and passes, which is what let the rule ship without
+       stopping the whole book on the day it landed. */
+    `ALTER TABLE leads ADD COLUMN qualificationReview TEXT;`,
+
+    /* §4.2 — who PLACES the order, where that is not who approves it. The
+       eighth qualification condition is satisfied by this OR by a confirmed
+       decision maker, so a shop where one man does both is never asked twice. */
+    `ALTER TABLE leads ADD COLUMN buyer TEXT;`,
+
+    /* The office's own marks, which the phone has never been given: what a lead
+       is worth ranking against, the day a parked one comes back, the coded
+       reason it was parked — `holdReason` beside it is the sentence and this is
+       the code, and only a code can be counted — and where it came from in more
+       words than "manual". */
+    `ALTER TABLE leads ADD COLUMN priority TEXT;`,
+    `ALTER TABLE leads ADD COLUMN holdResumeDate TEXT;`,
+    `ALTER TABLE leads ADD COLUMN holdReasonCode TEXT;`,
+    `ALTER TABLE leads ADD COLUMN sourceDetail TEXT;`,
+
+    /*
+     * §7 — the three facts the ROLE INSTRUCTION forks on.
+     *
+     * `roleAction` is what turns a rung noun into the verb somebody is supposed
+     * to act on, and the sales manager's line in Negotiation forks on a
+     * commitment with no order behind it. A commitment is a day AND a size —
+     * `lib/lead-commitment.ts` on the server is the one place that rule lives,
+     * and the answer comes down rather than the columns, so this phone cannot
+     * hold a second opinion about it.
+     *
+     * `backOfficeAmId` is a SEAT and not a role: MahekOne has three levels and
+     * per-app grants and deliberately no `back_office` role, so the vantage is
+     * resolved by comparing this id with the signed-in user, exactly as the
+     * lead manager beside it already is.
+     */
+    `ALTER TABLE leads ADD COLUMN hasCommitment INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN hasOrder INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN backOfficeAmId TEXT;`,
+  ],
+
 ];
 
 /**

@@ -159,7 +159,7 @@ export async function visitCount(leadId: string): Promise<number> {
  * three readings of "may this move" is how two of them come to disagree.
  */
 export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
-  const [visits, sample] = await Promise.all([
+  const [visits, sample, figuresFreshDays] = await Promise.all([
     visitCount(lead.id),
     one<{ state: string; trialOutcome: string | null; feedback: number }>(
       `SELECT s.state, s.trialOutcome,
@@ -170,6 +170,17 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
         LIMIT 1`,
       [lead.id],
     ),
+    /* §5.3 — the window, off the same `leads.*` keys the suspect cap reads.
+       It reaches this phone on every pull, so the staleness verdict is made
+       here against this phone's clock rather than sent as somebody else's. */
+    /* THE FALLBACK IS SPELLED OUT HERE because `data/config.ts`'s DEFAULTS
+       table does not carry this key, and `getConfig` answers `undefined` for
+       one it does not know. Undefined would switch the check off silently on a
+       handset that has not bootstrapped yet — which is the safe direction and
+       still a rule nobody could find out was not running. 60 is the registry's
+       own default; the table should grow the key and this argument should go
+       with it. */
+    getConfig<number>('leads.figuresFreshDays', 60),
   ]);
 
   return {
@@ -213,7 +224,18 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
     verifiedAt: lead.verifiedAt ? new Date(lead.verifiedAt) : null,
 
     thirdParty: Boolean(lead.thirdParty),
-    distributorCount: lead.distributorCustomerId ? 1 : 0,
+    /* THE OFFICE'S COUNT, and it used to be an id this phone never received.
+       `distributorCustomerId` reached no handset, so a third-party lead the
+       office had already given a distributor answered zero here and was refused
+       its sample in the words "Say which distributor invoices this shop" — over
+       an arrangement that was on the record. The id comes down now too, and the
+       count is still the count, because a shop on a territory boundary has two
+       and one column could only ever name one of them. */
+    distributorCount: lead.distributorCount ?? (lead.distributorCustomerId ? 1 : 0),
+    /* §4.2 — who PLACES the order. The eighth qualification condition takes
+       this OR a confirmed decision maker, so the ordinary shop where one man
+       does both is never asked for a second name. */
+    buyer: lead.buyer,
 
     /* The state words differ on the two sides — this app keeps the design's
        `Awaiting feedback` and MahekOne keeps `dispatched`/`received`. The gate
@@ -228,9 +250,78 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
       : null,
 
     distributorProfile: distributorProfileOf(lead),
+    /* §12 — the two approval steps, the commercial terms and the signed
+       agreement. None of the four is this phone's to assert and nothing here
+       writes one; they arrive so a salesman on the distributor ladder is told
+       which of them he is waiting on instead of being shown a disabled button
+       over a list with nothing on it he can do. 1 is the office's yes; 0 and
+       null both leave the rung shut, which is what the gate already does. */
+    managementReviewApproved: lead.managementReviewApproved === 1,
+    distributorApprovalApproved: lead.distributorApprovalApproved === 1,
+    commercialTermsAgreed: lead.commercialTermsAgreed === 1,
+    agreementOnFile: lead.agreementOnFile === 1,
+
+    /* §18–§22 — what the LEDGER says, counted by the office over the whole
+       account. Deliberately not counted from this phone's own orders table: the
+       handset holds what it has been sent and what is still in its outbox, and
+       a count that included the outbox would tell a salesman a rung was open
+       and let the server refuse the move a minute later. */
+    countingOrderCount: lead.countingOrderCount ?? undefined,
+    deliveredOrderCount: lead.deliveredOrderCount ?? undefined,
+    confirmedPaymentCount: lead.confirmedPaymentCount ?? undefined,
+    /* §21 — the initial stock order a distributor committed to IS an order on
+       their account. There is no separate flag on either side and there should
+       not be one: a boolean somebody ticks beside an order book that disagrees
+       with it is how the two come apart. Derived from the count rather than
+       sent, for the same reason — one fact, one number. */
+    initialStockOrderPlaced: (lead.countingOrderCount ?? 0) >= 1,
+
+    /*
+     * §5.3 — THE FIGURES, JUDGED HERE against this phone's own clock.
+     *
+     * The office sends the DAY somebody last confirmed them and this works out
+     * whether that is stale, rather than the office sending the verdict. A
+     * verdict is about the moment of the pull, which is right for a phone
+     * syncing through the day and a week out of date on one that has been in a
+     * district with no signal — which is exactly the handset a gate answered
+     * offline is for. `leads.figuresFreshDays` rides down with the rest of the
+     * `leads.*` keys; a threshold of zero switches the check off, and never
+     * having confirmed them is stale, which is `figuresAreStale` on the server
+     * said in the same order.
+     */
+    figuresStale: figuresAreStale(lead.figuresConfirmedAt, figuresFreshDays),
+    /* §5.3 — and a manager who said the checklist was not finished is listened
+       to. Only `incomplete` and `clarification` hold it; an unreviewed
+       checklist passes, which is what let the rule ship without stopping the
+       whole book on the day it landed. */
+    qualificationReview:
+      lead.qualificationReview === 'incomplete' ||
+      lead.qualificationReview === 'clarification' ||
+      lead.qualificationReview === 'verified'
+        ? lead.qualificationReview
+        : null,
 
     expectedOrderDate: lead.expectedOrderDate,
   };
+}
+
+/**
+ * §5.3 — are the four conversion figures older than we are willing to send a
+ * sample on?
+ *
+ * The SERVER's copy is `figuresAreStale` in `lib/services/lead-service.ts`,
+ * which is `server-only` and cannot be imported here — so this is four lines
+ * saying the same thing rather than a mirror file, and they are written in the
+ * same order so the two can be read side by side. Never confirmed is STALE:
+ * the question is whether anybody has said the figures still hold, and nobody
+ * having said so is the answer the rule exists for. A threshold of zero
+ * switches the check off, which is how a team that does not want it turns it
+ * off from the Settings screen rather than from a deploy.
+ */
+function figuresAreStale(confirmedAtMs: number | null, freshDays: number): boolean {
+  if (!freshDays || freshDays <= 0) return false;
+  if (!confirmedAtMs) return true;
+  return Date.now() - confirmedAtMs > freshDays * 24 * 60 * 60 * 1000;
 }
 
 /**

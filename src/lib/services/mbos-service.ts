@@ -43,6 +43,12 @@ import { employeeJoinOn } from "../employee-link";
 /* The Accounts ledger's own read. See `customerBills` — the handset must not
    have a second opinion about what a shop owes. */
 import { listBills } from "./payment-service";
+/* What "did we sell anything" means, everywhere. See lib/order-status.ts: the
+   eight money queries read it and a status list typed into a query is the half
+   that drifts. */
+import { orderCountsSql } from "../order-status";
+/* §3.4 — a commitment is a day AND a size, in one place. */
+import { confirmedCommitmentSql } from "../lead-commitment";
 
 /* ---------------------------------------------------------------------------
  * MBOS — every read the handset makes.
@@ -1482,11 +1488,184 @@ async function openLeads(userId: string, since?: string | null) {
            ds.name as "distributorSalesmanName",
            c.lead_expected_order_date::text as "expectedOrderDate",
            c.lead_expected_order_value_paise as "expectedOrderValuePaise",
+           --
+           -- ------------------------------------------------------------
+           -- EVERY RUNG ABOVE NEGOTIATION WAS STRUCTURALLY UNREACHABLE, and
+           -- this block is the whole of why.
+           --
+           -- lead-gates.ts is mirrored byte-for-byte onto the handset, so the
+           -- phone has always known all twenty-three rungs and every condition
+           -- on them. What it did not have is the FACTS those conditions read:
+           -- the ledger counts, the distributor application, the two approval
+           -- steps and the manager review. An absent field is undefined,
+           -- undefined is not greater than or equal to 1, and the rung stayed
+           -- shut behind a sentence the salesman had no way to act on -- "There
+           -- is no order on this account yet" over a shop that had ordered
+           -- three times. Nothing failed at either end: the gate was working
+           -- exactly as written against facts that never arrived, which is the
+           -- same shape as the GST verdict above it and as every other bug on
+           -- this wire.
+           --
+           -- All of it is DERIVED here rather than sent as a flag somebody
+           -- ticks, for the reason lead-service.ts gives about the initial
+           -- stock order: a boolean beside an order book that disagrees with it
+           -- is how the two come apart.
+           -- ------------------------------------------------------------
+           --
+           -- What the ledger says, three counts rather than one join -- a join
+           -- across orders and receipts multiplies the rows and produces a
+           -- number nobody notices is wrong until a lead has walked up two
+           -- rungs it never earned. It is ledgerCounts in lead-service.ts, said
+           -- once per lead instead of once per call, and orderCountsSql is what
+           -- "did we sell anything" means everywhere in this product.
+           (select count(*)::int from orders o
+             where o.customer_id = c.id
+               and ${orderCountsSql("o")}) as "countingOrderCount",
+           (select count(*)::int from orders od
+             where od.customer_id = c.id
+               and od.status = 'dispatched') as "deliveredOrderCount",
+           (select count(*)::int from payment_receipts pr
+             where pr.customer_id = c.id
+               and pr.status = 'confirmed') as "confirmedPaymentCount",
+           --
+           -- §23 -- who invoices this shop. A COUNT and not an id, because the
+           -- gate asks how many and a shop on a territory boundary is served by
+           -- two. The handset used to answer this from a distributorCustomerId
+           -- that reached it on no wire, so a third-party lead the office had
+           -- already given a distributor was refused its sample in the words
+           -- "Say which distributor invoices this shop".
+           (select count(*)::int from customer_distributors cd
+             where cd.customer_id = c.id) as "distributorCount",
+           -- And WHO, for the two columns this table has had since the funnel
+           -- landed and never once received: the usual one where somebody has
+           -- said which is usual, and any of them where nobody has.
+           (select cdp.distributor_customer_id from customer_distributors cdp
+             where cdp.customer_id = c.id
+             order by cdp.is_primary desc, cdp.id asc
+             limit 1) as "distributorCustomerId",
+           (select dcn.name from customer_distributors cdn
+              join customers dcn on dcn.id = cdn.distributor_customer_id
+             where cdn.customer_id = c.id
+             order by cdn.is_primary desc, cdn.id asc
+             limit 1) as "distributorName",
+           --
+           -- §11 -- the thirty answers, as the ROW rather than as a checklist.
+           -- The gate reads the values, so a condition cannot be ticked without
+           -- the answer that satisfies it, and the handset has held a
+           -- distributorProfile column reading '{}' on every lead since the
+           -- funnel shipped. Keyed in the engine's own words rather than the
+           -- database's, because the engine is one file on both ends and a
+           -- snake_case key would satisfy nothing.
+           -- jsonb_build_object and NOT a derived table: a subselect in a
+           -- FROM clause may not see dp from the query above it without
+           -- LATERAL, and the lateral form buys nothing here.
+           case when dp.id is null then null else jsonb_build_object(
+             'gstVerified', dp.gst_verified,
+             'panVerified', dp.pan_verified,
+             'businessAddressVerified', dp.business_address_verified,
+             'businessType', dp.business_type,
+             'yearsInBusiness', dp.years_in_business,
+             'decisionMaker', dp.decision_maker,
+             'hasDealerNetwork', dp.has_dealer_network,
+             'activeDealerCount', dp.active_dealer_count,
+             'territoryCovered', dp.territory_covered,
+             'citiesCovered', dp.cities_covered,
+             'salesTeamSize', dp.sales_team_size,
+             'deliveryCapability', dp.delivery_capability,
+             'hasWarehouse', dp.has_warehouse,
+             'storageCapacityLitres', dp.storage_capacity_litres,
+             'productPortfolio', dp.product_portfolio,
+             'competitorBrands', dp.competitor_brands,
+             'monthlyPotentialPaise', dp.monthly_potential_paise,
+             'initialOrderPotentialPaise', dp.initial_order_potential_paise,
+             'investmentCapacityPaise', dp.investment_capacity_paise,
+             'expectedMonthlyPurchasePaise', dp.expected_monthly_purchase_paise,
+             'creditDaysRequired', dp.credit_days_required,
+             'creditLimitRequiredPaise', dp.credit_limit_required_paise,
+             'proposedTerritory', dp.proposed_territory,
+             'existingDistributorChecked', dp.existing_distributor_checked,
+             'territoryConflict', dp.territory_conflict,
+             'exclusivityRequested', dp.exclusivity_requested,
+             'initialStockCommitmentPaise', dp.initial_stock_commitment_paise,
+             'monthlyPurchaseCommitmentPaise', dp.monthly_purchase_commitment_paise,
+             'dealerDevelopmentCommitment', dp.dealer_development_commitment,
+             'expectedStartDate', dp.expected_start_date::text
+           ) end as "distributorProfile",
+           --
+           -- §12 -- the two approval steps, and neither is the salesman's to
+           -- assert. stepIndex 0 is the sales manager putting them forward and
+           -- 1 is management appointing them, which is the same chain every
+           -- other MBOS decision runs through.
+           exists (select 1 from mbos_approvals ar
+                    where ar.type = 'distributor_appointment'
+                      and ar.subject_type = 'customers'
+                      and ar.subject_id = c.id
+                      and ar.step_index = 0
+                      and ar.state = 'approved') as "managementReviewApproved",
+           exists (select 1 from mbos_approvals aa
+                    where aa.type = 'distributor_appointment'
+                      and aa.subject_type = 'customers'
+                      and aa.subject_id = c.id
+                      and aa.step_index = 1
+                      and aa.state = 'approved') as "distributorApprovalApproved",
+           (dp.commercial_terms_agreed_at is not null) as "commercialTermsAgreed",
+           -- On FILE, and derived from the library rather than from a boolean
+           -- beside it, so "is the agreement signed" stays answerable by
+           -- opening the agreement.
+           exists (select 1 from mbos_documents md
+                    where md.customer_id = c.id
+                      and md.category = 'agreement'
+                      and md.active) as "agreementOnFile",
+           --
+           -- §5.3 -- WHEN somebody last said the four conversion figures still
+           -- hold, and not whether they are stale. The threshold is
+           -- leads.figuresFreshDays, which already rides down with the rest of
+           -- the leads.* keys, so the phone can answer the question itself --
+           -- which matters, because a handset that has been in a district with
+           -- no signal for a week would otherwise be reading a verdict about
+           -- last Tuesday.
+           c.lead_figures_confirmed_at as "figuresConfirmedAt",
+           -- §5.3 -- the sales manager's verdict on the checklist. Only the two
+           -- negative ones hold the lead; the gate treats an unreviewed
+           -- checklist as passing, and so does a null here.
+           c.lead_qualification_review as "qualificationReview",
+           -- §4.2 -- who PLACES the order where that is not who approves it.
+           -- The eighth qualification condition is satisfied by this OR by a
+           -- confirmed decision maker, and with it on no wire the shop where
+           -- one man does both could still be asked for a second name.
+           c.lead_buyer as buyer,
+           --
+           -- The office's own marks on the lead, which the phone has never been
+           -- given: what it is worth ranking against, when a parked one comes
+           -- back, the coded reason it was parked, and where the lead came from
+           -- in more words than "manual".
+           c.lead_priority as priority,
+           c.lead_hold_resume_date::text as "holdResumeDate",
+           c.lead_hold_reason_code as "holdReasonCode",
+           c.lead_source_detail as "sourceDetail",
+           --
+           -- §7 -- the two facts the role instruction forks on, under the same
+           -- names sales-service.ts sends them by. A commitment is a day AND a
+           -- size, and confirmedCommitmentSql is the one place that rule lives:
+           -- a date alone escalated the sales manager to "Confirm actual order"
+           -- over an order nobody had agreed a quantity or a price for.
+           ${sql.raw(confirmedCommitmentSql("c"))} as "hasCommitment",
+           exists (select 1 from orders oh
+                    where oh.customer_id = c.id
+                      and ${orderCountsSql("oh")}) as "hasOrder",
+           -- The seat §7 calls the back office. It is a SEAT and not a role --
+           -- see access-control.ts -- so the handset resolves its own vantage
+           -- by comparing this id with the signed-in user, exactly as it does
+           -- with the lead manager beside it.
+           c.back_office_am_id as "backOfficeAmId",
            c.updated_at as "updatedAt"
       from customers c
       left join products p on p.id = c.lead_required_product_id
       left join distributor_salesmen ds on ds.id = c.lead_distributor_salesman_id
       left join users lm on lm.id = c.lead_manager_id
+      -- §11 -- one profile per candidate, kept unique by
+      -- distributor_profiles_customer_key, so this join cannot multiply a row.
+      left join distributor_profiles dp on dp.customer_id = c.id
       -- The lead manager reads it too, not only the salesman who raised it.
       -- The commercial half of a lead is his to answer, and a screen that
       -- listed only what a person OWNS would hide every lead he was named on.

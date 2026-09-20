@@ -143,6 +143,58 @@ export type Lead = {
   expectedOrderDate: string | null;
   expectedOrderValuePaise: number | null;
   lostReasonCode: string | null;
+
+  /* ------------------------------------------- the facts the gates read
+   *
+   * `engines/funnel/lead-gates.ts` is the server's file byte for byte, so this
+   * app has known all twenty-three rungs and every condition on them since the
+   * funnel shipped — and held none of the facts they turn on. An absent field
+   * is `undefined`, `undefined >= 1` is false, and every rung above Negotiation
+   * was shut behind a sentence a salesman could not act on: "There is no order
+   * on this account yet", on a shop that had ordered three times.
+   *
+   * All of them are the OFFICE's, counted over the whole account. Nothing here
+   * writes one, and a handset that counted its own orders would tell somebody a
+   * rung was open and watch the save refuse it in different words.
+   *
+   * Null is this phone not having heard rather than a zero: the gate reads both
+   * the same way, and only one of them is a fact worth putting on a screen.
+   */
+  countingOrderCount: number | null;
+  deliveredOrderCount: number | null;
+  confirmedPaymentCount: number | null;
+  /** §23 — how many distributors invoice this shop. The gate asks how many. */
+  distributorCount: number | null;
+  /** §12 — the two steps, the terms and the signed agreement. Down only. */
+  managementReviewApproved: number | null;
+  distributorApprovalApproved: number | null;
+  commercialTermsAgreed: number | null;
+  agreementOnFile: number | null;
+  /**
+   * §5.3 — the day somebody last confirmed the four conversion figures, and
+   * deliberately not a verdict about whether they are stale. The threshold is
+   * `leads.figuresFreshDays`, which this phone already holds, so it answers
+   * against its own clock rather than against the moment of a pull it may not
+   * have had for a week.
+   */
+  figuresConfirmedAt: number | null;
+  /** §5.3 — the sales manager's verdict. Only the two negative ones hold. */
+  qualificationReview: string | null;
+  /** §4.2 — who places the order, where that is not who approves it. */
+  buyer: string | null;
+  /* The office's own marks. `holdReasonCode` is the CODE behind the sentence in
+     `holdReason` — a stored label stops resolving the day somebody rewords the
+     list, and only a code can be counted. */
+  priority: string | null;
+  holdResumeDate: string | null;
+  holdReasonCode: string | null;
+  sourceDetail: string | null;
+  /* §7 — what `roleAction` forks on, and the seat it resolves a vantage from. A
+     commitment is a day AND a size, decided on the server so this phone cannot
+     hold a second opinion about one lead. */
+  hasCommitment: number | null;
+  hasOrder: number | null;
+  backOfficeAmId: string | null;
 };
 
 export type LeadNote = { at: number; text: string };

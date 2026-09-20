@@ -530,6 +530,14 @@ const ENGINE_COPIES: { server: string; handset: string }[] = [
   { server: "src/lib/lead-labels.ts", handset: "mbos-app/src/engines/funnel/lead-labels.ts" },
   { server: "src/lib/engines/lead-ladder.ts", handset: "mbos-app/src/engines/funnel/lead-ladder.ts" },
   { server: "src/lib/engines/lead-gates.ts", handset: "mbos-app/src/engines/funnel/lead-gates.ts" },
+  /* §7 — the verb, not the rung. The sales manager is told "Confirm actual
+     order" and the back office "Dispatch sample" about one lead on one
+     afternoon, and a handset wording either of those differently is a
+     salesman and his manager reading two instructions off one shop. */
+  {
+    server: "src/lib/engines/lead-role-action.ts",
+    handset: "mbos-app/src/engines/funnel/lead-role-action.ts",
+  },
 ];
 
 /** The import lines are the one difference allowed, so they are normalised. */
@@ -698,6 +706,164 @@ test("the office's GST verdict reaches the gate, and no handset may write it", (
     "src/lib/actions/mbos.ts now names gstVerified on a payload the handset " +
       "sends. The verdict is the back office's — a phone that can certify its " +
       "own GST is the self-certification validateGstin exists to end",
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * AND THE GST VERDICT WAS ONE OF ELEVEN FACTS THAT NEVER ARRIVED.
+ *
+ * The test above is about one field and the same chain broke on twenty. The
+ * gate engine is mirrored byte for byte, so the handset has known all
+ * twenty-three rungs and every condition on them since the funnel shipped —
+ * and held almost none of the facts those conditions read. `countingOrderCount`
+ * was `undefined`, `undefined >= 1` is false, and EVERY RUNG ABOVE NEGOTIATION
+ * was structurally unreachable from a phone: First order refused itself in the
+ * words "There is no order on this account yet", over a shop that had ordered
+ * three times, with the office's own screen showing the rung open. Delivery,
+ * Payment, Second order, the whole distributor ladder and the two review gates
+ * were the same.
+ *
+ * FOUR LINKS PER FIELD AND EVERY ONE OF THEM SILENT WHEN IT BREAKS: the server
+ * has to send it, the handler has to READ it, the handler has to KEEP it — the
+ * INSERT and the `ON CONFLICT` clause are two separate assertions, because a
+ * hand-rolled handler types its column list out and a field read and not kept
+ * reads exactly like a column of nulls — and the table has to have somewhere to
+ * put it. A fifth is asserted separately below: arriving is not being READ BY
+ * THE GATE.
+ *
+ * Adding a column to `openLeads` without the other three is worse than not
+ * adding it: a column the handset cannot hold throws inside `applyPull`, which
+ * is ONE transaction, so it rolls back the whole pull — the customers, the
+ * products, the price list, the journey, the configuration, all of it.
+ * ------------------------------------------------------------------------- */
+
+/** Wire name → why the gate or §7 cannot do its job without it. */
+const LEAD_GATE_FACTS: Record<string, string> = {
+  countingOrderCount:
+    "First order, Second order and Customer all count orders; without it the " +
+    "three of them refuse a shop that has ordered",
+  deliveredOrderCount: "Delivery reads it — the material has not reached them yet, for ever",
+  confirmedPaymentCount: "Payment reads it — accounts have not found the money, for ever",
+  distributorCount:
+    "§23 — a third-party shop may not be sent a sample until somebody bills " +
+    "it, and the office had already said who",
+  distributorCustomerId: "and WHO bills it, for the column this table has had all along",
+  distributorName: "the name beside that id, because the handset holds no customer of its own for it",
+  distributorProfile:
+    "§11 — the thirty answers the distributor ladder is gated on. Absent, " +
+    "Management review lists all thirty as missing on an application that is complete",
+  managementReviewApproved: "§12 — the sales manager putting them forward, which is step 0",
+  distributorApprovalApproved: "§12 — management appointing them, which is step 1",
+  commercialTermsAgreed: "§12 — the discount, the credit limit and the territory",
+  agreementOnFile: "§12 — the signed agreement, derived from the library rather than a tick",
+  figuresConfirmedAt:
+    "§5.3 — the day somebody last said the four conversion figures hold. The " +
+    "phone judges staleness against its own clock, so what crosses is the day",
+  qualificationReview: "§5.3 — a manager who marked the checklist incomplete is listened to",
+  buyer: "§4.2 — who places the order, which is the eighth qualification condition",
+  priority: "what the office thinks this lead is worth beside the others",
+  holdResumeDate: "when a parked lead comes back",
+  holdReasonCode: "the CODE behind the hold sentence — a label cannot be counted",
+  sourceDetail: "where the lead came from, in more words than manual",
+  hasCommitment:
+    "§7 — a commitment is a day AND a size, and it is what escalates the sales " +
+    "manager's verb in Negotiation from supporting to closing",
+  hasOrder: "§7 — the other half of that fork",
+  backOfficeAmId: "§7 — the seat a back-office vantage is resolved from",
+};
+
+test("every fact the lead gates read reaches the handset, and is kept there", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  const pull = readFileSync("mbos-app/src/sync/pull.ts", "utf8");
+  const sent = new Set(payloadColumns(service, "openLeads"));
+  const read = new Set(fieldsRead(pull, "upsertLeads"));
+  const columns = handsetTables().get("leads") ?? new Set<string>();
+
+  const at = pull.indexOf("function upsertLeads(");
+  const body = pull.slice(at, pull.indexOf("\n}", at));
+  const inserted = new Set(
+    (body.match(/INSERT INTO leads \(([^)]*)\)/)?.[1] ?? "")
+      .split(",")
+      .map((c) => c.trim()),
+  );
+  const kept = new Set(
+    [...body.matchAll(/(\w+) = excluded\.\1/g)].map((m) => m[1]),
+  );
+
+  const faults: string[] = [];
+  for (const [field, why] of Object.entries(LEAD_GATE_FACTS)) {
+    if (!sent.has(field)) faults.push(`openLeads does not send ${field} — ${why}`);
+    if (!read.has(field)) faults.push(`upsertLeads does not read ${field} — ${why}`);
+    if (!inserted.has(field)) faults.push(`upsertLeads reads ${field} and never inserts it`);
+    if (!kept.has(field)) {
+      faults.push(
+        `upsertLeads inserts ${field} and does not update it on conflict, so ` +
+          "it is whatever it was the first time this lead arrived",
+      );
+    }
+    if (!columns.has(field)) {
+      faults.push(
+        `the handset's leads table has no ${field} column — the server sends ` +
+          "it, applyPull throws on the unknown column, and ONE transaction " +
+          "rolls back the ENTIRE pull",
+      );
+    }
+  }
+
+  assert.deepEqual(
+    faults,
+    [],
+    "every one of these is silent at both ends and shows up as a rung a " +
+      `salesman cannot climb with no way to find out why:\n  ${faults.join("\n  ")}`,
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * ARRIVING IS NOT BEING READ, and that is the link that fails with every other
+ * assertion above it green.
+ *
+ * A fact can be on the wire, in the table and kept by the upsert, and the gate
+ * still read `undefined` — because `leadGateInput` is what hands it over, and a
+ * field nobody added there is a phone holding the answer and refusing the rung
+ * anyway. That is exactly the shape of the original bug, one file further in.
+ * ------------------------------------------------------------------------- */
+
+test("every fact the handset holds is handed to the gate", () => {
+  const funnel = readFileSync("mbos-app/src/data/lead-funnel.ts", "utf8");
+  const at = funnel.indexOf("export async function leadGateInput(");
+  assert.ok(at > -1, "leadGateInput is gone from lead-funnel.ts");
+  const body = funnel.slice(at, funnel.indexOf("\n}", at));
+
+  /*
+   * The GATE's own field names, which are not always the wire's. `figuresStale`
+   * is worked out here from `figuresConfirmedAt` against this phone's clock,
+   * and `initialStockOrderPlaced` is derived from the order count rather than
+   * sent — §21 says the initial stock order IS an order on the account, and a
+   * boolean beside an order book that disagrees with it is how the two come
+   * apart.
+   */
+  const missing = [
+    "countingOrderCount",
+    "deliveredOrderCount",
+    "confirmedPaymentCount",
+    "initialStockOrderPlaced",
+    "distributorCount",
+    "distributorProfile",
+    "managementReviewApproved",
+    "distributorApprovalApproved",
+    "commercialTermsAgreed",
+    "agreementOnFile",
+    "figuresStale",
+    "qualificationReview",
+    "buyer",
+  ].filter((f) => !new RegExp(`^\\s*${f}:`, "m").test(body));
+
+  assert.deepEqual(
+    missing,
+    [],
+    "leadGateInput does not pass these to the gate, so the office's answers " +
+      "land on the phone and the rung stays shut over conditions the salesman " +
+      `has already satisfied: ${missing.join(", ")}`,
   );
 });
 

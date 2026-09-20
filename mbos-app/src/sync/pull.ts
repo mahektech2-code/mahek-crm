@@ -525,6 +525,62 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          `visitsHere`, which adds what has not synced yet. */
       visitCount?: number | null;
       holdReason?: string | null;
+      /*
+       * THE FACTS THE GATES READ, and every one of them was missing.
+       *
+       * `engines/funnel/lead-gates.ts` is the server's file byte for byte, so
+       * this app has known all twenty-three rungs since the funnel shipped —
+       * and none of the facts they turn on. An absent field is `undefined`,
+       * `undefined >= 1` is false, and every rung above Negotiation was shut
+       * behind a sentence the salesman could not act on: "There is no order on
+       * this account yet", on a shop that had ordered three times.
+       *
+       * They are read here in the SAME change that adds them to `openLeads`
+       * and to the handset's schema, never ahead of either — a field read and
+       * not sent is `undefined`, and the `ON CONFLICT` clause writes that NULL
+       * over whatever the row held. That is how every completed task lost its
+       * note and its photograph.
+       */
+      countingOrderCount?: number | null;
+      deliveredOrderCount?: number | null;
+      confirmedPaymentCount?: number | null;
+      /* §23 — how many distributors invoice this shop, plus the usual one by
+         name for the two columns this table has had all along and never
+         filled. */
+      distributorCount?: number | null;
+      distributorCustomerId?: string | null;
+      distributorName?: string | null;
+      /* §11 — the thirty answers, keyed in the engine's own words. Held as
+         text here and parsed by `distributorProfileOf`, exactly like
+         `qualification` above. */
+      distributorProfile?: unknown;
+      /* §12 — the two steps, the terms and the agreement. Down only: nothing
+         here writes one, and a phone that could would be appointing its own
+         distributor. */
+      managementReviewApproved?: boolean | null;
+      distributorApprovalApproved?: boolean | null;
+      commercialTermsAgreed?: boolean | null;
+      agreementOnFile?: boolean | null;
+      /* §5.3 — the DAY somebody last confirmed the four conversion figures,
+         not a verdict about it. The threshold is configuration this phone
+         already holds, so it answers against its own clock rather than
+         against the moment of a pull it may not have had for a week. */
+      figuresConfirmedAt?: string | null;
+      qualificationReview?: string | null;
+      /* §4.2 — who places the order where that is not who approves it. */
+      buyer?: string | null;
+      /* The office's own marks: worth, when a parked lead comes back, the
+         CODE behind the hold sentence, and where the lead came from. */
+      priority?: string | null;
+      holdResumeDate?: string | null;
+      holdReasonCode?: string | null;
+      sourceDetail?: string | null;
+      /* §7 — what `roleAction` forks on, and the seat it resolves a vantage
+         from. A commitment is a day AND a size, decided on the server so this
+         phone cannot hold a second opinion about one lead. */
+      hasCommitment?: boolean | null;
+      hasOrder?: boolean | null;
+      backOfficeAmId?: string | null;
     };
     await run(
       `INSERT INTO leads (id, name, company, mobile, city, area, source, estimatedPotentialPaise,
@@ -538,9 +594,17 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
                           qualification,
                           nextAction, nextActionDate, nextActionOwnerId, nextActionOutcome,
                           suspectDecidedAt, verifiedAt, thirdParty, distributorSalesmanId,
-                          distributorSalesmanName, expectedOrderDate, expectedOrderValuePaise)
+                          distributorSalesmanName, expectedOrderDate, expectedOrderValuePaise,
+                          distributorCustomerId, distributorName, distributorProfile,
+                          countingOrderCount, deliveredOrderCount, confirmedPaymentCount,
+                          distributorCount, managementReviewApproved, distributorApprovalApproved,
+                          commercialTermsAgreed, agreementOnFile, figuresConfirmedAt,
+                          qualificationReview, buyer, priority, holdResumeDate,
+                          holdReasonCode, sourceDetail, hasCommitment, hasOrder,
+                          backOfficeAmId)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced',
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
          city = excluded.city, area = excluded.area, source = excluded.source,
@@ -570,7 +634,26 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          distributorSalesmanId = excluded.distributorSalesmanId,
          distributorSalesmanName = excluded.distributorSalesmanName,
          expectedOrderDate = excluded.expectedOrderDate,
-         expectedOrderValuePaise = excluded.expectedOrderValuePaise
+         expectedOrderValuePaise = excluded.expectedOrderValuePaise,
+         distributorCustomerId = excluded.distributorCustomerId,
+         distributorName = excluded.distributorName,
+         distributorProfile = excluded.distributorProfile,
+         countingOrderCount = excluded.countingOrderCount,
+         deliveredOrderCount = excluded.deliveredOrderCount,
+         confirmedPaymentCount = excluded.confirmedPaymentCount,
+         distributorCount = excluded.distributorCount,
+         managementReviewApproved = excluded.managementReviewApproved,
+         distributorApprovalApproved = excluded.distributorApprovalApproved,
+         commercialTermsAgreed = excluded.commercialTermsAgreed,
+         agreementOnFile = excluded.agreementOnFile,
+         figuresConfirmedAt = excluded.figuresConfirmedAt,
+         qualificationReview = excluded.qualificationReview,
+         buyer = excluded.buyer, priority = excluded.priority,
+         holdResumeDate = excluded.holdResumeDate,
+         holdReasonCode = excluded.holdReasonCode,
+         sourceDetail = excluded.sourceDetail,
+         hasCommitment = excluded.hasCommitment, hasOrder = excluded.hasOrder,
+         backOfficeAmId = excluded.backOfficeAmId
        WHERE leads.syncState = 'synced'`,
       [
         l.id,
@@ -633,6 +716,41 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.distributorSalesmanName ?? null,
         l.expectedOrderDate ?? null,
         l.expectedOrderValuePaise ?? null,
+        l.distributorCustomerId ?? null,
+        l.distributorName ?? null,
+        /* jsonb arrives as an object and SQLite holds text — and the column is
+           NOT NULL DEFAULT '{}', so a lead with no application on file gets the
+           empty object the gate already reads as thirty unanswered questions
+           rather than a null nothing would parse. */
+        l.distributorProfile == null ? '{}' : JSON.stringify(l.distributorProfile),
+        /* NULL KEPT AS NULL on all three counts. Zero is the office saying
+           there is no order on this account; null is this phone not having
+           heard, and only the first may be drawn as a fact. The gate reads
+           both the same way, so the distinction costs it nothing. */
+        l.countingOrderCount ?? null,
+        l.deliveredOrderCount ?? null,
+        l.confirmedPaymentCount ?? null,
+        l.distributorCount ?? null,
+        /* Booleans on the wire, integers here, and null preserved for the same
+           reason it is on `gstVerified`: an approval nobody has recorded and
+           one this handset has not been told about are different facts. */
+        l.managementReviewApproved == null ? null : l.managementReviewApproved ? 1 : 0,
+        l.distributorApprovalApproved == null ? null : l.distributorApprovalApproved ? 1 : 0,
+        l.commercialTermsAgreed == null ? null : l.commercialTermsAgreed ? 1 : 0,
+        l.agreementOnFile == null ? null : l.agreementOnFile ? 1 : 0,
+        /* An ISO instant carries its own zone, so `Date.parse` is right — it is
+           a date-ONLY string that would be read as UTC and land five and a half
+           hours early. */
+        l.figuresConfirmedAt ? Date.parse(l.figuresConfirmedAt) : null,
+        l.qualificationReview ?? null,
+        l.buyer ?? null,
+        l.priority ?? null,
+        l.holdResumeDate ?? null,
+        l.holdReasonCode ?? null,
+        l.sourceDetail ?? null,
+        l.hasCommitment == null ? null : l.hasCommitment ? 1 : 0,
+        l.hasOrder == null ? null : l.hasOrder ? 1 : 0,
+        l.backOfficeAmId ?? null,
       ],
     );
   }
