@@ -73,7 +73,7 @@ export type LadderTally = {
   parked: number;
   lost: number;
   arrived: number;
-  arrivedByStage: Partial<Record<LeadStage, number>>;
+  arrivedByStage: Partial<Record<LeadStage, RungTally>>;
 };
 
 /* ═══════════════════════════════════════════ the shared bar funnel (§8.3a) */
@@ -189,7 +189,11 @@ export function sharedFunnel(ladders: readonly LadderTally[]): SharedFunnel {
      */
     const arrived = tally.arrivedByStage[stage];
     if (arrived === undefined) return onLadder;
-    return { ...onLadder, count: onLadder.count + arrived };
+    /* The arrived cell is the whole row — count, median and potential — so a
+       terminal rung reads exactly like any other rather than saying "no dates"
+       beside forty leads that carry one. `onLadder` is the empty placeholder
+       the service fills every ladder rung with, so there is nothing to add. */
+    return { ...arrived, count: onLadder.count + arrived.count };
   };
 
   const build = (stage: LeadStage): SharedRung => {
@@ -277,13 +281,14 @@ export function distributorLadder(ladders: readonly LadderTally[]): StepLadder {
   const tally = ladders.find((l) => l.salesType === "distributor") ?? null;
 
   const steps: LadderStep[] = DISTRIBUTOR_LADDER.map((stage) => {
-    const cell = tally?.rungs.find((r) => r.stage === stage) ?? null;
+    const onLadder = tally?.rungs.find((r) => r.stage === stage) ?? null;
     /* `active_distributor` is the top of this ladder and has arrived, so its
-       count is in `arrivedByStage` for the same reason `customer` is. */
-    const arrived = tally?.arrivedByStage[stage] ?? 0;
+       row is in `arrivedByStage` for the same reason `customer` is. */
+    const arrived = tally?.arrivedByStage[stage] ?? null;
+    const cell = arrived ?? onLadder;
     return {
       stage,
-      count: (cell?.count ?? 0) + arrived,
+      count: (onLadder?.count ?? 0) + (arrived?.count ?? 0),
       medianDaysHere: cell?.medianDaysHere ?? null,
       dated: cell?.dated ?? 0,
       potentialPaise: cell?.potentialPaise ?? 0,

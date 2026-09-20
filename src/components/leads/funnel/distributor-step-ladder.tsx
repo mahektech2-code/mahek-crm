@@ -37,17 +37,18 @@ import { plural } from "@/components/console/words";
  * ------------------------------------------------------------------------- */
 
 /**
- * The board rather than the list, for the same reason the bar funnel uses it:
- * only the board takes a sales type off the URL, so only the board can open
- * exactly the leads a step is counting.
+ * Where a step goes, narrowed the same way the bar funnel's segments are.
  *
- * Six of these nine rungs are on no other ladder, so `leads?stage=…` would in
- * fact be exact for them — but the three at the foot are shared with both shop
- * ladders, and a screen where some steps open a list and others open a board is
- * one nobody can predict. One destination, always narrowed the same way.
+ * Six of these nine rungs are on no other ladder, so `stage` alone would in
+ * fact be exact for them — and the three at the foot, `suspect`, `prospect`
+ * and `qualification`, are shared with both shop ladders and would open three
+ * populations under one number. Naming the track on every step rather than on
+ * the three that need it: a screen where some links are narrowed and others
+ * are not is one nobody can predict, and the exception would be the one
+ * somebody reads.
  */
 function stepHref(workspace: LeadWorkspace, stage: LeadStage): string {
-  return leadHref(workspace, `leads/board?type=distributor&stage=${stage}`);
+  return leadHref(workspace, `leads?salesType=distributor&stage=${stage}`);
 }
 
 export function DistributorStepLadder({

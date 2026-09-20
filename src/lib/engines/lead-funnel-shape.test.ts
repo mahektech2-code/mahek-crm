@@ -15,7 +15,8 @@ import {
   DISTRIBUTOR_LADDER,
   THIRD_PARTY_LADDER,
 } from "./lead-ladder";
-import type { LeadSalesType, LeadStage } from "../lead-labels";
+import { SALES_TYPES, type LeadSalesType, type LeadStage } from "../lead-labels";
+import { LEGACY_SALES_TYPE, SALES_TYPE_BUCKETS } from "../lead-filters";
 
 /* ---------------------------------------------------------------------------
  * The rule these pin is that NO RUNG FALLS OFF THE SCREEN.
@@ -99,7 +100,7 @@ test("the top rung carries its arrivals rather than drawing zero", () => {
      `rungs` would draw its own last rung at zero on a book that has converted
      forty shops. */
   const f = sharedFunnel([
-    tally("direct", DIRECT_LADDER, {}, { arrived: 40, arrivedByStage: { customer: 40 } }),
+    tally("direct", DIRECT_LADDER, {}, { arrived: 40, arrivedByStage: { customer: rung("customer", 40, 12) } }),
   ]);
   assert.equal(f.rungs.find((r) => r.stage === "customer")!.total, 40);
 });
@@ -108,7 +109,7 @@ test("won is never counted onto a rung it was not on", () => {
   /* `arrived` sums three stages. Reaching for it instead of `arrivedByStage`
      would put legacy `won` leads on the direct ladder's `customer` rung. */
   const f = sharedFunnel([
-    tally("direct", DIRECT_LADDER, {}, { arrived: 7, arrivedByStage: { won: 7 } }),
+    tally("direct", DIRECT_LADDER, {}, { arrived: 7, arrivedByStage: { won: rung("won", 7) } }),
   ]);
   assert.equal(f.rungs.find((r) => r.stage === "customer")!.total, 0);
 });
@@ -177,7 +178,7 @@ test("the distributor top rung carries its arrivals too", () => {
       "distributor",
       DISTRIBUTOR_LADDER,
       {},
-      { arrived: 2, arrivedByStage: { active_distributor: 2 } },
+      { arrived: 2, arrivedByStage: { active_distributor: rung("active_distributor", 2, 5) } },
     ),
   ]);
   assert.equal(l.steps.find((s) => s.stage === "active_distributor")!.count, 2);
@@ -192,4 +193,41 @@ test("the legacy ladder is neither picture, and is reported rather than dropped"
     legacy,
   ]);
   assert.deepEqual(left.map((l) => l.salesType), [null]);
+});
+
+test("an arrived rung carries its median, not just its count", () => {
+  /* The median is computed for every group and was being thrown away on the
+     way into `arrived`. A rung reading 40 beside the words "no lead on this
+     rung records when it arrived" is a screen arguing with itself. */
+  const f = sharedFunnel([
+    tally(
+      "direct",
+      DIRECT_LADDER,
+      {},
+      { arrived: 40, arrivedByStage: { customer: rung("customer", 40, 12) } },
+    ),
+  ]);
+  const seg = f.rungs
+    .find((r) => r.stage === "customer")!
+    .segments.find((s) => s.salesType === "direct")!;
+  assert.equal(seg.medianDaysHere, 12);
+  assert.equal(seg.dated, 40);
+});
+
+test("every track the funnel can draw is one the list filter accepts", () => {
+  /*
+   * THE LINK AND THE LIST ARE JOINED BY A SPELLING, which is the failure this
+   * pins. Each segment opens `leads?salesType=<track>&stage=<rung>`, and a
+   * track the clause has never heard of does not fail — `leadFilterClause`
+   * simply matches nothing, so the bar says 14 and the list it opens says 0,
+   * with nothing on either screen able to say why. A fourth sales type added
+   * to the enum without a bucket fails here instead.
+   */
+  const offered = new Set<string>(SALES_TYPE_BUCKETS.map((b) => b.value));
+  for (const t of SALES_TYPES) {
+    assert.ok(offered.has(t.code), `${t.code} is a sales type the list cannot be filtered to`);
+  }
+  /* And the fourth answer, which is not in the enum at all: a lead carrying no
+     sales type is a population, and `in (…)` never matches NULL. */
+  assert.ok(offered.has(LEGACY_SALES_TYPE));
 });

@@ -36,28 +36,27 @@ import { plural } from "@/components/console/words";
  * ------------------------------------------------------------------------- */
 
 /**
- * Where a segment goes when it is clicked.
+ * Where a segment goes when it is clicked, and it opens EXACTLY what it counts.
  *
- * THE BOARD RATHER THAN THE LIST, and that is a decision rather than an
- * oversight. Both read the same book through the same scope and the same
- * filters — `lead-board-service.ts` and `leadsPage` share `leadsVisible` and
- * both exclude archived leads — but only the board takes a SALES TYPE off the
- * URL. The list's filters have no such key, so `leads?stage=suspect` would
- * answer with the direct, third-party, distributor and legacy leads on that
- * rung all at once, which is not the number the segment is showing. A figure
- * that opens a bigger list than it claims is worse than one that does not open
- * at all: nobody checks the second, and everybody stops trusting the first.
+ * A rung is not a track. `leads?stage=suspect` answers with the direct,
+ * third-party, distributor and legacy leads standing there all at once, which
+ * is four populations under one number and not the one this bar is showing —
+ * and a figure that opens a bigger list than it claims is worse than one that
+ * does not open at all, because nobody checks the second and everybody stops
+ * trusting the first.
  *
- * ONE LINE WOULD CHANGE THIS. If `pages/leads.tsx` ever reads a `salesType`
- * parameter into its `LeadFilters`, this becomes `leads?salesType=…&stage=…`
- * and the two segments can be one link again.
+ * Both parameters are needed and neither is redundant. The list's base is the
+ * funnel's own — `lead_stage is not null`, `lead_archived = false`, and
+ * `leadsVisible(scope)` under the same `managerScope()` — and `leadFilterClause`
+ * narrows on `lead_sales_type` and `lead_stage` exactly as `funnelByRung`
+ * groups on them, so the two cannot answer differently about one segment.
  */
 function segmentHref(
   workspace: LeadWorkspace,
   salesType: LeadSalesType,
   stage: LeadStage,
 ): string {
-  return leadHref(workspace, `leads/board?type=${salesType}&stage=${stage}`);
+  return leadHref(workspace, `leads?salesType=${salesType}&stage=${stage}`);
 }
 
 const TRACK_TONE: Record<string, string> = {
@@ -84,7 +83,7 @@ export function SharedBarFunnel({
           <p className="mt-0.5 max-w-[620px] text-xs text-muted">
             One sale up one ladder, split by who holds the invoice — {sharedRungOrder().length}{" "}
             rungs, with {OPERATIONAL_STAGES.map((s) => stageLabel(s)).join(" and ").toLowerCase()}{" "}
-            kept out and counted below. Every segment opens the board narrowed to exactly the leads
+            kept out and counted below. Every segment opens the list narrowed to exactly the leads
             it counts.
           </p>
         </div>

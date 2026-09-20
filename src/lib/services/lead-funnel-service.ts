@@ -116,10 +116,16 @@ export type RungFunnel = {
    * which is a lie on every book that has ever converted anybody, or reached
    * for `arrived` and quietly counted `won` leads onto it.
    *
+   * It is the WHOLE cell rather than a count, because a rung drawn from a bare
+   * number would have to say "no dates" beside forty leads that do carry
+   * one — the median is computed for every group and was simply being thrown
+   * away on the way into `arrived`. A terminal rung now reads exactly like any
+   * other rung, which is the point of putting a number on it at all.
+   *
    * It is additive and nothing that read `arrived` had to change: this says
    * WHICH, and that one goes on saying HOW MANY.
    */
-  arrivedByStage: Partial<Record<LeadStage, number>>;
+  arrivedByStage: Partial<Record<LeadStage, RungCount>>;
 };
 
 /**
@@ -205,7 +211,10 @@ export async function funnelByRung(day: string): Promise<RungFunnel[]> {
     }
     if (r.stage === "won" || r.stage === "customer" || r.stage === "active_distributor") {
       f.arrived += cell.count;
-      f.arrivedByStage[r.stage] = (f.arrivedByStage[r.stage] ?? 0) + cell.count;
+      /* One row per (sales type, stage) out of the `group by`, so this is an
+         assignment rather than a merge — a merge would be code guarding against
+         a shape the query cannot produce. */
+      f.arrivedByStage[r.stage] = cell;
       continue;
     }
     measured.get(k)!.set(r.stage, cell);
