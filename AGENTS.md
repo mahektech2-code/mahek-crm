@@ -4235,6 +4235,37 @@ h.on_date)` is a DATE and has no instant to lose. The half-open range is also
 the faster answer: a comparison on the column can use its index, which two
 `extract`s per row never could.
 
+**TWO OF THE SIX COMPONENTS ARE A SHARE, AND EVERY SCREEN DREW THE NUMERATOR
+ALONE.** Revenue, volume and new customers are absolute, and the mix is already
+a percentage of itself. Collection is a share of WHAT WAS ALREADY OVERDUE when
+the month opened, and activity is a share of THE TASKS THAT FELL DUE in it —
+and seven surfaces printed "₹2.4L · 73%" and "18 · 45%", which tell a manager
+nothing: 73% of what, and eighteen out of how many. `PersonActuals` had both
+bases all along and said so in its own comment — "the count of completed tasks
+says nothing on its own: twelve tasks and a hundred tasks were both held to
+'ten done'" — which is exactly what the cell printed.
+
+`lib/performance-labels.ts` is the one vocabulary, and it **imports nothing at
+all**: money is rendered by a function the caller passes in. That is what lets
+it be MIRRORED to `mbos-app/src/engines/performance-labels.ts` byte for byte,
+compared as text by `mbos-wire.test.ts` like the three funnel engines beside it
+— the office passes `money`, the phone passes `inrFromPaise`, and a manager and
+the salesman he manages cannot read two different sentences about one month.
+
+**A ZERO BASE AND A NULL BASE ARE DIFFERENT ANSWERS.** Zero is "nothing was
+overdue" — a statement about the month, which the scoring already treats as
+"not asked" and drops rather than failing. Null is "nobody recorded one", which
+is every cached row written before the columns existed. Printing 0% for either
+invents a failure nobody recorded, against the person least able to argue with
+it, so all three cases are words rather than a figure.
+
+**The handset needed the base on the WIRE, because it reads the cache and
+nothing else.** `sales_performance` stored the implied rupee target and the
+numerator; `collection_base_paise` and `activity_assigned` are the missing
+denominators, filled by the recompute and nullable for the rows that predate
+them. The web needed no such thing — it reads live actuals — which is why this
+landed as one PR for six screens and two columns for the seventh.
+
 **Litres are derived from the SKU's packing, and revenue is not derived from
 anything.** Quantity is cans, `products.millilitres_per_can` turns it into
 millilitres, and the value of a line is what was actually billed — the product

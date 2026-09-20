@@ -2,6 +2,11 @@ import Link from "next/link";
 import { MonthNav } from "@/components/ui/month-nav";
 import { monthName } from "@/components/ui/month";
 import { money, moneyShort } from "@/lib/format";
+import {
+  activitySub,
+  collectionSub,
+  NOTHING_OVERDUE,
+} from "@/lib/performance-labels";
 import { today } from "@/lib/recompute";
 import { BP } from "@/lib/engines/performance";
 import {
@@ -62,10 +67,11 @@ export default async function Page({
       revenue: a.revenue + r.actuals.revenuePaise,
       millilitres: a.millilitres + r.actuals.millilitres,
       collected: a.collected + r.actuals.collectionPaise,
+      overdue: a.overdue + r.actuals.overdueAtStartPaise,
       newCustomers: a.newCustomers + r.actuals.newCustomers,
       unmatched: a.unmatched + r.unmatchedPaise,
     }),
-    { revenue: 0, millilitres: 0, collected: 0, newCustomers: 0, unmatched: 0 },
+    { revenue: 0, millilitres: 0, collected: 0, overdue: 0, newCustomers: 0, unmatched: 0 },
   );
 
   const days = rows[0];
@@ -121,7 +127,16 @@ export default async function Page({
               ? `${money(totals.unmatched)} on unrecognised products`
               : undefined,
           },
-          { label: "Collected", value: money(totals.collected), sub: "confirmed only" },
+          {
+            label: "Collected",
+            value: money(totals.collected),
+            // Against the team's own old debt, which is what the component is
+            // a share of — "confirmed only" said which receipts counted and
+            // never what the figure was measured against.
+            sub: totals.overdue > 0
+              ? `${collectionSub({ done: totals.collected, base: totals.overdue }, money)}, confirmed only`
+              : NOTHING_OVERDUE,
+          },
           { label: "New customers", value: String(totals.newCustomers) },
           {
             label: "Working days",
@@ -211,10 +226,24 @@ export default async function Page({
                     <Achieved
                       actual={moneyShort(r.actuals.collectionPaise)}
                       bp={by("collection")}
+                      sub={collectionSub(
+                        {
+                          done: r.actuals.collectionPaise,
+                          base: r.actuals.overdueAtStartPaise,
+                        },
+                        moneyShort,
+                      )}
                     />
                   </Cell>
                   <Cell align="right">
-                    <Achieved actual={String(r.actuals.activity)} bp={by("activity")} />
+                    <Achieved
+                      actual={String(r.actuals.activity)}
+                      bp={by("activity")}
+                      sub={activitySub({
+                        done: r.actuals.activity,
+                        base: r.actuals.activityAssigned,
+                      })}
+                    />
                   </Cell>
                   <Cell truncate={180}>
                     {r.alerts.length ? (
@@ -273,10 +302,19 @@ export default async function Page({
 function Achieved({
   actual,
   bp,
+  sub,
   emphasise,
 }: {
   actual: string;
   bp: number | null;
+  /*
+   * WHAT THE FIGURE IS A SHARE OF, for the two components where it is one.
+   * Collection and activity are a numerator over a base somebody else's book
+   * decides, and the base was never drawn — "₹2.4L · 73%" left a manager with
+   * no way to know 73% of what. It is a second line rather than a longer first
+   * one so the column still scans as a column.
+   */
+  sub?: string;
   emphasise?: boolean;
 }) {
   return (
@@ -295,6 +333,7 @@ function Achieved({
           {(bp / 100).toFixed(0)}%
         </span>
       )}
+      {sub ? <span className="block text-[11px] text-muted">{sub}</span> : null}
     </span>
   );
 }

@@ -912,7 +912,9 @@ export async function recomputeSalesPerformance(
         mix_achievement_bp,
         new_customer_target, new_customer_actual, new_customer_achievement_bp,
         collection_target_paise, collection_actual_paise, collection_achievement_bp,
+        collection_base_paise,
         activity_target, activity_actual, activity_achievement_bp,
+        activity_assigned,
         total_score_bp, rating, untargeted, unmatched_revenue_paise, computed_at
       ) values (
         ${rowId}, ${reading.userId}, ${period}, ${reading.targetId},
@@ -921,7 +923,9 @@ export async function recomputeSalesPerformance(
         ${reading.mix.achievementBp},
         ${by("newCustomers")?.target ?? null}, ${reading.actuals.newCustomers}, ${by("newCustomers")?.achievementBp ?? null},
         ${by("collection")?.target ?? null}, ${reading.actuals.collectionPaise}, ${by("collection")?.achievementBp ?? null},
+        ${reading.actuals.overdueAtStartPaise},
         ${by("activity")?.target ?? null}, ${reading.actuals.activity}, ${by("activity")?.achievementBp ?? null},
+        ${reading.actuals.activityAssigned},
         ${reading.score.totalBp}, ${reading.rating},
         ${JSON.stringify(reading.score.untargeted)}::jsonb,
         ${reading.unmatchedPaise}, now()
@@ -941,9 +945,11 @@ export async function recomputeSalesPerformance(
         collection_target_paise = excluded.collection_target_paise,
         collection_actual_paise = excluded.collection_actual_paise,
         collection_achievement_bp = excluded.collection_achievement_bp,
+        collection_base_paise = excluded.collection_base_paise,
         activity_target = excluded.activity_target,
         activity_actual = excluded.activity_actual,
         activity_achievement_bp = excluded.activity_achievement_bp,
+        activity_assigned = excluded.activity_assigned,
         total_score_bp = excluded.total_score_bp,
         rating = excluded.rating,
         untargeted = excluded.untargeted,

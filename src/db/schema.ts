@@ -8354,10 +8354,28 @@ export const salesPerformance = pgTable(
     collectionTargetPaise: bigint("collection_target_paise", { mode: "number" }),
     collectionActualPaise: bigint("collection_actual_paise", { mode: "number" }).notNull().default(0),
     collectionAchievementBp: integer("collection_achievement_bp"),
+    /*
+     * WHAT THAT MONEY WAS A SHARE OF — the book's overdue balance at the start
+     * of the month.
+     *
+     * The target above is already the implied rupee figure, so scoring needs
+     * nothing more. This is for READING: collection is not "money collected",
+     * it is old debt worked down, and ₹2.4L says nothing until somebody knows
+     * whether ₹3L was overdue or ₹80L. The web computes it live from
+     * `PersonActuals`; the handset reads this row and nothing else, which is
+     * why it has to travel.
+     *
+     * NULL means no base was recorded, which is not zero — zero is the claim
+     * that nothing was overdue, and every row written before this column
+     * existed would have been making it.
+     */
+    collectionBasePaise: bigint("collection_base_paise", { mode: "number" }),
 
     activityTarget: integer("activity_target"),
     activityActual: integer("activity_actual").notNull().default(0),
     activityAchievementBp: integer("activity_achievement_bp"),
+    /** How many tasks were ASKED of them. The same role, one component along. */
+    activityAssigned: integer("activity_assigned"),
 
     /** Out of 100, in basis points. 9140 is 91.40. */
     totalScoreBp: integer("total_score_bp").notNull().default(0),
