@@ -74,20 +74,31 @@ export function dueTodayWindow(day: string): SQL {
 }
 
 /**
- * Past its day, with nobody having said anything since.
+ * Past its day. And it USED TO SAY "with nobody having said anything since",
+ * which read the column backwards and emptied the screen of its own subject.
  *
- * `lead_next_action_outcome is null` is the second half of that sentence and
- * it is what keeps the screen meaningful: a lead whose call was made and whose
- * answer was written down has been worked, whatever its date says.
+ * The clause was `and c.lead_next_action_outcome is null`, on the reading that
+ * a lead whose answer has been written down has been worked whatever its date
+ * says. That would be sound if the column held what HAPPENED. It holds §24's
+ * fourth answer — "what that person is expected to come back with" — written
+ * in the same breath as the action and the day. The record's own band renders
+ * it as "Expected back: …", the handset's sheet asks for it under "What you
+ * expect to come back with", and `advanceLeadStage` REFUSES a move without it.
  *
- * A park whose day has GONE is late in a way a promise is not: nobody has to
- * have recorded an outcome for it to still be waiting, because what was
- * promised was not a call — it was that somebody would look again. So the
- * `outcome is null` half deliberately does not apply to it.
+ * So the clause excluded every lead that followed the rule, and admitted only
+ * the ones missing an answer §24 demands. A lead planned carefully and then
+ * forgotten was the one thing this screen could not show, which is precisely
+ * the lead it exists for. Nothing anywhere records whether the call was made,
+ * so there is no second half to this sentence to write: the day has gone, and
+ * that is the whole of it.
+ *
+ * The park half is unchanged and needed no such clause in the first place —
+ * what was promised there was not a call, it was that somebody would look
+ * again, so the day arriving is the whole event.
  */
 export function overdueWindow(day: string): SQL {
   return sql`(
-    (c.lead_next_action_date < ${day}::date and c.lead_next_action_outcome is null)
+    c.lead_next_action_date < ${day}::date
     or ${parkComesBack(sql`< ${day}::date`)}
   )`;
 }

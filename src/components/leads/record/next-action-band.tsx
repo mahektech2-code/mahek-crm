@@ -148,11 +148,28 @@ export function NextActionBand({
   const days = daysBetween(today, record.nextActionDate!);
 
   /*
-   * PAST ITS DAY ONLY WHERE NOTHING CAME BACK. An action whose outcome has
-   * been recorded is done, whatever its date says, and drawing a finished call
-   * as overdue is how a screen teaches people to ignore the colour.
+   * PAST ITS DAY, FULL STOP — and the clause that used to be beside it read
+   * the column backwards.
+   *
+   * It was `days < 0 && !record.nextActionOutcome`, on the reading that an
+   * action whose outcome is recorded is done whatever its date says. That
+   * would be sound if the column held what HAPPENED. It does not.
+   * `lead_next_action_outcome` is §24's FOURTH ANSWER — "what that person is
+   * expected to come back with" — written in the same breath as the action and
+   * the day, which is exactly how the paragraph twenty lines below renders it:
+   * "Expected back: …".
+   *
+   * So the two readings inverted each other. §24 REQUIRES the expected outcome
+   * on every upward move, so `outcome is null` is false for every lead that
+   * followed the rule — and the band could never draw one of them as overdue.
+   * The only leads it could colour were the ones missing an answer §24 demands,
+   * which is the opposite of the population somebody opens this screen for: a
+   * lead planned carefully and then forgotten went quietly grey for ever.
+   *
+   * Nothing on this record says whether the call was made. The honest reading
+   * of the date alone is that the day has gone, and that is what is drawn.
    */
-  const overdue = days < 0 && !record.nextActionOutcome;
+  const overdue = days < 0;
   const status: Status = overdue ? "overdue" : "planned";
   const seat = record.nextActionOwnerId ? seatOf(record, record.nextActionOwnerId) : null;
 
@@ -172,11 +189,12 @@ export function NextActionBand({
         {record.nextActionOwnerName ?? "somebody"}
         {seat ? <span className="text-muted"> · {seat}</span> : null}
       </div>
-      {/* §24's fourth answer — what that person is expected to come back with.
-          Said as "expected back" rather than "outcome" where none is recorded
-          yet, because the two are one field and the word has to survive both:
-          before the day it is what we are waiting for, after it is what we
-          got. Silence on it is a real state and is drawn as one. */}
+      {/* §24's fourth answer — what that person is expected to come back with,
+          written when the action is set rather than after it. That is the whole
+          of what this column is, and reading it as a record of what happened is
+          the mistake the overdue clause above used to make. Silence on it is a
+          real state — §24 demands an answer, so a lead without one is a lead
+          that slipped past the rule — and is drawn as one. */}
       <div className="mt-1 text-[13px] text-muted">
         {record.nextActionOutcome
           ? `Expected back: ${record.nextActionOutcome}`
