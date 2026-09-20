@@ -1929,6 +1929,39 @@ export const MIGRATIONS: string[][] = [
     `CREATE INDEX IF NOT EXISTS idx_lead_checks_cust ON lead_field_checks(customerId, changedAt DESC);`,
   ],
 
+  /* ---- §8's other twelve answers, which had nowhere to land here ---------
+   *
+   * `mbos_lead_validations` has a column for each of §8's seventeen questions;
+   * this table had five of them, the wire declared the same five, and
+   * `app/validate.tsx` filtered its own form down to match. So the one call
+   * that authorises a sample could not record whether the SHOP said it was
+   * ready for a trial — §5.4 turns on that answer — and a call made from a car
+   * recorded a third of the conversation a call made at a desk did, into one
+   * table, with nothing on either row saying which it was.
+   *
+   * TEXT and not INTEGER, exactly as the office's own columns are: "he came but
+   * only for five minutes" and "ready once the season turns" are the answers
+   * worth having and a tick cannot hold either. NULL stays "nobody asked" and a
+   * filled box stays "asked, including where the answer was no" — no default
+   * turns one into the other at either end.
+   *
+   * Adding the block IS adding the migration: `SCHEMA_VERSION` counts them.
+   */
+  [
+    `ALTER TABLE lead_validations ADD COLUMN salesmanVisited TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN mahekExplained TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN productUnderstood TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN currentProduct TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN growthPotential TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN priceConcern TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN genuineInterest TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN creditConcern TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN competitorConcern TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN readyForTrial TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN readyForCommercial TEXT;`,
+    `ALTER TABLE lead_validations ADD COLUMN readyForOrder TEXT;`,
+  ],
+
 ];
 
 /**

@@ -31,6 +31,12 @@ const WHAT_TO_DO: Record<string, string> = {
   bill_settled: 'The back office had already received this. Nothing more to do — check with them.',
   outstanding_stale: 'The balance moved while you were offline. Open the customer and check before resending.',
   duplicate: 'This was already recorded. Nothing to send again.',
+  /* Deliberately NOT the `validation` sentence below: there is nothing here for
+     him to correct. The document he named has been taken out of the library
+     since he pulled it, so the ways forward are a different document or the
+     office publishing that one again — and "correct it and send it again" would
+     send him looking for a mistake in an entry that was right when he made it. */
+  not_found: 'What this names is no longer in MahekOne. Send a different one, or ask the office to publish it again.',
   validation: 'Something on this record was not accepted. Correct it and send it again.',
   not_permitted: 'This is not yours to record. Your manager can tell you who does it.',
 };

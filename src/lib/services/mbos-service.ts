@@ -1812,12 +1812,26 @@ async function openLeads(userId: string, since?: string | null) {
  * given `lead_validations.syncState = 'synced'`, so a call sitting in the
  * outbox is never written over by the office's answer to an older one.
  *
- * **WHAT IS DELIBERATELY NOT SENT is §8's own seven.** `salesman_visited`,
- * `mahek_explained` and `product_understood` are the manager's check ON the
- * salesman, and a check somebody reads on his own phone is a check he learns
- * to anticipate — which is the whole reason §8 makes the call a manager's. The
- * other four are the office's working notes with no screen here asking for
- * them, and a column sent with nowhere to land takes the entire pull down.
+ * **AND IT SENDS ALL SEVENTEEN NOW, WHICH IS A REVERSAL.** It sent five, on the
+ * reasoning that §8's check ON the salesman — did he visit, did he explain
+ * Mahek, did any of it land — is a check he learns to anticipate once he can
+ * read it on his own phone, and that the rest were the office's working notes
+ * with no screen here asking for them. The first half of that was a real
+ * argument and it lost to a worse outcome: the handset WRITES this table, so
+ * five columns on the wire meant a call made from a car recorded five answers
+ * and the office's own recorded seventeen, into one table, with nothing on any
+ * row saying which kind it was. A report counting "how many said credit was the
+ * problem" cannot be read at all against that.
+ *
+ * What is left of the old worry is that the manager's three are answers ABOUT
+ * the salesman holding the phone. They are his lead's record either way — the
+ * office already rings him about them — and a record he is shown is one he can
+ * argue with, which is the whole reason `calledByName` rides down beside them.
+ *
+ * ONE FUNCTION, bootstrap and delta both, because a column the first sends and
+ * the second does not is a value that is right on the day he signed in and
+ * stale for the life of the installation: `pullCursor` is set once and cleared
+ * by nothing.
  *
  * `since` makes it a delta as well as a bootstrap, like `openSamples`: a
  * verdict reached this morning has to reach the phone before the salesman next
@@ -1844,6 +1858,27 @@ async function leadValidations(userId: string, since?: string | null) {
            k.confirmed_monthly_volume_litres as "confirmedMonthlyVolumeLitres",
            k.confirmed_competitor as "confirmedCompetitor",
            k.confirmed_potential_paise as "confirmedPotentialPaise",
+           -- AND THE TWELVE THAT HAD NO WIRE AT ALL. The office asks all
+           -- seventeen and so does the phone, so a call arriving here with
+           -- twelve of them dropped reads on the record as a shorter
+           -- conversation rather than as a payload with a hole in it. Every one
+           -- of these has a column on the handset; a column it had no place for
+           -- would throw in applyPull and roll back the WHOLE pull, not this
+           -- channel.
+           k.salesman_visited as "salesmanVisited",
+           k.mahek_explained as "mahekExplained",
+           k.product_understood as "productUnderstood",
+           k.current_product as "currentProduct",
+           k.growth_potential as "growthPotential",
+           k.price_concern as "priceConcern",
+           k.genuine_interest as "genuineInterest",
+           k.credit_concern as "creditConcern",
+           k.competitor_concern as "competitorConcern",
+           -- §5.4 decides a sample on these three, and it decides it on what
+           -- the SHOP said rather than on the salesman being ready to ask.
+           k.ready_for_trial as "readyForTrial",
+           k.ready_for_commercial as "readyForCommercial",
+           k.ready_for_order as "readyForOrder",
            k.verdict, k.verdict_reason as "verdictReason", k.notes,
            -- An id is not a person and this app holds no user table, so the
            -- name is resolved here -- the same reason leadManagerName rides

@@ -39,6 +39,24 @@ export const REJECTION_CODES = [
    * handset needs to be able to tell those apart to say the right sentence.
    */
   "day_locked",
+  /*
+   * WHAT THE RECORD NAMES IS GONE — a document withdrawn from the library
+   * between the pull that put it on the phone and the tap that sent it.
+   *
+   * Its own code for the third time and for the third version of one reason:
+   * nothing the salesman sent is malformed, so `validation` — which the
+   * handset renders as "correct it and send it again" — sends him to fix an
+   * entry that is already right. There is nothing for him to correct: either he
+   * names a different document or the office publishes that one again, and only
+   * a code of its own can carry that difference. `product_inactive` is the
+   * nearest by shape and names a PRODUCT, so it would read wrong on
+   * `/rejections` and would be wrong in any count by code.
+   *
+   * An unrecognised code costs a guidance line and never the refusal itself:
+   * `/rejections` prints the office's own sentence verbatim whatever the code
+   * says, which is why two codes here have never had one.
+   */
+  "not_found",
   "validation",
   "not_permitted",
 ] as const;

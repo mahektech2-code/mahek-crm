@@ -4698,6 +4698,37 @@ const leadValidationSchema = z.object({
   confirmedMonthlyVolumeLitres: z.number().int().nonnegative().nullish(),
   confirmedCompetitor: z.string().max(200).nullish(),
   confirmedPotentialPaise: z.number().int().nonnegative().nullish(),
+
+  /* ---- §8's other twelve, which this wire declared for nobody ------------
+   *
+   * `mbos_lead_validations` has a column for every one of §8's seventeen
+   * questions and this schema declared five of them. The other twelve were
+   * stripped by zod IN SILENCE — a handset sending them got an accepted item
+   * back and twelve null columns, which is the worst shape a loss can take:
+   * the caller believes the answer was written down and nobody finds out until
+   * somebody goes looking for it months later. `app/validate.tsx` was built
+   * honestly around that gap — it filters its own form down to what the wire
+   * can carry — so the phone drew five boxes and the Readiness section, the
+   * answer §5.4 decides a sample on, was not drawn at all.
+   *
+   * TEXT rather than boolean, for the schema's own stated reason: "he came but
+   * only for five minutes" and "ready once the season turns" are the answers
+   * that matter and a tick cannot hold either. NULL is nobody asked and a
+   * filled box is asked — including when the answer was no — so nothing here
+   * may default one into the other.
+   */
+  salesmanVisited: z.string().max(2000).nullish(),
+  mahekExplained: z.string().max(2000).nullish(),
+  productUnderstood: z.string().max(2000).nullish(),
+  currentProduct: z.string().max(2000).nullish(),
+  growthPotential: z.string().max(2000).nullish(),
+  priceConcern: z.string().max(2000).nullish(),
+  genuineInterest: z.string().max(2000).nullish(),
+  creditConcern: z.string().max(2000).nullish(),
+  competitorConcern: z.string().max(2000).nullish(),
+  readyForTrial: z.string().max(2000).nullish(),
+  readyForCommercial: z.string().max(2000).nullish(),
+  readyForOrder: z.string().max(2000).nullish(),
   /** §F — the Lead Manager's decision, or `pending` where they left it open. */
   verdict: z.enum(["pending", "confirmed", "not_qualified", "on_hold"]).nullish(),
   verdictReason: z.string().max(500).nullish(),
@@ -4763,6 +4794,23 @@ async function handleLeadValidation(
       confirmedMonthlyVolumeLitres: p.confirmedMonthlyVolumeLitres ?? null,
       confirmedCompetitor: p.confirmedCompetitor ?? null,
       confirmedPotentialPaise: p.confirmedPotentialPaise ?? null,
+      /* DECLARED IS NOT WRITTEN. The five columns above this line reached the
+         schema and this list in two separate changes once already, and the
+         half that arrives second is the one that matters — a field zod accepts
+         and no insert names is a field the handset sends, the sync accepts,
+         and nothing stores. Every one of §8's seventeen is on both lists. */
+      salesmanVisited: p.salesmanVisited ?? null,
+      mahekExplained: p.mahekExplained ?? null,
+      productUnderstood: p.productUnderstood ?? null,
+      currentProduct: p.currentProduct ?? null,
+      growthPotential: p.growthPotential ?? null,
+      priceConcern: p.priceConcern ?? null,
+      genuineInterest: p.genuineInterest ?? null,
+      creditConcern: p.creditConcern ?? null,
+      competitorConcern: p.competitorConcern ?? null,
+      readyForTrial: p.readyForTrial ?? null,
+      readyForCommercial: p.readyForCommercial ?? null,
+      readyForOrder: p.readyForOrder ?? null,
       verdict: p.verdict ?? "pending",
       verdictReason: p.verdictReason ?? null,
       notes: p.notes ?? null,

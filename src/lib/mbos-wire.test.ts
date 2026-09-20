@@ -2089,6 +2089,22 @@ const VALIDATION_FACTS: Record<string, string> = {
   confirmedMonthlyVolumeLitres: "the volume the shop gave the office, which is a number somebody will quote back at him",
   confirmedCompetitor: "whose product the shop told the office it uses, which is the fact a negotiation starts from",
   confirmedPotentialPaise: "what the office was told this shop could be worth",
+  /* §8's OTHER TWELVE. The table has had a column for each of them since the
+     call was built; the wire declared five, so a call the office made reached
+     the phone a third told and a call the phone made was stripped by zod on the
+     way up — silently, with an accepted item coming back. */
+  salesmanVisited: "whether the shop says our man came at all. It is the question §8 exists for, and a check on a salesman's own work that never reaches a record is no check",
+  mahekExplained: "whether Mahek was explained properly. No amount of GPS proves it, which is why somebody has to ring and ask",
+  productUnderstood: "whether any of it landed. A visit the shop cannot describe afterwards is a visit that sold nothing",
+  currentProduct: "what they are using TODAY, in their own words — the thing a first order has to displace",
+  growthPotential: "whether the monthly figure could grow, said as a sentence. The number beside it is what somebody guessed; this is what the shop said",
+  priceConcern: "whether price is the objection. Answered into a free-text impression it is a sentence; here it is the count §8 exists to produce",
+  genuineInterest: "whether they actually want to try it. It is the last question of the section and the one a sample is worth risking on",
+  creditConcern: "whether the CREDIT terms are the objection rather than the price. A shop happy with the price and stuck on the terms is a different offer entirely",
+  competitorConcern: "what holds them to whoever supplies them now. Knowing the incumbent's name says nothing about how hard they are to displace",
+  readyForTrial: "whether the SHOP said it was ready for a trial. §5.4 decides a sample on this answer and on nothing else",
+  readyForCommercial: "whether they are ready to talk terms, which is what authorises a commercial conversation",
+  readyForOrder: "whether they are ready to order. Absent, the next call has to ask the whole of §8 again",
   calledByName: "WHO made the call. An id is unrenderable here — this app holds no user table — and the answer to a figure he disagrees with is to ring that person",
   clientCreatedAt: "NOT NULL on the handset, so a row the office authored cannot be inserted without it",
   deviceId: "NOT NULL on the handset, and it is also which door wrote the row",
@@ -2167,6 +2183,101 @@ test("the office's verification call and every check on a finding reach the hand
       "record shows every handset-made call twice",
   );
 });
+
+/* ---------------------------------------------------------------------------
+ * AND THE SAME SEVENTEEN GOING UP, which is four links rather than one.
+ *
+ * The test above walks the DOWN direction. This one walks the up: the office's
+ * zod schema has to DECLARE each answer, the insert beside it has to NAME each
+ * one, the handset has to agree it can carry each, and `validationsFor` has to
+ * read each back. Every link fails silently on its own and each in its own
+ * shape — zod strips an undeclared field and answers `accepted`, a declared
+ * field no insert names is stored nowhere at all, a column missing from
+ * `CARRIED` is a question the form simply stops drawing, and one missing from
+ * the read is an answer that arrived and no screen shows. That split cost five
+ * columns once already, in `0157`, where the schema and the `columns` map both
+ * picked them up for free and the one hand-typed `values` list did not.
+ * ------------------------------------------------------------------------- */
+
+const HANDSET_VALIDATIONS = "mbos-app/src/data/validations.ts";
+
+/** Answer column → what a lead's record loses where the link is broken. */
+const ANSWER_COSTS: Record<string, string> = {
+  salesmanVisited: "nobody can tell a shop that says our man never came from one nobody asked",
+  mahekExplained: "the one question no GPS can answer goes unrecorded",
+  productUnderstood: "a visit the shop cannot describe afterwards reads as a visit that worked",
+  currentProduct: "what a first order has to displace is unknown to whoever makes the next call",
+  growthPotential: "the shop's own words about whether the figure could grow are lost behind somebody's guess",
+  priceConcern: "how many were lost on price stops being a question anybody can ask",
+  genuineInterest: "a sample goes out on the salesman being ready to ask rather than on the shop wanting it",
+  creditConcern: "a shop stuck on the terms is filed as a shop stuck on the price",
+  competitorConcern: "how hard the incumbent is to displace is never written down",
+  readyForTrial: "§5.4 decides a sample on this and would be deciding it on nothing",
+  readyForCommercial: "a commercial conversation is opened on nobody's word",
+  readyForOrder: "the next call asks the whole of §8 over again",
+  confirmedRequirement: "the contradiction this call exists to produce cannot be seen",
+  confirmedCompetitor: "the fact a negotiation starts from is lost",
+  salesmanFeedback: "how the shop found our man is lost",
+  qualityFeedback: "a quality objection is unreadable as anything but prose",
+  dispatchFeedback: "a service objection is unreadable as anything but prose",
+};
+
+test("every answer §8 asks survives the round trip, at both ends", () => {
+  const actions = readFileSync(SYNC_ACTIONS, "utf8");
+  const handset = readFileSync(HANDSET_VALIDATIONS, "utf8");
+  const faults: string[] = [];
+
+  /* The schema and the insert, read as the two TEXT regions they are: the zod
+     object, and the `.values({…})` of the insert `handleLeadValidation` makes.
+     Both are in one file and neither is reachable from a type. */
+  const schemaAt = actions.indexOf("const leadValidationSchema = z.object({");
+  assert.ok(schemaAt > -1, "leadValidationSchema is gone — this test needs updating with it");
+  const schema = actions.slice(schemaAt, actions.indexOf("\n});", schemaAt));
+
+  const insertAt = actions.indexOf(".insert(mbosLeadValidations)");
+  assert.ok(insertAt > -1, "handleLeadValidation no longer inserts into mbosLeadValidations");
+  const insert = actions.slice(insertAt, actions.indexOf("onConflictDoNothing", insertAt));
+
+  /* The handset's two halves: the list saying what it can carry, and the one
+     query that reads a call back for the record page. */
+  const carriedAt = handset.indexOf("const CARRIED");
+  assert.ok(carriedAt > -1, "the handset's CARRIED list is gone — the form's filter reads it");
+  const carried = handset.slice(carriedAt, handset.indexOf("]);", carriedAt));
+
+  const readAt = handset.indexOf("FROM lead_validations");
+  assert.ok(readAt > -1, "validationsFor no longer selects from lead_validations");
+  const readBack = handset.slice(handset.lastIndexOf("SELECT", readAt), readAt);
+
+  for (const [column, cost] of Object.entries(ANSWER_COSTS)) {
+    if (!new RegExp(`\\n\\s*${column}:`).test(schema)) {
+      faults.push(
+        `leadValidationSchema does not declare ${column} — zod strips it in SILENCE ` +
+          `and answers the handset "accepted", so ${cost}`,
+      );
+    }
+    if (!new RegExp(`\\n\\s*${column}: p\\.`).test(insert)) {
+      faults.push(
+        `handleLeadValidation never writes ${column} — declared and unwritten is the ` +
+          `worse of the two, because the payload arrives and the column stays null: ${cost}`,
+      );
+    }
+    if (!carried.includes(`'${column}'`)) {
+      faults.push(
+        `the handset's CARRIED list has no ${column}, so \`answerableQuestions\` drops ` +
+          `its question and the form never draws the box: ${cost}`,
+      );
+    }
+    if (!new RegExp(`\\b${column}\\b`).test(readBack)) {
+      faults.push(
+        `validationsFor never reads ${column} back, so the answer arrives on the phone ` +
+          `and no screen can show it: ${cost}`,
+      );
+    }
+  }
+
+  assert.deepEqual(faults, [], `\n  ${faults.join("\n  ")}`);
+});
+
 
 /* ---------------------------------------------------------------------------
  * THE TWO STAGE COLUMNS, AND THE ONE WRITER THAT KEPT THEM OUT OF STEP.

@@ -60,6 +60,8 @@ import {
   salesTypeLabel,
   stageLabel,
   stageSentence,
+  VERIFICATION_COLUMNS,
+  VERIFICATION_QUESTIONS,
   type LeadSalesType,
   type LeadStage,
 } from '../src/engines/funnel';
@@ -1031,6 +1033,26 @@ export default function LeadRecord() {
                       {'About the visit: ' + v.salesmanFeedback.trim()}
                     </T>
                   ) : null}
+                  {/* §8's OTHER ANSWERS, in §8's own words. The call asks
+                      seventeen questions and this card drew five, because five
+                      was all the wire carried — so the office's own reading of
+                      the shop arrived a third told. The ones that decide the
+                      next move are among the twelve: whether the SHOP said it
+                      was ready for a trial, which is what §5.4 sends a sample
+                      on, and whether the objection is the price or the credit,
+                      which is what decides what we offer.
+
+                      An unanswered question is LEFT OUT rather than drawn
+                      blank. Null is nobody having asked, and a line reading
+                      "Any concern about price? —" asserts the shop said no. */}
+                  {alsoSaid(v).map((a) => (
+                    <View key={a.id} style={{ marginTop: 6 }}>
+                      <T s="caption">{a.ask}</T>
+                      <T style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 1 }}>
+                        {a.said}
+                      </T>
+                    </View>
+                  ))}
                   {v.verdictReason ? (
                     <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>
                       {v.verdictReason}
@@ -1648,6 +1670,42 @@ function told(
   }
 
   return rows;
+}
+
+/**
+ * WHAT ELSE THE OFFICE ASKED, AND WHAT THEY SAID TO IT.
+ *
+ * `told` above is the four CONFIRMED figures, which are drawn as a comparison
+ * because their whole value is that they can disagree with what the salesman
+ * wrote down. These are the rest of §8's seventeen, which are answers and not
+ * figures: nothing on this lead contradicts them, so they are drawn as the
+ * question and the sentence under it, in the wording the caller read out.
+ *
+ * The question comes from `VERIFICATION_QUESTIONS` and the column it lands in
+ * from `VERIFICATION_COLUMNS` — the same two lists the form on this phone draws
+ * from and the office's own form writes through. A label typed in here would be
+ * the copy that drifts, and the half that drifts is the half somebody reads.
+ *
+ * The three drawn ABOVE are left out rather than repeated: `confirmedRequirement`
+ * and `confirmedCompetitor` are two of `told`'s four, and `salesmanFeedback` is
+ * the "About the visit" line. One answer printed twice on one card reads as the
+ * shop having said it twice.
+ */
+const DRAWN_ABOVE = new Set(['confirmedRequirement', 'confirmedCompetitor', 'salesmanFeedback']);
+
+function alsoSaid(
+  v: Awaited<ReturnType<typeof validationsFor>>[number],
+): { id: string; ask: string; said: string }[] {
+  const row = v as unknown as Record<string, unknown>;
+  return VERIFICATION_QUESTIONS.flatMap((q) => {
+    const column = VERIFICATION_COLUMNS[q.id];
+    if (!column || DRAWN_ABOVE.has(column)) return [];
+    const said = row[column];
+    /* A blank is nobody having asked, which is a different fact from the shop
+       having nothing to say — and only the second is worth a line. */
+    if (typeof said !== 'string' || !said.trim()) return [];
+    return [{ id: q.id, ask: q.ask, said: said.trim() }];
+  });
 }
 
 function verdictWord(v: string): string {
