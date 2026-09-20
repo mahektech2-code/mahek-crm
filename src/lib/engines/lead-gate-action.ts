@@ -339,7 +339,14 @@ export function gateAction(facts: LeadGateActionFacts): LeadGateAction {
             label: "Confirm the actual order",
             tone: "danger",
             control: "confirm_order",
-            says: "A day and a size were promised and nothing has been placed against them. This asks for a real value and a reference, and it supersedes the forecast.",
+            /* WHAT IT DOES NOT DO IS PART OF THE SENTENCE. The form this sends
+               somebody to records a real order, at `pending_approval`, and the
+               rung does not move today: §18's gate counts orders that COUNT
+               and a pending one counts nowhere. Said here rather than only on
+               the card, because this string is what the rail, the console and
+               the handset all print — and a manager who expected the ladder to
+               advance and watched it stand still presses the button again. */
+            says: "A day and a size were promised and nothing has been placed against them. This asks for a real value and a reference, and it supersedes the forecast. The order goes to accounts like every other; the rung follows their decision rather than this button.",
           }
         : {
             label: "Record the commitment",

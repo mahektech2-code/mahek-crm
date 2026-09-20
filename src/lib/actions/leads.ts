@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -13,6 +13,7 @@ import {
   mbosLeadValidations,
   mbosTasks,
   notifications,
+  orders,
   users,
 } from "@/db/schema";
 import {
@@ -23,7 +24,7 @@ import {
 } from "@/lib/access-control";
 import { today } from "@/lib/recompute";
 import { getConfig } from "@/lib/config/store";
-import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
+import { writeTimelineEvent, CRM_EVENT, MBOS_EVENT } from "@/lib/timeline";
 import { err, fromThrown, ok, type FieldError, type Result } from "@/lib/result";
 import {
   COMMUNICATION_ACTIONS,
@@ -43,7 +44,8 @@ import {
   type LeadStage,
 } from "@/lib/lead-labels";
 import { checklistFor } from "@/lib/engines/lead-gates";
-import { commitmentGap, commitmentState } from "@/lib/lead-commitment";
+import { commitmentGap, commitmentState, isConfirmedCommitment } from "@/lib/lead-commitment";
+import { addDays, money } from "@/lib/format";
 import { isParked, ladderFor, rungOf } from "@/lib/engines/lead-ladder";
 import {
   applyLeadStageMove,
@@ -1920,6 +1922,301 @@ export async function askForFirstOrder(
       state === "confirmed"
         ? "Recorded as a commitment. The first-order rung is open once the order arrives."
         : "Recorded as an expected order. With no quantity or value it is a follow-up rather than a commitment, so it is not counted in the forecast.",
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ══════════════════════════════════════ §5.5 confirming the actual order */
+
+/**
+ * §7's own fork, and the one instruction on the ladder with nowhere to go.
+ *
+ * `gateAction` has named this act since the card was written: at Negotiation,
+ * with a commitment on file and nothing placed against it, the sales manager
+ * is told in danger tone to CONFIRM THE ACTUAL ORDER. The verb routed to the
+ * Commercial tab and the Commercial tab held one form — `askForFirstOrder`,
+ * which records the FORECAST. So the most consequential instruction in the
+ * funnel sent somebody to the form it supersedes, and pressing it again
+ * rewrote the promise rather than closing it.
+ *
+ * ---------------------------------------------------------------------------
+ * WHICH SHAPE THIS IS, AND THE ARGUMENT FOR IT.
+ *
+ * There were two honest answers and only one of them leaves the funnel joined
+ * to the ledger. The other was to record that a manager SAYS an order exists —
+ * a reference and a value written down somewhere — and let the rung move when
+ * the ledger agreed. That is a note. Nothing in MahekOne would ever agree,
+ * because the only thing that puts an order in the ledger is somebody creating
+ * one, and the manager who has just been told to confirm this order is exactly
+ * the person who would then have to go and do it somewhere else. A danger-toned
+ * instruction answered by a sentence in a timeline is the gap wearing different
+ * clothes.
+ *
+ * So this creates a REAL order, through the shape every other order in this
+ * product has, and it changes nothing about who decides. `status` is
+ * `pending_approval`: the customer has said yes and the business has not, and
+ * accounts check who they are and what they already owe exactly as they do for
+ * a telecaller's order and a salesman's. Approving stays theirs — the person
+ * carrying the target must not sign off the orders that hit it, and a manager
+ * standing on a lead record is that person.
+ *
+ * **AND THE RUNG IS NOT WRITTEN HERE.** That is the load-bearing half. §18's
+ * gate reads `countingOrderCount`, which is `orderCountsSql`, which does not
+ * count a pending order — so the lead does NOT move to First order when this
+ * saves, and it moves when accounts accept. A stage write here would be a
+ * second opinion about a gate that has one, and the reason it would be wrong
+ * is not procedural: it would walk a lead onto the book on the strength of an
+ * order accounts were about to decline. The card says so in words before the
+ * button is pressed, because a manager who expected the rung to move and
+ * watched it stand still would press again.
+ *
+ * §20 IS RENDERED RATHER THAN RE-IMPLEMENTED, and this does not breach that.
+ * What that rule forbids is a parallel status ladder for a row whose status
+ * comes from the sheet and from accounts' approval — a second author of
+ * `orders.status`. This writes the status ONCE, at creation, the value every
+ * other capture path writes, and never touches it again. The rungs above
+ * (`delivery`, `payment`) go on reading the ledger.
+ *
+ * **NO LINE ITEMS, deliberately.** The manager confirmed a value and a
+ * reference on a phone call; he did not pick a SKU. A line invented from
+ * `lead_required_product_id` — free text a salesman typed months earlier —
+ * would put litres into the product mix and the volume half of somebody's
+ * score on the strength of a guess. Without one the money still counts as
+ * revenue and is REPORTED as unmatched, which is the honest answer and the one
+ * `sales_performance.unmatched_revenue_paise` exists to give.
+ *
+ * `order.capture` rather than `lead.work`, because the act is an order and the
+ * capability that names an order is the one to check. Both are held by every
+ * associate, so this narrows nobody in practice; what it buys is that a refusal
+ * names the thing being refused, and that `audit_log.actor_role`/`actor_app`
+ * record which hat took an order rather than which hat worked a lead.
+ */
+export async function confirmFirstOrder(
+  customerId: string,
+  input: {
+    /** The day the customer placed it, which is not always today. */
+    orderedOn: string;
+    /** PAISE. Money is paise everywhere and rupees only on the way to a screen. */
+    valuePaise: number;
+    /** Their confirmation number, PO or the office's own reference. */
+    reference: string;
+    /** CANS, carried forward from the commitment. Recorded, never priced. */
+    cans?: number;
+  },
+): Promise<Result<null>> {
+  try {
+    const parsed = z
+      .object({
+        orderedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Give the day as a date."),
+        /*
+         * A REAL VALUE IS WHAT SEPARATES THIS FROM THE FORECAST, so zero is
+         * refused rather than stored. `askForFirstOrder` accepts a day with no
+         * size because the salesman genuinely may not have been told one; here
+         * the order has been placed, and an order nobody can value is one that
+         * reads as ₹0 on every target, every EOD figure and every bill raised
+         * against it.
+         */
+        valuePaise: z
+          .number()
+          .int()
+          .positive("What the order is worth. A confirmation with no value is a forecast."),
+        reference: z
+          .string()
+          .trim()
+          .min(1, "Their confirmation number, or the reference the office gave it.")
+          .max(64),
+        cans: z.number().int().positive().optional(),
+      })
+      .safeParse(input);
+    if (!parsed.success) return zodErr(parsed.error);
+    const p = parsed.data;
+
+    const ctx = await requireCapability("order.capture");
+    const found = await reachableLead(customerId);
+    if (!found.ok) return found.refusal;
+    const lead = found.lead;
+
+    /*
+     * The three commitment columns and the two the order needs, read off the
+     * row rather than trusted from the form. `LEAD_COLUMNS` carries neither
+     * the cans nor the credit term, and widening it is `lead-service.ts`'s to
+     * do — one select of five columns here is cheaper than a shared shape
+     * growing a field for one caller.
+     */
+    const [row] = await db
+      .select({
+        kind: customers.kind,
+        creditDays: customers.creditDays,
+        lastOrderDate: customers.lastOrderDate,
+        expectedOrderDate: customers.leadExpectedOrderDate,
+        expectedOrderCans: customers.leadExpectedOrderCans,
+        expectedOrderValuePaise: customers.leadExpectedOrderValuePaise,
+      })
+      .from(customers)
+      .where(eq(customers.id, customerId))
+      .limit(1);
+    if (!row) return err("That lead is not on MahekOne.", "not_found");
+
+    /*
+     * THE SAME TWO FACTS THE CARD FORKS ON, asked here because a server action
+     * is a URL and a button drawn only in one state is not a rule. They are
+     * read from the same places `leads-record.tsx` reads them — the commitment
+     * through `lead-commitment.ts`, the order through `order-status.ts` — and
+     * never re-derived, or the screen and the save would come to disagree
+     * about one shop on one afternoon.
+     */
+    if (!isConfirmedCommitment(row)) {
+      return err(
+        commitmentGap(row) ??
+          "Record what they promised first. Confirming an order against nothing is a sale with no forecast behind it.",
+        "validation",
+        [{ field: "commitment", message: "Ask for the first order before confirming one." }],
+      );
+    }
+
+    /*
+     * A LIVE ORDER IS ANY ORDER NOBODY HAS REFUSED, which is a wider question
+     * than the gate's. `countingOrderCount` ignores a pending order by design,
+     * so a manager who confirmed one this morning would be shown this same
+     * danger-toned instruction this afternoon and would take the order twice —
+     * one customer, two rows, and the second discovered by accounts. Declined
+     * and cancelled orders are excluded because neither is an order any more,
+     * and a shop whose first attempt was refused has to be able to place a
+     * second.
+     */
+    const [live] = await db
+      .select({
+        id: orders.id,
+        status: orders.status,
+        orderedAt: orders.orderedAt,
+        externalRef: orders.externalRef,
+      })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.customerId, customerId),
+          notInArray(orders.status, ["declined", "cancelled"]),
+        ),
+      )
+      .limit(1);
+    if (live) {
+      return err(
+        live.status === "pending_approval"
+          ? `There is already an order on ${lead.name} waiting for accounts${live.externalRef ? ` — ${live.externalRef}` : ""}. It counts towards the rung the day they accept it, not the day it was taken.`
+          : `There is already an order on ${lead.name}. The rung follows the ledger, so there is nothing left to confirm.`,
+        "conflict",
+      );
+    }
+
+    const day = await today();
+    /* An order cannot have been placed on a day that has not happened. A past
+       date is ordinary — an order often reaches a desk after the call that
+       produced it — and is exactly why this is asked rather than assumed. */
+    if (p.orderedOn > day) {
+      return err("That day has not happened yet.", "validation", [
+        { field: "orderedOn", message: "The day they placed it." },
+      ]);
+    }
+
+    const config = await getConfig();
+    const creditDays = row.creditDays ?? config["customers.defaultCreditDays"];
+    const orderId = gen("ord");
+    /* 09:00 IST on the day it is FOR, the convention every CRM-captured order
+       follows: the clock part is filler and the screens that know it print the
+       date alone. The zone is named because a bare local midnight is read in
+       the session's zone, and the session's zone is not a property of the row. */
+    const orderedAt = new Date(`${p.orderedOn}T09:00:00+05:30`);
+
+    await db.transaction(async (tx) => {
+      await tx.insert(orders).values({
+        id: orderId,
+        customerId,
+        userId: ctx.user.id,
+        source: "crm",
+        /*
+         * The reference goes to `external_ref` and NOT to `order_no`. Our own
+         * number is allocated from the series; this is the customer's word for
+         * the same order, and two readers already want it in that column — the
+         * bill detail screen resolves an order number from it and the accounts
+         * payment-capture search matches on it.
+         */
+        externalRef: p.reference,
+        status: "pending_approval",
+        orderedAt,
+        totalAmount: p.valuePaise,
+        creditDays,
+        paymentDueDate: addDays(p.orderedOn, creditDays),
+      });
+
+      /* `last_order_date` moves on CAPTURE and not on approval — it is what
+         stops the Call Log chasing somebody who ordered this morning, and a
+         backdated order must never drag it backwards. A decline pulls it back
+         through `recomputeLastOrder`. */
+      await tx
+        .update(customers)
+        .set({
+          ...(!row.lastOrderDate || p.orderedOn > row.lastOrderDate
+            ? { lastOrderDate: p.orderedOn }
+            : {}),
+          leadLastActivityDate: day,
+          updatedAt: new Date(),
+        })
+        .where(eq(customers.id, customerId));
+
+      await writeTimelineEvent(tx, {
+        customerId,
+        eventType: CRM_EVENT.order,
+        sourceApp: "crm",
+        sourceRecordId: orderId,
+        /* The day the order was PLACED. An order confirmed on Friday for
+           Tuesday belongs on Tuesday's line of the history. */
+        occurredAt: orderedAt,
+        actorUserId: ctx.user.id,
+        summary: `Order confirmed by ${ctx.user.name} — ${money(p.valuePaise)}, ref ${p.reference}, awaiting approval by accounts`,
+      });
+
+      await tx.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: ctx.user.id,
+        action: "lead.firstOrder.confirm",
+        entityType: "order",
+        entityId: orderId,
+        actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
+        afterState: {
+          customerId,
+          reference: p.reference,
+          valuePaise: p.valuePaise,
+          cans: p.cans ?? null,
+          orderedOn: p.orderedOn,
+          /* What it supersedes, kept beside what replaced it: "they promised
+             400 cans on the 12th and placed ₹2,10,000 on the 19th" is the one
+             question this record gets asked months later. */
+          supersededCommitment: {
+            date: row.expectedOrderDate,
+            cans: row.expectedOrderCans,
+            valuePaise: row.expectedOrderValuePaise,
+          },
+        },
+      });
+    });
+
+    /*
+     * NOTHING IS RECOMPUTED, and that is not an omission. Every derived cache
+     * on this account — the buying cycle, outstanding, the health band — reads
+     * orders that COUNT, and a pending one counts nowhere. The rebuild belongs
+     * to the decision that makes it count, which is `order-approval-service`,
+     * and that is also where `convertIfNowQualified` asks whether the account
+     * has become a customer. Running them here would be a pass that changes
+     * nothing, on a book where a recompute that runs is a recompute somebody
+     * later reasons about.
+     */
+    refresh(customerId);
+    return ok(
+      null,
+      `Order recorded against ${lead.name} — ${money(p.valuePaise)}, ref ${p.reference}. It is with accounts, and the rung moves the day they accept it.`,
     );
   } catch (e) {
     return fromThrown(e);
