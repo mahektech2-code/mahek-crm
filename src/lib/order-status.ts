@@ -69,6 +69,31 @@ export function countsAsPurchase(status: string): boolean {
  * subquery binds to the inner table, which is the bug the integration tests
  * exist to catch.
  */
+/**
+ * WHAT AN ORDER IS WORTH, in the unit every target in this product is written
+ * in — net of GST and after the discount.
+ *
+ * `total_amount` is what the customer was billed and is right for the bill, the
+ * credit limit and the approvals queue. A TARGET is not written in that unit:
+ * Mahek sets one excluding tax, so scoring achievement on `total_amount` reads
+ * about 18% ahead of the figure somebody typed. That was true of the salesman's
+ * revenue and of every per-customer monthly target beside it.
+ *
+ * Null means nobody stated a net — only the sheet projection fills it, because
+ * only the sheet carries a rate and a discount per line — so it coalesces back
+ * to the billed figure. A CRM order is one total somebody typed with no tax
+ * stated near it, and dropping those would be a silent subtraction from
+ * somebody's month.
+ *
+ * It lives here, beside `orderCountsSql`, because the two are asked together
+ * every single time: "did we sell anything" and "what was it worth" are one
+ * question in eight queries, and a second copy of either is a screen waiting to
+ * disagree with the one next to it.
+ */
+export function orderValueSql(alias: string) {
+  return sql.raw(`coalesce(${alias}.net_amount_paise, ${alias}.total_amount)`);
+}
+
 export function orderCountsSql(alias: string) {
   /*
    * DERIVED FROM THE LIST, never restated.

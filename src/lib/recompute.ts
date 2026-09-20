@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { orderCountsSql } from "./order-status";
+import { orderCountsSql, orderValueSql } from "./order-status";
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -41,6 +41,7 @@ import {
   calendarDate,
   monthKey,
   addMonths,
+  monthWindowSql,
   type BusinessDate,
 } from "./business-date";
 import { CANCELLED_STATUS } from "./taken-order-parse";
@@ -1084,15 +1085,22 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
     const trailing: number[] = [];
     for (let i = 1; i <= config["targets.trailingMonths"]; i++) {
       const key = addMonths(period, -i);
-      const [y, m] = key.split("-").map(Number);
+      /*
+       * The DEFAULT target is derived from these months, so they have to be
+       * measured in the unit a target is written in — net of GST, after the
+       * discount. Read GST-inclusive, the figure the engine proposes is about
+       * 18% above the month it was derived from, and nothing on the screen
+       * says the number came from a different question.
+       */
+      const window = monthWindowSql(key);
       const [row] = await db
-        .select({ total: sql<number>`coalesce(sum(${orders.totalAmount}),0)::bigint` })
+        .select({ total: sql<number>`coalesce(sum(${orderValueSql("orders")}),0)::bigint` })
         .from(orders)
         .where(
           and(
             eq(orders.customerId, c.id),
-            sql`extract(year from ${orders.orderedAt}) = ${y}`,
-            sql`extract(month from ${orders.orderedAt}) = ${m}`,
+            sql`${orders.orderedAt} >= ${sql.raw(window.start)}`,
+            sql`${orders.orderedAt} < ${sql.raw(window.end)}`,
             orderCountsSql("orders"),
           ),
         );

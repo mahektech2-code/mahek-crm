@@ -1,7 +1,7 @@
 import "server-only";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { orderCountsSql } from "../order-status";
+import { orderCountsSql, orderValueSql } from "../order-status";
 import { bills, calls, customers, orders } from "@/db/schema";
 import { assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
@@ -15,6 +15,7 @@ import {
   daysBetween,
   daysInMonth,
   isWorkingDay,
+  monthWindowSql,
   startOfMonth,
   type BusinessDate,
 } from "../business-date";
@@ -204,17 +205,24 @@ export async function customerInformation(
 
   const [year, month] = day.split("-").map(Number);
 
+  /*
+   * The same month, the same unit and the same statuses the Monthly Targets
+   * screen reads — see `orderValueSql` and `monthWindowSql`. A customer's
+   * record and the target list quoting two different figures for one shop is
+   * how somebody stops believing both.
+   */
+  const window = monthWindowSql(day.slice(0, 7));
   const [achievedRow] = await db
     .select({
-      total: sql<number>`coalesce(sum(${orders.totalAmount}), 0)::bigint`,
+      total: sql<number>`coalesce(sum(${orderValueSql("orders")}), 0)::bigint`,
     })
     .from(orders)
     .where(
       and(
         eq(orders.customerId, customerId),
         orderCountsSql("orders"),
-        sql`extract(year from ${orders.orderedAt}) = ${year}`,
-        sql`extract(month from ${orders.orderedAt}) = ${month}`,
+        sql`${orders.orderedAt} >= ${sql.raw(window.start)}`,
+        sql`${orders.orderedAt} < ${sql.raw(window.end)}`,
       ),
     );
 
