@@ -249,7 +249,7 @@ export function legacyStageFor(
    * somebody who has just parked a lead most needs to see afterwards. It read
    * as the park having failed rather than as a stage having been mislabelled.
    *
-   * `On hold` is the same spelling `LEAD_FILTERS` offers as a chip and the
+   * `On hold` is the same spelling `LEAD_VIEWS` offers as a chip and the
    * same one `localStage` writes for a lead the OFFICE parked, so a park made
    * in a shop and a park made at a desk land on one chip rather than two.
    */

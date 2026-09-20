@@ -10,10 +10,12 @@ import {
   stageRefusal,
   followUpRefusal,
   type DuplicateMatch,
-  type LeadFilter,
   type LeadThresholds,
   type VisitCapThresholds,
 } from '../engines/leads';
+import { leadBookQuery, rungCountsQuery, type LeadBookFilter } from './lead-query';
+
+export type { LeadBookFilter };
 
 /**
  * Leads — a shop that is not yet on the book.
@@ -142,6 +144,17 @@ export type Lead = {
 
   expectedOrderDate: string | null;
   expectedOrderValuePaise: number | null;
+  /** §5.5 — the SIZE of the promise, in cans. A commitment is a date AND a
+      quantity (Mahek's own answer), and a date alone is a forecast nobody can
+      hold an order against. Cans because qualification has already demanded a
+      product, so there IS a pack size — §L's litres argument is about capture,
+      where there is not. */
+  expectedOrderQuantityCans: number | null;
+  /** What is in the way, as a CODE from `leads.orderBlockers`. Never a label:
+      a stored label stops resolving the moment somebody rewords the list, and
+      "how many did we lose on credit terms this quarter" is the question this
+      exists to make askable. */
+  expectedOrderBlockerCode: string | null;
   lostReasonCode: string | null;
 
   /* ------------------------------------------- the facts the gates read
@@ -206,41 +219,22 @@ export type LeadResult<T> = { ok: true; value: T } | { ok: false; message: strin
 /**
  * The list, in the order the work should be done.
  *
- * A promised follow-up comes first and the ones with no date sit under them —
- * a lead nobody has promised anything is still a lead, and sorting it off the
- * bottom of the screen is how it stops existing.
+ * The statement is `leadBookQuery`, in `lead-query.ts`, so that it can be put
+ * through a real SQLite by a test rather than only by a handset.
  */
-export async function listLeads(filter: LeadFilter = 'All', query = ''): Promise<Lead[]> {
-  const order = `ORDER BY nextFollowUpDate IS NULL, nextFollowUpDate ASC, lastActivityDate ASC, name`;
+export async function listLeads(filter: LeadBookFilter = {}, query = ''): Promise<Lead[]> {
+  const q = leadBookQuery(filter, query);
+  return all<Lead>(q.sql, q.params);
+}
 
-  /*
-   * The search runs in SQLite rather than over the rows already on the screen,
-   * for the reason the customers list gives: eight stage chips are the only
-   * narrowing this screen had, and finding one named shop in a few hundred
-   * leads meant scrolling past all of them. It reaches the shop name, the
-   * person, the number and the town, because that is whichever one he has been
-   * given. The number is matched as typed AND stripped, so a lead stored as
-   * `9822011001` is still found by somebody who types `98220 11001`.
-   */
-  const q = query.trim();
-  const like = `%${q}%`;
-  const digits = normaliseMobile(q);
-  const search = q
-    ? ` AND (name LIKE ? OR company LIKE ? OR city LIKE ? OR mobile LIKE ?${digits.length >= 4 ? ' OR mobile LIKE ?' : ''})`
-    : '';
-  const args = q
-    ? digits.length >= 4
-      ? [like, like, like, like, `%${digits}%`]
-      : [like, like, like, like]
-    : [];
-
-  if (filter === 'Archived') {
-    return all<Lead>(`SELECT * FROM leads WHERE archived = 1${search} ${order}`, args);
-  }
-  if (filter === 'All') {
-    return all<Lead>(`SELECT * FROM leads WHERE archived = 0${search} ${order}`, args);
-  }
-  return all<Lead>(`SELECT * FROM leads WHERE archived = 0 AND stage = ?${search} ${order}`, [filter, ...args]);
+/** The rungs under the picked band. The statement is `rungCountsQuery`. */
+export async function rungsInBook(
+  filter: LeadBookFilter,
+  query = '',
+): Promise<{ rung: string; count: number }[]> {
+  const q = rungCountsQuery(filter, query);
+  if (!q) return [];
+  return all<{ rung: string; count: number }>(q.sql, q.params);
 }
 
 export async function getLead(id: string): Promise<Lead | null> {
@@ -367,6 +361,13 @@ export async function createLead(args: {
   mobile: string;
   city?: string | null;
   source?: string | null;
+  /* WHAT "OTHER" HAS TO SAY, and it used to ride in the note.
+     `customers.lead_source_detail` is the server's column and `handleLead`
+     writes it; `leads.sourceDetail` is this phone's and the pull fills it.
+     Nothing carried it UP, so the form prefixed the sentence onto the note to
+     keep it from being lost — which put it where a person reads it and where
+     no report can count it. This is the step between. */
+  sourceDetail?: string | null;
   estimatedPotentialPaise?: number | null;
   assigneeId?: string | null;
   nextFollowUpDate?: string | null;
@@ -470,6 +471,7 @@ export async function createLead(args: {
          ever held codes, so every lead was still refused after the other three
          were mended. See `wireSource`. */
       source: wireSource(args.source),
+      sourceDetail: args.sourceDetail?.trim() || undefined,
     },
     row: {
       ...base,
@@ -478,6 +480,7 @@ export async function createLead(args: {
       mobile: mobile || null,
       city: args.city?.trim() || null,
       source: args.source ?? null,
+      sourceDetail: args.sourceDetail?.trim() || null,
       estimatedPotentialPaise: args.estimatedPotentialPaise ?? null,
       assigneeId: args.assigneeId ?? null,
       salesType: args.salesType ?? null,

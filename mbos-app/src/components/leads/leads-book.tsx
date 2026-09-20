@@ -1,14 +1,50 @@
 import React from 'react';
-import { View, Pressable, ScrollView } from 'react-native';
+import { View, Pressable, ScrollView, FlatList, type ListRenderItemInfo } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
 import { BottomSheet, Calendar } from '../ui/overlays';
 import { color as C, radius, weight, type BadgeTone } from '../../theme/tokens';
-import { createLead, leadThresholds, listLeads, visitCapThresholds, type Lead } from '../../data/leads';
+import {
+  createLead,
+  leadThresholds,
+  listLeads,
+  rungsInBook,
+  visitCapThresholds,
+  type Lead,
+  type LeadBookFilter,
+} from '../../data/leads';
 import { leadSources } from '../../data/config';
 import { takePhoto } from '../../native/capture';
-import { CUSTOMER_TYPES, LEAD_FILTERS, OTHER_SOURCE, leadAlert, leadSourceLabel, visitCapLabel, visitCapState, type DuplicateMatch, type LeadFilter, type LeadSource, type LeadThresholds, type VisitCapThresholds } from '../../engines/leads';
-import { offeredSalesTypes, salesTypeLabel, type LeadSalesType } from '../../engines/funnel';
+import {
+  CUSTOMER_TYPES,
+  daysBetween,
+  leadOwed,
+  owedLabel,
+  LEAD_VIEWS,
+  LEAD_WHENS,
+  OTHER_SOURCE,
+  leadAlert,
+  leadPriorityLabel,
+  leadSourceLabel,
+  viewOfLead,
+  visitCapLabel,
+  visitCapState,
+  type DuplicateMatch,
+  type LeadSource,
+  type LeadThresholds,
+  type LeadView,
+  type LeadWhen,
+  type VisitCapThresholds,
+} from '../../engines/leads';
+import {
+  offeredSalesTypes,
+  roleAction,
+  salesTypeLabel,
+  stageLabel,
+  type LeadActionTone,
+  type LeadSalesType,
+  type LeadStage,
+} from '../../engines/funnel';
 import { dmy, inrFromPaise, isoDate, plural, pretty } from '../../lib/format';
 import { useStore } from '../../state/store';
 
@@ -27,14 +63,248 @@ import { useStore } from '../../state/store';
  * same shop gets typed in twice with a digit changed.
  */
 
-const STAGE_TONE: Record<string, BadgeTone> = {
-  New: 'info',
-  Contacted: 'teal',
-  Qualified: 'amber',
-  Negotiation: 'amber',
-  Converted: 'success',
-  Lost: 'danger',
+/**
+ * The badge's colour, keyed on the CHIP a lead answers to.
+ *
+ * It was keyed on `leads.stage`, the six-word column, which meant a lead
+ * standing on any of the seventeen rungs the funnel added fell through to
+ * neutral. The key is `viewOfLead` now, so the badge and the chip that caught
+ * the row can never disagree — one lead, one word, one colour.
+ */
+const VIEW_TONE: Record<LeadView, BadgeTone> = {
+  all: 'neutral',
+  new: 'info',
+  contacted: 'teal',
+  qualified: 'amber',
+  negotiation: 'amber',
+  on_hold: 'neutral',
+  converted: 'success',
+  lost: 'danger',
+  archived: 'neutral',
 };
+
+const VIEW_LABEL: Record<LeadView, string> = Object.fromEntries(
+  LEAD_VIEWS.map((v) => [v.value, v.label]),
+) as Record<LeadView, string>;
+
+/**
+ * §7's four tones as ink.
+ *
+ * `muted` is the one that earns its place — "Nothing operational pending" drawn
+ * at the weight of "Payment follow-up" would be read as a task. See
+ * `lead-role-action.ts`, which names the four and says why.
+ */
+const ACTION_INK: Record<LeadActionTone, string> = {
+  brand: C.primaryDeep,
+  warn: C.warnInk,
+  danger: C.danger,
+  muted: C.muted,
+};
+
+/** The gap between cards, which the wrapping `View`'s `gap: 12` used to give. */
+function RowGap() {
+  return <View style={{ height: 12 }} />;
+}
+
+/**
+ * ONE LEAD, AND IT LEADS WITH A VERB.
+ *
+ * The card printed a rung NOUN — "Qualified" — which tells a salesman where the
+ * lead stands and not one thing about what he is supposed to do with it this
+ * morning. §7 is the specification's answer to that and `roleAction` is the one
+ * place it lives: the same function the office reads for him, so the sentence
+ * on his phone and the sentence on his manager's screen are the same sentence
+ * about the same shop. It is asked from the `salesman` vantage and only that
+ * one — his book is his own, and resolving a vantage on a phone would be a
+ * second copy of `vantagesFor` deciding which hat somebody is wearing.
+ *
+ * `sampleAwaitingDispatch` is passed FALSE rather than derived. Nothing in the
+ * salesman's own column of §7's table forks on it — it is the back office's
+ * fact, read at `sample_trial` to tell them whether to pack a parcel — so
+ * deriving it would be a query per row to change no word he reads.
+ */
+function LeadRow({
+  lead,
+  today,
+  cfg,
+  capCfg,
+  sources,
+  onPress,
+}: {
+  lead: Lead;
+  today: string;
+  cfg: LeadThresholds | null;
+  capCfg: VisitCapThresholds | null;
+  sources: LeadSource[] | null;
+  onPress: (id: string) => void;
+}) {
+  const view = viewOfLead(lead);
+  /*
+   * WHAT IS OWED, AND WHICH OF THE THREE DAYS IT IS.
+   *
+   * The same answer the chips cut by and the same one the sort used — said in
+   * words here, which is what pays for the chip being wider than any one
+   * column. "Late — you said you would go back on the 14th" and "Late — back
+   * off hold since the 14th" are different mornings, and a chip that caught
+   * both over a line naming neither would be a count nobody could act on.
+   */
+  const owed = leadOwed(lead, today);
+  const owedLine = owedLabel(owed, pretty);
+  const overdue = !!owed && owed.daysLate > 0 && view !== 'converted' && view !== 'lost';
+
+  /*
+   * The alert is dropped where the line above has already said it.
+   *
+   * `leadAlert`'s first branch is the follow-up running late, which is one of
+   * the three days `leadOwed` answers about — drawn together they are the same
+   * sentence twice, and the narrower one underneath reads as a second, smaller
+   * problem. Its other branches are about the lead having gone QUIET, which is
+   * a different fact and still worth saying.
+   */
+  const alert = cfg ? leadAlert(lead, today, cfg) : null;
+  const quiet = owed && owed.source === 'promise' && owed.daysLate > 0 ? null : alert;
+
+  const rung = (lead.funnelStage as LeadStage | null) ?? null;
+  const facts = {
+    stage: (rung ?? 'new') as LeadStage,
+    salesType: lead.salesType as LeadSalesType | null,
+    hasCommitment: lead.hasCommitment === 1,
+    hasOrder: lead.hasOrder === 1,
+    sampleAwaitingDispatch: false,
+  };
+  const action = roleAction(facts, 'salesman');
+
+  /* How long it has sat where it is. `stageSince` is the day it reached this
+     rung and is the office's own column, unlike `clientCreatedAt`, which is
+     when THIS PHONE first saw the row — see the note on age in the book's own
+     header. Said only once it has been a while: "0 days on this rung" on a lead
+     somebody moved this morning is a line that costs a row of space to say
+     nothing. */
+  const held = rung ? daysBetween(lead.stageSince, today) : null;
+
+  /*
+   * NOBODY NAMED TO DO THE OPERATIONAL HALF, said only where there IS one.
+   *
+   * `backOfficeAmId` is a seat, and an empty one is why a sample sits undispatched
+   * and a GST never gets validated — the task falls through to the Lead Manager
+   * and the salesman assumes the parcel is on its way. Asked of `roleAction` from
+   * the back office's vantage rather than guessed from the rung, so the rule is
+   * §7's own: where they have nothing to do, an empty seat is not a problem and
+   * saying so would be a warning on most of the book.
+   */
+  const backOfficeGap = !lead.backOfficeAmId && roleAction(facts, 'back_office').actionable;
+
+  const marks = [
+    leadPriorityLabel(lead.priority),
+    lead.hasOrder === 1 ? 'Order placed' : lead.hasCommitment === 1 ? 'Committed' : null,
+    lead.leadManagerName ? 'Lead manager ' + lead.leadManagerName : null,
+  ].filter(Boolean);
+
+  return (
+    <Pressable onPress={() => onPress(lead.id)} accessibilityRole="button">
+      <Card style={overdue ? { borderLeftWidth: 3, borderLeftColor: C.danger } : undefined}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
+              {lead.company?.trim() || lead.name}
+            </T>
+            <T s="caption" style={{ marginTop: 2 }}>
+              {/* The ladder is named on the row, because which kind of sale
+                  this is changes what the next call is about — and it is the
+                  one fact about a lead that cannot be guessed from its name. */}
+              {[
+                lead.company?.trim() ? lead.name : null,
+                lead.salesType ? salesTypeLabel(lead.salesType as LeadSalesType) : null,
+                lead.city,
+                leadSourceLabel(lead.source, sources ?? []),
+              ]
+                .filter(Boolean)
+                .join(' \u00b7 ')}
+            </T>
+            {/* What "Other" actually was. It is the sentence that tells Mahek
+                which eleventh channel is worth adding to the list, and until
+                now it reached the phone and no screen drew it. */}
+            {lead.sourceDetail ? (
+              <T s="caption" style={{ marginTop: 2 }} numberOfLines={2}>
+                {lead.sourceDetail}
+              </T>
+            ) : null}
+          </View>
+          <Badge tone={VIEW_TONE[view]}>{VIEW_LABEL[view]}</Badge>
+        </View>
+
+        {/* §7 — what he is supposed to DO, above everything the lead IS. */}
+        <T style={[{ fontSize: 15, lineHeight: 21, marginTop: 10, color: ACTION_INK[action.tone] }, weight(600)]}>
+          {action.label}
+        </T>
+
+        {rung ? (
+          <T s="caption" style={{ marginTop: 2 }}>
+            {stageLabel(rung) + (held && held > 0 ? ' \u00b7 ' + plural(held, 'day') + ' on this rung' : '')}
+          </T>
+        ) : null}
+
+        <T style={[{ fontSize: 15, marginTop: 10, color: lead.estimatedPotentialPaise ? C.ink : C.muted }, weight(500)]}>
+          {lead.estimatedPotentialPaise
+            ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month, he reckons'
+            : 'Worth not estimated yet'}
+        </T>
+
+        <T style={{ fontSize: 14, lineHeight: 20, marginTop: 4, color: overdue ? C.danger : C.muted }}>
+          {owedLine ?? 'Nobody is waiting on anything'}
+        </T>
+
+        {quiet ? (
+          <T style={[{ fontSize: 14, lineHeight: 20, marginTop: 4, color: C.warnInk }, weight(500)]}>{quiet}</T>
+        ) : null}
+
+        {/* "Visit 2 / 3" — §B. Drawn only where it means something: a
+            qualified prospect visited a fourth time is a negotiation,
+            not a stall, and carries no counter at all. */}
+        {capCfg && visitCapLabel(lead.stage, lead.visitCount, capCfg) ? (
+          <T
+            style={[
+              {
+                fontSize: 14,
+                lineHeight: 20,
+                marginTop: 4,
+                color:
+                  visitCapState(lead.stage, lead.visitCount, capCfg) === 'decide' ? C.warnInk : C.muted,
+              },
+              weight(500),
+            ]}>
+            {visitCapLabel(lead.stage, lead.visitCount, capCfg)}
+            {visitCapState(lead.stage, lead.visitCount, capCfg) === 'decide' ? ' \u00b7 a decision is due' : ''}
+          </T>
+        ) : null}
+
+        {marks.length ? (
+          <T s="caption" style={{ marginTop: 4 }} numberOfLines={2}>
+            {marks.join(' \u00b7 ')}
+          </T>
+        ) : null}
+
+        {backOfficeGap ? (
+          <T style={[{ fontSize: 14, lineHeight: 20, marginTop: 4, color: C.warnInk }, weight(500)]}>
+            No back office person named — the office half of this will land on your lead manager
+          </T>
+        ) : null}
+
+        {/* Why it is not moving. On a held lead this is the whole point
+            of the status — without it "On hold" reads as "forgotten". */}
+        {lead.holdReason ? (
+          <T s="caption" style={{ marginTop: 4 }} numberOfLines={2}>
+            {'Waiting: ' + lead.holdReason}
+          </T>
+        ) : null}
+
+        {lead.archived ? (
+          <T s="caption" style={{ marginTop: 4 }}>Archived — still here, just out of the way</T>
+        ) : null}
+      </Card>
+    </Pressable>
+  );
+}
 
 /**
  * The lead book, drawn the same wherever it is opened.
@@ -56,7 +326,20 @@ export function LeadsBook() {
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
 
-  const [filter, setFilter] = React.useState<LeadFilter>('All');
+  /*
+   * THREE NARROWINGS, AND THE SECOND ONE IS THE POINT OF THIS SCREEN.
+   *
+   * `view` is where the lead stands and is the row of chips this book has
+   * always had — the same eight words, selecting on the funnel's rungs now
+   * rather than on the six-word column. `when` is what is OWED, which is the
+   * question a man planning a Tuesday morning actually asks and which nothing
+   * here could put. `rung` narrows a picked band to one of its rungs and is
+   * offered only where the book holds more than one.
+   */
+  const [view, setView] = React.useState<LeadView>('all');
+  const [when, setWhen] = React.useState<LeadWhen>('any');
+  const [rung, setRung] = React.useState<string | null>(null);
+  const [rungs, setRungs] = React.useState<{ rung: string; count: number }[]>([]);
   const [rows, setRows] = React.useState<Lead[]>([]);
   /* Null until the thresholds arrive from configuration. A default written in
      here would be a business rule living in a screen, and the sentence it
@@ -123,17 +406,34 @@ export function LeadsBook() {
   const [competitor, setCompetitor] = React.useState('');
   const [shopPhotoId, setShopPhotoId] = React.useState<string | null>(null);
 
+  /* One object, so a caller that adds a fourth narrowing does not add a fourth
+     argument to two functions. `today` travels with it rather than being read
+     inside the query: the clock is read once, at the top of this component. */
+  const filter: LeadBookFilter = React.useMemo(
+    () => ({ view, rung, when, today }),
+    [view, rung, when, today],
+  );
+
   const load = React.useCallback(() => {
     let live = true;
-    void Promise.all([listLeads(filter), leadThresholds(), visitCapThresholds(), leadSources()]).then(
-      ([r, t, c, srcs]) => {
-        if (!live) return;
-        setRows(r);
-        setCfg(t);
-        setCapCfg(c);
-        setSources(srcs);
-      },
-    );
+    void Promise.all([
+      listLeads(filter),
+      /* The rungs under the picked band, counted in SQLite over the same
+         narrowing. A separate grouped query rather than a pass over `rows`,
+         because picking a rung shortens `rows` and counting from it would make
+         every other rung read zero the moment one was chosen. */
+      rungsInBook(filter),
+      leadThresholds(),
+      visitCapThresholds(),
+      leadSources(),
+    ]).then(([r, g, t, c, srcs]) => {
+      if (!live) return;
+      setRows(r);
+      setRungs(g);
+      setCfg(t);
+      setCapCfg(c);
+      setSources(srcs);
+    });
     return () => {
       live = false;
     };
@@ -228,24 +528,13 @@ export function LeadsBook() {
         mobile,
         city,
         source,
-        /*
-         * THE SENTENCE RIDES IN THE NOTE, AND THAT IS AN INTERIM SAID OUT LOUD.
-         *
-         * `customers.lead_source_detail` is on the server and `handleLead`
-         * writes it; `leads.sourceDetail` is on this phone and the pull fills
-         * it. What is missing is the one step between them — `createLead` has
-         * no argument to carry it UP, and adding one is another file. Dropped,
-         * the answer he was just refused for not giving would go nowhere,
-         * which is the worst of the three options; put in the note it reaches
-         * `leadNotes` on the record, where a person reads it, and nothing is
-         * lost in the meantime.
-         *
-         * The moment that argument lands this becomes
-         * `sourceDetail: sourceDetail.trim()` and the prefix goes with it.
-         */
-        note: source === OTHER_SOURCE && sourceDetail.trim()
-          ? 'Source details: ' + sourceDetail.trim()
-          : undefined,
+        /* Where it actually came from, on its own column at both ends —
+           `customers.lead_source_detail` on the server and `leads.sourceDetail`
+           here. It used to ride in the note prefixed "Source details: ",
+           because nothing carried it up: that put the answer he had just been
+           refused for not giving where a person could read it and no report
+           could count it. */
+        sourceDetail: source === OTHER_SOURCE ? sourceDetail : null,
         /* Rupees on the screen, paise in the store — the only place the two meet. */
         estimatedPotentialPaise: rupees > 0 ? rupees * 100 : null,
         nextFollowUpDate: followUp,
@@ -289,116 +578,170 @@ export function LeadsBook() {
     }
   };
 
-  return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+  const openLead = React.useCallback((id: string) => {
+    router.push(`/lead?id=${id}&from=leads`);
+  }, []);
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
-        style={{ marginHorizontal: -16, paddingHorizontal: 16 }}>
-        {LEAD_FILTERS.map((f) => (
-          <Choice key={f} label={f} selected={filter === f} onPress={() => setFilter(f)} style={{ paddingHorizontal: 16 }} />
-        ))}
-      </ScrollView>
+  const renderRow = React.useCallback(
+    ({ item }: ListRenderItemInfo<Lead>) => (
+      <LeadRow
+        lead={item}
+        today={today}
+        cfg={cfg}
+        capCfg={capCfg}
+        sources={sources}
+        onPress={openLead}
+      />
+    ),
+    [today, cfg, capCfg, sources, openLead],
+  );
 
-      <DashedButton label="+ Add lead" tone="primary" onPress={openForm} style={{ marginTop: 12 }} />
+  /*
+   * AN ELEMENT AND NEVER A FUNCTION — the trap the customers list carries its
+   * own note about. An inline component would be a fresh type on every render,
+   * so the header would unmount and remount and the chips would lose their
+   * scroll position on every keystroke the parent makes.
+   *
+   * TWO CHIP ROWS AND NOT A MENU. Both change what the list IS rather than how
+   * it is drawn, and a list whose subject is hidden behind a menu is one people
+   * misread — the same rule the customers list follows for its Everything /
+   * Customers / Leads chips.
+   */
+  const header = React.useMemo(
+    () => (
+      <View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
+          style={{ marginHorizontal: -16, paddingHorizontal: 16 }}>
+          {LEAD_WHENS.map((w) => (
+            <Choice
+              key={w.value}
+              label={w.label}
+              selected={when === w.value}
+              onPress={() => setWhen(w.value)}
+              style={{ paddingHorizontal: 16 }}
+            />
+          ))}
+        </ScrollView>
 
-      {rows.length === 0 ? (
-        <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-            {filter === 'All' ? 'No leads yet' : 'Nothing at ' + filter}
-          </T>
-          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            {filter === 'All'
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
+          style={{ marginHorizontal: -16, paddingHorizontal: 16, marginTop: 8 }}>
+          {LEAD_VIEWS.map((v) => (
+            <Choice
+              key={v.value}
+              label={v.label}
+              selected={view === v.value}
+              onPress={() => {
+                setView(v.value);
+                /* The rung belongs to the band it was picked under. Carried
+                   across it would narrow the new band to a rung that band does
+                   not carry, and the list would go empty with nothing on the
+                   screen saying why. */
+                setRung(null);
+              }}
+              style={{ paddingHorizontal: 16 }}
+            />
+          ))}
+        </ScrollView>
+
+        {/* THE RUNGS UNDER THE BAND, and only where there is a choice to make.
+            Built from what is in the book rather than from the ladder — see
+            `rungsInBook`. One rung draws nothing: a single option is not a
+            choice, which is the same reason the launcher does not draw itself
+            for somebody holding one app. */}
+        {rungs.length > 1 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
+            style={{ marginHorizontal: -16, paddingHorizontal: 16, marginTop: 8 }}>
+            <Choice
+              label={'All of ' + VIEW_LABEL[view].toLowerCase()}
+              selected={rung === null}
+              onPress={() => setRung(null)}
+              style={{ paddingHorizontal: 16 }}
+            />
+            {rungs.map((r) => (
+              <Choice
+                key={r.rung}
+                label={stageLabel(r.rung as LeadStage) + ' ' + r.count}
+                selected={rung === r.rung}
+                onPress={() => setRung(r.rung)}
+                style={{ paddingHorizontal: 16 }}
+              />
+            ))}
+          </ScrollView>
+        ) : null}
+
+        <DashedButton label="+ Add lead" tone="primary" onPress={openForm} style={{ marginTop: 12 }} />
+
+        {rows.length ? <T s="caption" style={{ marginTop: 12, marginBottom: 8 }}>{plural(rows.length, 'lead')}</T> : null}
+      </View>
+    ),
+    [view, when, rung, rungs, rows.length, openForm],
+  );
+
+  /*
+   * AN EMPTY LIST SAYS WHICH KIND OF EMPTY IT IS.
+   *
+   * Nothing at all, nothing at this rung, and nothing owed on these days are
+   * three different facts and only one of them is about the book. A salesman
+   * who has picked Overdue and sees "No leads yet" concludes his leads are
+   * gone; what is true is that he owes nobody anything, which is the best news
+   * on the screen.
+   */
+  const empty = React.useMemo(
+    () => (
+      <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
+        <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
+          {when !== 'any'
+            ? 'Nothing ' + LEAD_WHENS.find((w) => w.value === when)!.label.toLowerCase()
+            : view === 'all'
+              ? 'No leads yet'
+              : 'Nothing at ' + VIEW_LABEL[view]}
+        </T>
+        <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
+          {when !== 'any'
+            ? 'Every lead is still here — this is only what you owe somebody.'
+            : view === 'all'
               ? 'A shop you walk past and a name somebody gives you both start here.'
               : 'Every lead is still on All — nothing has been deleted.'}
-          </T>
-        </Card>
-      ) : (
-        <T s="caption" style={{ marginTop: 12 }}>{plural(rows.length, 'lead')}</T>
-      )}
+        </T>
+      </Card>
+    ),
+    [view, when],
+  );
 
-      <View style={{ gap: 12, marginTop: 8 }}>
-        {rows.map((x) => {
-          const alert = cfg ? leadAlert(x, today, cfg) : null;
-          const overdue = !!x.nextFollowUpDate && x.nextFollowUpDate < today && x.stage !== 'Converted' && x.stage !== 'Lost';
-          return (
-            <Pressable
-              key={x.id}
-              onPress={() => router.push(`/lead?id=${x.id}&from=leads`)}
-              accessibilityRole="button">
-              <Card style={overdue ? { borderLeftWidth: 3, borderLeftColor: C.danger } : undefined}>
-                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-                      {x.company?.trim() || x.name}
-                    </T>
-                    <T s="caption" style={{ marginTop: 2 }}>
-                      {/* The ladder is named on the row, because which kind of
-                          sale this is changes what the next call is about —
-                          and it is the one fact about a lead that cannot be
-                          guessed from its name. */}
-                      {[x.company?.trim() ? x.name : null, x.salesType ? salesTypeLabel(x.salesType as LeadSalesType) : null, x.city, leadSourceLabel(x.source, sources ?? [])]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </T>
-                  </View>
-                  <Badge tone={STAGE_TONE[x.stage] ?? 'neutral'}>{x.stage}</Badge>
-                </View>
-
-                <T style={[{ fontSize: 15, marginTop: 10, color: x.estimatedPotentialPaise ? C.ink : C.muted }, weight(500)]}>
-                  {x.estimatedPotentialPaise
-                    ? inrFromPaise(x.estimatedPotentialPaise) + ' a month, he reckons'
-                    : 'Worth not estimated yet'}
-                </T>
-
-                <T style={{ fontSize: 14, lineHeight: 20, marginTop: 4, color: overdue ? C.danger : C.muted }}>
-                  {x.nextFollowUpDate ? 'Next ' + pretty(x.nextFollowUpDate) : 'No follow-up set'}
-                </T>
-
-                {alert ? (
-                  <T style={[{ fontSize: 14, lineHeight: 20, marginTop: 4, color: C.warnInk }, weight(500)]}>{alert}</T>
-                ) : null}
-
-                {/* "Visit 2 / 3" — §B. Drawn only where it means something: a
-                    qualified prospect visited a fourth time is a negotiation,
-                    not a stall, and carries no counter at all. */}
-                {capCfg && visitCapLabel(x.stage, x.visitCount, capCfg) ? (
-                  <T
-                    style={[
-                      {
-                        fontSize: 14,
-                        lineHeight: 20,
-                        marginTop: 4,
-                        color:
-                          visitCapState(x.stage, x.visitCount, capCfg) === 'decide'
-                            ? C.warnInk
-                            : C.muted,
-                      },
-                      weight(500),
-                    ]}>
-                    {visitCapLabel(x.stage, x.visitCount, capCfg)}
-                    {visitCapState(x.stage, x.visitCount, capCfg) === 'decide'
-                      ? ' · a decision is due'
-                      : ''}
-                  </T>
-                ) : null}
-
-                {/* Why it is not moving. On a held lead this is the whole point
-                    of the status — without it "On hold" reads as "forgotten". */}
-                {x.holdReason ? (
-                  <T s="caption" style={{ marginTop: 4 }} numberOfLines={2}>
-                    {'Waiting: ' + x.holdReason}
-                  </T>
-                ) : null}
-
-                {x.archived ? <T s="caption" style={{ marginTop: 4 }}>Archived — still here, just out of the way</T> : null}
-              </Card>
-            </Pressable>
-          );
-        })}
-      </View>
+  return (
+    <View style={{ flex: 1 }}>
+      {/*
+        * IT IS A `FlatList`, and for the reason the customers list next door
+        * spells out: the rows were `rows.map()` inside a `ScrollView`, so every
+        * lead was mounted at once — and this card is now a good deal heavier
+        * than it was, carrying a verb, a rung, a counter and the marks. A few
+        * hundred of those built on the JS thread is a screen that stutters
+        * exactly when somebody is scrolling it looking for one shop.
+        */}
+      <FlatList
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
+        data={rows}
+        keyExtractor={(x) => x.id}
+        renderItem={renderRow}
+        ItemSeparatorComponent={RowGap}
+        ListHeaderComponent={header}
+        ListEmptyComponent={empty}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      />
 
       {/* ------------------------------------------------------------ form */}
       <BottomSheet open={formOpen} onClose={() => setFormOpen(false)} scroll>
@@ -628,6 +971,6 @@ export function LeadsBook() {
         />
         <SecondaryButton label="Close" onPress={() => setCal(false)} style={{ minHeight: 48, height: 48, marginTop: 10 }} />
       </BottomSheet>
-    </ScrollView>
+    </View>
   );
 }

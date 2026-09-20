@@ -7,12 +7,39 @@
  * pinned by tests that need neither SQLite nor a handset.
  */
 
+/*
+ * The ladders are imported rather than restated. This file is the handset's
+ * own rules about leads; `engines/funnel/` is MahekOne's, copied byte for
+ * byte, and which rungs exist is emphatically theirs — a list typed here would
+ * drift the day a twenty-fourth arrives, and the half that drifts is always
+ * the half somebody reads.
+ */
+import {
+  DIRECT_LADDER,
+  DISTRIBUTOR_LADDER,
+  LEGACY_LADDER,
+  THIRD_PARTY_LADDER,
+  TERMINAL_STAGES,
+  bandOf,
+  isOnTheBookAt,
+  isParked,
+  ladderFor,
+  type LeadSalesType,
+  /* Aliased, because this file's own `LeadStage` is the six capitalised words
+     the legacy column holds and the funnel's is the twenty-three rungs. Two
+     things called one name in one file is how somebody writes the wrong one. */
+  type LeadStage as FunnelRung,
+} from './funnel';
+
 export const LEAD_STAGES = ['New', 'Contacted', 'Qualified', 'Negotiation', 'On hold', 'Converted', 'Lost'] as const;
 export type LeadStage = (typeof LEAD_STAGES)[number];
 
-/** Archived is a FILTER. A lead is never deleted, only kept out of the way. */
-export const LEAD_FILTERS = ['All', 'New', 'Contacted', 'Qualified', 'Negotiation', 'On hold', 'Lost', 'Archived'] as const;
-export type LeadFilter = (typeof LEAD_FILTERS)[number];
+/* `LEAD_FILTERS` was here — eight words typed into this file that `listLeads`
+   selected `leads.stage` on. It is `LEAD_VIEWS` below now, derived from the
+   ladders, and it is DELETED rather than left exported: an export nothing
+   imports is a feature nobody can reach, and the next reader would have taken
+   it for the list in force. Archived is still a FILTER and a lead is still
+   never deleted, only kept out of the way. */
 
 /**
  * Where a lead came from.
@@ -347,4 +374,386 @@ export function reorderLabel(
   return state === 'overdue'
     ? 'Overdue to reorder — ' + since + ' days, buys every ' + cycleDays
     : 'Due to reorder — ' + since + ' days, buys every ' + cycleDays;
+}
+
+/* ------------------------------------------------- what the book is cut by */
+
+/**
+ * THE CHIP ROW IS DERIVED FROM THE LADDERS, AND IT IS BANDS RATHER THAN RUNGS.
+ *
+ * `LEAD_FILTERS` was eight words typed into this file, and `listLeads`
+ * selected on `leads.stage` — the six-word column this app shipped with. The
+ * funnel put twenty-three rungs across four ladders on the row beside it, so a
+ * salesman could not ask for his sample trials, his negotiations, or anything
+ * else the specification actually names. What is below replaces that selection
+ * without replacing the words: the chips read the same, and a lead at
+ * `sample_review` now answers to Qualified instead of sitting on no chip at
+ * all.
+ *
+ * WHY BANDS AND NOT RUNGS AT THE TOP. A salesman's book holds leads on four
+ * different ladders at once, and the rungs do not line up: `sample_received`
+ * exists on one of them, `management_review` on another, and the legacy six on
+ * none of the three new ones. A chip row built from the union is twenty-three
+ * chips of which most are empty for any one person, and a chip named for a rung
+ * a lead's own ladder does not carry is a chip that can never match it.
+ * `bandOf` is the one reading every ladder maps onto — it is also the reading
+ * the console's funnel bar draws and the owner's cohort counts by — so a band
+ * means the same thing on this phone and in that report. The rungs are not lost:
+ * they are offered UNDERNEATH a picked band, built from what is actually in the
+ * book, which is the only list that can never be empty or wrong.
+ *
+ * `bandOf` answers null for four rungs and for a park, and that is exactly why
+ * those get chips of their own rather than being folded into a band: a funnel
+ * counts what is still in it, and a lead nobody will ring again is not.
+ */
+
+/** Every rung anything can stand on, built from the ladders and never typed. */
+export const ALL_RUNGS: readonly FunnelRung[] = Array.from(
+  new Set<FunnelRung>([
+    ...LEGACY_LADDER,
+    ...DIRECT_LADDER,
+    ...THIRD_PARTY_LADDER,
+    ...DISTRIBUTOR_LADDER,
+    ...TERMINAL_STAGES,
+    /* Neither is on a ladder. `lost` leaves from any rung and `on_hold`
+       displaces one — see `isParked` — and both are somewhere a lead is
+       genuinely standing, so both have to be findable. */
+    'lost',
+    'on_hold',
+  ]),
+);
+
+/**
+ * The top chip row.
+ *
+ * `all` and `archived` are not stages and never were: one is the whole open
+ * book and the other is the filter that keeps a lead out of the way without
+ * deleting it. The seven between them are the words this app has always used,
+ * and `Converted` is the one that was MISSING — `legacyStageFor` has been able
+ * to write it since the funnel landed and no chip selected it, so a lead that
+ * had been won was findable on nothing but All.
+ */
+export const LEAD_VIEWS = [
+  { value: 'all', label: 'All' },
+  { value: 'new', label: 'New' },
+  { value: 'contacted', label: 'Contacted' },
+  { value: 'qualified', label: 'Qualified' },
+  { value: 'negotiation', label: 'Negotiation' },
+  { value: 'on_hold', label: 'On hold' },
+  { value: 'converted', label: 'Converted' },
+  { value: 'lost', label: 'Lost' },
+  { value: 'archived', label: 'Archived' },
+] as const;
+
+export type LeadView = (typeof LEAD_VIEWS)[number]['value'];
+
+/**
+ * The sales type whose ladder actually carries this rung.
+ *
+ * `isOnTheBookAt` needs one, and asking it about a rung that is not on the
+ * ladder it was handed answers false — so `distributor_approval` judged as a
+ * direct lead reads as still being sold to, which is the opposite of what it
+ * means. Every rung below the terminals appears on exactly one ladder or on
+ * ladders that agree about it, so there is a right answer here rather than a
+ * guess: this finds it.
+ */
+function typeCarrying(stage: FunnelRung): LeadSalesType | null {
+  for (const t of ['direct', 'third_party', 'distributor'] as const) {
+    if (ladderFor(t).includes(stage)) return t;
+  }
+  return null;
+}
+
+/**
+ * Which chip a rung answers to.
+ *
+ * It is the SAME reading `lib/wire.ts`'s `legacyStageFor` takes — parked
+ * first, then on the book, then the band — because that function is what
+ * writes the six-word column this list used to filter on, and a chip that
+ * disagreed with the badge beside it would be one lead wearing two words on
+ * one screen. `isOnTheBookAt` rather than the band is what puts `second_order`
+ * under Converted: it is in the funnel's Negotiation band and it is plainly an
+ * account we have sold to, and the two questions have different answers on
+ * exactly those rungs.
+ */
+export function viewOfRung(
+  stage: FunnelRung,
+  salesType: LeadSalesType | null | undefined = undefined,
+): LeadView {
+  if (stage === 'lost') return 'lost';
+  if (isParked(stage)) return 'on_hold';
+  const t = salesType === undefined ? typeCarrying(stage) : salesType;
+  if (isOnTheBookAt(stage, t)) return 'converted';
+  switch (bandOf(stage)) {
+    case 'new':
+      return 'new';
+    case 'contacted':
+      return 'contacted';
+    case 'qualified':
+      return 'qualified';
+    case 'negotiation':
+      return 'negotiation';
+    default:
+      /* A rung in no band that is neither parked, lost nor on the book is a
+         rung this build has never heard of — a server one release ahead. New
+         is where a lead nobody has moved sits, and it is the one answer that
+         keeps the row findable rather than filing it under a verdict. */
+      return 'new';
+  }
+}
+
+/**
+ * The six-word column read as a rung.
+ *
+ * A lead raised on this handset before the funnel — and every row pulled by a
+ * build older than the funnel columns — carries `funnelStage` null and one of
+ * the seven words in `LEAD_STAGES`. They are the legacy ladder's own rungs
+ * under capitals, with `Converted` standing for `won`, so the mapping is
+ * mechanical rather than a table somebody has to maintain.
+ */
+export function rungOfLegacyWord(word: string | null | undefined): FunnelRung | null {
+  const s = String(word ?? '').trim().toLowerCase().replace(/\s+/g, '_');
+  if (!s) return null;
+  if (s === 'converted') return 'won';
+  return (ALL_RUNGS as readonly string[]).includes(s) ? (s as FunnelRung) : null;
+}
+
+/**
+ * What a lead's own chip is, whichever of the two columns it is carrying.
+ *
+ * Read by the row's badge and by nothing else — the LIST is narrowed in SQLite
+ * by `viewMatch` below, because a few hundred rows filtered in JavaScript is
+ * the thing the customers list next door was rebuilt to stop doing.
+ */
+export function viewOfLead(lead: {
+  funnelStage: string | null;
+  stage: string;
+  salesType: string | null;
+}): LeadView {
+  const rung = (lead.funnelStage as FunnelRung | null) ?? rungOfLegacyWord(lead.stage);
+  if (!rung) return 'new';
+  return viewOfRung(rung, lead.funnelStage ? (lead.salesType as LeadSalesType | null) : null);
+}
+
+/**
+ * What a view narrows to, in the two vocabularies the row can be speaking.
+ *
+ * Null means no narrowing at all — `all` and `archived` are answered by the
+ * archive flag alone, and cutting them by stage as well would hide the leads
+ * a salesman opens All to find.
+ *
+ * The two lists are not alternatives: a row carries `funnelStage` OR, where
+ * nothing has ever sent one, the six-word column. Both arms are needed or the
+ * old book vanishes from every chip the day this ships, which is the one
+ * outcome this change must not have.
+ */
+export type ViewMatch = { rungs: FunnelRung[]; legacy: string[] };
+
+export function viewMatch(view: LeadView): ViewMatch | null {
+  if (view === 'all' || view === 'archived') return null;
+  return {
+    rungs: ALL_RUNGS.filter((s) => viewOfRung(s) === view),
+    legacy: LEAD_STAGES.filter((w) => {
+      const rung = rungOfLegacyWord(w);
+      /* Judged on the LEGACY ladder, which is what `salesType` null means —
+         a row with no `funnelStage` has never had a sales type either. */
+      return rung ? viewOfRung(rung, null) === view : false;
+    }),
+  };
+}
+
+/* --------------------------------------------------------------- the when */
+
+/**
+ * WHAT IS OWED, AND IT IS THE FILTER THIS SCREEN NEVER HAD.
+ *
+ * Eight stage chips answer "where is this lead in the process", which is a
+ * question a manager asks. The question a man planning a Tuesday morning asks
+ * is "what did I promise and when", and nothing on this screen could put it —
+ * the date was drawn on every row and could not be selected on.
+ *
+ * The buckets are MahekOne's own `NEXT_BUCKETS` in `lib/lead-filters.ts`, to
+ * the day, so a salesman and his manager reading the word "overdue" about one
+ * shop mean the same thing. `later` is deliberately left out rather than
+ * renamed: it is the residue, it is reachable on All, and a chip row a salesman
+ * has to read five words of before finding the two he wants is a chip row he
+ * stops reading.
+ *
+ * IT IS THE EARLIEST OF THREE DAYS AND NOT ONE COLUMN, which is the whole of
+ * the reasoning worth keeping.
+ *
+ * `nextFollowUpDate` is the salesman's own diary — the day he said he would go
+ * back. `nextActionDate` is §24's, which is a different and stricter thing: an
+ * action, a day, a person and what that person is expected to come back with,
+ * demanded on every upward move and EXEMPT for the legacy book. `holdResumeDate`
+ * is the day a parked lead was promised a second look, which is as much a thing
+ * owed as either — nobody has to record an outcome for a park to still be
+ * waiting.
+ *
+ * Keying on any ONE of them is wrong in a way that is invisible on the screen.
+ * The action alone empties the chip for most of an old book, because §24 never
+ * applied to it. The follow-up alone hides every lead whose only commitment is
+ * §24's, which is every lead anybody has moved up a rung since the funnel
+ * landed. And the park is on neither. So the chip answers the same way the CRM
+ * already answers the same question about a customer — the EARLIEST day they
+ * come back, with the other named beside it — because answering with one date
+ * while two are true is wrong about when the name reappears.
+ *
+ * WHAT PAYS FOR THAT WIDTH IS THAT THE ROW SAYS WHICH. "Late — you said you
+ * would ring on the 14th" and "Late — back off hold since the 14th" are
+ * different mornings, and a chip that caught both while the line underneath
+ * named neither would be a count nobody could act on. See `leadOwed`.
+ *
+ * `/lead-actions` is deliberately NARROWER and stays so: `engines/lead-worklist.ts`
+ * is §24's own worklist, it answers about the action and the park alone, and it
+ * is right to — the two screens ask different questions and the wider one is the
+ * book. What they must not do is use one word for two populations without
+ * saying so, which is why each names the other.
+ *
+ * AND NEITHER READS `nextActionOutcome`. That column is §24's FOURTH ANSWER —
+ * what the responsible person is expected to come back with, written in the
+ * same breath as the action — and not a record of what happened.
+ * `advanceLeadStage` refuses a move without one, so `outcome is null` excludes
+ * every lead that followed the rule and admits only the ones that did not.
+ * MahekOne's own `overdueWindow` carried exactly that clause and it emptied
+ * Overdue; do not reproduce it here.
+ */
+export const LEAD_WHENS = [
+  { value: 'any', label: 'Any day' },
+  { value: 'overdue', label: 'Overdue' },
+  { value: 'today', label: 'Today' },
+  { value: 'week', label: 'Next 7 days' },
+  { value: 'none', label: 'Nothing promised' },
+] as const;
+
+export type LeadWhen = (typeof LEAD_WHENS)[number]['value'];
+
+/** Which of the three days a lead's earliest one came from. */
+export type OwedSource = 'action' | 'promise' | 'hold';
+
+export type LeadOwed = { date: string; source: OwedSource; daysLate: number };
+
+/** A parked lead, whichever of the two columns it is carrying the park in. */
+export function leadIsParked(lead: { funnelStage: string | null; stage: string }): boolean {
+  return lead.funnelStage
+    ? lead.funnelStage === 'on_hold'
+    : rungOfLegacyWord(lead.stage) === 'on_hold';
+}
+
+/**
+ * The earliest day this lead next wants him, and which day it is.
+ *
+ * The SAME three columns `listLeads` cuts and sorts by — said here rather than
+ * re-derived on the card, so the chip that caught the row, the place the sort
+ * put it and the sentence under its name are one answer. A park counts only on
+ * a lead that is actually parked: `holdResumeDate` outlives the resume, and a
+ * lead somebody brought back in March would otherwise go on being owed for
+ * ever on the strength of a day it already honoured.
+ *
+ * Ties go to the ACTION. Where both fall on one day the two are the same
+ * morning, and §24's is the one with a person and an expected answer attached
+ * — it is the more useful of two true sentences.
+ */
+export function leadOwed(
+  lead: {
+    nextActionDate: string | null;
+    nextFollowUpDate: string | null;
+    holdResumeDate: string | null;
+    funnelStage: string | null;
+    stage: string;
+  },
+  today: string,
+): LeadOwed | null {
+  const candidates: LeadOwed[] = [];
+  const add = (date: string | null, source: OwedSource) => {
+    if (date) candidates.push({ date, source, daysLate: date < today ? (daysBetween(date, today) ?? 0) : 0 });
+  };
+  add(lead.nextActionDate, 'action');
+  add(lead.nextFollowUpDate, 'promise');
+  if (leadIsParked(lead)) add(lead.holdResumeDate, 'hold');
+  if (!candidates.length) return null;
+  /* ISO dates sort as text, which is the whole reason nothing here parses
+     one: a comparison between two days needs no midnight and therefore no
+     zone. The order below is the tie-break, and `sort` is stable. */
+  return candidates.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))[0];
+}
+
+/**
+ * The one line the card carries about it, naming which day it is.
+ *
+ * Null where nothing is owed, so the caller says "No follow-up set" in its own
+ * words rather than this file inventing a sentence about an absence.
+ */
+export function owedLabel(owed: LeadOwed | null, pretty: (iso: string) => string): string | null {
+  if (!owed) return null;
+  const when = pretty(owed.date);
+  if (owed.daysLate > 0) {
+    switch (owed.source) {
+      case 'action':
+        return 'Late \u2014 this was due on ' + when;
+      case 'promise':
+        return 'Late \u2014 you said you would go back on ' + when;
+      case 'hold':
+        return 'Late \u2014 back off hold since ' + when;
+    }
+  }
+  switch (owed.source) {
+    case 'action':
+      return 'Next action ' + when;
+    case 'promise':
+      return 'You said you would go back ' + when;
+    case 'hold':
+      return 'Comes back off hold ' + when;
+  }
+}
+
+/**
+ * A day shifted, with no zone anywhere in it.
+ *
+ * `Date.UTC` and `toISOString` are exact inverses on a date-only value, which
+ * is the one case the rule about `toISOString().slice(0, 10)` does not bite:
+ * nothing local went in, so nothing local can come out. Reading the parts back
+ * with `getDate()` would answer in the machine's zone and be wrong by a day
+ * either side of midnight — the same trap, one spelling along.
+ */
+export function shiftDays(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1) + days * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+/** How many days out "Next 7 days" reaches. The web's `week` bucket, exactly. */
+export const WHEN_WEEK_DAYS = 7;
+
+/* ---------------------------------------------------------- the manager's */
+
+/**
+ * §4.1 — THE MANAGER'S OWN MARK, AND NULL IS THE FOURTH ANSWER.
+ *
+ * Mirrors MahekOne's `lib/lead-priority.ts`, which is a frozen three-value
+ * list rather than configuration. Null is not `low`: nobody has judged this
+ * lead, and that is a different fact from a manager having looked at it and
+ * said it can wait. Every lead carries null on the day the column ships and
+ * nothing backfills one.
+ *
+ * The handset READS it and never writes one — a salesman does not set his own
+ * priorities — so there is no picker here and no list to publish.
+ */
+export function leadPriorityLabel(priority: string | null | undefined): string | null {
+  switch ((priority ?? '').trim().toLowerCase()) {
+    case 'high':
+      return 'High priority';
+    case 'medium':
+      return 'Medium priority';
+    case 'low':
+      return 'Low priority';
+    default:
+      /* Null on the ROW draws nothing at all, unlike the web's table, which
+         prints "Not set" because a blank cell in a column of words reads as
+         missing data. A card has no column: a line saying nobody has judged
+         this lead would be on most of the book, saying the same nothing on
+         each of them. */
+      return null;
+  }
 }

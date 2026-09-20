@@ -343,7 +343,7 @@ export default function Customers() {
       return;
     }
     let live = true;
-    void listLeads('All', asking)
+    void listLeads({}, asking)
       .then((r) => {
         if (live) setLeadsMatching(r.length);
       })
