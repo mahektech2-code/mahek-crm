@@ -34,6 +34,12 @@ import {
    that worked out who covers Vidarbha its own way is the copy that drifts. */
 import { leadManagerCandidatesFor } from "@/lib/services/lead-service";
 import { LeadRecordScreen } from "@/components/leads/record/lead-record-screen";
+/* §7 — the four booleans `vantagesFor` takes, read ONCE off this person's
+   hats. It is a read, so it is a service; it decides WORDS and no rights, and
+   every control below goes on asking its own capability for itself. */
+import { vantageViewer } from "@/lib/services/lead-vantage-service";
+import { isConfirmedCommitment } from "@/lib/lead-commitment";
+import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
 
 
 /**
@@ -192,6 +198,34 @@ export async function Body({
    */
   const next = gateForNext(gateInput);
 
+  /*
+   * §7's five facts, resolved HERE because three of them are rules with a
+   * single home and none of them is a column.
+   *
+   * `isConfirmedCommitment` is the pure half of the same rule the leads list
+   * asks in SQL through `confirmedCommitmentSql` — one file, two spellings,
+   * and a third typed into a screen is how two screens come to disagree about
+   * one shop. `hasOrder` is `countingOrderCount`, which is `orderCountsSql`
+   * and never a status list. `sampleAwaitingDispatch` is APPROVED and not yet
+   * sent, which is the sample desk's own worklist read about one lead: a
+   * REQUEST is a salesman asking, and telling the back office to dispatch
+   * against one asks them to do the thing the approval step exists to stop.
+   *
+   * It is read off the samples already loaded rather than as a query of its
+   * own. That read is capped at ten and ordered newest first, so a lead
+   * carrying more than ten samples of which the only approved one is the
+   * eleventh would read as nothing awaiting dispatch — the back office's own
+   * worklist is where that lead is caught, and a wrong instruction is worse
+   * than a missing one only when it moves stock.
+   */
+  const actionFacts: LeadActionFacts = {
+    stage: record.stage,
+    salesType: record.salesType,
+    hasCommitment: isConfirmedCommitment(record),
+    hasOrder: record.countingOrderCount > 0,
+    sampleAwaitingDispatch: samples.some((s) => s.state === "approved"),
+  };
+
   return (
     <LeadRecordScreen workspace={workspace}
       record={record}
@@ -278,6 +312,11 @@ export async function Body({
       figuresStale={figuresStale}
       figuresFreshDays={freshDays}
       overrideAllowed={config["leads.allowManagerOverride"]}
+      /* §7 — who is reading and what this lead is, so the record can say what
+         it reads as to them and to the other four. Resolved on the server
+         because the hats are a read and the screen is a client component. */
+      viewer={await vantageViewer(user)}
+      actionFacts={actionFacts}
       nowMs={nowMs()}
     />
   );

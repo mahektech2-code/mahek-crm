@@ -64,6 +64,10 @@ import { ConfirmFigures } from "./confirm-figures";
 import { ValidateGst } from "./validate-gst";
 import { SetSalesType } from "./set-sales-type";
 import { AssignLeadManager, type LeadManagerCandidate } from "./assign-lead-manager";
+import { NextActionBand } from "./next-action-band";
+import { RoleReadings } from "./where-it-stands";
+import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
+import type { VantageSeats, VantageViewer } from "@/lib/lead-vantage";
 
 /**
  * One lead's whole record, in the order somebody reads it.
@@ -286,6 +290,8 @@ export function LeadRecordScreen({
   figuresStale,
   figuresFreshDays,
   overrideAllowed,
+  viewer,
+  actionFacts,
   nowMs,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
@@ -398,6 +404,24 @@ export function LeadRecordScreen({
   /** `leads.figuresFreshDays`, so the panel can say how long the window is. */
   figuresFreshDays: number;
   overrideAllowed: boolean;
+  /**
+   * §7 — WHO IS READING, as four booleans off their hats.
+   *
+   * `vantageViewer` resolves it once on the server, because the hats are a
+   * read and this is a client component. It decides WORDS and nothing else:
+   * which of the five jobs this person is doing on this lead, and therefore
+   * which sentence `roleAction` puts in front of them. Every control on this
+   * page goes on asking its own capability — a sentence is not a permission.
+   */
+  viewer: VantageViewer;
+  /**
+   * The five facts `roleAction` reads, resolved on the server from the same
+   * three rules the leads list resolves them from in SQL. Handed down rather
+   * than derived here, because two of them — is there a confirmed commitment,
+   * is there an approved sample nobody has sent — are rules with a single
+   * home, and a screen re-reading either would be the second copy that drifts.
+   */
+  actionFacts: LeadActionFacts;
   /** The clock, read once on the server. A client may not read it in render. */
   nowMs: number;
 }) {
@@ -654,6 +678,21 @@ export function LeadRecordScreen({
         <Banner tone="danger" title="This lead is closed" body={record.lostReason} />
       ) : null}
 
+      {/* --------------------------------------------- what happens next */}
+
+      {/* §24 ABOVE THE FOLD AND ACROSS THE PAGE, because it is the question
+          the rest of this record is evidence for. It used to be a panel third
+          down the rail, under the gate and under a twelve-rung ladder, which
+          on a laptop is a scroll — so the line saying what happens next sat
+          below the screen somebody opened to find out. `mustDecide` and the
+          park banner sit above it deliberately: both are things that have to
+          be answered before a next action means anything. */}
+      <NextActionBand
+        record={record}
+        active={!CLOSED_STAGES.has(record.stage) && !park}
+        nowMs={nowMs}
+      />
+
       {/* ------------------------------------------ the body and the rail */}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,380px)]">
@@ -836,8 +875,18 @@ export function LeadRecordScreen({
             byStage={byStage}
             salesType={record.salesType}
             parked={Boolean(park)}
+            facts={actionFacts}
+            viewer={viewer}
+            seats={{
+              /* `salesmanId` IS `owner_id` — the record names the column for
+                 the person rather than for the foreign key, which is the right
+                 word on a screen and the wrong one here, where the seat is
+                 what is being matched. */
+              ownerId: record.salesmanId,
+              backOfficeAmId: record.backOfficeAmId,
+              leadManagerId: record.leadManagerId,
+            }}
           />
-          <NextActionPanel record={record} nowMs={nowMs} />
         </div>
       </div>
 
@@ -1133,28 +1182,48 @@ function GateRail({
  * and a salesman learns the process from seeing the rungs above him rather than
  * from being refused at each one in turn.
  */
+/**
+ * §8.5 item 7 — "Where this lead stands", which is TWO answers and one section.
+ *
+ * The rung is where it stands; the readings are what that rung ASKS OF WHOM.
+ * They are one panel rather than two because a reader asking the first
+ * question is always about to ask the second, and a ladder on its own answers
+ * only a noun — the record page drew that noun and no verb at all until this
+ * landed, on the one screen where somebody is deciding what to do.
+ *
+ * The readings sit ABOVE the rungs deliberately. The instruction is what the
+ * reader came for; the twelve rungs underneath are the evidence for it, and a
+ * verb printed below a twelve-item list is a verb below the fold.
+ */
 function LadderPanel({
   ladder,
   rung,
   byStage,
   salesType,
   parked,
+  facts,
+  viewer,
+  seats,
 }: {
   ladder: readonly LeadStage[];
   rung: number;
   byStage: Map<LeadStage, GateVerdict>;
   salesType: LeadRecord["salesType"];
   parked: boolean;
+  facts: LeadActionFacts;
+  viewer: VantageViewer;
+  seats: VantageSeats;
 }) {
   return (
     <Panel
-      title="The climb"
+      title="Where this lead stands"
       hint={
         parked
           ? `${ladderName(salesType)}. This lead is parked, so it stands on none of these — the highlight is off the ladder rather than missing from it.`
           : ladderName(salesType)
       }
     >
+      <RoleReadings facts={facts} viewer={viewer} seats={seats} />
       <ol className="m-0 list-none p-0">
         {ladder.map((stage, i) => {
           const v = byStage.get(stage);
@@ -1649,59 +1718,6 @@ function GstPanel({
           </>
         )}
       </p>
-    </Panel>
-  );
-}
-
-/**
- * §24 — what happens next, on what day, and who is doing it.
- *
- * All three parts or none: a date with nobody against it is how a lead sits for
- * six weeks with everyone assuming somebody else has it. An outcome that is
- * still empty past the date is drawn as overdue rather than as a plan.
- */
-function NextActionPanel({ record, nowMs }: { record: LeadRecord; nowMs: number }) {
-  const complete =
-    Boolean(record.nextAction) &&
-    Boolean(record.nextActionDate) &&
-    Boolean(record.nextActionOwnerId);
-  const overdue =
-    Boolean(record.nextActionDate) &&
-    !record.nextActionOutcome &&
-    /* The day boundary is named — a bare `new Date("2026-09-08")` is read as
-       UTC and lands five and a half hours before the day it names, which is
-       invisible in IST and wrong the moment anything compares it to a local
-       one. */
-    new Date(`${record.nextActionDate}T00:00:00+05:30`).getTime() < nowMs;
-
-  return (
-    <Panel
-      title="Next action"
-      hint="An active lead may not sit with nothing owed by anybody. That is the standing rule, not a field on a form."
-    >
-      {!complete ? (
-        <p className="text-[13px] text-warn-ink">
-          Nothing is planned. This lead is on the exception list until somebody names an action, a
-          day and a person.
-        </p>
-      ) : (
-        <>
-          <div className="text-[14px] text-ink">{record.nextAction}</div>
-          <div className="mt-0.5 text-[13px] text-body">
-            {shortDate(record.nextActionDate!)} · {record.nextActionOwnerName ?? "somebody"}
-            {overdue ? (
-              <span className="ml-1.5">
-                <Pill tone="warn">Past its day</Pill>
-              </span>
-            ) : null}
-          </div>
-          {record.nextActionOutcome ? (
-            <div className="mt-1.5 text-[13px] text-muted">
-              Outcome: {record.nextActionOutcome}
-            </div>
-          ) : null}
-        </>
-      )}
     </Panel>
   );
 }
