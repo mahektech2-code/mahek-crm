@@ -3,7 +3,7 @@ import { View, Text, Pressable, TextInput, FlatList } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
-import { Card, HealthPill, PrimaryButton } from '../src/components/ui/primitives';
+import { Card, HealthPill, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
 import { BottomSheet } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
@@ -32,6 +32,8 @@ import { ShopMap } from '../src/components/ui/shop-map';
 import { territoryState } from '../src/sync/pull';
 import type { TerritoryState } from '../src/sync/api';
 import { whereNow } from '../src/native/where';
+import { LeadsBook } from '../src/components/leads/leads-book';
+import { listLeads, openLeadCount } from '../src/data/leads';
 
 /**
  * The book. Search reaches the name, the owner, the city, the phone and the
@@ -162,16 +164,50 @@ export default function Customers() {
    */
   const [territory, setTerritory] = React.useState<TerritoryState | null>(null);
   /*
-   * WHICH HALF OF THE BOOK. Customers, leads, or both.
+   * WHICH HALF OF THE BOOK — and it is a TAB now rather than a chip.
    *
-   * It is a VIEW and not a scope: all three show only his own, and a territory
-   * has already narrowed them to where he works. Nothing here reaches another
-   * salesman's book.
+   * It was three chips reading Everything / Customers / Leads, in a row headed
+   * "Show", sitting under the search box with the origin chips. The reasoning
+   * for putting them there still holds and is why they are being PROMOTED
+   * rather than removed: they change what the list IS, and a list whose
+   * subject is hidden behind a menu is one people misread. A chip row under a
+   * search box is a weaker version of the same claim — it reads as a filter on
+   * one list, and these are two different lists about two different jobs.
+   *
+   * A CUSTOMER AND A LEAD ARE NOT THE SAME CARD, which is what settled it. A
+   * customer's row is a cycle, a debt and a health band; a lead's is a rung, a
+   * promise and what is owed before it can move. Drawn as one list, "Everything"
+   * had to pick one of those shapes and be wrong about half the rows — and it
+   * picked the customer's, so a lead in the book showed an outstanding of zero
+   * and a reorder line about an order nobody had ever placed.
+   *
+   * So "Everything" is gone, and it is a real loss worth stating: a salesman
+   * who types a name and does not know which half it is in used to find it
+   * either way. What pays for it is the line under the empty customer search,
+   * which counts the leads matching the same words and offers the other tab —
+   * the answer moved, and the screen says where it moved to.
+   *
+   * It is still a VIEW and never a scope. Both halves show only his own book,
+   * already narrowed to the territory he works, and neither reaches another
+   * salesman's.
    */
-  const [view, setView] = React.useState<BookView>('all');
-  /* What the count below is counting. `all` holds both, and calling that
-     "customers" is the screen arguing with its own Leads chip. */
-  const counted = view === 'leads' ? 'lead' : view === 'customers' ? 'customer' : 'account';
+  const [half, setHalf] = React.useState<'customers' | 'leads'>('customers');
+  /*
+   * The customer half is exactly what the "Customers" chip used to show. It is
+   * a constant rather than state because there is nothing left to set it to:
+   * the leads are a tab now, not a third value of this.
+   */
+  const view: BookView = 'customers';
+  const counted = 'customer';
+  /* What the other tab holds, for the badge beside its name and for the line
+     under an empty search. Read on focus, because a lead raised on a visit a
+     moment ago has to be on the count when he comes back to this screen. */
+  const [leadCount, setLeadCount] = React.useState<number | null>(null);
+  /* Leads matching the SAME words, for the sentence that names the other tab.
+     Asked only when the customer half came back with nothing — the whole point
+     of it is to explain an empty list, and running it otherwise is a second
+     query per keystroke to answer a question nobody asked. */
+  const [leadsMatching, setLeadsMatching] = React.useState(0);
   /*
    * LIST OR MAP, and the tap means a different thing on each SCREEN rather than
    * on each mode: here it opens the record, and on the journey screen the same
@@ -273,11 +309,54 @@ export default function Customers() {
       void territoryState().then((t) => {
         if (live) setTerritory(t);
       });
+      /* The badge on the other tab. Counted on every focus rather than once,
+         because a lead raised from a visit two screens ago has to be on it by
+         the time he comes back here — a count that only moves on a cold start
+         is one people stop believing. */
+      void openLeadCount().then((n) => {
+        if (live) setLeadCount(n);
+      });
       return () => {
         live = false;
       };
     }, [custQ, origin, view]),
   );
+
+  /*
+   * WHERE THE ANSWER WENT.
+   *
+   * Splitting the book in two means a name typed on this tab no longer finds a
+   * shop that is still a lead — which, on a book where most of what a salesman
+   * is working has never ordered, is most of what he searches for. An empty
+   * list saying "nothing matches that" would be TRUE and would be the screen
+   * withholding the answer it is holding one tab away.
+   *
+   * It runs only where this half came back empty, and only where he has typed
+   * something: that is the whole moment it exists for, and asking otherwise is
+   * a second query per keystroke over the same book to answer a question
+   * nobody has.
+   */
+  React.useEffect(() => {
+    const asking = custQ.trim();
+    if (!loaded || rows.length > 0 || !asking) {
+      setLeadsMatching(0);
+      return;
+    }
+    let live = true;
+    void listLeads('All', asking)
+      .then((r) => {
+        if (live) setLeadsMatching(r.length);
+      })
+      .catch(() => {
+        /* A count that could not be read is a count we do not print. It is a
+           courtesy on top of an empty list, and an empty list is still a
+           correct answer without it. */
+        if (live) setLeadsMatching(0);
+      });
+    return () => {
+      live = false;
+    };
+  }, [custQ, rows.length, loaded]);
 
   /* Load more APPENDS, and asks for the page after what is on screen — never
      a page number, which would skip or repeat a row the moment the book
@@ -491,52 +570,6 @@ export default function Customers() {
         })}
       </View>
 
-      {/* WHICH HALF. A view, never a scope — all three show only his own book,
-          already narrowed to the territory he works. Drawn beside "where from"
-          rather than buried in the filter sheet because it changes what the
-          list IS, and a list whose subject is hidden behind a menu is one people
-          misread.
-
-          AND THE ROW IS NAMED. Two rows of identically drawn pills with nothing
-          saying what question each answers is why they read as one row of six:
-          "Leads" and "A–Z" are answers to different questions, and only the
-          label says so. The label is what carries it; the different fills below
-          are what let somebody who is not reading tell the rows apart.
-
-          THE SELECTED CHIP IS ALSO HEAVIER, like both chip rows around it. This
-          row alone carried its selected state on colour and nothing else, which
-          is the wrong row to do it on — it decides what the list IS — and
-          colour alone is the first thing to go in sunlight on a phone held at
-          arm's length in a market lane. */}
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, alignItems: 'center' }}>
-        <Text style={[type.label, { width: 42 }]}>Show</Text>
-        {([
-          { key: 'all', label: 'Everything' },
-          { key: 'customers', label: 'Customers' },
-          { key: 'leads', label: 'Leads' },
-        ] as const).map((chip) => {
-          const on = view === chip.key;
-          return (
-            <Pressable
-              key={chip.key}
-              onPress={() => setView(chip.key)}
-              accessibilityState={{ selected: on }}
-              style={{
-                paddingHorizontal: 12,
-                paddingVertical: 7,
-                borderRadius: radius.pill,
-                borderWidth: 1,
-                borderColor: on ? C.ink : C.border,
-                backgroundColor: on ? C.ink : C.surface,
-              }}>
-              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(on ? 600 : 500)]}>
-                {chip.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
       {/* WHERE FROM. Three chips rather than a menu: it is one tap, it is
           always visible, and the one in use is the answer to "why is this shop
           at the top".
@@ -715,9 +748,43 @@ export default function Customers() {
             ? 'Your customer list stays empty until the office sets the area you work. Nothing of yours is lost — ask your manager to set it on the Sales Dashboard.'
             : 'If you are standing in a shop we deliver to on somebody else’s bill, open it here and take the order.'}
         </Text>
-        {noArea && !asked ? null : (
+        {/*
+          WHERE THE ANSWER ACTUALLY IS.
+
+          This half holds the shops we invoice, so a name that belongs to a
+          lead comes back empty here and is sitting one tab away. "No shop
+          matches that" is true and is the screen withholding what it is
+          holding — the sentence people would act on is that it is a lead,
+          which is a different job and a different card.
+
+          It is drawn only where there is something to find. Offering the other
+          tab on every empty search would teach people it never has the answer
+          either, and then the one time it does they will not look.
+        */}
+        {asked && leadsMatching > 0 ? (
           <View style={{ marginTop: 14, alignSelf: 'stretch', paddingHorizontal: 24 }}>
-            <PrimaryButton label="Add a delivery shop" onPress={openAdd} />
+            <PrimaryButton
+              label={
+                leadsMatching === 1
+                  ? 'One lead matches — open Leads'
+                  : `${leadsMatching} leads match — open Leads`
+              }
+              onPress={() => setHalf('leads')}
+            />
+          </View>
+        ) : null}
+        {/* Second where the lead hand-off is drawn, and first where it is not.
+            Two primary buttons stacked is two shouted answers to one question,
+            and the likelier answer to an empty search on a name he has just
+            typed is that the shop is a lead — not that it is a shop nobody has
+            ever recorded. */}
+        {noArea && !asked ? null : (
+          <View style={{ marginTop: asked && leadsMatching > 0 ? 10 : 14, alignSelf: 'stretch', paddingHorizontal: 24 }}>
+            {asked && leadsMatching > 0 ? (
+              <SecondaryButton label="Add a delivery shop" onPress={openAdd} />
+            ) : (
+              <PrimaryButton label="Add a delivery shop" onPress={openAdd} />
+            )}
           </View>
         )}
       </Card>
@@ -986,6 +1053,96 @@ export default function Customers() {
 
   return (
     <AppFrame title="Customers" activeTab="customers" scroll={false}>
+      {/*
+        THE TWO HALVES OF THE BOOK, and they are drawn ABOVE the list rather
+        than inside its header.
+
+        That is the whole difference between a tab and a chip here. The header
+        scrolls away with the first four shops, so a control drawn in it is one
+        somebody can be looking at a screenful of leads without being able to
+        see. These decide which of two jobs he is doing — selling to a shop, or
+        working one towards a first order — and the answer to "what am I looking
+        at" has to be on the screen the whole time he is looking at it.
+
+        A tray of two joined halves, the same geometry the List/Map switch
+        below uses, because it is the same kind of control: it does not narrow
+        one list, it picks which list. The chips underneath narrow; keeping the
+        two shapes apart is what lets somebody tell them apart without reading.
+      */}
+      <View
+        style={{
+          flexDirection: 'row',
+          marginHorizontal: 16,
+          marginTop: 12,
+          padding: 3,
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: C.border,
+          backgroundColor: C.wash,
+        }}>
+        {([
+          { key: 'customers', label: 'Customers', badge: null as number | null },
+          /* The count is what is still being WORKED — `openLeadCount` excludes
+             converted and lost — because a badge counting leads he finished
+             with in March is a number that only ever grows and that nobody can
+             ever clear. A null count draws no badge at all rather than a zero:
+             this phone has not counted yet, which is not the same fact as
+             having no leads. */
+          { key: 'leads', label: 'Leads', badge: leadCount },
+        ] as const).map((seg) => {
+          const on = half === seg.key;
+          return (
+            <Pressable
+              key={seg.key}
+              onPress={() => setHalf(seg.key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={
+                seg.badge ? `${seg.label}, ${plural(seg.badge, 'open')}` : seg.label
+              }
+              style={{
+                flex: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 7,
+                minHeight: 40,
+                paddingHorizontal: 12,
+                borderRadius: radius.sm,
+                backgroundColor: on ? C.surface : 'transparent',
+                boxShadow: on ? shadow.soft : undefined,
+              }}>
+              <Text style={[{ fontSize: 14, color: on ? C.ink : C.muted }, weight(on ? 600 : 500)]}>
+                {seg.label}
+              </Text>
+              {seg.badge ? (
+                <View
+                  style={{
+                    minWidth: 20,
+                    paddingHorizontal: 6,
+                    paddingVertical: 1,
+                    borderRadius: radius.pill,
+                    backgroundColor: on ? C.ink : C.border,
+                  }}>
+                  <Text
+                    style={[
+                      { fontSize: 11, textAlign: 'center', color: on ? C.surface : C.body },
+                      weight(600),
+                    ]}>
+                    {seg.badge}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* The lead book is a component and not a second copy of this screen —
+          the More screen's own Leads row opens the same one. See its header. */}
+      {half === 'leads' ? (
+        <LeadsBook />
+      ) : (
       <FlatList
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}
@@ -1008,6 +1165,7 @@ export default function Customers() {
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
       />
+      )}
 
       {/* THE TOWNS COME OUT OF THE BOOK, never a list typed into a screen —
           the day somebody sells into a new town a hardcoded list is wrong and
