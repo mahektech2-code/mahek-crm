@@ -183,6 +183,26 @@ function LeadRow({
   const held = rung ? daysBetween(lead.stageSince, today) : null;
 
   /*
+   * HOW OLD THE LEAD IS, which this row could not honestly say until now.
+   *
+   * It was drawn off nothing, because the only creation date on the phone was
+   * `clientCreatedAt` — the moment THIS HANDSET first pulled the row, bound to
+   * `now` by `upsertLeads` and never updated on conflict. On every lead the
+   * office raised it says today, and says something else again after a
+   * reinstall, so an age read off it is a confident wrong number on exactly
+   * the leads a manager would ask about. `createdAt` is the office's own, and
+   * null where it has not arrived — drawn as nothing rather than as new, which
+   * is the same mistake wearing a different column.
+   *
+   * It sits BESIDE the rung age rather than replacing it. "Ninety days old,
+   * four days on this rung" and "ninety days old, eighty on this rung" are two
+   * different shops and only the pair tells them apart: the first is moving,
+   * the second is stuck, and the rung age alone cannot say which.
+   */
+  const age =
+    lead.createdAt == null ? null : daysBetween(isoDate(new Date(lead.createdAt)), today);
+
+  /*
    * NOBODY NAMED TO DO THE OPERATIONAL HALF, said only where there IS one.
    *
    * `backOfficeAmId` is a seat, and an empty one is why a sample sits undispatched
@@ -240,7 +260,13 @@ function LeadRow({
 
         {rung ? (
           <T s="caption" style={{ marginTop: 2 }}>
-            {stageLabel(rung) + (held && held > 0 ? ' \u00b7 ' + plural(held, 'day') + ' on this rung' : '')}
+            {[
+              stageLabel(rung),
+              age && age > 0 ? plural(age, 'day') + ' old' : null,
+              held && held > 0 ? plural(held, 'day') + ' on this rung' : null,
+            ]
+              .filter(Boolean)
+              .join(' \u00b7 ')}
           </T>
         ) : null}
 

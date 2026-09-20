@@ -61,6 +61,14 @@ export type Lead = {
    */
   leadManagerId: string | null;
   leadManagerName: string | null;
+  /**
+   * Who raises this account's paperwork. The NAME beside the id, for the same
+   * reason `leadManagerName` carries one: this phone holds no user table, so
+   * an id alone can only say whether the seat is empty and never who holds it.
+   * §7 gives the back office real work at several rungs, and "somebody at the
+   * office is holding this" is a worse sentence than a name when there is one.
+   */
+  backOfficeAmName: string | null;
   /* §A and §C — what he learns in the shop. See the v14 migration for why
      consumption is in litres and not in cans. */
   address: string | null;
@@ -75,6 +83,23 @@ export type Lead = {
   visitCount: number;
   /** Why it is not moving. Set for On hold, and for a Suspect kept past the cap. */
   holdReason: string | null;
+  /**
+   * When the lead was RAISED, as the office holds it. Epoch milliseconds.
+   *
+   * Deliberately NOT `clientCreatedAt` below, which is the moment this handset
+   * first pulled the row: `upsertLeads` binds `now` into that column and its
+   * `ON CONFLICT` clause never updates it, so on every lead the OFFICE raised
+   * it says today — and says something different again after a reinstall. An
+   * age drawn off it reads "today" on a four-year-old lead, which is why the
+   * book drew days-on-this-rung instead and could not draw an age at all.
+   *
+   * Two facts, two columns. `clientCreatedAt` means exactly what it says for a
+   * lead the salesman raised himself, and the outbox reasons about it.
+   *
+   * Null is a lead whose creation date has not arrived yet, which must read as
+   * unknown rather than as raised the moment this phone pulled it.
+   */
+  createdAt: number | null;
   clientCreatedAt: number;
   syncState: string;
 
