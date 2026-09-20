@@ -53,6 +53,30 @@ test('only a Suspect is asked to justify itself', () => {
   }
 });
 
+test('the cap reads the funnel\'s own rung, not only the six-word column', () => {
+  /*
+   * THE HALF THAT WAS MISSING, and it was missing because this file kept a list
+   * of its own — `['New', 'Contacted']`, which is the legacy column's
+   * vocabulary and nothing else. A lead the funnel raises stands on `suspect`,
+   * and both the rung and the six-word word for it have to answer the same way:
+   * this file is handed `leads.stage` by one screen and could as easily be
+   * handed `funnelStage` by the next, and a cap that fired on one and not the
+   * other would put the counter on a card and leave the decision unasked.
+   */
+  const cfg = { visitsBeforeDecision: 2, maxSuspectVisits: 3 };
+  for (const stage of ['suspect', 'new', 'contacted', 'New', 'Contacted']) {
+    assert.equal(visitCapState(stage, 2, cfg), 'decide', stage + ' should be capped');
+    assert.equal(visitCapLabel(stage, 2, cfg), 'Visit 2 / 3', stage + ' should carry a counter');
+  }
+  /* `prospect` is what the decision MOVES a Suspect to. Capping it would demand
+     the same answer a second time, which is the "a qualified prospect visited a
+     fourth time is a negotiation" rule read one rung lower. */
+  for (const stage of ['prospect', 'qualification', 'sample_trial', 'first_order', 'customer']) {
+    assert.equal(visitCapState(stage, 9, cfg), 'ok', stage + ' should not be capped');
+    assert.equal(visitCapLabel(stage, 9, cfg), null, stage + ' should carry no counter');
+  }
+});
+
 test('the counter keeps counting past the cap rather than sticking', () => {
   const cfg = { visitsBeforeDecision: 2, maxSuspectVisits: 3 };
   assert.equal(visitCapLabel('New', 1, cfg), 'Visit 1 / 3');

@@ -54,7 +54,13 @@ import {
   leadGateInput,
   leadRow,
 } from "../services/lead-service";
-import { isVerificationFinding } from "../lead-labels";
+import { isVerificationFinding, VERIFICATION_FAILED_CODE } from "../lead-labels";
+import {
+  isUndecidedSuspect,
+  ladderFor,
+  nextStage,
+  plantableStage,
+} from "../engines/lead-ladder";
 import type { LeadSalesType, LeadStage } from "../lead-labels";
 import { getConfig } from "../config/store";
 import { financialYearOf } from "../financial-year";
@@ -771,6 +777,15 @@ type ScopedCustomer = {
   name: string;
   /** Null on a real customer. Non-null means this record is still a lead. */
   leadStage: string | null;
+  /**
+   * WHICH LADDER, carried because the visit's own suspect decision has to land
+   * on a rung this lead's ladder actually has. "Yes, a prospect" is `contacted`
+   * on the legacy ladder and `prospect` on all three funnel ones, and writing
+   * the first onto the second puts a lead on a rung its own ladder does not
+   * carry — where `rungOf` answers -1 and every screen that draws progress from
+   * it stops being able to say where the shop is.
+   */
+  leadSalesType: LeadSalesType | null;
   ownerId: string | null;
   salesAmId: string | null;
   creditBlocked: boolean;
@@ -805,6 +820,7 @@ async function scopedCustomer(
       id: customers.id,
       name: customers.name,
       leadStage: customers.leadStage,
+      leadSalesType: customers.leadSalesType,
       /* Whose book it is, carried so a conversion can move the sales seat
          through `assignedUserId` rather than re-deriving a fallback. */
       ownerId: customers.ownerId,
@@ -961,6 +977,50 @@ const visitSchema = z.object({
   quantityCans: z.number().int().nonnegative().nullish(),
 });
 
+/**
+ * WHERE THE SUSPECT DECISION ACTUALLY PUTS THE LEAD.
+ *
+ * The five answers are the legacy ladder's own words, because that is the
+ * ladder that existed when the question was written — and they were being
+ * written onto the stage column verbatim. That was harmless while the cap only
+ * ever fired on `new` and `contacted`; the moment it fires on `suspect` as well
+ * it would put `contacted` onto a lead climbing the direct ladder, which does
+ * not carry that rung at all. `rungOf` answers -1 there, and every screen that
+ * draws progress from the ladder stops being able to say where the shop is.
+ *
+ * So the answer is mapped onto the lead's OWN ladder, and it is derived rather
+ * than tabulated: a word the ladder carries is that ladder's rung already, and
+ * a word it does not carry means the one rung up. On the legacy ladder that is
+ * `contacted` and `qualified` exactly as before; on all three funnel ladders
+ * both answers land on `prospect`.
+ *
+ * BOTH OF THEM, and that is the part worth arguing. "Qualified" on a funnel
+ * lead would be `qualification`, two rungs up and behind §28's gate — twelve
+ * answers, a GSTIN and a verification call that a visit form does not carry and
+ * that `handleLead`'s own move path would refuse. Writing it from here would be
+ * the gate bypassed by the one door that does not ask, which is a bug this same
+ * pass exists to close. What the salesman's answer does instead is move the
+ * lead up the one rung it has earned and start the workflow that unlocks the
+ * next — `qualifyLead` runs on that answer regardless, fills the Lead Manager
+ * seat and raises the validation call, which is exactly what the qualification
+ * gate is waiting for.
+ */
+function suspectDecisionRung(
+  decision: "contacted" | "qualified" | "on_hold" | "lost" | "still_suspect",
+  customer: Pick<ScopedCustomer, "leadStage" | "leadSalesType">,
+): LeadStage {
+  const ladder = ladderFor(customer.leadSalesType);
+  const current = (customer.leadStage ?? ladder[0]) as LeadStage;
+  /* Never reached — the caller writes no stage at all where the lead stays a
+     Suspect — and answered anyway, because a function that moves a lead on a
+     word meaning "it did not move" is one bad refactor away from doing it. */
+  if (decision === "still_suspect") return current;
+  /* Both terminals mean the same thing on every ladder. */
+  if (decision === "on_hold" || decision === "lost") return decision;
+  if ((ladder as readonly string[]).includes(decision)) return decision;
+  return nextStage(current, customer.leadSalesType) ?? current;
+}
+
 async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
   const parsed = visitSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
@@ -992,13 +1052,27 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    *
    * Only leads, and only leads still at the top of the ladder. A qualified
    * prospect being visited a fourth time is a negotiation, not a stall.
+   *
+   * WHICH RUNGS THOSE ARE IS NOT TYPED HERE ANY MORE. It was — `["new",
+   * "contacted"]`, the legacy ladder's foot — and the handset enforced the same
+   * rule from a second hand-typed list in a third vocabulary. A lead the funnel
+   * raises is planted at `suspect`, which was in neither, so the rule §B cares
+   * about most fired on nothing the new funnel produced: no counter, no
+   * warning, no decision demanded, and no refusal here at the third visit. The
+   * office's own `mustDecideSuspect` reads `suspect` and caught it, which is
+   * how two vocabularies for one rule read from the outside — the rule works,
+   * on the one screen nobody is standing at.
+   *
+   * `isUndecidedSuspect` is the one list, in the ladder engine, which the
+   * handset compiles byte for byte and a test pins. The comparison is one line
+   * at each end deliberately: a rule small enough to be obvious cannot drift
+   * the way a re-derived one does.
    */
-  const suspectStages = ["new", "contacted"];
   /* The working day in Asia/Kolkata, for the lead's own staleness clock — a
      visit is activity, so it has to move that date whichever way the decision
      went. Read once here rather than inside the transaction. */
   const day = await today();
-  if (customer.leadStage && suspectStages.includes(customer.leadStage)) {
+  if (isUndecidedSuspect(customer.leadStage)) {
     const [seen] = await db
       .select({ n: sql<number>`count(*)::int` })
       .from(mbosVisits)
@@ -1294,7 +1368,9 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         .set({
           /* Staying a Suspect does not move the stage — it records why not.
              Everything else is a real move along the ladder. */
-          ...(stays ? {} : { leadStage: p.suspectDecision as "contacted" }),
+          ...(stays
+            ? {}
+            : { leadStage: suspectDecisionRung(p.suspectDecision, customer) }),
           ...(p.suspectReason?.trim()
             ? p.suspectDecision === "lost"
               ? { leadLostReason: p.suspectReason.trim() }
@@ -1328,7 +1404,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     await qualifyLead(customer.id, principal.user.id, customer.name).catch(() => {});
   }
 
-  if (customer.leadStage && suspectStages.includes(customer.leadStage)) {
+  if (isUndecidedSuspect(customer.leadStage)) {
     const decideAt = config["mbos.leads.maxSuspectVisits"];
     const [after] = await db
       .select({ n: sql<number>`count(*)::int` })
@@ -4207,7 +4283,42 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
    * the foot of `LEGACY_LADDER`, exactly as it always has — an APK cannot be
    * recalled, so the server moves first and the phone catches up.
    */
-  const foot = p.salesType ? "suspect" : "new";
+  /*
+   * AND A CREATE MAY NOT PLANT A LEAD ANYWHERE ELSE.
+   *
+   * §28 is asked on the UPDATE path and only there — `onTheFunnel &&
+   * movingStage` — so a create naming `negotiation`, or `customer`, landed
+   * exactly where it asked with no checklist, no verification, no next action
+   * and no transition row behind it. That is every gate in the funnel bypassed
+   * at the one door that does not ask, on an endpoint authenticating a device
+   * somebody owns rather than a browser session.
+   *
+   * REFUSING IT IS THE WRONG ANSWER, for the reason the check-in gate spells
+   * out one module over: by the time a create reaches here there is a shop, a
+   * photograph, a pin, a competitor and thirty answers behind it, all of them
+   * typed standing in front of a shopkeeper, and a rejection puts the lot in
+   * `/rejections` for ever to punish one field. An APK cannot be recalled
+   * either, so anything refused here is refused for the life of every handset
+   * in the field.
+   *
+   * ACCEPTING IT SILENTLY IS THE OTHER WRONG ANSWER, because then nothing
+   * anywhere records what was claimed. So the lead is planted at the foot of
+   * its own ladder — where the deployed handset already plants it, so no honest
+   * payload is touched — and the rung it asked for is said in words on its own
+   * timeline. `lost` is the one other rung a create may name: it is not a climb,
+   * it is a closure, and the reason for it has already been demanded above.
+   *
+   * The conflict branch leaves the stage where it stands rather than restating
+   * this one. A create is an ARRIVAL and a move is a move: a create re-sent for
+   * a lead the office has since worked would otherwise knock it back down the
+   * ladder, which is the same bypass wearing the opposite sign.
+   *
+   * The foot itself is no longer worked out here. It was — `p.salesType ?
+   * "suspect" : "new"` — which is a second statement of the first rung of every
+   * ladder, and `ladderFor` has been the first statement of it all along.
+   */
+  const plantedStage = plantableStage(p.stage ?? null, p.salesType ?? null);
+
   /* §6 and §9's answers, sent with the lead where the form asked them. */
   const funnelFields = {
     leadSalesType: p.salesType ?? null,
@@ -4250,7 +4361,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
        * handset AND in the scoped lists the office reads — `ASSIGNED_TO_SQL`
        * resolves a lead through `owner_id`. One column, three screens. */
       ownerId: principal.user.id,
-      leadStage: p.stage ?? foot,
+      leadStage: plantedStage,
       /* The rung it is standing on, dated — the console ages every list by this
          and a null would read as a lead that has been there since the epoch. */
       leadStageSince: day,
@@ -4285,7 +4396,12 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
         phone: p.mobile,
         city,
         area: p.area ?? null,
-        leadStage: p.stage ?? foot,
+        /* Written out with the table named rather than through Drizzle's own
+           column reference, which renders a bare `"lead_stage"`: inside an ON
+           CONFLICT SET there are two rows in scope and a reader should not have
+           to know which way Postgres resolves a bare one. This is the row that
+           is already there. */
+        leadStage: sql`coalesce(customers.lead_stage, ${plantedStage})`,
         leadNextFollowUpDate: p.nextFollowUpDate ?? null,
         leadNotes: p.notes ?? null,
         ...sourceDetailPatch,
@@ -4320,7 +4436,15 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
     sourceRecordId: item.entityId,
     occurredAt: new Date(item.clientCreatedAt),
     actorUserId: principal.user.id,
-    summary: `Lead raised in the field${p.city ? ` — ${p.city}` : ""}${p.source ? ` (${p.source.replace("_", " ")})` : ""}`,
+    /* The corrected rung is NAMED where it was corrected, because a silent
+       correction destroys the record of what was claimed just as surely as a
+       refusal destroys the work. On every honest payload the clause is absent
+       and this reads exactly as it always has. */
+    summary: `Lead raised in the field${p.city ? ` — ${p.city}` : ""}${p.source ? ` (${p.source.replace("_", " ")})` : ""}${
+      p.stage && p.stage !== plantedStage
+        ? `. Raised at ${plantedStage} — the handset asked for ${p.stage}, which a lead has to be walked up to rather than started on.`
+        : ""
+    }`,
   }).catch(() => {});
 
   /*
@@ -4578,6 +4702,31 @@ async function handleLeadValidation(
  *
  * Best-effort on top of a completed write, like every other notification in
  * this file.
+ *
+ * AND CONFIRMED STAMPS `lead_verified_at`, WHICH FOR A LONG TIME IT DID NOT.
+ *
+ * That column had exactly one writer — `recordLeadValidationCall`, the
+ * console's own action — and `lead-gates.ts` refuses `qualification` without
+ * it. So a Lead Manager who made the call from the handset, which
+ * `app/validate.tsx` exists precisely because he is as likely to do from a car
+ * as from a desk, recorded the answers, closed the task, told the salesman his
+ * prospect was confirmed, and moved the lead nowhere: it sat at Prospect
+ * reading "your sales manager has to verify this customer first" over a call
+ * that had actually been made. Nothing failed at either end, and the only way
+ * out was to ring the shop again from a desk.
+ *
+ * THE TWO DOORS ARE NOT ONE FUNCTION, and that is a finding rather than a
+ * shortcut. `recordLeadValidationCall` is a browser action: it resolves a
+ * session through `requireCapability`, mints its own call id, takes §8's twelve
+ * answers and the correction rows beside them, and demands a named FINDING
+ * before it will close a lead. This one authenticates a device, takes the
+ * id off the outbox item so a retry writes nothing twice, carries four feedback
+ * fields rather than twelve answers, and has a fourth verdict — `on_hold` —
+ * that the console cannot express at all. Welding them together would mean one
+ * function with two authentication models and two answer sets, which is how
+ * both ends stop being read. What they genuinely share is the CONSEQUENCE of a
+ * verdict, and that is what is shared here: the same column, set to the same
+ * thing, by the person who made the call.
  */
 async function afterValidationVerdict(
   principal: MbosPrincipal,
@@ -4594,6 +4743,21 @@ async function afterValidationVerdict(
   const salesmanId = lead?.ownerId;
 
   if (verdict === "confirmed") {
+    /*
+     * BEFORE the owner guard below, deliberately. A lead with nobody on it is
+     * exactly the lead a manager is most likely to be verifying by hand, and
+     * skipping the stamp for want of somebody to send a task to would leave the
+     * gate shut on the strength of an empty column.
+     */
+    await db
+      .update(customers)
+      .set({
+        leadVerifiedAt: new Date(),
+        leadVerifiedById: principal.user.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(customers.id, customerId));
+
     if (!salesmanId) return;
     const day = await today();
     await db
@@ -4629,16 +4793,72 @@ async function afterValidationVerdict(
   }
 
   if (verdict === "not_qualified" || verdict === "on_hold") {
-    await db
-      .update(customers)
-      .set({
-        leadStage: verdict === "on_hold" ? "on_hold" : "lost",
-        ...(verdict === "on_hold"
-          ? { leadHoldReason: reason }
-          : { leadLostReason: reason }),
-        updatedAt: new Date(),
-      })
-      .where(eq(customers.id, customerId));
+    /*
+     * A FAILED VERIFICATION CLOSES THE LEAD THE WAY THE CONSOLE CLOSES IT.
+     *
+     * The console's own path routes this through `advanceLeadStage`, which
+     * appends to `lead_stage_transitions` and stamps the loss with the FIXED
+     * `verification_failed` code — fixed rather than picked because "wrong lead
+     * — should not have been raised" is somebody at Mahek raising something
+     * that was never a lead, and this is the verification call finding that the
+     * opportunity the salesman reported is not there. Folded together, neither
+     * count means anything.
+     *
+     * This door wrote `lead_stage = 'lost'` straight onto the row: no
+     * transition, no code, and therefore no row in the one table §26's report
+     * is counted from. The same closure, recorded two ways, depending on
+     * whether the manager had signal for the console.
+     *
+     * A REFUSAL FALLS BACK rather than failing. This whole function is a
+     * courtesy on top of a call that is already in the ledger, and the gate can
+     * legitimately say no — the lead may already be closed, or this deployment
+     * may have no `verification_failed` reason configured, which the console
+     * refuses outright because there is somebody at a screen to tell. There is
+     * nobody at a screen here, and a lead left OPEN after a manager recorded
+     * that the shop does not exist is the worse of the two wrong answers. So
+     * the closure still happens, in the shape this door has always written it.
+     */
+    let closed = false;
+    if (verdict === "not_qualified") {
+      try {
+        const [lead, gate] = await Promise.all([leadRow(customerId), leadGateInput(customerId)]);
+        if (lead && gate) {
+          const decision = await evaluateLeadStageMove({
+            lead,
+            gate,
+            to: "lost",
+            reasonCode: VERIFICATION_FAILED_CODE,
+            override: null,
+            canOverride: false,
+          });
+          if (decision.ok) {
+            const hats = await hatsFor(principal.user);
+            await applyLeadStageMove(
+              { userId: principal.user.id, hat: grantingHat(hats, "lead.verify"), sourceApp: "mbos" },
+              lead,
+              "lost",
+              { decision, reasonCode: VERIFICATION_FAILED_CODE, note: reason, day: await today() },
+            );
+            closed = true;
+          }
+        }
+      } catch {
+        /* Swallowed on purpose: the fallback below is the answer. */
+      }
+    }
+
+    if (!closed) {
+      await db
+        .update(customers)
+        .set({
+          leadStage: verdict === "on_hold" ? "on_hold" : "lost",
+          ...(verdict === "on_hold"
+            ? { leadHoldReason: reason }
+            : { leadLostReason: reason }),
+          updatedAt: new Date(),
+        })
+        .where(eq(customers.id, customerId));
+    }
 
     if (salesmanId) {
       await db

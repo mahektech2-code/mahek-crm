@@ -23,6 +23,7 @@ import {
   bandOf,
   isOnTheBookAt,
   isParked,
+  isUndecidedSuspect,
   ladderFor,
   type LeadSalesType,
   /* Aliased, because this file's own `LeadStage` is the six capitalised words
@@ -234,9 +235,29 @@ export type VisitCapState = 'ok' | 'warn' | 'decide';
 
 export type VisitCapThresholds = { visitsBeforeDecision: number; maxSuspectVisits: number };
 
-/** Only these two are a Suspect. A qualified prospect being visited again is a
- *  negotiation, not a stall, and must never be asked to justify itself. */
-const SUSPECT_STAGES = ['New', 'Contacted'];
+/**
+ * Is this lead still a Suspect — asked of whichever word the caller happens to
+ * be holding.
+ *
+ * This file used to answer it from a list of its own, `['New', 'Contacted']`,
+ * which is the six-word column's vocabulary and nothing else. It was right
+ * about the only column the screens read and it was right for the wrong
+ * reason, because the server enforced the same rule from a SECOND hand-typed
+ * list in the funnel's vocabulary — and that one had never been told about
+ * `suspect`. Two lists for one rule is how the half that fires at the door
+ * comes to disagree with the half that fires at the office, and §B is the rule
+ * that can least afford it.
+ *
+ * So there is one list now, in `engines/funnel/lead-ladder.ts`, which is
+ * MahekOne's own file copied here byte for byte and pinned by a test. What
+ * stays here is the TRANSLATION, because it is genuinely this end's problem:
+ * `leads.stage` may carry a capitalised legacy word, `leads.funnelStage`
+ * carries a rung, and `rungOfLegacyWord` already exists to read either as the
+ * one vocabulary the shared list is written in.
+ */
+function stillASuspect(stage: string): boolean {
+  return isUndecidedSuspect(rungOfLegacyWord(stage) ?? stage);
+}
 
 export function visitCapState(
   stage: string,
@@ -244,7 +265,7 @@ export function visitCapState(
   visitsSoFar: number,
   cfg: VisitCapThresholds,
 ): VisitCapState {
-  if (!SUSPECT_STAGES.includes(stage)) return 'ok';
+  if (!stillASuspect(stage)) return 'ok';
   const thisVisit = visitsSoFar + 1;
   if (thisVisit >= cfg.maxSuspectVisits) return 'decide';
   if (thisVisit >= cfg.visitsBeforeDecision) return 'warn';
@@ -262,7 +283,7 @@ export function visitCapLabel(
   visitsSoFar: number,
   cfg: VisitCapThresholds,
 ): string | null {
-  if (!SUSPECT_STAGES.includes(stage)) return null;
+  if (!stillASuspect(stage)) return null;
   /* Past the cap it keeps counting rather than sticking at "3 / 3": a fourth
      visit happened, the manager has been told, and a counter that lies about
      it is worse than one that reads oddly. */
