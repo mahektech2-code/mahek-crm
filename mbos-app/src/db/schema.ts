@@ -1859,6 +1859,76 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE leads ADD COLUMN backOfficeAmName TEXT;`,
   ],
 
+  /* ---- the office's own reading of the shop, arriving --------------------
+   *
+   * Three channels that went UP and never came back, and each of them breaks
+   * something on the record this phone draws.
+   */
+  [
+    /*
+     * WHO MADE THE CALL, in words.
+     *
+     * `lead_validations` has carried `calledAt` and a verdict since §E shipped
+     * and no name for the person behind either, because every row in it was
+     * written on THIS phone by the man holding it — asking who made it was
+     * asking who he was. The office's own calls change that: "the office rang
+     * them" is a sentence about somebody, and a card that cannot say who is one
+     * a salesman cannot act on, because the answer to a figure he disagrees
+     * with is to ring that person back.
+     *
+     * Resolved by the office rather than looked up here, for the reason
+     * `leadManagerName` already rides beside its id: this app holds no user
+     * table.
+     */
+    `ALTER TABLE lead_validations ADD COLUMN calledByName TEXT;`,
+
+    /*
+     * §5.2 — WHO CHANGED WHAT ON THIS LEAD, AND WHY.
+     *
+     * The corrected VALUES have always reached the phone, on the lead itself.
+     * The record of the correction never has — so a salesman opened a shop he
+     * had answered for last week and found his figure quietly replaced, with
+     * nothing anywhere saying who replaced it or on what grounds. That is the
+     * SILENT OVERWRITE the whole verification mechanism exists to prevent,
+     * kept honestly on the web and broken here.
+     *
+     * REFERENCE and not owned: nothing on this phone writes this table. A
+     * salesman's own Confirm/Correct/Unable-to-verify answers wait in `kv`
+     * until a lead save carries them up as `fieldChecks`, and they come back
+     * here as rows once the office has them. So a plain upsert is right, with
+     * no `syncState` guard to keep — there is no local answer for a pull to
+     * write over.
+     *
+     * All three verdicts, because they are three different facts. A
+     * confirmation is evidence somebody asked again and got the same answer;
+     * `unverified` is we asked and could not establish it. Folding either into
+     * the other is how a figure nobody could check comes to look checked.
+     *
+     * `validationId` is NULLABLE and the null is the answer to WHICH DOOR: a
+     * check made on the office's call names one, a check made standing in the
+     * shop names none. A second column saying the same thing is a column that
+     * can contradict this one.
+     *
+     * `changedAt` is epoch milliseconds like every other instant here.
+     */
+    `CREATE TABLE IF NOT EXISTS lead_field_checks (
+      id TEXT PRIMARY KEY,
+      customerId TEXT NOT NULL,
+      validationId TEXT,
+      field TEXT NOT NULL,
+      verdict TEXT NOT NULL,
+      original TEXT,
+      corrected TEXT,
+      reason TEXT,
+      changedById TEXT,
+      changedByName TEXT,
+      changedAt INTEGER NOT NULL
+    );`,
+    /* The record draws these one field at a time, newest first, for one lead.
+       That is the only question asked of this table and it is the index. */
+    `CREATE INDEX IF NOT EXISTS idx_lead_checks_cust ON lead_field_checks(customerId, changedAt DESC);`,
+  ],
+
 ];
 
 /**
@@ -1887,6 +1957,10 @@ export const OWNED_TABLES = [
      salesman recorded about a shop is the record even where the office's own
      copy disagrees about a stage. */
   'lead_events', 'sample_feedback',
+  /* The validation call is his work when he makes it and the office's when
+     they do, and both land here under one id — so it is owned in the same
+     sense `leads` is, and a pull writes it only under `syncState = 'synced'`. */
+  'lead_validations',
   /* The day and its legs are his work, not the office's — a pull must never
      delete a leg he recorded in a market and has not sent yet. */
   'expense_days', 'travel_legs',
@@ -1898,6 +1972,10 @@ export const REFERENCE_TABLES = [
   'journey_stops', 'leave_balances', 'holidays', 'documents', 'courses',
   'notifications', 'performance', 'salary',
   'customer_orders', 'customer_payments', 'customer_bills',
+  /* The record of who checked a finding and what came of it. Written only by
+     the office — a salesman's own checks go up through the lead save and come
+     back here — so there is never a local answer for a pull to lose. */
+  'lead_field_checks',
   /* The policy and the modes are the office's, wholly. `expense_exceptions`
      is too: they are the office's questions about his day, and a question he
      has already answered comes back answered rather than being kept here. */

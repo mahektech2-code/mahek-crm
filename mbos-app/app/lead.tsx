@@ -20,7 +20,8 @@ import {
   touchLead,
   type Lead,
 } from '../src/data/leads';
-import { validationsFor } from '../src/data/validations';
+import { validationsFor, verificationChecksFor, type VerificationCheck } from '../src/data/validations';
+import { FieldCheckNote, checksByField, valueFromChecks } from '../src/components/leads/field-check-note';
 import { callNumber } from '../src/lib/messaging';
 import {
   addLeadNote,
@@ -42,6 +43,7 @@ import {
 import { currentSession } from '../src/data/session';
 import { leadAlert, type LeadThresholds } from '../src/engines/leads';
 import {
+  findingLabel,
   gateTo,
   isParked,
   isTerminal,
@@ -182,6 +184,7 @@ export default function LeadRecord() {
   const committing = React.useRef(false);
 
   const [checks, setChecks] = React.useState<Awaited<ReturnType<typeof validationsFor>>>([]);
+  const [fieldChecks, setFieldChecks] = React.useState<VerificationCheck[]>([]);
   const [photo, setPhoto] = React.useState<{ uri: string | null } | null>(null);
 
   const load = React.useCallback(() => {
@@ -197,14 +200,20 @@ export default function LeadRecord() {
          produces that nothing else could — the office's answer beside the
          salesman's — was written down and never shown to either of them. */
       validationsFor(id),
+      /* §5.2 — WHO CHANGED WHAT ON THIS LEAD, AND WHY. The corrected values
+         have always reached this phone, on the lead itself; the record of the
+         correction reached it on no channel at all, so a figure a salesman
+         answered for last week came back silently replaced. */
+      verificationChecksFor(id),
       shopPhoto(id),
-    ]).then(([v, e, t, s, calls, shot]) => {
+    ]).then(([v, e, t, s, calls, verifications, shot]) => {
       if (!live) return;
       setView(v);
       setEvents(e);
       setCfg(t);
       setMe(s ? { id: s.user.id, name: s.user.name } : null);
       setChecks(calls);
+      setFieldChecks(verifications);
       setPhoto(shot);
     });
     return () => {
@@ -243,13 +252,36 @@ export default function LeadRecord() {
      which is how a salesman learns not to fill them. Only what was actually
      answered is drawn: a column of "Not recorded" rows would be an invitation
      to fill boxes this screen has nowhere to open. */
-  const learned: { label: string; value: string }[] = [];
+  const learned: { label: string; value: string; finding?: string }[] = [];
   if (lead.address?.trim()) learned.push({ label: 'Where it is', value: lead.address.trim() });
-  if (lead.requirement?.trim()) learned.push({ label: 'What they want', value: lead.requirement.trim() });
+  if (lead.requirement?.trim()) {
+    learned.push({ label: 'What they want', value: lead.requirement.trim(), finding: 'required_product' });
+  }
   const litres = lead.monthlyLitres ?? lead.monthlyVolumeLitres;
-  if (litres != null) learned.push({ label: 'Gets through', value: plural(litres, 'litre') + ' a month' });
+  if (litres != null) {
+    learned.push({ label: 'Gets through', value: plural(litres, 'litre') + ' a month', finding: 'monthly_litres' });
+  }
   const onNow = lead.competitor?.trim() || lead.competitorName?.trim();
-  if (onNow) learned.push({ label: 'Buys from now', value: onNow });
+  if (onNow) learned.push({ label: 'Buys from now', value: onNow, finding: 'competitor' });
+
+  /* §5.2 — EVERY CHECK IS BESIDE THE FIELD IT IS ABOUT, and that is what
+     decides the shape of this list rather than a panel further down.
+     A "Corrections" section under the timeline is one a salesman has to match
+     against the values above it by eye, one field code at a time, standing in
+     the shop the disagreement is about. Under the value there is nothing to
+     match: what the record says and how it came to say it are one thing.
+
+     Six of the nine findings have no line up there — who we ask for, who signs
+     off, the credit they want and the rest — so a check on one of those would
+     have nothing to sit under and would fall off the screen in silence. They
+     get a line of their own, labelled in the finding's own words and carrying
+     whatever the checks themselves say the value is. */
+  const byFinding = checksByField(fieldChecks);
+  const drawn = new Set(learned.map((l) => l.finding).filter(Boolean));
+  for (const [field, rows] of byFinding) {
+    if (drawn.has(field)) continue;
+    learned.push({ label: findingLabel(field), value: valueFromChecks(rows) ?? '—', finding: field });
+  }
 
   /* --------------------------------------------------------- §4 the window
    *
@@ -492,7 +524,14 @@ export default function LeadRecord() {
             {learned.length > 0 ? (
               <View style={{ gap: 8 }}>
                 {learned.map((l) => (
-                  <Line key={l.label} label={l.label} value={l.value} />
+                  <View key={l.label}>
+                    <Line label={l.label} value={l.value} />
+                    {/* Under the value, never in a list of its own — see
+                        `field-check-note.tsx`. A field nobody has checked
+                        draws nothing at all, which is the ordinary case and
+                        has to stay silent. */}
+                    <FieldCheckNote checks={l.finding ? (byFinding.get(l.finding) ?? []) : []} />
+                  </View>
                 ))}
               </View>
             ) : null}
@@ -870,7 +909,22 @@ export default function LeadRecord() {
 
           `confirmedRequirement` is the point of the whole exercise: what the
           office was told on the phone, kept apart from what the salesman was
-          told standing in the shop, precisely so the two can disagree. */}
+          told standing in the shop, precisely so the two can disagree.
+
+          AND THE OFFICE'S OWN CALLS ARRIVE HERE NOW. This list was every call
+          made on THIS PHONE and nothing else — `mbos_lead_validations` went up
+          and never came back — so a salesman could not see that the office had
+          rung his customer, what they were told, or the one that matters, that
+          the requirement he reported had been contradicted. It is the same
+          table either way, under the same row id, which is what keeps a call
+          made here from appearing twice.
+
+          ALL FOUR FIGURES ARE DRAWN, not the requirement alone. The other
+          three are a volume, a competitor and a potential, and each of them is
+          a number somebody will quote back at him. Where one disagrees with
+          what he has, the disagreement is SAID: it is the single most useful
+          thing this call produces, and a screen that prints both figures and
+          leaves the reader to notice is a screen that produces it for nobody. */}
       {checks.length ? (
         <View style={{ marginTop: 20 }}>
           <SectionLabel style={{ marginBottom: 10 }}>The office rang them</SectionLabel>
@@ -896,12 +950,36 @@ export default function LeadRecord() {
                     <Badge tone={tone}>{verdictWord(v.verdict)}</Badge>
                   </View>
                   <T s="caption" style={{ marginTop: 3 }}>
-                    {pretty(isoDate(new Date(v.calledAt)))}
+                    {[
+                      pretty(isoDate(new Date(v.calledAt))),
+                      /* An id is not a person, and the answer to a figure he
+                         disagrees with is to ring whoever wrote it down. */
+                      v.calledByName,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                     {v.syncState === 'queued' ? ' · not sent yet' : ''}
                   </T>
-                  {v.confirmedRequirement ? (
-                    <T style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
-                      {'They told the office: ' + v.confirmedRequirement}
+                  {told(v, lead).map((t) => (
+                    <View key={t.label} style={{ marginTop: 6 }}>
+                      <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>
+                        {t.label + ': ' + t.said}
+                      </T>
+                      {/* Drawn only where the two readings differ. A shop that
+                          told the office the same thing it told him is a
+                          confirmation and reads as one; printing "you had the
+                          same" under every agreeing figure is four lines of
+                          furniture over the one that is not furniture. */}
+                      {t.differsFrom ? (
+                        <T s="caption" style={{ marginTop: 1, color: C.muted }}>
+                          {'You have: ' + t.differsFrom}
+                        </T>
+                      ) : null}
+                    </View>
+                  ))}
+                  {v.salesmanFeedback?.trim() ? (
+                    <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 6 }}>
+                      {'About the visit: ' + v.salesmanFeedback.trim()}
                     </T>
                   ) : null}
                   {v.verdictReason ? (
@@ -1455,6 +1533,74 @@ function PartiesSheet({
  * falls through to "Waiting" rather than being printed raw — a verdict added
  * at a desk should read as pending on an older handset, not as an enum.
  */
+/**
+ * §8 — WHAT THE SHOP TOLD THE OFFICE, beside what it told him.
+ *
+ * The four `confirmed*` figures are never written over the lead's own columns,
+ * at either end, and the schema says why at length: what the salesman was told
+ * standing in the shop and what the office was told on the phone are two
+ * readings of one shop, and the whole value of the call is that they can
+ * disagree. This is the reading back — the half that had no screen.
+ *
+ * The second line is drawn ONLY WHERE THEY DIFFER. A figure the shop repeated
+ * is a confirmation and reads as one; printing "you have the same" under all
+ * four would bury the one row that is not furniture, which is the same mistake
+ * the microphone made when it was drawn at the weight of the resize grip.
+ *
+ * A figure the office did not ask about is left out entirely rather than drawn
+ * as a blank. Null here is nobody having asked, not the shop having said
+ * nothing — and a row saying "Gets through: —" asserts the second.
+ */
+function told(
+  v: Awaited<ReturnType<typeof validationsFor>>[number],
+  lead: Lead,
+): { label: string; said: string; differsFrom: string | null }[] {
+  const rows: { label: string; said: string; differsFrom: string | null }[] = [];
+
+  const differs = (a: string | null | undefined, b: string | null | undefined) => {
+    const mine = (b ?? '').trim();
+    /* Nothing to disagree WITH is not a disagreement. A lead the salesman
+       never answered for is one the office has just filled in, and calling
+       that a contradiction would put an accusation on an empty field. */
+    if (!mine) return null;
+    return mine.toLowerCase() === (a ?? '').trim().toLowerCase() ? null : mine;
+  };
+
+  if (v.confirmedRequirement?.trim()) {
+    rows.push({
+      label: 'What they want',
+      said: v.confirmedRequirement.trim(),
+      differsFrom: differs(v.confirmedRequirement, lead.requirement),
+    });
+  }
+  if (v.confirmedMonthlyVolumeLitres != null) {
+    const mine = lead.monthlyLitres ?? lead.monthlyVolumeLitres;
+    rows.push({
+      label: 'Gets through',
+      said: plural(v.confirmedMonthlyVolumeLitres, 'litre') + ' a month',
+      differsFrom:
+        mine != null && mine !== v.confirmedMonthlyVolumeLitres ? plural(mine, 'litre') + ' a month' : null,
+    });
+  }
+  if (v.confirmedCompetitor?.trim()) {
+    rows.push({
+      label: 'Buys from now',
+      said: v.confirmedCompetitor.trim(),
+      differsFrom: differs(v.confirmedCompetitor, lead.competitor ?? lead.competitorName),
+    });
+  }
+  if (v.confirmedPotentialPaise != null) {
+    const mine = lead.estimatedPotentialPaise;
+    rows.push({
+      label: 'Could be worth',
+      said: inrFromPaise(v.confirmedPotentialPaise) + ' a month',
+      differsFrom: mine != null && mine !== v.confirmedPotentialPaise ? inrFromPaise(mine) + ' a month' : null,
+    });
+  }
+
+  return rows;
+}
+
 function verdictWord(v: string): string {
   switch (v) {
     case 'confirmed': return 'Confirmed';

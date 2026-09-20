@@ -784,6 +784,21 @@ export type BootstrapPayload = {
   samples: unknown[];
   leads: unknown[];
   timeline: unknown[];
+  /**
+   * §8 and §5.2 — the office's own call to the shop, and every check anybody
+   * has made on one of the nine findings.
+   *
+   * Both went UP and came back on no channel at all, so a salesman saw only
+   * the calls he had made himself and watched his own figures be replaced with
+   * nothing saying who replaced them. The validations land in the table the
+   * handset already writes, under the id the row was minted with — a call made
+   * on the phone comes back as itself rather than as a second copy — and carry
+   * the `syncState = 'synced'` guard `leads` and `samples` carry, enforced
+   * where the row lands. The checks are reference: nothing on the phone writes
+   * that table.
+   */
+  leadValidations: unknown[];
+  leadFieldChecks: unknown[];
   customerOrders: unknown[];
   customerPayments: unknown[];
   /** Every bill inside the statement window, with what was on each. See
@@ -922,6 +937,8 @@ export async function buildBootstrap(
     taskRows,
     sampleRows,
     leadRows,
+    validationRows,
+    fieldCheckRows,
     timelineRows,
     orderHistoryRows,
     paymentHistoryRows,
@@ -947,6 +964,12 @@ export async function buildBootstrap(
     openTasks(principal.user.id),
     openSamples(principal.user.id, ids),
     openLeads(principal.user.id),
+    /* §8 and §5.2 — the office's own call, and every check anybody has made
+       on a finding. Null `since`, like every other bootstrap channel: a phone
+       signing in fresh has to start with the whole window rather than wait for
+       a delta that only carries what has moved since. */
+    leadValidations(principal.user.id),
+    leadFieldChecks(principal.user.id),
     recentTimeline(ids, TIMELINE_PER_CUSTOMER),
     recentOrders(ids, HISTORY_PER_CUSTOMER),
     recentPayments(ids, { from: statementStart }),
@@ -985,6 +1008,8 @@ export async function buildBootstrap(
     tasks: taskRows,
     samples: sampleRows,
     leads: leadRows,
+    leadValidations: validationRows,
+    leadFieldChecks: fieldCheckRows,
     timeline: timelineRows,
     customerOrders: orderHistoryRows,
     customerPayments: paymentHistoryRows,
@@ -1426,6 +1451,21 @@ async function openLeads(userId: string, since?: string | null) {
            c.lead_estimated_potential_paise as "estimatedPotentialPaise",
            c.lead_next_follow_up_date::text as "nextFollowUpDate",
            c.lead_notes as notes,
+           -- WHERE THE SHOP ACTUALLY IS, in words, which went up and never
+           -- came back.
+           --
+           -- lead-intake.ts writes it and leadSchema accepts it from the
+           -- handset, so a salesman standing outside a shop could send it; this
+           -- query never selected it, so an address corrected at a desk reached
+           -- the phone on no pass, ever. What he navigated from instead was a
+           -- pin or a city -- and roughly half this book has no pin, which is
+           -- exactly the half where the written address is the only thing that
+           -- gets anybody to a door.
+           --
+           -- The handset has had the column since the capture sheet shipped and
+           -- app/lead.tsx has drawn it as "Where it is" all along. What was
+           -- missing was this line and the one in upsertLeads that reads it.
+           c.address,
            c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
            -- The coordinating seat, and the NAME beside it: a salesman with a
            -- commercial question needs somebody to ring, and an id is not a
@@ -1750,6 +1790,132 @@ async function openLeads(userId: string, since?: string | null) {
        and c.lead_stage not in ('won', 'lost')
        ${since ? sql`and c.updated_at > ${since}` : sql``}
      order by c.lead_next_follow_up_date asc nulls last
+  `);
+}
+
+/**
+ * §8 — THE OFFICE'S OWN CALL TO THE SHOP, coming back down.
+ *
+ * `mbos_lead_validations` has travelled one way since it was written. The
+ * handset records a call (`app/validate.tsx`), sends it, and the office keeps
+ * it; a call the office made reached the phone on no channel at all. So a
+ * salesman saw only the calls he had made himself, and the one thing this call
+ * produces that nothing else could — the shop's own answer standing beside the
+ * one he wrote down — was produced for the office alone.
+ *
+ * **IT LANDS IN THE SAME TABLE THE HANDSET WRITES**, and the alternative is
+ * worse than it looks. `handleLeadValidation` keeps `item.entityId` as the row
+ * id, so a call this phone made comes back as ITSELF; a second, office-only
+ * table would hold a copy of every one of them and the record would show each
+ * call twice. It is the shape `leads` and `samples` already have — an OWNED
+ * table with an office end — and it carries their guard with it: `upsert` is
+ * given `lead_validations.syncState = 'synced'`, so a call sitting in the
+ * outbox is never written over by the office's answer to an older one.
+ *
+ * **WHAT IS DELIBERATELY NOT SENT is §8's own seven.** `salesman_visited`,
+ * `mahek_explained` and `product_understood` are the manager's check ON the
+ * salesman, and a check somebody reads on his own phone is a check he learns
+ * to anticipate — which is the whole reason §8 makes the call a manager's. The
+ * other four are the office's working notes with no screen here asking for
+ * them, and a column sent with nowhere to land takes the entire pull down.
+ *
+ * `since` makes it a delta as well as a bootstrap, like `openSamples`: a
+ * verdict reached this morning has to reach the phone before the salesman next
+ * walks into that shop, not at his next sign-in.
+ */
+async function leadValidations(userId: string, since?: string | null) {
+  return db.execute<Record<string, unknown>>(sql`
+    select k.id, k.customer_id as "customerId",
+           -- Epoch milliseconds, because the handset column is an INTEGER and
+           -- every instant in that database is one. A timestamp cast to text
+           -- would land as a string in a numeric column and sort as one.
+           (extract(epoch from k.called_at) * 1000)::double precision as "calledAt",
+           k.reached,
+           k.product_feedback as "productFeedback",
+           k.quality_feedback as "qualityFeedback",
+           k.dispatch_feedback as "dispatchFeedback",
+           k.salesman_feedback as "salesmanFeedback",
+           -- THE FOUR THAT MAKE THE CONTRADICTION VISIBLE. They are never
+           -- written over the lead's own columns, at either end -- what the
+           -- salesman was told standing in the shop and what the office was
+           -- told on the phone are two readings of one shop, and the record is
+           -- worth having precisely where they differ.
+           k.confirmed_requirement as "confirmedRequirement",
+           k.confirmed_monthly_volume_litres as "confirmedMonthlyVolumeLitres",
+           k.confirmed_competitor as "confirmedCompetitor",
+           k.confirmed_potential_paise as "confirmedPotentialPaise",
+           k.verdict, k.verdict_reason as "verdictReason", k.notes,
+           -- An id is not a person and this app holds no user table, so the
+           -- name is resolved here -- the same reason leadManagerName rides
+           -- beside its own id on the lead.
+           u.name as "calledByName",
+           -- NOT NULL on the handset, and it has to be filled for a row the
+           -- office authored: the office's own call has no client clock, so
+           -- the server's stamp stands in for it. Sent rather than stamped on
+           -- arrival because a value the handset invents on every pull is one
+           -- that moves forward on every pull.
+           (extract(epoch from coalesce(k.client_created_at, k.server_created_at)) * 1000)::double precision
+             as "clientCreatedAt",
+           (extract(epoch from k.server_created_at) * 1000)::double precision as "serverCreatedAt",
+           -- WHICH DOOR wrote it, kept rather than guessed. Null here means the
+           -- office, and the column is NOT NULL on the phone.
+           coalesce(k.device_id, 'server') as "deviceId"
+      from mbos_lead_validations k
+      join customers c on c.id = k.customer_id
+      left join users u on u.id = k.called_by_user_id
+      -- The same reach openLeads has, and said the same way: a validation may
+      -- not arrive for a lead this handset does not hold, or it lands against a
+      -- customerId nothing on the phone can resolve.
+     where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
+       ${since ? sql`and k.updated_at > ${since}` : sql``}
+     order by k.called_at desc
+     limit 500
+  `);
+}
+
+/**
+ * §5.2 — WHO CHANGED WHAT, AND WHY, on the lead's own findings.
+ *
+ * `lead_verification_corrections` is written from both doors — a manager on
+ * the web, and the salesman's own second visit through `leadSchema.fieldChecks`
+ * — and was sent down by neither. The corrected VALUES reach the phone on the
+ * lead, so what the salesman sees is his figure silently replaced with nothing
+ * saying who replaced it or why. That is the exact "silent overwrite" the whole
+ * mechanism exists to prevent, kept on the web and broken on the phone.
+ *
+ * All three verdicts come down, not just corrections. A confirmation is the
+ * evidence that somebody asked again and got the same answer, and `unverified`
+ * — we asked and could not establish it — is a third fact that is neither.
+ * Folding either into the other destroys the only reason to record it.
+ *
+ * `validationId` rides with the row because null is the answer to WHICH DOOR:
+ * a check made on a call names one, a check made standing in the shop names
+ * none, and those read differently to the man deciding whether to argue with
+ * the figure.
+ *
+ * It is a REFERENCE table on the handset and nothing there writes it: a
+ * salesman's own checks wait in `kv` until a save carries them up, and they
+ * come back as rows through this. The delta gate is `changed_at` rather than an
+ * `updated_at`, which this table does not have and must not — it is append-only,
+ * so a row never changes and the moment it was written is the only cursor it
+ * could ever need.
+ */
+async function leadFieldChecks(userId: string, since?: string | null) {
+  return db.execute<Record<string, unknown>>(sql`
+    select x.id, x.customer_id as "customerId",
+           x.validation_id as "validationId",
+           x.field, x.verdict, x.original, x.corrected, x.reason,
+           x.changed_by_id as "changedById",
+           -- Readable after the account is gone, which is why the office stores
+           -- the name on the row rather than joining for it.
+           x.changed_by_name as "changedByName",
+           (extract(epoch from x.changed_at) * 1000)::double precision as "changedAt"
+      from lead_verification_corrections x
+      join customers c on c.id = x.customer_id
+     where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
+       ${since ? sql`and x.changed_at > ${since}` : sql``}
+     order by x.changed_at desc
+     limit 500
   `);
 }
 
@@ -2586,6 +2752,8 @@ export async function buildPull(
       travelModes: [],
       expensePolicy: null,
       leads: [],
+      leadValidations: [],
+      leadFieldChecks: [],
       samples: [],
       customerOrders: [],
       customerPayments: [],
@@ -2653,6 +2821,8 @@ export async function buildPull(
     deletionRows,
     taskChanges,
     leadChanges,
+    validationChanges,
+    fieldCheckChanges,
     sampleChanges,
     orderHistoryChanges,
     paymentHistoryChanges,
@@ -2822,6 +2992,15 @@ export async function buildPull(
        * Narrowed by the same functions the bootstrap uses, so nothing can
        * reach a handset through the delta that sign-in would have withheld. */
       openLeads(principal.user.id, sinceIso),
+
+      /* THE SAME FUNCTIONS THE BOOTSTRAP CALLS, which is the only way to be
+         sure a delta sends what the bootstrap sends. A second spelling of a
+         channel is a second thing to get right, and every one that has existed
+         here drifted — see the DELTA list in mbos-wire.test.ts, whose whole
+         purpose is to watch the ones that have not been folded back yet. */
+      leadValidations(principal.user.id, sinceIso),
+      leadFieldChecks(principal.user.id, sinceIso),
+
       openSamples(principal.user.id, ids, sinceIso),
 
       /* Not `since`-gated. Orders are capped at ten a customer and the cap is
@@ -2880,6 +3059,8 @@ export async function buildPull(
        number the office will not pay. */
     expensePolicy: await expensePolicyFor(principal.user.id, await today()),
     leads: leadChanges as unknown[],
+    leadValidations: validationChanges as unknown[],
+    leadFieldChecks: fieldCheckChanges as unknown[],
     samples: sampleChanges as unknown[],
     customerOrders: orderHistoryChanges as unknown[],
     customerPayments: paymentHistoryChanges as unknown[],

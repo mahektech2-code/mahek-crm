@@ -216,6 +216,26 @@ export function localFunnelStage(stage: string | null | undefined): LeadStage | 
 }
 
 /**
+ * WHICH LADDER, off the wire, where the column is TEXT and the type is a union.
+ *
+ * NULL is the fourth answer and it is the one that has to survive: a lead
+ * raised before the funnel existed carries no sales type and climbs the six
+ * legacy rungs, and guessing one for it would decide which GATES apply to a
+ * record nobody has decided anything about. So an unrecognised value answers
+ * null rather than a default — the same reading `wireFunnelStage` takes one
+ * function up.
+ *
+ * It is here and not typed out at each call site because there are two of
+ * them, `sync/pull.ts` and `data/visits.ts`, and they both feed
+ * `legacyStageFor` — two spellings of one three-way comparison is two chances
+ * to forget `third_party` the day a fourth kind of sale is added.
+ */
+export function localSalesType(kind: string | null | undefined): LeadSalesType | null {
+  const s = (kind ?? '').trim().toLowerCase();
+  return s === 'direct' || s === 'distributor' || s === 'third_party' ? (s as LeadSalesType) : null;
+}
+
+/**
  * The rung, said in the six words this app's filter chips select on.
  *
  * The two columns are kept in step HERE and nowhere else. `funnelStage` is the

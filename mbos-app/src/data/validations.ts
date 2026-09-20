@@ -133,7 +133,20 @@ export async function recordValidation(a: ValidationAnswers): Promise<{ ok: bool
   return { ok: true };
 }
 
-/** This lead's calls, newest first. Two is common and the first is the one that matters. */
+/**
+ * This lead's calls, newest first. Two is common and the first is the one that
+ * matters.
+ *
+ * IT IS NOT ONLY THIS PHONE'S ANY MORE. The office's own calls land in this
+ * same table through `upsertLeadValidations`, under the id the row was minted
+ * with — so a call made here comes back as itself rather than as a second copy,
+ * and this one query is every call anybody has made about this shop.
+ *
+ * All FOUR confirmed figures are read, not just the requirement. They are what
+ * the office was told on the phone, and the record is worth having exactly
+ * where they disagree with what the salesman was told standing in the shop —
+ * reading one of the four back was reading a quarter of the point.
+ */
 export async function validationsFor(customerId: string) {
   return all<{
     id: string;
@@ -142,10 +155,56 @@ export async function validationsFor(customerId: string) {
     verdict: string;
     verdictReason: string | null;
     confirmedRequirement: string | null;
+    confirmedMonthlyVolumeLitres: number | null;
+    confirmedCompetitor: string | null;
+    confirmedPotentialPaise: number | null;
+    salesmanFeedback: string | null;
+    notes: string | null;
+    /** Null on a call made before the office's own started arriving. */
+    calledByName: string | null;
     syncState: string;
   }>(
-    `SELECT id, calledAt, reached, verdict, verdictReason, confirmedRequirement, syncState
+    `SELECT id, calledAt, reached, verdict, verdictReason,
+            confirmedRequirement, confirmedMonthlyVolumeLitres,
+            confirmedCompetitor, confirmedPotentialPaise,
+            salesmanFeedback, notes, calledByName, syncState
        FROM lead_validations WHERE customerId = ? ORDER BY calledAt DESC`,
+    [customerId],
+  );
+}
+
+/** One person's answer about one finding, as the office recorded it. */
+export type VerificationCheck = {
+  id: string;
+  /** Null where the check was made in the shop rather than on a call. */
+  validationId: string | null;
+  /** One of `VERIFICATION_FINDINGS` — a code, never a label. */
+  field: string;
+  verdict: 'confirmed' | 'corrected' | 'unverified';
+  original: string | null;
+  corrected: string | null;
+  reason: string | null;
+  changedByName: string | null;
+  changedAt: number;
+};
+
+/**
+ * §5.2 — EVERY CHECK ANYBODY HAS MADE ON THIS LEAD'S FINDINGS, newest first.
+ *
+ * The corrected VALUES have always reached this phone, on the lead itself; the
+ * record of who changed them and why never did. So a salesman opened a shop he
+ * had answered for last week and found his own figure quietly replaced, with
+ * nothing saying whose reading it now was — which is the silent overwrite the
+ * whole mechanism exists to prevent, kept on the web and broken here.
+ *
+ * Newest first because that is the order the record draws them in: the top row
+ * for a field is what it says NOW, and everything under it is how it got there.
+ */
+export async function verificationChecksFor(customerId: string): Promise<VerificationCheck[]> {
+  return all<VerificationCheck>(
+    `SELECT id, validationId, field, verdict, original, corrected, reason,
+            changedByName, changedAt
+       FROM lead_field_checks WHERE customerId = ? ORDER BY changedAt DESC`,
     [customerId],
   );
 }

@@ -43,6 +43,11 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertPerformance(pull.performance, now);
     touched += await upsertTasks(pull.tasks, now);
     touched += await upsertLeads(pull.leads, now);
+    /* AFTER the leads, so the record can never draw a check or a call against
+       a lead this pull was about to introduce. Same reason the tombstones run
+       where they do. */
+    touched += await upsertLeadValidations(pull.leadValidations);
+    touched += await upsertLeadFieldChecks(pull.leadFieldChecks);
     touched += await upsertSamples(pull.samples, now);
     touched += await upsertSalary(pull.salary, now);
     touched += await upsertTravelModes(pull.travelModes, now);
@@ -180,8 +185,23 @@ async function knownColumns(table: string): Promise<Set<string>> {
  * An APK cannot be recalled, so the server has to be able to move first. A
  * column this build does not know about is one it cannot use anyway; dropping
  * it costs a field the screens never read, and refusing it costs the book.
+ *
+ * `guard` is what lets an OWNED table come through here rather than being
+ * hand-rolled. `leads` and `samples` both carry `WHERE syncState = 'synced'` on
+ * their conflict clause — a queued row is one this handset has said something
+ * about and the office has not heard yet, so the local answer is the newer fact
+ * and it stands until it is sent — and both pay for it by typing their column
+ * lists out, which is exactly the shape that silently NULLed every completed
+ * task's note. A guard clause costs one string and keeps the column filter,
+ * which is the half that cannot be got wrong by hand.
  */
-async function upsert(table: string, key: string, rows: unknown[] | undefined, extra: Row = {}): Promise<number> {
+async function upsert(
+  table: string,
+  key: string,
+  rows: unknown[] | undefined,
+  extra: Row = {},
+  guard?: string,
+): Promise<number> {
   if (!rows?.length) return 0;
   const known = await knownColumns(table);
   for (const raw of rows) {
@@ -192,7 +212,7 @@ async function upsert(table: string, key: string, rows: unknown[] | undefined, e
     const sets = cols.filter((c) => c !== key).map((c) => `${c} = excluded.${c}`).join(', ');
     await run(
       `INSERT INTO ${table} (${cols.join(',')}) VALUES (${marks})
-       ON CONFLICT(${key}) DO UPDATE SET ${sets}`,
+       ON CONFLICT(${key}) DO UPDATE SET ${sets}${guard ? ` WHERE ${guard}` : ''}`,
       cols.map((c) => normalise(row[c])),
     );
   }
@@ -348,6 +368,45 @@ function upsertCourses(rows: unknown[] | undefined, now: number) {
 }
 
 /**
+ * §8 — THE OFFICE'S OWN CALL TO THE SHOP, landing in the table this phone
+ * already writes.
+ *
+ * The same row either way: `handleLeadValidation` keeps the id the handset
+ * minted, so a call made here comes back as itself. A second, office-only
+ * table would have held a copy of every one of them and the record would have
+ * drawn each call twice, which is worse than not drawing the office's at all.
+ *
+ * GUARDED, like `leads` and `samples`: a call still in the outbox is one the
+ * office has not heard yet, so nothing arriving may write over it. `syncState`
+ * is stamped rather than sent, because what it records is how this ROW got
+ * here and that is not a fact the server holds.
+ */
+function upsertLeadValidations(rows: unknown[] | undefined) {
+  return upsert(
+    'lead_validations',
+    'id',
+    rows,
+    { syncState: 'synced' },
+    "lead_validations.syncState = 'synced'",
+  );
+}
+
+/**
+ * §5.2 — WHO CHECKED A FINDING, AND WHAT CAME OF IT.
+ *
+ * Reference, wholly. A salesman's own Confirm/Correct/Unable-to-verify answers
+ * go up inside the lead save as `fieldChecks` and come back here as rows, so
+ * there is never a local answer for a pull to lose and no guard to keep.
+ *
+ * Append-only at the office, which is what makes a plain upsert right: a row
+ * that never changes cannot be written back wrongly, and the conflict clause
+ * is there only so a row arriving twice costs nothing.
+ */
+function upsertLeadFieldChecks(rows: unknown[] | undefined) {
+  return upsert('lead_field_checks', 'id', rows);
+}
+
+/**
  * WHY THE BOOK IS THE SIZE IT IS — kept so a screen can tell an empty book
  * apart from a switched-off one.
  *
@@ -445,7 +504,7 @@ async function upsertConfig(config: Record<string, unknown> | undefined, now: nu
  */
 async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<number> {
   if (!rows?.length) return 0;
-  const { localNotes, localStage } = await import('../lib/wire');
+  const { localNotes, legacyStageFor, localSalesType } = await import('../lib/wire');
   for (const raw of rows) {
     const l = raw as {
       id: string;
@@ -456,6 +515,12 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       /* The locality inside the city. Sent since leads existed and
          dropped until this table had a column for it. */
       area?: string | null;
+      /* WHERE THE SHOP IS, in words. The column has been here since the
+         capture sheet shipped and `app/lead.tsx` has drawn it as "Where it
+         is" all along; `openLeads` simply never selected it, so an address
+         corrected at a desk reached this phone on no pass, ever, and roughly
+         half this book has no pin to navigate from instead. */
+      address?: string | null;
       source?: string | null;
       stage?: string;
       estimatedPotentialPaise?: number | null;
@@ -596,7 +661,7 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       createdAt?: string | null;
     };
     await run(
-      `INSERT INTO leads (id, name, company, mobile, city, area, source, estimatedPotentialPaise,
+      `INSERT INTO leads (id, name, company, mobile, city, area, address, source, estimatedPotentialPaise,
                           assigneeId, stage, nextFollowUpDate, notes, convertedCustomerId,
                           archived, lastActivityDate, gpsLat, gpsLng,
                           leadManagerId, leadManagerName, visitCount, holdReason,
@@ -616,12 +681,13 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
                           qualificationReview, buyer, priority, holdResumeDate,
                           holdReasonCode, sourceDetail, hasCommitment, hasOrder,
                           backOfficeAmId, backOfficeAmName, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced',
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced',
                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
-         city = excluded.city, area = excluded.area, source = excluded.source,
+         city = excluded.city, area = excluded.area, address = excluded.address,
+         source = excluded.source,
          estimatedPotentialPaise = excluded.estimatedPotentialPaise,
          stage = excluded.stage, nextFollowUpDate = excluded.nextFollowUpDate,
          convertedCustomerId = excluded.convertedCustomerId,
@@ -683,9 +749,32 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.mobile ?? null,
         l.city ?? null,
         l.area ?? null,
+        l.address ?? null,
         l.source ?? null,
         l.estimatedPotentialPaise ?? null,
-        localStage(l.stage),
+        /*
+         * THE SEVENTEEN NEW RUNGS ALL READ AS `New` HERE, and this line is the
+         * whole of why.
+         *
+         * `localStage` knows the six legacy rungs and nothing else, so every
+         * funnel rung the office sent fell through its lookup to `New`. Two
+         * things went wrong and only one of them looks like a label bug: the
+         * filter chips filed a lead at `sample_review` under New, which is
+         * merely wrong — and the visit cap read the same column, so a shop at
+         * `first_order`, or one we have been selling to for a year, told the
+         * salesman "Visit 2 of 3, a decision is due" and REFUSED TO CLOSE HIS
+         * VISIT until he answered Prospect-or-not about a customer.
+         *
+         * `legacyStageFor` is the one place the two columns are kept in step —
+         * its own header says so — and every other writer of this column
+         * already calls it. The pull was the last one that did not, which is
+         * exactly why it was invisible: a lead moved on the phone read
+         * correctly and the same lead after a sync did not.
+         *
+         * It takes the sales type because "on the book" is answered five rungs
+         * differently on the three ladders, and the type is on this same row.
+         */
+        legacyStageFor(l.stage, localSalesType(l.salesType)),
         l.nextFollowUpDate ?? null,
         /* Only on INSERT. The note list is APPENDED to locally and the wire
            carries one flattened string, so re-writing it on every pass would

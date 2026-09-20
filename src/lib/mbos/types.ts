@@ -424,6 +424,21 @@ export type PullDelta = {
   leads: unknown[];
   samples: unknown[];
   /**
+   * §8 and §5.2 — the office's own call to the shop, and every check anybody
+   * has made on one of the nine findings.
+   *
+   * Both went UP and came back on no channel at all, so a salesman saw only
+   * the calls he had made himself and watched his own figures be replaced with
+   * nothing saying who replaced them. The validations land in the table the
+   * handset already writes, under the id the row was minted with — a call made
+   * on the phone comes back as itself rather than as a second copy — and carry
+   * the `syncState = 'synced'` guard `leads` and `samples` carry, enforced
+   * where the row lands. The checks are reference: nothing on the phone writes
+   * that table.
+   */
+  leadValidations: unknown[];
+  leadFieldChecks: unknown[];
+  /**
    * What the office knows this shop bought and paid, ten of each per customer.
    *
    * Their own tables on the handset rather than `orders` and `payments`, which

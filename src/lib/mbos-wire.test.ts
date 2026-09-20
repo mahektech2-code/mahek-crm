@@ -239,6 +239,23 @@ const WIRE: { fn: string; table: string; extra?: string[] }[] = [
      handset has no place for throws on an unknown column and takes the whole
      pull down with it. */
   { fn: "travelModeRows", table: "travel_modes", extra: ["lastSyncedAt"] },
+  /*
+   * §8 and §5.2, and both go through the GENERIC upsert rather than a
+   * hand-rolled handler — which is why this list can cover them at all.
+   *
+   * `lead_validations` is an OWNED table with an office end, like `leads` and
+   * `samples`: the office's own calls land in the SAME table the handset
+   * writes, under the id the row was minted with, so a call made on the phone
+   * comes back as itself instead of as a second copy on the record. It carries
+   * the guard those two carry — `syncState = 'synced'` on the conflict clause
+   * — but it pays for it with a string rather than by typing a column list
+   * out, which is the half that silently NULLed every completed task's note.
+   *
+   * `extra` is `syncState`, stamped on arrival and never sent: what it records
+   * is how the row got onto this phone, which is not a fact the office holds.
+   */
+  { fn: "leadValidations", table: "lead_validations", extra: ["syncState"] },
+  { fn: "leadFieldChecks", table: "lead_field_checks" },
 ];
 
 test("every column MBOS sends has a column on the handset to land in", () => {
@@ -1964,5 +1981,210 @@ test("the commitment the salesman records reaches the office, and its blocker is
     "leads.orderBlockers has no entry in the handset's DEFAULTS, so a handset " +
       "that has not bootstrapped offers no blockers at all and a commitment " +
       "cannot be recorded",
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * THE ADDRESS, WHICH WENT UP AND NEVER CAME BACK.
+ *
+ * `lead-intake.ts` writes `customers.address` and `leadSchema` accepts it from
+ * the handset, so a salesman standing outside a shop could send one. Nothing
+ * ever sent it the other way: `openLeads` did not select it, so an address
+ * corrected at a desk reached the phone on no pass, ever, and what he
+ * navigated from instead was a pin or a city — on a book where roughly half
+ * the shops have no pin at all.
+ *
+ * Five links and every one of them is a spelling, like the chase count above:
+ * the office SELECTS it, `upsertLeads` READS it, INSERTS it, KEEPS it on
+ * conflict, and the table has somewhere to put it. Four passing and one
+ * failing is the state that loses data rather than the state that throws.
+ * ------------------------------------------------------------------------- */
+
+test("a lead's address survives all five links of the wire", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  const pull = readFileSync(PULL, "utf8");
+  const at = pull.indexOf("function upsertLeads(");
+  const body = pull.slice(at, pull.indexOf("\n}", at));
+
+  const faults: string[] = [];
+  if (!payloadColumns(service, "openLeads").includes("address")) {
+    faults.push(
+      "openLeads does not select `address`, so the handset reads undefined and " +
+        "an address corrected at a desk reaches the phone on no pass",
+    );
+  }
+  if (!fieldsRead(pull, "upsertLeads").includes("address")) {
+    faults.push("upsertLeads does not declare `address` on the payload it reads");
+  }
+  if (!(body.match(/INSERT INTO leads \(([^)]*)\)/)?.[1] ?? "").split(",").map((c) => c.trim()).includes("address")) {
+    faults.push(
+      "upsertLeads does not insert `address`, which on every screen reads " +
+        "exactly like a shop nobody wrote an address for",
+    );
+  }
+  if (!body.includes("address = excluded.address")) {
+    faults.push(
+      "upsertLeads does not keep `address` on conflict, so it is whatever it " +
+        "was the first time this lead arrived and a correction never lands",
+    );
+  }
+  if (!(handsetTables().get("leads") ?? new Set()).has("address")) {
+    faults.push("the handset's leads table has no `address` column");
+  }
+
+  assert.deepEqual(faults, [], `\n  ${faults.join("\n  ")}`);
+});
+
+/* ---------------------------------------------------------------------------
+ * §8 AND §5.2 — THE TWO CHANNELS THAT ONLY EVER RAN ONE WAY.
+ *
+ * `mbos_lead_validations` and `lead_verification_corrections` are both written
+ * from the handset and were both sent down by nothing, so a salesman saw the
+ * calls he had made himself and none of the office's, and saw his own figures
+ * silently replaced with no record anywhere of who replaced them or why.
+ *
+ * These are column-name checks like the `WIRE` test above them, and they are
+ * NOT redundant with it: that one asks whether a column the office sends has
+ * somewhere to land, which is the failure that throws. This asks the opposite
+ * — whether the column is sent at all — which is an ABSENCE, is a fault in no
+ * file, and can only be caught against a second list. It is the same shape as
+ * the eleven columns `customersForDevice` sent and its delta did not.
+ * ------------------------------------------------------------------------- */
+
+/** Wire name → what the lead record loses if the office stops sending it. */
+const VALIDATION_FACTS: Record<string, string> = {
+  calledAt: "WHEN the office rang. Two calls is common and the first is usually the one that matters, so a list with no dates cannot be read in order",
+  reached: "whether anybody picked up. A verdict off a call that never connected is a verdict about nothing",
+  verdict: "what the office concluded, which is what moves the lead",
+  verdictReason: "WHY it was turned down. Without it the salesman who raised it raises the next one exactly like it",
+  confirmedRequirement: "what the shop told the OFFICE it wants, beside what it told him. The two disagreeing is the single most useful thing this call produces",
+  confirmedMonthlyVolumeLitres: "the volume the shop gave the office, which is a number somebody will quote back at him",
+  confirmedCompetitor: "whose product the shop told the office it uses, which is the fact a negotiation starts from",
+  confirmedPotentialPaise: "what the office was told this shop could be worth",
+  calledByName: "WHO made the call. An id is unrenderable here — this app holds no user table — and the answer to a figure he disagrees with is to ring that person",
+  clientCreatedAt: "NOT NULL on the handset, so a row the office authored cannot be inserted without it",
+  deviceId: "NOT NULL on the handset, and it is also which door wrote the row",
+};
+
+/** Wire name → what the record loses without it. */
+const FIELD_CHECK_FACTS: Record<string, string> = {
+  field: "WHICH finding was checked. Without it a check cannot be drawn beside the value it is about, which is the whole of what makes it readable",
+  verdict: "which of the three answers. A confirmation, a correction and 'we asked and could not establish it' are three different facts about one figure",
+  original: "what the salesman had when he was asked. The before/after PAIR is the point — the correction alone is a fact about the shop and not about how the record came to say what it says",
+  corrected: "what he was told instead",
+  reason: "why the two differ. A correction with nothing behind it is one man's word against another's with nothing to settle it",
+  changedByName: "WHO checked it, readable after the account is gone",
+  changedAt: "WHEN. A field checked last March and one checked yesterday are not the same assurance",
+  validationId: "WHICH DOOR — null is a check made standing in the shop and an id is one made on the office's call, and they read differently to the man deciding whether to argue with the figure",
+};
+
+test("the office's verification call and every check on a finding reach the handset", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  const pull = readFileSync(PULL, "utf8");
+  const tables = handsetTables();
+  const faults: string[] = [];
+
+  const channels: { fn: string; table: string; facts: Record<string, string> }[] = [
+    { fn: "leadValidations", table: "lead_validations", facts: VALIDATION_FACTS },
+    { fn: "leadFieldChecks", table: "lead_field_checks", facts: FIELD_CHECK_FACTS },
+  ];
+
+  for (const { fn, table, facts } of channels) {
+    const sent = new Set(payloadColumns(service, fn));
+    const local = tables.get(table);
+    if (!local) {
+      faults.push(`the handset has no \`${table}\` table for ${fn} to fill`);
+      continue;
+    }
+    for (const [field, why] of Object.entries(facts)) {
+      if (!sent.has(field)) faults.push(`${fn} does not send ${field} — ${why}`);
+      if (!local.has(field)) {
+        faults.push(
+          `${table} has no ${field} column — the office sends it, applyPull throws ` +
+            "on the unknown column, and ONE transaction rolls back the ENTIRE pull",
+        );
+      }
+    }
+    /* APPLIED, not merely sent. A channel built and applied by nothing is the
+       state `leads` and `samples` sat in for as long as they existed: on the
+       bootstrap, on no delta, and read by no upsert at all. */
+    if (!pull.includes(`upsert('${table}',`)) {
+      faults.push(
+        `sync/pull.ts never upserts \`${table}\`, so the rows arrive and are ` +
+          "dropped on the floor — the exact failure that left MBOS with no " +
+          "reference data at all while everything the salesman authored worked",
+      );
+    }
+  }
+
+  /* THE GUARD ON THE OWNED ONE. `lead_validations` is written by the handset
+     too, so a call sitting in the outbox is a fact the office has not heard
+     yet and nothing arriving may write over it. `leads` and `samples` carry
+     the same clause for the same reason. */
+  assert.ok(
+    /lead_validations\.syncState = 'synced'/.test(pull),
+    "the lead_validations upsert has lost its `syncState = 'synced'` guard, so " +
+      "a pull can write the office's answer over a call still waiting in the outbox",
+  );
+
+  /* AND THE OFFICE'S ROWS LAND IN THE HANDSET'S OWN TABLE, which is what keeps
+     a call made on this phone from being drawn twice: `handleLeadValidation`
+     keeps the id the handset minted, so the row comes back as itself. */
+  assert.ok(
+    /insert\(mbosLeadValidations\)[\s\S]{0,200}id: item\.entityId/.test(
+      readFileSync(SYNC_ACTIONS, "utf8"),
+    ),
+    "handleLeadValidation no longer stores the handset's own entityId as the row " +
+      "id, so a call made on the phone comes back down as a SECOND row and the " +
+      "record shows every handset-made call twice",
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * THE TWO STAGE COLUMNS, AND THE ONE WRITER THAT KEPT THEM OUT OF STEP.
+ *
+ * The handset holds the rung twice: `funnelStage` is the truth about where a
+ * lead stands, and `stage` is the six-word legacy column the filter chips
+ * select on and the visit cap reads. `legacyStageFor` is the one place they are
+ * kept in step — its own header says so — and every writer of that column calls
+ * it except one. `upsertLeads` called `localStage`, which knows the six legacy
+ * rungs and nothing else, so ALL SEVENTEEN funnel rungs fell through to `New`.
+ *
+ * The chips filing a lead wrongly is the half that merely looks wrong. The half
+ * that bit is the cap: a shop at `first_order`, or one we have been selling to
+ * for a year, read as `New`, so the record demanded a Prospect-or-not decision
+ * about a customer and REFUSED TO CLOSE THE VISIT until it got one. Invisible
+ * in testing because a lead moved on the phone reads correctly and only the
+ * same lead after a sync does not.
+ * ------------------------------------------------------------------------- */
+
+test("the pull writes the legacy stage column through the one function that keeps it in step", () => {
+  const pull = readFileSync(PULL, "utf8");
+  const at = pull.indexOf("function upsertLeads(");
+  const body = pull.slice(at, pull.indexOf("\n}", at));
+
+  assert.ok(
+    /legacyStageFor\(l\.stage,/.test(body),
+    "upsertLeads no longer writes `stage` through legacyStageFor. `localStage` " +
+      "knows the six legacy rungs only, so every one of the seventeen funnel " +
+      "rungs lands as `New` — the chips file them all together, and the visit " +
+      "cap demands a Prospect-or-not decision about shops we already sell to " +
+      "and blocks the visit until it gets one",
+  );
+  assert.ok(
+    !/\blocalStage\(/.test(body),
+    "upsertLeads is calling localStage again somewhere. There is one writer of " +
+      "this column per fact and it is legacyStageFor; a second reading of the " +
+      "rung is a lead that reads one way on the phone and another after a sync",
+  );
+  /* The sales type comes off the SAME ROW, because "on the book" is answered
+     five rungs differently on the three ladders — a distributor at
+     `initial_stock_order` and a direct customer at `first_order` are not the
+     same word, and passing null would flatten both. */
+  assert.ok(
+    /legacyStageFor\(l\.stage, localSalesType\(l\.salesType\)\)/.test(body),
+    "upsertLeads is not passing the lead's own sales type to legacyStageFor, so " +
+      "every ladder is read as the legacy one and the rungs that only exist on " +
+      "the distributor ladder file themselves under the wrong chip",
   );
 });
