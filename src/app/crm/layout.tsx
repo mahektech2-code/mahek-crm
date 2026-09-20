@@ -6,7 +6,10 @@ import { webApps } from "@/lib/apps";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { getScope } from "@/lib/scope";
 import { crmBadgeCounts, customerStatusRequestCount, listNotifications } from "@/lib/queries";
+import { leadSidebarCounts } from "@/lib/services/lead-sidebar-service";
+import { today } from "@/lib/recompute";
 import { AppShell } from "@/components/shell/app-shell";
+import type { SidebarBadges } from "@/components/shell/sidebar";
 
 export default async function AppLayout({
   children,
@@ -59,16 +62,34 @@ export default async function AppLayout({
 }
 
 /**
- * Both sidebar counts, from the one definition in `lib/queries.ts` — the same
- * function the launcher tile and the dashboard read, so the number beside
- * Reminders in the sidebar and the number on the CRM tile cannot disagree.
+ * Every sidebar count, each from the one definition of its own question — the
+ * same functions the launcher tile, the dashboard and the screens behind the
+ * rows read, so a number beside a link and the same number inside it cannot
+ * disagree.
+ *
+ * **THE BUSINESS DAY IS READ HERE, not inside the statement.** The two lead
+ * windows are date comparisons against Asia/Kolkata's working day, and a
+ * `now()` in the statement would read in the session's zone — which on a
+ * server running in GMT puts a Monday promise on Sunday. `today()` applies the
+ * configured boundary, and every service below takes the answer as an argument
+ * for that reason.
  */
-async function sidebarBadges() {
-  // Both in one wait. The deactivation count is not scoped, matching the queue
-  // it labels — a request is work for whoever decides it, not for whoever asked.
-  const [{ dueReminders, openComplaints }, statusRequests] = await Promise.all([
+async function sidebarBadges(): Promise<SidebarBadges> {
+  const day = await today();
+
+  // All three in one wait. The deactivation count is not scoped, matching the
+  // queue it labels — a request is work for whoever decides it, not for
+  // whoever asked; the two lead counts are scoped exactly as their lists are.
+  const [{ dueReminders, openComplaints }, statusRequests, leads] = await Promise.all([
     crmBadgeCounts(),
     customerStatusRequestCount(),
+    leadSidebarCounts(day),
   ]);
-  return { reminders: dueReminders, complaints: openComplaints, statusRequests };
+  return {
+    reminders: dueReminders,
+    complaints: openComplaints,
+    statusRequests,
+    leadsDueToday: leads.dueToday,
+    leadsOverdue: leads.overdue,
+  };
 }

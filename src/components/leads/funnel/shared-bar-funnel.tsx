@@ -33,6 +33,21 @@ import { plural } from "@/components/console/words";
  * this screen and for the same reason. A filtered view of a funnel rung is the
  * thing a manager sends somebody, and a view held in component state is
  * unsendable and makes the back button a lie. Nothing here reads the clock.
+ *
+ * ---------------------------------------------------------------------------
+ * TWO SCREENS DRAW IT AND THERE IS STILL ONE FUNNEL. The dashboard asks for
+ * `compact`, which is a prop and deliberately not a second component: two
+ * funnels drawn from two readings is how two screens come to disagree about a
+ * rung, and the disagreement would be invisible — both would be internally
+ * consistent and only somebody holding the two side by side would ever see it.
+ *
+ * What `compact` takes away is EXPLANATION and never a figure. The medians,
+ * the estimated potential, the operational pair and the off-ladder tail are
+ * all sentences about why the picture is the shape it is, and a dashboard is
+ * the wrong place to read a paragraph. Every BAR is drawn, every rung is
+ * counted, and every segment still opens the list it counts — so the shape a
+ * manager reads on the dashboard is the shape the funnel screen draws, with
+ * the footnotes one click away rather than missing.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -71,9 +86,16 @@ const TRACK_TONE: Record<string, string> = {
 export function SharedBarFunnel({
   workspace,
   funnel,
+  compact = false,
 }: {
   workspace: LeadWorkspace;
   funnel: SharedFunnel;
+  /**
+   * The dashboard's shape. Bars, counts and links exactly as the funnel screen
+   * draws them; the footnotes that explain them replaced by the link to the
+   * screen that carries them. See the note at the top of this file.
+   */
+  compact?: boolean;
 }) {
   return (
     <section className="rounded-[6px] border border-line bg-surface">
@@ -81,10 +103,20 @@ export function SharedBarFunnel({
         <div>
           <h3 className="text-sm font-semibold text-ink">Direct &amp; third-party</h3>
           <p className="mt-0.5 max-w-[620px] text-xs text-muted">
-            One sale up one ladder, split by who holds the invoice — {sharedRungOrder().length}{" "}
-            rungs, with {OPERATIONAL_STAGES.map((s) => stageLabel(s)).join(" and ").toLowerCase()}{" "}
-            kept out and counted below. Every segment opens the list narrowed to exactly the leads
-            it counts.
+            {compact ? (
+              <>
+                One sale up one ladder, split by who holds the invoice. Every segment opens the
+                list narrowed to exactly the leads it counts.
+              </>
+            ) : (
+              <>
+                One sale up one ladder, split by who holds the invoice —{" "}
+                {sharedRungOrder().length} rungs, with{" "}
+                {OPERATIONAL_STAGES.map((s) => stageLabel(s)).join(" and ").toLowerCase()} kept out
+                and counted below. Every segment opens the list narrowed to exactly the leads it
+                counts.
+              </>
+            )}
           </p>
         </div>
         <div className="flex flex-none flex-wrap gap-1.5">
@@ -103,13 +135,35 @@ export function SharedBarFunnel({
             rung={rung}
             index={i}
             widest={funnel.widest}
+            compact={compact}
           />
         ))}
       </ol>
 
-      <Operational workspace={workspace} rungs={funnel.operational} />
+      {compact ? (
+        /*
+         * WHAT IS NOT ON THIS CARD, said rather than left out silently.
+         *
+         * `delivery` and `payment` are rungs leads really stand on, and the
+         * off-ladder tail is a real population; both are counted on the funnel
+         * screen and neither is drawn here. A card that quietly omitted them
+         * would be a funnel whose bars do not add up to its own book, which is
+         * the one thing this component's own footer exists to prevent — so the
+         * omission carries the door to where the missing figures are.
+         */
+        <footer className="border-t border-line px-5 py-3 text-[11px] text-muted">
+          <Link href={leadHref(workspace, "leads/funnel")} className="font-medium">
+            Funnel &amp; conversion
+          </Link>{" "}
+          — how long the typical lead has stood on each rung, the{" "}
+          {OPERATIONAL_STAGES.map((s) => stageLabel(s)).join(" and ").toLowerCase()} rungs kept out
+          of this picture, the appointment ladder, and what became of the leads raised in a window.
+        </footer>
+      ) : (
+        <Operational workspace={workspace} rungs={funnel.operational} />
+      )}
 
-      {funnel.offLadder.length > 0 ? (
+      {!compact && funnel.offLadder.length > 0 ? (
         <footer className="border-t border-line bg-canvas px-5 py-3 text-[13px] text-body">
           <span className="font-medium text-ink">Not on either shop ladder: </span>
           {funnel.offLadder.map((r, i) => (
@@ -157,11 +211,14 @@ function Bar({
   rung,
   index,
   widest,
+  compact,
 }: {
   workspace: LeadWorkspace;
   rung: SharedRung;
   index: number;
   widest: number;
+  /** Drops the line of footnotes under the bar, and nothing else. */
+  compact: boolean;
 }) {
   /* Measured against the FULLEST RUNG of this funnel rather than against the
      total. The question a funnel answers is where the book is bunching
@@ -190,16 +247,23 @@ function Bar({
         ))}
       </div>
 
-      <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[11px] text-muted">
-        {rung.segments.map((s) => (
-          <SegmentNote key={s.salesType} segment={s} />
-        ))}
-        {rung.potentialPaise > 0 ? (
-          <span title="Somebody's estimate of what these are worth. Never a derived figure, and never comparable with a real order value.">
-            {moneyShort(rung.potentialPaise)} estimated
-          </span>
-        ) : null}
-      </div>
+      {/* The footnotes: which track is which, the median and how many rows it
+          was taken over, and somebody's estimate of what the rung is worth.
+          Three sentences per rung over ten rungs is a paragraph, which is
+          right on the screen whose job is to explain the shape and wrong on a
+          card whose job is to show it. */}
+      {compact ? null : (
+        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[11px] text-muted">
+          {rung.segments.map((s) => (
+            <SegmentNote key={s.salesType} segment={s} />
+          ))}
+          {rung.potentialPaise > 0 ? (
+            <span title="Somebody's estimate of what these are worth. Never a derived figure, and never comparable with a real order value.">
+              {moneyShort(rung.potentialPaise)} estimated
+            </span>
+          ) : null}
+        </div>
+      )}
     </li>
   );
 }

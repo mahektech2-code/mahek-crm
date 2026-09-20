@@ -3,7 +3,7 @@
 import * as React from "react";
 import { AppFrame } from "./app-frame";
 import { Header } from "./header";
-import { Sidebar } from "./sidebar";
+import { Sidebar, type SidebarBadges } from "./sidebar";
 import { ToastProvider } from "@/components/ui/toast";
 import type { Notification, User } from "@/db/schema";
 import type { AppDefinition } from "@/lib/apps";
@@ -27,7 +27,7 @@ export function AppShell({
   isManager: boolean;
   scope: "mine" | "team";
   notifications: Notification[];
-  badges: { reminders: number; complaints: number; statusRequests: number };
+  badges: SidebarBadges;
   apps: AppDefinition[];
   /** The sidebar, already narrowed to what this person may open. */
   nav: NavGroup[];

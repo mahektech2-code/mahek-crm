@@ -16,14 +16,31 @@ import { LEAD_TILES, type LeadTileId, type LeadView } from "@/lib/lead-views";
  * from the clause the table ran, and each tile's destination is that clause
  * plus its own parameters.
  *
- * IT IS THE SAME STRIP THE DASHBOARD DRAWS, AND IT IS NOT THE SAME NINE. The
- * manager dashboard one tab along draws §8.2's seven management BLOCKS, which
- * are queues waiting on a decision; these are §8.4's nine cuts of the book,
- * which are populations. Two tiles overlap in spirit and neither is derived
- * from the other, because they are counted over different things — the
- * dashboard's over the whole scoped book, these over whatever is filtered
- * here. If the two are ever to share, the thing to share is the tile SKIN and
- * not the figures; see the note under `SKIN`.
+ * THREE STRIPS EXIST AND THIS COMPONENT DRAWS TWO OF THEM. That sentence
+ * replaces one that was true about an argument and false about the product:
+ * it said the dashboard drew a different nine, when the dashboard drew no
+ * nine at all, and a salesman opening the workspace saw two cards about his
+ * own day and nothing whatever about the shape of his book.
+ *
+ * **The list's nine** — this component, counted over WHATEVER IS FILTERED
+ * HERE, which is what makes pressing one narrow rather than surprise.
+ *
+ * **The dashboard's nine** — this same component, same tiles, same tones,
+ * counted over the WHOLE SCOPED BOOK because a dashboard has no filters to
+ * count inside. `dashboard/book-tiles.tsx` is the caller; `countedOver` is the
+ * one word that differs, and it differs because the sentence on an empty tile
+ * would otherwise blame filters nobody set. Drawn for EVERYBODY, which is why
+ * it is these nine and not the seven below: three of them are the reader's own
+ * work.
+ *
+ * **The dashboard's seven** — §8.2's management BLOCKS, which are a different
+ * question and a different audience. These nine are POPULATIONS of the book;
+ * those seven are queues waiting on a DECISION, and they are drawn only for
+ * the two vantages that run a book, because a salesman can act on none of
+ * them. Two tiles overlap in spirit and neither is derived from the other.
+ *
+ * What the three share is the tile SKIN and never the figures; see the note
+ * under `SKIN`.
  *
  * A CLIENT COMPONENT because the hrefs are built off the URL the reader is
  * standing on: a tile has to ADD its parameters to the filters already set
@@ -54,6 +71,7 @@ export function TileStrip({
   counts,
   view,
   hrefFor,
+  countedOver = "here under these filters",
 }: {
   /** One per tile, counted in SQL over the filtered set. */
   counts: Record<LeadTileId, number>;
@@ -66,6 +84,17 @@ export function TileStrip({
    * would eventually disagree about which parameters survive a click.
    */
   hrefFor: (params: Record<string, string>) => string;
+  /**
+   * What the nine were counted over, said on an empty tile.
+   *
+   * The list counts inside the filters in force and the dashboard counts the
+   * whole scoped book, and a zero means a different thing in each — "nothing
+   * matched what you narrowed to" sends somebody to clear a filter, and on a
+   * dashboard there is no filter to clear. One word rather than a second
+   * component, because everything else about the two strips is identical and
+   * a fork would drift on the half nobody is looking at.
+   */
+  countedOver?: string;
 }) {
   return (
     <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
@@ -88,7 +117,7 @@ export function TileStrip({
             key={tile.id}
             href={hrefFor(tile.params)}
             aria-current={here ? "page" : undefined}
-            title={empty ? `${tile.label} — nothing here under these filters.` : tile.hint}
+            title={empty ? `${tile.label} — nothing ${countedOver}.` : tile.hint}
             className={cx(
               "block rounded-[6px] border bg-surface px-3 py-2.5 no-underline",
               "hover:border-line-strong hover:no-underline",
