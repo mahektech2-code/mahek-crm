@@ -185,6 +185,7 @@ export async function Body({
       filters={{
         owner: splitFilter(filters.owner),
         source: splitFilter(filters.source),
+        salesType: splitFilter(filters.salesType),
         stage: splitFilter(filters.stage),
         potential: splitFilter(filters.potential),
         priority: splitFilter(filters.priority),

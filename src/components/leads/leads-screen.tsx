@@ -105,6 +105,11 @@ const FILTER_COLUMNS = [
      point of the field is that a shop can be worth a great deal and still not
      be this fortnight's work. */
   "priority",
+  /* Which ladder, drawn immediately before the rung and read before it for a
+     reason: a RUNG IS NOT A TRACK. `suspect` is the foot of all three, so a
+     stage ticked on its own answers with every ladder at once — which is how
+     a bar on the pipeline reading 40 opened a list of 140 before this existed. */
+  "salesType",
   "stage",
   "next",
   "age",
