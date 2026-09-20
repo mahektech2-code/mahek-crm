@@ -9,7 +9,8 @@ import {
   BLANK_VERIFY,
   correctionRefusal,
   fieldChecksFrom,
-  rememberFieldChecks,
+  forgetFieldChecks,
+  takeFieldChecks,
   VerifyFieldRow,
   type VerifyAnswer,
 } from '../src/components/leads/verify-field-row';
@@ -101,6 +102,15 @@ const CUSTOMER_TYPES: readonly { code: string; label: string; hint: string }[] =
   { code: 'manufacturer', label: 'Manufacturer', hint: 'Uses it in what they make' },
   { code: 'distributor', label: 'Distributor', hint: 'Stocks and supplies others' },
 ];
+
+/**
+ * The schema's own ceiling on `fieldChecks`, restated here because this is the
+ * one screen that can exceed it. Nine findings is what the form can answer and
+ * forty is what the wire will take, so the difference is the backlog — and a
+ * payload refused for length would take the seven prospect answers beside it
+ * down too, which is the one thing a drain must not cost.
+ */
+const FIELD_CHECK_LIMIT = 40;
 
 export default function ProspectForm() {
   const params = useLocalSearchParams<{ id?: string }>();
@@ -286,6 +296,24 @@ export default function ProspectForm() {
     if (refusal) return notify(refusal);
     saving.current = true;
     try {
+      /*
+       * THE ROWS ARE BUILT BEFORE THE SAVE AND TRAVEL WITH IT, which is the
+       * change: they used to be written to `kv` after it, because the wire had
+       * nowhere to put them. `payloadExtras` has somewhere now — see
+       * `saveProspectFields` — so they go up with the answers they are about,
+       * in one queued write, rather than as a second thing that could be
+       * delivered without its record or its record without it.
+       *
+       * The clock is read HERE and not during a render, which is what
+       * `fieldChecksFrom` takes `at` for.
+       */
+      const rows = fieldChecksFrom(checks, originals, me, Date.now());
+
+      /* AND THE ONES THAT HAD NOWHERE TO GO come with them. Everything
+         answered before `leadSchema` learned the field is still in `kv`; each
+         save carries as many of the oldest as the schema's forty will hold. */
+      const backlog = await takeFieldChecks(lead.id, Math.max(0, FIELD_CHECK_LIMIT - rows.length));
+
       const r = await saveProspectFields(lead.id, {
         customerType: customerType.trim() || null,
         monthlyLitres: litresNow ? Number(litresNow.replace(/[^\d]/g, '')) : null,
@@ -301,24 +329,26 @@ export default function ProspectForm() {
         application: application.trim() || null,
         gstin: gstin.trim() || null,
         prospectReasonCode: reasonCode ?? lead.prospectReasonCode ?? null,
-      });
+      }, [...backlog, ...rows]);
       if (!r.ok) return notify(r.message);
 
       /*
-       * THE PAIRS TRAVEL WITH THE SAVE, and after it rather than before.
+       * AND THE BACKLOG IS FORGOTTEN, now that it has been sent.
        *
-       * `saveProspectFields` queues the lead's own fields, so by the time this
-       * runs the record is safe and a failure here costs the reason and never
-       * the answer — the same discipline a photograph gets, and the same
-       * reason no save on this app is ever refused for want of signal. The
-       * wire cannot carry them yet (see `verify-field-row.tsx`), so they wait
-       * on the phone rather than being handed to a schema that would strip
-       * them without a word.
+       * Only what was actually carried, and only after the save has queued —
+       * the outbox is durable, so a queued row reaches the office on whatever
+       * signal comes next. The rows written on THIS screen are not remembered
+       * at all any more: they went up with the answers they are about, and a
+       * second local copy of a row already on the wire is a copy that can only
+       * ever be sent twice.
+       *
+       * It runs AFTER the save and can never fail one, like a photograph and
+       * for the same reason — a failure here costs at worst one shop's answers
+       * being sent again, and never the answer itself. No save on this app is
+       * refused for want of signal, and none is refused for want of a local
+       * write either.
        */
-      await rememberFieldChecks(
-        lead.id,
-        fieldChecksFrom(checks, originals, me, Date.now()),
-      );
+      await forgetFieldChecks(lead.id, backlog.length);
 
       /*
        * And the rows are re-baselined against what was just written. The

@@ -181,39 +181,34 @@ export function VerifyFieldRow({
 
 
 /*
- * WHERE THESE WAIT, AND WHY IT IS THE KEY/VALUE STORE.
+ * WHERE THESE USED TO WAIT, AND WHY THE STORE IS NOW ONLY READ.
  *
- * The lead wire — `leadSchema` in `src/lib/actions/mbos.ts` — names no field
- * for a correction, and Zod strips what it does not name WITHOUT A WORD, which
- * is the quietest failure on this wire: the salesman answers six rows standing
- * in the shop, the sync says accepted, and the office has nothing. So until
- * the field lands the pair stays on the phone rather than being thrown at a
- * schema that will drop it.
+ * `leadSchema` named no field for a correction when this form shipped, and Zod
+ * strips what it does not name WITHOUT A WORD — the quietest failure on this
+ * wire: the salesman answers six rows standing in the shop, the sync says
+ * accepted, and the office has nothing. So the pairs waited in `kv`, which is
+ * touched by no sync at all, rather than being thrown at a schema that would
+ * drop them. A column was never the answer either: a pull upserts `leads`, and
+ * a column the office never sends is one that reads correctly today and is
+ * overwritten the day somebody adds it.
  *
- * It is `kv` and not a column because the handset's `leads` table is not this
- * screen's to widen, and because a pull upserts `leads` — a column added here
- * would be the one the office never sends, and `upsert` writes exactly the
- * columns that arrive, so nothing would be overwritten today and everything
- * would be the day somebody added it. `kv` is touched by no sync at all.
+ * `leadSchema.fieldChecks` exists now, and `saveProspectFields` carries them
+ * with the answers they are about. So NOTHING WRITES HERE ANY MORE and what is
+ * left is the two functions that empty it: `takeFieldChecks` carries as many of
+ * the oldest as a payload will hold, and `forgetFieldChecks` drops them once
+ * the save has queued. A phone that has not been opened since the wire changed
+ * still holds a fortnight of answers, and the first save on each lead sends
+ * them.
  *
- * It is deliberately NOT folded into the lead's note on the way out, which is
- * the obvious way to make the office see it today. The office's own schema
- * comment is the argument: a correction folded into free text is a sentence
- * nobody can count, and "how many leads had their competitor corrected" is the
- * question the row exists to answer. Worse, a note cannot be deduplicated
- * against the real rows when the field lands, so the office would end up
- * holding one correction twice and disagreeing with itself about a shop.
+ * They were deliberately NOT folded into the lead's note on the way out, which
+ * was the obvious way to make the office see them sooner. The office's own
+ * schema comment is the argument: a correction folded into free text is a
+ * sentence nobody can count, and it could not have been deduplicated against
+ * the real rows when the field landed — the office would be holding one
+ * correction twice and disagreeing with itself about one shop.
  */
 
 const KEY = (leadId: string) => `lead.fieldChecks.${leadId}`;
-
-/**
- * A cap, because this is one string in one row. A prospect form is saved a
- * handful of times per lead and two hundred checks is far past anything a real
- * shop produces; the newest are kept, since the oldest reading is the one the
- * later ones have already answered.
- */
-const KEEP = 200;
 
 export async function fieldChecksFor(leadId: string): Promise<FieldCheck[]> {
   const raw = await getKv(KEY(leadId));
@@ -230,19 +225,43 @@ export async function fieldChecksFor(leadId: string): Promise<FieldCheck[]> {
 }
 
 /**
- * Appended as part of the save, and it can never fail one.
+ * THE BACKLOG, drained a save at a time.
  *
- * A save is never refused for want of signal on this app, and it must not be
- * refused for want of a local write either: the lead's own fields are already
- * queued by the time this runs, so a failure here costs the reason and never
- * the record.
+ * `leadSchema` had nowhere for these when the form shipped, so what a salesman
+ * answered on a second visit sat in `kv` and went nowhere. It has somewhere
+ * now, and the rows written before that are still on the phone — so each save
+ * takes as many of the OLDEST as it can carry and sends them with the new ones.
+ * Oldest first because they are the ones that have been waiting, and because
+ * the newest were answered on the screen that is open.
+ *
+ * CAPPED, and the cap is the schema's own forty. A payload the server refuses
+ * for length is one that takes the seven answers beside it down with it, and
+ * this backlog is the one part of the request whose size nobody on the screen
+ * controls.
  */
-export async function rememberFieldChecks(leadId: string, rows: FieldCheck[]): Promise<void> {
-  if (!rows.length) return;
+export async function takeFieldChecks(leadId: string, max: number): Promise<FieldCheck[]> {
+  if (max <= 0) return [];
+  return (await fieldChecksFor(leadId)).slice(0, max);
+}
+
+/**
+ * Dropped only once the save that carried them has been QUEUED, never before.
+ *
+ * The outbox is durable, so a queued row is a row that will reach the office on
+ * whatever signal comes next; a refusal at the far end loses them, exactly as
+ * it loses every other answer in that payload. Forgetting them BEFORE the queue
+ * would lose them to a save that never happened, which is the one failure the
+ * backlog exists to prevent.
+ */
+export async function forgetFieldChecks(leadId: string, howMany: number): Promise<void> {
+  if (howMany <= 0) return;
   try {
-    const kept = [...(await fieldChecksFor(leadId)), ...rows].slice(-KEEP);
-    await setKv(KEY(leadId), JSON.stringify(kept));
+    const rest = (await fieldChecksFor(leadId)).slice(howMany);
+    await setKv(KEY(leadId), rest.length ? JSON.stringify(rest) : '[]');
   } catch {
-    /* Deliberately swallowed — see above. */
+    /* Swallowed, like every other local write in this app that sits on top of
+       a completed save. The worst it costs is one shop's answers being sent
+       twice, which the office settles on (lead, field, `at`); throwing here
+       would cost the save itself. */
   }
 }

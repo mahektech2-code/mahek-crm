@@ -407,6 +407,36 @@ export const HOLD_REASONS: readonly CodedOption[] = [
 ] as const;
 
 /**
+ * §5.5 §9 — WHAT IS STOPPING THE FIRST ORDER, asked as the commitment is taken.
+ *
+ * A commitment is a day and a size and the one thing that would stop it, and
+ * the third is the half that is worth anything a fortnight later: "they will
+ * order 40 cans on the 12th" is a forecast, and "they will order 40 cans on the
+ * 12th once we agree the credit" is a forecast with somebody's name on the
+ * work. Coded for the reason every other list here is coded — "how much did we
+ * forecast behind credit terms this quarter" is a question somebody can ask,
+ * and a grep over free text is not.
+ *
+ * `no_blocker` is FIRST and is the default, because it is the ordinary answer
+ * and a list whose default is an obstacle teaches a salesman to record one. It
+ * is a real answer rather than an empty field: a commitment nobody attached a
+ * blocker to and a commitment somebody said was clear are different facts, and
+ * only the second says anybody was asked.
+ *
+ * Five, and the four that are not `no_blocker` are deliberately the four
+ * different DESKS a stalled first order lands on — ours to price, ours to
+ * allow, the godown's to fill, theirs to sign off. A list that mixed them
+ * would count into one number four problems with four owners.
+ */
+export const ORDER_BLOCKERS: readonly CodedOption[] = [
+  { code: "no_blocker", label: "No blocker" },
+  { code: "price_not_agreed", label: "Price not agreed" },
+  { code: "credit_terms", label: "Credit terms not settled" },
+  { code: "stock_availability", label: "Stock or availability" },
+  { code: "customer_approval_pending", label: "Waiting on their own approval" },
+] as const;
+
+/**
  * §— WHY A TRIAL WAS CALLED OFF. Mahek's eight.
  *
  * The reason for coding this one is sharper than for most: these eight

@@ -1,14 +1,16 @@
-import { all, newId, one, run } from '../db';
+import { all, getKv, newId, one, run, setKv } from '../db';
 import { getConfig } from './config';
 import { getLead, notesOf, type Lead, type LeadResult } from './leads';
 import { updateAndQueue } from './write';
-import { isoDate } from '../lib/format';
+import { isoDate, plural } from '../lib/format';
 import { legacyStageFor, stageOf, wireFunnelStage, wireNotes } from '../lib/wire';
+import type { FieldCheck } from '../engines/field-check';
 import {
   gateForNext,
   gateTo,
   labelOf,
   mustDecideSuspect,
+  ORDER_BLOCKERS,
   REASON_CODE_NEEDING_REMARKS,
   type CodedOption,
   type GateVerdict,
@@ -43,14 +45,17 @@ import {
  * differ. `stage` is always one of those: the local column holds this app's
  * six words and the wire carries the specification's rung.
  *
- * TODO(integration): four things this file records have no home on that schema
- * yet and are stripped by zod on arrival — `distributorProfile` (§11's thirty),
- * `thirdParty` with its distributor and that distributor's own salesman (§23),
- * and `expectedOrderDate`/`expectedOrderValuePaise` (§18). Workstream A owns
- * `leadSchema`; workstream B owns `saveDistributorProfile` and the third-party
- * link. Until they land the handset's own record is complete and the office
- * hears nothing about them — nothing is refused, which is the safe direction
- * and the silent one.
+ * TODO(integration): what this file records and the office cannot yet hear.
+ * `distributorProfile` (§11's thirty) and the third-party link (§23) are
+ * workstream B's; `expectedOrderDate`/`expectedOrderValuePaise` have since
+ * landed on `leadSchema` and are struck off. What remains is §5.5's other two
+ * halves of a commitment — the QUANTITY and the BLOCKER — which have no
+ * column on this phone and no field on that schema, and which are therefore
+ * kept in `kv` and deliberately NOT sent: see `rememberCommitmentExtras` below
+ * for why a field the office has not promised to hold must not be put on the
+ * wire on the chance that it one day will. Until they land the handset's own
+ * record is complete and the office hears nothing about them — nothing is
+ * refused, which is the safe direction and the silent one.
  */
 
 /* ------------------------------------------------------------- the config */
@@ -64,6 +69,10 @@ export type FunnelConfig = {
   /* Why a lead stopped. Published by the office since the funnel shipped and
      read by nothing here — see the note in `data/config.ts`. */
   holdReasons: CodedOption[];
+  /* §5.5 — what is stopping the first order. Configured for the same reason
+     every other list here is: a manager rewords one without a deploy, and on
+     this app without an APK nobody can recall. */
+  orderBlockers: CodedOption[];
 };
 
 /**
@@ -82,6 +91,7 @@ export async function funnelConfig(): Promise<FunnelConfig> {
     sampleReasons,
     lostReasons,
     holdReasons,
+    orderBlockers,
   ] = await Promise.all([
     getConfig<number>('leads.suspectMaxVisits'),
     getConfig<boolean>('leads.requireNextAction'),
@@ -89,6 +99,14 @@ export async function funnelConfig(): Promise<FunnelConfig> {
     getConfig<CodedOption[]>('leads.sampleReasons'),
     getConfig<CodedOption[]>('leads.lostReasons'),
     getConfig<CodedOption[]>('leads.holdReasons'),
+    /* THE FALLBACK IS SPELLED OUT HERE because `data/config.ts`'s DEFAULTS
+       table does not carry this key yet, and `getConfig` answers `undefined`
+       for one it does not know. Undefined here is a picker with nothing in it,
+       which reads as a broken screen rather than as a key nobody published —
+       and a commitment could then not be recorded at all. `ORDER_BLOCKERS` is
+       the registry's own default, so the two cannot differ; the table should
+       grow the key and this argument should go with it. */
+    getConfig<CodedOption[]>('leads.orderBlockers', ORDER_BLOCKERS.map((r) => ({ ...r }))),
   ]);
   return {
     suspectMaxVisits,
@@ -97,6 +115,7 @@ export async function funnelConfig(): Promise<FunnelConfig> {
     sampleReasons,
     lostReasons,
     holdReasons,
+    orderBlockers,
   };
 }
 
@@ -173,14 +192,7 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
     /* §5.3 — the window, off the same `leads.*` keys the suspect cap reads.
        It reaches this phone on every pull, so the staleness verdict is made
        here against this phone's clock rather than sent as somebody else's. */
-    /* THE FALLBACK IS SPELLED OUT HERE because `data/config.ts`'s DEFAULTS
-       table does not carry this key, and `getConfig` answers `undefined` for
-       one it does not know. Undefined would switch the check off silently on a
-       handset that has not bootstrapped yet — which is the safe direction and
-       still a rule nobody could find out was not running. 60 is the registry's
-       own default; the table should grow the key and this argument should go
-       with it. */
-    getConfig<number>('leads.figuresFreshDays', 60),
+    getConfig<number>('leads.figuresFreshDays'),
   ]);
 
   return {
@@ -579,6 +591,19 @@ export async function saveProspectFields(
     gstin?: string | null;
     prospectReasonCode?: string | null;
   },
+  /*
+   * §9 — CONFIRM § CORRECT § UNABLE TO VERIFY, as rows rather than as columns.
+   *
+   * They ride with the save and are NOT part of the patch, which is the whole
+   * distinction: the lead's own columns hold what the shop says TODAY, and
+   * these hold who asked, what the record said at the time and why the two
+   * differ. Folding them into the patch would try to write six columns that do
+   * not exist; folding them into the note would make them a sentence nobody
+   * can count, which is the argument `verify-field-row.tsx` already sets out.
+   *
+   * `payloadExtras` and not `patch` for exactly that reason.
+   */
+  fieldChecks?: FieldCheck[],
 ): Promise<LeadResult<null>> {
   const lead = await getLead(id);
   if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
@@ -604,6 +629,10 @@ export async function saveProspectFields(
     payloadExtras: {
       reasonCode: fields.prospectReasonCode ?? undefined,
       requiredProductName: undefined,
+      /* Omitted rather than sent empty: an absent field is a screen that asked
+         nothing, and `[]` on the wire would read at the office as six questions
+         somebody declined to answer. */
+      fieldChecks: fieldChecks?.length ? fieldChecks : undefined,
     },
   });
 
@@ -1160,12 +1189,64 @@ export async function setLeadParties(
  * A date and, where they gave one, a figure. "Interested" is not an answer and
  * there is nowhere on this form to type it.
  */
+/**
+ * §5.5 §9 — THE COMMITMENT: a day, a size, and what is stopping it.
+ *
+ * IT IS A FORECAST AND NOT A SALE, and that is the whole shape of it: nothing
+ * here moves the lead a rung. §9 says so in as many words and it is the right
+ * rule — a salesman writing down what a shopkeeper said over a counter has not
+ * been given an order, and a screen that advanced the ladder on his say-so
+ * would put "First order" against a shop that has bought nothing. What the
+ * date DOES do is open the gate in front of `first_order`, which still wants an
+ * actual order behind it before it will let the lead through. The card and this
+ * function both say that in words rather than leaving it to be discovered.
+ *
+ * A COMMITMENT NEEDS A DATE AND A QUANTITY, which is Mahek's own answer and
+ * overrules §9 where the two differ. "They will order some time next week" is
+ * not a commitment anybody can plan a godown around, and a promise with no size
+ * on it cannot be compared against the order that eventually answers it.
+ *
+ * THE QUANTITY IS IN CANS, and this is the one place §L's argument for litres
+ * does NOT apply. That argument is about CAPTURE: a prospect says "about two
+ * hundred litres a month" long before anybody knows what pack they will buy it
+ * in, so cans would be a unit nobody had agreed the size of. By the time a lead
+ * is being asked for a first order it has been through qualification, which
+ * demands `requiredProductId` — there IS a SKU, and the pack size with it. Cans
+ * are what the customer says when ordering and what every order in MahekOne is
+ * stored in, so a commitment in litres could not be held against the order that
+ * answers it without a conversion nobody performed. The screen shows the SKU
+ * beside the box so the unit is never ambiguous.
+ *
+ * THE VALUE IS OPTIONAL and the quantity is not. `products.priceSource` is
+ * still `unset`, so nothing here can derive what a number of cans is worth; a
+ * rupee figure on this record is somebody's estimate and a figure nobody
+ * estimated must read as absent rather than as zero.
+ *
+ * THE BLOCKER IS A CODE, from the configured list — the same rule as a lost
+ * lead, a park and a prospect. It defaults to `no_blocker` at the screen, and
+ * that is a real answer rather than an empty field: a commitment nobody was
+ * asked about and one somebody said was clear are different facts.
+ */
 export async function recordExpectedOrder(
   id: string,
-  args: { expectedDate: string; expectedValuePaise?: number | null },
+  args: {
+    expectedDate: string;
+    expectedQuantityCans: number;
+    expectedValuePaise?: number | null;
+    blockerCode?: string | null;
+  },
 ): Promise<LeadResult<null>> {
   if (!args.expectedDate) return { ok: false, message: 'Ask when they will place it.' };
+  if (!args.expectedQuantityCans || args.expectedQuantityCans <= 0) {
+    return { ok: false, message: 'Ask how many cans. A promise with no size on it cannot be planned around.' };
+  }
   const today = isoDate(new Date());
+  const blocker = args.blockerCode?.trim() || 'no_blocker';
+
+  /* The two the office can hold go in the patch; the two it cannot are
+     remembered first, so a commitment is never half-recorded on this phone if
+     the write below throws. */
+  await rememberCommitmentExtras(id, { quantityCans: args.expectedQuantityCans, blockerCode: blocker });
 
   await updateAndQueue({
     table: 'leads',
@@ -1176,19 +1257,90 @@ export async function recordExpectedOrder(
       expectedOrderValuePaise: args.expectedValuePaise ?? null,
       lastActivityDate: today,
     },
-    /* TODO(integration): §18's two columns are not on `leadSchema` yet. The
-       gate in front of `first_order` reads `expectedOrderDate`, so until they
-       land a lead can pass that rung on the phone and be refused at the
-       office — which is the right way round, and it is written down here so
-       nobody is surprised by it. */
+    /* AND THE OTHER TWO ARE DELIBERATELY NOT SENT.
+       The obvious move is to put them on the payload anyway, on the reasoning
+       that an unnamed field is stripped and costs nothing until the schema
+       grows one. `mbos-payload-contract.test.ts` refuses exactly that, and it
+       is right: a field zod strips leaves no refusal, no log and no rejection
+       row, so the salesman types the size in, the app says saved, and the
+       column stays null for ever. A field this app sends is a field the office
+       has promised to hold. Until `leadSchema` names these two, the honest
+       answer is that the phone holds them and says so, and the sentence in the
+       header above is what makes the gap findable. */
   });
 
   await addEvent({
     leadId: id,
     kind: 'expected_order',
-    summary: 'Order expected ' + args.expectedDate,
+    summary: plural(args.expectedQuantityCans, 'can') + ' expected ' + args.expectedDate,
+    detail: blocker === 'no_blocker' ? null : 'Blocked on ' + labelOf(ORDER_BLOCKERS, blocker),
   });
   return ok;
+}
+
+/* ------------------------------------------- the half with nowhere to land
+ *
+ * `expectedOrderQuantityCans` and `expectedOrderBlockerCode` have no column on
+ * this phone and no field on `leadSchema`, and the two absences want opposite
+ * treatment. The wire's is easy and the answer is to say NOTHING: a field
+ * `leadSchema` does not declare is stripped by zod in silence, and
+ * `mbos-payload-contract.test.ts` refuses one for exactly that reason — there
+ * is no refusal, no log and no rejection row, so a salesman types the size in,
+ * the app says saved, and the column stays null for ever. A field this app
+ * sends is one the office has promised to hold.
+ *
+ * The local one is harder. A column would be the honest home; what must not
+ * happen meanwhile is the
+ * quantity being folded into the lead's note to make it visible today, because
+ * a number inside a sentence is a number nobody can count and one that cannot
+ * be deduplicated against the real column when it lands — the office would end
+ * up holding one commitment twice. So it waits in `kv`, which no sync touches,
+ * exactly as `rememberFieldChecks` does one screen along and for the same
+ * reason. The day the column lands, this reads from the row instead and the
+ * key is dropped — there is nothing to migrate, because a commitment is
+ * restated rather than accumulated and the office already holds the date.
+ *
+ * REPLACED RATHER THAN APPENDED, unlike the field checks: a commitment is
+ * RESTATED when the customer changes his mind, and the previous answer is not a
+ * second commitment. The timeline above is where the history of it lives.
+ */
+
+export type CommitmentExtras = { quantityCans: number; blockerCode: string };
+
+const COMMITMENT_KEY = (leadId: string) => `lead.commitment.${leadId}`;
+
+export async function commitmentExtras(leadId: string): Promise<CommitmentExtras | null> {
+  const raw = await getKv(COMMITMENT_KEY(leadId));
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const row = parsed as Partial<CommitmentExtras>;
+    return typeof row.quantityCans === 'number'
+      ? { quantityCans: row.quantityCans, blockerCode: row.blockerCode ?? 'no_blocker' }
+      : null;
+  } catch {
+    /* A string that will not parse is a row nobody can act on. Answering with
+       nothing lets the next save write a good one; throwing here would take the
+       record page down over a cache. */
+    return null;
+  }
+}
+
+/**
+ * Written before the lead is queued, and it can never fail the commitment.
+ *
+ * A save on this app is never refused for want of signal and it must not be
+ * refused for want of a local write either — a swallowed failure here costs
+ * the size and the blocker, and never the date, which is the half the gate
+ * actually reads.
+ */
+async function rememberCommitmentExtras(leadId: string, extras: CommitmentExtras): Promise<void> {
+  try {
+    await setKv(COMMITMENT_KEY(leadId), JSON.stringify(extras));
+  } catch {
+    /* Deliberately swallowed — see above. */
+  }
 }
 
 /* -------------------------------------------------------- the shops we bill

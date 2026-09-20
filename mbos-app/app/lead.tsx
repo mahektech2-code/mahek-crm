@@ -6,7 +6,10 @@ import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, Secon
 import { VoiceField } from '../src/components/ui/dictate';
 import { Icon } from '../src/components/ui/Icon';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
+import { CommitmentCard } from '../src/components/leads/commitment-card';
+import { CommitmentSheet } from '../src/components/leads/commitment-sheet';
 import { NextActionSheet } from '../src/components/leads/next-action-sheet';
+import { RelationshipChain } from '../src/components/leads/relationship-chain';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
@@ -25,13 +28,16 @@ import {
   decideSuspect,
   distributorCandidates,
   leadEvents,
+  commitmentExtras,
   leadFunnelView,
   markLost,
   putOnHold,
+  recordExpectedOrder,
   setLeadParties,
   setNextAction,
   setSalesType,
   shopPhoto,
+  type CommitmentExtras,
   type LeadEvent,
   type LeadFunnelView,
 } from '../src/data/lead-funnel';
@@ -41,6 +47,7 @@ import {
   gateTo,
   isParked,
   isTerminal,
+  labelOf,
   ladderFor,
   offeredSalesTypes,
   REASON_CODE_NEEDING_REMARKS,
@@ -80,6 +87,33 @@ const STAGE_TONE: Record<string, BadgeTone> = {
   Converted: 'success',
   Lost: 'danger',
 };
+
+/**
+ * §4.1 — the manager's three, in a colour and a word.
+ *
+ * `high` is `danger` rather than `amber` deliberately: it is the one that has
+ * to survive being glanced at beside a stage badge, and amber is already what a
+ * blocked commitment and a parked lead use. `low` is drawn plainly — somebody
+ * has judged it and said "not first", which is information, and colouring it
+ * would make a screen of low-priority leads look like a screen of problems.
+ */
+const PRIORITY_TONE: Record<string, BadgeTone> = {
+  high: 'danger',
+  medium: 'amber',
+  low: 'neutral',
+};
+
+/** The stored word, in one somebody would say. Anything unrecognised is drawn
+    as it arrived rather than swallowed: a fourth value added at a desk should
+    read as itself on an older handset, not vanish. */
+function priorityWord(p: string): string {
+  switch (p) {
+    case 'high': return 'High priority';
+    case 'medium': return 'Medium priority';
+    case 'low': return 'Low priority';
+    default: return p;
+  }
+}
 
 export default function LeadRecord() {
   const params = useLocalSearchParams<{ id?: string }>();
@@ -143,6 +177,17 @@ export default function LeadRecord() {
    */
   const parking = React.useRef(false);
 
+  /* §5.5 — the two halves of a commitment the office has no column for yet.
+     Read beside the lead rather than derived from it: they live in `kv`, and
+     `lead-funnel.ts` explains at length why that is the right place for them
+     until a column exists. */
+  const [commit, setCommit] = React.useState<CommitmentExtras | null>(null);
+  const [commitOpen, setCommitOpen] = React.useState(false);
+  /* A ref rather than state, for the reason `parking` beside it gives: a
+     second press lands before React has re-rendered and records the promise
+     twice. */
+  const committing = React.useRef(false);
+
   const [checks, setChecks] = React.useState<Awaited<ReturnType<typeof validationsFor>>>([]);
   const [photo, setPhoto] = React.useState<{ uri: string | null } | null>(null);
 
@@ -160,7 +205,8 @@ export default function LeadRecord() {
          salesman's — was written down and never shown to either of them. */
       validationsFor(id),
       shopPhoto(id),
-    ]).then(([v, e, t, s, calls, shot]) => {
+      commitmentExtras(id),
+    ]).then(([v, e, t, s, calls, shot, promised]) => {
       if (!live) return;
       setView(v);
       setEvents(e);
@@ -168,6 +214,7 @@ export default function LeadRecord() {
       setMe(s ? { id: s.user.id, name: s.user.name } : null);
       setChecks(calls);
       setPhoto(shot);
+      setCommit(promised);
     });
     return () => {
       live = false;
@@ -308,7 +355,27 @@ export default function LeadRecord() {
               {[lead.company?.trim() ? lead.name : null, lead.city, lead.source].filter(Boolean).join(' · ')}
             </T>
           </View>
-          <Badge tone={STAGE_TONE[lead.stage] ?? 'neutral'}>{stageLabel(stage)}</Badge>
+          <View style={{ alignItems: 'flex-end', gap: 6 }}>
+            <Badge tone={STAGE_TONE[lead.stage] ?? 'neutral'}>{stageLabel(stage)}</Badge>
+            {/* §4.1 — HOW HARD TO PUSH, and it is READ-ONLY on this phone.
+                It is the manager's judgement about the WORK — which of forty
+                leads to get to first — as against the potential below, which is
+                a judgement about the account. A priority the person being
+                measured could set himself would follow whatever he felt like
+                doing, which is why `lead.verify` gates it and why there is no
+                control here. It has ridden down on every pull since the wire
+                change and was drawn by nothing, so a manager marking forty
+                leads high was talking to himself.
+
+                Null is nobody having judged it and is NOT the same as low, so
+                nothing is drawn at all — a "Low" badge on an unjudged lead is a
+                verdict the screen invented. */}
+            {lead.priority ? (
+              <Badge tone={PRIORITY_TONE[lead.priority] ?? 'neutral'}>
+                {priorityWord(lead.priority)}
+              </Badge>
+            ) : null}
+          </View>
         </View>
 
         <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 8 }}>{stageSentence(stage)}</T>
@@ -367,6 +434,15 @@ export default function LeadRecord() {
             label="Might buy"
             value={lead.estimatedPotentialPaise ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month' : 'Not estimated'}
           />
+          {/* Where it actually came from, in more words than "manual". The
+              subtitle above carries the SOURCE, which on a real book is one of
+              eight codes; this is the sentence behind it — which exhibition,
+              whose referral — and it is the half somebody opens the record for.
+              Drawn only where there is one: an empty row labelled "Came from"
+              is an invitation to fill a box this screen cannot open. */}
+          {lead.sourceDetail?.trim() ? (
+            <Line label="Came from" value={lead.sourceDetail.trim()} />
+          ) : null}
           <Line label="Visits" value={plural(visits, 'visit')} />
           <Line label="Next follow-up" value={lead.nextFollowUpDate ? pretty(lead.nextFollowUpDate) : 'None set'} />
         </View>
@@ -535,8 +611,24 @@ export default function LeadRecord() {
                 <T style={{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 8 }}>
                   {lead.holdReason
                     ? 'Waiting: ' + lead.holdReason
-                    : 'Nobody wrote down what it is waiting for.'}
+                    : lead.holdReasonCode
+                      ? 'Waiting: ' + labelOf(config.holdReasons, lead.holdReasonCode)
+                      : 'Nobody wrote down what it is waiting for.'}
                 </T>
+                {/* THE CODE AS WELL AS THE SENTENCE, where there are both.
+                    `holdReason` is what somebody typed and this is the coded
+                    answer beside it — the one that can be counted, and the one
+                    the office's own reports read. It has come down on the wire
+                    since that change landed and was drawn nowhere, so a lead
+                    parked from a desk under a named reason read on this phone
+                    as one parked for nothing. The label is resolved from the
+                    configured list, never printed raw: `budget_issue` on a
+                    card is the database talking. */}
+                {lead.holdReasonCode && lead.holdReason ? (
+                  <T s="caption" style={{ marginTop: 4 }}>
+                    {labelOf(config.holdReasons, lead.holdReasonCode)}
+                  </T>
+                ) : null}
                 {/* WHEN IT COMES BACK, said on the record rather than left to
                     the diary field further down the page. A park with a reason
                     and no end date is the state this exists to prevent, so the
@@ -546,11 +638,21 @@ export default function LeadRecord() {
                     be. It is `nextFollowUpDate` because that is the one column
                     this phone brings a lead back on: `listLeads` orders by it
                     and `leadAlert` measures lateness from it. */}
-                {lead.nextFollowUpDate ? (
+                {/* THE OFFICE'S OWN RESUME DATE WINS where it has one.
+                    `holdResumeDate` is the day the park was set to end when it
+                    was set at a desk, and it now reaches this phone; the
+                    follow-up date beside it is the column this app brings a
+                    lead back on, which `putOnHold` fills in from the same
+                    answer when the park was made here. Where the two disagree
+                    the office's is the one somebody decided, so it is the one
+                    said out loud — and where only the follow-up exists nothing
+                    is lost, because that is how every park made on this phone
+                    is stored. */}
+                {lead.holdResumeDate ?? lead.nextFollowUpDate ? (
                   <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 6 }, weight(500)]}>
-                    {lead.nextFollowUpDate <= today
-                      ? 'It was due back on ' + dmy(lead.nextFollowUpDate) + ' — pick it up'
-                      : 'Comes back on ' + dmy(lead.nextFollowUpDate)}
+                    {(lead.holdResumeDate ?? lead.nextFollowUpDate!) <= today
+                      ? 'It was due back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!) + ' — pick it up'
+                      : 'Comes back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!)}
                   </T>
                 ) : (
                   <T style={{ fontSize: 15, lineHeight: 21, color: C.warnInk, marginTop: 6 }}>
@@ -645,10 +747,54 @@ export default function LeadRecord() {
         </View>
       )}
 
+      {/* ------------------------------------------- §5.9 the chain --------
+
+          Drawn only on a shop somebody else invoices, because that is the only
+          shape it is true of. See `RelationshipChain` for why it is four boxes
+          and why the sentence about commercial authority sits under them. */}
+      {lead.thirdParty ? (
+        <View style={{ marginTop: 20 }}>
+          <SectionLabel style={{ marginBottom: 10 }}>Who this shop goes through</SectionLabel>
+          <RelationshipChain
+            shopName={title}
+            distributorSalesmanName={lead.distributorSalesmanName}
+            distributorName={lead.distributorName}
+            distributorCount={lead.distributorCount}
+            /* The Mahek end of the chain is the lead manager — the seat that
+               picks a qualified lead up and runs the conversion. It is the
+               person the distributor's own side actually deals with, and it is
+               already on the row with its name beside its id, because this
+               phone holds no user table to resolve one. */
+            salesManagerName={lead.leadManagerName}
+          />
+        </View>
+      ) : null}
+
       {/* -------------------------------------------------------- the forms */}
       {settled ? null : (
         <View style={{ marginTop: 20, gap: 10 }}>
           <SectionLabel style={{ marginBottom: 0 }}>The work</SectionLabel>
+
+          {/* §5.5 — THE COMMITMENT, and it sits at the TOP of the work.
+              It is the one condition in front of `first_order` that is this
+              salesman's to satisfy; everything under it on this list is a form
+              he fills in earlier on the ladder. Drawn only where the ladder he
+              is on actually has that rung: a legacy lead climbs the six this
+              app shipped with and a first order is not one of them, so a card
+              about it would be a question nobody asked. */}
+          {ladder.includes('first_order') ? (
+            <CommitmentCard
+              date={lead.expectedOrderDate}
+              valuePaise={lead.expectedOrderValuePaise}
+              quantityCans={commit?.quantityCans ?? null}
+              blockerCode={commit?.blockerCode ?? null}
+              blockers={config.orderBlockers}
+              hasOrder={lead.hasOrder === 1}
+              countingOrderCount={lead.countingOrderCount}
+              today={today}
+              onRecord={() => setCommitOpen(true)}
+            />
+          ) : null}
 
           <SecondaryButton
             label="Prospect details — the eight answers"
@@ -1022,6 +1168,46 @@ export default function LeadRecord() {
             load();
             notify(salesTypeLabel(t) + ' — back to the foot of that ladder');
           });
+        }}
+      />
+
+      {/* §5.5 §9 — what they said they would order. Keyed like every other
+          sheet here so it remounts with the record's own answers rather than
+          being reset in an effect. */}
+      <CommitmentSheet
+        key={commitOpen ? 'commit-open' : 'commit-shut'}
+        open={commitOpen}
+        today={today}
+        productName={lead.requiredProductName}
+        blockers={config.orderBlockers}
+        current={{
+          date: lead.expectedOrderDate,
+          quantityCans: commit?.quantityCans ?? null,
+          valuePaise: lead.expectedOrderValuePaise,
+          blockerCode: commit?.blockerCode ?? null,
+        }}
+        onClose={() => setCommitOpen(false)}
+        onSave={(c) => {
+          if (committing.current) return;
+          committing.current = true;
+          setCommitOpen(false);
+          void recordExpectedOrder(lead.id, {
+            expectedDate: c.date,
+            expectedQuantityCans: c.quantityCans,
+            expectedValuePaise: c.valuePaise,
+            blockerCode: c.blockerCode,
+          })
+            .then((r) => {
+              if (!r.ok) return notify(r.message);
+              load();
+              /* The confirmation says what it DID and, in the same breath, what
+                 it did not: a salesman who has just written down a promise will
+                 reasonably look for the ladder to have moved. */
+              notify(plural(c.quantityCans, 'can') + ' expected ' + dmy(c.date) + ' — noted, not ordered');
+            })
+            .finally(() => {
+              committing.current = false;
+            });
         }}
       />
 

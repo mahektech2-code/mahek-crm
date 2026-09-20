@@ -67,10 +67,6 @@ const PARKED: Record<string, string> = {
     'need. Its own docstring says no screen calls it yet and caps the read for when ' +
     'one does: 487 of 1,076 shops on a real handset have no pin, so capturing them ' +
     'is a field task somebody should be given a list for.',
-  recordExpectedOrder:
-    'Carries its own TODO: the two columns §18 writes are not on `leadSchema`, so ' +
-    'the office would never hear about what it records. Wiring the screen before ' +
-    'the wire would be a form that silently discards what is typed into it.',
   samplesFor:
     "The funnel module's per-customer read. The customer record's Samples tab still " +
     'reads `customerSamples` from `data/requests.ts` over the same table; one of ' +
