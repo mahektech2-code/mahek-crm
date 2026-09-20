@@ -1,4 +1,5 @@
 import { money, moneyShort } from "@/lib/format";
+import { activitySub, collectionSub } from "@/lib/performance-labels";
 import { today } from "@/lib/recompute";
 import { BP } from "@/lib/engines/performance";
 import { Badge, Card, PageHeader, Th, Td, Tr } from "@/components/ui/primitives";
@@ -105,10 +106,27 @@ export default async function Page({
                         <Achieved actual={String(r.actuals.newCustomers)} bp={by("newCustomers")} />
                       </Td>
                       <Td align="right">
-                        <Achieved actual={moneyShort(r.actuals.collectionPaise)} bp={by("collection")} />
+                        <Achieved
+                          actual={moneyShort(r.actuals.collectionPaise)}
+                          bp={by("collection")}
+                          sub={collectionSub(
+                            {
+                              done: r.actuals.collectionPaise,
+                              base: r.actuals.overdueAtStartPaise,
+                            },
+                            moneyShort,
+                          )}
+                        />
                       </Td>
                       <Td align="right">
-                        <Achieved actual={String(r.actuals.activity)} bp={by("activity")} />
+                        <Achieved
+                          actual={String(r.actuals.activity)}
+                          bp={by("activity")}
+                          sub={activitySub({
+                            done: r.actuals.activity,
+                            base: r.actuals.activityAssigned,
+                          })}
+                        />
                       </Td>
                       <Td className="max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap">
                         {r.alerts.length ? (
@@ -142,10 +160,13 @@ export default async function Page({
 function Achieved({
   actual,
   bp,
+  sub,
   emphasise,
 }: {
   actual: string;
   bp: number | null;
+  /** What the figure is a share of, where it is one. See `performance-labels`. */
+  sub?: string;
   emphasise?: boolean;
 }) {
   return (
@@ -164,6 +185,7 @@ function Achieved({
           {(bp / 100).toFixed(0)}%
         </span>
       )}
+      {sub ? <span className="block text-[11px] text-muted">{sub}</span> : null}
     </span>
   );
 }

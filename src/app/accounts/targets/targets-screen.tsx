@@ -23,7 +23,8 @@ import { Drawer, DrawerHeader, Modal, RowMenu, Tabs } from "@/components/ui/over
 import { useToast } from "@/components/ui/toast";
 import { PersonPicker, type Person } from "@/components/crm/person-picker";
 import { APP_TIMEZONE } from "@/lib/business-date";
-import { money, periodLabel } from "@/lib/format";
+import { money, moneyShort, periodLabel } from "@/lib/format";
+import { collectionLine } from "@/lib/performance-labels";
 import {
   publishSalesTarget,
   saveSalesTarget,
@@ -946,7 +947,27 @@ function Scorecard({ readings }: { readings: PerformanceReading[] }) {
                     : `${Math.round(r.actuals.millilitres / 1000).toLocaleString("en-IN")} L`}
                 </Td>
                 <Td>{r.hasTarget ? achievementCell(r, "newCustomers") : String(r.actuals.newCustomers)}</Td>
-                <Td>{r.hasTarget ? achievementCell(r, "collection") : money(r.actuals.collectionPaise)}</Td>
+                {/* With no collection target set — which is every target on
+                    this book today — the cell falls back to the raw figure, and
+                    a rupee total on its own says nothing about a component that
+                    is a SHARE of old debt. It says what it was a share of. */}
+                <Td title={collectionLine(
+                  {
+                    done: r.actuals.collectionPaise,
+                    base: r.actuals.overdueAtStartPaise,
+                  },
+                  money,
+                )}>
+                  {r.hasTarget
+                    ? achievementCell(r, "collection")
+                    : collectionLine(
+                        {
+                          done: r.actuals.collectionPaise,
+                          base: r.actuals.overdueAtStartPaise,
+                        },
+                        moneyShort,
+                      )}
+                </Td>
                 <Td>
                   {r.alerts.length ? (
                     <span className="flex flex-wrap gap-1">

@@ -1644,6 +1644,24 @@ export const MIGRATIONS: string[][] = [
        ON travel_legs (userId) WHERE origin = 'session' AND endedAt IS NULL;`,
   ],
 
+  /* ---- v31 · what collection and activity are a SHARE OF ---------------- */
+  [
+    /*
+     * Two of the six components are a numerator over a base: collection of
+     * what was already overdue when the month opened, activity of the tasks
+     * that fell due in it. The phone had the numerator and the implied target
+     * and never the base, so it drew "₹2.4L · 73%" with no way to say 73% of
+     * what — and the office screens had exactly the same hole until now.
+     *
+     * Nullable on purpose. A row pulled before the office started sending
+     * these carries no base, and 0 is not the same answer: zero is the claim
+     * that nothing was overdue, which is a statement about somebody's month.
+     * The screen says "not recorded" rather than inventing one.
+     */
+    `ALTER TABLE performance ADD COLUMN collectionBasePaise INTEGER;`,
+    `ALTER TABLE performance ADD COLUMN activityAssigned INTEGER;`,
+  ],
+
 ];
 
 /**

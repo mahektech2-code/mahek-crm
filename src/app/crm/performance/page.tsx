@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { MonthNav } from "@/components/ui/month-nav";
 import { monthName } from "@/components/ui/month";
 import { money } from "@/lib/format";
+import { activitySub, collectionSub } from "@/lib/performance-labels";
 import { today } from "@/lib/recompute";
 import { BP, focusLines } from "@/lib/engines/performance";
 import { readingsForPeriod } from "@/lib/services/performance-service";
@@ -117,9 +118,46 @@ export default async function Page({
               sub: targetSub(by("newCustomers")?.target ?? null, String),
             },
             {
+              /*
+               * The BASE first, then the target. This tile said "of ₹4,86,000"
+               * — the implied rupee target — and never what it was 60% OF, so
+               * the one figure that explains the number was missing from the
+               * screen the person is judged on. Collection is old debt worked
+               * down, and how much old debt there was is the first question
+               * anybody asks about it.
+               */
               label: "Collected",
               value: money(reading.actuals.collectionPaise),
-              sub: targetSub(by("collection")?.target ?? null, money),
+              sub: [
+                collectionSub(
+                  {
+                    done: reading.actuals.collectionPaise,
+                    base: reading.actuals.overdueAtStartPaise,
+                  },
+                  money,
+                ),
+                by("collection")?.target ? `target ${money(by("collection")!.target)}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · "),
+            },
+            {
+              /*
+               * AND ACTIVITY WAS NOT ON THIS SCREEN AT ALL, though it is one
+               * of the six the score is made of. A person reading their own
+               * appraisal could see five of them.
+               */
+              label: "Tasks done",
+              value: String(reading.actuals.activity),
+              sub: [
+                activitySub({
+                  done: reading.actuals.activity,
+                  base: reading.actuals.activityAssigned,
+                }),
+                by("activity")?.target ? `target ${by("activity")!.target}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · "),
             },
           ]}
         />

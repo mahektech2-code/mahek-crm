@@ -1,5 +1,6 @@
 import "server-only";
 import { money } from "@/lib/format";
+import { activityLine, collectionLine } from "@/lib/performance-labels";
 import { addDays, calendarDate, periodRange } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
@@ -131,8 +132,20 @@ function targetLine(r: PerformanceReading): string {
     `volume ${litres(r.actuals.millilitres)} — ${pct(by("volume"))} of target`,
     `mix ${pct(r.mix.achievementBp)} of target`,
     `${r.actuals.newCustomers} new customers — ${pct(by("newCustomers"))} of target`,
-    `${rupees(r.actuals.collectionPaise)} collected — ${pct(by("collection"))} of target`,
-    `activity ${pct(by("activity"))} of target`,
+    /*
+     * The BASE travels with both of these. A brief that says "₹2.4L collected"
+     * and "activity 45%" gives a manager two figures they cannot act on: 45% of
+     * what, and out of how much old debt. Both components are a share, and the
+     * share is the whole of what they say.
+     */
+    `${collectionLine(
+      { done: r.actuals.collectionPaise, base: r.actuals.overdueAtStartPaise },
+      rupees,
+    )} collected — ${pct(by("collection"))} of target`,
+    `${activityLine({
+      done: r.actuals.activity,
+      base: r.actuals.activityAssigned,
+    })} — ${pct(by("activity"))} of target`,
   ];
   const line = `- ${r.userName}: ${bits.join("; ")}`;
   return r.alerts.length ? `${line}\n  ⚠ ${r.alerts.map((a) => a.message).join(" ")}` : line;

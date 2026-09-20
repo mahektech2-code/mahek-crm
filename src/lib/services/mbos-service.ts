@@ -2241,8 +2241,14 @@ async function performanceFor(
            p.new_customer_actual as "newCustomerActual",
            p.collection_target_paise as "collectionTargetPaise",
            p.collection_actual_paise as "collectionActualPaise",
+           /* What the money and the tasks are a SHARE OF. The phone reads this
+              row and nothing else, so without these two the figures on it are
+              a numerator with no denominator anywhere. Null on any row written
+              before the columns existed, which the screen says in words. */
+           p.collection_base_paise as "collectionBasePaise",
            p.activity_target as "activityTarget",
            p.activity_actual as "activityActual",
+           p.activity_assigned as "activityAssigned",
            p.total_score_bp as "totalScoreBp",
            p.rating,
            p.untargeted,
