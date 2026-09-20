@@ -11,6 +11,8 @@ import {
   LEADS_PER_PAGE,
 } from "@/lib/services/sales-service";
 import { splitFilter, type LeadFilters } from "@/lib/lead-filters";
+import { viewFromParam } from "@/lib/lead-views";
+import { leadTileCounts } from "@/lib/services/lead-views-service";
 import {
   appointmentQueue,
   canLead,
@@ -84,7 +86,21 @@ export async function Body({
   await requireModule(user.id, `${workspace}.leads`);
 
   const params = await searchParams;
-  const showArchived = params.view === "archived";
+  /*
+   * §8.4 — ONE SCREEN, SEVERAL VIEWS, AND `archived` WAS ALREADY ONE OF THEM.
+   *
+   * The parameter is not new: `?view=archived` has been the way to the filed
+   * book since the list shipped, which is exactly why the rest of §8.4's views
+   * are spelled onto the same parameter rather than given one of their own.
+   * Two parameters saying which list this is would be two answers the first
+   * time somebody sent a link carrying both.
+   *
+   * `viewFromParam` reads anything it does not recognise as the whole book: a
+   * query string is a thing anybody can write, and a screen that refuses to
+   * draw over a typo is worse than one that shows them everything.
+   */
+  const view = viewFromParam(params.view);
+  const showArchived = view === "archived";
 
   const filters: LeadFilters = {
     /* Capped on the way in. A search box is a text field on a URL anybody can
@@ -102,11 +118,22 @@ export async function Body({
   };
 
   const day = await today();
-  const [page, config, team, archivedCount, verification, exceptions, appointments, options, viewer] =
-    await Promise.all([
+  const [
+    page,
+    config,
+    team,
+    archivedCount,
+    verification,
+    exceptions,
+    appointments,
+    options,
+    viewer,
+    tiles,
+  ] = await Promise.all([
       leadsPage(day, {
         archived: showArchived,
         filters,
+        view,
         page: Number(params.page) || 1,
         perPage: Number(params.per) || LEADS_PER_PAGE,
       }),
@@ -127,6 +154,20 @@ export async function Body({
        * screen, so §7 costs this page no round trip of its own.
        */
       vantageViewer(user),
+      /*
+       * §8.2's nine, counted in SQL over the SAME filters the table ran and
+       * deliberately not over the current view — `leadTileCounts` carries the
+       * argument. It rides in this `Promise.all`, so a strip that recounts on
+       * every filter change costs the screen no round trip of its own.
+       *
+       * On the archived book it is not asked at all. Every tile is a cut of
+       * the WORKING list — "owed today" over leads somebody filed away is a
+       * sentence about nothing — and nine zeroes above an archive would read
+       * as a strip that had failed to load.
+       */
+      showArchived
+        ? null
+        : leadTileCounts(day, { archived: false, filters }),
     ]);
 
   return (
@@ -151,6 +192,8 @@ export async function Body({
         health: splitFilter(filters.health),
       }}
       options={options}
+      view={view}
+      tiles={tiles}
       showArchived={showArchived}
       archivedCount={archivedCount}
       staleDays={config["mbos.leads.staleDays"]}

@@ -41,6 +41,7 @@ import {
   onlyMine,
 } from "@/lib/services/sales-service";
 import type { LeadFilters } from "@/lib/lead-filters";
+import type { LeadView } from "@/lib/lead-views";
 import { today } from "@/lib/recompute";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
@@ -1719,6 +1720,11 @@ export async function reassignLead(input: {
 export async function exportLeadRows(input: {
   archived?: boolean;
   filters?: LeadFilters;
+  /* §8.4 — WHICH VIEW THE BUTTON WAS PRESSED IN. A file downloaded from
+     Overdue that quietly held the whole book is worse than no export: it is
+     the capped-list mistake in reverse, and the person who sends it on has no
+     way of knowing. The name is resolved server-side by `leadsPage`. */
+  view?: LeadView;
 }): Promise<Result<{ rows: Array<Array<string | number>> }>> {
   try {
     await requireSales();
@@ -1726,12 +1732,14 @@ export async function exportLeadRows(input: {
     const first = await leadsPage(day, {
       archived: input.archived,
       filters: input.filters,
+      view: input.view,
       page: 1,
       perPage: 1,
     });
     const all = await leadsPage(day, {
       archived: input.archived,
       filters: input.filters,
+      view: input.view,
       page: 1,
       // The cap is `leadsPage`'s own, so a book that outgrows it is cut in one
       // place rather than two — and the count beside the button is the total,
@@ -1981,12 +1989,21 @@ function bulkMessage(outcome: BulkOutcome, verb: string): string {
 export async function leadIdsForSelection(input: {
   archived?: boolean;
   filters?: LeadFilters;
+  /* The view is part of what the screen is showing, so "Select everything"
+     has to mean everything on THIS list. Without it the count on the button
+     and the set the button selects are two different numbers, and the one
+     people trust is the one on the button. */
+  view?: LeadView;
 }): Promise<Result<{ ids: string[]; capped: boolean }>> {
   try {
     await requireSales();
     const day = await today();
     return ok(
-      await leadIdsMatching(day, { archived: input.archived, filters: input.filters }),
+      await leadIdsMatching(day, {
+        archived: input.archived,
+        filters: input.filters,
+        view: input.view,
+      }),
     );
   } catch (e) {
     return fromThrown(e);

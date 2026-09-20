@@ -24,7 +24,16 @@ import {
 import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
 import { healthView } from "@/lib/customer-health";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { cx } from "@/components/ui/primitives";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
+import {
+  VIEW_CHIPS,
+  VIEW_TEXT,
+  retiredLadderNote,
+  type LeadTileId,
+  type LeadView,
+} from "@/lib/lead-views";
+import { TileStrip } from "@/components/leads/tile-strip";
 import {
   AGE_BUCKETS,
   HEALTH_BUCKETS,
@@ -140,6 +149,8 @@ export function LeadsScreen({
   stale,
   filters,
   options,
+  view,
+  tiles,
   showArchived,
   archivedCount,
   staleDays,
@@ -173,6 +184,26 @@ export function LeadsScreen({
     sources: Array<FilterOption & { count: number }>;
     stages: Array<FilterOption & { count: number }>;
   };
+  /**
+   * §8.4 — WHICH CUT OF THE BOOK THIS IS, off the URL.
+   *
+   * One screen parameterised by a view rather than five screens: All Leads, My
+   * Leads, Today's Actions, Overdue and the Distributors & Third-Party
+   * register are one table, one filter bar, one pager and one set of row
+   * actions, and the specification says so in as many words. Five copies of
+   * this file would be five places to add a ninth filter to.
+   */
+  view: LeadView;
+  /**
+   * §8.2's nine, counted in SQL over the filtered set — null on the archived
+   * book, where a cut of the working list means nothing.
+   *
+   * It is a COUNT PER TILE and not a list of tiles, because what a tile IS
+   * lives in `lead-views.ts` where the tone and the destination carry their
+   * own reasoning. A service handing down labels would be a second place to
+   * reword one.
+   */
+  tiles: Record<LeadTileId, number> | null;
   showArchived: boolean;
   archivedCount: number;
   staleDays: number;
@@ -237,6 +268,42 @@ export function LeadsScreen({
       router.push(`?${next.toString()}`, { scroll: false });
     },
     [router, search],
+  );
+
+  /*
+   * A TILE'S DESTINATION, AND IT ADDS RATHER THAN REPLACES.
+   *
+   * The whole point of the strip recounting against the filters is that the
+   * tiles are a cut OF WHAT IS IN FRONT OF YOU. A href built from scratch
+   * would throw away the search somebody typed the moment they pressed one,
+   * and the number on the tile — which was counted with that search applied —
+   * would be right about a list they can no longer reach.
+   *
+   * `view=all` is written as the ABSENCE of the parameter rather than as the
+   * word, so the whole book keeps the address it has always had and a link
+   * somebody pasted last year still opens the same screen. The page is
+   * dropped for the reason `navigate` drops it: page 7 of a list just narrowed
+   * to eleven rows is an empty table that reads as a broken filter.
+   */
+  const hrefFor = React.useCallback(
+    (params: Record<string, string>) => {
+      const next = new URLSearchParams(search.toString());
+      /* A tile carrying `stage` must not leave a different `view` standing
+         over it, and a tile carrying `view` must not leave the previous view's
+         `stage` — either way the reader would land somewhere neither tile
+         counted. The two parameters the tiles write are cleared together and
+         then set from the tile alone. */
+      next.delete("view");
+      next.delete("stage");
+      next.delete("page");
+      for (const [k, v] of Object.entries(params)) {
+        if (v === "all") next.delete(k);
+        else next.set(k, v);
+      }
+      const q = next.toString();
+      return q ? `?${q}` : leadHref(workspace, "leads");
+    },
+    [search, workspace],
   );
 
   /*
@@ -353,6 +420,10 @@ export function LeadsScreen({
   async function selectEverything() {
     const result = await leadIdsForSelection({
       archived: showArchived,
+      /* "Select everything" means everything on THIS list. Without the view
+         the button's count and the set it selects are two different numbers,
+         and the one people trust is the one on the button. */
+      view,
       filters: {
         ...Object.fromEntries(FILTER_COLUMNS.map((c) => [c, filters[c].join(",") || undefined])),
         search: urlQ || undefined,
@@ -475,13 +546,18 @@ export function LeadsScreen({
 
   return (
     <div className="p-6">
+      {/*
+        THE HEADING CHANGES WITH THE VIEW, and it has to.
+        A page still calling itself "Leads" over a table of eleven overdue
+        promises is one somebody reads as the whole book having collapsed —
+        and unlike the eight filters, a view is not something the reader can
+        see ticked anywhere. The words are in `lead-views.ts` beside the view
+        itself, so the sentence that admits what is being shown cannot drift
+        from the clause that shows it.
+      */}
       <ScreenHeader
-        title={showArchived ? "Archived leads" : "Leads"}
-        subtitle={
-          showArchived
-            ? "Filed out of the way, newest first. Nothing here is deleted — restore one to put it back on the working list."
-            : "Prospects each salesman is working. Anything untouched for 30 days is tagged stale."
-        }
+        title={VIEW_TEXT[view].title}
+        subtitle={VIEW_TEXT[view].subtitle}
         actions={
           showArchived ? (
             <Link
@@ -501,6 +577,11 @@ export function LeadsScreen({
                 fetchRows={async () => {
                   const res = await exportLeadRows({
                     archived: showArchived,
+                    /* The file holds the VIEW as well as the filters. A CSV
+                       downloaded from Overdue that quietly carried the whole
+                       book is the capped-list mistake in reverse, and whoever
+                       it is forwarded to has no way of noticing. */
+                    view,
                     filters: {
                       ...Object.fromEntries(
                         FILTER_COLUMNS.map((c) => [c, filters[c].join(",") || undefined]),
@@ -531,13 +612,29 @@ export function LeadsScreen({
         }
       />
 
+      {/*
+        THE VIEW CHIPS AND THE STRIP SIT ABOVE THE EMPTY STATE, deliberately.
+        An empty Overdue list with no way back to the whole book is a dead end
+        — the reader has to guess that the URL is what put them there — and it
+        is the one moment the strip is worth most, because every other tile on
+        it still carries a number. Drawn inside the `leads.length` branch they
+        would vanish exactly when they are needed.
+      */}
+      {!showArchived ? (
+        <>
+          <ViewChips view={view} hrefFor={hrefFor} />
+          {tiles ? <TileStrip counts={tiles} view={view} hrefFor={hrefFor} /> : null}
+          {view === "register" ? <RegisterNote /> : null}
+        </>
+      ) : null}
+
       {leads.length === 0 ? (
         <Empty
-          title={showArchived ? "Nothing archived" : "No leads"}
+          title={showArchived ? "Nothing archived" : emptyTitleFor(view)}
           body={
             showArchived
               ? "Nobody has filed a lead away — archiving is a manager's own call, on top of what the nightly sweep already does for anything left untouched."
-              : "A lead is a shop that is not on the book yet. They are raised on the handset, and the duplicate check reads customers as well as leads — the number somebody is about to type is quite often already an account."
+              : emptyBodyFor(view)
           }
         />
       ) : (
@@ -1349,6 +1446,123 @@ function RoleReadings({ lead, viewer }: { lead: LeadRow; viewer: VantageViewer }
       </div>
     </div>
   );
+}
+
+/**
+ * §8.4's views as a chip strip, which is the one control that says this screen
+ * has more than one list in it.
+ *
+ * Chips rather than tabs, and above the filter bar rather than in it, because
+ * a view changes what the list IS while a filter narrows what it already is —
+ * the same argument the handset's Everything / Customers / Leads chips carry.
+ * A view hidden inside the filter menu is one people misread as a filter they
+ * forgot to clear.
+ *
+ * Every chip is a plain link, so a view survives a bookmark, a refresh and a
+ * link pasted into WhatsApp. `hrefFor` keeps the filters, which is the whole
+ * point: "everything Rakesh has, and of those the overdue ones" is two clicks
+ * and neither undoes the other.
+ */
+function ViewChips({
+  view,
+  hrefFor,
+}: {
+  view: LeadView;
+  hrefFor: (params: Record<string, string>) => string;
+}) {
+  return (
+    <nav aria-label="Lead views" className="mb-4 flex flex-wrap items-center gap-1.5">
+      {VIEW_CHIPS.map((v) => {
+        const active = v === view;
+        return (
+          <Link
+            key={v}
+            href={hrefFor({ view: v })}
+            aria-current={active ? "page" : undefined}
+            title={VIEW_TEXT[v].subtitle}
+            className={cx(
+              "inline-flex h-8 items-center rounded-[4px] border px-3 text-[13px] no-underline hover:no-underline",
+              active
+                ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                : "border-line bg-surface text-body hover:bg-canvas",
+            )}
+          >
+            {VIEW_TEXT[v].title}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+/**
+ * THE REGISTER SAYS THAT HALF OF IT IS NO LONGER BEING FED.
+ *
+ * A list headed "Distributors & third-party" with a distributor column and no
+ * sentence reads as a book somebody is still filling, and the leads on that
+ * ladder read as work in progress — which is exactly what they are not. Mahek
+ * withdrew the distributor track because nobody in the building had the
+ * authority to complete its appointment approval, so the leads on it were
+ * parked half way up a ladder with no end, indistinguishable on every screen
+ * from leads somebody was working. That is the failure this paragraph exists
+ * to stop happening a second time on the one screen that gathers them.
+ *
+ * The words come from `retiredLadderNote`, which reads the `retired` flag on
+ * `SALES_TYPES` rather than asserting anything: deleting that single line
+ * turns the ladder back on everywhere at once, and this sentence off with it.
+ * A note typed into this file would go on telling people the track was closed
+ * for as long as it took somebody to notice.
+ */
+function RegisterNote() {
+  const note = retiredLadderNote();
+  if (!note) return null;
+  return (
+    <div className="mb-4 rounded-[6px] border-l-[3px] border-line-strong bg-canvas px-4 py-3">
+      <div className="text-sm font-semibold text-ink">The distributor ladder is closed</div>
+      <div className="mt-0.5 text-[13px] text-pretty text-body">{note}</div>
+    </div>
+  );
+}
+
+/**
+ * AN EMPTY LIST HAS TO SAY WHICH KIND OF EMPTY IT IS.
+ *
+ * "No leads" under a view is a sentence about the whole book, and on Overdue
+ * it is the opposite of the truth — an empty Overdue list is the rule working,
+ * and drawing it as an absence of data is how somebody concludes the screen is
+ * broken and stops opening it. The same distinction the Overdue screen already
+ * makes with its answered count, made here with words because this view has no
+ * second figure to make it with.
+ */
+function emptyTitleFor(view: LeadView): string {
+  switch (view) {
+    case "mine": return "Nothing with your name on it";
+    case "today": return "Nothing owed today";
+    case "overdue": return "Nothing overdue";
+    case "expected": return "Nobody has committed to an order";
+    case "lost30": return "Nothing lost this month";
+    case "register": return "Nobody on this register";
+    default: return "No leads";
+  }
+}
+
+function emptyBodyFor(view: LeadView): string {
+  switch (view) {
+    case "mine":
+      return "No lead here carries your seat — not as its owner, not as its lead manager and not as its back office person. That is a fact about the seats rather than about your work: the For you column says what a lead wants from whoever is reading it.";
+    case "today":
+      return "No next action falls today and no parked lead comes back today, under these filters. §24 is the rule that stops a lead sitting with nothing owed by anybody — an empty day here is that rule working rather than a screen with nothing in it.";
+    case "overdue":
+      return "Every promise on this book has either been kept or is still in the future. This is the one list that is supposed to empty itself.";
+    case "expected":
+      return "§3.4 counts a commitment as a day AND a size. A day on its own is a follow-up somebody has to make and is deliberately not counted here — so an empty list can mean nobody was asked how much, rather than nobody promised anything.";
+    case "lost30":
+      return "Nothing has been closed as lost in the last thirty days. A lead with no recorded day at the rung it is on is left out rather than dated from a guess.";
+    case "register":
+      return "No lead is marked as a distributor or as a third-party shop. The third-party mark is what says the goods go here and somebody else holds the invoice; nobody has made that call on this book yet.";
+    default:
+      return "A lead is a shop that is not on the book yet. They are raised on the handset, and the duplicate check reads customers as well as leads — the number somebody is about to type is quite often already an account.";
+  }
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   type LeadFilters,
 } from "../lead-filters";
 import { stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
+import type { LeadView } from "../lead-views";
 import { orderCountsSql } from "../order-status";
 import { confirmedCommitmentSql } from "../lead-commitment";
 import type { LeadPriority } from "../lead-priority";
@@ -1486,6 +1487,27 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
  * that drifts is invisible, because both screens look right on their own and
  * only disagree about a count nobody is comparing.
  */
+/**
+ * `and (<the view>)`, or nothing at all.
+ *
+ * One spelling, read by the page of rows, by the counts around it and by the
+ * cross-page selection, so none of the three can be looking at a different
+ * list. It is the conjunction that lives here and the predicate that lives in
+ * `lead-views-service.ts`, because that file's own clause is spliced into a
+ * `count(*) filter (where …)` as well and a fragment carrying its own `and`
+ * could only be used in one of the two shapes.
+ *
+ * The import is dynamic because the view service reads this file for
+ * `leadFilterClause`, `leadsVisible` and `managerScope` — a static edge back
+ * would be a cycle, and a cycle in a module two dozen screens import is the
+ * kind that only shows up as an undefined export at runtime.
+ */
+async function viewNarrowing(view: LeadView | undefined, day: string) {
+  if (!view || view === "all" || view === "archived") return sql``;
+  const { leadViewClause } = await import("./lead-views-service");
+  return sql`and (${await leadViewClause(view, day)})`;
+}
+
 export function leadFilterClause(
   filters: LeadFilters,
   day: string,
@@ -1688,6 +1710,18 @@ export async function leadsPage(
   options: {
     archived?: boolean;
     filters?: LeadFilters;
+    /*
+     * §8.4 — WHICH VIEW OF THE BOOK, and it is a NAME rather than a clause.
+     *
+     * The caller says "overdue" and this resolves it; handing a `SQL` in would
+     * let a screen invent a narrowing the summary strip above it knows nothing
+     * about, and the tile's number and the list behind it would stop being one
+     * clause — which is the whole thing `lead-views-service.ts` exists to
+     * guarantee. It is also what keeps the export and the cross-page selection
+     * honest: they take the same name and resolve it through the same
+     * function, so a file downloaded from a view holds the view.
+     */
+    view?: LeadView;
     page?: number;
     perPage?: number;
   } = {},
@@ -1702,7 +1736,8 @@ export async function leadsPage(
   const where = sql`
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
-       ${leadsVisible(scope)}`;
+       ${leadsVisible(scope)}
+       ${await viewNarrowing(options.view, day)}`;
   const narrowed = leadFilterClause(filters, day, {
     atRiskBelow: config["mbos.health.atRiskBelow"],
     strongAtOrAbove: config["mbos.health.strongAtOrAbove"],
@@ -1826,7 +1861,7 @@ export const LEAD_BULK_CAP = 200;
  */
 export async function leadIdsMatching(
   day: string,
-  options: { archived?: boolean; filters?: LeadFilters; cap?: number } = {},
+  options: { archived?: boolean; filters?: LeadFilters; view?: LeadView; cap?: number } = {},
 ): Promise<{ ids: string[]; capped: boolean }> {
   const scope = await managerScope();
   const { getConfig } = await import("../config/store");
@@ -1840,6 +1875,7 @@ export async function leadIdsMatching(
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
        ${leadsVisible(scope)}
+       ${await viewNarrowing(options.view, day)}
        ${leadFilterClause(options.filters ?? {}, day, {
          atRiskBelow: config["mbos.health.atRiskBelow"],
          strongAtOrAbove: config["mbos.health.strongAtOrAbove"],

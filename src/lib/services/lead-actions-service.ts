@@ -2,7 +2,7 @@ import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { asDate } from "../business-date";
-import { TERMINAL_STAGES } from "../engines/lead-ladder";
+import { STILL_WORKING, dueTodayWindow, overdueWindow } from "../lead-action-window";
 import { COMMUNICATION_ACTIONS, type LeadSalesType, type LeadStage } from "../lead-labels";
 import { MBOS_EVENT } from "../timeline";
 import { leadsVisible, managerScope } from "./sales-service";
@@ -30,30 +30,6 @@ import { leadsVisible, managerScope } from "./sales-service";
  * the screen and enforced by `setLeadNextAction`, because a rule that lived in
  * a read would be a second opinion about what the write already refuses.
  * ------------------------------------------------------------------------- */
-
-/**
- * The rungs that are still the funnel's work, built from the engine rather
- * than typed out.
- *
- * `lead-console-service.ts` spells the same four stage names into a raw
- * fragment beside its own lists, and that copy is not wrong — it is the
- * authority on what a WORKLIST is, written before the engine exported its
- * terminal set. This one is derived, because a fifth terminal rung added to
- * the ladder has to leave every queue in the product on the same day, and a
- * hand-typed list leaves exactly one of them behind.
- */
-const STILL_WORKING = sql`
-  c.lead_stage is not null
-    and c.lead_archived = false
-    and c.lead_stage::text not in (${sql.join(
-      TERMINAL_STAGES.map((s) => sql`${s}`),
-      sql`, `,
-    )})
-`;
-/* `::text` on the left rather than four enum literals on the right: the
-   parameters go down untyped, and comparing an enum against an untyped
-   parameter is a resolution Postgres usually gets right and is not obliged to.
-   The cast costs nothing here — it is a comparison, not a date. */
 
 /* ══════════════════════════════════════════════ §24 the four answers, listed */
 
@@ -344,42 +320,28 @@ async function nextActions(
  * today" for the person who has to. One lead on two lists is right where the
  * two lists are two questions.
  *
- * Written as one function taking the comparison rather than as two fragments,
- * because the two windows differ by one operator and a second hand-typed copy
- * is how the due list and the overdue list come to disagree about which day a
- * park belongs to. `::date` on both sides throughout: these are stored DATES
- * and nothing here casts a timestamp, so there is no midnight to name.
+ * The two windows themselves live in `lib/lead-action-window.ts` — a leaf
+ * module below this one — because the leads list's summary strip counts the
+ * same two populations and offers a view of each. A strip whose figures were
+ * derived beside the screens they open is the drift this codebase argues
+ * against everywhere else: the tile says eleven, the screen lists nine, and
+ * nothing on either says which is wrong.
  */
-function parkComesBack(cmp: SQL): SQL {
-  return sql`(c.lead_stage = 'on_hold' and c.lead_hold_resume_date ${cmp})`;
-}
 
 /**
  * What is owed TODAY.
  *
- * `today` is the working day — `today()` in `lib/recompute.ts`, which applies
+ * `day` is the working day — `today()` in `lib/recompute.ts`, which applies
  * the configured day boundary in Asia/Kolkata — and it arrives as an argument
  * for the same reason every engine takes one: a service that read the clock
  * could not be asked what yesterday looked like, and a component that read it
  * would be reading it during a render.
- *
- * The date comparison is date-to-date throughout. Nothing here casts a stored
- * timestamp, so there is no midnight to name — the moment one of these columns
- * becomes a timestamp, `::timestamp at time zone ${"Asia/Kolkata"}` is the
- * spelling, and the grep tests will say so before anybody deploys it.
  */
 export async function nextActionsDue(
   day: string,
   opts: { ownerId?: string; limit?: number } = {},
 ): Promise<NextActionsPage> {
-  return nextActions(
-    day,
-    sql`(
-      c.lead_next_action_date = ${day}::date
-      or ${parkComesBack(sql`= ${day}::date`)}
-    )`,
-    opts,
-  );
+  return nextActions(day, dueTodayWindow(day), opts);
 }
 
 /**
@@ -389,24 +351,13 @@ export async function nextActionsDue(
  * it is what keeps this screen meaningful: a lead whose call was made and whose
  * answer was written down has been worked, whatever its date says, and listing
  * it here would fill the one screen that is supposed to empty itself with rows
- * nobody can act on.
+ * nobody can act on. The window itself says so in its own file.
  */
 export async function nextActionsOverdue(
   day: string,
   opts: { ownerId?: string; limit?: number } = {},
 ): Promise<NextActionsPage> {
-  return nextActions(
-    day,
-    /* A park whose day has GONE is late in a way a promise is not: nobody has
-       to have recorded an outcome for it to still be waiting, because what was
-       promised was not a call — it was that somebody would look again. So the
-       `outcome is null` half deliberately does not apply to it. */
-    sql`(
-      (c.lead_next_action_date < ${day}::date and c.lead_next_action_outcome is null)
-      or ${parkComesBack(sql`< ${day}::date`)}
-    )`,
-    opts,
-  );
+  return nextActions(day, overdueWindow(day), opts);
 }
 
 /**
