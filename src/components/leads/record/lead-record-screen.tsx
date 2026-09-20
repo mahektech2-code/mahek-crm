@@ -67,6 +67,8 @@ import { AssignLeadManager, type LeadManagerCandidate } from "./assign-lead-mana
 import { NextActionBand } from "./next-action-band";
 import { RoleReadings } from "./where-it-stands";
 import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
+import type { LeadGateActionFacts } from "@/lib/engines/lead-gate-action";
+import { MoveForward } from "./move-forward";
 import type { VantageSeats, VantageViewer } from "@/lib/lead-vantage";
 
 /**
@@ -292,6 +294,7 @@ export function LeadRecordScreen({
   overrideAllowed,
   viewer,
   actionFacts,
+  gateFacts,
   nowMs,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
@@ -422,6 +425,13 @@ export function LeadRecordScreen({
    * home, and a screen re-reading either would be the second copy that drifts.
    */
   actionFacts: LeadActionFacts;
+  /**
+   * §5 — the five facts `gateAction` reads, to answer which control this
+   * rung's work is done through. Two of them are §7's; `mustDecide` is
+   * `mustDecideSuspect`'s single answer, shared with the banner above the
+   * record so the cap cannot be read two ways on one page.
+   */
+  gateFacts: LeadGateActionFacts;
   /** The clock, read once on the server. A client may not read it in render. */
   nowMs: number;
 }) {
@@ -728,6 +738,24 @@ export function LeadRecordScreen({
 
           {here === "overview" ? (
             <>
+              {/* §8.5 — the one place "what do I do next on this lead"
+                  collapses to a single verb. It sits FIRST on the tab, above
+                  the seats and the visits, because those are who and what
+                  happened and this is what to do. The rail beside it still
+                  answers the other half — which rung, and what it is waiting
+                  on — and both read the same verdict, so neither can promise a
+                  move the other refuses. */}
+              <MoveForward
+                workspace={workspace}
+                base={base}
+                customerId={record.customerId}
+                facts={gateFacts}
+                verdict={nextVerdict}
+                nextRung={nextRung}
+                canWork={canWork}
+                canOverride={canOverride}
+                overrideAllowed={overrideAllowed}
+              />
               <SeatsPanel record={record} leadManagers={leadManagers} canWork={canWork} />
               <VisitsPanel visits={visits} total={counts.visits} record={record} />
               <HandoverPanel

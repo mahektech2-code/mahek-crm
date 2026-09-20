@@ -40,6 +40,8 @@ import { LeadRecordScreen } from "@/components/leads/record/lead-record-screen";
 import { vantageViewer } from "@/lib/services/lead-vantage-service";
 import { isConfirmedCommitment } from "@/lib/lead-commitment";
 import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
+import type { LeadGateActionFacts } from "@/lib/engines/lead-gate-action";
+import type { SampleState } from "@/lib/lead-labels";
 
 
 /**
@@ -226,6 +228,26 @@ export async function Body({
     sampleAwaitingDispatch: samples.some((s) => s.state === "approved"),
   };
 
+  /*
+   * §5's facts, which are §7's three plus two.
+   *
+   * `mustDecideSuspect` is asked ONCE and its answer used twice — by the
+   * banner above the record and by the card's verb — because counting visits
+   * against a cap in two places is two places for the cap to be read
+   * differently. The sample STATE rather than its verdict: which of the three
+   * sub-states a parcel is in decides who is being waited on, and what the
+   * customer thought of it is the GATE's question, asked one file over.
+   */
+  const mustDecide = mustDecideSuspect(gateInput, config["leads.suspectMaxVisits"]);
+  const gateFacts: LeadGateActionFacts = {
+    stage: record.stage,
+    salesType: record.salesType,
+    mustDecide,
+    hasCommitment: actionFacts.hasCommitment,
+    hasOrder: actionFacts.hasOrder,
+    sampleState: (record.sample?.state as SampleState | undefined) ?? null,
+  };
+
   return (
     <LeadRecordScreen workspace={workspace}
       record={record}
@@ -242,7 +264,7 @@ export async function Body({
       nextVerdict={next}
       nextRung={next.noNextRung ? null : next.to}
       park={park}
-      mustDecide={mustDecideSuspect(gateInput, config["leads.suspectMaxVisits"])}
+      mustDecide={mustDecide}
       transitions={transitions}
       calls={calls}
       timeline={timeline}
@@ -317,6 +339,7 @@ export async function Body({
          because the hats are a read and the screen is a client component. */
       viewer={await vantageViewer(user)}
       actionFacts={actionFacts}
+      gateFacts={gateFacts}
       nowMs={nowMs()}
     />
   );
