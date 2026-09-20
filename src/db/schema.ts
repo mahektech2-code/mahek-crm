@@ -7561,6 +7561,39 @@ export const mbosLeadValidations = pgTable(
     /** The last question, and the one that decides whether to send a sample. */
     genuineInterest: text("genuine_interest"),
 
+    /* ---- §5.2's sections C and D, which had nowhere to land at all ----
+     *
+     * `0156`. Of the PRD's five objections this row carried three — price,
+     * quality and dispatch — so a shop perfectly happy with the price and stuck
+     * on the credit terms said so into `salesman_feedback`, a free-text
+     * impression, where it is a sentence and not something anybody can count.
+     * "How many did we lose on credit this quarter" is exactly the question §8
+     * exists to produce and `ilike '%credit%'` is not an answer to it.
+     *
+     * Section D was missing outright, which is the worse of the two: the one
+     * call that authorises a sample could not record whether the SHOP said it
+     * was ready for a trial. §5.4 turns on that answer, and the call it is
+     * meant to inform was handing it on in prose or not at all.
+     *
+     * TEXT AND NOT BOOLEAN, like the three objections above them and for the
+     * schema's own stated reason: a tick cannot hold "ready once the season
+     * turns", and that clause is the whole of what the next call needs. It is
+     * also what keeps the distinction this table's other columns keep — NULL is
+     * nobody asked, and a filled box is asked. `false` would have collapsed
+     * "they have no credit problem" into "we never got to it", which are
+     * different facts about a call and read as the same lead.
+     */
+    creditConcern: text("credit_concern"),
+    /** What holds them to whoever supplies them now — a rebate, a relationship,
+     *  stock on the shelf. Distinct from `confirmed_competitor`, which is WHOSE
+     *  product it is: knowing the incumbent's name says nothing about how hard
+     *  they are to displace. */
+    competitorConcern: text("competitor_concern"),
+    /** §5.4 reads this one. A sample goes out on the customer's own word. */
+    readyForTrial: text("ready_for_trial"),
+    readyForCommercial: text("ready_for_commercial"),
+    readyForOrder: text("ready_for_order"),
+
     /**
      * `pending` is a call that was made and left undecided, which is a real
      * state rather than a missing value — the caller reached somebody, wrote

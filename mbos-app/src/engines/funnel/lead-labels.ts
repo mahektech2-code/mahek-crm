@@ -611,20 +611,132 @@ export function findingLabel(id: string): string {
   return VERIFICATION_FINDINGS.find((f) => f.id === id)?.label ?? id;
 }
 
-export const VERIFICATION_QUESTIONS: readonly { id: string; ask: string }[] = [
-  { id: "visited", ask: "Did our salesman actually visit?" },
-  { id: "explained", ask: "Did he explain Mahek properly?" },
-  { id: "understood", ask: "Did you understand what the product does?" },
-  { id: "current_product", ask: "What are you using at the moment?" },
-  { id: "competitor", ask: "Whose product is it?" },
-  { id: "monthly_requirement", ask: "How much do you use in a month?" },
-  { id: "potential", ask: "Could that grow?" },
-  { id: "impression", ask: "How did you find our man?" },
-  { id: "price_issue", ask: "Any concern about price?" },
-  { id: "quality_issue", ask: "Any concern about quality?" },
-  { id: "service_issue", ask: "Any concern about delivery or service?" },
-  { id: "genuine_interest", ask: "Are you genuinely interested in trying it?" },
+/**
+ * §5.2's FOUR SECTIONS, which is the shape the call is actually conducted in.
+ *
+ * The questions used to be a flat list of twelve and the two forms cut it with
+ * `slice(0, 2)` — the first two are about the salesman, the rest about the
+ * sale. That held while the list was twelve in that order and stopped holding
+ * the moment a question was appended: "How did you find our man?" is the third
+ * salesman question and sits at index seven, so the slice had already been
+ * drawing it under the wrong heading. A section is a PROPERTY of the question
+ * rather than a position in the array, because the array's order is what the
+ * conversation takes and the heading is what the question is about.
+ *
+ * The headings are here and not typed into a screen for the reason every list
+ * in this file is: the modal and the full page both draw them, and the half
+ * that drifts is always the half somebody reads.
+ */
+export type VerificationSection = "salesman" | "opportunity" | "objections" | "readiness";
+
+export const VERIFICATION_SECTIONS: readonly {
+  id: VerificationSection;
+  title: string;
+  /** Why this section exists, in the one sentence a manager needs. */
+  says: string;
+}[] = [
+  {
+    id: "salesman",
+    title: "About our man — this is why the call exists",
+    says:
+      "No amount of GPS proves that Mahek was explained properly. These are the questions a check on the salesman's own work cannot be performed by the salesman.",
+  },
+  {
+    id: "opportunity",
+    title: "About the opportunity",
+    says: "Whether the requirement the salesman reported is real, and whose product it would replace.",
+  },
+  {
+    id: "objections",
+    title: "What is in the way",
+    says:
+      "Every one of these is a separate answer. “Fine on price, the credit is the problem” is the sentence that decides what we offer next, and it is unreadable where the only place it can land is a free-text impression.",
+  },
+  {
+    id: "readiness",
+    title: "What they are ready for",
+    says:
+      "The half the call exists to hand on. §5.4 decides whether a sample goes out, and it decides it on whether the SHOP said it was ready for a trial — which this call had no box for at all.",
+  },
 ] as const;
+
+/**
+ * §5.2's questions, and FIVE OF THEM ARE NEW.
+ *
+ * Sections A and B were here from the day §8 shipped. Of section C — the
+ * objections — only price, quality and service were, so a shop that is happy
+ * with the price and stuck on the credit terms had nowhere to say so but the
+ * free-text impression, where it is a sentence rather than something anybody
+ * can count. `credit_concern` and `competitor_concern` are the PRD's other two.
+ * Section D was missing entirely, which is the more serious of the two gaps:
+ * the one call that authorises a sample could not record whether the customer
+ * said they were ready for one.
+ *
+ * `quality_issue` is NOT in the PRD's five and it stays. It is a real objection
+ * — a shop that has been burned by a thinner before says so on this call and
+ * nowhere else — and dropping a question that has answers stored against it to
+ * match a list of five would delete the answers rather than tidy the form.
+ * Six objections, of which five are the PRD's.
+ *
+ * THE PRD CALLS C AND D MULTI-SELECTS AND THESE ARE TEXT, deliberately. The
+ * three objections already here are text columns on `mbos_lead_validations`,
+ * for the reason the schema states beside them: "he came but only for five
+ * minutes" is the answer that matters and a tick cannot hold it. Storing the
+ * two new objections as booleans beside three that are text would be one
+ * question answered two ways on one row. What the multi-select actually buys is
+ * that several may be true at once, and a column each is the stronger version
+ * of that — "how many said credit was the problem" is `credit_concern is not
+ * null`, countable, with the shop's own words beside the count. A ticked box
+ * gives the count and nothing else.
+ *
+ * And the distinction that has to survive: a null column is nobody asked, and
+ * an answered one is asked. "No concern on price" is a real answer that goes in
+ * the box, exactly as the findings panel stores "Could not verify" as words
+ * rather than as a blank. A boolean would have collapsed the two, because
+ * `false` cannot tell "they have no credit problem" from "we never got to it".
+ */
+export const VERIFICATION_QUESTIONS: readonly {
+  id: string;
+  ask: string;
+  section: VerificationSection;
+}[] = [
+  { id: "visited", ask: "Did our salesman actually visit?", section: "salesman" },
+  { id: "explained", ask: "Did he explain Mahek properly?", section: "salesman" },
+  { id: "impression", ask: "How did you find our man?", section: "salesman" },
+  { id: "understood", ask: "Did you understand what the product does?", section: "opportunity" },
+  { id: "current_product", ask: "What are you using at the moment?", section: "opportunity" },
+  { id: "competitor", ask: "Whose product is it?", section: "opportunity" },
+  { id: "monthly_requirement", ask: "How much do you use in a month?", section: "opportunity" },
+  { id: "potential", ask: "Could that grow?", section: "opportunity" },
+  {
+    id: "genuine_interest",
+    ask: "Are you genuinely interested in trying it?",
+    section: "opportunity",
+  },
+  { id: "price_issue", ask: "Any concern about price?", section: "objections" },
+  { id: "quality_issue", ask: "Any concern about quality?", section: "objections" },
+  { id: "service_issue", ask: "Any concern about delivery or service?", section: "objections" },
+  { id: "credit_concern", ask: "Any concern about the credit terms?", section: "objections" },
+  {
+    id: "competitor_concern",
+    ask: "Anything holding them to whoever supplies them now?",
+    section: "objections",
+  },
+  { id: "ready_for_trial", ask: "Are they ready to take a trial?", section: "readiness" },
+  {
+    id: "ready_for_commercial",
+    ask: "Are they ready to talk rates and terms?",
+    section: "readiness",
+  },
+  { id: "ready_for_order", ask: "Are they ready to talk about an order?", section: "readiness" },
+] as const;
+
+/** The questions of one section, in the order they are asked. */
+export function questionsInSection(
+  section: VerificationSection,
+): readonly { id: string; ask: string; section: VerificationSection }[] {
+  return VERIFICATION_QUESTIONS.filter((q) => q.section === section);
+}
 
 /**
  * WHERE EACH ANSWER LANDS IN `mbos_lead_validations`.
@@ -668,6 +780,15 @@ export const VERIFICATION_COLUMNS: Readonly<Record<string, string>> = {
   quality_issue: "qualityFeedback",
   service_issue: "dispatchFeedback",
   genuine_interest: "genuineInterest",
+  /* §5.2's C and D, added by `0156`. A column each rather than an array, for
+     the argument beside `VERIFICATION_QUESTIONS` above: these sit next to
+     three objections that are already columns, and a row that answers one
+     question two ways is a row two screens will read differently. */
+  credit_concern: "creditConcern",
+  competitor_concern: "competitorConcern",
+  ready_for_trial: "readyForTrial",
+  ready_for_commercial: "readyForCommercial",
+  ready_for_order: "readyForOrder",
 };
 
 /**
@@ -773,6 +894,84 @@ export function verificationVerdictFor(
   if (outcome === "verified") return "confirmed";
   if (outcome === "not_qualified") return "not_qualified";
   return "pending";
+}
+
+/**
+ * §5.2's FOURTH RESULT, AND IT IS DERIVED RATHER THAN STORED.
+ *
+ * The PRD makes the call's result four-way, not three: a verification that
+ * survived the phone untouched and one where the manager corrected three of the
+ * salesman's figures are both "verified" today, and telling them apart is most
+ * of why the four-way split is asked for. "How many of our salesmen's reports
+ * stood up to the call" is the question, and it is unanswerable while both read
+ * back as one word.
+ *
+ * IT IS NOT A FOURTH `VERIFICATION_OUTCOMES` ENTRY, and that is the decision
+ * worth stating. The corrections are already stored and already countable, one
+ * row per contradicted field in `lead_verification_corrections`; a stored
+ * fourth outcome would be a SECOND statement of the same fact, written by a
+ * radio button a manager pressed, sitting beside the rows it claims to
+ * summarise and free to disagree with them. This codebase argues the same thing
+ * about a handover being outstanding and about a third party with no
+ * distributor: derive it, because the flag would be a cache with nothing
+ * rebuilding it and the only facts it could be rebuilt from are the rows
+ * underneath it.
+ *
+ * It is also not a JUDGEMENT, which is the other half. The three outcomes are
+ * things a manager decides on the call — did the visit happen, is the
+ * opportunity real. Whether he corrected anything is not a decision he makes,
+ * it is a count of what he did, and offering it as a radio would let somebody
+ * pick "verified with corrections" having recorded none, or pick plain
+ * "verified" having recorded four.
+ *
+ * WHERE IT IS COUNTED: the corrections table, `verdict = 'corrected'` grouped by
+ * `validation_id` — the index `lead_verification_corrections_verdict_idx`
+ * already serves it. A call with no row there is a clean verification. Anything
+ * reading a call back passes the count in here rather than deciding for itself
+ * what the threshold is.
+ */
+export type VerificationResult = VerificationOutcome | "verified_with_corrections";
+
+/**
+ * The four-way result, from the call read back and how many findings the shop
+ * contradicted.
+ *
+ * It takes `verificationVerdict`'s own tri-state rather than the raw column,
+ * because that is the shape every reader of a call already holds — the record
+ * page, `ManagerCall`, the qualification screen. Asking for the column here
+ * would mean each of them keeping a second copy of which word means which, and
+ * that mapping already exists one function up.
+ *
+ * `null` is a call that was made and left undecided, which reads as a
+ * follow-up: it closes nothing and opens nothing, which is precisely what a
+ * follow-up does.
+ *
+ * Only a VERIFIED call can carry the fourth word. A follow-up could not confirm
+ * the visit and a failed verification found no opportunity, and on neither of
+ * those does "and three figures were corrected" say anything about whether the
+ * report stood up — the report was never accepted in the first place. The
+ * corrections are still stored and still counted on both; what they do not do
+ * is rename the outcome.
+ */
+export function verificationResultOf(
+  verified: boolean | null,
+  correctedCount: number,
+): VerificationResult {
+  if (verified === false) return "not_qualified";
+  if (verified === null) return "follow_up";
+  return correctedCount > 0 ? "verified_with_corrections" : "verified";
+}
+
+/**
+ * The result's own words, for a row in a list and a pill on a record.
+ *
+ * The three that are also outcomes deliberately read back through
+ * `VERIFICATION_OUTCOMES`, so a label reworded there moves everywhere rather
+ * than in one of two places — the drift this file exists to prevent.
+ */
+export function verificationResultLabel(result: VerificationResult): string {
+  if (result === "verified_with_corrections") return "Verified with corrections";
+  return VERIFICATION_OUTCOMES.find((o) => o.code === result)?.label ?? result;
 }
 
 /* ------------------------------------------------- §16 the sample review */

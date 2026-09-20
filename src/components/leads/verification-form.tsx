@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { VERIFICATION_QUESTIONS } from "@/lib/lead-labels";
+import { VERIFICATION_SECTIONS, questionsInSection } from "@/lib/lead-labels";
 import { recordLeadValidationCall } from "@/lib/actions/leads";
 import { Button } from "@/components/console/parts";
 
@@ -29,9 +29,13 @@ import { Button } from "@/components/console/parts";
  * only the successes would leave a lead that has been rung three times looking
  * exactly like one nobody has rung at all.
  *
- * The first two questions are drawn apart from the other ten, because they are
- * about the SALESMAN rather than the sale and they are the reason the call
- * exists: no amount of GPS proves that Mahek was explained properly.
+ * **The sections come from the list, not from a slice.** The salesman's
+ * questions are drawn apart from the sale's because they are the reason the
+ * call exists — no amount of GPS proves that Mahek was explained properly — and
+ * this used to cut the array at index two to find them. "How did you find our
+ * man?" is the third of them and sat at index seven, so the heading was already
+ * wrong before §5.2's five new questions were appended under it. The section is
+ * a property of the question now; see `VERIFICATION_SECTIONS`.
  */
 export function VerificationForm({
   customerId,
@@ -96,11 +100,6 @@ export function VerificationForm({
     router.refresh();
   }
 
-  const [salesmanQs, customerQs] = [
-    VERIFICATION_QUESTIONS.slice(0, 2),
-    VERIFICATION_QUESTIONS.slice(2),
-  ];
-
   return (
     <Modal open={open} onClose={onClose} title="Verification call" width={720}>
       <div className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[13px]">
@@ -118,16 +117,13 @@ export function VerificationForm({
       </div>
 
       <div className="max-h-[46vh] overflow-y-auto pr-1">
-        <Section title="About our man — this is why the call exists">
-          {salesmanQs.map((q) => (
-            <Ask key={q.id} q={q} value={answers[q.id] ?? ""} onChange={setAnswers} />
-          ))}
-        </Section>
-        <Section title="About the opportunity">
-          {customerQs.map((q) => (
-            <Ask key={q.id} q={q} value={answers[q.id] ?? ""} onChange={setAnswers} />
-          ))}
-        </Section>
+        {VERIFICATION_SECTIONS.map((s) => (
+          <Section key={s.id} title={s.title}>
+            {questionsInSection(s.id).map((q) => (
+              <Ask key={q.id} q={q} value={answers[q.id] ?? ""} onChange={setAnswers} />
+            ))}
+          </Section>
+        ))}
       </div>
 
       <div className="mt-4 border-t border-divider pt-3">
