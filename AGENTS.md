@@ -627,13 +627,30 @@ headings and lines the caller reads out, because it is content: it will be
 argued about, improved after a bad call and eventually translated, and none of
 that should need a deploy — or, on the handset, an APK nobody can recall.
 
-**NO COMMERCIAL COMMITMENT BEFORE NEGOTIATION.** §G says the requirement visit
-carries no price, service or quality promise, and an order is the most
-commercial commitment there is — so `handleOrder` refuses one against a lead
-below `negotiation`. This one IS a refusal, unlike the visit cap, and the
-difference is what is lost: refusing a visit loses a record of work that really
-happened, while refusing an order loses nothing, because the order was never
-agreed with anybody who could agree it. The message names the way forward.
+**AN ORDER ON A LEAD CONVERTS IT, AND THAT IS A REVERSAL.** This paragraph used
+to say the opposite, and the code stopped agreeing with it before this file did
+— which is worse than either answer, because a reader who trusts it goes on
+building against a refusal that is not there. It said: §G carries no price,
+service or quality promise at the requirement stage, an order is the most
+commercial commitment there is, so `handleOrder` refuses one against a lead
+below `negotiation`, and refusing loses nothing because the order was never
+agreed with anybody who could agree it.
+
+Mahek's answer is the opposite and it is theirs to give: **a shop that is ready
+to buy is a customer, whatever rung somebody had filed it under**, and a
+salesman standing in front of one with an order in his hand must not be told to
+come back later. The reasoning that produced the refusal was not wrong about
+§G; it was wrong about what §G governs — a requirement VISIT makes no promises,
+and a customer placing an order is not the visit.
+
+The stage machinery is not wasted by it. §L still opens negotiation off an
+approved sample, the tasks still fire, and `lead_stage` still records how the
+account was won. What has gone is only the refusal.
+
+**And the conversion is `lead-conversion-service`, the SAME function the CRM's
+interaction save calls.** Two copies of "what happens when a lead orders" would
+drift within a release, and the half that drifts is the one nobody is watching
+— which here is the handset.
 
 **THE VEHICLE IS A FACT ABOUT THE SESSION, not about the stop.** It was asked
 at every shop and got the same answer all day: a man on his own bike said "own
