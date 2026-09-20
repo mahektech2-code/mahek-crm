@@ -2,10 +2,23 @@ import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
 import { ScreenHeader } from "@/components/console/parts";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
-import type { ManagerLeadBlock } from "@/lib/services/lead-dashboard-service";
+import type {
+  AttentionList,
+  ManagerLeadBlock,
+  RoleFocus,
+} from "@/lib/services/lead-dashboard-service";
+import { AttentionCard } from "./attention-card";
+import { RoleFocusCard } from "./role-focus-card";
 
 /* ---------------------------------------------------------------------------
- * §8.2 — the sales manager's seven, drawn.
+ * §8.2 — the lead dashboard, drawn.
+ *
+ * THREE ANSWERS IN THE ORDER SOMEBODY READS THEM. What is owed on a lead
+ * today; what is waiting on the reader personally; and, for the two vantages
+ * that run a book rather than work one, the seven queues across the whole
+ * funnel. The personal half is first deliberately — a manager opening this
+ * screen is still a person with six calls owed, and a strip of team figures
+ * above their own work is how a dashboard becomes a report.
  *
  * Every figure here is a QUEUE and every tile is a DOOR. That is the whole
  * shape of the screen, and it is what separates it from the funnel screen one
@@ -38,9 +51,10 @@ import type { ManagerLeadBlock } from "@/lib/services/lead-dashboard-service";
  *
  * **The href is workspace-relative and `leadHref` is what resolves it.**
  * Nothing in the funnel's screens spells an app's own segment any more — see
- * `lib/lead-workspace.ts` — so the same seven tiles land a telecaller inside
- * the CRM and a manager inside the Sales Dashboard without either file knowing
- * the other app exists.
+ * `lib/lead-workspace.ts` — so the same tiles land a telecaller inside the CRM
+ * and a manager inside the Sales Dashboard without either file knowing the
+ * other app exists. NOTHING HERE BRANCHES ON THE WORKSPACE: what differs
+ * between the two apps is where a link points, never what the screen says.
  * ------------------------------------------------------------------------- */
 
 /** The tile's skin per tone. Number colour and border only — no new card style. */
@@ -51,7 +65,7 @@ const SKIN: Record<ManagerLeadBlock["tone"], { border: string; value: string }> 
   muted: { border: "border-line", value: "text-muted" },
 };
 
-export function DashboardScreen({
+function ManagerStrip({
   workspace,
   blocks,
 }: {
@@ -59,12 +73,10 @@ export function DashboardScreen({
   blocks: ManagerLeadBlock[];
 }) {
   return (
-    <>
-      <ScreenHeader
-        title="Lead dashboard"
-        subtitle="Seven queues, each one work that is waiting on somebody. Every figure opens the list behind it — a number nobody can get behind is one they have to take on trust."
-      />
-
+    <div className="mt-6">
+      <div className="mb-2 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+        Across the funnel
+      </div>
       {/*
         One column on a phone and four on a desk. It is a grid rather than the
         console's own MetricRow because these are doors: a row of figures reads
@@ -104,6 +116,43 @@ export function DashboardScreen({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+export function DashboardScreen({
+  workspace,
+  blocks,
+  attention,
+  focus,
+}: {
+  workspace: LeadWorkspace;
+  /** Empty for anybody who is neither a sales manager nor management. */
+  blocks: ManagerLeadBlock[];
+  attention: AttentionList;
+  focus: RoleFocus;
+}) {
+  return (
+    <>
+      <ScreenHeader
+        title="Lead dashboard"
+        subtitle="What is owed today, what is waiting on you, and what is stuck across the funnel. Every figure opens the list behind it — a number nobody can get behind is one they have to take on trust."
+      />
+
+      {/*
+        Two thirds and one third, and the focus card is the RIGHT RAIL the
+        specification asks for. It stacks on a phone with the attention card
+        first, because the order on a narrow screen is the order of urgency
+        rather than the order of the columns.
+      */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <AttentionCard workspace={workspace} list={attention} />
+        </div>
+        <RoleFocusCard workspace={workspace} focus={focus} />
+      </div>
+
+      {blocks.length > 0 ? <ManagerStrip workspace={workspace} blocks={blocks} /> : null}
     </>
   );
 }
