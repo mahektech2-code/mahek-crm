@@ -15,9 +15,22 @@ import { Button, Pill } from "@/components/console/parts";
  *
  * `COMMUNICATION_ACTIONS` is the authority on what they are and which library
  * category each `send` reaches for. Writing eleven buttons into this file would
- * be the same mistake as a product list typed into a screen: the handset reads
- * that list too, and the half that drifts is always the half somebody is
- * looking at.
+ * be the same mistake as a product list typed into a screen: two web screens
+ * read that list — this panel and `actions/communication-screen.tsx` — and the
+ * half that drifts is always the half somebody is looking at.
+ *
+ * **THE HANDSET DOES NOT HAVE THIS YET, and the line above used to say it did.**
+ * It read "the handset reads that list too", which is the shape of a true
+ * sentence and is not one. `mbos-app/src/engines/funnel/lead-labels.ts` is a
+ * byte-for-byte mirror of the server's file, so the eleven ARE on the phone as
+ * a constant — and nothing on the phone imports them. That is the
+ * exported-with-no-caller shape AGENTS.md names: legal TypeScript, clean lint,
+ * every test green, and no screen. So a salesman standing in the shop cannot
+ * send the current price list or log the call against the lead in front of him;
+ * he does both from a desk afterwards, or not at all. The sentence is corrected
+ * rather than deleted, because a comment asserting a feature exists where it
+ * does not is worse than silence — it is the reason nobody goes looking, and
+ * the gap survives another release on the strength of somebody having read it.
  *
  * **A send resolves its own document.** The whole point of the button is that a
  * manager never hunts for the current price list, so the category is looked up
@@ -31,6 +44,73 @@ import { Button, Pill } from "@/components/console/parts";
  * able to see both against a lead that has gone quiet. Recording only the sends
  * would make a lead rung four times read as untouched.
  */
+/**
+ * §8.5 §10.4 — WHAT HAS ALREADY GONE, marked on the button rather than only in
+ * a list underneath it.
+ *
+ * The history below carries when and by whom, which a badge cannot, so it
+ * stays. What it cannot do is answer the question somebody asks with their
+ * hand already on a button: has this one gone. Answering it meant matching
+ * eleven labels by eye against a list of sentences, and the failure that
+ * follows is sending the price list twice — which is precisely the thing a
+ * customer notices and reads as nobody here talking to each other.
+ *
+ * **THE COUNT, NEVER A TICK.** "Sent" alone flattens once and five times onto
+ * one mark, and those are different mornings: one is a job done and the other
+ * is a manager who should be picking up the phone instead of emailing a sixth
+ * copy of the brochure. §16's chase counter exists for the same reason one
+ * level up.
+ *
+ * **THE CODE IS READ OFF THE SOURCE ID, which is where the action deliberately
+ * put it.** `timeline_events.summary` says in its own schema comment that it is
+ * never parsed, so counting by matching the label inside the sentence would be
+ * reading the one column that is not allowed to be read — and it would break
+ * the first time somebody reworded a button. `recordCommunication` writes
+ * `<generated id>:<action code>` for exactly this, and `lead-actions-service`
+ * splits it the same way in SQL. Two readings of one convention, which is a
+ * thing to watch: they agree today because both take everything after the first
+ * colon, and the generated id contains none.
+ *
+ * **AN ENTRY WITH NO CODE IS COUNTED APART, and said in words.** Rows written
+ * before the suffix existed carry a bare id, so they are communications that
+ * genuinely happened and cannot be attributed to one of the eleven. Folding
+ * them into the nearest button would be inventing which; dropping them silently
+ * would make the badges quietly undercount on exactly the oldest leads, where
+ * the history matters most.
+ */
+type SentTally = { byCode: Map<string, number>; unattributed: number };
+
+function sentPerAction(history: TimelineRow[]): SentTally {
+  const byCode = new Map<string, number>();
+  let unattributed = 0;
+  for (const h of history) {
+    const at = h.sourceRecordId?.indexOf(":") ?? -1;
+    const code = at >= 0 ? h.sourceRecordId!.slice(at + 1) : "";
+    if (!code) {
+      unattributed += 1;
+      continue;
+    }
+    byCode.set(code, (byCode.get(code) ?? 0) + 1);
+  }
+  return { byCode, unattributed };
+}
+
+/** The green mark on a button that has already been pressed, and how often. */
+function SentBadge({ n }: { n: number }) {
+  return (
+    <span
+      className="inline-flex items-center rounded-[9px] bg-success-soft px-1.5 py-[1px] text-[10px] leading-[14px] font-medium tracking-[0.03em] text-success uppercase"
+      title={
+        n === 1
+          ? "This has gone out once. When, and who sent it, is in the list below."
+          : `This has gone out ${n} times. When, and who sent each, is in the list below.`
+      }
+    >
+      {n === 1 ? "Sent" : `Sent ×${n}`}
+    </span>
+  );
+}
+
 export function CommunicationPanel({
   customerId,
   documents,
@@ -87,6 +167,8 @@ export function CommunicationPanel({
     (a) => a.document && !documents[a.document],
   );
 
+  const sent = sentPerAction(history);
+
   return (
     <section className="rounded-[6px] border border-line bg-surface px-5 py-4">
       <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
@@ -102,6 +184,12 @@ export function CommunicationPanel({
           const doc = a.document ? documents[a.document] : undefined;
           const noDoc = Boolean(a.document) && !doc;
           const off = disabled || noDoc;
+          /* The badge is drawn on a DISABLED button too. That it went out in
+             March is a fact about this lead, and withdrawing the document since
+             does not unsend it — hiding the mark there would make the one case
+             where somebody most needs the history read as never having
+             happened. */
+          const n = sent.byCode.get(a.code) ?? 0;
           return (
             <Button
               key={a.code}
@@ -120,6 +208,7 @@ export function CommunicationPanel({
               onClick={() => begin(a)}
             >
               {a.label}
+              {n ? <SentBadge n={n} /> : null}
             </Button>
           );
         })}
@@ -137,6 +226,15 @@ export function CommunicationPanel({
         <div className="mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
           What has gone out
         </div>
+        {sent.unattributed ? (
+          <p className="mb-1.5 text-[12px] text-muted">
+            {sent.unattributed === 1
+              ? "One entry below was"
+              : `${sent.unattributed} entries below were`}{" "}
+            recorded before the action was stored with them, so {sent.unattributed === 1 ? "it is" : "they are"}{" "}
+            in this list and not counted on any button above.
+          </p>
+        ) : null}
         {history.length === 0 ? (
           <p className="text-[13px] text-muted">
             Nothing recorded. A lead nobody has contacted and a lead somebody rang four times look

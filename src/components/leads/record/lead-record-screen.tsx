@@ -66,6 +66,8 @@ import { SetSalesType } from "./set-sales-type";
 import { AssignLeadManager, type LeadManagerCandidate } from "./assign-lead-manager";
 import { NextActionBand } from "./next-action-band";
 import { RoleReadings } from "./where-it-stands";
+import { timelineActor, type TimelineActorKind } from "./timeline-actor";
+import { RelationshipChain } from "./relationship-chain";
 import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
 import type { LeadGateActionFacts } from "@/lib/engines/lead-gate-action";
 import { MoveForward } from "./move-forward";
@@ -757,6 +759,22 @@ export function LeadRecordScreen({
                 overrideAllowed={overrideAllowed}
               />
               <SeatsPanel record={record} leadManagers={leadManagers} canWork={canWork} />
+              {/* §5.9 — the chain, and only where there is one. The seats panel
+                  above already holds two of its links, four cells apart and
+                  each reading as a fact of its own; this is the same facts in
+                  the order the goods and the money travel in, which is the
+                  order somebody uses them. `thirdParty` is the whole of when it
+                  is true — a direct customer is an account we invoice, so we
+                  are the far end of the chain rather than a link in it, and a
+                  shortened version drawn for one would invent a relationship
+                  nobody recorded. */}
+              {record.thirdParty ? (
+                <RelationshipChain
+                  shopName={record.name}
+                  links={record.distributorLinks}
+                  salesManagerName={record.salesManagerName}
+                />
+              ) : null}
               <VisitsPanel visits={visits} total={counts.visits} record={record} />
               <HandoverPanel
                 customerId={record.customerId}
@@ -2682,6 +2700,28 @@ function HistoryPanel({
 }
 
 /**
+ * §8.5 — the three actor marks, in one place rather than a ternary at the row.
+ *
+ * It is an inset SHADOW and not `border-l`, because the row already carries
+ * `border-b border-divider` — a shorthand that sets the colour of all four
+ * sides — and a left border would then be two declarations arguing over one
+ * property, settled by whichever utility Tailwind happens to emit last. A
+ * shadow answers the same question and is nobody else's property.
+ *
+ * The weights run the way the distinction matters: the field is the brand's own
+ * purple, the office a mid grey, and MahekOne's own hand the faintest rule on
+ * the list — so system against person, which is the one worth buying, is the
+ * one visible from furthest away. None of the three is `success`, `warn` or
+ * `danger`: all three mean something else on this very screen, and a green
+ * visit would read as a good visit.
+ */
+const ACTOR_MARK: Record<TimelineActorKind, { rule: string; name: string }> = {
+  field: { rule: "shadow-[inset_3px_0_0_var(--color-brand)]", name: "text-body" },
+  office: { rule: "shadow-[inset_3px_0_0_var(--color-line-strong)]", name: "text-body" },
+  system: { rule: "shadow-[inset_3px_0_0_var(--color-divider)]", name: "text-muted italic" },
+};
+
+/**
  * §25 — the shared timeline, paged with a KEYSET and saying what it is a slice
  * of.
  *
@@ -2699,6 +2739,14 @@ function HistoryPanel({
  * moment anything is written — so a reader sees one entry twice and another
  * never. The cursor is `(occurred_at, id)`, a position in the sort rather than
  * a distance from the top.
+ *
+ * **§8.5 — EVERY ROW IS COLOURED BY WHO DID IT.** They were identical: one
+ * neutral pill each and the actor as muted text at the end of a line nobody
+ * reads, so on a two-hundred-entry account a salesman's visit, the office's
+ * call and a nurture task nothing human touched looked the same on the one
+ * screen built for reading what happened. `timelineActor` beside this file
+ * works out the kind and says what it can and cannot know; see its header for
+ * why two thirds of that answer is a proxy and one third is exact.
  */
 function TimelinePanel({
   page,
@@ -2758,18 +2806,28 @@ function TimelinePanel({
       ) : (
         <>
           <ul className="m-0 list-none p-0">
-            {page.rows.map((e) => (
-              <li key={e.id} className="border-b border-divider py-1.5 last:border-b-0">
-                <span className="flex flex-wrap items-baseline gap-2">
-                  <Pill tone="neutral">{e.eventType.replace(/_/g, " ")}</Pill>
-                  <span className="text-[13px] text-body">{e.summary}</span>
-                </span>
-                <span className="block text-[12px] text-muted">
-                  {stamp(e.occurredAt)}
-                  {e.actorName ? ` · ${e.actorName}` : ""}
-                </span>
-              </li>
-            ))}
+            {page.rows.map((e) => {
+              const who = timelineActor(e);
+              const mark = ACTOR_MARK[who.kind];
+              return (
+                <li
+                  key={e.id}
+                  className={cx(
+                    "border-b border-divider py-1.5 pl-2.5 last:border-b-0",
+                    mark.rule,
+                  )}
+                >
+                  <span className="flex flex-wrap items-baseline gap-2">
+                    <Pill tone="neutral">{e.eventType.replace(/_/g, " ")}</Pill>
+                    <span className="text-[13px] text-body">{e.summary}</span>
+                  </span>
+                  <span className="block text-[12px] text-muted">
+                    {stamp(e.occurredAt)} · <span className={mark.name}>{who.name}</span> ·{" "}
+                    {who.what}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
 
           {page.next ? (
