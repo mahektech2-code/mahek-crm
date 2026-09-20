@@ -576,11 +576,39 @@ const DEPENDENCY_TABLES: Record<string, string> = {
   internal_note: "mbos_internal_notes",
   task: "mbos_tasks",
   expense: "mbos_expenses",
-  attendance: "mbos_attendance_days",
+  /* THE KEY IS THE PREFIX THE HANDSET MINTS, never the entity type. An
+   * attendance day is `mbos_att_<uuid>` — `stamp('att')` in
+   * `data/attendance.ts` — so this entry was `attendance` for as long as the
+   * map existed and matched nothing: `entityOfClientId` reads the id, and no
+   * id has ever spelled the word out. It cost nothing until an approval was
+   * raised against a day, which names the day as its subject. */
+  att: "mbos_attendance_days",
   customer: "customers",
   leave: "mbos_leave_requests",
   approval: "mbos_approvals",
   plan: "mbos_journey_plans",
+  tour: "mbos_tours",
+  /*
+   * THE TRAVEL MODULE SHIPPED WITHOUT ITS TWO PREFIXES, and the failure was a
+   * permanent rejection of real work. A travel leg opened from a visit
+   * depends on its expense day (`mbos_expday_`), an expense filed against a
+   * day depends on the same, and the day's submission depends on every leg
+   * (`mbos_leg_`). None of the three was here, and a dependency with no entry
+   * is answered `blocked` — "not a kind of record MahekOne holds" — which the
+   * handset files under rejections and never retries. The first leg of the
+   * first field day on the new build was refused three minutes after the day
+   * it depended on had been ACCEPTED, its mileage and both odometer
+   * photographs with it.
+   *
+   * It hid because a day and its first leg usually sync in one batch, where
+   * `acceptedHere` answers before this map is asked. Only a check-in that
+   * synced its day ahead of the journey reached the lookup — which is the
+   * ordinary order of a morning in the field, not the exception.
+   * `sync-dependencies.test.ts` reads every prefix the handset mints against
+   * this map so a fourth cannot go missing the same way.
+   */
+  expday: "mbos_expense_days",
+  leg: "mbos_travel_legs",
 };
 
 function entityOfClientId(id: string): string | null {
