@@ -9493,6 +9493,16 @@ export type PriceParsedHeader = {
   freightTerm: PriceFreightTerm | null;
   validityDays: number | null;
   signatory: string | null;
+  /** The discount sentences the document printed, kept with the header until publish copies them onto the list. */
+  discountTerms?: Array<{
+    kind: PriceDiscountKind;
+    percentBp: number;
+    thresholdLitres: number | null;
+    thresholdPaise: number | null;
+    rawText: string;
+  }>;
+  /** The terms block as printed, for the list's `termsText`. */
+  termsText?: string | null;
 };
 
 /**
