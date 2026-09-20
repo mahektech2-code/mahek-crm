@@ -6,6 +6,7 @@ import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, Secon
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
+  cancelReasons,
   cancelSample,
   confirmReceived,
   feedbackFor,
@@ -14,6 +15,8 @@ import {
   markTrialStarted,
   markTried,
   recordFeedback,
+  rejectionSaidWhy,
+  REJECTION_NEEDS_WHY,
   whatIsOwed,
   type FunnelSample,
   type SampleFeedback,
@@ -23,7 +26,8 @@ import { VoiceField } from '../src/components/ui/dictate';
 import { getCustomer } from '../src/data/customers';
 import { getLead } from '../src/data/leads';
 import { takePhoto } from '../src/native/capture';
-import { FEEDBACK_FIELDS } from '../src/engines/funnel';
+import { FEEDBACK_FIELDS, REASON_CODE_NEEDING_REMARKS, type CodedOption } from '../src/engines/funnel';
+import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import { dmy, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
@@ -86,7 +90,6 @@ export default function SampleRecord() {
   const id = params.id ?? '';
   const back = useCameFrom('samples');
   const notify = useStore((s) => s.notify);
-  const askConfirm = useStore((s) => s.askConfirm);
 
   const [sample, setSample] = React.useState<FunnelSample | null>(null);
   const [review, setReview] = React.useState<SampleFeedback | null>(null);
@@ -100,7 +103,16 @@ export default function SampleRecord() {
   const [status, setStatus] = React.useState<'reading' | 'ready' | 'failed'>('reading');
   const [dispatchOpen, setDispatchOpen] = React.useState(false);
   const [reviewOpen, setReviewOpen] = React.useState(false);
+  const [cancelOpen, setCancelOpen] = React.useState(false);
+  /* The eight, read off configuration once when the screen opens. An empty
+     list is a real state and the sheet draws it — see `ReasonSheet`. */
+  const [reasons, setReasons] = React.useState<CodedOption[]>([]);
   const [busy, setBusy] = React.useState(false);
+  /* A REF, not state: a second tap arrives before any re-render has happened,
+     so a boolean in state is read at its old value and the cancellation is
+     queued twice. The sheet closes on the first press and the write is still
+     in flight behind it. */
+  const cancelling = React.useRef(false);
 
   const load = React.useCallback(() => {
     let live = true;
@@ -108,11 +120,12 @@ export default function SampleRecord() {
       setStatus('ready');
       return;
     }
-    void Promise.all([getSample(id), feedbackFor(id)])
-      .then(async ([s, f]) => {
+    void Promise.all([getSample(id), feedbackFor(id), cancelReasons()])
+      .then(async ([s, f, why]) => {
         if (!live) return;
         setSample(s);
         setReview(f);
+        setReasons(why);
         setStatus('ready');
         if (s) {
           const c = await getCustomer(s.customerId);
@@ -332,24 +345,14 @@ export default function SampleRecord() {
             <PrimaryButton label="Write down what they thought" onPress={() => setReviewOpen(true)} />
           ) : null}
 
-          <DashedButton
-            label="Cancel this sample"
-            onPress={() =>
-              askConfirm({
-                title: 'Cancel this sample?',
-                body: 'The record stays with your reason on it. It stops being chased.',
-                reasonLabel: 'Why · required',
-                confirmLabel: 'Cancel it',
-                run: (reason) => {
-                  void cancelSample(s.id, reason).then((r) => {
-                    if (!r.ok) return notify(r.message);
-                    load();
-                    notify('Cancelled');
-                  });
-                },
-              })
-            }
-          />
+          {/* WHY, AS ONE OF EIGHT AND NOT AS A BOX. This was the generic
+              confirmation sheet, which offers a single multiline field — so
+              every cancellation a salesman made arrived at the office as prose
+              nobody could count, while the office had taken a code since the
+              module shipped. The three problems the eight exist to separate —
+              a product we could not source, a shop that stopped answering, a
+              price objection — all read as "trial cancelled" until then. */}
+          <DashedButton label="Cancel this sample" onPress={() => setCancelOpen(true)} />
         </View>
       )}
 
@@ -409,6 +412,36 @@ export default function SampleRecord() {
           setDispatchOpen(false);
           load();
           notify('Sent · ' + d.courierDocket);
+        }}
+      />
+
+      <ReasonSheet
+        key={cancelOpen ? 'c-open' : 'c-shut'}
+        open={cancelOpen}
+        onClose={() => setCancelOpen(false)}
+        title="Cancel this sample?"
+        body="The record stays, with the reason on it, and it stops being chased."
+        options={reasons}
+        confirmLabel="Cancel it"
+        noteLabel="What actually happened"
+        notePlaceholder="Optional — in your own words"
+        /* The one of the eight that costs a sentence, said on the sheet BEFORE
+           the button is pressed, and refused again in `cancelSample`: a screen
+           is not a rule, and this is the same pair the office keeps. */
+        noteRequiredForCode={REASON_CODE_NEEDING_REMARKS}
+        onConfirm={(code, said) => {
+          if (cancelling.current) return;
+          cancelling.current = true;
+          setCancelOpen(false);
+          void cancelSample(s.id, { reasonCode: code, remarks: said })
+            .then((r) => {
+              if (!r.ok) return notify(r.message);
+              load();
+              notify('Cancelled');
+            })
+            .finally(() => {
+              cancelling.current = false;
+            });
         }}
       />
 
@@ -574,6 +607,25 @@ function ReviewSheet({
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
 
+  /*
+   * A REJECTED SAMPLE HAS TO SAY WHY, and the button says so before it is
+   * pressed.
+   *
+   * Any one of the seven answers used to be enough, so a No beside four
+   * perfectly good notes about quality, performance, application and drying
+   * saved a refusal with nothing in it that says WHY they refused — and the
+   * next sample then goes out exactly the same, which is the whole point of
+   * the rule. The three fields are `recordFeedback`'s own, imported rather
+   * than retyped, because the office derives the stored rejection reason from
+   * precisely those three and a check on a fourth would demand an answer and
+   * still store nothing.
+   *
+   * Drawn on the button rather than raised on the press: the moment "No" is
+   * picked the sheet knows exactly what is still owed, and a refusal held back
+   * until the save is one that arrives after somebody thought they were done.
+   */
+  const owedWhy = outcome === 'rejected' && !rejectionSaidWhy(fields) ? REJECTION_NEEDS_WHY : null;
+
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
       <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
@@ -618,6 +670,9 @@ function ReviewSheet({
         <T s="caption" style={{ marginTop: 6 }}>
           Negotiation does not open until this is a yes. That is the rule, not the screen being awkward.
         </T>
+        {owedWhy ? (
+          <T s="caption" style={{ marginTop: 6, color: C.danger }}>{owedWhy}</T>
+        ) : null}
       </View>
 
       <View style={{ marginTop: 14 }}>
@@ -645,11 +700,13 @@ function ReviewSheet({
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
         <PrimaryButton
           label={saving ? 'Saving…' : 'Save the review'}
-          disabled={saving}
+          disabled={saving || Boolean(owedWhy)}
+          whyDisabled={owedWhy ?? undefined}
           onPress={async () => {
             if (saving) return;
             const any = FEEDBACK_FIELDS.some((f) => (fields[f.id] ?? '').trim());
             if (!any) return setErr('Write down at least one thing they said about it.');
+            if (owedWhy) return setErr(owedWhy);
             /* The sheet only closes once the write returns, so without this a
                second tap on a slow phone saved the review twice. */
             setSaving(true);

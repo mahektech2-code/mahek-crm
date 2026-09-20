@@ -3,7 +3,12 @@ import { getConfig } from './config';
 import { raiseApproval } from './requests';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
 import { isoDate } from '../lib/format';
-import { FEEDBACK_FIELDS, type CodedOption } from '../engines/funnel';
+import {
+  FEEDBACK_FIELDS,
+  REASON_CODE_NEEDING_REMARKS,
+  SAMPLE_CANCEL_REASONS,
+  type CodedOption,
+} from '../engines/funnel';
 
 /**
  * §15 §16 — a sample, from asked for to reviewed.
@@ -172,6 +177,30 @@ export async function overdueSamples(today: string): Promise<FunnelSample[]> {
 /** §10 — the ten answers to "why does this customer want a trial?" */
 export async function sampleReasons(): Promise<CodedOption[]> {
   return getConfig<CodedOption[]>('leads.sampleReasons');
+}
+
+/**
+ * WHY A TRIAL WAS CALLED OFF — Mahek's eight, read from configuration.
+ *
+ * The eight exist to separate THREE different problems one free-text box could
+ * not tell apart: a product we could not source is a supply problem, a shop
+ * that stopped answering is a customer problem, a price objection is a sales
+ * problem. All three read as "trial cancelled" until somebody can count them,
+ * and each one is somebody else's to fix.
+ *
+ * Configuration rather than the literal, like every other coded list here: an
+ * office may reword these without a deploy, and a phone offering the words it
+ * was compiled with is a phone whose answers stop matching the report they are
+ * counted in. `SAMPLE_CANCEL_REASONS` is the fallback and nothing more — the
+ * `leads.*` keys do not reach a handset yet, so it is what the screen actually
+ * draws today, and it is the same list `lib/config/registry.ts` takes its own
+ * default from.
+ */
+export async function cancelReasons(): Promise<CodedOption[]> {
+  return getConfig<CodedOption[]>(
+    'leads.sampleCancelReasons',
+    SAMPLE_CANCEL_REASONS.map((r) => ({ ...r })),
+  );
 }
 
 /**
@@ -430,6 +459,25 @@ export async function markTried(id: string): Promise<SampleResult<null>> {
 }
 
 /**
+ * The three of the seven that can carry a REFUSAL, and the sentence for their
+ * absence.
+ *
+ * Exported so the sheet can grey its own button on the same rule the save
+ * refuses on, rather than a second reading of it typed into a screen — the
+ * half that drifts is always the half somebody is reading.
+ */
+export const REJECTION_FEEDBACK_FIELDS = ['otherComments', 'priceFeedback', 'competitorComparison'] as const;
+
+export const REJECTION_NEEDS_WHY =
+  'A rejected trial has to say why — the price, the comparison against what they use now, or in your own words. Without it the next sample goes out exactly the same.';
+
+export function rejectionSaidWhy(
+  fields: Partial<Record<(typeof FEEDBACK_FIELDS)[number]['id'], string>>,
+): boolean {
+  return REJECTION_FEEDBACK_FIELDS.some((id) => (fields[id] ?? '').trim().length > 0);
+}
+
+/**
  * §16 — the seven-part review.
  *
  * Six named answers and one open one, and the verdict beside them. Every one
@@ -458,6 +506,29 @@ export async function recordFeedback(
   const said = FEEDBACK_FIELDS.filter((f) => (args.fields[f.id] ?? '').trim());
   if (!said.length) {
     return { ok: false, message: 'Write down at least one thing they said about it.' };
+  }
+
+  /*
+   * A REJECTED SAMPLE HAS TO SAY WHY, and this end was not asking.
+   *
+   * The office refuses a rejection carrying none of these three, and its own
+   * comment claimed the handset had enforced it from the day it shipped. It
+   * had not: any one of the seven answers satisfied the check above, so a
+   * review with "dries in four hours" in the drying box and a No beside it
+   * saved perfectly well here and was refused at the far end — or worse, was
+   * accepted by an older server and stored a refusal nobody could read back.
+   * The next sample then goes out exactly the same, which is the whole reason
+   * the rule exists.
+   *
+   * The SAME three fields the office checks, because the office DERIVES the
+   * stored rejection reason from precisely these — a check that passed on a
+   * field the derivation ignores would demand an answer and still store
+   * nothing. It is not a refusal for want of signal, which this app never
+   * makes; it is a refusal for want of an ANSWER, which is a different thing
+   * and legitimate on a sofa or in a market lane alike.
+   */
+  if (args.trialOutcome === 'rejected' && !rejectionSaidWhy(args.fields)) {
+    return { ok: false, message: REJECTION_NEEDS_WHY };
   }
 
   const base = await stamp('samplefb');
@@ -533,16 +604,52 @@ export async function recordFeedback(
  * product and turned it down — a sentence about the shop, written because the
  * office withdrew a sample that never left the godown. The state already says
  * it was cancelled, and `cancelReason` already says why.
+ *
+ * **A REASON IS A CODE, AND THIS PATH SENT ONLY WORDS.** The office has taken
+ * `cancelReasonCode` since the module shipped and the handset — the one end
+ * where a cancellation is actually decided, standing in the shop that said so
+ * — sent a free sentence and nothing else. So every cancellation a salesman
+ * made arrived uncountable: "cancelled: 14" is a number that sends nobody
+ * anywhere, and the three problems above stayed folded into one.
+ *
+ * **The sentence stays, and it is not a second copy of the code.** A code says
+ * WHICH of the eight and can be counted; the remarks say what actually
+ * happened, which no list of eight can, and whoever picks this record up next
+ * reads the second. Both, exactly as every other coded reason in this app
+ * stores both.
+ *
+ * **`other` costs a sentence and the other seven do not.** A code meaning
+ * "something else" with nothing behind it is the one row nobody can act on,
+ * and it is what people reach for when a list does not fit — so it has to be
+ * paid for. Refused here as well as on the sheet, because a screen is not a
+ * rule and this function is reachable without one.
  */
-export async function cancelSample(id: string, reason: string): Promise<SampleResult<null>> {
-  const said = reason.trim();
-  if (!said) return { ok: false, message: 'Say why it is being cancelled.' };
+export async function cancelSample(
+  id: string,
+  args: { reasonCode: string; remarks?: string | null },
+): Promise<SampleResult<null>> {
+  const code = (args.reasonCode ?? '').trim();
+  const said = (args.remarks ?? '').trim();
+  if (!code) return { ok: false, message: 'Pick why the trial is being called off.' };
+  if (code === REASON_CODE_NEEDING_REMARKS && !said) {
+    return {
+      ok: false,
+      message: '“Other” with nothing behind it is the one cancellation nobody can act on. A sentence, however short.',
+    };
+  }
   const at = Date.now();
   await moveSample(
     id,
     await customerOf(id),
-    { state: 'Cancelled', cancelledAt: at, cancelReason: said },
-    { state: 'cancelled', cancelReason: said },
+    /* The CODE is not written locally: `samples` has no column for it, and the
+       state and the sentence are what this screen draws. It goes up the wire
+       regardless — the office is where cancellations are counted, and losing
+       the code to a missing local column would be the same silent loss this
+       whole change is about. */
+    { state: 'Cancelled', cancelledAt: at, cancelReason: said || null },
+    /* Null rather than an empty string where nobody typed one: an empty string
+       reads on a record as a person who was asked and had nothing to say. */
+    { state: 'cancelled', cancelReasonCode: code, cancelReason: said || null },
   );
   return { ok: true, value: null };
 }

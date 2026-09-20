@@ -781,14 +781,21 @@ export async function recordSampleFeedback(
      * A REJECTED SAMPLE HAS TO SAY WHY, and this path was not asking.
      *
      * The rule is the same one a lost lead and an On Hold follow, for the same
-     * reason: the next sample goes out exactly the same otherwise. The handset
-     * enforced it from the day it shipped; the console never did, and the
-     * rejection reason here is DERIVED from whichever of three fields happens
-     * to be filled in. So a reviewer who wrote only about quality, performance,
-     * drying and application — four perfectly good answers — saved a rejection
-     * with `rejection_reason` null, and the record page then drew its "a
-     * rejected trial with no reason on it" banner about a form that had never
-     * asked.
+     * reason: the next sample goes out exactly the same otherwise. NEITHER END
+     * was asking — this comment used to say the handset had enforced it from
+     * the day it shipped, which was simply not true: `recordFeedback` there
+     * checked that ANY ONE of the seven answers was filled in, exactly as the
+     * console did, and the assertion went unread for as long as it was wrong.
+     * A claim that a rule is kept somewhere else is the cheapest thing in a
+     * codebase to write and the most expensive to rely on. Both ends check it
+     * now, on the same three fields.
+     *
+     * The rejection reason here is DERIVED from whichever of three fields
+     * happens to be filled in. So a reviewer who wrote only about quality,
+     * performance, drying and application — four perfectly good answers —
+     * saved a rejection with `rejection_reason` null, and the record page then
+     * drew its "a rejected trial with no reason on it" banner about a form
+     * that had never asked.
      *
      * Checked against the SAME three fields the reason is derived from, because
      * a check that passes on a field the derivation ignores would refuse the
