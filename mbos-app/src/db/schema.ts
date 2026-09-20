@@ -1799,6 +1799,66 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE samples ADD COLUMN lastReviewChaseAt INTEGER;`,
   ],
 
+  /* ----------------------------------------------------------------------
+   * §5.5 — THE COMMITMENT'S OTHER TWO THIRDS, AND TWO FACTS A LEAD ARRIVED
+   * WITHOUT.
+   * -------------------------------------------------------------------- */
+  [
+    /*
+     * §5.5 — HOW MUCH, and WHAT IS IN THE WAY.
+     *
+     * Mahek's answer is that a commitment is a date AND a quantity, with the
+     * blocker recorded beside it. `expectedOrderDate` and
+     * `expectedOrderValuePaise` have had columns since the funnel shipped and
+     * these two had none — so `recordExpectedOrder` kept them in `kv` under
+     * `lead.commitment.<id>`, where no sync could reach them and no screen but
+     * the record page could read them. Both ends landed together: the server
+     * column, the wire, this table and the schema that accepts them coming
+     * back up.
+     *
+     * The blocker is a CODE from `leads.orderBlockers` and never a label. Null
+     * is not `no_blocker`: that code is somebody being asked and saying
+     * nothing is stopping the order, and null is nobody having been asked.
+     */
+    `ALTER TABLE leads ADD COLUMN expectedOrderQuantityCans INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN expectedOrderBlockerCode TEXT;`,
+
+    /*
+     * WHEN THE LEAD WAS ACTUALLY RAISED, which this table could not say and
+     * looked as though it could.
+     *
+     * `upsertLeads` binds `now` into `clientCreatedAt` and `serverCreatedAt`,
+     * and both mean exactly what they say for a lead the salesman raised on
+     * this phone — the moment he typed it in, and the moment the office
+     * accepted it. For a lead the OFFICE raised they mean the moment this
+     * handset first pulled the row, which is a different fact wearing a name
+     * that reads like the right one. An age computed off it says "today" on a
+     * four-year-old lead, and says something else again after a reinstall.
+     *
+     * So it is a COLUMN OF ITS OWN rather than a better binding for
+     * `clientCreatedAt`: that one is what the outbox reasons about, it is
+     * honest for every lead authored here, and one column cannot carry two
+     * facts. Epoch milliseconds, like every other instant in this database.
+     *
+     * It is why the book draws "N days on this rung" off `stageSince` and has
+     * no counterpart to the web's age buckets — there was nothing to compute
+     * one from that would not have been a lie.
+     */
+    `ALTER TABLE leads ADD COLUMN createdAt INTEGER;`,
+
+    /*
+     * WHO HOLDS THE BACK OFFICE SEAT, in words.
+     *
+     * `backOfficeAmId` arrived with §7 and an id is not a person: this app
+     * holds no user table, so a screen could say the seat was filled and never
+     * who filled it. `leadManagerName` has ridden down beside its own id since
+     * the funnel shipped for exactly this reason, and §7 gives the back office
+     * real work at several rungs — "somebody at the office is holding this" is
+     * a worse sentence than a name, when the name exists.
+     */
+    `ALTER TABLE leads ADD COLUMN backOfficeAmName TEXT;`,
+  ],
+
 ];
 
 /**

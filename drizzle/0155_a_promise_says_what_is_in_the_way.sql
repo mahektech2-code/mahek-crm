@@ -1,0 +1,26 @@
+-- §5.5 — WHAT IS STOPPING THE FIRST ORDER, beside the day and the size.
+--
+-- `0151` gave the commitment its quantity — `lead_expected_order_cans` —
+-- because Mahek's answer is that a date alone is not a commitment. This is the
+-- other half of the same question, and it is the half that says whose work it
+-- is: a forecast with no blocker on it is a number, and one with a blocker on
+-- it is a number and somebody's desk. The five codes are four different desks
+-- — ours to price, ours to allow, the godown's to fill, theirs to sign off —
+-- plus the ordinary answer that nothing is in the way.
+--
+-- A CODE AND NEVER A LABEL, the same rule as a lost lead, a park and a
+-- prospect. A stored label stops resolving the moment somebody rewords the
+-- list on the Settings screen, and "how much are we forecasting behind credit
+-- terms this quarter" is a question somebody can ask of a code and cannot ask
+-- of a grep over sentences nobody typed the same way twice. The list itself is
+-- `leads.orderBlockers` in the registry, so rewording one needs no deploy —
+-- and on a handset, no APK nobody can recall.
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_expected_order_blocker_code" text;
+
+-- NOTHING IS BACKFILLED, and `no_blocker` is not a default.
+--
+-- That code is a real answer: it is somebody being asked what was in the way
+-- and saying nothing was. A commitment recorded before this column existed was
+-- never asked, and writing `no_blocker` onto it would turn "we do not know"
+-- into "they told us it was clear" on every row in the book at once — the one
+-- statement the list exists to be able to make. Null says the honest thing.

@@ -512,6 +512,12 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       distributorSalesmanName?: string | null;
       expectedOrderDate?: string | null;
       expectedOrderValuePaise?: number | null;
+      /* §5.5 — the size of the promise and what is in the way. They lived in
+         this app's `kv` store while the office had no column for either; both
+         are now on the wire in both directions, so the one place they live is
+         the row. */
+      expectedOrderQuantityCans?: number | null;
+      expectedOrderBlockerCode?: string | null;
       /* Sent since leads existed and dropped on the floor until the
          `a lead has a place` migration gave this table somewhere to put
          them — a lead map with no coordinates. */
@@ -581,6 +587,13 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       hasCommitment?: boolean | null;
       hasOrder?: boolean | null;
       backOfficeAmId?: string | null;
+      /* The name beside the id, resolved by the office because this app holds
+         no user table — exactly as `leadManagerName` is. */
+      backOfficeAmName?: string | null;
+      /* When the lead was actually RAISED, and not when this handset first saw
+         it. `clientCreatedAt` below is bound to `now` and means the second;
+         two facts, two columns. */
+      createdAt?: string | null;
     };
     await run(
       `INSERT INTO leads (id, name, company, mobile, city, area, source, estimatedPotentialPaise,
@@ -595,16 +608,17 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
                           nextAction, nextActionDate, nextActionOwnerId, nextActionOutcome,
                           suspectDecidedAt, verifiedAt, thirdParty, distributorSalesmanId,
                           distributorSalesmanName, expectedOrderDate, expectedOrderValuePaise,
+                          expectedOrderQuantityCans, expectedOrderBlockerCode,
                           distributorCustomerId, distributorName, distributorProfile,
                           countingOrderCount, deliveredOrderCount, confirmedPaymentCount,
                           distributorCount, managementReviewApproved, distributorApprovalApproved,
                           commercialTermsAgreed, agreementOnFile, figuresConfirmedAt,
                           qualificationReview, buyer, priority, holdResumeDate,
                           holdReasonCode, sourceDetail, hasCommitment, hasOrder,
-                          backOfficeAmId)
+                          backOfficeAmId, backOfficeAmName, createdAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced',
                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
          city = excluded.city, area = excluded.area, source = excluded.source,
@@ -635,6 +649,8 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          distributorSalesmanName = excluded.distributorSalesmanName,
          expectedOrderDate = excluded.expectedOrderDate,
          expectedOrderValuePaise = excluded.expectedOrderValuePaise,
+         expectedOrderQuantityCans = excluded.expectedOrderQuantityCans,
+         expectedOrderBlockerCode = excluded.expectedOrderBlockerCode,
          distributorCustomerId = excluded.distributorCustomerId,
          distributorName = excluded.distributorName,
          distributorProfile = excluded.distributorProfile,
@@ -653,7 +669,12 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          holdReasonCode = excluded.holdReasonCode,
          sourceDetail = excluded.sourceDetail,
          hasCommitment = excluded.hasCommitment, hasOrder = excluded.hasOrder,
-         backOfficeAmId = excluded.backOfficeAmId
+         backOfficeAmId = excluded.backOfficeAmId,
+         backOfficeAmName = excluded.backOfficeAmName,
+         -- Kept on conflict as well as inserted. A lead is on this phone long
+         -- before anybody asks how old it is, so a value written once and
+         -- never restated is one that stays null on every row already here.
+         createdAt = excluded.createdAt
        WHERE leads.syncState = 'synced'`,
       [
         l.id,
@@ -716,6 +737,13 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.distributorSalesmanName ?? null,
         l.expectedOrderDate ?? null,
         l.expectedOrderValuePaise ?? null,
+        /* NULL KEPT AS NULL on the blocker, and it is not the same fact as
+           `no_blocker`. That code is somebody being asked and answering that
+           nothing is stopping the order; null is nobody having been asked. A
+           card that read the second as the first would assert a clear road on
+           every commitment taken before the question existed. */
+        l.expectedOrderQuantityCans ?? null,
+        l.expectedOrderBlockerCode ?? null,
         l.distributorCustomerId ?? null,
         l.distributorName ?? null,
         /* jsonb arrives as an object and SQLite holds text — and the column is
@@ -751,6 +779,14 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.hasCommitment == null ? null : l.hasCommitment ? 1 : 0,
         l.hasOrder == null ? null : l.hasOrder ? 1 : 0,
         l.backOfficeAmId ?? null,
+        l.backOfficeAmName ?? null,
+        /* An ISO instant carries its own zone, so `Date.parse` is right — it is
+           a date-ONLY string that would be read as UTC and land five and a half
+           hours early. Null kept as null: a lead whose creation date has not
+           arrived must read as unknown rather than as raised the moment this
+           handset happened to pull it, which is the whole reason this column is
+           not `clientCreatedAt`. */
+        l.createdAt ? Date.parse(l.createdAt) : null,
       ],
     );
   }

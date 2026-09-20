@@ -3297,6 +3297,37 @@ const leadSchema = z.object({
    */
   expectedOrderDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   expectedOrderValuePaise: z.number().int().nonnegative().nullish(),
+  /*
+   * §5.5 — THE OTHER TWO THIRDS OF A COMMITMENT, and until they were declared
+   * here the handset could not send them at all.
+   *
+   * Mahek's answer is that a commitment is a date AND a quantity, with what is
+   * in the way beside it. `recordExpectedOrder` had nowhere to put either: a
+   * field this schema does not name is stripped by `safeParse` IN SILENCE —
+   * no refusal, no log, no rejection row — so the salesman would have typed
+   * the size in, seen "saved", and the column would have stayed null for ever.
+   * `mbos-payload-contract.test.ts` refuses a field on a payload that no
+   * schema accepts for exactly that reason, and it held the handset back to
+   * `kv` until this landed. A field the app sends is a field the office has
+   * promised to hold.
+   *
+   * POSITIVE rather than non-negative, unlike the value beside it. Zero cans
+   * is not a small promise, it is a promise of nothing — and the handset
+   * refuses it at the sheet in those words. A value of zero is different: the
+   * price has not been agreed, which is a real state and one of the blockers.
+   */
+  expectedOrderQuantityCans: z.number().int().positive().nullish(),
+  /*
+   * A CODE, checked against the STORED list rather than against an enum typed
+   * out here — the way `evaluateLeadStageMove` checks a prospect reason
+   * against `leads.prospectReasons`. A hard-coded list beside a configured one
+   * is two definitions waiting to disagree, and the disagreement arrives the
+   * day a manager rewords a blocker on the Settings screen: every commitment
+   * taken on an older APK would then be refused, or worse, stored under a code
+   * nothing resolves. zod checks the SHAPE; `handleLeadUpdate` checks the
+   * membership.
+   */
+  expectedOrderBlockerCode: z.string().trim().min(1).max(64).nullish(),
   /* §24 — what happens next, on what day, and who is doing it. */
   nextAction: z
     .object({
@@ -3663,6 +3694,34 @@ async function handleLeadUpdate(
   if (p.expectedOrderValuePaise != null) {
     changed.leadExpectedOrderValuePaise = p.expectedOrderValuePaise;
   }
+  /* §5.5 — the size of the promise. A date alone is a forecast nobody can hold
+     an order against, which is Mahek's own answer and the reason the column
+     exists. */
+  if (p.expectedOrderQuantityCans != null) {
+    changed.leadExpectedOrderCans = p.expectedOrderQuantityCans;
+  }
+  /*
+   * §5.5 — WHAT IS IN THE WAY, checked against the STORED list.
+   *
+   * The same rule `evaluateLeadStageMove` applies to a prospect reason: the
+   * membership is asked of `leads.orderBlockers` as the office currently holds
+   * it, never of a list retyped beside this line. A manager rewording the list
+   * on the Settings screen is then not waiting on a deploy — which on a
+   * handset is an APK nobody can recall.
+   *
+   * A code this office does not recognise is DROPPED rather than refusing the
+   * item, which is the same judgement the field checks below make: the codes
+   * exist to be COUNTED, a row nobody can count is worse than an absent one,
+   * and refusing would take the DATE and the SIZE down with it — the two halves
+   * of the commitment that are not in dispute. The salesman is long gone from
+   * the shop by the time the outbox drains, so there is nobody to ask.
+   */
+  if (p.expectedOrderBlockerCode != null) {
+    const blockers = (await getConfig())["leads.orderBlockers"].map((o) => o.code);
+    if (blockers.includes(p.expectedOrderBlockerCode)) {
+      changed.leadExpectedOrderBlockerCode = p.expectedOrderBlockerCode;
+    }
+  }
   /* §23 — the mark, from the one place the answer is actually known. The
      no-import rule is about a spreadsheet, not about a salesman standing in the
      shop; the distributor behind it is written below, after the row lands. */
@@ -3762,17 +3821,44 @@ async function handleLeadUpdate(
    * thing this visit produces that nothing else could — writing the corrected
    * value onto the lead would destroy exactly that.
    *
-   * APPEND-ONLY, so a retried sync would write a second copy. That is the
-   * honest failure of the two available: the alternative is a natural key over
-   * a free-text field and a millisecond, which would fold two genuine checks of
-   * one figure onto one row — and a lead is routinely checked twice, with the
-   * first usually the one that matters.
+   * APPEND-ONLY, AND DEDUPED ON (LEAD, FIELD, MOMENT) — and the second half of
+   * that sentence is a reversal.
    *
-   * The AUTHOR is the principal and never the id the payload carries. A device
-   * somebody owns may name anybody, and this row is read back months later as
-   * "who corrected it"; the name is stored beside the id for the reason
-   * `customer_am_changes` stores one, so the history stays readable after the
-   * account is gone.
+   * It was append-only and nothing else, on the reasoning that a natural key
+   * over a free-text field and a millisecond would fold two genuine checks of
+   * one figure onto one row — and a lead is routinely checked twice, with the
+   * first usually the one that matters. That reasoning was about two checks
+   * made at two MOMENTS, and the moment is now on the payload: `c.at` is when
+   * he answered standing in the shop, so two real checks of one figure differ
+   * in it and a REDELIVERED one does not. What changed underneath is that the
+   * handset drains a backlog of these — the same shape as the position batch,
+   * which Android hands over again whenever the task did not complete — so a
+   * retry is the ordinary case rather than the rare one, and each retry gave
+   * one shop a second account of one afternoon with nothing on the record
+   * saying which was the copy.
+   *
+   * Only where the moment is STATED. A check with no `at` falls back to the
+   * column's own default and two of those are two different instants, so there
+   * is nothing to deduplicate against and the old behaviour stands — which is
+   * every build already in a pocket that never learned to send one.
+   *
+   * A read before the write rather than a unique index: `changed_at` defaults
+   * to `now()`, so an index over it would be unique by accident on exactly the
+   * rows this cannot deduplicate, and would refuse a retry with a constraint
+   * violation — which fails the whole item and takes the lead's own answers
+   * down with it. Two devices racing one check would still write two rows;
+   * this is one handset draining one outbox in order, which is the case that
+   * actually happens.
+   *
+   * The AUTHOR is the principal and never the id the payload carries, and that
+   * is a STATED decision rather than an oversight: the handset sends
+   * `changedById` and `changedByName` on every one of these rows and
+   * `leadSchema` declares neither, so zod strips both. It is harmless because
+   * the server knows which device is asking and therefore who is asking — a
+   * better answer than the phone's, since a device somebody owns may name
+   * anybody, and this row is read back months later as "who corrected it". The
+   * name is stored beside the id for the reason `customer_am_changes` stores
+   * one, so the history stays readable after the account is gone.
    *
    * A field this office does not recognise is DROPPED rather than refusing the
    * item: the code is meant to be counted, a row nobody can count is worse than
@@ -3781,6 +3867,21 @@ async function handleLeadUpdate(
    */
   for (const c of p.fieldChecks ?? []) {
     if (!isVerificationFinding(c.field)) continue;
+    const at = c.at && Number.isFinite(c.at) ? new Date(c.at) : null;
+    if (at) {
+      const already = await db
+        .select({ id: leadVerificationCorrections.id })
+        .from(leadVerificationCorrections)
+        .where(
+          and(
+            eq(leadVerificationCorrections.customerId, item.entityId),
+            eq(leadVerificationCorrections.field, c.field),
+            eq(leadVerificationCorrections.changedAt, at),
+          ),
+        )
+        .limit(1);
+      if (already.length) continue;
+    }
     await db.insert(leadVerificationCorrections).values({
       id: `lvc_${randomUUID().slice(0, 12)}`,
       customerId: item.entityId,
@@ -3796,8 +3897,9 @@ async function handleLeadUpdate(
          with no signal those are days apart, and the second would date every
          check on the phone to whenever it next found a bar. Nonsense falls
          back to the column's own default rather than storing a date nobody
-         could have been standing in a shop on. */
-      ...(c.at && Number.isFinite(c.at) ? { changedAt: new Date(c.at) } : {}),
+         could have been standing in a shop on — and that fallback is exactly
+         the case the deduplication above cannot cover. */
+      ...(at ? { changedAt: at } : {}),
     });
   }
 

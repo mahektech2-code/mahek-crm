@@ -1382,6 +1382,26 @@ export const customers = pgTable(
      */
     leadExpectedOrderCans: integer("lead_expected_order_cans"),
     /**
+     * §5.5 — WHAT IS IN THE WAY, beside the day and the size.
+     *
+     * The two columns above say what was promised; this says whose work it is
+     * that it has not happened yet. The five codes are four different desks —
+     * ours to price, ours to allow, the godown's to fill, theirs to sign off —
+     * plus the ordinary answer that nothing is stopping it, and a list that
+     * mixed them would count four problems with four owners into one number.
+     *
+     * A CODE, from `leads.orderBlockers`, and never a label: a stored label
+     * stops resolving the moment somebody rewords the list, and "how much are
+     * we forecasting behind credit terms this quarter" is a question somebody
+     * can ask of a code and cannot ask of a grep.
+     *
+     * NULL IS NOT `no_blocker`. That code is somebody being asked and saying
+     * nothing is in the way; null is nobody having been asked, which is every
+     * commitment recorded before this column existed. Only the first may be
+     * drawn as a fact.
+     */
+    leadExpectedOrderBlockerCode: text("lead_expected_order_blocker_code"),
+    /**
      * WHO COORDINATES THIS LEAD'S CONVERSION — a second seat, beside the owner.
      *
      * The office proposes that the sales manager over the salesman picks this

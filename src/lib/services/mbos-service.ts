@@ -1506,6 +1506,27 @@ async function openLeads(userId: string, since?: string | null) {
            ds.name as "distributorSalesmanName",
            c.lead_expected_order_date::text as "expectedOrderDate",
            c.lead_expected_order_value_paise as "expectedOrderValuePaise",
+           -- §5.5 -- THE OTHER TWO THIRDS OF A COMMITMENT, and until they
+           -- landed the handset held them in its own key-value store and the
+           -- office heard nothing whatever about either.
+           --
+           -- Mahek's own answer is that a commitment is a date AND a quantity,
+           -- with what is in the way recorded beside it. The date has been on
+           -- this wire since §18; the size and the blocker had no column here,
+           -- no field on the inbound lead schema and nowhere to land -- so a
+           -- salesman typed "40 cans, waiting on their approval" into the
+           -- sheet, the app said saved, and the office's forecast carried a day
+           -- with no size on it.
+           --
+           -- They go BOTH ways, unlike the GST verdict above: the salesman is
+           -- the one standing in the shop being told the number, and the office
+           -- corrects a commitment on the Leads screen. So this sends what the
+           -- office holds and leadSchema accepts what the phone reports.
+           --
+           -- (And no backticks in this comment: it lives inside a sql template
+           -- literal, where one would end the literal mid-query.)
+           c.lead_expected_order_cans as "expectedOrderQuantityCans",
+           c.lead_expected_order_blocker_code as "expectedOrderBlockerCode",
            --
            -- ------------------------------------------------------------
            -- EVERY RUNG ABOVE NEGOTIATION WAS STRUCTURALLY UNREACHABLE, and
@@ -1685,11 +1706,34 @@ async function openLeads(userId: string, since?: string | null) {
            -- by comparing this id with the signed-in user, exactly as it does
            -- with the lead manager beside it.
            c.back_office_am_id as "backOfficeAmId",
+           -- AND WHO THAT IS, because an id is not a person and the handset
+           -- holds no user table. The lead manager's name has ridden down
+           -- beside its own id since the funnel shipped for exactly this
+           -- reason; this seat had only the id, so a screen could say it was
+           -- filled and never who filled it. §7 gives the back office real work
+           -- at several rungs, and "somebody at the office is holding this" is
+           -- a worse sentence than a name when the name exists.
+           bo.name as "backOfficeAmName",
+           -- WHEN THE LEAD WAS ACTUALLY RAISED, which the handset could not say
+           -- and had a column that looked as though it could.
+           --
+           -- upsertLeads binds the moment of the pull into clientCreatedAt, and
+           -- that is honest for a lead the salesman raised on the phone: it is
+           -- when he typed it in. For a lead the OFFICE raised it is the moment
+           -- this handset first saw the row, which is a different fact wearing
+           -- a name that reads like the right one -- so an age read off it says
+           -- "today" on a four-year-old lead, and says something else again
+           -- after a reinstall. Sent as the fact itself, into a column of its
+           -- own, because one column cannot carry two facts.
+           c.created_at as "createdAt",
            c.updated_at as "updatedAt"
       from customers c
       left join products p on p.id = c.lead_required_product_id
       left join distributor_salesmen ds on ds.id = c.lead_distributor_salesman_id
       left join users lm on lm.id = c.lead_manager_id
+      -- The other seat, for the name beside its id. LEFT, because most leads
+      -- have nobody in it and a lead with an empty seat still has to come down.
+      left join users bo on bo.id = c.back_office_am_id
       -- §11 -- one profile per candidate, kept unique by
       -- distributor_profiles_customer_key, so this join cannot multiply a row.
       left join distributor_profiles dp on dp.customer_id = c.id

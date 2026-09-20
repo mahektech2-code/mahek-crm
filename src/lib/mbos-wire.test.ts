@@ -1812,3 +1812,157 @@ test("the lead sources list is spelled the same on both sides", () => {
       "bootstrapped offers no sources at all",
   );
 });
+
+/* ---------------------------------------------------------------------------
+ * §5.5 — A COMMITMENT IS A DATE AND A QUANTITY, AND THE OTHER TWO THIRDS OF IT
+ * LIVED IN A KEY-VALUE STORE.
+ *
+ * Mahek's own answer, and it overrules §9 where the two differ: "they will
+ * order some time next week" is not a commitment anybody can plan a godown
+ * around, and a promise with no size on it cannot be held against the order
+ * that eventually answers it. The blocker beside it says whose work it is that
+ * the order has not happened — four codes for four different desks, plus the
+ * ordinary answer that nothing is in the way.
+ *
+ * `recordExpectedOrder` has collected all four since the commitment sheet
+ * shipped and could send only two. There was no column on `customers` for the
+ * quantity until `0151` and none for the blocker until `0155`, no field on
+ * `leadSchema` for either, and no column on the handset — so the two it could
+ * not send were kept in `kv` under `lead.commitment.<id>`, where no sync
+ * touches them. That was the RIGHT answer while it held, and the reason is the
+ * one this test exists to keep true: a field `leadSchema` does not declare is
+ * stripped by zod IN SILENCE. No refusal, no log, no rejection row — the
+ * salesman types the size in, the app says saved, and the column stays null
+ * for ever. `mbos-payload-contract.test.ts` refuses such a field for exactly
+ * that reason and is what held the handset back.
+ *
+ * Both ends landed together, which is the only way this may ever be done, and
+ * the links are the same five every other field on this wire has: the server
+ * SENDS it, the handler READS it, the INSERT and the `ON CONFLICT` clause KEEP
+ * it — two assertions, because a hand-rolled handler types its column list out
+ * and a field read and never kept reads exactly like a column of nulls — and
+ * the table has somewhere to PUT it. Two of them travel back up as well, so
+ * `leadSchema` has to declare them or the wire is one-way again.
+ * ------------------------------------------------------------------------- */
+
+/** Wire name → what a lead loses if this link breaks. */
+const LEAD_COMMITMENT_FACTS: Record<string, string> = {
+  expectedOrderQuantityCans:
+    "§5.5 — HOW MUCH they said they would take. Without it a commitment is a " +
+    "day with no size on it, which is a follow-up rather than a forecast, and " +
+    "no order can be measured against what was promised",
+  expectedOrderBlockerCode:
+    "§5.5 — WHAT IS IN THE WAY, as a code. Without it 'how much are we " +
+    "forecasting behind credit terms this quarter' is a grep over sentences " +
+    "nobody typed the same way twice, and four problems with four owners " +
+    "count as one number",
+  createdAt:
+    "when the lead was actually RAISED. The handset binds the moment of the " +
+    "pull into clientCreatedAt, so an age read off that says 'today' on a " +
+    "four-year-old lead and says something else again after a reinstall",
+  backOfficeAmName:
+    "§7 — WHO holds the back office seat. The id alone is unrenderable here, " +
+    "because this app holds no user table, so a screen can say the seat is " +
+    "filled and never by whom",
+};
+
+test("a commitment's size, its blocker and a lead's two missing facts survive the wire", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  const pull = readFileSync("mbos-app/src/sync/pull.ts", "utf8");
+  const sent = new Set(payloadColumns(service, "openLeads"));
+  const read = new Set(fieldsRead(pull, "upsertLeads"));
+  const columns = handsetTables().get("leads") ?? new Set<string>();
+
+  const at = pull.indexOf("function upsertLeads(");
+  const body = pull.slice(at, pull.indexOf("\n}", at));
+  const inserted = new Set(
+    (body.match(/INSERT INTO leads \(([^)]*)\)/)?.[1] ?? "")
+      .split(",")
+      .map((c) => c.trim()),
+  );
+  const kept = new Set([...body.matchAll(/(\w+) = excluded\.\1/g)].map((m) => m[1]));
+
+  const faults: string[] = [];
+  for (const [field, why] of Object.entries(LEAD_COMMITMENT_FACTS)) {
+    if (!sent.has(field)) faults.push(`openLeads does not send ${field} — ${why}`);
+    if (!read.has(field)) faults.push(`upsertLeads does not read ${field} — ${why}`);
+    if (!inserted.has(field)) {
+      faults.push(
+        `upsertLeads reads ${field} and never inserts it, which reads on every ` +
+          `screen exactly like a column of nulls — ${why}`,
+      );
+    }
+    if (!kept.has(field)) {
+      faults.push(
+        `upsertLeads inserts ${field} and does not update it on conflict, so it ` +
+          "is whatever it was the first time this lead arrived — and a lead is " +
+          "on the phone long before anybody records a commitment against it",
+      );
+    }
+    if (!columns.has(field)) {
+      faults.push(
+        `the handset's leads table has no ${field} column — the server sends it, ` +
+          "applyPull throws on the unknown column, and ONE transaction rolls " +
+          "back the ENTIRE pull",
+      );
+    }
+  }
+
+  assert.deepEqual(faults, [], `\n  ${faults.join("\n  ")}`);
+});
+
+test("the commitment the salesman records reaches the office, and its blocker is checked against the stored list", () => {
+  const actions = readFileSync(SYNC_ACTIONS, "utf8");
+  const funnel = readFileSync("mbos-app/src/data/lead-funnel.ts", "utf8");
+
+  /* UP AS WELL AS DOWN, which is the half `gstVerified` deliberately does not
+     have. The salesman is the one standing in the shop being told the number,
+     so the schema has to name both or `safeParse` strips them without a word
+     and the office keeps a date with no size on it. */
+  for (const field of ["expectedOrderQuantityCans", "expectedOrderBlockerCode"]) {
+    assert.ok(
+      new RegExp(`\\b${field}: z\\.`).test(actions),
+      `leadSchema no longer declares ${field}, so zod strips it in silence — ` +
+        "the salesman types it in, the app says saved, and the column stays null",
+    );
+    assert.ok(
+      new RegExp(`\\b${field}:`).test(funnel),
+      `recordExpectedOrder no longer puts ${field} on the patch, so the office ` +
+        "hears a commitment with a piece missing and nothing anywhere says so",
+    );
+  }
+
+  /* AND THE `kv` WORKAROUND IS GONE. Left in place it would be a second home
+     for one fact — a size on the row and a size in the store, disagreeing the
+     first time a manager corrects one at a desk. */
+  assert.ok(
+    !/lead\.commitment\./.test(funnel),
+    "the lead.commitment.<id> key is back in lead-funnel.ts. Both halves now " +
+      "have a column, so a second copy in `kv` is one that can disagree with " +
+      "the row the office and the phone both read",
+  );
+
+  /* THE CODE IS CHECKED AGAINST THE STORED LIST, never an enum typed out
+     beside the handler. A hard-coded list beside a configured one is two
+     definitions waiting to disagree, and the disagreement arrives the day a
+     manager rewords a blocker on the Settings screen. */
+  assert.match(
+    actions,
+    /\["leads\.orderBlockers"\]/,
+    "handleLeadUpdate no longer checks the blocker against leads.orderBlockers. " +
+      "A list retyped beside the handler is one that stops matching the office's " +
+      "the day somebody rewords a code, and the stored value then resolves to nothing",
+  );
+
+  /* AND THE HANDSET HAS THE LIST BEFORE ITS FIRST BOOTSTRAP. A missing DEFAULTS
+     entry here is invisible rather than loud: `getConfig` answers `undefined`,
+     the picker draws no chips, and the sheet becomes a title and a button that
+     can only ever say "Pick one" — on a deployment that published the list. */
+  const config = readFileSync("mbos-app/src/data/config.ts", "utf8");
+  assert.ok(
+    config.includes("'leads.orderBlockers':"),
+    "leads.orderBlockers has no entry in the handset's DEFAULTS, so a handset " +
+      "that has not bootstrapped offers no blockers at all and a commitment " +
+      "cannot be recorded",
+  );
+});

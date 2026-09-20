@@ -3,6 +3,7 @@ import { LEAD_SOURCES, type LeadSource } from '../engines/leads';
 import {
   HOLD_REASONS,
   LOST_REASONS,
+  ORDER_BLOCKERS,
   OVERRIDE_REASONS,
   PROSPECT_REASONS,
   SAMPLE_CANCEL_REASONS,
@@ -287,6 +288,15 @@ const DEFAULTS: Record<string, unknown> = {
      people never typed the same way twice. */
   'leads.holdReasons': HOLD_REASONS.map((r) => ({ ...r })),
   'leads.sampleCancelReasons': SAMPLE_CANCEL_REASONS.map((r) => ({ ...r })),
+  /* §5.5 — WHAT IS STOPPING THE FIRST ORDER, and it was the third list read on
+     a phone and named nowhere here. `funnelConfig()` spelled the fallback out
+     at its own call site, which is the arrangement this table exists to
+     replace: without either, `getConfig` answers `undefined`, the picker draws
+     no chips, and the commitment sheet becomes a title and a button that can
+     only ever say "Pick one" — on a deployment that has published the list and
+     paid for the feature. Five codes, four of which are four different desks;
+     copied from `lib/config/registry.ts` like everything else here. */
+  'leads.orderBlockers': ORDER_BLOCKERS.map((r) => ({ ...r })),
   'leads.overrideReasons': OVERRIDE_REASONS.map((r) => ({ ...r })),
   'leads.sampleReviewChaseDays': [2, 4, 6],
   'leads.verificationDueDays': 2,

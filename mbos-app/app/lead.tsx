@@ -28,7 +28,6 @@ import {
   decideSuspect,
   distributorCandidates,
   leadEvents,
-  commitmentExtras,
   leadFunnelView,
   markLost,
   putOnHold,
@@ -37,7 +36,6 @@ import {
   setNextAction,
   setSalesType,
   shopPhoto,
-  type CommitmentExtras,
   type LeadEvent,
   type LeadFunnelView,
 } from '../src/data/lead-funnel';
@@ -177,11 +175,6 @@ export default function LeadRecord() {
    */
   const parking = React.useRef(false);
 
-  /* §5.5 — the two halves of a commitment the office has no column for yet.
-     Read beside the lead rather than derived from it: they live in `kv`, and
-     `lead-funnel.ts` explains at length why that is the right place for them
-     until a column exists. */
-  const [commit, setCommit] = React.useState<CommitmentExtras | null>(null);
   const [commitOpen, setCommitOpen] = React.useState(false);
   /* A ref rather than state, for the reason `parking` beside it gives: a
      second press lands before React has re-rendered and records the promise
@@ -205,8 +198,7 @@ export default function LeadRecord() {
          salesman's — was written down and never shown to either of them. */
       validationsFor(id),
       shopPhoto(id),
-      commitmentExtras(id),
-    ]).then(([v, e, t, s, calls, shot, promised]) => {
+    ]).then(([v, e, t, s, calls, shot]) => {
       if (!live) return;
       setView(v);
       setEvents(e);
@@ -214,7 +206,6 @@ export default function LeadRecord() {
       setMe(s ? { id: s.user.id, name: s.user.name } : null);
       setChecks(calls);
       setPhoto(shot);
-      setCommit(promised);
     });
     return () => {
       live = false;
@@ -786,8 +777,8 @@ export default function LeadRecord() {
             <CommitmentCard
               date={lead.expectedOrderDate}
               valuePaise={lead.expectedOrderValuePaise}
-              quantityCans={commit?.quantityCans ?? null}
-              blockerCode={commit?.blockerCode ?? null}
+              quantityCans={lead.expectedOrderQuantityCans}
+              blockerCode={lead.expectedOrderBlockerCode}
               blockers={config.orderBlockers}
               hasOrder={lead.hasOrder === 1}
               countingOrderCount={lead.countingOrderCount}
@@ -1182,9 +1173,9 @@ export default function LeadRecord() {
         blockers={config.orderBlockers}
         current={{
           date: lead.expectedOrderDate,
-          quantityCans: commit?.quantityCans ?? null,
+          quantityCans: lead.expectedOrderQuantityCans,
           valuePaise: lead.expectedOrderValuePaise,
-          blockerCode: commit?.blockerCode ?? null,
+          blockerCode: lead.expectedOrderBlockerCode,
         }}
         onClose={() => setCommitOpen(false)}
         onSave={(c) => {

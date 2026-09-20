@@ -54,7 +54,10 @@ export function CommitmentCard({
 }: {
   date: string | null;
   valuePaise: number | null;
-  /** The phone's own copy — see `rememberCommitmentExtras`. Null until asked. */
+  /** §5.5 — the SIZE of the promise, off the lead row. Null is nobody having
+      been asked; the blocker's own null is the same fact, and is NOT the
+      `no_blocker` code, which is somebody being asked and saying the road is
+      clear. */
   quantityCans: number | null;
   blockerCode: string | null;
   blockers: CodedOption[];
