@@ -3,6 +3,7 @@ import { getConfig } from './config';
 import { raiseApproval } from './requests';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
 import { isoDate } from '../lib/format';
+import { chaseSchedule, type ChaseCount, type ChaseSchedule } from '../lib/sample-chase';
 import {
   FEEDBACK_FIELDS,
   REASON_CODE_NEEDING_REMARKS,
@@ -88,6 +89,26 @@ export type FunnelSample = {
   trialOutcome: string | null;
   followUpDate: string | null;
   convertedOrderId: string | null;
+  /**
+   * §16 — HOW MANY TIMES THE OFFICE HAS ASKED, and why it is optional.
+   *
+   * `mbos_samples.review_chase_count` is a real server column, raised by the
+   * hourly pass, and it is what lets a screen say "asked three times" — the
+   * number that tells somebody to stop waiting and ring the shop themselves.
+   * It does not travel on the wire and the handset's `samples` table has no
+   * place for it, so `SELECT *` does not produce the key at all and this reads
+   * `undefined` on every handset today.
+   *
+   * It is declared OPTIONAL rather than `number | null` deliberately. Zero
+   * chases and "this phone has not been told" are different facts, and the
+   * moment one is defaulted to the other on the way to a screen the difference
+   * is gone and a salesman is quietly reassured that nothing has been chased on
+   * a sample the office has rung about three times. `chaseCountOf` is the one
+   * place the states are read, and it answers null rather than zero.
+   */
+  reviewChaseCount?: number | null;
+  /** The day of the last ask. The same story: a server column, not on the wire. */
+  lastReviewChaseAt?: number | null;
   syncState: string;
 };
 
@@ -192,9 +213,12 @@ export async function sampleReasons(): Promise<CodedOption[]> {
  * office may reword these without a deploy, and a phone offering the words it
  * was compiled with is a phone whose answers stop matching the report they are
  * counted in. `SAMPLE_CANCEL_REASONS` is the fallback and nothing more — the
- * `leads.*` keys do not reach a handset yet, so it is what the screen actually
- * draws today, and it is the same list `lib/config/registry.ts` takes its own
- * default from.
+ * `leads.*` keys DO reach a handset — `mbosConfigPayload` sends every key
+ * beginning `mbos.` or `leads.` — so this is what a phone draws only until its
+ * first pull lands, and it is the same list `lib/config/registry.ts` takes its
+ * own default from. (The sentence here used to say the opposite, written before
+ * that prefix test existed; a stale comment about which keys travel is how the
+ * next person concludes a configured list cannot be trusted.)
  */
 export async function cancelReasons(): Promise<CodedOption[]> {
   return getConfig<CodedOption[]>(
@@ -234,6 +258,91 @@ export function whatIsOwed(s: FunnelSample): string | null {
     case 'Cancelled': return null;
     default: return null;
   }
+}
+
+/* --------------------------------------------------- §16 the chase ladder */
+
+/**
+ * The ladder the office chases a review on — day 2, then 4, then 6, and the
+ * last interval for ever after that.
+ *
+ * Configuration rather than three numbers typed into a screen, for the reason
+ * every coded list here is: a cadence compiled into an APK is a business rule
+ * living where the one person who would change it cannot see it, and an APK
+ * cannot be recalled. `leads.*` keys reach the handset with the rest of the
+ * pull, so the office rewording the ladder reaches a phone on the next sync.
+ *
+ * The fallback is the registry's own default and nothing more — what a handset
+ * that has never completed a bootstrap draws, so a salesman signing in on a bad
+ * connection still sees a rhythm rather than an empty panel.
+ */
+export async function reviewChaseDays(): Promise<number[]> {
+  const days = await getConfig<number[]>('leads.sampleReviewChaseDays', [2, 4, 6]);
+  return Array.isArray(days) ? days.map((d) => Number(d)).filter((d) => Number.isFinite(d) && d >= 0) : [2, 4, 6];
+}
+
+/**
+ * How many times the office has asked, or NULL where nobody has told us.
+ *
+ * The column is not on the wire, so `SELECT *` does not produce the key and
+ * this answers null on every handset today. It will answer a number the moment
+ * the field lands, with nothing on any screen needing to change — which is the
+ * point of asking the question here rather than at each call site.
+ *
+ * A row this handset raised and has not yet synced answers null too, and that
+ * is right rather than merely convenient: the office cannot have chased a
+ * sample it has not heard about, but it is also true that nothing has told us
+ * so, and the screen that says "nobody has told this phone" is honest about
+ * both.
+ */
+export function chaseCountOf(s: FunnelSample): ChaseCount {
+  const n = s.reviewChaseCount;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
+/**
+ * The day the SHOP said it was in their hands, which is the only day the review
+ * clock may be counted from.
+ *
+ * Not `dispatchedAt`, which is us saying it went, and not `deliveredAt`, which
+ * is the carrier saying it arrived. §J turns on the third assertion precisely
+ * because the first two cannot answer it, and a chase dated from dispatch rings
+ * a customer still waiting for the parcel — a call that teaches them we do not
+ * know where our own stock is.
+ *
+ * Both column names are read for the same reason the record page reads both:
+ * `receivedConfirmedAt` is what a confirmation made on THIS handset writes and
+ * `receivedAt` is the name the office writes the same fact under. One party,
+ * one fact, two spellings.
+ */
+export function receiptConfirmedOn(s: FunnelSample): string | null {
+  const at = s.receivedAt ?? s.receivedConfirmedAt;
+  return at ? isoDate(new Date(at)) : null;
+}
+
+/**
+ * Is this sample sitting on somebody's word that has not come?
+ *
+ * The chase exists for exactly this gap and nowhere else: the shop has the can
+ * and nobody has written down what they thought of it. A sample still in the
+ * godown has nothing to review and a reviewed one has an answer, so drawing a
+ * ladder against either would be a checklist for work that does not exist.
+ */
+export function isAwaitingReview(s: FunnelSample): boolean {
+  if (s.trialOutcome && s.trialOutcome !== 'pending') return false;
+  return s.state === 'Awaiting feedback' || s.state === 'Tried';
+}
+
+/**
+ * The whole chase for one sample, wired to the two things it is derived from.
+ *
+ * The arithmetic is `lib/sample-chase.ts` and stays there — pure, tested and
+ * runnable with no signal, which is the state the salesman reading this is
+ * actually in. This is the seam: which day it counts from, and what the office
+ * has said about it.
+ */
+export function chaseFor(s: FunnelSample, chaseDays: readonly number[], today: string): ChaseSchedule {
+  return chaseSchedule({ receivedOn: receiptConfirmedOn(s), asked: chaseCountOf(s), chaseDays, today });
 }
 
 /* ----------------------------------------------------------------- writes */

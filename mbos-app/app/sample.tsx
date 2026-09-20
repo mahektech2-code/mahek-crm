@@ -8,20 +8,24 @@ import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens'
 import {
   cancelReasons,
   cancelSample,
+  chaseFor,
   confirmReceived,
   feedbackFor,
   getSample,
+  isAwaitingReview,
   markDispatched,
   markTrialStarted,
   markTried,
   recordFeedback,
   rejectionSaidWhy,
   REJECTION_NEEDS_WHY,
+  reviewChaseDays,
   whatIsOwed,
   type FunnelSample,
   type SampleFeedback,
   type TrialVerdict,
 } from '../src/data/lead-samples';
+import { chaseCountSentence, nextChaseSentence, type ChaseSchedule } from '../src/lib/sample-chase';
 import { VoiceField } from '../src/components/ui/dictate';
 import { getCustomer } from '../src/data/customers';
 import { getLead } from '../src/data/leads';
@@ -107,6 +111,16 @@ export default function SampleRecord() {
   /* The eight, read off configuration once when the screen opens. An empty
      list is a real state and the sheet draws it — see `ReasonSheet`. */
   const [reasons, setReasons] = React.useState<CodedOption[]>([]);
+  /* §16's ladder, off configuration rather than typed here. The registry's own
+     default is the fallback, so a handset that has never pulled still draws a
+     rhythm rather than an empty panel. */
+  const [chaseDays, setChaseDays] = React.useState<number[]>([]);
+  /* THE DAY, READ ON EVERY FOCUS rather than during render. This process lives
+     for days — the salesman opens the app he left open last night — and a date
+     frozen at mount would draw yesterday's ladder, in the direction that hides
+     what is already due. Reading the clock in render is the other way to get
+     this wrong and the compiler rules forbid it. */
+  const [today, setToday] = React.useState(() => isoDate(new Date()));
   const [busy, setBusy] = React.useState(false);
   /* A REF, not state: a second tap arrives before any re-render has happened,
      so a boolean in state is read at its old value and the cancellation is
@@ -120,12 +134,14 @@ export default function SampleRecord() {
       setStatus('ready');
       return;
     }
-    void Promise.all([getSample(id), feedbackFor(id), cancelReasons()])
-      .then(async ([s, f, why]) => {
+    setToday(isoDate(new Date()));
+    void Promise.all([getSample(id), feedbackFor(id), cancelReasons(), reviewChaseDays()])
+      .then(async ([s, f, why, chase]) => {
         if (!live) return;
         setSample(s);
         setReview(f);
         setReasons(why);
+        setChaseDays(chase);
         setStatus('ready');
         if (s) {
           const c = await getCustomer(s.customerId);
@@ -162,6 +178,12 @@ export default function SampleRecord() {
 
   const s = sample;
   const owed = whatIsOwed(s);
+  /* Pure, and derived on the way past rather than held in state: the ladder is
+     arithmetic over the receipt date, the configured days and today, and a
+     cached second copy of it is a copy that can disagree with the record it
+     sits on. */
+  const chase = chaseFor(s, chaseDays, today);
+  const awaiting = isAwaitingReview(s);
   const finished = s.state === 'Reviewed' || s.state === 'Converted' || s.state === 'Cancelled' || s.state === 'Rejected';
 
   return (
@@ -181,6 +203,41 @@ export default function SampleRecord() {
 
         {owed ? (
           <T style={[{ fontSize: 15, lineHeight: 21, marginTop: 10, color: C.ink }, weight(500)]}>{owed}</T>
+        ) : null}
+
+        {/* HOW MANY TIMES IT HAS BEEN ASKED, at the top of the record and not
+            buried in the panel below.
+
+            This is the number the whole mechanism exists to produce. A trial
+            reviewed yesterday and one chased three times with no answer are the
+            same badge and the same sentence otherwise, and they are two
+            different mornings — the first is waiting and the second is picking
+            the phone up yourself. Where the count has not reached this phone it
+            says exactly that, in a differently shaped sentence, because a zero
+            drawn for an absence reassures somebody about work nobody has
+            checked. */}
+        {awaiting ? (
+          <T
+            style={[
+              {
+                fontSize: 15,
+                lineHeight: 21,
+                marginTop: 6,
+                /* Red only once the named ladder has been walked to its end
+                   with no answer — that is the point at which a manager is
+                   meant to stop reading and ring the shop. Not asked yet, and
+                   not told, are both quiet. */
+                color:
+                  chase.asked == null || chase.asked === 0
+                    ? C.muted
+                    : chase.asked >= chase.rungs.length
+                      ? C.danger
+                      : C.warnInk,
+              },
+              weight(600),
+            ]}>
+            {chaseCountSentence(chase.asked)}
+          </T>
         ) : null}
 
         <Divider style={{ marginVertical: 12 }} />
@@ -356,6 +413,9 @@ export default function SampleRecord() {
         </View>
       )}
 
+      {/* ------------------------------------------- §16 the chase ladder */}
+      {awaiting ? <ChasePanel chase={chase} /> : null}
+
       {/* ------------------------------------------------- §16 the review */}
       {review ? (
         <View style={{ marginTop: 20 }}>
@@ -467,6 +527,136 @@ export default function SampleRecord() {
         }}
       />
     </AppFrame>
+  );
+}
+
+/**
+ * §16 — the chase, drawn as a checklist that does not run out.
+ *
+ * Three things have to survive being put on a screen, and each of them is a way
+ * this panel could quietly lie.
+ *
+ * THE CLOCK STARTS AT CONFIRMED RECEIPT. Not at dispatch, which is us saying it
+ * went, and not at delivery, which is the carrier's word. A ladder counted from
+ * either would tell a salesman to ring a shop still waiting for the parcel —
+ * and that call teaches the shop we do not know where our own stock is. Before
+ * the shop confirms, this panel draws no ladder at all and says why.
+ *
+ * THE LAST RUNG IS NOT THE LAST ASK. A finite three-item list that runs out
+ * implies the chasing has stopped, and it has not: the last interval repeats
+ * until there is an answer, because a trial nobody reviewed is stock given away
+ * for nothing. So the named ladder is the checklist, what has gone past it is
+ * counted in one line, and the sentence underneath always names the next day.
+ *
+ * NOT BEING TOLD IS NOT BEING TOLD NOTHING HAPPENED. The count lives in
+ * `mbos_samples.review_chase_count` and does not travel on the wire, so every
+ * handset today reads null — and the boxes are drawn hollow with the days said
+ * plainly rather than ticked as unchased. The calendar is still ours: which
+ * days have gone by is arithmetic this phone can do with no signal, and saying
+ * that much is worth more than saying nothing.
+ */
+function ChasePanel({ chase }: { chase: ChaseSchedule }) {
+  const next = nextChaseSentence(chase, pretty);
+
+  if (!chase.startedOn) {
+    return (
+      <View style={{ marginTop: 20 }}>
+        <SectionLabel style={{ marginBottom: 10 }}>Chasing the review</SectionLabel>
+        <Card>
+          <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>
+            The chasing has not started. It is counted from the day the shop confirms they have it — not from the day
+            it went out — so nothing is due until somebody marks it received.
+          </T>
+        </Card>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ marginTop: 20 }}>
+      <SectionLabel style={{ marginBottom: 10 }}>Chasing the review</SectionLabel>
+      <Card>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+          <T style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 21, color: C.ink }, weight(600)]}>
+            {chaseCountSentence(chase.asked)}
+          </T>
+          {chase.asked != null && chase.asked >= chase.rungs.length && chase.rungs.length ? (
+            <Badge tone="danger">Worth ringing yourself</Badge>
+          ) : null}
+        </View>
+        <T s="caption" style={{ marginTop: 4 }}>
+          {'Counted from ' + pretty(chase.startedOn) + ', the day they confirmed they had it.'}
+        </T>
+
+        <Divider style={{ marginVertical: 12 }} />
+
+        <View style={{ gap: 10 }}>
+          {chase.rungs.map((r) => (
+            <View key={r.ask} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              {/* A filled mark is the office saying the ask went. A hollow one
+                  means either it has not or nobody has told us, and the word on
+                  the right is what tells the two apart — a tick that had to
+                  guess would be the one thing on this panel worth nothing. */}
+              <View
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 9,
+                  borderWidth: r.asked === true ? 0 : 1.5,
+                  borderColor: r.duePassed ? C.warnInk : C.border,
+                  backgroundColor: r.asked === true ? C.success : 'transparent',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                {r.asked === true ? <T style={{ fontSize: 11, color: '#FFFFFF', lineHeight: 14 }}>✓</T> : null}
+              </View>
+              <T style={{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }}>
+                {'Ask ' + r.ask + ' · ' + pretty(r.dueOn)}
+              </T>
+              <T
+                s="caption"
+                style={{
+                  color: r.asked === true ? C.success : r.duePassed ? C.warnInk : C.muted,
+                }}>
+                {r.asked === true
+                  ? 'asked'
+                  : r.asked === false
+                    ? r.duePassed
+                      ? 'not asked'
+                      : 'to come'
+                    : r.duePassed
+                      ? 'day gone by'
+                      : 'to come'}
+              </T>
+            </View>
+          ))}
+        </View>
+
+        {/* PAST THE LADDER IS A COUNT, NOT MORE BOXES. Twenty rows for a trial
+            that has gone quiet for six weeks is a list nobody reads, and the
+            one number worth having out of it is how many times we have asked. */}
+        {chase.beyondLadder ? (
+          <T style={[{ fontSize: 15, lineHeight: 21, marginTop: 10, color: C.warnInk }, weight(500)]}>
+            {'…and ' + plural(chase.beyondLadder, 'more ask') + ' since, on the same rhythm.'}
+          </T>
+        ) : null}
+
+        {next ? (
+          <T s="caption" style={{ marginTop: 10 }}>
+            {next}
+          </T>
+        ) : null}
+
+        {/* Said once, at the bottom, where somebody who has just read a column
+            of hollow circles is asking why none of them is ticked. */}
+        {chase.asked == null ? (
+          <T s="caption" style={{ marginTop: 6, color: C.muted }}>
+            The office keeps the count of what it has actually asked; this phone only knows the days. Ask them if it
+            matters before you ring.
+          </T>
+        ) : null}
+      </Card>
+    </View>
   );
 }
 
