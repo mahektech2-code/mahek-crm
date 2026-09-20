@@ -45,6 +45,7 @@ import {
   businessDate,
   daysBetween,
   monthKey,
+  monthWindowSql,
   onOrAfterWorkingDay,
 } from "../business-date";
 import { err, ok, okVoid, type Result } from "../result";
@@ -58,6 +59,7 @@ import {
   type CustomerListFilters,
 } from "../queries";
 import { creditedToSql, CREDITED_TO_SEAT_SQL, type CreditSeat } from "../sales-attribution";
+import { orderCountsSql, orderValueSql } from "../order-status";
 
 /**
  * Whose target a customer's monthly figure counts toward — the same rule
@@ -1158,13 +1160,13 @@ export async function targetTotals(
   period?: string,
   filters: TargetListFilters = {},
 ): Promise<{ customers: number; target: number; achieved: number }> {
-  const { where, joinTarget, year, month } = await targetListClause(period, filters);
+  const { where, joinTarget, key } = await targetListClause(period, filters);
 
   const [row] = await db
     .select({
       customers: sql<number>`count(*)::int`,
       target: sql<number>`coalesce(sum(coalesce(${monthlyTargets.targetAmount}, 0)), 0)::bigint`,
-      achieved: sql<number>`coalesce(sum(${targetAchievedSql(year, month)}), 0)::bigint`,
+      achieved: sql<number>`coalesce(sum(${targetAchievedSql(key)}), 0)::bigint`,
     })
     .from(customers)
     .leftJoin(monthlyTargets, joinTarget)
@@ -1261,7 +1263,7 @@ export async function listTargets(
   const config = await getConfig();
   // The population, the join and the month, built once in `targetListClause`
   // so the aggregate and the single-row reads above measure the same book.
-  const { where, joinTarget, year, month, key } = await targetListClause(period, filters);
+  const { where, joinTarget, key } = await targetListClause(period, filters);
 
   const rows = await db
     .select({
@@ -1279,18 +1281,18 @@ export async function listTargets(
       target: monthlyTargets.targetAmount,
       isDefault: monthlyTargets.isDefault,
       carriedForward: monthlyTargets.carriedForward,
-      achieved: sql<number>`coalesce((
-        select sum(o.total_amount) from ${orders} o
-         where o.customer_id = customers.id
-           and o.status in ('captured','confirmed','dispatched')
-           and extract(year from o.ordered_at) = ${year}
-           and extract(month from o.ordered_at) = ${month}
-      ), 0)`,
+      /*
+       * The SAME expression the totals row, the paged list and the shortfall
+       * report read. It was a second copy of it written out here, which is how
+       * this screen came to count three statuses of five and to read the month
+       * in whatever zone the session happened to be in.
+       */
+      achieved: targetAchievedSql(key),
       contactsThisMonth: sql<number>`(
         select count(*)::int from calls c
          where c.customer_id = customers.id
-           and extract(year from c.started_at) = ${year}
-           and extract(month from c.started_at) = ${month}
+           and c.started_at >= ${monthWindow(key).start}
+           and c.started_at < ${monthWindow(key).end}
       )`,
     })
     .from(customers)
@@ -1335,13 +1337,54 @@ export async function listTargets(
   });
 }
 
-function targetAchievedSql(year: number, month: number) {
+/**
+ * A MONTH, AS AN INSTANT RANGE IN THE ZONE WE WORK IN.
+ *
+ * `extract(month from o.ordered_at)` is the bare `::date` cast wearing
+ * different clothes: `ordered_at` is a timestamptz, so Postgres extracts it in
+ * the SESSION's zone, and the session's zone is not a property of the row. On
+ * anything not set to Asia/Kolkata a 1am IST order on the 1st is counted in the
+ * previous month — and local Postgres runs in Asia/Kolkata and agrees with
+ * itself, so it is invisible here and wrong in production. That is the trap the
+ * rule was written for, and the existing grep guard could not see this spelling
+ * because it watches for `::date`.
+ *
+ * A half-open range on the instant also lets the index on `ordered_at` be used,
+ * which two `extract`s per row never could.
+ */
+function monthWindow(key: string) {
+  const w = monthWindowSql(key);
+  return { start: sql.raw(w.start), end: sql.raw(w.end) };
+}
+
+/**
+ * What this customer has bought in the month — the one definition, read by the
+ * Targets tab, its totals row, the paged list and the shortfall report.
+ *
+ * TWO THINGS IT NO LONGER SPELLS OUT FOR ITSELF, and both were wrong.
+ *
+ * `orderCountsSql` answers "did we sell anything". This wrote three statuses
+ * out as a literal beside a list that holds five, so an order stopped counting
+ * towards its customer's month the moment somebody recorded that it was
+ * `in_transit` or `delivered` — achievement going DOWN as an order progressed,
+ * silently, and only on the orders that had got furthest. `lib/order-status.ts`
+ * says in as many words that the half which drifts is the SQL.
+ *
+ * And the VALUE is the sale net of GST, because that is the unit the target
+ * beside it is typed in — the same correction the person-level target took, on
+ * the screen next to it. `total_amount` is the sheet's Final Amount, tax in;
+ * `net_amount_paise` is the sale under it, and null means nobody stated one, so
+ * a CRM order counts at its own typed value rather than falling out of the
+ * month.
+ */
+function targetAchievedSql(key: string) {
+  const w = monthWindow(key);
   return sql<number>`coalesce((
-    select sum(o.total_amount) from ${orders} o
+    select sum(${orderValueSql("o")}) from ${orders} o
      where o.customer_id = customers.id
-       and o.status in ('captured','confirmed','dispatched')
-       and extract(year from o.ordered_at) = ${year}
-       and extract(month from o.ordered_at) = ${month}
+       and ${orderCountsSql("o")}
+       and o.ordered_at >= ${w.start}
+       and o.ordered_at < ${w.end}
   ), 0)`;
 }
 
@@ -1421,7 +1464,7 @@ export async function targetFilterClause(
   const key = period ?? monthKey(day);
   const [year, month] = key.split("-").map(Number);
 
-  const achievedExpr = targetAchievedSql(year, month);
+  const achievedExpr = targetAchievedSql(key);
   const targetExpr = sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)`;
   const isDefaultExpr = sql<boolean>`coalesce(${monthlyTargets.isDefault}, true)`;
   const gapExpr = sql<number>`greatest(0, ${targetExpr} - ${achievedExpr})`;
@@ -1521,8 +1564,6 @@ export async function listTargetsPage(
     targetExpr,
     achievedExpr,
     gapExpr,
-    year,
-    month,
     key,
   } = await targetFilterClause(period, filters);
 
@@ -1565,8 +1606,8 @@ export async function listTargetsPage(
       contactsThisMonth: sql<number>`(
         select count(*)::int from calls c
          where c.customer_id = customers.id
-           and extract(year from c.started_at) = ${year}
-           and extract(month from c.started_at) = ${month}
+           and c.started_at >= ${monthWindow(key).start}
+           and c.started_at < ${monthWindow(key).end}
       )`,
     })
     .from(customers)
@@ -1768,7 +1809,7 @@ export async function shortfallAnalysis(
 ) {
   await requireCapability("target.shortfall");
   const day = await today();
-  const { where, joinTarget, year, month } = await targetListClause(period, filters);
+  const { where, joinTarget, key } = await targetListClause(period, filters);
 
   const rows = await db
     .select({
@@ -1779,12 +1820,12 @@ export async function shortfallAnalysis(
       // always 0. See `targetTotals` for why that is an identity rather than
       // an approximation.
       target: sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)::bigint`,
-      achieved: targetAchievedSql(year, month),
+      achieved: targetAchievedSql(key),
       contactsThisMonth: sql<number>`(
         select count(*)::int from calls c
          where c.customer_id = customers.id
-           and extract(year from c.started_at) = ${year}
-           and extract(month from c.started_at) = ${month}
+           and c.started_at >= ${monthWindow(key).start}
+           and c.started_at < ${monthWindow(key).end}
       )`,
     })
     .from(customers)

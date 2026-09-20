@@ -21,8 +21,10 @@ import {
 } from "../engines/queue";
 import { nextStep, type NextStep } from "../engines/next-step";
 import { today } from "../recompute";
+import { orderCountsSql, orderValueSql } from "../order-status";
 import { getPaymentFollowUpPlan, paymentCadenceFor } from "./payment-service";
 import {
+  APP_TIMEZONE,
   businessDate,
   dayBoundaryWindow,
   type BusinessDate,
@@ -282,13 +284,26 @@ async function queueInputs(
            and o.status in ('pending_approval','captured','confirmed')
          order by o.ordered_at desc limit 1
       )`,
+      /*
+       * The gap this customer's month still has to make up — the SAME three
+       * rules the Monthly Targets screen reads, so the reason a telecaller is
+       * given and the figure their manager is looking at cannot differ.
+       *
+       * It used to spell out three of `PURCHASE_STATUSES`' five, so a delivered
+       * order stopped counting and the gap grew back; it read `total_amount`,
+       * which is GST-inclusive against a target typed without it; and it
+       * extracted the month in the session's zone. The window is built from the
+       * target's own year and month, which is why it is composed here rather
+       * than passed in.
+       */
       targetGap: sql<number>`coalesce((
         select greatest(0, t.target_amount - coalesce((
-          select sum(o.total_amount) from ${orders} o
+          select sum(${orderValueSql("o")}) from ${orders} o
            where o.customer_id = customers.id
-             and o.status in ('captured','confirmed','dispatched')
-             and extract(year  from o.ordered_at) = t.year
-             and extract(month from o.ordered_at) = t.month
+             and ${orderCountsSql("o")}
+             and o.ordered_at >= make_timestamptz(t.year, t.month, 1, 0, 0, 0, ${APP_TIMEZONE})
+             and o.ordered_at <  make_timestamptz(t.year, t.month, 1, 0, 0, 0, ${APP_TIMEZONE})
+                                 + interval '1 month'
         ), 0))
         from ${monthlyTargets} t
         where t.customer_id = customers.id

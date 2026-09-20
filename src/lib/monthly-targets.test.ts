@@ -22,11 +22,11 @@ import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
-  appAccess, customers, monthlyTargets, users } from "@/db/schema";
+  appAccess, customers, monthlyTargets, orders, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { seedMonthlyTargets } from "@/lib/recompute";
-import { setTarget } from "@/lib/services/worklist-services";
+import { listTargets, setTarget } from "@/lib/services/worklist-services";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -175,4 +175,112 @@ test("saving a real target clears a carried-forward mark", async () => {
   const after_ = await targetFor(c.id, 2026, 9);
   assert.equal(after_?.targetAmount, 130_000);
   assert.equal(after_?.carriedForward, false, "a manager has now looked at this month and decided");
+});
+
+/* ============================ what the month has ACHIEVED against that target */
+
+/**
+ * The other half of the screen, and it was wrong in three ways at once — all
+ * of them invisible, because a figure that is merely too big looks like a good
+ * month. The achievement subquery spelled three of `PURCHASE_STATUSES`' five
+ * out as a literal, read `total_amount` (GST in) against a target typed
+ * without it, and extracted the month in whatever zone the session was in.
+ */
+
+const PERIOD = "2026-08";
+
+async function makeOrderFor(
+  customerId: string,
+  over: Partial<typeof orders.$inferInsert> = {},
+) {
+  const [row] = await db
+    .insert(orders)
+    .values({
+      id: id("ord"),
+      customerId,
+      source: "external",
+      status: "dispatched",
+      orderedAt: new Date(`${PERIOD}-15T09:00:00+05:30`),
+      totalAmount: 118_000_00,
+      netAmountPaise: 100_000_00,
+      ...over,
+    })
+    .returning();
+  return row;
+}
+
+async function achievedFor(customerId: string) {
+  const rows = await listTargets(PERIOD);
+  const row = rows.find((r) => r.customerId === customerId);
+  assert.ok(row, "the customer did not reach the targets list at all");
+  return row.achieved;
+}
+
+test("achievement is the sale net of GST, not the figure the customer was billed", async () => {
+  const c = await makeCustomer();
+  await makeOrderFor(c.id);
+  assert.equal(await achievedFor(c.id), 100_000_00);
+});
+
+test("AN ORDER THAT REACHED THE CUSTOMER STILL COUNTS", async () => {
+  /*
+   * The worst of the three. The literal held `captured`, `confirmed` and
+   * `dispatched`, so recording that an order was in transit or delivered took
+   * it back out of its customer's month — achievement going DOWN as the order
+   * went further, and a gap reopening on a shop that had already bought.
+   */
+  for (const status of ["in_transit", "delivered"] as const) {
+    const c = await makeCustomer();
+    await makeOrderFor(c.id, { status });
+    assert.equal(await achievedFor(c.id), 100_000_00, `${status} stopped counting`);
+  }
+});
+
+test("and a declined order still counts for nothing", async () => {
+  // The widening must not have reached the other list.
+  const c = await makeCustomer();
+  await makeOrderFor(c.id, { status: "declined" });
+  assert.equal(await achievedFor(c.id), 0);
+});
+
+test("an order with no net stated counts at what was typed, never at zero", async () => {
+  const c = await makeCustomer();
+  await makeOrderFor(c.id, { source: "crm", netAmountPaise: null, totalAmount: 50_000_00 });
+  assert.equal(await achievedFor(c.id), 50_000_00);
+});
+
+test("a 1am order on the FIRST belongs to that month, on a GMT database", async () => {
+  /*
+   * The zone rule, in its fourth spelling. `extract(month from ordered_at)`
+   * reads the session's zone, so this order fell into July on any database not
+   * set to Asia/Kolkata — and local Postgres is, which is why nothing here ever
+   * saw it. The session is forced to GMT for the length of the read.
+   */
+  const c = await makeCustomer();
+  await makeOrderFor(c.id, {
+    orderedAt: new Date(`${PERIOD}-01T01:00:00+05:30`),
+  });
+
+  await db.execute(sql`set time zone 'GMT'`);
+  try {
+    assert.equal(await achievedFor(c.id), 100_000_00);
+  } finally {
+    await db.execute(sql`set time zone 'Asia/Kolkata'`);
+  }
+});
+
+test("and an order on the LAST night of the month does not spill into the next", async () => {
+  const c = await makeCustomer();
+  await makeOrderFor(c.id, {
+    orderedAt: new Date(`${PERIOD}-31T23:30:00+05:30`),
+  });
+
+  await db.execute(sql`set time zone 'GMT'`);
+  try {
+    assert.equal(await achievedFor(c.id), 100_000_00);
+    const next = await listTargets("2026-09");
+    assert.equal(next.find((r) => r.customerId === c.id)?.achieved, 0);
+  } finally {
+    await db.execute(sql`set time zone 'Asia/Kolkata'`);
+  }
 });
