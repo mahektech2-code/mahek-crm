@@ -7,7 +7,9 @@ import { legacyStageFor, stageOf, wireFunnelStage, wireNotes } from '../lib/wire
 import {
   gateForNext,
   gateTo,
+  labelOf,
   mustDecideSuspect,
+  REASON_CODE_NEEDING_REMARKS,
   type CodedOption,
   type GateVerdict,
   type LeadGateInput,
@@ -59,25 +61,43 @@ export type FunnelConfig = {
   prospectReasons: CodedOption[];
   sampleReasons: CodedOption[];
   lostReasons: CodedOption[];
+  /* Why a lead stopped. Published by the office since the funnel shipped and
+     read by nothing here — see the note in `data/config.ts`. */
+  holdReasons: CodedOption[];
 };
 
 /**
- * The four coded lists and the suspect window, fetched together.
+ * The coded lists and the suspect window, fetched together.
  *
- * Together rather than five deep, because every screen in the funnel needs at
- * least two of them and a form that renders its options one await at a time
- * flickers its way onto the screen while somebody is standing in a shop.
+ * Together rather than one await at a time, because every screen in the funnel
+ * needs at least two of them and a form that renders its options one await at
+ * a time flickers its way onto the screen while somebody is standing in a
+ * shop.
  */
 export async function funnelConfig(): Promise<FunnelConfig> {
-  const [suspectMaxVisits, requireNextAction, prospectReasons, sampleReasons, lostReasons] =
-    await Promise.all([
-      getConfig<number>('leads.suspectMaxVisits'),
-      getConfig<boolean>('leads.requireNextAction'),
-      getConfig<CodedOption[]>('leads.prospectReasons'),
-      getConfig<CodedOption[]>('leads.sampleReasons'),
-      getConfig<CodedOption[]>('leads.lostReasons'),
-    ]);
-  return { suspectMaxVisits, requireNextAction, prospectReasons, sampleReasons, lostReasons };
+  const [
+    suspectMaxVisits,
+    requireNextAction,
+    prospectReasons,
+    sampleReasons,
+    lostReasons,
+    holdReasons,
+  ] = await Promise.all([
+    getConfig<number>('leads.suspectMaxVisits'),
+    getConfig<boolean>('leads.requireNextAction'),
+    getConfig<CodedOption[]>('leads.prospectReasons'),
+    getConfig<CodedOption[]>('leads.sampleReasons'),
+    getConfig<CodedOption[]>('leads.lostReasons'),
+    getConfig<CodedOption[]>('leads.holdReasons'),
+  ]);
+  return {
+    suspectMaxVisits,
+    requireNextAction,
+    prospectReasons,
+    sampleReasons,
+    lostReasons,
+    holdReasons,
+  };
 }
 
 /* ------------------------------------------------------------------ reads */
@@ -176,6 +196,10 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
     creditDaysWanted: lead.creditDaysWanted,
     application: lead.application,
     gstin: lead.gstin,
+    /* §11.6 — the OFFICE's verdict, pulled down and settable by nothing here.
+       The gate reads the number AND this, so while it was on no wire it was
+       undefined on every handset and no shop lead ever reached Sample/Trial. */
+    gstVerified: lead.gstVerified === 1,
 
     nextAction: lead.nextAction,
     nextActionDate: lead.nextActionDate,
@@ -827,6 +851,161 @@ export async function markLost(
     detail: said ?? reasonCode,
     fromStage: stageOf(lead),
     toStage: 'lost',
+  });
+  return ok;
+}
+
+/**
+ * §— ON HOLD IS A PAUSE, AND THE PHONE COULD NOT EVEN ASK FOR ONE.
+ *
+ * `on_hold` has been on the wire, in the gate engine and on the record's own
+ * badge since the funnel shipped, and every route into it went through a desk
+ * or through a visit's suspect decision: a salesman standing in a shop being
+ * told the plant is shut for two months could mark the lead LOST, which is
+ * wrong and irreversible in the reader's mind, or leave it alone and let the
+ * staleness sweep archive a live prospect. The record screen could READ a park
+ * and offer to end one. Nothing on it could start one.
+ *
+ * So this asks the three things Mahek asked for, and all three are required
+ * for the same reason §24 demands a next action: a park with no end date is
+ * the exact state it exists to prevent — "back after Diwali" is a sentence
+ * nobody is watching, and a lead carrying one sits until somebody happens to
+ * scroll past it.
+ *
+ *   - the CODE, from `leads.holdReasons`, because four of the six are the
+ *     customer's doing and two are ours to chase, and that split is the whole
+ *     value of counting them. `other` costs a sentence: a code meaning
+ *     "something else" with nothing behind it is the one row nobody can act on.
+ *   - the DAY it comes back, which is the difference between a pause and a
+ *     quiet death.
+ *   - WHAT HAPPENS when it does, and who is doing it — because a lead that
+ *     comes back to nobody has not come back.
+ *
+ * It writes `funnelStage` and not only `stage`. `stageOf` reads `funnelStage`
+ * first for any lead carrying a sales type, so a park written into the legacy
+ * column alone would leave the record reading Negotiation, the gate offering
+ * the next rung, and the parked card never drawn — the lead would be on hold
+ * in the office and nowhere on the phone. The legacy column takes `On hold`
+ * rather than `legacyStageFor('on_hold', …)`, which answers `New`: a park
+ * DISPLACES the rung rather than lowering it, `bandOf` returns null for
+ * exactly that reason, and filing a parked Negotiation lead under New would be
+ * a guess printed on a chip. `On hold` is a chip the list already has.
+ *
+ * TODO(schema): the handset's `leads` table has `holdReason` and no
+ * `holdReasonCode` or `holdResumeDate` — both exist on the office side
+ * (`0151`) and neither has a column here or a place on the pull. So the CODE
+ * travels up and is not kept down here, and the local sentence carries the
+ * picked reason's LABEL where the salesman wrote no remark of his own. That is
+ * a sentence in a sentence column and not a label where a code belongs — the
+ * countable answer goes to `lead_hold_reason_code` — but it does mean a park
+ * made on this phone reads back in the words the list used ON THE DAY, and a
+ * park made at a desk arrives with no code the phone can resolve at all. The
+ * resume date rides `nextFollowUpDate`, which is the honest half of the trade:
+ * see below.
+ */
+export async function putOnHold(
+  id: string,
+  hold: {
+    reasonCode: string;
+    note?: string | null;
+    resumeDate: string;
+    next: { action: string; date: string; ownerId: string; outcome?: string | null };
+  },
+): Promise<LeadResult<null>> {
+  const lead = await getLead(id);
+  if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
+
+  const said = hold.note?.trim() || null;
+  const code = hold.reasonCode.trim();
+  const { holdReasons } = await funnelConfig();
+
+  /* Checked here as well as in the sheet, because a sheet is a screen and this
+     is the function every caller reaches — the same reason the server checks
+     it again after both of them. */
+  if (!code) return { ok: false, message: 'Pick why it is stopping — it is what gets counted afterwards.' };
+  if (code === REASON_CODE_NEEDING_REMARKS && !said) {
+    return { ok: false, message: 'You picked Other — say in words what it actually is.' };
+  }
+  if (!hold.resumeDate) return { ok: false, message: 'Name the day it comes back.' };
+  if (!hold.next.action.trim() || !hold.next.date || !hold.next.ownerId) {
+    return { ok: false, message: 'Say what happens when it comes back, on what day, and who is doing it.' };
+  }
+
+  const today = isoDate(new Date());
+  const from = stageOf(lead);
+  /* The sentence the record reads back. The remark where he wrote one, and the
+     list's own words where he did not — see the TODO above for why this column
+     carries words rather than the code. */
+  const sentence = said ?? labelOf(holdReasons, code);
+  const notes = notesOf(lead);
+  notes.push({ at: Date.now(), text: 'On hold until ' + hold.resumeDate + ' — ' + sentence });
+
+  await updateAndQueue({
+    table: 'leads',
+    entityType: 'lead',
+    id,
+    patch: {
+      funnelStage: 'on_hold',
+      /* Not `legacyStageFor` — see the header. */
+      stage: 'On hold',
+      stageSince: today,
+      holdReason: sentence,
+      notes,
+      nextAction: hold.next.action.trim(),
+      nextActionDate: hold.next.date,
+      nextActionOwnerId: hold.next.ownerId,
+      nextActionOutcome: hold.next.outcome?.trim() || null,
+      /*
+       * THE RESUME DATE IS THE DIARY DATE, and that is deliberate rather than
+       * a shortcut around the missing column.
+       *
+       * `setNextAction` already makes these one date and says why: two dates
+       * meaning almost the same thing disagreed on every lead where somebody
+       * set one and not the other. A park is the case where the distinction
+       * would bite hardest — a lead parked until the 20th whose diary still
+       * says the 3rd is a lead the list surfaces for a fortnight of mornings
+       * on which nothing can be done about it, which is how a salesman learns
+       * to ignore the list.
+       *
+       * It is the RESUME date and not the action's, where the salesman moved
+       * the action later: `listLeads` orders on this column and `leadAlert`
+       * measures lateness from it, so this is the one thing that brings a
+       * parked lead back to him on the day the park ends. The office's own
+       * resume worklist is fed by `lead_hold_resume_date`, sent below.
+       */
+      nextFollowUpDate: hold.resumeDate,
+      lastActivityDate: today,
+    },
+    payloadExtras: {
+      stage: wireFunnelStage('on_hold'),
+      /* The code is what gets counted; the sentence is what gets read. The
+         server writes the first to `lead_hold_reason_code` and the second to
+         `lead_hold_reason`, and accepts the park on either — an older build
+         sends no code at all and a park refused for want of one would be a
+         plant shutdown lost to an argument about a word. */
+      reasonCode: code,
+      holdReason: sentence,
+      holdResumeDate: hold.resumeDate,
+      notes: wireNotes(notes),
+      /* THREE LOCAL COLUMNS, ONE WIRE FIELD — `nextAction` is a string here
+         and an object on `leadSchema`, and sending the string would fail
+         validation and take the park down with it. */
+      nextAction: {
+        action: hold.next.action.trim(),
+        date: hold.next.date,
+        ownerId: hold.next.ownerId,
+        outcome: hold.next.outcome?.trim() || undefined,
+      },
+    },
+  });
+
+  await addEvent({
+    leadId: id,
+    kind: 'hold',
+    summary: 'On hold — ' + labelOf(holdReasons, code),
+    detail: [said, 'Back on ' + hold.resumeDate].filter(Boolean).join(' · '),
+    fromStage: from,
+    toStage: 'on_hold',
   });
   return ok;
 }

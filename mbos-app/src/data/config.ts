@@ -1,8 +1,10 @@
 import { all, one } from '../db';
 import {
+  HOLD_REASONS,
   LOST_REASONS,
   OVERRIDE_REASONS,
   PROSPECT_REASONS,
+  SAMPLE_CANCEL_REASONS,
   SAMPLE_REASONS,
 } from '../engines/funnel/lead-labels';
 
@@ -253,14 +255,24 @@ const DEFAULTS: Record<string, unknown> = {
    * window of three on a phone and two in the office would be two rules
    * wearing one name, and the salesman would be the one who found out.
    *
-   * TODO(integration): `mbosConfigPayload()` in
-   * `src/lib/services/mbos-service.ts` sends every `mbos.*` key and
-   * `products.priceSource`, so none of these reaches a handset yet — the
-   * defaults below are what the app runs on until workstream A widens it to
-   * carry the `leads.*` keys too. They are copied from
+   * They ARRIVE now, which they did not when this block was written:
+   * `mbosConfigPayload()` in `src/lib/services/mbos-service.ts` sends every
+   * key beginning `mbos.` or `leads.`, so an office that rewords a list
+   * rewords it on the phone on the next pull. What is below is still what the
+   * app runs on before the first bootstrap lands, copied from
    * `lib/config/registry.ts`, which takes its own from the same
-   * `lead-labels.ts` this app compiles, so the words on the screen are right
-   * even while the numbers are only defaults.
+   * `lead-labels.ts` this app compiles — so the words on the screen are the
+   * office's words either way.
+   *
+   * WHICH IS WHY A MISSING ENTRY HERE IS INVISIBLE RATHER THAN LOUD.
+   * `getConfig` falls back to `DEFAULTS[key]` and then to the caller's own
+   * argument, so a list nobody remembered to name reads as `undefined`, the
+   * picker draws no chips, and the sheet becomes a title and a button that can
+   * only ever answer "Pick one". `leads.holdReasons` and
+   * `leads.sampleCancelReasons` were exactly that: the office has published
+   * both since the funnel shipped, the CRM has picked from both, and the
+   * handset asked for neither — so the two lists that exist to make a park and
+   * a called-off trial COUNTABLE were the two the phone could not offer.
    */
   'leads.suspectMaxVisits': 3,
   'leads.requireNextAction': true,
@@ -268,6 +280,12 @@ const DEFAULTS: Record<string, unknown> = {
   'leads.prospectReasons': PROSPECT_REASONS.map((r) => ({ ...r })),
   'leads.sampleReasons': SAMPLE_REASONS.map((r) => ({ ...r })),
   'leads.lostReasons': LOST_REASONS.map((r) => ({ ...r })),
+  /* §— WHY A LEAD STOPPED, and why a trial was called off. Six and eight, and
+     both of them are what makes "how many did we park on budget this quarter"
+     a question somebody can ask of a column rather than a grep over sentences
+     people never typed the same way twice. */
+  'leads.holdReasons': HOLD_REASONS.map((r) => ({ ...r })),
+  'leads.sampleCancelReasons': SAMPLE_CANCEL_REASONS.map((r) => ({ ...r })),
   'leads.overrideReasons': OVERRIDE_REASONS.map((r) => ({ ...r })),
   'leads.sampleReviewChaseDays': [2, 4, 6],
   'leads.verificationDueDays': 2,

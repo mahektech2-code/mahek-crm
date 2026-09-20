@@ -1,5 +1,5 @@
 import { isoDate } from './format';
-import { bandOf, isOnTheBookAt } from '../engines/funnel/lead-ladder';
+import { bandOf, isOnTheBookAt, isParked } from '../engines/funnel/lead-ladder';
 import type { LeadSalesType, LeadStage } from '../engines/funnel/lead-labels';
 
 /**
@@ -212,6 +212,25 @@ export function legacyStageFor(
   const s = localFunnelStage(funnelStage);
   if (!s) return 'New';
   if (s === 'lost') return 'Lost';
+  /*
+   * A PARK DISPLACES THE RUNG RATHER THAN LOWERING IT, and this function used
+   * to lower it all the way to the foot.
+   *
+   * `bandOf('on_hold')` is null on purpose — a parked lead belongs in no
+   * funnel band, because the rung it was parked FROM lives in the transition
+   * history and a band printed for it would be a guess printed as a figure.
+   * That is right for the funnel bar and wrong here: the switch below reads a
+   * null band as `default` and answered `New`, so a lead parked half way up
+   * the ladder filed itself under the New chip, lost the "On hold" word and
+   * lost the "Waiting: …" line the list draws beneath it — the two things
+   * somebody who has just parked a lead most needs to see afterwards. It read
+   * as the park having failed rather than as a stage having been mislabelled.
+   *
+   * `On hold` is the same spelling `LEAD_FILTERS` offers as a chip and the
+   * same one `localStage` writes for a lead the OFFICE parked, so a park made
+   * in a shop and a park made at a desk land on one chip rather than two.
+   */
+  if (isParked(s)) return 'On hold';
   /* On the book is `Converted` here, and `isOnTheBookAt` is asked rather than
      the band — a lead at `first_order` is in the funnel's Negotiation band and
      is plainly an account we have sold to, and this app's own word for that

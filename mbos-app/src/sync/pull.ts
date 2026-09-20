@@ -487,6 +487,19 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       creditDaysWanted?: number | null;
       application?: string | null;
       gstin?: string | null;
+      /*
+       * §11.6 — WHETHER ANYBODY CHECKED THE NUMBER, which is a different fact
+       * from the number and is not this phone's to assert.
+       *
+       * The gate reads `gstin && gstVerified === true`, so while this was on
+       * no wire and in no column here it was `undefined` on every handset and
+       * a shop lead could never once reach Sample/Trial from the field — the
+       * refusal naming the GST over a number that was already typed in and
+       * already verified in the office. It arrives as a boolean off a NOT NULL
+       * column, so a lead the office has looked at carries a real false rather
+       * than an absence; SQLite holds it as 1/0 below.
+       */
+      gstVerified?: boolean | null;
       qualification?: unknown;
       nextAction?: string | null;
       nextActionDate?: string | null;
@@ -521,12 +534,13 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
                           clientCreatedAt, serverCreatedAt, deviceId, syncState,
                           salesType, funnelStage, stageSince, customerType, monthlyLitres,
                           competitor, requiredProductId, requiredProductName, contactPerson,
-                          decisionMaker, creditDaysWanted, application, gstin, qualification,
+                          decisionMaker, creditDaysWanted, application, gstin, gstVerified,
+                          qualification,
                           nextAction, nextActionDate, nextActionOwnerId, nextActionOutcome,
                           suspectDecidedAt, verifiedAt, thirdParty, distributorSalesmanId,
                           distributorSalesmanName, expectedOrderDate, expectedOrderValuePaise)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced',
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
          city = excluded.city, area = excluded.area, source = excluded.source,
@@ -546,7 +560,8 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          requiredProductName = excluded.requiredProductName,
          contactPerson = excluded.contactPerson, decisionMaker = excluded.decisionMaker,
          creditDaysWanted = excluded.creditDaysWanted, application = excluded.application,
-         gstin = excluded.gstin, qualification = excluded.qualification,
+         gstin = excluded.gstin, gstVerified = excluded.gstVerified,
+         qualification = excluded.qualification,
          nextAction = excluded.nextAction, nextActionDate = excluded.nextActionDate,
          nextActionOwnerId = excluded.nextActionOwnerId,
          nextActionOutcome = excluded.nextActionOutcome,
@@ -598,6 +613,10 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.creditDaysWanted ?? null,
         l.application ?? null,
         l.gstin ?? null,
+        /* A boolean on the wire, an integer here — and null kept as null,
+           because a server that has not sent it and an office that has said no
+           are different facts and only the second may be drawn as one. */
+        l.gstVerified == null ? null : l.gstVerified ? 1 : 0,
         /* jsonb arrives as an object and SQLite holds text. */
         l.qualification == null ? '{}' : JSON.stringify(l.qualification),
         l.nextAction ?? null,

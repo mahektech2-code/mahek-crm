@@ -1453,6 +1453,23 @@ async function openLeads(userId: string, since?: string | null) {
            c.lead_credit_days_wanted as "creditDaysWanted",
            c.lead_application as application,
            c.gstin,
+           -- §11.6 — WHETHER ANYBODY CHECKED THE NUMBER, which is the half the
+           -- gate actually turns on and the half that never left the office.
+           --
+           -- lead-gates.ts asks for the number AND this, on purpose: on the web
+           -- validateGstin exists so that the salesman who collected the number
+           -- is not the man who certifies it. But this column sat on customers
+           -- and reached no handset, so the field read undefined, undefined is
+           -- not true, and a shop lead could never once climb to Sample/Trial
+           -- from the phone — refused in the words "Get their GST number", over
+           -- a number already typed in and already verified at a desk. Nothing
+           -- failed anywhere: the gate was working exactly as written against a
+           -- fact that never arrived.
+           --
+           -- It goes DOWN only. The inbound lead payload does not name it and
+           -- zod strips what it does not name, so a handset cannot certify its
+           -- own GST by sending one.
+           c.gst_verified as "gstVerified",
            c.lead_qualification as qualification,
            c.lead_next_action as "nextAction",
            c.lead_next_action_date::text as "nextActionDate",

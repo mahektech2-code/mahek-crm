@@ -27,6 +27,7 @@ import {
   leadEvents,
   leadFunnelView,
   markLost,
+  putOnHold,
   setLeadParties,
   setNextAction,
   setSalesType,
@@ -42,6 +43,7 @@ import {
   isTerminal,
   ladderFor,
   offeredSalesTypes,
+  REASON_CODE_NEEDING_REMARKS,
   salesTypeLabel,
   stageLabel,
   stageSentence,
@@ -108,6 +110,38 @@ export default function LeadRecord() {
      because a list of twelve rungs on a record that is on hold reads as the
      screen suggesting he move it. */
   const [returning, setReturning] = React.useState(false);
+
+  /*
+   * PARKING IS THREE QUESTIONS AND THEY ARE ASKED ONE AT A TIME.
+   *
+   * Why it stopped, the day it comes back, and what happens when it does —
+   * none of them optional, because a park missing any one of the three is the
+   * state the whole thing exists to prevent. They are three sheets rather than
+   * one long form for the reason the rest of this app is built: each is a
+   * question somebody can answer standing in a shop, and the two that already
+   * have a component here — `ReasonSheet` and `NextActionSheet` — are the same
+   * two questions the funnel asks everywhere else, in the same words.
+   *
+   * ONE piece of state and not three booleans. Three would let two sheets be
+   * open at once and would let the second be reached with the first unanswered
+   * — and what the second and third ask depends on what the first said, so the
+   * answers travel WITH the step rather than in three fields that can be
+   * cleared independently.
+   */
+  const [hold, setHold] = React.useState<
+    | null
+    | { step: 'why' }
+    | { step: 'until'; code: string; note: string }
+    | { step: 'next'; code: string; note: string; until: string }
+  >(null);
+  /*
+   * A `ref` and not `useState`, and this is earned rather than stylistic: a
+   * state flag is read from the closure of the render that drew the button, so
+   * a second press landing before React has re-rendered sees the old `false`
+   * and parks the lead twice. It has already cost this app duplicate visits,
+   * complaints and samples.
+   */
+  const parking = React.useRef(false);
 
   const [checks, setChecks] = React.useState<Awaited<ReturnType<typeof validationsFor>>>([]);
   const [photo, setPhoto] = React.useState<{ uri: string | null } | null>(null);
@@ -503,6 +537,26 @@ export default function LeadRecord() {
                     ? 'Waiting: ' + lead.holdReason
                     : 'Nobody wrote down what it is waiting for.'}
                 </T>
+                {/* WHEN IT COMES BACK, said on the record rather than left to
+                    the diary field further down the page. A park with a reason
+                    and no end date is the state this exists to prevent, so the
+                    day it ends belongs beside the reason it started — and a
+                    parked lead whose card says nothing about a date reads as
+                    one nobody is watching, which is exactly what it would then
+                    be. It is `nextFollowUpDate` because that is the one column
+                    this phone brings a lead back on: `listLeads` orders by it
+                    and `leadAlert` measures lateness from it. */}
+                {lead.nextFollowUpDate ? (
+                  <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 6 }, weight(500)]}>
+                    {lead.nextFollowUpDate <= today
+                      ? 'It was due back on ' + dmy(lead.nextFollowUpDate) + ' — pick it up'
+                      : 'Comes back on ' + dmy(lead.nextFollowUpDate)}
+                  </T>
+                ) : (
+                  <T style={{ fontSize: 15, lineHeight: 21, color: C.warnInk, marginTop: 6 }}>
+                    No day was set for it to come back. Nothing will bring it back to you.
+                  </T>
+                )}
                 <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
                   It is not lost and nothing about it has been given up on. Nothing climbs until somebody says
                   which rung it comes back to.
@@ -772,6 +826,18 @@ export default function LeadRecord() {
         {settled ? null : (
           <>
             <PrimaryButton label="Convert to customer" onPress={convert} />
+            {/* ON HOLD SITS BESIDE LOST, AND THAT PLACEMENT IS THE POINT.
+                This is the moment a salesman is standing in front of the two
+                answers — the plant is shut for two months, or they are never
+                buying — and until now only one of them was on the screen. A
+                park drawn anywhere else is a park nobody finds at the moment
+                they are reaching for Lost, and Lost is the one that cannot be
+                taken back in the reader's mind. It is offered only where the
+                lead is still being worked: a parked lead has the card above
+                with "Bring it back" on it, and parking a park says nothing. */}
+            {parked ? null : (
+              <SecondaryButton label="Put it on hold" onPress={() => setHold({ step: 'why' })} />
+            )}
             <SecondaryButton label="Mark lost" onPress={() => setLost(true)} />
           </>
         )}
@@ -825,6 +891,107 @@ export default function LeadRecord() {
       />
 
       {suspectSheet()}
+
+      {/* ------------------------------------------------- §— the park, in three
+
+          Each sheet hands its answers to the next one in `hold`, and the write
+          happens once, at the end of the third — so a salesman who backs out
+          half way has parked nothing, which is right: two of three answers is
+          the park this whole flow exists to refuse. Every one of them is keyed
+          on the step it belongs to, so it remounts with fresh state rather
+          than being reset in an effect, which the React Compiler rules forbid
+          and which is how a second park would arrive carrying the first's
+          answers. */}
+      <ReasonSheet
+        key={hold?.step === 'why' ? 'hold-why-open' : 'hold-why-shut'}
+        open={hold?.step === 'why'}
+        onClose={() => setHold(null)}
+        title="Put this lead on hold?"
+        body={
+          title +
+          ' stops being chased until the day you name. It is not lost, it stays on your list, and nothing about it is given up on.'
+        }
+        options={config.holdReasons}
+        confirmLabel="Next — when does it come back?"
+        noteLabel="What they actually said"
+        /* Only "Other" costs a sentence. A code meaning "something else" with
+           nothing behind it is the one row nobody can act on afterwards, and
+           it is the code people reach for when the list does not fit. */
+        noteRequiredForCode={REASON_CODE_NEEDING_REMARKS}
+        onConfirm={(code, said) => setHold({ step: 'until', code, note: said })}
+      />
+
+      <BottomSheet open={hold?.step === 'until'} onClose={() => setHold(null)} scroll>
+        <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
+          When does it come back?
+        </T>
+        <T s="caption" style={{ marginTop: 2 }}>
+          {/* The sentence says what the date DOES, because a date on a screen
+              that does nothing is how "back after Diwali" became a lead nobody
+              looked at for six months. */}
+          On this day it returns to your list with the action you set next.
+        </T>
+        <View style={{ marginTop: 14 }}>
+          <Calendar
+            key={hold?.step === 'until' ? 'hold-cal-open' : 'hold-cal-shut'}
+            selected=""
+            /* Today is refused rather than merely past days: a hold that ends
+               on the day it is made is not a hold, and the screen saying so is
+               kinder than a park that quietly means nothing. */
+            disabledReason={(iso) =>
+              iso <= today ? 'A hold has to end after today, or it is not a hold.' : null
+            }
+            onPick={(iso) =>
+              setHold((h) => (h?.step === 'until' ? { step: 'next', code: h.code, note: h.note, until: iso } : h))
+            }
+          />
+        </View>
+        <SecondaryButton
+          label="Cancel"
+          onPress={() => setHold(null)}
+          style={{ minHeight: 48, height: 48, marginTop: 10, borderRadius: radius.xl }}
+        />
+      </BottomSheet>
+
+      <NextActionSheet
+        key={hold?.step === 'next' ? 'hold-next-open' : 'hold-next-shut'}
+        open={hold?.step === 'next'}
+        onClose={() => setHold(null)}
+        meId={me?.id ?? ''}
+        meName={me?.name ?? 'You'}
+        managerId={lead.leadManagerId}
+        managerName={lead.leadManagerName}
+        /* Pre-filled with the day the park ends, because that is the ordinary
+           answer — the action is what happens WHEN it comes back. He can move
+           it, and the lead still returns to his list on the resume date rather
+           than on whatever he moved it to: `putOnHold` says why. */
+        current={{
+          action: lead.nextAction,
+          date: hold?.step === 'next' ? hold.until : null,
+          ownerId: lead.nextActionOwnerId,
+        }}
+        onSave={(n) => {
+          if (hold?.step !== 'next') return;
+          if (parking.current) return;
+          parking.current = true;
+          const until = hold.until;
+          setHold(null);
+          void putOnHold(lead.id, {
+            reasonCode: hold.code,
+            note: hold.note,
+            resumeDate: until,
+            next: n,
+          })
+            .then((r) => {
+              if (!r.ok) return notify(r.message);
+              load();
+              notify('On hold until ' + dmy(until));
+            })
+            .finally(() => {
+              parking.current = false;
+            });
+        }}
+      />
 
       <NextActionSheet
         key={nextOpen ? 'next-open' : 'next-shut'}

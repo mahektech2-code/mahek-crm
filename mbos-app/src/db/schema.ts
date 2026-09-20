@@ -1644,6 +1644,39 @@ export const MIGRATIONS: string[][] = [
        ON travel_legs (userId) WHERE origin = 'session' AND endedAt IS NULL;`,
   ],
 
+  /* ---- v31 · the GST is somebody else's answer, and it had to reach here --- */
+  [
+    /*
+     * THE ONE FACT THE GATE READ AND THE PHONE NEVER HELD.
+     *
+     * `lead-gates.ts` answers §11.6 with `has(i.gstin) && i.gstVerified ===
+     * true` — the number somebody wrote down AND somebody else saying they
+     * checked it, which is the whole point of the column: on the web,
+     * `validateGstin` exists precisely so the salesman who collected the
+     * number is not the man who certifies it. That column is on `customers`
+     * and was on no wire and in no table here, so `i.gstVerified` was
+     * `undefined` on every handset, `undefined === true` is false, and a shop
+     * lead could NEVER reach Sample/Trial from the phone. The refusal read
+     * "Get their GST number — the back office checks it" for ever, over a
+     * number the salesman had already typed and the office had already
+     * verified. Nothing failed, nothing logged: the gate was working exactly
+     * as written against a fact that never arrived.
+     *
+     * PULL-ONLY, and that is the point rather than an omission. Nothing on
+     * this handset writes it and the office's inbound lead schema does not
+     * name it, so a payload claiming it is stripped without a word. A control
+     * here that set it would hand the certification back to the man collecting
+     * the number, which is the arrangement this column exists to end.
+     *
+     * NULLABLE and not `NOT NULL DEFAULT 0`, because null is a real answer:
+     * this phone has not heard from the office about this lead yet. The gate
+     * reads all three the same way — only an explicit true opens it — so the
+     * distinction costs nothing there and keeps a screen from saying "not
+     * verified" about a lead nobody has sent us an answer on.
+     */
+    `ALTER TABLE leads ADD COLUMN gstVerified INTEGER;`,
+  ],
+
 ];
 
 /**

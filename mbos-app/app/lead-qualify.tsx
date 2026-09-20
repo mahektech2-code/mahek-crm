@@ -98,12 +98,45 @@ const GROUP_TITLE: Record<string, string> = {
  * The shop's twelve, and where each is actually answered.
  *
  * A `column` means the gate reads a real value off the record and no switch on
- * this screen can satisfy it. `gst_verified` is the one that needs both: the
- * number has to be there AND somebody has to say they checked it, which is the
- * difference between a GST written down and a GST verified.
+ * this screen can satisfy it. `gst_verified` is the one that is not this
+ * salesman's to answer AT ALL, which is why it carries a `note` of its own.
+ *
+ * IT USED TO BE A SWITCH, AND THE SWITCH SATISFIED NOTHING. The row read the
+ * number on the record AND a tick stored in `qualification.gst_verified` — a
+ * tick this screen let the salesman set himself. So the checklist said "8 of 8
+ * answered" while the gate, which reads `customers.gst_verified` and has never
+ * read that tick, stayed shut with the GST named as the thing still missing.
+ * Two screens in one app disagreeing about one lead, and the one a salesman
+ * works from was the one that was wrong. Worse, the tick was exactly the
+ * self-certification the office's own validation exists to end: the man who
+ * collected the number was the man saying it had been checked.
+ *
+ * So the row reads the office's answer and offers no control. A checklist item
+ * somebody else owes is a real state, and saying whose it is beats a switch
+ * that moves and changes nothing.
  */
-const SHOP_COLUMNS: Record<string, { reads: (v: LeadFunnelView) => boolean; where: string }> = {
-  gst_verified: { reads: (v) => Boolean(v.lead.gstin?.trim()), where: 'GST number, on Prospect details' },
+const SHOP_COLUMNS: Record<
+  string,
+  {
+    reads: (v: LeadFunnelView) => boolean;
+    where: string;
+    /** Drawn instead of `where` where the answer is somebody else's to give. */
+    note?: (v: LeadFunnelView) => string;
+  }
+> = {
+  gst_verified: {
+    /* BOTH HALVES, and both of them off the record. The number is the
+       salesman's; the verdict is the back office's, pulled down onto this
+       phone and writable by nothing here. */
+    reads: (v) => Boolean(v.lead.gstin?.trim()) && v.lead.gstVerified === 1,
+    where: 'GST number, on Prospect details',
+    note: (v) =>
+      !v.lead.gstin?.trim()
+        ? 'Add the GST number under Prospect details — the back office checks it'
+        : v.lead.gstVerified === 1
+          ? 'Checked by the back office'
+          : 'With the back office — they check the number against the portal',
+  },
   /* Both columns, for the two that have two. The capture form writes what he
      was told in the shop into `monthlyVolumeLitres`/`competitorName` and the
      office writes the same facts into `monthlyLitres`/`competitor` —
@@ -235,13 +268,14 @@ export default function QualifyScreen() {
       if (f.kind === 'yesno') return raw === true || raw === false;
       return raw !== null && raw !== undefined && String(raw).trim().length > 0;
     }
+    /* A column-backed condition is the record's answer whether the row is
+       being drawn live or counted, because there is no box on this screen that
+       could make the two differ. The GST reads two columns rather than one and
+       is otherwise no different — the old `&& tick` half is gone, and nothing
+       carries it forward: importing a tick the salesman set himself into the
+       condition that exists to stop him is the bug, not the migration. */
     const col = SHOP_COLUMNS[c.id];
-    if (col) {
-      /* The GST is the one that needs both halves — a number written down and
-         somebody saying they checked it are two different facts. */
-      const tick = live ? ticks[c.id] === true : savedQualification[c.id] === true;
-      return c.id === 'gst_verified' ? col.reads(view) && tick : col.reads(view);
-    }
+    if (col) return col.reads(view);
     if (live) return ticks[c.id] === true;
     const said = savedQualification[c.id];
     return said === true || (typeof said === 'string' && said.trim().length > 0);
@@ -295,6 +329,12 @@ export default function QualifyScreen() {
 
     const answers: Record<string, boolean | string> = {};
     for (const c of conditions) {
+      /* A condition the record answers is never written back as a tick. It is
+         the GST that makes this matter: a lead carrying the old self-certified
+         `gst_verified: true` still seeds `ticks` on load, and saving would
+         re-assert it on every visit to this screen — a claim nothing reads and
+         nobody made, sitting on the record as though somebody had. */
+      if (SHOP_COLUMNS[c.id]) continue;
       if (c.id in ticks) answers[c.id] = ticks[c.id];
       const typed = (draft[c.id] ?? '').trim();
       if (typed) answers[c.id] = typed;
@@ -374,14 +414,20 @@ export default function QualifyScreen() {
                   {f?.hint ? <T s="caption" style={{ marginTop: 2 }}>{f.hint}</T> : null}
                   {col ? (
                     <T s="caption" style={{ marginTop: 2 }}>
-                      {met ? 'Answered — ' + col.where : 'Answer it under ' + col.where}
+                      {col.note
+                        ? col.note(view)
+                        : met
+                          ? 'Answered — ' + col.where
+                          : 'Answer it under ' + col.where}
                     </T>
                   ) : null}
                 </View>
                 {/* A value-backed condition draws no switch, because a switch
                     that cannot satisfy the gate is a control that lies. The
-                    GST is the exception and gets both halves. */}
-                {col && c.id !== 'gst_verified' ? (
+                    GST used to be the exception and got a switch beside it;
+                    that switch was the lie, because the fact the gate reads is
+                    written at a desk in the office and by nobody here. */}
+                {col ? (
                   <T style={[{ fontSize: 14, color: met ? C.success : C.muted }, weight(600)]}>
                     {met ? 'Done' : 'Not yet'}
                   </T>

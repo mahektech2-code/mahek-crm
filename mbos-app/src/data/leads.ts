@@ -106,6 +106,19 @@ export type Lead = {
   application: string | null;
   prospectReasonCode: string | null;
 
+  /**
+   * §11.6 — the BACK OFFICE's answer about the GST, never this phone's.
+   *
+   * `gstin` above is the number the salesman wrote down; this is whether
+   * anybody checked it against the portal, which on the web is `validateGstin`
+   * and is deliberately not the collector's to assert. It arrives on the pull
+   * and is written by nothing here — 1, 0 and null all read as "the gate stays
+   * shut" and only the office can make it 1. Null is this phone not having
+   * heard yet, which is not the same fact as a refusal and must not be drawn
+   * as one.
+   */
+  gstVerified: number | null;
+
   /** JSON, keyed by condition id. Read as a whole by the gate engine. */
   qualification: string | null;
   distributorProfile: string | null;

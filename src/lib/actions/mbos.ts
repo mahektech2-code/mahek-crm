@@ -3311,6 +3311,24 @@ const leadSchema = z.object({
   /* Why a held or stuck lead is not moving. Demanded for `on_hold`, and for a
      lead the salesman is keeping as a Suspect past the decision visit. */
   holdReason: z.string().max(500).nullish(),
+  /*
+   * §— THE DAY A PARK ENDS, which is the difference between a pause and a
+   * quiet death.
+   *
+   * `lead_hold_resume_date` has existed since `0151` and the web has demanded
+   * one on every park since; the handset could not park a lead at all, so this
+   * schema never had to name it — and the moment the phone could, a park would
+   * have arrived with the reason accepted and the date SILENTLY STRIPPED,
+   * which is the failure `mbos-payload-contract.test.ts` exists for. A parked
+   * lead with no resume date is on nobody's worklist at either end.
+   *
+   * Nullish because an APK cannot be recalled and the builds already in
+   * pockets send none. The CODE beside it is `reasonCode` above, which the
+   * wire has always carried for a stage move and which the hold branch below
+   * now writes to `lead_hold_reason_code` — one field for "why did this move",
+   * rather than a second spelling of it that could disagree.
+   */
+  holdResumeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   /** Out of the way, not gone — a filter on every read, never a delete. */
   archived: wireBoolean.nullish(),
   /** The shop this lead became, so the two records stay joined up. */
@@ -3411,8 +3429,23 @@ async function handleLeadUpdate(
    * nothing. Unlike lost, this one is reversible, which is exactly why the
    * reason matters: "back after Diwali" is what tells somebody when to look
    * again.
+   *
+   * A CODE IS A REASON, which is why it counts here. This read the sentence
+   * alone, and a handset that picks from `leads.holdReasons` — which is the
+   * whole point of coding the six — sends a code and a sentence only where the
+   * salesman had one to add. Refusing that park would refuse the BETTER answer
+   * of the two: the code is countable and the sentence is not. It is the same
+   * pair `lost` is judged on thirty lines up, in the same order, and the codes
+   * are deliberately not checked against the configured list for the reason
+   * `sampleSchema` gives at length — an APK cannot be recalled, a build made
+   * before a reason was reworded goes on sending the old spelling, and a real
+   * plant shutdown must not be lost to an argument about a word.
    */
-  if (p.stage === "on_hold" && !(p.holdReason ?? held?.holdReason)?.trim()) {
+  if (
+    p.stage === "on_hold" &&
+    !(p.holdReason ?? held?.holdReason)?.trim() &&
+    !p.reasonCode?.trim()
+  ) {
     return {
       kind: "rejected",
       value: reject(
@@ -3532,15 +3565,47 @@ async function handleLeadUpdate(
     changed.leadMonthlyVolumeLitres = p.monthlyVolumeLitres;
   }
   if (p.holdReason != null) changed.leadHoldReason = p.holdReason;
+  /*
+   * THE PARK'S OWN TWO COLUMNS, and both only on the move that parks it.
+   *
+   * `leadHoldReasonCode` is read off `reasonCode` rather than out of a field
+   * of its own, so the code on the customer row and the code on the transition
+   * this same sync writes are ONE value read once — the split `lead-service`
+   * argues for on the desk's own path, arriving here for the first time. It is
+   * guarded on the stage because `reasonCode` is the code behind ANY move: a
+   * lost lead and a promoted suspect both carry one, and writing it here
+   * unguarded would leave "lost on credit terms" sitting in the column that
+   * answers why this lead is PARKED.
+   *
+   * The resume date is what makes a park a pause. Until this landed the
+   * handset could not park a lead at all, so the column was the desk's alone
+   * and every park made in a shop was a park the office's resume worklist
+   * never saw.
+   */
+  if (p.stage === "on_hold") {
+    if (p.reasonCode != null) changed.leadHoldReasonCode = p.reasonCode;
+    if (p.holdResumeDate != null) changed.leadHoldResumeDate = p.holdResumeDate;
+  }
   if (p.deliveryTerms != null) changed.leadDeliveryTerms = p.deliveryTerms;
   if (p.agreedTerms != null) changed.leadAgreedTerms = p.agreedTerms;
   /*
    * A lead that starts moving again is no longer explaining itself. Clearing
    * the reason on the way out of a hold is what stops "waiting for their
    * budget quarter" sitting on a lead that has since ordered.
+   *
+   * THE CODE AND THE DATE GO WITH IT, and the date is the one that bites. Both
+   * answered "why is this stopped and when does it start again" about a lead
+   * that is no longer stopped — and a resume date left behind keeps the lead on
+   * the office's resume worklist for ever, which is how that list becomes one
+   * nobody opens. This mirrors `moveLeadStage` in `lead-service.ts`, which has
+   * cleared all three on the desk's own path since the columns existed; the
+   * sync path cleared one of them, because it was written when a handset could
+   * only ever send the sentence.
    */
   if (p.stage != null && p.stage !== "on_hold" && p.stage !== "new") {
     changed.leadHoldReason = null;
+    changed.leadHoldReasonCode = null;
+    changed.leadHoldResumeDate = null;
   }
   if (p.gpsLat != null && p.gpsLng != null) {
     changed.gpsLat = p.gpsLat;

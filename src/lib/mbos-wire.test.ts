@@ -611,6 +611,97 @@ test("a hand-rolled handler writes no column the handset lacks", () => {
 });
 
 /* ---------------------------------------------------------------------------
+ * ONE FIELD, FOUR LINKS, AND EVERY ONE OF THEM SILENT WHEN IT BREAKS.
+ *
+ * §11.6's gate is `has(i.gstin) && i.gstVerified === true` — the number
+ * somebody wrote down AND somebody else saying they checked it, which is the
+ * whole reason `validateGstin` exists on the web: the salesman who collected
+ * the number must not be the man who certifies it.
+ *
+ * The verdict lives on `customers.gst_verified` and for a full release it
+ * reached no handset: not on the wire, not in the handset's schema, not read
+ * by the handler. So `i.gstVerified` was `undefined` on every phone in the
+ * field, `undefined === true` is false, and a SHOP LEAD COULD NEVER ONCE REACH
+ * SAMPLE/TRIAL from the handset. The refusal read "Get their GST number — the
+ * back office checks it", over a number already typed in and already verified
+ * at a desk, for ever. Nothing failed at either end: the gate was working
+ * exactly as written against a fact that never arrived, which is the same
+ * shape as every other bug on this wire.
+ *
+ * The two tests above would catch this field being dropped from `openLeads` or
+ * being read ahead of the server sending it, because they compare the two
+ * lists wholesale. What they cannot say is why THIS one matters, or that it is
+ * a one-way field: nothing on the handset writes it, and the inbound lead
+ * payload deliberately does not name it, so a device sending one has it
+ * stripped by `safeParse` without a word. A schema that grew a `gstVerified`
+ * would hand the certification back to the man collecting the number and look
+ * like a feature while it did it.
+ * ------------------------------------------------------------------------- */
+
+test("the office's GST verdict reaches the gate, and no handset may write it", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  const pull = readFileSync("mbos-app/src/sync/pull.ts", "utf8");
+
+  assert.ok(
+    payloadColumns(service, "openLeads").includes("gstVerified"),
+    "openLeads no longer sends gstVerified — every shop lead on every handset " +
+      "is refused Sample/Trial again, in words naming a GST number that is there",
+  );
+
+  assert.ok(
+    fieldsRead(pull, "upsertLeads").includes("gstVerified"),
+    "upsertLeads no longer reads gstVerified, so the office's verdict arrives " +
+      "and is dropped on the floor",
+  );
+
+  /* READ is not KEPT. A hand-rolled handler types its column list out, so the
+     cast can name a field the INSERT and the ON CONFLICT clause never mention
+     — which reads exactly like a field that is stored and is a column of
+     nulls. Both halves, because the second is what a pull after the first one
+     writes. */
+  const at = pull.indexOf("function upsertLeads(");
+  const body = pull.slice(at, pull.indexOf("\n}", at));
+  assert.ok(
+    /INSERT INTO leads \([^)]*\bgstVerified\b/.test(body),
+    "upsertLeads reads gstVerified and does not insert it",
+  );
+  assert.ok(
+    /gstVerified = excluded\.gstVerified/.test(body),
+    "upsertLeads inserts gstVerified and does not update it on conflict, so " +
+      "the verdict is whatever it was the first time this lead arrived",
+  );
+
+  assert.ok(
+    handsetTables().get("leads")?.has("gstVerified"),
+    "the handset's leads table has no gstVerified column, so the gate reads " +
+      "undefined and refuses every shop lead at Sample/Trial",
+  );
+
+  /* ARRIVING IS NOT BEING READ, and that is the last link in this chain — the
+     one that would fail silently with every other assertion above it green.
+     The column can be on the wire, in the table and kept by the upsert, and
+     the gate still reads `undefined` unless `leadGateInput` hands it over: a
+     shop lead refused at Sample/Trial for want of a verdict the phone is
+     holding, with nothing on either end saying so. */
+  const funnel = readFileSync("mbos-app/src/data/lead-funnel.ts", "utf8");
+  assert.ok(
+    /gstVerified:/.test(funnel),
+    "leadGateInput does not pass gstVerified to the gate, so the office's " +
+      "verdict lands on the phone and the gate still reads undefined",
+  );
+
+  /* ONE WAY. The lead payload is what a handset may assert about a lead, and
+     this is the one fact about a lead that is not its to assert. */
+  const actions = readFileSync("src/lib/actions/mbos.ts", "utf8");
+  assert.ok(
+    !/\bgstVerified\s*:/.test(actions),
+    "src/lib/actions/mbos.ts now names gstVerified on a payload the handset " +
+      "sends. The verdict is the back office's — a phone that can certify its " +
+      "own GST is the self-certification validateGstin exists to end",
+  );
+});
+
+/* ---------------------------------------------------------------------------
  * A CONFIG KEY IS A WIRE CONTRACT TOO, and this one decides whether a control
  * is drawn at all.
  *
