@@ -25,6 +25,7 @@ import {
   mbosJourneyPlans,
   mbosJourneyStops,
   mbosCompetitorRecords,
+  mbosDocuments,
   mbosInternalNotes,
   leadVerificationCorrections,
   mbosLeadValidations,
@@ -54,7 +55,11 @@ import {
   leadGateInput,
   leadRow,
 } from "../services/lead-service";
-import { isVerificationFinding, VERIFICATION_FAILED_CODE } from "../lead-labels";
+import {
+  COMMUNICATION_ACTIONS,
+  isVerificationFinding,
+  VERIFICATION_FAILED_CODE,
+} from "../lead-labels";
 import {
   isUndecidedSuspect,
   ladderFor,
@@ -747,6 +752,8 @@ async function dispatchItem(
       return handleLeadValidation(principal, item);
     case "internal_note":
       return handleInternalNote(principal, item);
+    case "lead_communication":
+      return handleLeadCommunication(principal, item);
     case "approval":
       return handleApproval(principal, item);
     case "plan_day":
@@ -4562,6 +4569,116 @@ async function handleInternalNote(
     actorUserId: principal.user.id,
     summary: "An internal note was added",
   }).catch(() => {});
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/* --------------------------------------------- §10.4 reaching out, from the field */
+
+const leadCommunicationSchema = z.object({
+  customerId: z.string(),
+  actionCode: z.string().trim().min(1).max(80),
+  documentId: z.string().min(1).nullish(),
+  note: z.string().trim().max(2000).nullish(),
+});
+
+/**
+ * One of the eleven, recorded against a lead from the handset.
+ *
+ * `recordCommunication` in `lib/actions/leads.ts` is the same act from a
+ * browser, and the two are deliberately the same three rules in the same
+ * words: an unknown code is refused, a `send` naming no document is refused
+ * because the record could not say which one went a month from now, and a
+ * document that has left the library is refused rather than recorded as sent.
+ * They cannot be one function — that one establishes who is asking through a
+ * browser session and `requireCapability`, and this one through a device token
+ * and a scope — but the rules and the sentences are copied from it rather than
+ * invented here, and the shape of the row written is identical.
+ *
+ * **THE CODE RIDES IN THE SOURCE ID**, exactly as it does there, so "how many
+ * brochures went out this month" is a question the log can answer about its own
+ * contents. `timeline_events.summary` says in its own schema comment that it is
+ * never parsed.
+ *
+ * **THE ID IS THE HANDSET'S**, which is what makes a retry safe and what lets
+ * the phone count the outbox without double counting. The timeline's natural
+ * key is (app, kind, source row), so the same communication arriving twice off
+ * a 2G connection writes one row — and the phone, which minted that id, can
+ * recognise its own item coming back down the timeline channel.
+ */
+async function handleLeadCommunication(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = leadCommunicationSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const found = await scopedCustomer(principal, p.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+  const customer = found.customer;
+
+  const action = COMMUNICATION_ACTIONS.find((a) => a.code === p.actionCode);
+  if (!action) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        "MahekOne does not know that way of reaching out, so nothing was recorded. This is a bug to report rather than something to retry.",
+      ),
+    };
+  }
+
+  let documentTitle: string | null = null;
+  if (p.documentId) {
+    const [doc] = await db
+      .select({ title: mbosDocuments.title, active: mbosDocuments.active })
+      .from(mbosDocuments)
+      .where(eq(mbosDocuments.id, p.documentId))
+      .limit(1);
+    if (!doc || !doc.active) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "not_found",
+          "That document has been withdrawn from the library, so it cannot be recorded as sent.",
+        ),
+      };
+    }
+    documentTitle = doc.title;
+  } else if (action.kind === "send") {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `"${action.label}" has to name the document that went, or the record cannot say which one a month from now.`,
+      ),
+    };
+  }
+
+  await writeTimeline(db, {
+    customerId: customer.id,
+    eventType: MBOS_EVENT.leadCommunication,
+    sourceRecordId: `${item.entityId}:${action.code}`,
+    occurredAt: new Date(item.clientCreatedAt),
+    actorUserId: principal.user.id,
+    summary: [
+      action.label,
+      documentTitle ? `— ${documentTitle}` : null,
+      p.note ? `: ${p.note}` : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  });
+
+  /* Reaching out IS work on the lead, and staleness is measured from the last
+     thing that happened — so this moves the clock exactly as an edit does.
+     Without it a salesman who rings a shop every week watches it age towards
+     the sweep that archives leads nobody is working. */
+  await db
+    .update(customers)
+    .set({ leadLastActivityDate: await today(), updatedAt: new Date() })
+    .where(eq(customers.id, customer.id));
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }

@@ -436,6 +436,7 @@ const ROUTES: Record<string, Route> = {
   "competitor/create": { schema: "competitorSchema" },
   "lead_validation/create": { schema: "leadValidationSchema" },
   "internal_note/create": { schema: "internalNoteSchema" },
+  "lead_communication/create": { schema: "leadCommunicationSchema" },
   "approval/create": { schema: "approvalSchema" },
   "plan_day/create": { schema: "planDaySchema" },
   "plan_day/update": { schema: "planDaySchema" },

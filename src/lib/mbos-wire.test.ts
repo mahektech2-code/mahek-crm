@@ -1126,6 +1126,34 @@ test("every entity the sync dispatcher handles is one a handset can send", () =>
   );
 });
 
+/* ---------------------------------------------------------------------------
+ * A MIRRORED LIST NOTHING IMPORTS IS THE SAME BUG ONE LEVEL DOWN.
+ *
+ * The test above asks whether the two halves of a WRITE meet. This one asks
+ * something narrower and, as it turned out, just as expensive: the funnel's
+ * vocabulary is copied onto the handset byte for byte, so a list can be
+ * compiled into every APK and read by no screen. §10.4's eleven communication
+ * actions sat in `engines/funnel/lead-labels.ts` in exactly that state — legal
+ * TypeScript, clean lint, every test green, and a salesman in the shop who
+ * could not send the current price list.
+ *
+ * It is pinned for this one list rather than for every export of that file,
+ * because several of the others are genuinely mid-build and a test that fails
+ * on work in progress is a test somebody turns off. Widening it is the right
+ * move once they land.
+ */
+test("the handset reads §10.4's eleven rather than carrying them unused", () => {
+  const readers = [...readdirSyncDeep("mbos-app/src"), ...readdirSyncDeep("mbos-app/app")]
+    .filter((f) => !f.endsWith("engines/funnel/lead-labels.ts"))
+    .filter((f) => readFileSync(f, "utf8").includes("COMMUNICATION_ACTIONS"));
+
+  assert.ok(
+    readers.length > 0,
+    "COMMUNICATION_ACTIONS is mirrored onto the handset and nothing there imports it — " +
+      "the eleven buttons exist in the bundle and on no screen",
+  );
+});
+
 function readdirSyncDeep(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const path = `${dir}/${entry}`;

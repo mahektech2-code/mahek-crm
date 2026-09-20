@@ -139,6 +139,16 @@ export const SYNC_ENTITY_TYPES = [
    * `mbos_competitor_records` was in.
    */
   "internal_note",
+  /**
+   * §10.4 — one of the eleven ways of reaching out, recorded against a lead.
+   *
+   * The office has had this since the communication panel shipped; the phone
+   * standing in the shop had the ELEVEN compiled into it and no way to use one,
+   * which is the same shape `internal_note` above was in. A call logged and a
+   * price list sent are both this, because both answer the one question the
+   * record is for: has anybody been in touch, and how often.
+   */
+  "lead_communication",
   "approval",
   /**
    * The salesman's answer to a proposed day: agreed, or refused with a reason

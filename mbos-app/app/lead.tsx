@@ -22,6 +22,12 @@ import {
 } from '../src/data/leads';
 import { validationsFor, verificationChecksFor, type VerificationCheck } from '../src/data/validations';
 import { FieldCheckNote, checksByField, valueFromChecks } from '../src/components/leads/field-check-note';
+import { CommunicationPanel } from '../src/components/leads/communication-panel';
+import {
+  communicationLog,
+  recordCommunication,
+  type CommunicationLog,
+} from '../src/data/lead-communication';
 import { callNumber } from '../src/lib/messaging';
 import {
   addLeadNote,
@@ -186,6 +192,12 @@ export default function LeadRecord() {
   const [checks, setChecks] = React.useState<Awaited<ReturnType<typeof validationsFor>>>([]);
   const [fieldChecks, setFieldChecks] = React.useState<VerificationCheck[]>([]);
   const [photo, setPhoto] = React.useState<{ uri: string | null } | null>(null);
+  /* §10.4 — the eleven ways of reaching out, what each of them would send, and
+     what has already gone. Null until the first read: an empty log and a log
+     nobody has read yet are different things, and drawing eleven buttons all
+     reading "nothing sent" over a record that has had six would be worse than
+     drawing nothing for a moment. */
+  const [comms, setComms] = React.useState<CommunicationLog | null>(null);
 
   const load = React.useCallback(() => {
     let live = true;
@@ -206,7 +218,8 @@ export default function LeadRecord() {
          answered for last week came back silently replaced. */
       verificationChecksFor(id),
       shopPhoto(id),
-    ]).then(([v, e, t, s, calls, verifications, shot]) => {
+      communicationLog(id),
+    ]).then(([v, e, t, s, calls, verifications, shot, reach]) => {
       if (!live) return;
       setView(v);
       setEvents(e);
@@ -215,6 +228,7 @@ export default function LeadRecord() {
       setChecks(calls);
       setFieldChecks(verifications);
       setPhoto(shot);
+      setComms(reach);
     });
     return () => {
       live = false;
@@ -873,6 +887,41 @@ export default function LeadRecord() {
             onPress={() => setLadderOpen(true)}
           />
         </View>
+      )}
+
+      {/* ------------------------------------------------ §10.4 reaching out --
+
+          It sits under the work and above the follow-up date deliberately: it
+          is what he DOES between today and the day he goes back, and a panel
+          of eleven contact buttons above the qualification forms would read as
+          the app suggesting a brochure where it should be asking for answers.
+
+          Drawn only on a live lead, like everything else in this half of the
+          screen. Sending a price list to a shop somebody wrote off last month
+          is not a thing to make one tap away. */}
+      {settled || !comms ? null : (
+        <CommunicationPanel
+          log={comms}
+          onDial={
+            lead.mobile
+              ? () => {
+                  void callNumber(lead.mobile!).then((out) => {
+                    if (out.status === 'failed') notify(out.reason);
+                  });
+                }
+              : undefined
+          }
+          onRecord={(args) => {
+            void recordCommunication({ customerId: lead.id, ...args }).then((r) => {
+              if (!r.ok) return notify(r.message);
+              /* The clock moves on this exactly as it does on a ring from the
+                 header: reaching out IS work on the lead, and a record that
+                 aged while somebody was working it is how a live shop reaches
+                 the staleness sweep. */
+              void touchLead(lead.id, today).then(load);
+            });
+          }}
+        />
       )}
 
       {/* --------------------------------------------------- follow-up */}
