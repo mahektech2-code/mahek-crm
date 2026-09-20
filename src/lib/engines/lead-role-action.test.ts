@@ -125,15 +125,19 @@ describe("scope of each vantage, as §7 states it", () => {
 
   test("the calling desk never reaches past the early rungs", () => {
     const acting = ALL_LEAD_STAGES.filter((s) => roleAction(facts(s), "calling_desk").actionable);
-    /* Suspect, its legacy twin, Prospect and its legacy twin — plus the
-     * repeat-order call, which is a calling-desk job by any reading. */
-    assert.deepEqual(acting.sort(), [
-      "contacted",
-      "new",
-      "prospect",
-      "second_order",
-      "suspect",
-    ]);
+    /* Suspect, its legacy twin, Prospect and its legacy twin, and nothing
+     * else: §7 scopes the desk to intake. `second_order` used to be on this
+     * list and is the cell the engine file argues about at length. */
+    assert.deepEqual(acting.sort(), ["contacted", "new", "prospect", "suspect"]);
+  });
+
+  test("the repeat-order rung is not the calling desk's", () => {
+    const a = roleAction(facts("second_order"), "calling_desk");
+    assert.equal(a.label, "No calling-desk action");
+    assert.equal(a.actionable, false);
+    /* And the manager's verb on that rung is untouched, because the two cells
+     * carried the same words and only one of them was wrong. */
+    assert.equal(roleAction(facts("second_order"), "sales_manager").label, "Repeat-order call");
   });
 
   test("the back office is silent on every rung before the sample", () => {
@@ -144,6 +148,46 @@ describe("scope of each vantage, as §7 states it", () => {
         stage,
       );
     }
+  });
+
+  test("except at Prospect, where the GST number is theirs and nobody else's", () => {
+    /* The one cell this engine does not take from §7's table, and the engine
+     * file carries the argument: §2 and §11.6 both give GST validation to the
+     * back office, and it is the rung qualification is blocked on. Pinned by
+     * name so the divergence cannot be undone by accident — reversing it is a
+     * decision somebody makes here, having read why. */
+    for (const stage of ["prospect", "contacted"] as LeadStage[]) {
+      const a = roleAction(facts(stage), "back_office");
+      assert.equal(a.label, "Validate GST number", stage);
+      assert.equal(a.actionable, true, stage);
+    }
+  });
+
+  test("management on a distributor candidate is told there is a track, not nothing", () => {
+    /* §7's note, second half — the half `facts.salesType` exists for. */
+    for (const stage of ["suspect", "prospect", "qualification"] as LeadStage[]) {
+      assert.equal(
+        roleAction(facts(stage, { salesType: "distributor" }), "management").label,
+        "Monitor distributor track",
+        stage,
+      );
+      assert.equal(
+        roleAction(facts(stage), "management").label,
+        "No approval pending",
+        stage,
+      );
+    }
+  });
+
+  test("and it is still only words: neither answer is on anybody's queue", () => {
+    const acting = ALL_LEAD_STAGES.filter(
+      (s) => roleAction(facts(s, { salesType: "distributor" }), "management").actionable,
+    );
+    assert.deepEqual(acting.sort(), [
+      "commercial_discussion",
+      "distributor_approval",
+      "management_review",
+    ]);
   });
 
   test("a sample waiting to go is the back office's, in danger tone", () => {

@@ -1,9 +1,10 @@
 /**
  * The funnel's rules, on the handset.
  *
- * The three files beside this one are BYTE-FOR-BYTE COPIES of MahekOne's own
- * `src/lib/lead-labels.ts`, `src/lib/engines/lead-ladder.ts` and
- * `src/lib/engines/lead-gates.ts`, differing only in the path an import names.
+ * The four files beside this one are BYTE-FOR-BYTE COPIES of MahekOne's own
+ * `src/lib/lead-labels.ts`, `src/lib/engines/lead-ladder.ts`,
+ * `src/lib/engines/lead-gates.ts` and `src/lib/engines/lead-role-action.ts`,
+ * differing only in the path an import names.
  * They are copied rather than imported because this project is a separate
  * TypeScript program that the server's `tsconfig.json` excludes and that
  * excludes the server's `src/` in turn — a phone builds from this folder and
@@ -26,3 +27,8 @@
 export * from './lead-labels';
 export * from './lead-ladder';
 export * from './lead-gates';
+/* §7 — the VERB, where the three above answer which rung and whether it may
+   be climbed. A salesman reading a rung noun is reading the state of a lead;
+   what he needs is what he is supposed to do about it this morning, and the
+   same sentence has to be the one the office reads for him. */
+export * from './lead-role-action';

@@ -10,8 +10,11 @@ import { useToast } from "@/components/ui/toast";
 import {
   VERIFICATION_OUTCOMES,
   VERIFICATION_QUESTIONS,
+  VERIFICATION_SECTIONS,
   salesTypeLabel,
   stageLabel,
+  verificationResultLabel,
+  verificationResultOf,
   type VerificationOutcome,
 } from "@/lib/lead-labels";
 import type { LeadStage } from "@/lib/lead-labels";
@@ -23,7 +26,7 @@ import { plural } from "@/components/console/words";
 /* ---------------------------------------------------------------------------
  * §8 — the verification call, at full size.
  *
- * Twelve questions and nine findings is a scroll inside a modal, and this is
+ * §5.2's four sections and nine findings is a scroll inside a modal, and this is
  * the one form in the funnel somebody fills in WHILE ON THE PHONE. A manager
  * hunting for the question the customer has just answered is a manager who
  * writes the call up afterwards from memory — which is precisely the failure
@@ -136,6 +139,22 @@ export function VerifyScreen({
   const consumed = new Set(findings.map((f) => f.lands).filter((x): x is string => Boolean(x)));
   const remaining = VERIFICATION_QUESTIONS.filter((q) => !consumed.has(q.id));
 
+  /*
+   * ASKED IN §5.2'S OWN FOUR SECTIONS, because seventeen boxes in one grid is a
+   * form somebody reads down rather than a call somebody conducts. The headings
+   * come off the question list — a heading typed here would be the copy that
+   * drifts the day a question moves between sections, and the modal draws the
+   * same four.
+   *
+   * A section every one of whose questions was answered by a finding above is
+   * dropped rather than drawn empty: an empty heading reads as a section this
+   * screen forgot to build.
+   */
+  const sections = VERIFICATION_SECTIONS.map((s) => ({
+    ...s,
+    questions: remaining.filter((q) => q.section === s.id),
+  })).filter((s) => s.questions.length > 0);
+
   const landed = findings.filter((f) => f.lands);
   const unlanded = findings.filter((f) => !f.lands);
 
@@ -206,6 +225,24 @@ export function VerifyScreen({
   });
 
   const answered = findings.filter((f) => answers[f.id]?.verdict).length;
+
+  /*
+   * §5.2'S FOURTH RESULT, SHOWN AS IT IS EARNED RATHER THAN OFFERED AS A
+   * CHOICE.
+   *
+   * "Verified" and "verified, having corrected three of his figures" are two
+   * different statements about a salesman's report, and the second is most of
+   * why anybody runs this call. It is DERIVED — see `verificationResultOf` in
+   * `lead-labels.ts` — from the correction rows this form is about to write,
+   * never stored beside them, because a stored fourth outcome is a second copy
+   * of a fact the rows already state and is free to disagree with them.
+   *
+   * So it is drawn here as a consequence: the manager marks a finding
+   * corrected, and the line under "Verified" changes to say what the call will
+   * be recorded as. A radio he could pick directly would let him record it with
+   * no corrections behind it, which is the disagreement in its first afternoon.
+   */
+  const correctedCount = findings.filter((f) => answers[f.id]?.verdict === "corrected").length;
   /* Both unsuccessful outcomes demand the sentence, for two different reasons:
      a follow-up's words become the salesman's task, and a failed verification's
      are the only record anybody will have of why a real-looking lead was
@@ -326,7 +363,27 @@ export function VerifyScreen({
         <Banner
           tone="info"
           title={`${plural(priorCalls.length, "call")} already made`}
-          body={`The newest was ${stamp(priorCalls[0].calledAt)} by ${priorCalls[0].managerName ?? "a manager"}. A lead is routinely validated twice and the first call is usually the one that matters, so this writes a new row rather than editing that one.`}
+          /* WHAT THE LAST CALL CAME TO, and not merely when it was. A manager
+             about to ring the same shop is deciding whether to ask the same
+             questions again, and "verified, and three of his figures were
+             wrong" is a different afternoon to "verified". The words are
+             DERIVED from that call's own correction rows rather than read off a
+             stored fourth outcome — nothing here can disagree with the rows
+             below it, because it is the rows. */
+          body={`The newest was ${stamp(priorCalls[0].calledAt)} by ${priorCalls[0].managerName ?? "a manager"} and came to “${verificationResultLabel(
+            verificationResultOf(
+              priorCalls[0].verified,
+              /* ONLY THE CORRECTIONS, and the day this comment predicted has
+                 arrived. It used to count every row, on the reasoning that a
+                 confirmation on a validation call was never worth one — true
+                 of this door and never true of the other. `0155` gave the table
+                 three verdicts, and a field check made in the shop can carry a
+                 `validation_id`, so an unfiltered count would read a manager's
+                 confirmations back to him as figures he had corrected.
+                 A filter here rather than a second definition, as promised. */
+              priorCalls[0].corrections.filter((c) => c.verdict === "corrected").length,
+            ),
+          )}”. A lead is routinely validated twice and the first call is usually the one that matters, so this writes a new row rather than editing that one.`}
         />
       ) : null}
 
@@ -410,28 +467,39 @@ export function VerifyScreen({
 
       <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
         <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          The rest of §8&rsquo;s twelve
+          The rest of the call
         </div>
-        <p className="mb-3 max-w-[620px] text-[12px] text-pretty text-muted">
+        <p className="mb-4 max-w-[620px] text-[12px] text-pretty text-muted">
           {consumed.size
-            ? `${plural(consumed.size, "question")} of the twelve are answered by the findings above and are not asked twice — two controls writing one column is how one of them silently wins. `
+            ? `${plural(consumed.size, "question")} are answered by the findings above and are not asked twice — two controls writing one column is how one of them silently wins. `
             : ""}
           Nothing here is required. A gate refuses a MOVE; this is a record of a conversation, and
           a customer who would not say what he uses in a month is a fact about the call rather than
           an error in the form.
+          {" "}
+          An answer of &ldquo;no&rdquo; belongs in the box rather than left blank: a blank column
+          says nobody asked, which is a different fact and reads as one.
         </p>
 
-        <div className="grid grid-cols-1 gap-x-8 gap-y-3 lg:grid-cols-2">
-          {remaining.map((q) => (
-            <label key={q.id} className="block">
-              <span className="mb-1 block text-[13px] text-body">{q.ask}</span>
-              <Textarea
-                rows={2}
-                disabled={!canVerify}
-                value={questions[q.id] ?? ""}
-                onChange={(e) => setQuestions((s) => ({ ...s, [q.id]: e.target.value }))}
-              />
-            </label>
+        <div className="flex flex-col gap-5">
+          {sections.map((s) => (
+            <div key={s.id}>
+              <div className="mb-0.5 text-[13px] font-medium text-ink">{s.title}</div>
+              <p className="mb-2.5 max-w-[620px] text-[12px] text-pretty text-muted">{s.says}</p>
+              <div className="grid grid-cols-1 gap-x-8 gap-y-3 lg:grid-cols-2">
+                {s.questions.map((q) => (
+                  <label key={q.id} className="block">
+                    <span className="mb-1 block text-[13px] text-body">{q.ask}</span>
+                    <Textarea
+                      rows={2}
+                      disabled={!canVerify}
+                      value={questions[q.id] ?? ""}
+                      onChange={(e) => setQuestions((s2) => ({ ...s2, [q.id]: e.target.value }))}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </section>
@@ -473,6 +541,18 @@ export function VerifyScreen({
                     finds out about from the salesman whose lead went. */}
                 <span className="mt-0.5 block max-w-[620px] text-[12px] text-pretty text-muted">
                   {o.says}
+                  {o.code === "verified" && correctedCount > 0 ? (
+                    <>
+                      {" "}
+                      <strong className="text-body">
+                        This call will read as &ldquo;
+                        {verificationResultLabel("verified_with_corrections")}&rdquo;
+                      </strong>{" "}
+                      &mdash; you have corrected {plural(correctedCount, "finding")}. Nothing extra
+                      is stored for it: it is read off the correction rows themselves, so the count
+                      and the words can never disagree.
+                    </>
+                  ) : null}
                 </span>
               </span>
             </label>

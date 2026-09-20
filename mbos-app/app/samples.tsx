@@ -6,13 +6,17 @@ import { Badge, Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButto
 import { BottomSheet } from '../src/components/ui/overlays';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
+  chaseFor,
+  isAwaitingReview,
   isSampleOverdue,
   listFunnelSamples,
   requestLeadSample,
+  reviewChaseDays,
   sampleReasons,
   whatIsOwed,
   type FunnelSample,
 } from '../src/data/lead-samples';
+import { chaseCountSentence } from '../src/lib/sample-chase';
 import { VoiceField } from '../src/components/ui/dictate';
 import { getLead } from '../src/data/leads';
 import { getCustomer, listCustomersPage, searchProducts, type Customer } from '../src/data/customers';
@@ -71,6 +75,10 @@ export default function SamplesScreen() {
   const [now, setNow] = React.useState(() => Date.now());
   const [askOpen, setAskOpen] = React.useState(params.ask === '1');
   const [reasons, setReasons] = React.useState<CodedOption[]>([]);
+  /* §16's ladder, off configuration. The row only needs it to know how many
+     named rungs there are — which is what turns "asked three times" from a
+     number into "the ladder has been walked and nobody has answered". */
+  const [chaseDays, setChaseDays] = React.useState<number[]>([]);
   /* READING is not NOTHING. Both start with an empty array, and "No samples
      out" on the first frame is a definitive sentence about a read still in
      flight. */
@@ -121,11 +129,12 @@ export default function SamplesScreen() {
   const load = React.useCallback(() => {
     let live = true;
     setToday(isoDate(new Date()));
-    void Promise.all([listFunnelSamples(), sampleReasons()])
-      .then(async ([r, why]) => {
+    void Promise.all([listFunnelSamples(), sampleReasons(), reviewChaseDays()])
+      .then(async ([r, why, chase]) => {
         if (!live) return;
         setRows(r);
         setReasons(why);
+        setChaseDays(chase);
         setStatus('ready');
         /* The row says whose shop it is, so the name is fetched for the ids on
            screen rather than joined into every sample query. A lead is not in
@@ -221,6 +230,10 @@ export default function SamplesScreen() {
           const days = Math.max(0, Math.round((now - x.requestedAt) / 86_400_000));
           const name = names[x.customerId] ?? 'Unknown shop';
           const owed = whatIsOwed(x);
+          /* §16 — pure arithmetic over the receipt date and the configured
+             ladder, worked out once for the row rather than at each place that
+             reads a piece of it. */
+          const chase = chaseFor(x, chaseDays, today);
           /*
            * To the SAMPLE, not to the customer's Samples tab.
            *
@@ -253,6 +266,35 @@ export default function SamplesScreen() {
                 ) : null}
 
                 <T s="caption" style={{ marginTop: 4 }}>{plural(days, 'day') + ' ago'}</T>
+
+                {/* HOW MANY TIMES IT HAS BEEN ASKED, on the row itself.
+
+                    "Awaiting feedback · 19 days ago" is the same row whether
+                    the office has rung three times or has not rung at all, and
+                    those are the two rows on this list a salesman most needs to
+                    tell apart. Drawn only where a review is actually owed: on a
+                    sample still in the godown there is nothing to have asked
+                    about, and a count there would read as a fault.
+
+                    The unknown case is deliberately NOT drawn here. The
+                    sentence for it is a long one about what this phone has and
+                    has not been told, and a list row is not where that belongs
+                    — it is on the record, one tap away, with the ladder it
+                    explains. A row that said it four hundred times would be a
+                    row nobody reads. */}
+                {isAwaitingReview(x) && chase.asked ? (
+                  <T
+                    style={[
+                      {
+                        fontSize: 14,
+                        marginTop: 4,
+                        color: chase.asked >= chase.rungs.length ? C.danger : C.warnInk,
+                      },
+                      weight(500),
+                    ]}>
+                    {chaseCountSentence(chase.asked) + ' with no answer'}
+                  </T>
+                ) : null}
 
                 {isSampleOverdue(x, today) ? (
                   <T style={[{ fontSize: 14, color: C.warnInk, marginTop: 4 }, weight(500)]}>

@@ -346,6 +346,17 @@ export type PullPayload = {
    */
   bookIds?: string[];
   leads?: unknown[];
+  /**
+   * §8 and §5.2 — the office's own call to the shop, and every check anybody
+   * has made on one of the nine findings.
+   *
+   * Optional like every channel here: an older server sends neither and the
+   * screens draw what this phone happens to hold. Both are applied AFTER
+   * `leads`, so a call or a check can never land against a lead the same pull
+   * was in the middle of introducing.
+   */
+  leadValidations?: unknown[];
+  leadFieldChecks?: unknown[];
   notifications?: unknown[];
   documents?: unknown[];
   courses?: unknown[];

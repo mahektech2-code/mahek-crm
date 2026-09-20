@@ -51,6 +51,43 @@ export const PURCHASE_STATUSES = [
   "delivered",
 ] as const;
 
+/**
+ * Goods that have left us. §20's tail of the ladder, and a SUBSET of the list
+ * above rather than a second opinion about it.
+ *
+ * `PURCHASE_STATUSES` answers "did we sell anything"; this answers "has it
+ * gone", which is a different question with a different answer on the two
+ * statuses that precede it — a `captured` or `confirmed` order is a sale the
+ * business has agreed to and a lorry nobody has loaded.
+ *
+ * It exists because the §28 Delivery gate read `status = 'dispatched'` alone,
+ * in two places, and `dispatched` stopped being the last word the day §N added
+ * `in_transit` and `delivered` to the enum. So a lead whose order had been
+ * recorded as ARRIVED did not satisfy a gate whose own refusal reads "the
+ * material has not reached them yet" — the record said it had, and the rung
+ * stayed shut.
+ *
+ * The element type is `PURCHASE_STATUSES`'s own, so a status listed here that
+ * is not a sale fails `tsc` rather than quietly counting as a delivery of
+ * something we never agreed to sell. That is the same discipline
+ * `orderCountsSql` keeps by being derived: one list, checked against itself.
+ */
+export const DELIVERY_STATUSES: readonly (typeof PURCHASE_STATUSES)[number][] = [
+  "dispatched",
+  "in_transit",
+  "delivered",
+];
+
+/**
+ * The same fragment as `orderCountsSql`, for the other question. Pass the
+ * alias the query uses, and qualify it — an unqualified `status` inside a
+ * correlated subquery binds to the inner table.
+ */
+export function orderDeliveredSql(alias: string) {
+  const list = DELIVERY_STATUSES.map((s) => `'${s}'`).join(", ");
+  return sql.raw(`${alias}.status in (${list})`);
+}
+
 export const NON_PURCHASE_STATUSES = [
   "pending_approval",
   "declined",

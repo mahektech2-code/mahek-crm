@@ -5,7 +5,16 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Card, Choice, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { VoiceField } from '../src/components/ui/dictate';
 import { color as C, radius, weight } from '../src/theme/tokens';
-import { recordValidation, validationRefusal, validationScript, type ValidationScript } from '../src/data/validations';
+import {
+  answerableQuestions,
+  carriedColumnFor,
+  recordValidation,
+  validationRefusal,
+  validationScript,
+  type CarriedColumn,
+  type ValidationScript,
+} from '../src/data/validations';
+import { VERIFICATION_SECTIONS } from '../src/engines/funnel/lead-labels';
 import { getLead, type Lead } from '../src/data/leads';
 import { callNumber } from '../src/lib/messaging';
 import { useStore } from '../src/state/store';
@@ -24,6 +33,30 @@ import { useStore } from '../src/state/store';
  * nobody can recall.
  */
 
+/**
+ * §8's OWN QUESTIONS, in §8's own words, under §8's own headings.
+ *
+ * This screen asked four questions of its own — "The products, explained
+ * clearly?", "The quality", "Dispatch and service", "How our man was with
+ * them" — typed into the file. They are §E's four and they are not the list
+ * the office's verification form asks, so the phone and the desk were two
+ * doors writing one table with different questions on them: a call made from a
+ * car recorded a different conversation to the same call made at a desk, and
+ * no report reading that table could tell which.
+ *
+ * The list is `VERIFICATION_SECTIONS` and `answerableQuestions`, mirrored from
+ * MahekOne's own `lead-labels.ts`. A question reworded there is reworded here
+ * without an APK, and a question ADDED there appears here the day its answer
+ * has somewhere to land — which is what `answerableQuestions` is filtering on,
+ * and why a section with nothing landable is not drawn at all. A heading
+ * promising "what they are ready for" over an empty card is a worse answer
+ * than a heading that is absent.
+ */
+const SECTIONS = VERIFICATION_SECTIONS.map((s) => ({
+  ...s,
+  questions: answerableQuestions(s.id),
+})).filter((s) => s.questions.length > 0);
+
 const VERDICTS = [
   { v: 'confirmed' as const, label: 'A real Prospect' },
   { v: 'on_hold' as const, label: 'On hold' },
@@ -41,17 +74,15 @@ export default function ValidateLead() {
   const [lead, setLead] = React.useState<Lead | null>(null);
   const [script, setScript] = React.useState<ValidationScript>([]);
   const [reached, setReached] = React.useState(true);
-  const [product, setProduct] = React.useState('');
-  const [quality, setQuality] = React.useState('');
-  const [dispatch, setDispatch] = React.useState('');
-  const [behaviour, setBehaviour] = React.useState('');
-  const [requirement, setRequirement] = React.useState('');
+  /* Keyed on the QUESTION rather than a field per column, so a question added
+     to the shared list needs nothing here. */
+  const [answers, setAnswers] = React.useState<Record<string, string>>({});
   const [litres, setLitres] = React.useState('');
-  const [competitor, setCompetitor] = React.useState('');
   const [verdict, setVerdict] = React.useState<'pending' | 'confirmed' | 'not_qualified' | 'on_hold'>('pending');
   const [why, setWhy] = React.useState('');
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  const inFlight = React.useRef(false);
 
   React.useEffect(() => {
     if (!id) return;
@@ -73,9 +104,7 @@ export default function ValidateLead() {
   const dirty =
     !reached ||
     verdict !== 'pending' ||
-    Boolean(
-      (product + quality + dispatch + behaviour + requirement + litres + competitor + why).trim(),
-    );
+    Boolean((Object.values(answers).join('') + litres + why).trim());
 
   const leave = () => {
     if (!dirty) return back.go();
@@ -88,29 +117,40 @@ export default function ValidateLead() {
   };
 
   const save = async () => {
-    if (saving) return;
+    /* A ref rather than the `saving` flag: state is a render behind, and two
+       taps on a phone that has just gone quiet arrive inside one. */
+    if (inFlight.current) return;
     /* Refused BEFORE the write and in the same words the service uses, so the
        sentence he had in mind while the customer's words were fresh is not
        lost to a round trip that comes back with a refusal. */
     const refusal = validationRefusal({ customerId: id, reached, verdict, verdictReason: why.trim() || null });
     if (refusal) return setErr(refusal);
+    inFlight.current = true;
     setSaving(true);
+
+    /* Each answer into the column that question lands in, looked up rather
+       than typed out beside it — one mapping, read here and by the office's
+       own form, because a screen holding its own copy of which column is which
+       is a screen that files the credit answer under quality the day somebody
+       adds a question. */
+    const carried: Partial<Record<CarriedColumn, string | null>> = {};
+    for (const [questionId, said] of Object.entries(answers)) {
+      const column = carriedColumnFor(questionId);
+      if (column) carried[column] = said.trim() || null;
+    }
+
     const result = await recordValidation({
+      ...carried,
       customerId: id,
       reached,
-      productFeedback: product.trim() || null,
-      qualityFeedback: quality.trim() || null,
-      dispatchFeedback: dispatch.trim() || null,
-      salesmanFeedback: behaviour.trim() || null,
-      confirmedRequirement: requirement.trim() || null,
       confirmedMonthlyVolumeLitres: Number(litres.replace(/[^\d]/g, '')) || null,
-      confirmedCompetitor: competitor.trim() || null,
       verdict,
       verdictReason: why.trim() || null,
       taskId: params.taskId ?? null,
     });
     if (!result.ok) {
       setErr(result.message ?? 'That could not be saved.');
+      inFlight.current = false;
       setSaving(false);
       return;
     }
@@ -192,47 +232,59 @@ export default function ValidateLead() {
       {reached ? (
         <>
           <Card style={{ marginTop: 12 }}>
-            <SectionLabel>What they said about the visit</SectionLabel>
+            <SectionLabel>What they said</SectionLabel>
             <T s="caption" style={{ marginTop: 4 }}>
-              All optional. Write down what they actually said, not a summary.
+              Nothing here is required. Write down what they actually said, not a summary.
             </T>
-            {[
-              { label: 'The products, explained clearly?', v: product, set: setProduct },
-              { label: 'The quality', v: quality, set: setQuality },
-              { label: 'Dispatch and service', v: dispatch, set: setDispatch },
-              { label: 'How our man was with them', v: behaviour, set: setBehaviour },
-            ].map((f) => (
-              <View key={f.label} style={{ marginTop: 12 }}>
-                <SectionLabel style={{ marginBottom: 6 }}>{f.label}</SectionLabel>
-                {/* "What they actually said, not a summary" asked of a single
-                    line that scrolls sideways. Prose, so it gets the mic. */}
-                <VoiceField value={f.v} onChangeText={f.set} placeholder="In their words" />
-              </View>
-            ))}
+            {/* THE BLANK AND THE "NO" ARE DIFFERENT FACTS, and the column
+                cannot tell them apart unless the caller does. An empty box
+                says nobody asked; "no problem with the price" says it was
+                asked and answered, which is what somebody deciding what to
+                offer next is reading for. The office's own form says
+                this above its grid and the phone has to say it too — the two
+                doors are one table, and a rule stated at one of them is a rule
+                half the answers were never written under. */}
+            <T s="caption" style={{ marginTop: 6 }}>
+              If the answer was no, write that down rather than leaving the box empty. A blank
+              says nobody asked, which is a different thing.
+            </T>
           </Card>
 
-          <Card style={{ marginTop: 12 }}>
-            <SectionLabel>What they say they need</SectionLabel>
-            {/* Kept apart from the lead's own columns on purpose: what the
-                salesman was told and what the office was told are two readings
-                of one shop, and the difference is the point of this call. */}
-            <T s="caption" style={{ marginTop: 4 }}>
-              Recorded beside what the salesman reported, never over it.
-            </T>
-            <View style={{ marginTop: 12 }}>
-              <SectionLabel style={{ marginBottom: 6 }}>Requirement</SectionLabel>
-              <Input value={requirement} onChangeText={setRequirement} placeholder="Thinner for a spray booth" />
-            </View>
-            <View style={{ marginTop: 12 }}>
-              <SectionLabel style={{ marginBottom: 6 }}>Monthly volume</SectionLabel>
-              <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
-              <T s="caption" style={{ marginTop: 6 }}>In litres, as they say it.</T>
-            </View>
-            <View style={{ marginTop: 12 }}>
-              <SectionLabel style={{ marginBottom: 6 }}>Buying from</SectionLabel>
-              <Input value={competitor} onChangeText={setCompetitor} placeholder="Asian Paints" />
-            </View>
-          </Card>
+          {SECTIONS.map((section) => (
+            <Card key={section.id} style={{ marginTop: 12 }}>
+              <T style={[{ fontSize: 14, color: C.ink }, weight(600)]}>{section.title}</T>
+              <T s="caption" style={{ marginTop: 4 }}>{section.says}</T>
+              {section.questions.map((q) => (
+                <View key={q.id} style={{ marginTop: 12 }}>
+                  <SectionLabel style={{ marginBottom: 6 }}>{q.ask}</SectionLabel>
+                  {/* "What they actually said, not a summary" asked of a single
+                      line that scrolls sideways. Prose, so it gets the mic. */}
+                  <VoiceField
+                    value={answers[q.id] ?? ''}
+                    onChangeText={(v) => setAnswers((prev) => ({ ...prev, [q.id]: v }))}
+                    placeholder="In their words"
+                  />
+                </View>
+              ))}
+
+              {/* The NUMBER, beside the sentence that carries it and never
+                  parsed out of it. "About 15-20 tins, more in season" is the
+                  answer above; a figure guessed from it would be a confident
+                  wrong number on the owner's own screens, which is where a
+                  wrong number does the most damage. Asked here rather than in
+                  a card of its own because it is the same question. */}
+              {section.id === 'opportunity' ? (
+                <View style={{ marginTop: 12 }}>
+                  <SectionLabel style={{ marginBottom: 6 }}>Monthly volume</SectionLabel>
+                  <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
+                  <T s="caption" style={{ marginTop: 6 }}>
+                    In litres, only if they gave a figure. Recorded beside what the salesman
+                    reported, never over it.
+                  </T>
+                </View>
+              ) : null}
+            </Card>
+          ))}
         </>
       ) : null}
 

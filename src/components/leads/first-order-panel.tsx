@@ -13,6 +13,7 @@ import {
 } from "@/lib/lead-commitment";
 import { askForFirstOrder } from "@/lib/actions/leads";
 import { Button } from "@/components/console/parts";
+import { ConfirmOrderPanel } from "./confirm-order-panel";
 
 /**
  * §18 — asking for the order, and "customer interested" is not an answer.
@@ -52,6 +53,7 @@ export function FirstOrderPanel({
   expectedOrderCans,
   expectedOrderValuePaise,
   countingOrderCount,
+  pendingOrderCount,
   disabled,
   disabledReason,
 }: {
@@ -62,6 +64,12 @@ export function FirstOrderPanel({
   expectedOrderValuePaise: number | null;
   /** Once there is a real order the ask is history rather than a task. */
   countingOrderCount: number;
+  /**
+   * Orders already with accounts, where the screen knows. Passed straight
+   * through to the confirmation card, whose own prose says why it cannot be
+   * worked out from the count above it.
+   */
+  pendingOrderCount?: number;
   disabled: boolean;
   disabledReason?: string;
 }) {
@@ -117,6 +125,7 @@ export function FirstOrderPanel({
   }
 
   return (
+    <>
     <section className="rounded-[6px] border border-line bg-surface px-5 py-4">
       <div className="mb-1 flex items-start justify-between gap-3">
         <div>
@@ -290,6 +299,35 @@ export function FirstOrderPanel({
         </div>
       </Modal>
     </section>
+
+    {/*
+      §5.5's SECOND ACT, DRAWN FROM THE FIRST, because the two are one subject
+      and the second only exists once the first has happened. Mounted here
+      rather than by each screen: this component is what every Commercial
+      surface already renders — the record's tab, the commitments worklist and
+      the first-order worklist — and adding the confirmation to three call
+      sites is how one of them comes to be missing it. §7's instruction is
+      surfaced on all three or on none.
+
+      THE SAME TWO FACTS THE CARD FORKS ON, and read from the same places:
+      `commitmentState` on the stored columns, which is `hasCommitment`, and
+      `countingOrderCount`, which is `hasOrder`. Not re-derived and not a
+      second opinion — `gateAction` routes a manager here on exactly this pair,
+      so drawing the form on anything else would send him to a card that is not
+      there.
+    */}
+    {saved === "confirmed" && countingOrderCount === 0 && expectedOrderDate ? (
+      <ConfirmOrderPanel
+        customerId={customerId}
+        expectedOrderDate={expectedOrderDate}
+        expectedOrderCans={expectedOrderCans}
+        expectedOrderValuePaise={expectedOrderValuePaise}
+        pendingOrderCount={pendingOrderCount}
+        disabled={disabled}
+        disabledReason={disabledReason}
+      />
+    ) : null}
+    </>
   );
 }
 

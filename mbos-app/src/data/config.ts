@@ -1,8 +1,12 @@
 import { all, one } from '../db';
+import { LEAD_SOURCES, type LeadSource } from '../engines/leads';
 import {
+  HOLD_REASONS,
   LOST_REASONS,
+  ORDER_BLOCKERS,
   OVERRIDE_REASONS,
   PROSPECT_REASONS,
+  SAMPLE_CANCEL_REASONS,
   SAMPLE_REASONS,
 } from '../engines/funnel/lead-labels';
 
@@ -253,14 +257,24 @@ const DEFAULTS: Record<string, unknown> = {
    * window of three on a phone and two in the office would be two rules
    * wearing one name, and the salesman would be the one who found out.
    *
-   * TODO(integration): `mbosConfigPayload()` in
-   * `src/lib/services/mbos-service.ts` sends every `mbos.*` key and
-   * `products.priceSource`, so none of these reaches a handset yet — the
-   * defaults below are what the app runs on until workstream A widens it to
-   * carry the `leads.*` keys too. They are copied from
+   * They ARRIVE now, which they did not when this block was written:
+   * `mbosConfigPayload()` in `src/lib/services/mbos-service.ts` sends every
+   * key beginning `mbos.` or `leads.`, so an office that rewords a list
+   * rewords it on the phone on the next pull. What is below is still what the
+   * app runs on before the first bootstrap lands, copied from
    * `lib/config/registry.ts`, which takes its own from the same
-   * `lead-labels.ts` this app compiles, so the words on the screen are right
-   * even while the numbers are only defaults.
+   * `lead-labels.ts` this app compiles — so the words on the screen are the
+   * office's words either way.
+   *
+   * WHICH IS WHY A MISSING ENTRY HERE IS INVISIBLE RATHER THAN LOUD.
+   * `getConfig` falls back to `DEFAULTS[key]` and then to the caller's own
+   * argument, so a list nobody remembered to name reads as `undefined`, the
+   * picker draws no chips, and the sheet becomes a title and a button that can
+   * only ever answer "Pick one". `leads.holdReasons` and
+   * `leads.sampleCancelReasons` were exactly that: the office has published
+   * both since the funnel shipped, the CRM has picked from both, and the
+   * handset asked for neither — so the two lists that exist to make a park and
+   * a called-off trial COUNTABLE were the two the phone could not offer.
    */
   'leads.suspectMaxVisits': 3,
   'leads.requireNextAction': true,
@@ -268,9 +282,47 @@ const DEFAULTS: Record<string, unknown> = {
   'leads.prospectReasons': PROSPECT_REASONS.map((r) => ({ ...r })),
   'leads.sampleReasons': SAMPLE_REASONS.map((r) => ({ ...r })),
   'leads.lostReasons': LOST_REASONS.map((r) => ({ ...r })),
+  /* §— WHY A LEAD STOPPED, and why a trial was called off. Six and eight, and
+     both of them are what makes "how many did we park on budget this quarter"
+     a question somebody can ask of a column rather than a grep over sentences
+     people never typed the same way twice. */
+  'leads.holdReasons': HOLD_REASONS.map((r) => ({ ...r })),
+  'leads.sampleCancelReasons': SAMPLE_CANCEL_REASONS.map((r) => ({ ...r })),
+  /* §5.5 — WHAT IS STOPPING THE FIRST ORDER, and it was the third list read on
+     a phone and named nowhere here. `funnelConfig()` spelled the fallback out
+     at its own call site, which is the arrangement this table exists to
+     replace: without either, `getConfig` answers `undefined`, the picker draws
+     no chips, and the commitment sheet becomes a title and a button that can
+     only ever say "Pick one" — on a deployment that has published the list and
+     paid for the feature. Five codes, four of which are four different desks;
+     copied from `lib/config/registry.ts` like everything else here. */
+  'leads.orderBlockers': ORDER_BLOCKERS.map((r) => ({ ...r })),
   'leads.overrideReasons': OVERRIDE_REASONS.map((r) => ({ ...r })),
   'leads.sampleReviewChaseDays': [2, 4, 6],
   'leads.verificationDueDays': 2,
+  /*
+   * §5.3 — WHEN THE FOUR CONVERSION FIGURES STOP COUNTING AS CURRENT.
+   *
+   * The key was read in `data/lead-funnel.ts` and had no entry here, so the
+   * only thing standing between a handset that has never bootstrapped and a
+   * freshness check that does not run was a fallback argument spelled out at
+   * one call site. That is the arrangement this table exists to replace: a
+   * number a caller happens to remember is a number the next caller gets
+   * wrong, and `getConfig` reaching `DEFAULTS` is what makes the answer the
+   * same wherever it is asked from.
+   *
+   * 60 is `lib/config/registry.ts`'s own default, copied like everything else
+   * here — not policy, just what a phone runs on until the office tells it.
+   */
+  'leads.figuresFreshDays': 60,
+  /* WHERE A LEAD CAME FROM — the ten codes, and the third list that was read
+     on a phone and published nowhere. The handset had five LABELS of its own
+     compiled into `engines/leads.ts` and translated them down to four codes,
+     three of which this list has never contained; so every lead a salesman
+     raised was filed under a channel the office cannot count. The fallback is
+     copied from `lib/config/registry.ts`, like everything else here, and it is
+     what a handset offers before its first bootstrap rather than policy. */
+  'leads.sources': LEAD_SOURCES.map((s) => ({ ...s })),
 
   /* tasks */
   'mbos.tasks.escalationHours': 24,
@@ -323,4 +375,19 @@ export async function getAllConfig(): Promise<Record<string, unknown>> {
 export async function configAge(): Promise<number | null> {
   const row = await one<{ at: number }>('SELECT MAX(lastSyncedAt) AS at FROM config');
   return row?.at || null;
+}
+
+/**
+ * The ten channels, as the office currently words them.
+ *
+ * Read through here rather than by each screen calling `getConfig` with its
+ * own fallback: the failure this list keeps having is the SILENT one —
+ * `getConfig` answers `undefined` for a key nobody published, the picker draws
+ * no chips, and the form becomes a title and a button that can only ever say
+ * "Pick one", on a deployment that configured the feature perfectly. One
+ * reader, one fallback, and a list that is never empty.
+ */
+export async function leadSources(): Promise<LeadSource[]> {
+  const list = await getConfig<LeadSource[]>('leads.sources');
+  return Array.isArray(list) && list.length ? list : LEAD_SOURCES.map((s) => ({ ...s }));
 }

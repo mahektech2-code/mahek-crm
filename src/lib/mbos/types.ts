@@ -39,6 +39,24 @@ export const REJECTION_CODES = [
    * handset needs to be able to tell those apart to say the right sentence.
    */
   "day_locked",
+  /*
+   * WHAT THE RECORD NAMES IS GONE — a document withdrawn from the library
+   * between the pull that put it on the phone and the tap that sent it.
+   *
+   * Its own code for the third time and for the third version of one reason:
+   * nothing the salesman sent is malformed, so `validation` — which the
+   * handset renders as "correct it and send it again" — sends him to fix an
+   * entry that is already right. There is nothing for him to correct: either he
+   * names a different document or the office publishes that one again, and only
+   * a code of its own can carry that difference. `product_inactive` is the
+   * nearest by shape and names a PRODUCT, so it would read wrong on
+   * `/rejections` and would be wrong in any count by code.
+   *
+   * An unrecognised code costs a guidance line and never the refusal itself:
+   * `/rejections` prints the office's own sentence verbatim whatever the code
+   * says, which is why two codes here have never had one.
+   */
+  "not_found",
   "validation",
   "not_permitted",
 ] as const;
@@ -139,6 +157,16 @@ export const SYNC_ENTITY_TYPES = [
    * `mbos_competitor_records` was in.
    */
   "internal_note",
+  /**
+   * §10.4 — one of the eleven ways of reaching out, recorded against a lead.
+   *
+   * The office has had this since the communication panel shipped; the phone
+   * standing in the shop had the ELEVEN compiled into it and no way to use one,
+   * which is the same shape `internal_note` above was in. A call logged and a
+   * price list sent are both this, because both answer the one question the
+   * record is for: has anybody been in touch, and how often.
+   */
+  "lead_communication",
   "approval",
   /**
    * The salesman's answer to a proposed day: agreed, or refused with a reason
@@ -423,6 +451,21 @@ export type PullDelta = {
    */
   leads: unknown[];
   samples: unknown[];
+  /**
+   * §8 and §5.2 — the office's own call to the shop, and every check anybody
+   * has made on one of the nine findings.
+   *
+   * Both went UP and came back on no channel at all, so a salesman saw only
+   * the calls he had made himself and watched his own figures be replaced with
+   * nothing saying who replaced them. The validations land in the table the
+   * handset already writes, under the id the row was minted with — a call made
+   * on the phone comes back as itself rather than as a second copy — and carry
+   * the `syncState = 'synced'` guard `leads` and `samples` carry, enforced
+   * where the row lands. The checks are reference: nothing on the phone writes
+   * that table.
+   */
+  leadValidations: unknown[];
+  leadFieldChecks: unknown[];
   /**
    * What the office knows this shop bought and paid, ten of each per customer.
    *

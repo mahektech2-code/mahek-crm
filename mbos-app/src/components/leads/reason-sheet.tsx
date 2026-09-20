@@ -28,6 +28,7 @@ export function ReasonSheet({
   noteLabel,
   notePlaceholder,
   requireNote = false,
+  noteRequiredForCode,
   onConfirm,
 }: {
   open: boolean;
@@ -39,6 +40,18 @@ export function ReasonSheet({
   noteLabel?: string;
   notePlaceholder?: string;
   requireNote?: boolean;
+  /**
+   * ONE CODE MAY COST A SENTENCE WHERE THE OTHERS DO NOT.
+   *
+   * `requireNote` is all-or-nothing and says nothing about WHICH answer was
+   * picked. Mahek's lists each end in "Other", and that one answer — a code
+   * meaning "something else" with nothing behind it — is the single row nobody
+   * can act on afterwards, so it is the one that has to be paid for. Naming
+   * the code here rather than turning `requireNote` on demands the sentence
+   * exactly where the office demands it and nowhere else, which is what keeps
+   * the seven ordinary answers from teaching people to type a full stop.
+   */
+  noteRequiredForCode?: string;
   onConfirm: (code: string, note: string) => void;
 }) {
   /* Remounted by the caller's `key` when it opens rather than reset in an
@@ -65,8 +78,27 @@ export function ReasonSheet({
    */
   const nothingToPick = options.length === 0;
 
+  /*
+   * THE REFUSAL IS STATED BEFORE THE BUTTON IS PRESSED, not after it.
+   *
+   * Everything else on this sheet answers on the press, because until somebody
+   * has picked there is nothing to say. A code that demands a sentence is
+   * different: the moment "Other" is chosen the screen knows exactly what is
+   * still owed, and holding that back until the press teaches somebody the app
+   * refuses things at random. Only the CODE-driven demand is drawn this way —
+   * `requireNote` and the nothing-to-pick case answer on the press as they
+   * always have, because widening this would move the behaviour of four other
+   * screens that never asked for it.
+   */
+  const codeDemandsNote = noteRequiredForCode !== undefined && code === noteRequiredForCode;
+  const missing =
+    codeDemandsNote && !note.trim()
+      ? 'Say what happened — “Other” with nothing behind it is the one answer nobody can act on.'
+      : null;
+
   const confirm = () => {
     if (!code && !nothingToPick) return setErr('Pick one — it is what gets counted afterwards.');
+    if (missing) return setErr(missing);
     if ((requireNote || nothingToPick) && !note.trim()) {
       return setErr('A sentence, so whoever reads this next knows what happened.');
     }
@@ -100,12 +132,14 @@ export function ReasonSheet({
       )}
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>{noteLabel ?? 'Anything to add'}</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>
+          {(noteLabel ?? 'Anything to add') + (codeDemandsNote ? ' · required' : '')}
+        </SectionLabel>
         <Input
           value={note}
           onChangeText={(v) => { setNote(v); setErr(null); }}
           placeholder={
-            nothingToPick
+            nothingToPick || codeDemandsNote
               ? 'What happened, in your own words'
               : notePlaceholder ?? 'Optional — what they actually said'
           }
@@ -121,7 +155,17 @@ export function ReasonSheet({
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
-        <PrimaryButton label={confirmLabel} onPress={confirm} style={{ flex: 1, borderRadius: radius.xl }} />
+        {/* Still pressable with a reason on it, which is the house rule for
+            every disabled button here: a tap that answers teaches somebody
+            what is missing, and one that swallows the press teaches them the
+            screen is broken. */}
+        <PrimaryButton
+          label={confirmLabel}
+          onPress={confirm}
+          disabled={Boolean(missing)}
+          whyDisabled={missing ?? undefined}
+          style={{ flex: 1, borderRadius: radius.xl }}
+        />
       </View>
     </BottomSheet>
   );

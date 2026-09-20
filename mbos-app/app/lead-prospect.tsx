@@ -5,6 +5,15 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Card, Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { NextActionSheet } from '../src/components/leads/next-action-sheet';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
+import {
+  BLANK_VERIFY,
+  correctionRefusal,
+  fieldChecksFrom,
+  forgetFieldChecks,
+  takeFieldChecks,
+  VerifyFieldRow,
+  type VerifyAnswer,
+} from '../src/components/leads/verify-field-row';
 import { color as C, radius, weight } from '../src/theme/tokens';
 import {
   leadFunnelView,
@@ -35,7 +44,48 @@ import { useStore } from '../src/state/store';
  * "Decision maker" is on this form and is NOT one of the eight. The
  * specification says "if known", and a gate that refused on an optional field
  * would be a gate nobody could pass.
+ *
+ * **WHERE A VISIT ALREADY FOUND A VALUE, THE BOX IS NOT A BOX.** §5.1 asks for
+ * the Section 4 fields to be "captured OR CORRECTED", and a plain input over a
+ * value somebody already wrote down can only ever do the first — it overwrites
+ * the earlier reading silently, so nothing afterwards records that the two
+ * disagreed or why. Those rows are `VerifyFieldRow` instead: confirm, correct
+ * with a stated reason, or say plainly that nobody would answer. It is the
+ * same control the office's verification screen draws, for the same reason
+ * §1 gives — one book, and a second visit CHECKS the first rather than typing
+ * over it.
+ *
+ * **SIX OF THEM, AND ONLY WHERE THERE IS SOMETHING TO CHECK.** The six are
+ * §5.1's own list — the monthly requirement, the potential, the product, the
+ * competitor, the contact and the decision maker. What kind of business this
+ * is, the credit days, the application and the GST number are left as plain
+ * boxes: the first is a four-chip pick where "correct it" is the tap itself,
+ * and the other three are optional details nobody is being checked on. A field
+ * the record has no answer for falls back to a plain input whatever list it is
+ * on, because "Confirm" over an empty box is asking somebody to confirm
+ * nothing.
  */
+
+/**
+ * The finding codes, which are `VERIFICATION_FINDINGS`' own and not a second
+ * spelling of them — the office counts corrections by these, and a code typed
+ * into a screen and into nothing else is a correction that arrives naming a
+ * field nobody can look up. The words beside them are this screen's, because
+ * "Litres a month" is what the heading above the row says and a refusal that
+ * named the field differently would read as being about a different field.
+ */
+const CHECKED: readonly { field: string; label: string }[] = [
+  { field: 'monthly_litres', label: 'Litres a month' },
+  { field: 'potential', label: 'What they could be worth' },
+  { field: 'competitor', label: 'Whose product they are on' },
+  { field: 'required_product', label: 'Which of ours they need' },
+  { field: 'contact_person', label: 'Who we ask for' },
+  { field: 'decision_maker', label: 'Who signs off a purchase' },
+];
+
+const CHECKED_LABELS: Record<string, string> = Object.fromEntries(
+  CHECKED.map((c) => [c.field, c.label]),
+);
 
 /**
  * §6 — what kind of business it is, and it is a CODE rather than a word.
@@ -52,6 +102,15 @@ const CUSTOMER_TYPES: readonly { code: string; label: string; hint: string }[] =
   { code: 'manufacturer', label: 'Manufacturer', hint: 'Uses it in what they make' },
   { code: 'distributor', label: 'Distributor', hint: 'Stocks and supplies others' },
 ];
+
+/**
+ * The schema's own ceiling on `fieldChecks`, restated here because this is the
+ * one screen that can exceed it. Nine findings is what the form can answer and
+ * forty is what the wire will take, so the difference is the backlog — and a
+ * payload refused for length would take the seven prospect answers beside it
+ * down too, which is the one thing a drain must not cost.
+ */
+const FIELD_CHECK_LIMIT = 40;
 
 export default function ProspectForm() {
   const params = useLocalSearchParams<{ id?: string }>();
@@ -93,6 +152,23 @@ export default function ProspectForm() {
   const [reasonOpen, setReasonOpen] = React.useState(false);
   const [nextOpen, setNextOpen] = React.useState(false);
 
+  /*
+   * WHAT THE RECORD HELD WHEN THIS SCREEN OPENED, kept apart from what is in
+   * the boxes. It is the `original` half of every before/after pair, and it is
+   * a copy taken at that moment on purpose: the lead's own columns are live —
+   * a save rewrites them — so reading one back to find out what a correction
+   * corrected would answer with whatever it says afterwards.
+   */
+  const [originals, setOriginals] = React.useState<Record<string, string>>({});
+  const [originalProduct, setOriginalProduct] = React.useState<{ id: string; name: string } | null>(
+    null,
+  );
+  const [checks, setChecks] = React.useState<Record<string, VerifyAnswer>>({});
+
+  /* Double taps are guarded by a ref rather than by state: state is a render
+     behind, and the second tap of a double tap lands inside that gap. */
+  const saving = React.useRef(false);
+
   const load = React.useCallback(() => {
     let live = true;
     if (!id) return;
@@ -115,17 +191,30 @@ export default function ProspectForm() {
            way, so the boxes and the gate agree. */
         const litresHere = v.lead.monthlyLitres ?? v.lead.monthlyVolumeLitres;
         setLitres(litresHere != null ? String(litresHere) : '');
-        setPotential(
-          v.lead.estimatedPotentialPaise != null ? String(Math.round(v.lead.estimatedPotentialPaise / 100)) : '',
-        );
-        setCompetitor(v.lead.competitor ?? v.lead.competitorName ?? '');
-        setProduct(
-          v.lead.requiredProductId
-            ? { id: v.lead.requiredProductId, name: v.lead.requiredProductName ?? 'Chosen product' }
-            : null,
-        );
+        const potentialHere =
+          v.lead.estimatedPotentialPaise != null
+            ? String(Math.round(v.lead.estimatedPotentialPaise / 100))
+            : '';
+        setPotential(potentialHere);
+        const competitorHere = (v.lead.competitor ?? v.lead.competitorName ?? '').trim();
+        setCompetitor(competitorHere);
+        const productHere = v.lead.requiredProductId
+          ? { id: v.lead.requiredProductId, name: v.lead.requiredProductName ?? 'Chosen product' }
+          : null;
+        setProduct(productHere);
+        setOriginalProduct(productHere);
         setContact(v.lead.contactPerson ?? '');
         setDecisionMaker(v.lead.decisionMaker ?? '');
+        /* Taken in the same breath as the boxes, off the same values, so the
+           row can never show one thing and the pair record another. */
+        setOriginals({
+          monthly_litres: litresHere != null ? String(litresHere) : '',
+          potential: potentialHere,
+          competitor: competitorHere,
+          required_product: productHere?.name ?? '',
+          contact_person: (v.lead.contactPerson ?? '').trim(),
+          decision_maker: (v.lead.decisionMaker ?? '').trim(),
+        });
         setCreditDays(v.lead.creditDaysWanted != null ? String(v.lead.creditDaysWanted) : '');
         setApplication(v.lead.application ?? '');
         setGstin(v.lead.gstin ?? '');
@@ -168,27 +257,166 @@ export default function ProspectForm() {
 
   const { lead, input, config } = view;
 
-  const save = async (reasonCode?: string) => {
-    const r = await saveProspectFields(lead.id, {
-      customerType: customerType.trim() || null,
-      monthlyLitres: litres.trim() ? Number(litres.replace(/[^\d]/g, '')) : null,
-      /* Rupees on the screen, paise in the store — the only place the two
-         meet, exactly as the new-lead form does it. */
-      estimatedPotentialPaise: potential.trim() ? Number(potential.replace(/[^\d]/g, '')) * 100 : null,
-      competitor: competitor.trim() || null,
-      requiredProductId: product?.id ?? null,
-      requiredProductName: product?.name ?? null,
-      contactPerson: contact.trim() || null,
-      decisionMaker: decisionMaker.trim() || null,
-      creditDaysWanted: creditDays.trim() ? Number(creditDays.replace(/[^\d]/g, '')) : null,
-      application: application.trim() || null,
-      gstin: gstin.trim() || null,
-      prospectReasonCode: reasonCode ?? lead.prospectReasonCode ?? null,
-    });
-    if (!r.ok) return notify(r.message);
-    load();
-    notify('Saved');
+  const patchCheck = (field: string, patch: Partial<VerifyAnswer>) =>
+    setChecks((prev) => ({ ...prev, [field]: { ...(prev[field] ?? BLANK_VERIFY), ...patch } }));
+
+  /*
+   * WHAT THE FIELD IS WORTH NOW, which is a different question on a checked
+   * row to an unchecked one.
+   *
+   * With nothing recorded, the box is the answer. With something recorded, the
+   * VERDICT decides: only a correction moves the value, and a row nobody has
+   * touched keeps exactly what was there — so a salesman who opens this form
+   * to fill in the GST number cannot blank the other man's six answers by
+   * saving.
+   */
+  const answered = (field: string, typed: string) => {
+    const was = originals[field] ?? '';
+    if (!was) return typed.trim();
+    const a = checks[field];
+    return a?.verdict === 'corrected' ? a.corrected.trim() : was;
   };
+
+  const litresNow = answered('monthly_litres', litres);
+  const potentialNow = answered('potential', potential);
+  const competitorNow = answered('competitor', competitor);
+  const contactNow = answered('contact_person', contact);
+  const decisionMakerNow = answered('decision_maker', decisionMaker);
+
+  /* Said before the button is pressed, never after it: refused at the save,
+     the sentence somebody had in mind is already gone and the other seven
+     answers go with it. */
+  const refusal = correctionRefusal(checks, CHECKED_LABELS);
+
+  const save = async (reasonCode?: string) => {
+    if (saving.current) return;
+    /* `PrimaryButton` keeps a button with a `whyDisabled` PRESSABLE and hands
+       the press to us, so this is where the refusal is actually spoken — the
+       same shape `collect()` in pay.tsx uses. */
+    if (refusal) return notify(refusal);
+    saving.current = true;
+    try {
+      /*
+       * THE ROWS ARE BUILT BEFORE THE SAVE AND TRAVEL WITH IT, which is the
+       * change: they used to be written to `kv` after it, because the wire had
+       * nowhere to put them. `payloadExtras` has somewhere now — see
+       * `saveProspectFields` — so they go up with the answers they are about,
+       * in one queued write, rather than as a second thing that could be
+       * delivered without its record or its record without it.
+       *
+       * The clock is read HERE and not during a render, which is what
+       * `fieldChecksFrom` takes `at` for.
+       */
+      const rows = fieldChecksFrom(checks, originals, me, Date.now());
+
+      /* AND THE ONES THAT HAD NOWHERE TO GO come with them. Everything
+         answered before `leadSchema` learned the field is still in `kv`; each
+         save carries as many of the oldest as the schema's forty will hold. */
+      const backlog = await takeFieldChecks(lead.id, Math.max(0, FIELD_CHECK_LIMIT - rows.length));
+
+      const r = await saveProspectFields(lead.id, {
+        customerType: customerType.trim() || null,
+        monthlyLitres: litresNow ? Number(litresNow.replace(/[^\d]/g, '')) : null,
+        /* Rupees on the screen, paise in the store — the only place the two
+           meet, exactly as the new-lead form does it. */
+        estimatedPotentialPaise: potentialNow ? Number(potentialNow.replace(/[^\d]/g, '')) * 100 : null,
+        competitor: competitorNow || null,
+        requiredProductId: product?.id ?? null,
+        requiredProductName: product?.name ?? null,
+        contactPerson: contactNow || null,
+        decisionMaker: decisionMakerNow || null,
+        creditDaysWanted: creditDays.trim() ? Number(creditDays.replace(/[^\d]/g, '')) : null,
+        application: application.trim() || null,
+        gstin: gstin.trim() || null,
+        prospectReasonCode: reasonCode ?? lead.prospectReasonCode ?? null,
+      }, [...backlog, ...rows]);
+      if (!r.ok) return notify(r.message);
+
+      /*
+       * AND THE BACKLOG IS FORGOTTEN, now that it has been sent.
+       *
+       * Only what was actually carried, and only after the save has queued —
+       * the outbox is durable, so a queued row reaches the office on whatever
+       * signal comes next. The rows written on THIS screen are not remembered
+       * at all any more: they went up with the answers they are about, and a
+       * second local copy of a row already on the wire is a copy that can only
+       * ever be sent twice.
+       *
+       * It runs AFTER the save and can never fail one, like a photograph and
+       * for the same reason — a failure here costs at worst one shop's answers
+       * being sent again, and never the answer itself. No save on this app is
+       * refused for want of signal, and none is refused for want of a local
+       * write either.
+       */
+      await forgetFieldChecks(lead.id, backlog.length);
+
+      /*
+       * And the rows are re-baselined against what was just written. The
+       * record now HOLDS the corrected answer, so leaving the row quoting the
+       * old one would invite the same correction to be made and recorded
+       * twice — one shop appearing to have contradicted itself on one
+       * afternoon.
+       */
+      setOriginals((prev) => ({
+        ...prev,
+        monthly_litres: prev.monthly_litres ? litresNow : '',
+        potential: prev.potential ? potentialNow : '',
+        competitor: prev.competitor ? competitorNow : '',
+        required_product: prev.required_product ? (product?.name ?? '') : '',
+        contact_person: prev.contact_person ? contactNow : '',
+        decision_maker: prev.decision_maker ? decisionMakerNow : '',
+      }));
+      setOriginalProduct(product);
+      setChecks({});
+      load();
+      notify('Saved');
+    } finally {
+      saving.current = false;
+    }
+  };
+
+  /*
+   * The catalogue search, written once and used by both shapes of the product
+   * field — plain where nothing was recorded, and the corrected half of the
+   * row where something was. Two copies of it is how the picker on one of them
+   * quietly stops mirroring the name into the pair.
+   */
+  const pickProduct = (p: { id: string; name: string } | null) => {
+    setProduct(p);
+    setProductQuery('');
+    if (checks.required_product?.verdict === 'corrected') {
+      patchCheck('required_product', { corrected: p?.name ?? '' });
+    }
+  };
+
+  const productField = () =>
+    product ? (
+      <Choice
+        label={product.name}
+        selected
+        onPress={() => pickProduct(null)}
+        style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
+      />
+    ) : (
+      <>
+        <Input value={productQuery} onChangeText={setProductQuery} placeholder="Thinner, Nano, M5x4" />
+        <View style={{ gap: 8, marginTop: 8 }}>
+          {hits.map((p) => (
+            <Choice
+              key={p.id}
+              label={p.name}
+              sub={p.formulation ?? undefined}
+              selected={false}
+              onPress={() => pickProduct({ id: p.id, name: p.name })}
+              style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
+            />
+          ))}
+          {productQuery.trim() && hits.length === 0 ? (
+            <T s="caption">Nothing in the catalogue matches that.</T>
+          ) : null}
+        </View>
+      </>
+    );
 
   /* What is still missing, read off the SAME conditions the gate refuses on —
      so somebody working down this list cannot reach the bottom and still be
@@ -197,11 +425,14 @@ export default function ProspectForm() {
   const outstanding = PROSPECT_CONDITIONS.filter((c) => {
     switch (c.id) {
       case 'customer_type': return !customerType.trim();
-      case 'monthly_litres': return !litres.trim();
-      case 'potential_value': return !potential.trim();
-      case 'competitor': return !competitor.trim();
+      /* Read off the EFFECTIVE value rather than the box, or a row somebody
+         has confirmed — where there is no box at all — would read as still
+         unanswered and the list would ask for what is already on the record. */
+      case 'monthly_litres': return !litresNow;
+      case 'potential_value': return !potentialNow;
+      case 'competitor': return !competitorNow;
       case 'required_product': return !product;
-      case 'contact_person': return !contact.trim();
+      case 'contact_person': return !contactNow;
       case 'next_action': return !(lead.nextAction && lead.nextActionDate && lead.nextActionOwnerId);
       case 'prospect_reason': return !lead.prospectReasonCode;
       default: return false;
@@ -243,55 +474,106 @@ export default function ProspectForm() {
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Litres a month</SectionLabel>
-        <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
+        {originals.monthly_litres ? (
+          <VerifyFieldRow
+            field="monthly_litres"
+            label={CHECKED_LABELS.monthly_litres}
+            reported={originals.monthly_litres + ' litres a month'}
+            answer={checks.monthly_litres ?? BLANK_VERIFY}
+            onChange={(patch) => patchCheck('monthly_litres', patch)}
+            placeholder="200"
+            keyboardType="number-pad"
+          />
+        ) : (
+          <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
+        )}
         <T s="caption" style={{ marginTop: 6 }}>What they actually get through, of everything — not just ours.</T>
       </View>
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>What they could be worth a month</SectionLabel>
-        <Input value={potential} onChangeText={setPotential} placeholder="40000" keyboardType="number-pad" />
+        {originals.potential ? (
+          <VerifyFieldRow
+            field="potential"
+            label={CHECKED_LABELS.potential}
+            reported={'₹' + originals.potential + ' a month'}
+            answer={checks.potential ?? BLANK_VERIFY}
+            onChange={(patch) => patchCheck('potential', patch)}
+            placeholder="40000"
+            keyboardType="number-pad"
+          />
+        ) : (
+          <Input value={potential} onChangeText={setPotential} placeholder="40000" keyboardType="number-pad" />
+        )}
         <T s="caption" style={{ marginTop: 6 }}>In rupees, roughly.</T>
       </View>
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Whose product are they on now</SectionLabel>
-        <Input value={competitor} onChangeText={setCompetitor} placeholder="Asian, Berger, a local brand" />
+        {originals.competitor ? (
+          <VerifyFieldRow
+            field="competitor"
+            label={CHECKED_LABELS.competitor}
+            reported={originals.competitor}
+            answer={checks.competitor ?? BLANK_VERIFY}
+            onChange={(patch) => patchCheck('competitor', patch)}
+            placeholder="Asian, Berger, a local brand"
+          />
+        ) : (
+          <Input value={competitor} onChangeText={setCompetitor} placeholder="Asian, Berger, a local brand" />
+        )}
       </View>
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Which of ours do they need</SectionLabel>
-        {product ? (
-          <Choice
-            label={product.name}
-            selected
-            onPress={() => { setProduct(null); setProductQuery(''); }}
-            style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
+        {originals.required_product ? (
+          <VerifyFieldRow
+            field="required_product"
+            label={CHECKED_LABELS.required_product}
+            reported={originals.required_product}
+            answer={checks.required_product ?? BLANK_VERIFY}
+            /* A SKU is picked, not typed, so the row hands the catalogue
+               search back to this screen rather than owning one. Choosing
+               "Correct" empties the pick — a corrected product with the old
+               one still selected is the overwrite this pattern exists to
+               stop, arriving through the one field that has no text box — and
+               the two verdicts that leave the value alone put it back. */
+            onChange={(patch) => {
+              patchCheck('required_product', patch);
+              if (patch.verdict === 'corrected') {
+                setProduct(null);
+                setProductQuery('');
+              } else if (patch.verdict) {
+                setProduct(originalProduct);
+                setProductQuery('');
+              }
+            }}
+            renderCorrected={() => (
+              <View>
+                <T s="caption" style={{ marginBottom: 6 }}>Which of ours they actually need</T>
+                {productField()}
+              </View>
+            )}
           />
         ) : (
-          <>
-            <Input value={productQuery} onChangeText={setProductQuery} placeholder="Thinner, Nano, M5x4" />
-            <View style={{ gap: 8, marginTop: 8 }}>
-              {hits.map((p) => (
-                <Choice
-                  key={p.id}
-                  label={p.name}
-                  sub={p.formulation ?? undefined}
-                  selected={false}
-                  onPress={() => { setProduct({ id: p.id, name: p.name }); setProductQuery(''); }}
-                  style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
-                />
-              ))}
-              {productQuery.trim() && hits.length === 0 ? (
-                <T s="caption">Nothing in the catalogue matches that.</T>
-              ) : null}
-            </View>
-          </>
+          productField()
         )}
       </View>
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Who we ask for when we ring</SectionLabel>
-        <Input value={contact} onChangeText={setContact} placeholder="Suresh, on the counter" />
+        {originals.contact_person ? (
+          <VerifyFieldRow
+            field="contact_person"
+            label={CHECKED_LABELS.contact_person}
+            reported={originals.contact_person}
+            answer={checks.contact_person ?? BLANK_VERIFY}
+            onChange={(patch) => patchCheck('contact_person', patch)}
+            placeholder="Suresh, on the counter"
+          />
+        ) : (
+          <Input value={contact} onChangeText={setContact} placeholder="Suresh, on the counter" />
+        )}
       </View>
 
       {/* Not one of the eight — the specification says "if known", and a gate
@@ -300,7 +582,18 @@ export default function ProspectForm() {
           salesman is already standing in front of the man. */}
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Who actually signs off a purchase</SectionLabel>
-        <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Optional — the proprietor, his son" />
+        {originals.decision_maker ? (
+          <VerifyFieldRow
+            field="decision_maker"
+            label={CHECKED_LABELS.decision_maker}
+            reported={originals.decision_maker}
+            answer={checks.decision_maker ?? BLANK_VERIFY}
+            onChange={(patch) => patchCheck('decision_maker', patch)}
+            placeholder="The proprietor, his son"
+          />
+        ) : (
+          <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Optional — the proprietor, his son" />
+        )}
       </View>
 
       <View style={{ marginTop: 14 }}>
@@ -361,7 +654,28 @@ export default function ProspectForm() {
         </View>
       )}
 
-      <PrimaryButton label="Save the details" onPress={() => save()} style={{ marginTop: 16 }} />
+      {/*
+        SAID PLAINLY, because he has just typed a sentence for somebody to
+        read. The corrected ANSWER goes up with everything else; the pair and
+        the reason behind it have nowhere on the wire to land yet, and a
+        salesman who believes his manager is reading that sentence this evening
+        has been misled by a screen rather than by anybody. Drawn only where
+        there is a correction to be honest about.
+      */}
+      {Object.values(checks).some((a) => a.verdict === 'corrected') ? (
+        <T s="caption" style={{ marginTop: 14 }}>
+          The office gets the corrected answer. Why it changed is kept on this phone until their side
+          can hold it.
+        </T>
+      ) : null}
+
+      <PrimaryButton
+        label="Save the details"
+        onPress={() => save()}
+        disabled={Boolean(refusal)}
+        whyDisabled={refusal ?? undefined}
+        style={{ marginTop: 16 }}
+      />
       <SecondaryButton
         label="Back to the lead"
         onPress={() => router.replace(`/lead?id=${lead.id}&from=leads`)}

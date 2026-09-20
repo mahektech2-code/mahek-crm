@@ -9,11 +9,14 @@ import {
   normaliseMobile,
   stageRefusal,
   followUpRefusal,
+  viewMatch,
   type DuplicateMatch,
-  type LeadFilter,
   type LeadThresholds,
   type VisitCapThresholds,
 } from '../engines/leads';
+import { leadBookQuery, rungCountsQuery, type LeadBookFilter } from './lead-query';
+
+export type { LeadBookFilter };
 
 /**
  * Leads — a shop that is not yet on the book.
@@ -58,6 +61,14 @@ export type Lead = {
    */
   leadManagerId: string | null;
   leadManagerName: string | null;
+  /**
+   * Who raises this account's paperwork. The NAME beside the id, for the same
+   * reason `leadManagerName` carries one: this phone holds no user table, so
+   * an id alone can only say whether the seat is empty and never who holds it.
+   * §7 gives the back office real work at several rungs, and "somebody at the
+   * office is holding this" is a worse sentence than a name when there is one.
+   */
+  backOfficeAmName: string | null;
   /* §A and §C — what he learns in the shop. See the v14 migration for why
      consumption is in litres and not in cans. */
   address: string | null;
@@ -72,6 +83,23 @@ export type Lead = {
   visitCount: number;
   /** Why it is not moving. Set for On hold, and for a Suspect kept past the cap. */
   holdReason: string | null;
+  /**
+   * When the lead was RAISED, as the office holds it. Epoch milliseconds.
+   *
+   * Deliberately NOT `clientCreatedAt` below, which is the moment this handset
+   * first pulled the row: `upsertLeads` binds `now` into that column and its
+   * `ON CONFLICT` clause never updates it, so on every lead the OFFICE raised
+   * it says today — and says something different again after a reinstall. An
+   * age drawn off it reads "today" on a four-year-old lead, which is why the
+   * book drew days-on-this-rung instead and could not draw an age at all.
+   *
+   * Two facts, two columns. `clientCreatedAt` means exactly what it says for a
+   * lead the salesman raised himself, and the outbox reasons about it.
+   *
+   * Null is a lead whose creation date has not arrived yet, which must read as
+   * unknown rather than as raised the moment this phone pulled it.
+   */
+  createdAt: number | null;
   clientCreatedAt: number;
   syncState: string;
 
@@ -106,6 +134,19 @@ export type Lead = {
   application: string | null;
   prospectReasonCode: string | null;
 
+  /**
+   * §11.6 — the BACK OFFICE's answer about the GST, never this phone's.
+   *
+   * `gstin` above is the number the salesman wrote down; this is whether
+   * anybody checked it against the portal, which on the web is `validateGstin`
+   * and is deliberately not the collector's to assert. It arrives on the pull
+   * and is written by nothing here — 1, 0 and null all read as "the gate stays
+   * shut" and only the office can make it 1. Null is this phone not having
+   * heard yet, which is not the same fact as a refusal and must not be drawn
+   * as one.
+   */
+  gstVerified: number | null;
+
   /** JSON, keyed by condition id. Read as a whole by the gate engine. */
   qualification: string | null;
   distributorProfile: string | null;
@@ -129,7 +170,70 @@ export type Lead = {
 
   expectedOrderDate: string | null;
   expectedOrderValuePaise: number | null;
+  /** §5.5 — the SIZE of the promise, in cans. A commitment is a date AND a
+      quantity (Mahek's own answer), and a date alone is a forecast nobody can
+      hold an order against. Cans because qualification has already demanded a
+      product, so there IS a pack size — §L's litres argument is about capture,
+      where there is not. */
+  expectedOrderQuantityCans: number | null;
+  /** What is in the way, as a CODE from `leads.orderBlockers`. Never a label:
+      a stored label stops resolving the moment somebody rewords the list, and
+      "how many did we lose on credit terms this quarter" is the question this
+      exists to make askable. */
+  expectedOrderBlockerCode: string | null;
   lostReasonCode: string | null;
+
+  /* ------------------------------------------- the facts the gates read
+   *
+   * `engines/funnel/lead-gates.ts` is the server's file byte for byte, so this
+   * app has known all twenty-three rungs and every condition on them since the
+   * funnel shipped — and held none of the facts they turn on. An absent field
+   * is `undefined`, `undefined >= 1` is false, and every rung above Negotiation
+   * was shut behind a sentence a salesman could not act on: "There is no order
+   * on this account yet", on a shop that had ordered three times.
+   *
+   * All of them are the OFFICE's, counted over the whole account. Nothing here
+   * writes one, and a handset that counted its own orders would tell somebody a
+   * rung was open and watch the save refuse it in different words.
+   *
+   * Null is this phone not having heard rather than a zero: the gate reads both
+   * the same way, and only one of them is a fact worth putting on a screen.
+   */
+  countingOrderCount: number | null;
+  deliveredOrderCount: number | null;
+  confirmedPaymentCount: number | null;
+  /** §23 — how many distributors invoice this shop. The gate asks how many. */
+  distributorCount: number | null;
+  /** §12 — the two steps, the terms and the signed agreement. Down only. */
+  managementReviewApproved: number | null;
+  distributorApprovalApproved: number | null;
+  commercialTermsAgreed: number | null;
+  agreementOnFile: number | null;
+  /**
+   * §5.3 — the day somebody last confirmed the four conversion figures, and
+   * deliberately not a verdict about whether they are stale. The threshold is
+   * `leads.figuresFreshDays`, which this phone already holds, so it answers
+   * against its own clock rather than against the moment of a pull it may not
+   * have had for a week.
+   */
+  figuresConfirmedAt: number | null;
+  /** §5.3 — the sales manager's verdict. Only the two negative ones hold. */
+  qualificationReview: string | null;
+  /** §4.2 — who places the order, where that is not who approves it. */
+  buyer: string | null;
+  /* The office's own marks. `holdReasonCode` is the CODE behind the sentence in
+     `holdReason` — a stored label stops resolving the day somebody rewords the
+     list, and only a code can be counted. */
+  priority: string | null;
+  holdResumeDate: string | null;
+  holdReasonCode: string | null;
+  sourceDetail: string | null;
+  /* §7 — what `roleAction` forks on, and the seat it resolves a vantage from. A
+     commitment is a day AND a size, decided on the server so this phone cannot
+     hold a second opinion about one lead. */
+  hasCommitment: number | null;
+  hasOrder: number | null;
+  backOfficeAmId: string | null;
 };
 
 export type LeadNote = { at: number; text: string };
@@ -141,41 +245,22 @@ export type LeadResult<T> = { ok: true; value: T } | { ok: false; message: strin
 /**
  * The list, in the order the work should be done.
  *
- * A promised follow-up comes first and the ones with no date sit under them —
- * a lead nobody has promised anything is still a lead, and sorting it off the
- * bottom of the screen is how it stops existing.
+ * The statement is `leadBookQuery`, in `lead-query.ts`, so that it can be put
+ * through a real SQLite by a test rather than only by a handset.
  */
-export async function listLeads(filter: LeadFilter = 'All', query = ''): Promise<Lead[]> {
-  const order = `ORDER BY nextFollowUpDate IS NULL, nextFollowUpDate ASC, lastActivityDate ASC, name`;
+export async function listLeads(filter: LeadBookFilter = {}, query = ''): Promise<Lead[]> {
+  const q = leadBookQuery(filter, query);
+  return all<Lead>(q.sql, q.params);
+}
 
-  /*
-   * The search runs in SQLite rather than over the rows already on the screen,
-   * for the reason the customers list gives: eight stage chips are the only
-   * narrowing this screen had, and finding one named shop in a few hundred
-   * leads meant scrolling past all of them. It reaches the shop name, the
-   * person, the number and the town, because that is whichever one he has been
-   * given. The number is matched as typed AND stripped, so a lead stored as
-   * `9822011001` is still found by somebody who types `98220 11001`.
-   */
-  const q = query.trim();
-  const like = `%${q}%`;
-  const digits = normaliseMobile(q);
-  const search = q
-    ? ` AND (name LIKE ? OR company LIKE ? OR city LIKE ? OR mobile LIKE ?${digits.length >= 4 ? ' OR mobile LIKE ?' : ''})`
-    : '';
-  const args = q
-    ? digits.length >= 4
-      ? [like, like, like, like, `%${digits}%`]
-      : [like, like, like, like]
-    : [];
-
-  if (filter === 'Archived') {
-    return all<Lead>(`SELECT * FROM leads WHERE archived = 1${search} ${order}`, args);
-  }
-  if (filter === 'All') {
-    return all<Lead>(`SELECT * FROM leads WHERE archived = 0${search} ${order}`, args);
-  }
-  return all<Lead>(`SELECT * FROM leads WHERE archived = 0 AND stage = ?${search} ${order}`, [filter, ...args]);
+/** The rungs under the picked band. The statement is `rungCountsQuery`. */
+export async function rungsInBook(
+  filter: LeadBookFilter,
+  query = '',
+): Promise<{ rung: string; count: number }[]> {
+  const q = rungCountsQuery(filter, query);
+  if (!q) return [];
+  return all<{ rung: string; count: number }>(q.sql, q.params);
 }
 
 export async function getLead(id: string): Promise<Lead | null> {
@@ -184,11 +269,51 @@ export async function getLead(id: string): Promise<Lead | null> {
 
 /** Still being worked — what the More screen counts on its row. */
 export async function openLeadCount(): Promise<number> {
+  /*
+   * THE LAST READER OF THE SIX-WORD COLUMN, and it had to stop being one.
+   *
+   * It counted `stage NOT IN ('Converted','Lost')` — the legacy column, in the
+   * legacy vocabulary. That was close enough while `legacyStageFor` kept the
+   * two in step, and "close enough, kept in step by a function maintained
+   * somewhere else" is exactly the shape that drifts: `Converted` was not even
+   * offered as a chip until this release, so the column could already hold a
+   * word no screen would show.
+   *
+   * `viewMatch` is the reading the whole book takes now — the chips, the badge
+   * on the row and this badge on More — so a lead counted here as still being
+   * worked is one the salesman can actually find when he taps it. That is the
+   * only promise a badge makes, and two readings of "still open" is how it
+   * comes to be broken.
+   *
+   * Both arms of the match are needed, exactly as they are on the book: a row
+   * carries `funnelStage`, or the six-word column where nothing has ever sent
+   * one. Dropping either loses half the leads.
+   */
+  const done = (['converted', 'lost'] as const).map(viewMatch);
+  const clauses: string[] = [];
+  const args: string[] = [];
+  for (const m of done) {
+    if (!m) continue;
+    if (m.rungs.length) {
+      clauses.push(`funnelStage IN (${m.rungs.map(() => '?').join(',')})`);
+      args.push(...m.rungs);
+    }
+    if (m.legacy.length) {
+      clauses.push(
+        `(funnelStage IS NULL AND stage IN (${m.legacy.map(() => '?').join(',')}))`,
+      );
+      args.push(...m.legacy);
+    }
+  }
+
+  const where = clauses.length ? ` AND NOT (${clauses.join(' OR ')})` : '';
   const row = await one<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM leads WHERE archived = 0 AND stage NOT IN ('Converted','Lost')`,
+    `SELECT COUNT(*) AS n FROM leads WHERE archived = 0${where}`,
+    args,
   );
   return row?.n ?? 0;
 }
+
 
 export function notesOf(lead: Pick<Lead, 'notes'>): LeadNote[] {
   if (!lead.notes) return [];
@@ -302,6 +427,13 @@ export async function createLead(args: {
   mobile: string;
   city?: string | null;
   source?: string | null;
+  /* WHAT "OTHER" HAS TO SAY, and it used to ride in the note.
+     `customers.lead_source_detail` is the server's column and `handleLead`
+     writes it; `leads.sourceDetail` is this phone's and the pull fills it.
+     Nothing carried it UP, so the form prefixed the sentence onto the note to
+     keep it from being lost — which put it where a person reads it and where
+     no report can count it. This is the step between. */
+  sourceDetail?: string | null;
   estimatedPotentialPaise?: number | null;
   assigneeId?: string | null;
   nextFollowUpDate?: string | null;
@@ -405,6 +537,7 @@ export async function createLead(args: {
          ever held codes, so every lead was still refused after the other three
          were mended. See `wireSource`. */
       source: wireSource(args.source),
+      sourceDetail: args.sourceDetail?.trim() || undefined,
     },
     row: {
       ...base,
@@ -413,6 +546,7 @@ export async function createLead(args: {
       mobile: mobile || null,
       city: args.city?.trim() || null,
       source: args.source ?? null,
+      sourceDetail: args.sourceDetail?.trim() || null,
       estimatedPotentialPaise: args.estimatedPotentialPaise ?? null,
       assigneeId: args.assigneeId ?? null,
       salesType: args.salesType ?? null,

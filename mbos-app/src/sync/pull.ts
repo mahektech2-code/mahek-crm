@@ -43,6 +43,11 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertPerformance(pull.performance, now);
     touched += await upsertTasks(pull.tasks, now);
     touched += await upsertLeads(pull.leads, now);
+    /* AFTER the leads, so the record can never draw a check or a call against
+       a lead this pull was about to introduce. Same reason the tombstones run
+       where they do. */
+    touched += await upsertLeadValidations(pull.leadValidations);
+    touched += await upsertLeadFieldChecks(pull.leadFieldChecks);
     touched += await upsertSamples(pull.samples, now);
     touched += await upsertSalary(pull.salary, now);
     touched += await upsertTravelModes(pull.travelModes, now);
@@ -180,8 +185,23 @@ async function knownColumns(table: string): Promise<Set<string>> {
  * An APK cannot be recalled, so the server has to be able to move first. A
  * column this build does not know about is one it cannot use anyway; dropping
  * it costs a field the screens never read, and refusing it costs the book.
+ *
+ * `guard` is what lets an OWNED table come through here rather than being
+ * hand-rolled. `leads` and `samples` both carry `WHERE syncState = 'synced'` on
+ * their conflict clause — a queued row is one this handset has said something
+ * about and the office has not heard yet, so the local answer is the newer fact
+ * and it stands until it is sent — and both pay for it by typing their column
+ * lists out, which is exactly the shape that silently NULLed every completed
+ * task's note. A guard clause costs one string and keeps the column filter,
+ * which is the half that cannot be got wrong by hand.
  */
-async function upsert(table: string, key: string, rows: unknown[] | undefined, extra: Row = {}): Promise<number> {
+async function upsert(
+  table: string,
+  key: string,
+  rows: unknown[] | undefined,
+  extra: Row = {},
+  guard?: string,
+): Promise<number> {
   if (!rows?.length) return 0;
   const known = await knownColumns(table);
   for (const raw of rows) {
@@ -192,7 +212,7 @@ async function upsert(table: string, key: string, rows: unknown[] | undefined, e
     const sets = cols.filter((c) => c !== key).map((c) => `${c} = excluded.${c}`).join(', ');
     await run(
       `INSERT INTO ${table} (${cols.join(',')}) VALUES (${marks})
-       ON CONFLICT(${key}) DO UPDATE SET ${sets}`,
+       ON CONFLICT(${key}) DO UPDATE SET ${sets}${guard ? ` WHERE ${guard}` : ''}`,
       cols.map((c) => normalise(row[c])),
     );
   }
@@ -348,6 +368,45 @@ function upsertCourses(rows: unknown[] | undefined, now: number) {
 }
 
 /**
+ * §8 — THE OFFICE'S OWN CALL TO THE SHOP, landing in the table this phone
+ * already writes.
+ *
+ * The same row either way: `handleLeadValidation` keeps the id the handset
+ * minted, so a call made here comes back as itself. A second, office-only
+ * table would have held a copy of every one of them and the record would have
+ * drawn each call twice, which is worse than not drawing the office's at all.
+ *
+ * GUARDED, like `leads` and `samples`: a call still in the outbox is one the
+ * office has not heard yet, so nothing arriving may write over it. `syncState`
+ * is stamped rather than sent, because what it records is how this ROW got
+ * here and that is not a fact the server holds.
+ */
+function upsertLeadValidations(rows: unknown[] | undefined) {
+  return upsert(
+    'lead_validations',
+    'id',
+    rows,
+    { syncState: 'synced' },
+    "lead_validations.syncState = 'synced'",
+  );
+}
+
+/**
+ * §5.2 — WHO CHECKED A FINDING, AND WHAT CAME OF IT.
+ *
+ * Reference, wholly. A salesman's own Confirm/Correct/Unable-to-verify answers
+ * go up inside the lead save as `fieldChecks` and come back here as rows, so
+ * there is never a local answer for a pull to lose and no guard to keep.
+ *
+ * Append-only at the office, which is what makes a plain upsert right: a row
+ * that never changes cannot be written back wrongly, and the conflict clause
+ * is there only so a row arriving twice costs nothing.
+ */
+function upsertLeadFieldChecks(rows: unknown[] | undefined) {
+  return upsert('lead_field_checks', 'id', rows);
+}
+
+/**
  * WHY THE BOOK IS THE SIZE IT IS — kept so a screen can tell an empty book
  * apart from a switched-off one.
  *
@@ -445,7 +504,7 @@ async function upsertConfig(config: Record<string, unknown> | undefined, now: nu
  */
 async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<number> {
   if (!rows?.length) return 0;
-  const { localNotes, localStage } = await import('../lib/wire');
+  const { localNotes, legacyStageFor, localSalesType } = await import('../lib/wire');
   for (const raw of rows) {
     const l = raw as {
       id: string;
@@ -456,6 +515,12 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       /* The locality inside the city. Sent since leads existed and
          dropped until this table had a column for it. */
       area?: string | null;
+      /* WHERE THE SHOP IS, in words. The column has been here since the
+         capture sheet shipped and `app/lead.tsx` has drawn it as "Where it
+         is" all along; `openLeads` simply never selected it, so an address
+         corrected at a desk reached this phone on no pass, ever, and roughly
+         half this book has no pin to navigate from instead. */
+      address?: string | null;
       source?: string | null;
       stage?: string;
       estimatedPotentialPaise?: number | null;
@@ -487,6 +552,19 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       creditDaysWanted?: number | null;
       application?: string | null;
       gstin?: string | null;
+      /*
+       * §11.6 — WHETHER ANYBODY CHECKED THE NUMBER, which is a different fact
+       * from the number and is not this phone's to assert.
+       *
+       * The gate reads `gstin && gstVerified === true`, so while this was on
+       * no wire and in no column here it was `undefined` on every handset and
+       * a shop lead could never once reach Sample/Trial from the field — the
+       * refusal naming the GST over a number that was already typed in and
+       * already verified in the office. It arrives as a boolean off a NOT NULL
+       * column, so a lead the office has looked at carries a real false rather
+       * than an absence; SQLite holds it as 1/0 below.
+       */
+      gstVerified?: boolean | null;
       qualification?: unknown;
       nextAction?: string | null;
       nextActionDate?: string | null;
@@ -499,6 +577,12 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       distributorSalesmanName?: string | null;
       expectedOrderDate?: string | null;
       expectedOrderValuePaise?: number | null;
+      /* §5.5 — the size of the promise and what is in the way. They lived in
+         this app's `kv` store while the office had no column for either; both
+         are now on the wire in both directions, so the one place they live is
+         the row. */
+      expectedOrderQuantityCans?: number | null;
+      expectedOrderBlockerCode?: string | null;
       /* Sent since leads existed and dropped on the floor until the
          `a lead has a place` migration gave this table somewhere to put
          them — a lead map with no coordinates. */
@@ -512,24 +596,98 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          `visitsHere`, which adds what has not synced yet. */
       visitCount?: number | null;
       holdReason?: string | null;
+      /*
+       * THE FACTS THE GATES READ, and every one of them was missing.
+       *
+       * `engines/funnel/lead-gates.ts` is the server's file byte for byte, so
+       * this app has known all twenty-three rungs since the funnel shipped —
+       * and none of the facts they turn on. An absent field is `undefined`,
+       * `undefined >= 1` is false, and every rung above Negotiation was shut
+       * behind a sentence the salesman could not act on: "There is no order on
+       * this account yet", on a shop that had ordered three times.
+       *
+       * They are read here in the SAME change that adds them to `openLeads`
+       * and to the handset's schema, never ahead of either — a field read and
+       * not sent is `undefined`, and the `ON CONFLICT` clause writes that NULL
+       * over whatever the row held. That is how every completed task lost its
+       * note and its photograph.
+       */
+      countingOrderCount?: number | null;
+      deliveredOrderCount?: number | null;
+      confirmedPaymentCount?: number | null;
+      /* §23 — how many distributors invoice this shop, plus the usual one by
+         name for the two columns this table has had all along and never
+         filled. */
+      distributorCount?: number | null;
+      distributorCustomerId?: string | null;
+      distributorName?: string | null;
+      /* §11 — the thirty answers, keyed in the engine's own words. Held as
+         text here and parsed by `distributorProfileOf`, exactly like
+         `qualification` above. */
+      distributorProfile?: unknown;
+      /* §12 — the two steps, the terms and the agreement. Down only: nothing
+         here writes one, and a phone that could would be appointing its own
+         distributor. */
+      managementReviewApproved?: boolean | null;
+      distributorApprovalApproved?: boolean | null;
+      commercialTermsAgreed?: boolean | null;
+      agreementOnFile?: boolean | null;
+      /* §5.3 — the DAY somebody last confirmed the four conversion figures,
+         not a verdict about it. The threshold is configuration this phone
+         already holds, so it answers against its own clock rather than
+         against the moment of a pull it may not have had for a week. */
+      figuresConfirmedAt?: string | null;
+      qualificationReview?: string | null;
+      /* §4.2 — who places the order where that is not who approves it. */
+      buyer?: string | null;
+      /* The office's own marks: worth, when a parked lead comes back, the
+         CODE behind the hold sentence, and where the lead came from. */
+      priority?: string | null;
+      holdResumeDate?: string | null;
+      holdReasonCode?: string | null;
+      sourceDetail?: string | null;
+      /* §7 — what `roleAction` forks on, and the seat it resolves a vantage
+         from. A commitment is a day AND a size, decided on the server so this
+         phone cannot hold a second opinion about one lead. */
+      hasCommitment?: boolean | null;
+      hasOrder?: boolean | null;
+      backOfficeAmId?: string | null;
+      /* The name beside the id, resolved by the office because this app holds
+         no user table — exactly as `leadManagerName` is. */
+      backOfficeAmName?: string | null;
+      /* When the lead was actually RAISED, and not when this handset first saw
+         it. `clientCreatedAt` below is bound to `now` and means the second;
+         two facts, two columns. */
+      createdAt?: string | null;
     };
     await run(
-      `INSERT INTO leads (id, name, company, mobile, city, area, source, estimatedPotentialPaise,
+      `INSERT INTO leads (id, name, company, mobile, city, area, address, source, estimatedPotentialPaise,
                           assigneeId, stage, nextFollowUpDate, notes, convertedCustomerId,
                           archived, lastActivityDate, gpsLat, gpsLng,
                           leadManagerId, leadManagerName, visitCount, holdReason,
                           clientCreatedAt, serverCreatedAt, deviceId, syncState,
                           salesType, funnelStage, stageSince, customerType, monthlyLitres,
                           competitor, requiredProductId, requiredProductName, contactPerson,
-                          decisionMaker, creditDaysWanted, application, gstin, qualification,
+                          decisionMaker, creditDaysWanted, application, gstin, gstVerified,
+                          qualification,
                           nextAction, nextActionDate, nextActionOwnerId, nextActionOutcome,
                           suspectDecidedAt, verifiedAt, thirdParty, distributorSalesmanId,
-                          distributorSalesmanName, expectedOrderDate, expectedOrderValuePaise)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced',
+                          distributorSalesmanName, expectedOrderDate, expectedOrderValuePaise,
+                          expectedOrderQuantityCans, expectedOrderBlockerCode,
+                          distributorCustomerId, distributorName, distributorProfile,
+                          countingOrderCount, deliveredOrderCount, confirmedPaymentCount,
+                          distributorCount, managementReviewApproved, distributorApprovalApproved,
+                          commercialTermsAgreed, agreementOnFile, figuresConfirmedAt,
+                          qualificationReview, buyer, priority, holdResumeDate,
+                          holdReasonCode, sourceDetail, hasCommitment, hasOrder,
+                          backOfficeAmId, backOfficeAmName, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced',
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
-         city = excluded.city, area = excluded.area, source = excluded.source,
+         city = excluded.city, area = excluded.area, address = excluded.address,
+         source = excluded.source,
          estimatedPotentialPaise = excluded.estimatedPotentialPaise,
          stage = excluded.stage, nextFollowUpDate = excluded.nextFollowUpDate,
          convertedCustomerId = excluded.convertedCustomerId,
@@ -546,7 +704,8 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          requiredProductName = excluded.requiredProductName,
          contactPerson = excluded.contactPerson, decisionMaker = excluded.decisionMaker,
          creditDaysWanted = excluded.creditDaysWanted, application = excluded.application,
-         gstin = excluded.gstin, qualification = excluded.qualification,
+         gstin = excluded.gstin, gstVerified = excluded.gstVerified,
+         qualification = excluded.qualification,
          nextAction = excluded.nextAction, nextActionDate = excluded.nextActionDate,
          nextActionOwnerId = excluded.nextActionOwnerId,
          nextActionOutcome = excluded.nextActionOutcome,
@@ -555,7 +714,33 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          distributorSalesmanId = excluded.distributorSalesmanId,
          distributorSalesmanName = excluded.distributorSalesmanName,
          expectedOrderDate = excluded.expectedOrderDate,
-         expectedOrderValuePaise = excluded.expectedOrderValuePaise
+         expectedOrderValuePaise = excluded.expectedOrderValuePaise,
+         expectedOrderQuantityCans = excluded.expectedOrderQuantityCans,
+         expectedOrderBlockerCode = excluded.expectedOrderBlockerCode,
+         distributorCustomerId = excluded.distributorCustomerId,
+         distributorName = excluded.distributorName,
+         distributorProfile = excluded.distributorProfile,
+         countingOrderCount = excluded.countingOrderCount,
+         deliveredOrderCount = excluded.deliveredOrderCount,
+         confirmedPaymentCount = excluded.confirmedPaymentCount,
+         distributorCount = excluded.distributorCount,
+         managementReviewApproved = excluded.managementReviewApproved,
+         distributorApprovalApproved = excluded.distributorApprovalApproved,
+         commercialTermsAgreed = excluded.commercialTermsAgreed,
+         agreementOnFile = excluded.agreementOnFile,
+         figuresConfirmedAt = excluded.figuresConfirmedAt,
+         qualificationReview = excluded.qualificationReview,
+         buyer = excluded.buyer, priority = excluded.priority,
+         holdResumeDate = excluded.holdResumeDate,
+         holdReasonCode = excluded.holdReasonCode,
+         sourceDetail = excluded.sourceDetail,
+         hasCommitment = excluded.hasCommitment, hasOrder = excluded.hasOrder,
+         backOfficeAmId = excluded.backOfficeAmId,
+         backOfficeAmName = excluded.backOfficeAmName,
+         -- Kept on conflict as well as inserted. A lead is on this phone long
+         -- before anybody asks how old it is, so a value written once and
+         -- never restated is one that stays null on every row already here.
+         createdAt = excluded.createdAt
        WHERE leads.syncState = 'synced'`,
       [
         l.id,
@@ -564,9 +749,32 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.mobile ?? null,
         l.city ?? null,
         l.area ?? null,
+        l.address ?? null,
         l.source ?? null,
         l.estimatedPotentialPaise ?? null,
-        localStage(l.stage),
+        /*
+         * THE SEVENTEEN NEW RUNGS ALL READ AS `New` HERE, and this line is the
+         * whole of why.
+         *
+         * `localStage` knows the six legacy rungs and nothing else, so every
+         * funnel rung the office sent fell through its lookup to `New`. Two
+         * things went wrong and only one of them looks like a label bug: the
+         * filter chips filed a lead at `sample_review` under New, which is
+         * merely wrong — and the visit cap read the same column, so a shop at
+         * `first_order`, or one we have been selling to for a year, told the
+         * salesman "Visit 2 of 3, a decision is due" and REFUSED TO CLOSE HIS
+         * VISIT until he answered Prospect-or-not about a customer.
+         *
+         * `legacyStageFor` is the one place the two columns are kept in step —
+         * its own header says so — and every other writer of this column
+         * already calls it. The pull was the last one that did not, which is
+         * exactly why it was invisible: a lead moved on the phone read
+         * correctly and the same lead after a sync did not.
+         *
+         * It takes the sales type because "on the book" is answered five rungs
+         * differently on the three ladders, and the type is on this same row.
+         */
+        legacyStageFor(l.stage, localSalesType(l.salesType)),
         l.nextFollowUpDate ?? null,
         /* Only on INSERT. The note list is APPENDED to locally and the wire
            carries one flattened string, so re-writing it on every pass would
@@ -598,6 +806,10 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.creditDaysWanted ?? null,
         l.application ?? null,
         l.gstin ?? null,
+        /* A boolean on the wire, an integer here — and null kept as null,
+           because a server that has not sent it and an office that has said no
+           are different facts and only the second may be drawn as one. */
+        l.gstVerified == null ? null : l.gstVerified ? 1 : 0,
         /* jsonb arrives as an object and SQLite holds text. */
         l.qualification == null ? '{}' : JSON.stringify(l.qualification),
         l.nextAction ?? null,
@@ -614,6 +826,56 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.distributorSalesmanName ?? null,
         l.expectedOrderDate ?? null,
         l.expectedOrderValuePaise ?? null,
+        /* NULL KEPT AS NULL on the blocker, and it is not the same fact as
+           `no_blocker`. That code is somebody being asked and answering that
+           nothing is stopping the order; null is nobody having been asked. A
+           card that read the second as the first would assert a clear road on
+           every commitment taken before the question existed. */
+        l.expectedOrderQuantityCans ?? null,
+        l.expectedOrderBlockerCode ?? null,
+        l.distributorCustomerId ?? null,
+        l.distributorName ?? null,
+        /* jsonb arrives as an object and SQLite holds text — and the column is
+           NOT NULL DEFAULT '{}', so a lead with no application on file gets the
+           empty object the gate already reads as thirty unanswered questions
+           rather than a null nothing would parse. */
+        l.distributorProfile == null ? '{}' : JSON.stringify(l.distributorProfile),
+        /* NULL KEPT AS NULL on all three counts. Zero is the office saying
+           there is no order on this account; null is this phone not having
+           heard, and only the first may be drawn as a fact. The gate reads
+           both the same way, so the distinction costs it nothing. */
+        l.countingOrderCount ?? null,
+        l.deliveredOrderCount ?? null,
+        l.confirmedPaymentCount ?? null,
+        l.distributorCount ?? null,
+        /* Booleans on the wire, integers here, and null preserved for the same
+           reason it is on `gstVerified`: an approval nobody has recorded and
+           one this handset has not been told about are different facts. */
+        l.managementReviewApproved == null ? null : l.managementReviewApproved ? 1 : 0,
+        l.distributorApprovalApproved == null ? null : l.distributorApprovalApproved ? 1 : 0,
+        l.commercialTermsAgreed == null ? null : l.commercialTermsAgreed ? 1 : 0,
+        l.agreementOnFile == null ? null : l.agreementOnFile ? 1 : 0,
+        /* An ISO instant carries its own zone, so `Date.parse` is right — it is
+           a date-ONLY string that would be read as UTC and land five and a half
+           hours early. */
+        l.figuresConfirmedAt ? Date.parse(l.figuresConfirmedAt) : null,
+        l.qualificationReview ?? null,
+        l.buyer ?? null,
+        l.priority ?? null,
+        l.holdResumeDate ?? null,
+        l.holdReasonCode ?? null,
+        l.sourceDetail ?? null,
+        l.hasCommitment == null ? null : l.hasCommitment ? 1 : 0,
+        l.hasOrder == null ? null : l.hasOrder ? 1 : 0,
+        l.backOfficeAmId ?? null,
+        l.backOfficeAmName ?? null,
+        /* An ISO instant carries its own zone, so `Date.parse` is right — it is
+           a date-ONLY string that would be read as UTC and land five and a half
+           hours early. Null kept as null: a lead whose creation date has not
+           arrived must read as unknown rather than as raised the moment this
+           handset happened to pull it, which is the whole reason this column is
+           not `clientCreatedAt`. */
+        l.createdAt ? Date.parse(l.createdAt) : null,
       ],
     );
   }
@@ -654,6 +916,16 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
       satisfaction?: string | null;
       additionalRequirement?: string | null;
       rejectionReason?: string | null;
+      /* §16 — the chase, as the office counts it. It did not cross the wire
+         until now, so `chaseCountOf` answered null on every handset and a
+         screen could not say "asked three times". Optional here for the same
+         reason it is nullable in the schema: a build of the SERVER that
+         predates the columns sends neither, and reading a field nothing sends
+         writes `undefined` — which the `ON CONFLICT` clause below would then
+         put over whatever was there. That is `upsertTasks` erasing completion
+         notes, and it is why the SELECT and this list have to land together. */
+      reviewChaseCount?: number | null;
+      lastReviewChaseAt?: string | number | null;
     };
     await run(
       `INSERT INTO samples (id, customerId, productId, productName, cans, reason,
@@ -662,8 +934,9 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
                             dispatchedAt, courierName, trackingNumber, receivedAt,
                             trialStartedAt, trialCompletedAt, satisfaction,
                             additionalRequirement, rejectionReason,
+                            reviewChaseCount, lastReviewChaseAt,
                             clientCreatedAt, serverCreatedAt, deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          productId = excluded.productId, productName = excluded.productName,
          cans = excluded.cans, reason = excluded.reason, state = excluded.state,
@@ -676,7 +949,9 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
          trialCompletedAt = excluded.trialCompletedAt,
          satisfaction = excluded.satisfaction,
          additionalRequirement = excluded.additionalRequirement,
-         rejectionReason = excluded.rejectionReason
+         rejectionReason = excluded.rejectionReason,
+         reviewChaseCount = excluded.reviewChaseCount,
+         lastReviewChaseAt = excluded.lastReviewChaseAt
        WHERE samples.syncState = 'synced'`,
       [
         s.id,
@@ -709,6 +984,8 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
         s.satisfaction ?? null,
         s.additionalRequirement ?? null,
         s.rejectionReason ?? null,
+        s.reviewChaseCount ?? null,
+        s.lastReviewChaseAt ? localInstant(s.lastReviewChaseAt) : null,
         now,
         now,
       ],

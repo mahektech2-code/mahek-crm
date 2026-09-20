@@ -266,6 +266,86 @@ export function bandOf(stage: LeadStage): FunnelBand {
 }
 
 /**
+ * WHERE A LEAD ARRIVING FROM A HANDSET MAY BE PLANTED.
+ *
+ * §28 is asked when a lead MOVES, and a lead that is created has not moved —
+ * so a `create` naming `negotiation`, or `customer`, used to land exactly where
+ * it asked with no checklist, no verification, no next action and no transition
+ * row behind it. Every gate in the funnel bypassed at the one door that does
+ * not ask, on an endpoint that authenticates a device somebody owns rather than
+ * a browser session.
+ *
+ * The answer is neither a refusal nor a shrug. A create carries a shop, a
+ * photograph, a pin, a competitor and thirty answers typed standing in front of
+ * a shopkeeper, and refusing it puts all of that in the outbox's rejection list
+ * for ever to punish one field — the same trade `handleVisit` refuses to make
+ * about a distance. So the lead is planted at the FOOT of its own ladder, which
+ * is where the deployed handset already plants it, and the rung it asked for is
+ * recorded in words by the caller.
+ *
+ * `lost` is the one other rung a create may name, and it is not an exception to
+ * the rule: it is not a climb at all, it is a closure, and what a closure has to
+ * carry — a reason — is demanded separately and always was.
+ */
+export function plantableStage(
+  claimed: LeadStage | null | undefined,
+  salesType: LeadSalesType | null | undefined,
+): LeadStage {
+  const foot = ladderFor(salesType)[0];
+  if (!claimed) return foot;
+  return claimed === foot || claimed === "lost" ? claimed : foot;
+}
+
+/**
+ * THE RUNGS AT WHICH NOBODY HAS DECIDED ANYTHING YET — §B's "Suspect".
+ *
+ * This is the one list, and it is here rather than in the two runtimes that
+ * enforce the visit cap because there were two of them and they held two
+ * different vocabularies. The handset's `visitCapState` and the server's
+ * `handleVisit` both spelled a suspect out as `new` and `contacted`, which is
+ * the LEGACY ladder's own foot and nothing else — so every lead the funnel
+ * raises, which is planted at `suspect`, was invisible to both halves of the
+ * rule §B cares about more than any other. No counter on the card, no warning,
+ * no decision demanded, and no refusal at the third visit. The office's own
+ * `mustDecideSuspect` tested `suspect` and caught it; the two ends that fire at
+ * the door did not.
+ *
+ * `prospect` is deliberately NOT here, and that is the whole distinction the
+ * list carries. A Prospect is a shop somebody has already answered the question
+ * about — it is what the answer MOVES a Suspect to — so capping it would demand
+ * the same decision a second time, which is the "a qualified prospect visited a
+ * fourth time is a negotiation, not a stall" rule read one rung lower. The
+ * legacy ladder has no such rung: `new` and `contacted` are both "we have been
+ * and decided nothing", which is why both of them are capped and why nothing
+ * about the old book changes.
+ *
+ * Not exported. The list is the reasoning and `isUndecidedSuspect` is the
+ * question: an export nothing imports is a rule nothing asks, and a second
+ * caller reading the array rather than the function is how the two ends came
+ * to hold two lists in the first place.
+ */
+const UNDECIDED_SUSPECT_RUNGS: readonly LeadStage[] = [
+  "new",
+  "contacted",
+  "suspect",
+] as const;
+
+/**
+ * Whether the visit cap has anything to say about a lead on this rung.
+ *
+ * Takes a bare string rather than a `LeadStage` because both callers hold one:
+ * the server reads `customers.lead_stage`, which is TEXT behind an enum, and
+ * the handset reads a column that may still carry the six capitalised words it
+ * shipped with. Neither should have to prove the rung is on the union before it
+ * can ask — an unrecognised word answers false, which is the safe direction: a
+ * cap that fires on a rung nobody recognises is a decision demanded about a
+ * lead nobody can place.
+ */
+export function isUndecidedSuspect(stage: string | null | undefined): boolean {
+  return (UNDECIDED_SUSPECT_RUNGS as readonly string[]).includes(stage ?? "");
+}
+
+/**
  * THE RUNG AT WHICH A LEAD BECOMES A CUSTOMER, and it is the SECOND order.
  *
  * §22 says so, and the reason is the trade rather than the schema: a first

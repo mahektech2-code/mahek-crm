@@ -28,6 +28,13 @@ import { mayOpenDay } from '../src/data/day-gate';
 import { ordersToday } from '../src/data/orders';
 import { cashInHand } from '../src/data/payments';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
+import { listLeads, type Lead } from '../src/data/leads';
+import { LeadActionCard } from '../src/components/leads/lead-action-card';
+import {
+  countLeads,
+  rowsFor,
+  type LeadActionCounts,
+} from '../src/engines/lead-worklist';
 import { followUpCounts, visitsToday } from '../src/data/visits';
 import { stopCounts } from '../src/data/journey';
 import { lastPullAt } from '../src/sync/api';
@@ -180,6 +187,22 @@ export default function Home() {
    */
   const [neverPulled, setNeverPulled] = React.useState(false);
   /*
+   * §12.1 — the leads half of the morning.
+   *
+   * `undefined` is still reading, exactly as `day` above is and for exactly
+   * the same reason: three noughts under "My leads · Overdue · Due today" on a
+   * handset whose pull has never landed is a screen telling a salesman he has
+   * no prospects, which is the one failure nobody reports because it looks
+   * like having nothing to do.
+   *
+   * The counts and the rows are held TOGETHER and are derived from one read of
+   * the book, so the stat saying four and the list under it drawing three is
+   * not a state this screen can reach.
+   */
+  const [leads, setLeads] = React.useState<
+    { counts: LeadActionCounts; dueToday: Lead[] } | undefined
+  >(undefined);
+  /*
    * A READ THAT FAILED IS NOT A READ STILL RUNNING. `load` had no `catch` at
    * all, so one rejected promise among the eleven left this screen reading
    * "Reading…" for the rest of the session — which is a spinner that never
@@ -245,10 +268,22 @@ export default function Home() {
          figures rather than on its own, so the sentence under them and the
          figures themselves describe the same moment. */
       lastPullAt(),
-    ]).then(([stops, due, follow, orders, visits, cash, tasks, attendance, state, months, pulledAt]) => {
+      /* The whole lead book, once. Every figure and every card in the leads
+         section below is a filter over these rows — see `lead-worklist.ts` —
+         so four counts and a list cost one query and can never disagree. */
+      listLeads({}),
+    ]).then(([stops, due, follow, orders, visits, cash, tasks, attendance, state, months, pulledAt, leadRows]) => {
       setReadErr(null);
       setNeverPulled(pulledAt === 0);
       setMonth(months[0] ?? null);
+      setLeads({
+        counts: countLeads(leadRows, iso),
+        /* Six, because §12.1 says six: a list somebody scrolls on the first
+           screen of the morning is a list that has stopped being a summary.
+           The count above it says what it is a slice of, and the whole of it
+           is one tap away. */
+        dueToday: rowsFor(leadRows, 'today', iso).slice(0, 6),
+      });
       setDay({
         stops: stops.total,
         stopsDone: stops.done,
@@ -275,6 +310,10 @@ export default function Home() {
          than a grid of zeros or a spinner that will never stop. `month` is
          settled too, or its card would read "Reading…" for ever beside it. */
       setMonth(null);
+      /* Settled to nothing rather than left holding the last good read: a
+         stale list of leads under a sentence saying the read failed is the
+         screen arguing with itself. */
+      setLeads(undefined);
       setReadErr('Your day could not be read on this phone. Close MBOS and open it again.');
     });
   }, [userId]);
@@ -286,6 +325,9 @@ export default function Home() {
   const today = new Date(now);
   const dateLine = `${WEEKDAYS[today.getDay()]}, ${today.getDate()} ${MONTHS[today.getMonth()]}`;
 
+  /* See the chip below for why the designation wins over the role. */
+  const roleChip = boot.session?.user.designation?.trim() || boot.session?.user.role?.trim() || null;
+
   /*
    * The six figures — or, until there are six figures, six dashes.
    *
@@ -295,6 +337,9 @@ export default function Home() {
    * zero is what all three used to print.
    */
   const figuresPending = !day || neverPulled;
+  /* The same rule one section down: a handset nothing has reached has no lead
+     book either, so its three figures are empty rather than nought. */
+  const leadsPending = !leads || neverPulled;
   const dashValues: { v: string; s: string; small?: boolean }[] = !day
     ? DASH_CARDS.map(() => ({ v: '—', s: readErr ? 'Not read' : 'Reading…' }))
     : neverPulled
@@ -794,7 +839,35 @@ export default function Home() {
           <Text style={type.h2}>
             {greetingFor(today.getHours()) + ', ' + (boot.session?.user.name.split(' ')[0] ?? '')}
           </Text>
-          <Text style={{ fontSize: 13, color: C.muted }}>{dateLine}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 1 }}>
+            <Text style={{ fontSize: 13, color: C.muted }}>{dateLine}</Text>
+            {/*
+              WHAT HE IS HERE AS — §12.1's role chip.
+
+              The DESIGNATION and not the role. `role` is a LEVEL — associate,
+              manager, admin — and AGENTS.md is emphatic that a level is not a
+              job: "associate" on a handset says nothing a salesman recognises
+              about himself, and it is the same word for the telecaller on the
+              phones. What HR publishes in the employee master is what he is
+              called at work, so that is what is drawn, and the level is the
+              fallback for an account that has none rather than the answer.
+              Nothing is drawn where there is neither: an empty chip is a
+              rectangle that says less than the space it takes.
+            */}
+            {roleChip ? (
+              <View
+                style={{
+                  backgroundColor: C.primaryTint,
+                  borderRadius: radius.md,
+                  paddingHorizontal: 8,
+                  paddingVertical: 2,
+                }}>
+                <Text numberOfLines={1} style={[{ fontSize: 12, color: C.primaryDeep }, weight(600)]}>
+                  {roleChip}
+                </Text>
+              </View>
+            ) : null}
+          </View>
         </View>
       </View>
 
@@ -977,6 +1050,154 @@ export default function Home() {
           </Text>
         </Card>
       ) : null}
+
+      {/* ---- the leads half of the morning ----
+
+          §12.1, AND IT SITS HERE RATHER THAN AT THE TOP.
+
+          Everything above this line was already on the screen and answers the
+          DAY: has it started, what is the route, what has been sold, collected
+          and banked. Leads are the other half of a morning and not a louder
+          half, so they go under it — nothing that was above the fold has been
+          pushed below it, which was the first rule of adding anything here.
+
+          §12.4 is why there is no distributor term, no commercial table and no
+          approval queue anywhere in it: the mobile view is not a shrunk
+          desktop. A field salesman never needs those, so they are absent from
+          the data path rather than hidden by a style — `listLeads` reads his
+          own book off this phone and there is nothing else on the wire to
+          leak.
+
+          WHAT IT DELIBERATELY DOES NOT DRAW is a second "Today's visits" list.
+          The specification's mobile Home names one, and this screen already
+          has the day's route three cards up — a planned journey through shops
+          somebody chose. A second list under almost the same words would be
+          two different questions wearing one name on one screen, and the
+          salesman would have to work out which was which. What is drawn is
+          what the route cannot answer: the leads that are owed something
+          today. */}
+      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 22 }}>
+        <Text style={[type.label, { flex: 1 }]}>Your leads</Text>
+        <Pressable onPress={() => router.push('/lead-actions?from=home')} accessibilityRole="button">
+          <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(600)]}>What is owed ›</Text>
+        </Pressable>
+      </View>
+
+      {/*
+        THREE FIGURES, AND EACH ONE OPENS THE LIST IT COUNTS.
+
+        A headline nobody can get behind is a number somebody has to take on
+        trust, and on a phone the tap is the only way behind it. Each carries
+        its own view in the URL, so the list that opens is the one whose number
+        was pressed rather than the first of four with another tap to go.
+
+        Overdue is red where it is not nought and plain where it is, because a
+        red nought is an alarm about nothing and teaches people to stop reading
+        the colour. The dash rule is the one the six figures above already
+        follow: a figure nobody has read yet is a dash, never a nought.
+      */}
+      <View
+        style={{
+          flexDirection: 'row',
+          backgroundColor: C.surface,
+          borderWidth: 1,
+          borderColor: C.hairline,
+          borderRadius: radius.xl,
+          marginTop: 8,
+          overflow: 'hidden',
+        }}>
+        {([
+          /* My leads is the BOOK and not a cut of it, so it opens the book —
+             the same list the Customers tab and the More screen already show.
+             Pointing it at a view of the worklist would have been tidier and
+             would answer a different question to the one its own label asks. */
+          { l: 'My leads', v: leads?.counts.working, href: '/leads?from=home', tone: C.ink },
+          { l: 'Overdue', v: leads?.counts.overdue, href: '/lead-actions?view=overdue&from=home', tone: C.danger },
+          { l: 'Due today', v: leads?.counts.today, href: '/lead-actions?view=today&from=home', tone: C.ink },
+        ] as const).map((stat, i) => (
+          <Pressable
+            key={stat.l}
+            onPress={() => router.push(stat.href)}
+            accessibilityRole="button"
+            style={{
+              flex: 1,
+              paddingVertical: 12,
+              paddingHorizontal: 8,
+              alignItems: 'center',
+              borderLeftWidth: i ? 1 : 0,
+              borderLeftColor: C.hairline,
+            }}>
+            <Text
+              style={[
+                {
+                  fontSize: 19,
+                  lineHeight: 24,
+                  color:
+                    leadsPending || stat.v === undefined
+                      ? C.muted
+                      : stat.v > 0
+                        ? stat.tone
+                        : C.ink,
+                },
+                weight(600),
+                tabular,
+              ]}>
+              {leadsPending || stat.v === undefined ? '—' : String(stat.v)}
+            </Text>
+            <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{stat.l}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {/*
+        AND THE SIX CARDS UNDER THEM.
+
+        An empty list here says WHICH emptiness it is. "Nothing owed today" is
+        a good morning; "your book has not arrived" is a support call; and a
+        read that failed is a phone to restart. Drawn alike they are the state
+        nobody debugs, because two of the three look like having no work.
+      */}
+      {readErr ? (
+        <Card style={{ marginTop: 10, padding: 14 }}>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Not read on this phone.</Text>
+        </Card>
+      ) : !leads ? (
+        <Card style={{ marginTop: 10, padding: 14 }}>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Reading…</Text>
+        </Card>
+      ) : neverPulled ? null /* the card above already says it, in full */ : leads.counts.working === 0 ? (
+        <Card style={{ marginTop: 10, padding: 14 }}>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>
+            No leads being worked. A shop you walk past is how a new one starts.
+          </Text>
+        </Card>
+      ) : leads.dueToday.length === 0 ? (
+        <Card style={{ marginTop: 10, padding: 14 }}>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>
+            {leads.counts.overdue
+              ? 'Nothing owed today — but ' + plural(leads.counts.overdue, 'lead') + ' past its day.'
+              : 'Nothing owed on a lead today.'}
+          </Text>
+        </Card>
+      ) : (
+        <View style={{ gap: 10, marginTop: 10 }}>
+          {leads.dueToday.map((lead) => (
+            <LeadActionCard key={lead.id} lead={lead} meId={userId} from="home" />
+          ))}
+          {/* A capped list says what it is a slice of. Six cards over a due
+              count of nineteen with nothing saying so is a screen quietly
+              losing thirteen shops. */}
+          {leads.counts.today > leads.dueToday.length ? (
+            <Pressable
+              onPress={() => router.push('/lead-actions?view=today&from=home')}
+              accessibilityRole="button">
+              <Text style={[type.caption, { textAlign: 'center' }]}>
+                {'Showing ' + leads.dueToday.length + ' of ' + leads.counts.today + ' — tap for the rest'}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      )}
 
       {/* ---- how the period is going ----
 

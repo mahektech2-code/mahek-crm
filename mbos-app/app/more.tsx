@@ -79,6 +79,14 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
         { label: 'Near me', badge: '', route: 'nearby' },
         { label: 'Tasks', badge: n.overdueTasks ? plural(n.overdueTasks, 'overdue', 'overdue') : '', route: 'tasks' },
         { label: 'Leads', badge: n.openLeads ? plural(n.openLeads, 'open', 'open') : '', route: 'leads' },
+        /* §24 — the book and what is OWED on it are two questions, and the
+           second is the one a morning is made of. The Leads row above is every
+           lead he holds; this one is the four that are actually asking for
+           something: due today, late, parked and coming back, and the ones
+           nobody has promised anything about at all. No badge, because Home
+           already carries the two figures and a third statement of them here
+           is a number somebody has to reconcile rather than read. */
+        { label: 'What is owed', badge: '', route: 'lead-actions' },
         /* These two named a LIST and opened a capture form — the only two
            rows here that did. Punching an order and taking money both start
            at the + button, like every other capture; what was missing was

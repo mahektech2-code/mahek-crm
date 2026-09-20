@@ -25,8 +25,13 @@ import assert from "node:assert/strict";
 
 import {
   VERIFICATION_OUTCOMES,
+  VERIFICATION_QUESTIONS,
+  VERIFICATION_COLUMNS,
+  VERIFICATION_SECTIONS,
   verificationVerdict,
   verificationVerdictFor,
+  verificationResultOf,
+  verificationResultLabel,
   type VerificationOutcome,
 } from "../lead-labels";
 
@@ -87,5 +92,89 @@ describe("what a verification call can establish", () => {
     const followUp = VERIFICATION_OUTCOMES.find((o) => o.code === "follow_up");
     assert.ok(followUp);
     assert.doesNotMatch(followUp.says, /close/i);
+  });
+});
+
+describe("§5.2's fourth result, which is derived and not stored", () => {
+  test("a clean verification and a corrected one do not read as one word", () => {
+    /* The whole point of the four-way split: "how many of our salesmen's
+       reports survived the call unchanged" is unanswerable while both of these
+       come back as `verified`. */
+    assert.equal(verificationResultOf(true, 0), "verified");
+    assert.equal(verificationResultOf(true, 3), "verified_with_corrections");
+    assert.notEqual(verificationResultOf(true, 0), verificationResultOf(true, 1));
+  });
+
+  test("it reads the same tri-state the record page already holds", () => {
+    /* `verificationVerdict` is the one mapping from the stored column, and this
+       takes its answer rather than a second copy of it — a reader that had to
+       know `confirmed` means verified would be that copy. */
+    assert.equal(verificationResultOf(verificationVerdict("confirmed"), 0), "verified");
+    assert.equal(verificationResultOf(verificationVerdict("pending"), 0), "follow_up");
+  });
+
+  test("only a verified call can carry it", () => {
+    /* A follow-up could not confirm the visit and a failed verification found
+       no opportunity. On neither does "and three figures were corrected" say
+       anything about whether the report stood up — it was never accepted. */
+    assert.equal(verificationResultOf(null, 4), "follow_up");
+    assert.equal(verificationResultOf(false, 4), "not_qualified");
+  });
+
+  test("it is NOT an outcome anybody can pick", () => {
+    /* The three outcomes are judgements a manager makes on the call. Whether he
+       corrected anything is a count of what he did, and a radio for it would let
+       one be recorded with no corrections behind it — a second copy of a fact
+       the rows already state, free to disagree with them from its first
+       afternoon. */
+    const codes = VERIFICATION_OUTCOMES.map((o) => o.code);
+    assert.ok(!codes.includes("verified_with_corrections" as VerificationOutcome));
+  });
+
+  test("the three that are also outcomes take their words from the one list", () => {
+    for (const o of VERIFICATION_OUTCOMES) {
+      assert.equal(verificationResultLabel(o.code), o.label);
+    }
+    assert.match(verificationResultLabel("verified_with_corrections"), /corrections/i);
+  });
+});
+
+describe("§5.2's four sections", () => {
+  test("every question names a section that exists", () => {
+    const known = new Set(VERIFICATION_SECTIONS.map((s) => s.id));
+    for (const q of VERIFICATION_QUESTIONS) {
+      assert.ok(known.has(q.section), `${q.id} is in no section the forms draw`);
+    }
+  });
+
+  test("no section is empty, or a heading draws over nothing", () => {
+    for (const s of VERIFICATION_SECTIONS) {
+      assert.ok(
+        VERIFICATION_QUESTIONS.some((q) => q.section === s.id),
+        `${s.id} has no questions`,
+      );
+    }
+  });
+
+  test("every question has somewhere to land", () => {
+    /* An answer with no column is an answer the action drops on the floor, in
+       silence — the form takes it, the manager watches it save, and the record
+       reads afterwards as a question nobody asked. */
+    for (const q of VERIFICATION_QUESTIONS) {
+      assert.ok(VERIFICATION_COLUMNS[q.id], `${q.id} has no column on mbos_lead_validations`);
+    }
+  });
+
+  test("C and D are asked, which is the gap this closed", () => {
+    const ids = new Set(VERIFICATION_QUESTIONS.map((q) => q.id));
+    /* The PRD's five objections, of which quality is ours and stays. */
+    for (const id of ["price_issue", "credit_concern", "service_issue", "competitor_concern",
+      "quality_issue"]) {
+      assert.ok(ids.has(id), `objection ${id} is not asked`);
+    }
+    /* §5.4 decides whether a sample goes out on the first of these. */
+    for (const id of ["ready_for_trial", "ready_for_commercial", "ready_for_order"]) {
+      assert.ok(ids.has(id), `readiness ${id} is not asked`);
+    }
   });
 });

@@ -3,7 +3,7 @@ import { View, Text, Pressable, TextInput } from 'react-native';
 import { router, useNavigation } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
-import { Card, Choice, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
+import { Card, Choice, Input, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { OdometerCamera, type OdometerResult } from '../src/components/ui/odometer-camera';
@@ -30,6 +30,8 @@ import { getConfig } from '../src/data/config';
 import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/visits';
 import { checkInAtShop, clearArrival, recordArrival } from '../src/data/arrival';
 import { logComplaint, requestSample } from '../src/data/requests';
+import { sampleReasons } from '../src/data/lead-samples';
+import { type CodedOption } from '../src/engines/funnel';
 import { starterProducts } from '../src/data/customers';
 import { todayStops } from '../src/data/journey';
 import {
@@ -198,6 +200,11 @@ export default function Visit() {
     suspect && capCfg ? visitCapLabel(suspect.stage, suspect.visits + 1, capCfg) : null;
   const [linked, setLinked] = React.useState<{ complaintId?: string; sampleId?: string }>({});
   const [products, setProducts] = React.useState<Product[]>([]);
+  /* §10's coded list — why a shop wants a trial. Read from the cached
+     configuration like every other `mbos.*` answer, so the sheet has it with
+     no signal; empty until it arrives, which the sheet says in words rather
+     than drawing no question at all. */
+  const [reasons, setReasons] = React.useState<CodedOption[]>([]);
   const [stopId, setStopId] = React.useState<string | null>(null);
   /*
    * ONE VISIT PER PRESS.
@@ -459,12 +466,14 @@ export default function Visit() {
       starterProducts(5),
       todayStops(),
       getConfig<number>('mbos.travel.maxLegKilometres', 400),
-    ]).then(([dwell, metres, skus, stops, maxKm]) => {
+      sampleReasons(),
+    ]).then(([dwell, metres, skus, stops, maxKm, why]) => {
       if (!live) return;
       setMinDwell(dwell);
       setMaxMetres(metres);
       setMaxLegKm(maxKm);
       setProducts(skus);
+      setReasons(why);
       /* A stop on today's plan makes this a planned visit and gets marked
          visited when the save lands. */
       setStopId(stops.find((s) => s.customerId === custId && s.status === 'planned')?.id ?? null);
@@ -779,10 +788,29 @@ export default function Visit() {
     }
   };
 
+  /*
+   * §10's three answers, asked here exactly as the samples screen asks them.
+   *
+   * This asked ONE of the three: a sentence, sent as the note. The quantity was
+   * hardcoded to a single can — which is a figure nobody typed, on a request the
+   * godown picks stock against — and neither the coded reason nor the
+   * application was asked at all, so every trial raised on a visit reached the
+   * desk with `reason_code` and `application` null. The code is what somebody
+   * counts a quarter's trials by and the application is what makes a trial
+   * judgeable, so a door that answered neither was a door whose samples could
+   * not be read back.
+   *
+   * The CANS default of one is kept, because one can is what a trial usually
+   * is and a box he has to fill in from scratch mid-conversation is a box that
+   * gets a wrong number. What changed is that it is a number he can see and
+   * correct.
+   */
   const submitSample = async () => {
     if (formBusy.current) return;
     if (!draft.sku) return setFormErr('sku');
-    if (!(draft.why ?? '').trim()) return setFormErr('why');
+    if (!(Number(draft.cans ?? '1') > 0)) return setFormErr('cans');
+    if (!(draft.application ?? '').trim()) return setFormErr('application');
+    if (!draft.reasonCode) return setFormErr('reason');
     if (!c) return;
     formBusy.current = true;
     setFormSaving(true);
@@ -792,8 +820,9 @@ export default function Visit() {
         customerId: c.id,
         productId: draft.sku,
         productName: draft.skuName ?? '',
-        cans: 1,
-        reason: draft.why.trim(),
+        cans: Number(draft.cans ?? '1'),
+        reasonCode: draft.reasonCode,
+        application: draft.application.trim(),
         followUpDate: trial,
       });
       setLinked((l) => ({ ...l, sampleId: id }));
@@ -1962,16 +1991,72 @@ export default function Visit() {
         ))}
         {formErr === 'sku' ? <Text style={{ fontSize: 13, color: C.danger }}>Pick the product he wants to try.</Text> : null}
 
-        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>Why he wants it</Text>
+        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>How many cans</Text>
+        {/* A REAL FIGURE, because the godown picks stock against it. This was
+            `cans: 1` in the handler with no box on the sheet, so a trial of six
+            cans was requested as one and the salesman found out when it
+            arrived. Digits only — a pack size is a count, and a keyboard that
+            offers letters invites "one". */}
+        <Input
+          value={draft.cans ?? '1'}
+          onChangeText={(v) => { setDraft({ ...draft, cans: v.replace(/[^\d]/g, '') }); setFormErr(null); }}
+          keyboardType="number-pad"
+          invalid={formErr === 'cans'}
+        />
+        {formErr === 'cans' ? (
+          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>How many cans?</Text>
+        ) : null}
+
+        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>What he will use it on</Text>
+        {/* Prose, so it gets the microphone: this is spoken far better than it
+            is typed, one-handed, standing in a shop. It is the sample's own
+            "why he wants it" made specific — a trial nobody can judge is a can
+            given away. */}
         <VoiceField
-          value={draft.why ?? ''}
-          onChangeText={(v) => { setDraft({ ...draft, why: v }); setFormErr(null); }}
-          invalid={formErr === 'why'}
-          placeholder="Comparing against what he buys from Asian"
+          value={draft.application ?? ''}
+          onChangeText={(v) => { setDraft({ ...draft, application: v }); setFormErr(null); }}
+          invalid={formErr === 'application'}
+          placeholder="Spray booth, furniture polish, wooden doors"
           style={{ minHeight: 80 }}
         />
-        {formErr === 'why' ? (
-          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Your manager approves on this reason.</Text>
+        {formErr === 'application' ? (
+          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
+            What will they use it on? Without that nobody can judge the trial.
+          </Text>
+        ) : null}
+
+        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>Why he wants a trial</Text>
+        {/* A CODE AND NOT A SENTENCE — the same rule the lost reason and the
+            hold reason follow. A sentence cannot be counted, so "how many
+            trials did we give away on a price comparison this quarter" is a
+            grep over free text; the list is configuration, so the office can
+            reword one without an APK nobody can recall. */}
+        {reasons.length ? (
+          <View style={{ gap: 8 }}>
+            {reasons.map((o) => (
+              <Choice
+                key={o.code}
+                label={o.label}
+                selected={draft.reasonCode === o.code}
+                onPress={() => { setDraft({ ...draft, reasonCode: o.code }); setFormErr(null); }}
+                style={{ width: '100%', alignItems: 'flex-start', paddingHorizontal: 14 }}
+              />
+            ))}
+          </View>
+        ) : (
+          /* Said out loud rather than drawn as an empty space. The list is
+             compiled into this build as well as published, so the only way it
+             is empty is an office that emptied it — and a heading with nothing
+             under it reads as a broken screen rather than as a decision
+             somebody made. */
+          <Text style={[type.caption, { color: C.muted }]}>
+            Nobody has set up the trial reasons — ask the office to add them.
+          </Text>
+        )}
+        {formErr === 'reason' ? (
+          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
+            Say why he wants a trial — your manager approves on it.
+          </Text>
         ) : null}
 
         <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>Come back on</Text>

@@ -39,6 +39,40 @@
  * about territory narrowing a book without being a permission.
  *
  * ---------------------------------------------------------------------------
+ * WHERE THIS FILE PARTS COMPANY WITH §7, said here rather than left to be
+ * discovered by whoever next reads the table beside the code.
+ *
+ * ONE CELL IS DELIBERATELY NOT THE TABLE'S. The back office reads "Validate
+ * GST number" at Prospect, where §7's row has a dash and §7's own note says
+ * the back office is silent from Suspect through Negotiation. The
+ * specification disagrees with ITSELF about that cell, and the other two
+ * readings win: §2 hands the back office "Sample dispatch, GST validation,
+ * order processing…" in as many words, and §11.6 is emphatic — GST is
+ * collected once and validated once, only the back office flips `gstVerified`,
+ * and no other role's screens ask for it again. Qualification condition #1
+ * says the same thing to the salesman standing in the shop. MahekOne built it
+ * that way rather than borrowed it: `lead.gstValidate` is a real capability
+ * with its own desk check, and the qualify gate reads the office's verdict, so
+ * the number is asked for at Prospect precisely because qualification is the
+ * rung it blocks. A back office told "nothing operational pending" on the one
+ * early rung where a lead is waiting on THEM is the exact failure the muted
+ * sentences exist to prevent. The dash is read as the prototype's mock
+ * omitting a step it never implemented, not as a rule.
+ *
+ * AND THE TONES ARE AN INTERPRETATION, which is worth saying because it looks
+ * like conformance. §7 marks four cells danger — "Confirm actual order",
+ * "Approval required" twice, and "Payment follow-up" — and says nothing
+ * whatever about the rest, which is an absence rather than a verdict of "not
+ * danger". Three more carry it here: "Verify prospect", "Review sample /
+ * trial" and "Dispatch sample". Each is a rung where the lead is stopped dead
+ * until that one person acts and nobody else on the table can move it — §11.2
+ * says nothing skips manager verification, §11.4 says negotiation cannot open
+ * on an unreviewed trial, and an approved sample nobody has posted is a lead
+ * waiting on a parcel that never left. A tone is what sorts four hundred rows,
+ * so a blocking rung drawn at the weight of a courtesy visit is a list nobody
+ * works top-down. It is a choice; it should be read as one.
+ *
+ * ---------------------------------------------------------------------------
  * WHAT THIS FILE DOES NOT DECIDE is whether the lead may MOVE — that is
  * `lead-gates.ts` — nor what comes next, which is `lead-ladder.ts`. A person
  * can be told "Confirm actual order" by this file and refused by that one, and
@@ -155,6 +189,34 @@ const NO_APPROVAL_PENDING: LeadAction = {
   actionable: false,
 };
 
+/**
+ * §7's note, second half: management sees "No approval pending" on an ordinary
+ * lead "or 'Monitor distributor track' if it's a distributor-type lead
+ * elsewhere in its ladder".
+ *
+ * That sentence is what `facts.salesType` is FOR, and for a while nothing read
+ * it — a declared input nothing consults is worse than an absent one, because
+ * it reads as implemented. A distributor candidate sitting at Suspect,
+ * Prospect, Qualification or Negotiation told "No approval pending" is being
+ * told something true and useless: the distributor track is the one ladder
+ * management owns end to end, and the honest answer while a candidate climbs
+ * towards them is that there is a track here worth an eye. Both answers are
+ * muted and neither is actionable, so this changes what management READS and
+ * never what lands on their queue — §7's own rule that management is given a
+ * verb on exactly the three approval rungs is untouched, and there is a test
+ * saying so.
+ */
+const MONITOR_DISTRIBUTOR: LeadAction = {
+  label: "Monitor distributor track",
+  tone: "muted",
+  actionable: false,
+};
+
+/** Management's quiet answer, which depends on which ladder the lead is on. */
+function managementQuiet(facts: LeadActionFacts): LeadAction {
+  return facts.salesType === "distributor" ? MONITOR_DISTRIBUTOR : NO_APPROVAL_PENDING;
+}
+
 const NOT_YOUR_LADDER: LeadAction = {
   label: "No action for you on this lead",
   tone: "muted",
@@ -223,7 +285,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
     if (vantage === "management") {
       return stage === "active_distributor"
         ? { label: "Appointed — nothing pending", tone: "muted", actionable: false }
-        : { label: "Monitor distributor track", tone: "muted", actionable: false };
+        : MONITOR_DISTRIBUTOR;
     }
     if (vantage === "sales_manager") {
       switch (stage) {
@@ -256,7 +318,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "sales_manager":
           return { label: "Suspect — no manager action yet", tone: "muted", actionable: false };
         case "management":
-          return NO_APPROVAL_PENDING;
+          return managementQuiet(facts);
         case "back_office":
           return NOTHING_OPERATIONAL;
       }
@@ -272,7 +334,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "sales_manager":
           return { label: "Verify prospect", tone: "danger", actionable: true };
         case "management":
-          return NO_APPROVAL_PENDING;
+          return managementQuiet(facts);
         case "back_office":
           /* §11.6 — GST is collected once and validated once, and the back
            * office is who validates it. It is the earliest thing they own on
@@ -291,7 +353,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "sales_manager":
           return { label: "Review qualification", tone: "warn", actionable: true };
         case "management":
-          return NO_APPROVAL_PENDING;
+          return managementQuiet(facts);
         case "back_office":
           return NOTHING_OPERATIONAL;
       }
@@ -310,7 +372,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "sales_manager":
           return { label: "Sample out — awaiting receipt", tone: "muted", actionable: false };
         case "management":
-          return NO_APPROVAL_PENDING;
+          return managementQuiet(facts);
         case "back_office":
           /*
            * The false arm reads "dispatched — track it" and stays true of a
@@ -336,7 +398,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "sales_manager":
           return { label: "Review sample / trial", tone: "danger", actionable: true };
         case "management":
-          return NO_APPROVAL_PENDING;
+          return managementQuiet(facts);
         case "back_office":
           return NOTHING_OPERATIONAL;
       }
@@ -358,7 +420,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
             ? { label: "Confirm actual order", tone: "danger", actionable: true }
             : { label: "Support negotiation", tone: "warn", actionable: true };
         case "management":
-          return NO_APPROVAL_PENDING;
+          return managementQuiet(facts);
         case "back_office":
           return NOTHING_OPERATIONAL;
       }
@@ -373,7 +435,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "sales_manager":
           return { label: "Monitor delivery", tone: "muted", actionable: false };
         case "management":
-          return NO_APPROVAL_PENDING;
+          return managementQuiet(facts);
         case "back_office":
           return { label: "Process order for dispatch", tone: "danger", actionable: true };
       }
@@ -388,7 +450,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "sales_manager":
           return { label: "Monitor payment follow-up", tone: "muted", actionable: false };
         case "management":
-          return NO_APPROVAL_PENDING;
+          return managementQuiet(facts);
         case "back_office":
           return { label: "Track delivery", tone: "warn", actionable: true };
       }
@@ -403,7 +465,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "sales_manager":
           return { label: "Monitor payment follow-up", tone: "warn", actionable: true };
         case "management":
-          return NO_APPROVAL_PENDING;
+          return managementQuiet(facts);
         case "back_office":
           return { label: "Payment follow-up", tone: "danger", actionable: true };
       }
@@ -414,11 +476,28 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "salesman":
           return { label: "Repeat-order visit", tone: "brand", actionable: true };
         case "calling_desk":
-          return { label: "Repeat-order call", tone: "brand", actionable: true };
+          /*
+           * §7 PUTS A DASH HERE AND IT IS RIGHT, though a repeat-order call is
+           * a calling-desk job by any other reading — which is what made this
+           * cell wrong for a while. Two mechanisms chase a repeat order and
+           * they are not one mechanism. The CRM's Call Log times a stock check
+           * and an order chase off the customer's OWN measured buying cycle,
+           * on the account rather than on the lead, and by this rung
+           * `promotesToCustomerAt` has long since flipped `kind` — so the shop
+           * is already on that cadence, with a quiet window and a cooldown
+           * deciding when it is rung. A verb here would be a second
+           * instruction about one shop on one afternoon, off a ladder the
+           * office is not working. §7 scopes the calling desk "strictly to
+           * intake, never to the field or commercial workflow", and §10.4
+           * leaves a repeat-order call on the Communication tab for any role
+           * at any stage, so nothing is taken from a telecaller who wants to
+           * make one.
+           */
+          return NO_CALLING_DESK_ACTION;
         case "sales_manager":
           return { label: "Repeat-order call", tone: "warn", actionable: true };
         case "management":
-          return NO_APPROVAL_PENDING;
+          return managementQuiet(facts);
         case "back_office":
           return NOTHING_OPERATIONAL;
       }
