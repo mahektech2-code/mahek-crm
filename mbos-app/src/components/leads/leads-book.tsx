@@ -5,8 +5,9 @@ import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, Secon
 import { BottomSheet, Calendar } from '../ui/overlays';
 import { color as C, radius, weight, type BadgeTone } from '../../theme/tokens';
 import { createLead, leadThresholds, listLeads, visitCapThresholds, type Lead } from '../../data/leads';
+import { leadSources } from '../../data/config';
 import { takePhoto } from '../../native/capture';
-import { CUSTOMER_TYPES, LEAD_FILTERS, LEAD_SOURCES, leadAlert, visitCapLabel, visitCapState, type DuplicateMatch, type LeadFilter, type LeadThresholds, type VisitCapThresholds } from '../../engines/leads';
+import { CUSTOMER_TYPES, LEAD_FILTERS, OTHER_SOURCE, leadAlert, leadSourceLabel, visitCapLabel, visitCapState, type DuplicateMatch, type LeadFilter, type LeadSource, type LeadThresholds, type VisitCapThresholds } from '../../engines/leads';
 import { offeredSalesTypes, salesTypeLabel, type LeadSalesType } from '../../engines/funnel';
 import { dmy, inrFromPaise, isoDate, plural, pretty } from '../../lib/format';
 import { useStore } from '../../state/store';
@@ -70,11 +71,32 @@ export function LeadsBook() {
 
   /* the form */
   const [formOpen, setFormOpen] = React.useState(false);
+  /* See `save`. Not state: a second tap arrives before a re-render would. */
+  const saving = React.useRef(false);
   const [name, setName] = React.useState('');
   const [company, setCompany] = React.useState('');
   const [mobile, setMobile] = React.useState('');
   const [city, setCity] = React.useState('');
-  const [source, setSource] = React.useState<string>(LEAD_SOURCES[0]);
+  /**
+   * THE CODE, NOT THE WORD, and the list is the office's.
+   *
+   * This held one of five labels typed into `engines/leads.ts`, which the wire
+   * then translated down to four codes — three of which `leads.sources`, the
+   * one authoritative list, has never contained. So every lead raised here was
+   * filed under a channel nobody can count. What is stored now is the code, and
+   * the words beside it are whatever the office last published.
+   *
+   * Null until the list has arrived and until he has answered. Defaulting to
+   * the first chip is the app quietly answering a question about attribution on
+   * a salesman's behalf, and "Salesman Prospecting" would then be the largest
+   * bar on the chart by construction.
+   */
+  const [sources, setSources] = React.useState<LeadSource[] | null>(null);
+  const [source, setSource] = React.useState<string | null>(null);
+  /* §— what "Other" has to say. Only ever read when the source is `other`, and
+     deliberately NOT cleared when the answer moves off it: the web form does
+     the same, because it is a record of what somebody believed on the day. */
+  const [sourceDetail, setSourceDetail] = React.useState('');
   /**
    * §2 — asked before anything else is typed, and null until it is answered.
    *
@@ -103,12 +125,13 @@ export function LeadsBook() {
 
   const load = React.useCallback(() => {
     let live = true;
-    void Promise.all([listLeads(filter), leadThresholds(), visitCapThresholds()]).then(
-      ([r, t, c]) => {
+    void Promise.all([listLeads(filter), leadThresholds(), visitCapThresholds(), leadSources()]).then(
+      ([r, t, c, srcs]) => {
         if (!live) return;
         setRows(r);
         setCfg(t);
         setCapCfg(c);
+        setSources(srcs);
       },
     );
     return () => {
@@ -136,7 +159,8 @@ export function LeadsBook() {
     setCompany('');
     setMobile('');
     setCity('');
-    setSource(LEAD_SOURCES[0]);
+    setSource(null);
+    setSourceDetail('');
     setSalesType(null);
     setPotential('');
     setFollowUp(null);
@@ -175,47 +199,83 @@ export function LeadsBook() {
   };
 
   const save = async () => {
+    /* One lead per press. `createLead` awaits a duplicate check, a GPS fix and
+       a write, and a second tap inside that window is the ordinary way a shop
+       ends up on the book twice — the duplicate check cannot catch it, because
+       neither row is written yet when the other starts. A ref rather than
+       state: state is a render away and the second tap is not. */
+    if (saving.current) return;
+
     /* The ladder is asked FIRST and refused first, in that order, so the
        message somebody reads names the question at the top of the form rather
        than the one they have just finished typing. */
     if (!salesType) return setErr('Which kind of sale is this? It decides what the rest of the funnel asks.');
     if (!name.trim()) return setErr('Say who this is — a name or the shop.');
     if (mobile.replace(/\D/g, '').length < 10) return setErr('A ten-digit mobile, so somebody can ring them.');
-
-    const rupees = Number(potential.replace(/[^\d]/g, ''));
-    const result = await createLead({
-      name,
-      company,
-      mobile,
-      city,
-      source,
-      /* Rupees on the screen, paise in the store — the only place the two meet. */
-      estimatedPotentialPaise: rupees > 0 ? rupees * 100 : null,
-      nextFollowUpDate: followUp,
-      salesType,
-      address,
-      customerType: custType,
-      requirement,
-      monthlyVolumeLitres: Number(litres.replace(/[^\d]/g, '')) || null,
-      decisionMaker,
-      competitorName: competitor,
-      shopPhotoId,
-      today,
-    });
-
-    if (!result.ok) {
-      setErr(result.message);
-      setDup(result.duplicate ?? null);
-      return;
+    if (!source) return setErr('Say how you found them. It is the one question only you can answer.');
+    /* Refused on the phone as well as in the office, because being told after
+       the fact loses the sentence he had in mind while he was standing there. */
+    if (source === OTHER_SOURCE && !sourceDetail.trim()) {
+      return setErr('Say where this one actually came from — "Other" with nothing behind it is a source nobody can count later.');
     }
 
-    setFormOpen(false);
-    /* One of the two places anything is thrown away — this one and Cancel. The
-       next "+ Add lead" is a different shop; this one is on the list behind
-       the sheet. */
-    clearForm();
-    load();
-    notify('Lead added · ' + (company.trim() || name.trim()));
+    saving.current = true;
+    try {
+      const rupees = Number(potential.replace(/[^\d]/g, ''));
+      const result = await createLead({
+        name,
+        company,
+        mobile,
+        city,
+        source,
+        /*
+         * THE SENTENCE RIDES IN THE NOTE, AND THAT IS AN INTERIM SAID OUT LOUD.
+         *
+         * `customers.lead_source_detail` is on the server and `handleLead`
+         * writes it; `leads.sourceDetail` is on this phone and the pull fills
+         * it. What is missing is the one step between them — `createLead` has
+         * no argument to carry it UP, and adding one is another file. Dropped,
+         * the answer he was just refused for not giving would go nowhere,
+         * which is the worst of the three options; put in the note it reaches
+         * `leadNotes` on the record, where a person reads it, and nothing is
+         * lost in the meantime.
+         *
+         * The moment that argument lands this becomes
+         * `sourceDetail: sourceDetail.trim()` and the prefix goes with it.
+         */
+        note: source === OTHER_SOURCE && sourceDetail.trim()
+          ? 'Source details: ' + sourceDetail.trim()
+          : undefined,
+        /* Rupees on the screen, paise in the store — the only place the two meet. */
+        estimatedPotentialPaise: rupees > 0 ? rupees * 100 : null,
+        nextFollowUpDate: followUp,
+        salesType,
+        address,
+        customerType: custType,
+        requirement,
+        monthlyVolumeLitres: Number(litres.replace(/[^\d]/g, '')) || null,
+        decisionMaker,
+        competitorName: competitor,
+        shopPhotoId,
+        today,
+      });
+
+      if (!result.ok) {
+        setErr(result.message);
+        setDup(result.duplicate ?? null);
+        return;
+      }
+
+      setFormOpen(false);
+      /* One of the two places anything is thrown away — this one and Cancel. The
+         next "+ Add lead" is a different shop; this one is on the list behind
+         the sheet. */
+      clearForm();
+      load();
+      notify('Lead added · ' + (company.trim() || name.trim()));
+    } finally {
+      saving.current = false;
+    }
   };
 
   const openDuplicate = () => {
@@ -279,7 +339,7 @@ export function LeadsBook() {
                           sale this is changes what the next call is about —
                           and it is the one fact about a lead that cannot be
                           guessed from its name. */}
-                      {[x.company?.trim() ? x.name : null, x.salesType ? salesTypeLabel(x.salesType as LeadSalesType) : null, x.city, x.source]
+                      {[x.company?.trim() ? x.name : null, x.salesType ? salesTypeLabel(x.salesType as LeadSalesType) : null, x.city, leadSourceLabel(x.source, sources ?? [])]
                         .filter(Boolean)
                         .join(' · ')}
                     </T>
@@ -401,11 +461,37 @@ export function LeadsBook() {
         <View style={{ marginTop: 12 }}>
           <SectionLabel style={{ marginBottom: 6 }}>How you found them</SectionLabel>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {LEAD_SOURCES.map((s) => (
-              <Choice key={s} label={s} selected={source === s} onPress={() => setSource(s)} style={{ paddingHorizontal: 14 }} />
+            {(sources ?? []).map((s) => (
+              <Choice
+                key={s.code}
+                label={s.label}
+                selected={source === s.code}
+                onPress={() => setSource(s.code)}
+                style={{ paddingHorizontal: 14 }}
+              />
             ))}
           </View>
         </View>
+
+        {/*
+          * ONLY UNDER "OTHER", and required there — the same shape the web
+          * intake form draws, for the same reason. "Other" is the cheapest
+          * answer on any list: left free it becomes the biggest bar on the
+          * chart with nothing behind it, and the sentences are what tell Mahek
+          * which eleventh channel is worth adding to the list. A box that is
+          * dead on nine answers in ten is furniture, and people stop reading
+          * furniture, so it is drawn rather than disabled.
+          */}
+        {source === OTHER_SOURCE ? (
+          <View style={{ marginTop: 12 }}>
+            <SectionLabel style={{ marginBottom: 6 }}>Source details</SectionLabel>
+            <Input
+              value={sourceDetail}
+              onChangeText={(v) => { setSourceDetail(v); setErr(null); }}
+              placeholder="A builder on the site next door sent him"
+            />
+          </View>
+        ) : null}
 
         <View style={{ marginTop: 12 }}>
           <SectionLabel style={{ marginBottom: 6 }}>What they might buy a month</SectionLabel>

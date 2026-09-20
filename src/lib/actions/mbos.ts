@@ -3140,15 +3140,54 @@ async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<H
 
 /* ------------------------------------------------------------------- leads */
 
+/**
+ * THE FOUR CODES THE OLD BUILDS WROTE, kept resolving rather than orphaned.
+ *
+ * `leads.sources` has never contained any of them, and there are leads on the
+ * book carrying each. They are ACCEPTED here — a stored value that stops
+ * resolving is the mistake `product_aliases` exists to prevent — and they are
+ * never OFFERED, because the picker on both ends reads the configured list.
+ * They are also never rewritten into one of the ten: `manual` meant both a
+ * market enquiry and a lead the office handed over, and no migration can
+ * recover which, so promoting it would be a guess dressed up as a correction.
+ *
+ * Retiring one is a merge on the sources report, which is a person's decision
+ * and already has a screen; it is not something this file may take.
+ */
+const RETAINED_LEAD_SOURCES = ["manual", "referral", "cold_call", "campaign"] as const;
+
 const leadSchema = z.object({
   name: z.string().min(1).max(200),
   companyName: z.string().max(200).nullish(),
   mobile: z.string().min(6).max(20),
   city: z.string().max(120).nullish(),
   area: z.string().max(120).nullish(),
-  source: z
-    .enum(["manual", "website", "referral", "exhibition", "cold_call", "whatsapp", "campaign"])
-    .nullish(),
+  /*
+   * A STRING, AND THE LIST IS `leads.sources`.
+   *
+   * It was a seven-value enum typed out here, and `leads.sources` is ten codes
+   * Mahek gave us — the two shared three. A hard-coded enum beside a configured
+   * list is two definitions waiting to disagree, and this is what that looks
+   * like once they have: every lead a field salesman raised arrived under
+   * `cold_call`, `manual` or `referral`, none of which the authoritative list
+   * contains, and the report that answers "where does our business come from"
+   * counted each of them as a channel of its own.
+   *
+   * So zod checks the SHAPE and `handleLead` checks the membership, against the
+   * stored list, the way `evaluateLeadStageMove` checks a reason code against
+   * `leads.prospectReasons`. A manager who adds an eleventh channel on the
+   * Settings screen is then not waiting on a deploy — which on a handset is an
+   * APK nobody can recall.
+   */
+  source: z.string().trim().min(1).max(64).nullish(),
+  /*
+   * WHAT "OTHER" HAS TO SAY, and it is the one source that asks a second
+   * question. `customers.lead_source_detail` already carries it for the web
+   * form; declared here because `safeParse` strips what it does not name,
+   * without a word — which is how the salesType answer was lost between the two
+   * ends, one field up.
+   */
+  sourceDetail: z.string().max(500).nullish(),
   estimatedPotentialPaise: z.number().int().nonnegative().nullish(),
   /*
    * THE FUNNEL'S RUNGS, and the original six are still first.
@@ -3894,6 +3933,42 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
   const city = p.city ?? p.area ?? "Unknown";
 
   /*
+   * THE SOURCE IS ONE OF THE CONFIGURED TEN, OR ONE OF THE FOUR WE STILL OWE A
+   * LABEL TO, OR IT IS NOTHING — and this last part is where the wire parts
+   * company with the web form deliberately.
+   *
+   * `captureLead` REFUSES an unrecognised source, and it is right to: a server
+   * action is a URL, the person is at a screen, and telling them to pick again
+   * costs a click. Here the payload came off a phone that may have been
+   * compiled a year ago and is standing in a market with one bar, and refusing
+   * it loses the lead, the shop photograph and the pin with it. So an
+   * unrecognised source is DROPPED and the lead is kept, which is the trade
+   * `wireSource` already names at the other end.
+   *
+   * `RETAINED_LEAD_SOURCES` are the four the old builds wrote. They are
+   * accepted and never rewritten into one of the ten: `manual` was both a
+   * market enquiry and a lead the office handed over, and no migration can
+   * recover which — guessing would put a fact on the record that nobody
+   * established, and would split one lead's history across two bars of the
+   * sources report.
+   */
+  const config = await getConfig();
+  const sourceCodes = new Set<string>([
+    ...config["leads.sources"].map((o) => o.code),
+    ...RETAINED_LEAD_SOURCES,
+  ]);
+  const leadSource = p.source && sourceCodes.has(p.source) ? p.source : null;
+  /*
+   * Written only when the payload carries one, so a build that does not ask the
+   * question cannot erase an answer — and so the detail SURVIVES the source
+   * being changed away from `other`, which is what the column's own note asks
+   * for: it is a record of what somebody believed on the day they raised the
+   * lead, not a field that describes whatever the source happens to say now.
+   */
+  const sourceDetailPatch =
+    p.sourceDetail != null ? { leadSourceDetail: p.sourceDetail.trim() || null } : {};
+
+  /*
    * WHERE A NEW LEAD STARTS DEPENDS ON WHETHER IT NAMES A SALES TYPE.
    *
    * A build that asks the §2 question raises a lead at `suspect`, the foot of
@@ -3935,7 +4010,11 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
       city,
       area: p.area ?? null,
       kind: "lead",
-      leadSource: p.source ?? "manual",
+      /* NOT `?? "manual"`, which is how a lead nobody could attribute came to
+         assert a channel. Null says the true thing — nobody recorded one — and
+         the sources report already counts and prints that separately. */
+      leadSource,
+      ...sourceDetailPatch,
       /* The salesman who raised it OWNS it, and that is what puts it on his
        * handset AND in the scoped lists the office reads — `ASSIGNED_TO_SQL`
        * resolves a lead through `owner_id`. One column, three screens. */
@@ -3978,6 +4057,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
         leadStage: p.stage ?? foot,
         leadNextFollowUpDate: p.nextFollowUpDate ?? null,
         leadNotes: p.notes ?? null,
+        ...sourceDetailPatch,
         address: p.address ?? null,
         leadRequirement: p.requirement ?? null,
         leadLostReason: p.lostReason ?? null,

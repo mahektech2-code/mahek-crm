@@ -68,42 +68,65 @@ export function wireStage(stage: string): string | undefined {
 /**
  * Where the lead came from, in the word MahekOne stores.
  *
- * THIS IS THE FIELD THAT WAS MISSED. `companyName`, the stage and the notes
- * were all fixed when the two halves were first run against each other; the
- * source was left going out raw, so every lead a salesman ever created was
- * refused on it alone — `Walked past` against an enum that has never held
- * anything but lower-case codes. Both leads production has seen were rejected
- * this way, and `mbos_leads` is empty because of it.
+ * THIS IS THE FIELD THAT WAS MISSED, and then it was mistranslated.
  *
- * Two of the five collapse onto `manual`, and that is a real loss said out
- * loud rather than hidden: `manual` is the residual value — the lead nobody
- * can attribute to a channel — and both a walk-in enquiry and one the office
- * handed over are exactly that. The salesman's own word survives on the local
- * row, which is what the Leads screen prints; the wire carries MahekOne's.
+ * `companyName`, the stage and the notes were all fixed when the two halves
+ * were first run against each other; the source was left going out raw, so
+ * every lead a salesman created was refused on it alone — `Walked past`
+ * against an enum that has never held anything but lower-case codes. The fix
+ * was this map, and it bought a worse failure quietly: it translated five
+ * labels down to four codes, and three of those four are not in
+ * `leads.sources` — the one list Mahek actually gave us. So the leads stopped
+ * being refused and started arriving under words the report that answers
+ * "where does our business come from" has never heard of.
  *
- * Undefined where the word is not one of ours, for the same reason
- * `wireStage` does it: an unknown value is refused for the WHOLE lead, and a
- * lead that reaches the office with no source recorded is enormously better
- * than one that never arrives. That is the property this whole file exists
- * for, and the one the source field never had.
+ * SO THE PICKER NOW HOLDS CODES, AND THE LIST IS THE OFFICE'S. The form reads
+ * `leads.sources` off the pull, so what `args.source` carries is already the
+ * code MahekOne stores; there is nothing left to translate on a lead raised by
+ * this build. What remains here is the two things a pure, synchronous function
+ * on a handset can still be sure of.
+ *
+ * The first is the five LABELS, which are not gone: a lead raised by an older
+ * APK sits on somebody's phone with 'Market enquiry' in its `source` column,
+ * and an EDIT of it re-sends exactly that. They keep the codes they have
+ * always mapped to — `cold_call`, `referral`, `manual`, `exhibition` — rather
+ * than being promoted into the configured ten, because the office already
+ * holds that lead under the legacy code, and re-sending a different one on an
+ * edit would split one lead's source across two bars of a report whose merge
+ * tool exists to undo precisely that. Retained, never remapped; see
+ * `LEGACY_LEAD_SOURCES` in `engines/leads.ts` for what keeps them readable.
+ *
+ * The second is that A CODE PASSES THROUGH UNTOUCHED. It cannot be checked
+ * against the list here — `leads.sources` is configuration, it arrives on a
+ * pull, and this file is pure and synchronous by design — and it must not be:
+ * a manager who adds an eleventh channel this afternoon would otherwise have
+ * every lead naming it silently stripped by a handset compiled last year.
+ * Validating against the list is the SERVER's job, where the list lives, and
+ * `handleLead` does it.
+ *
+ * Undefined where the word is neither, for the same reason `wireStage` does
+ * it — except that here the field is dropped rather than the lead refused:
+ * a lead that reaches the office with no source recorded is enormously better
+ * than one that never arrives.
  */
-const SOURCES: Record<string, string> = {
+const LEGACY_LABELS: Record<string, string> = {
   'walked past': 'cold_call',
   referral: 'referral',
   'market enquiry': 'manual',
   exhibition: 'exhibition',
   office: 'manual',
-  /* MahekOne's own words, so a value that arrived from the office and is
-     being sent back on an edit is not refused for being already correct. */
-  manual: 'manual',
-  website: 'website',
-  cold_call: 'cold_call',
-  whatsapp: 'whatsapp',
-  campaign: 'campaign',
 };
 
+/** A code as MahekOne spells one: lower case, digits and underscores. Shape
+    rather than membership, because membership is the server's question. */
+const CODE = /^[a-z0-9_]+$/;
+
 export function wireSource(source: string | null | undefined): string | undefined {
-  return SOURCES[(source ?? '').trim().toLowerCase()];
+  const raw = (source ?? '').trim();
+  if (!raw) return undefined;
+  const legacy = LEGACY_LABELS[raw.toLowerCase()];
+  if (legacy) return legacy;
+  return CODE.test(raw) ? raw : undefined;
 }
 
 export type LeadNote = { at: number; text: string };

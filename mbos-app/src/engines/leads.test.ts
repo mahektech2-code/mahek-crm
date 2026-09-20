@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { reorderLabel, reorderState, stageRefusal, visitCapLabel, visitCapState } from './leads';
+import { LEAD_SOURCES, LEGACY_LEAD_SOURCES, OTHER_SOURCE, leadSourceLabel, reorderLabel, reorderState, stageRefusal, visitCapLabel, visitCapState } from './leads';
 
 /**
  * The visit cap, and why it is a question rather than a gate.
@@ -120,4 +120,39 @@ test('a fortnightly buyer and a quarterly one are judged on their own rhythm', (
      30/60/90. */
   assert.equal(reorderState('2026-08-20', 14, today), 'due');
   assert.equal(reorderState('2026-08-20', 90, today), null);
+});
+
+/* ------------------------------------------------------------- the source */
+
+/**
+ * A CODE IS NOT A LABEL, and the thing being pinned is that none of the four
+ * words the old builds wrote ends up on a screen as itself.
+ *
+ * `cold_call`, `manual`, `referral` and `campaign` are on the book and are in
+ * none of the ten. Orphaning them is the mistake `product_aliases` exists to
+ * prevent: a stored value that stops resolving reads on the card as a database
+ * word, which is how somebody concludes the record is broken.
+ */
+test('the office\'s own list wins, and it is words rather than codes', () => {
+  const sources = [
+    { code: 'walk_in', label: 'Walk-in' },
+    { code: 'other', label: 'Other' },
+  ];
+  assert.equal(leadSourceLabel('walk_in', sources), 'Walk-in');
+  assert.equal(leadSourceLabel(OTHER_SOURCE, sources), 'Other');
+});
+
+test('the four codes the old builds wrote still resolve to words', () => {
+  for (const legacy of LEGACY_LEAD_SOURCES) {
+    assert.equal(leadSourceLabel(legacy.code, LEAD_SOURCES), legacy.label);
+  }
+});
+
+test('a source nobody recognises is shown as itself, never hidden', () => {
+  /* An eleventh channel a manager added after this APK shipped, arriving on a
+     lead pulled down from the office. The pulled list will normally carry it;
+     where it does not, the code is a better answer than a blank cell. */
+  assert.equal(leadSourceLabel('architect_reference', LEAD_SOURCES), 'architect_reference');
+  assert.equal(leadSourceLabel(null, LEAD_SOURCES), null);
+  assert.equal(leadSourceLabel('   ', LEAD_SOURCES), null);
 });

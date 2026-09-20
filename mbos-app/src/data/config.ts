@@ -1,4 +1,5 @@
 import { all, one } from '../db';
+import { LEAD_SOURCES, type LeadSource } from '../engines/leads';
 import {
   HOLD_REASONS,
   LOST_REASONS,
@@ -289,6 +290,14 @@ const DEFAULTS: Record<string, unknown> = {
   'leads.overrideReasons': OVERRIDE_REASONS.map((r) => ({ ...r })),
   'leads.sampleReviewChaseDays': [2, 4, 6],
   'leads.verificationDueDays': 2,
+  /* WHERE A LEAD CAME FROM — the ten codes, and the third list that was read
+     on a phone and published nowhere. The handset had five LABELS of its own
+     compiled into `engines/leads.ts` and translated them down to four codes,
+     three of which this list has never contained; so every lead a salesman
+     raised was filed under a channel the office cannot count. The fallback is
+     copied from `lib/config/registry.ts`, like everything else here, and it is
+     what a handset offers before its first bootstrap rather than policy. */
+  'leads.sources': LEAD_SOURCES.map((s) => ({ ...s })),
 
   /* tasks */
   'mbos.tasks.escalationHours': 24,
@@ -341,4 +350,19 @@ export async function getAllConfig(): Promise<Record<string, unknown>> {
 export async function configAge(): Promise<number | null> {
   const row = await one<{ at: number }>('SELECT MAX(lastSyncedAt) AS at FROM config');
   return row?.at || null;
+}
+
+/**
+ * The ten channels, as the office currently words them.
+ *
+ * Read through here rather than by each screen calling `getConfig` with its
+ * own fallback: the failure this list keeps having is the SILENT one —
+ * `getConfig` answers `undefined` for a key nobody published, the picker draws
+ * no chips, and the form becomes a title and a button that can only ever say
+ * "Pick one", on a deployment that configured the feature perfectly. One
+ * reader, one fallback, and a list that is never empty.
+ */
+export async function leadSources(): Promise<LeadSource[]> {
+  const list = await getConfig<LeadSource[]>('leads.sources');
+  return Array.isArray(list) && list.length ? list : LEAD_SOURCES.map((s) => ({ ...s }));
 }

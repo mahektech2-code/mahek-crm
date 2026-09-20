@@ -17,12 +17,85 @@ export type LeadFilter = (typeof LEAD_FILTERS)[number];
 /**
  * Where a lead came from.
  *
- * Short enough to be a row of chips, because a salesman standing outside the
- * shop will pick one and will not type one. It sits here rather than in a
- * screen so both the form and anything that later counts by source read the
- * same list.
+ * A CODE and a LABEL, and the list is the office's rather than this file's.
+ * It was five labels typed here — 'Walked past', 'Market enquiry', 'Office' —
+ * which `lib/wire.ts` then translated down to four codes on the way out, three
+ * of which `leads.sources` had never heard of. So every lead a salesman raised
+ * was filed under a word the one authoritative list does not contain, and the
+ * report that answers "which channels actually produce customers" counted them
+ * as channels of their own.
+ *
+ * What is below is the COMPILED FALLBACK, copied from `lib/config/registry.ts`
+ * — what a handset offers before it has ever completed a bootstrap, and never
+ * policy. `leads.sources` comes down on every pull, so an office that adds an
+ * eleventh channel adds it on the phone the same afternoon; a deploy is not
+ * available to a manager and an APK is not recallable, which is why the list
+ * cannot live in a screen.
  */
-export const LEAD_SOURCES = ['Walked past', 'Referral', 'Market enquiry', 'Exhibition', 'Office'] as const;
+export type LeadSource = { code: string; label: string };
+
+export const LEAD_SOURCES: readonly LeadSource[] = [
+  { code: 'salesman_prospecting', label: 'Salesman Prospecting' },
+  /* A lead SOURCE's label — the channel Mahek names, not the role value that
+     no longer exists. The code is `telecalling` for exactly that reason: only
+     the half a person reads keeps his word. */
+  { code: 'telecalling', label: 'Telecaller' },
+  { code: 'customer_reference', label: 'Existing Customer Reference' },
+  { code: 'dealer_reference', label: 'Dealer / Distributor Reference' },
+  { code: 'website', label: 'Website / Online Enquiry' },
+  { code: 'whatsapp', label: 'WhatsApp Enquiry' },
+  { code: 'phone', label: 'Phone Enquiry' },
+  { code: 'exhibition', label: 'Exhibition / Trade Fair' },
+  { code: 'walk_in', label: 'Walk-in' },
+  /* The only one that asks a second question. Picking it demands a sentence,
+     because "Other" is the easiest answer on any list and a year of it is the
+     biggest bar on the chart with nothing behind it. */
+  { code: 'other', label: 'Other' },
+] as const;
+
+/** The code that asks for a sentence. Named once so the form and anything
+    that later checks the answer cannot disagree about which one it is. */
+export const OTHER_SOURCE = 'other';
+
+/**
+ * WHAT THE OLD BUILDS SENT, RETAINED RATHER THAN REMAPPED.
+ *
+ * There are leads on the book carrying `cold_call`, `manual`, `referral` and
+ * `campaign`, and `leads.sources` contains none of them. A stored value that
+ * stops resolving to a label is the mistake `product_aliases` exists to
+ * prevent, so they keep a label here and are never offered: rewriting them
+ * into one of the ten would be guessing on the salesman's behalf — `manual`
+ * was BOTH 'Market enquiry' and 'Office', and no migration can recover which —
+ * and it would split one lead's history across two codes in a report whose
+ * merge tool exists to undo exactly that.
+ */
+export const LEGACY_LEAD_SOURCES: readonly LeadSource[] = [
+  { code: 'cold_call', label: 'Cold call (old)' },
+  { code: 'referral', label: 'Referral (old)' },
+  { code: 'manual', label: 'Entered by hand (old)' },
+  { code: 'campaign', label: 'Campaign (old)' },
+] as const;
+
+/**
+ * A stored code as words.
+ *
+ * Takes the pulled list rather than reading configuration, because everything
+ * in this file is pure — and falls through to the retained codes above and
+ * then to the code itself, which is the honest last answer: a source nobody
+ * here recognises is better shown as the word it was stored as than hidden.
+ */
+export function leadSourceLabel(
+  code: string | null | undefined,
+  sources: readonly LeadSource[],
+): string | null {
+  const c = (code ?? '').trim();
+  if (!c) return null;
+  return (
+    sources.find((s) => s.code === c)?.label ??
+    LEGACY_LEAD_SOURCES.find((s) => s.code === c)?.label ??
+    c
+  );
+}
 
 /**
  * What the account IS in the trade.
