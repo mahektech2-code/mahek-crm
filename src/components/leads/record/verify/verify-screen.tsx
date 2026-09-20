@@ -373,12 +373,15 @@ export function VerifyScreen({
           body={`The newest was ${stamp(priorCalls[0].calledAt)} by ${priorCalls[0].managerName ?? "a manager"} and came to “${verificationResultLabel(
             verificationResultOf(
               priorCalls[0].verified,
-              /* Every row this door writes is a CORRECTION — a confirmation on a
-                 validation call was never worth a row, which is what `0155`'s
-                 own comment says. The day `LeadCorrection` starts carrying the
-                 other two verdicts this has to count only the corrected ones,
-                 and it will be a filter here rather than a second definition. */
-              priorCalls[0].corrections.length,
+              /* ONLY THE CORRECTIONS, and the day this comment predicted has
+                 arrived. It used to count every row, on the reasoning that a
+                 confirmation on a validation call was never worth one — true
+                 of this door and never true of the other. `0155` gave the table
+                 three verdicts, and a field check made in the shop can carry a
+                 `validation_id`, so an unfiltered count would read a manager's
+                 confirmations back to him as figures he had corrected.
+                 A filter here rather than a second definition, as promised. */
+              priorCalls[0].corrections.filter((c) => c.verdict === "corrected").length,
             ),
           )}”. A lead is routinely validated twice and the first call is usually the one that matters, so this writes a new row rather than editing that one.`}
         />

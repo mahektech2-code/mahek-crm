@@ -1885,20 +1885,48 @@ function Corrections({ rows }: { rows: LeadCorrection[] }) {
   if (!rows.length) return null;
   return (
     <div className="mt-2 rounded-[4px] border border-divider bg-canvas px-3 py-2">
+      {/* "CHECKED", not "corrected", since `0155`. The table carried only
+          corrections when this panel was written, because on a validation call
+          a figure the shop agreed with was not worth a row. A field check made
+          in the shop is a row for all three answers, and two of them assert no
+          new value — so a heading promising corrections over a confirmation is
+          the screen telling somebody their own answer was overruled when it was
+          upheld. The three are drawn together on purpose: a confirmation is the
+          evidence that somebody asked again and got the same answer, which is
+          the whole of what a second visit buys. */}
       <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-        What the call corrected
+        What was checked
       </div>
       <p className="mb-2 max-w-[560px] text-[12px] text-pretty text-muted">
-        The lead still carries the salesman&rsquo;s own answer. These are what the shop said
-        instead, kept beside his rather than written over it &mdash; this is not an edit history.
+        The lead still carries the salesman&rsquo;s own answer. These are what came back when
+        somebody asked again, kept beside his rather than written over it &mdash; this is not an
+        edit history.
       </p>
       <div className="flex flex-col gap-2">
         {rows.map((r) => (
           /* One column on a phone, two once there is room. A before/after side
              by side at 360px is two words a line and unreadable. */
-          <div key={r.id} className="border-l-[3px] border-warn pl-2.5">
+          <div
+            key={r.id}
+            className={
+              r.verdict === "corrected"
+                ? "border-l-[3px] border-warn pl-2.5"
+                : "border-l-[3px] border-divider pl-2.5"
+            }>
             <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
               {findingLabel(r.field)}
+              {/* The verdict in WORDS beside the field, never carried by the
+                  rule's colour alone: only a correction changed anything, and
+                  which of the other two it was is the difference between "we
+                  asked and it stood up" and "we asked and could not establish
+                  it". Those are opposite facts about the same unchanged value. */}
+              <span className="ml-1.5 normal-case tracking-normal text-body">
+                {r.verdict === "corrected"
+                  ? "· corrected"
+                  : r.verdict === "confirmed"
+                    ? "· confirmed"
+                    : "· could not be verified"}
+              </span>
             </div>
             <div className="mt-0.5 grid grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-2">
               <div className="min-w-0 text-[12px]">
@@ -1907,12 +1935,19 @@ function Corrections({ rows }: { rows: LeadCorrection[] }) {
                   {r.original ?? <span className="text-muted">he recorded nothing</span>}
                 </span>
               </div>
-              <div className="min-w-0 text-[12px]">
-                <span className="text-muted">The shop says: </span>
-                <span className="text-ink">{r.corrected}</span>
-              </div>
+              {/* Only a correction asserts a new value. Drawing an empty "The
+                  shop says" under a confirmation would read as the shop having
+                  said nothing when it agreed. */}
+              {r.verdict === "corrected" ? (
+                <div className="min-w-0 text-[12px]">
+                  <span className="text-muted">The shop says: </span>
+                  <span className="text-ink">{r.corrected}</span>
+                </div>
+              ) : null}
             </div>
-            <div className="mt-0.5 text-[12px] text-pretty text-body">{r.reason}</div>
+            {r.reason ? (
+              <div className="mt-0.5 text-[12px] text-pretty text-body">{r.reason}</div>
+            ) : null}
             <div className="mt-0.5 text-[12px] text-muted">
               {r.changedByName ?? "a manager"} · {stamp(r.changedAt)}
             </div>
