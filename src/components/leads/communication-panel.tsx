@@ -6,7 +6,7 @@ import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { stamp } from "@/lib/format";
 import { COMMUNICATION_ACTIONS } from "@/lib/lead-labels";
-import type { PublishedDocument, TimelineRow } from "@/lib/services/lead-console-service";
+import type { LeadCommunications, PublishedDocument } from "@/lib/services/lead-console-service";
 import { recordCommunication } from "@/lib/actions/leads";
 import { Button, Pill } from "@/components/console/parts";
 
@@ -61,39 +61,31 @@ import { Button, Pill } from "@/components/console/parts";
  * copy of the brochure. §16's chase counter exists for the same reason one
  * level up.
  *
- * **THE CODE IS READ OFF THE SOURCE ID, which is where the action deliberately
- * put it.** `timeline_events.summary` says in its own schema comment that it is
- * never parsed, so counting by matching the label inside the sentence would be
- * reading the one column that is not allowed to be read — and it would break
- * the first time somebody reworded a button. `recordCommunication` writes
- * `<generated id>:<action code>` for exactly this, and `lead-actions-service`
- * splits it the same way in SQL. Two readings of one convention, which is a
- * thing to watch: they agree today because both take everything after the first
- * colon, and the generated id contains none.
+ * **AND THE COUNT COMES FROM SQL, which it did not.** It was tallied here,
+ * over the rows this component happened to hold — and `leadCommunications` is
+ * capped at thirty, so on a lead rung more often than that every badge counted
+ * within the newest thirty and read low with nothing anywhere saying so. That
+ * is exactly the mistake the CRM's timeline pills made before their counts
+ * came from SQL: a capped read that prints a number is a number about the cap
+ * and not about the thing. A badge undercounting is worse than no badge,
+ * because the whole of its job is to stop the sixth copy going out.
+ *
+ * So the service groups the WHOLE history and this renders what it is handed —
+ * `countByAction` for the badges, `unattributed` for the rows that predate the
+ * code, `total` for what the list below is a slice of. Nothing here parses a
+ * source id any more: the convention lives in `sourceIdField` in
+ * `lib/timeline.ts`, which is FIELD TWO of the colon-separated id, and this
+ * file used to read everything-after-the-first-colon instead. The two agreed
+ * only while no id had three fields, and `verificationCorrection` already
+ * writes one that does.
  *
  * **AN ENTRY WITH NO CODE IS COUNTED APART, and said in words.** Rows written
  * before the suffix existed carry a bare id, so they are communications that
  * genuinely happened and cannot be attributed to one of the eleven. Folding
- * them into the nearest button would be inventing which; dropping them silently
- * would make the badges quietly undercount on exactly the oldest leads, where
- * the history matters most.
+ * them into the nearest button would be inventing which; dropping them
+ * silently would make the badges quietly undercount on exactly the oldest
+ * leads, where the history matters most.
  */
-type SentTally = { byCode: Map<string, number>; unattributed: number };
-
-function sentPerAction(history: TimelineRow[]): SentTally {
-  const byCode = new Map<string, number>();
-  let unattributed = 0;
-  for (const h of history) {
-    const at = h.sourceRecordId?.indexOf(":") ?? -1;
-    const code = at >= 0 ? h.sourceRecordId!.slice(at + 1) : "";
-    if (!code) {
-      unattributed += 1;
-      continue;
-    }
-    byCode.set(code, (byCode.get(code) ?? 0) + 1);
-  }
-  return { byCode, unattributed };
-}
 
 /** The green mark on a button that has already been pressed, and how often. */
 function SentBadge({ n }: { n: number }) {
@@ -106,7 +98,7 @@ function SentBadge({ n }: { n: number }) {
           : `This has gone out ${n} times. When, and who sent each, is in the list below.`
       }
     >
-      {n === 1 ? "Sent" : `Sent ×${n}`}
+      {n === 1 ? "Sent" : `Sent \u00d7${n}`}
     </span>
   );
 }
@@ -121,7 +113,13 @@ export function CommunicationPanel({
   customerId: string;
   /** Keyed by `mbos_documents.category`. Absent means nothing is published. */
   documents: Record<string, PublishedDocument>;
-  history: TimelineRow[];
+  /**
+   * The capped list, the counts over the whole history, and what the list is
+   * a slice of. One object rather than four props because they are one read
+   * and a screen holding three of the four is a screen quoting a count
+   * against a list it does not match.
+   */
+  history: LeadCommunications;
   disabled: boolean;
   disabledReason?: string;
 }) {
@@ -167,8 +165,6 @@ export function CommunicationPanel({
     (a) => a.document && !documents[a.document],
   );
 
-  const sent = sentPerAction(history);
-
   return (
     <section className="rounded-[6px] border border-line bg-surface px-5 py-4">
       <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
@@ -189,7 +185,7 @@ export function CommunicationPanel({
              does not unsend it — hiding the mark there would make the one case
              where somebody most needs the history read as never having
              happened. */
-          const n = sent.byCode.get(a.code) ?? 0;
+          const n = history.countByAction[a.code] ?? 0;
           return (
             <Button
               key={a.code}
@@ -226,23 +222,36 @@ export function CommunicationPanel({
         <div className="mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
           What has gone out
         </div>
-        {sent.unattributed ? (
+        {history.unattributed ? (
+          /* Counted over the whole history and not over the list, so the
+             sentence says "on this lead" rather than "below" — several of
+             these can sit past the cap, and pointing at rows that are not on
+             the screen is how somebody concludes the panel is broken. */
           <p className="mb-1.5 text-[12px] text-muted">
-            {sent.unattributed === 1
-              ? "One entry below was"
-              : `${sent.unattributed} entries below were`}{" "}
-            recorded before the action was stored with them, so {sent.unattributed === 1 ? "it is" : "they are"}{" "}
-            in this list and not counted on any button above.
+            {history.unattributed === 1
+              ? "One communication on this lead was"
+              : `${history.unattributed} communications on this lead were`}{" "}
+            recorded before the action was stored with them, so{" "}
+            {history.unattributed === 1 ? "it is" : "they are"} not counted on any button above.
           </p>
         ) : null}
-        {history.length === 0 ? (
+        {history.rows.length < history.total ? (
+          /* A capped list says what it is a slice of. Thirty is plenty of
+             when-and-by-whom for a panel somebody skims, and the badges above
+             are not a slice of anything — they are the whole history, from
+             SQL, which is why the two numbers may honestly differ. */
+          <p className="mb-1.5 text-[12px] text-muted">
+            Showing the newest {history.rows.length} of {history.total}.
+          </p>
+        ) : null}
+        {history.rows.length === 0 ? (
           <p className="text-[13px] text-muted">
             Nothing recorded. A lead nobody has contacted and a lead somebody rang four times look
             identical until one of these is written down.
           </p>
         ) : (
           <ul className="m-0 list-none p-0">
-            {history.map((h) => (
+            {history.rows.map((h) => (
               <li key={h.id} className="border-b border-divider py-1.5 last:border-b-0">
                 <span className="text-[13px] text-body">{h.summary}</span>
                 <span className="ml-2 text-[12px] text-muted">

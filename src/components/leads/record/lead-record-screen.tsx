@@ -33,12 +33,12 @@ import type {
   LeadOrderRow,
   LeadReceiptRow,
   LeadRecord,
+  LeadCommunications,
   LeadCorrection,
   LeadTransition,
   ManagerCall,
   NurtureSchedule,
   PublishedDocument,
-  TimelineRow,
 } from "@/lib/services/lead-console-service";
 import type {
   ApprovalStep,
@@ -318,7 +318,7 @@ export function LeadRecordScreen({
   calls: ManagerCall[];
   timeline: TimelinePage;
   timelineKind: string | null;
-  communications: TimelineRow[];
+  communications: LeadCommunications;
   orders: LeadOrderRow[];
   receipts: LeadReceiptRow[];
   samples: LeadSampleRow[];

@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { asDate } from "../business-date";
 import { STILL_WORKING, dueTodayWindow, overdueWindow } from "../lead-action-window";
 import { COMMUNICATION_ACTIONS, type LeadSalesType, type LeadStage } from "../lead-labels";
-import { MBOS_EVENT } from "../timeline";
+import { MBOS_EVENT, sourceIdField } from "../timeline";
 import { leadsVisible, managerScope } from "./sales-service";
 
 /* ---------------------------------------------------------------------------
@@ -461,10 +461,13 @@ export async function communicationLog({
              e.occurred_at as "occurredAt",
              e.actor_user_id as "actorId", u.name as "actorName",
              e.summary,
-             /* Everything after the first colon, or nothing where there is no
-                colon — split_part returns '' rather than null, so the empty
-                case is turned into a null here and read as "not recorded". */
-             nullif(split_part(e.source_record_id, ':', 2), '') as "actionCode"
+             /* FIELD TWO of the source id, through the one function that
+                knows the shape -- see sourceIdField in timeline.ts. It was
+                spelled out here and read a different way in the panel that
+                draws the badges, and two readings of one convention agree
+                right up until the id grows a third field, which one kind of
+                event already has. */
+             ${sourceIdField("e.source_record_id", 2)} as "actionCode"
         from timeline_events e
         join customers c on c.id = e.customer_id
         left join users u on u.id = e.actor_user_id
