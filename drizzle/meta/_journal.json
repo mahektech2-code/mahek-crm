@@ -1107,6 +1107,13 @@
       "when": 1789885364355,
       "tag": "0158_the_columns_the_schema_always_claimed",
       "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "7",
+      "when": 1789931048129,
+      "tag": "0159_a_place_is_read_off_the_book",
+      "breakpoints": true
     }
   ]
 }
