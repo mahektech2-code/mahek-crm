@@ -59,6 +59,13 @@ npm run jobs:prod:sheets -- customer-master-sync
                            # Google credentials, .env.prod.local SECOND so its
                            # DATABASE_URL wins. Reversed, a "prod" job writes
                            # to the local database and reports success.
+npm run jobs -- resolve-places-lookup       # reverse-geocode the shops that
+                           # carry a pin. The ONE pass that spends requests
+npm run jobs -- resolve-places --dry-run   # the master it WOULD build, off
+                           # what is already stored — writes nothing
+npm run jobs -- resolve-places             # build `places` and point every
+                           # shop at its leaf. Also the REPARSE: the one to
+                           # run when the READING changed, not the answers
 npm run hrms:sync    # pull the employee sheet now
 npm run app:grant -- hrms vikram@mahek.in   # give somebody an app
 npm run catalogue:parse    # regenerate the product master from the document
@@ -243,6 +250,84 @@ show only his own book, already narrowed to the territory he works, and nothing
 there reaches another salesman's. They sit beside the origin chips rather than
 inside the filter sheet because they change what the list IS, and a list whose
 subject is hidden behind a menu is one people misread.
+
+**WHERE A SHOP IS, IS READ OFF THE BOOK RATHER THAN TYPED INTO IT.**
+`customers.city` is what the sheet says, and on the real book that is 1,165
+distinct strings across 5,925 shops — 675 naming exactly one shop, 355 carrying
+a comma because whole postal addresses were dropped into the column, and the
+ordinary duplicates beside them: bhiwendi 55 and bhiwandi 49, bhubaneshwar 71
+and bhubaneswar 39, "jabalpur, madhya pradesh, india" 78 sitting apart from
+plain Jabalpur. `beat`, `area` and `territory_region` are empty on every one of
+those rows and always have been. So a journey is proposed by typing into a box
+against a flat datalist, a territory is allocated by comparing that same text,
+and there has never been a third rung to allocate an area with.
+
+**No rule over those strings can produce a hierarchy** — the city is the first
+comma-separated field in one row and the sixth in the next, and stripping at
+the comma takes 1,165 distinct values to 1,078, which is a rounding error with
+somebody's afternoon spent on it. What produces one is the COORDINATE: 4,930 of
+these shops carry a pin somebody stood on, and a reverse geocode answers with
+the administrative tree the shop is actually in — `administrative_area_level_1`
+the state, `_2` the district, `locality` the city, `sublocality` the area.
+
+**THE DISTRICT AND THE CITY ARE TWO RUNGS though they are often one word.**
+Where they differ they differ enormously: this book carries Kandivali,
+Dombivali, Mira Road and Nalasopara as separate cities with 37 to 92 shops each
+and one district above all four. A territory is allocated in districts and a
+day is walked in cities, and neither rung can do the other's job.
+
+**AND `customers.city` IS NOT CLEANED, because it cannot be.** Two projections
+rewrite `city` and `region` from the sheet on every pass and neither is
+decision-guarded the way the manager seats are, so a corrected row is gone
+within half an hour — the `sales_person_name` failure this file already
+records, where holding the id and letting the name revert was the worst outcome
+available, and the reason `india-states.ts` normalises on read instead. The
+resolution is a DERIVED CACHE beside those columns: four ids on `customers`,
+rebuilt by `resolvePlaces()`, and nothing here replaces a column.
+
+**THREE PASSES, THREE COSTS, and only the first one spends anything.**
+`lookupPlaces` asks Ola and writes only `customer_place_lookups`;
+`proposePlaces` reads those and builds the tree it WOULD write, writing
+nothing; `resolvePlaces` writes the master and the ids. It is the sheet jobs'
+own split — sync, project, reparse — and the middle pass exists because a place
+master is what every territory and every journey gets picked from afterwards:
+a wrong node is not a row somebody notices, it is a shop that quietly stops
+appearing on a list.
+
+**A CHANGED READING COSTS NOTHING, which is what the lookup table buys.** The
+raw answer is kept per shop, so improving `parsePlace` means re-running the
+third pass rather than re-spending 4,930 requests. Without it this would be the
+Taken Order tab again, where a hash-driven sync re-read nothing when the rule
+changed and 294 rows stayed muted on the strength of a decision already
+reversed in the code.
+
+**IT GOES THROUGH `olaGet`, and here that matters more than anywhere.** This is
+by far the largest single spend MahekOne has ever asked of the key pool, and
+going round it with a bare `readSecret` would mean a run that dies half-way
+with four unused accounts configured and nothing recording why.
+
+**A TREE CANNOT HAVE A HOLE IN IT.** Ola answers rural coordinates with a state
+and a district and no locality, and a sublocality arriving under that hole
+would have to hang from the district — a rung it is not the child of, and every
+count above it would then be counting two different things. The chain ends
+where the answer does. A missing rung is never filled in from the one above it
+either: "the area is Nagpur" invented from the city is a statement nobody made,
+and `neighborhood` is not read as a second-choice sublocality, because it is a
+finer grain and promoting it would put two rungs in one column.
+
+**NULL IS THE HONEST ANSWER, and it is counted rather than hidden.** A shop
+with no pin resolves to nothing; forcing it into the state its typed text
+happens to name would put a guess in a column every screen reads as a fact. The
+proposal reports the unresolved by cause — never asked, asked and unanswered —
+the same rule `statelessShops` already follows.
+
+**AND A ROW SOMEBODY DECIDED IS LEFT ALONE.** `place_decided_at` is the third
+mark of its kind after `orders.approvedAt` and `customers.amDecidedAt`, and it
+guards the same thing: a job that runs unattended must not undo a person's
+decision. It is separate from `place_source` because they answer different
+questions — the source says how to READ the figure, the mark says whether
+anything may TOUCH it, which is the split `bills.paymentPosition` and
+`bills.paymentDecidedAt` already keep.
 
 **A TERRITORY NARROWS A BOOK. IT IS NOT A PERMISSION.**
 `mbos_user_territories` — renamed from `mbos_manager_territories`, because it is
@@ -1189,6 +1274,13 @@ src/
     catalogue-seed.ts      the product master, GENERATED from the document
   lib/
     apps.ts                the MahekOne app registry
+    place-parse.ts         a reverse-geocode answer -> state/district/city/area
+                           — PURE, the four rungs and the fold they match on
+    services/place-service.ts
+                           the three passes: ask, propose, resolve
+    services/ola-reverse-geocode-service.ts
+                           a coordinate -> the tree it sits in, through the
+                           same key pool every other Ola call uses
     account-types.ts       direct customer / lead / third-party customer, their
                            filter and their labels — PURE, read by both lists
                            and both list pages

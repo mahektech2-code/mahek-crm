@@ -66,6 +66,11 @@ import {
 } from "./services/field-activity-sync-service";
 import { projectFieldActivityTimeline } from "./services/field-activity-projection-service";
 
+import {
+  lookupPlaces,
+  proposePlaces,
+  resolvePlaces,
+} from "./services/place-service";
 import { syncCustomerMasterSheet } from "./services/customer-master-sync-service";
 import { projectCustomerMaster } from "./services/customer-master-projection-service";
 import { notifyUsers } from "./notify";
@@ -115,6 +120,10 @@ export type JobName =
   | "customer-master-project"
   /** Address to a coordinate, for the shops nobody has stood in. */
   | "geocode-customers"
+  /** A coordinate to the tree it sits in — spends the API, stores the answer. */
+  | "resolve-places-lookup"
+  /** Build the master and point every shop at its leaf, from what is stored. */
+  | "resolve-places"
   | "sheet-payments"
   | "taken-order-sync"
   | "taken-order-reparse"
@@ -723,6 +732,49 @@ export async function runJob(
           async () => {
             const out = await geocodeCustomers();
             return { recordsAffected: out.located, detail: out.detail };
+          },
+          triggeredById,
+        ),
+      ];
+    case "resolve-places-lookup":
+      /*
+       * THE ONLY PASS THAT SPENDS ANYTHING, and the only one that is not
+       * undone by running it again. Hand-triggerable and NOT in the nightly,
+       * the same reasoning `geocode-customers` beside it already gets: a job
+       * that quietly makes external requests every night is one nobody
+       * remembers is running when the bill or the 429 arrives. Bounded per
+       * run, a shop asked once, so repeating it is safe — it finds less to do
+       * each time and eventually nothing.
+       */
+      return [
+        await run(
+          "resolve-places-lookup",
+          async () => {
+            const out = await lookupPlaces();
+            return { recordsAffected: out.answered, detail: out.detail };
+          },
+          triggeredById,
+        ),
+      ];
+    case "resolve-places":
+      /*
+       * READS WHAT IS STORED and asks nothing of anybody. `--dry-run` builds
+       * the tree it would write and writes nothing, which is how somebody
+       * reads a place master BEFORE every territory and every journey starts
+       * being picked from it. Without the flag it is the reparse as well as
+       * the build: a change to `parsePlace` lands by running this, never by
+       * re-spending the requests.
+       */
+      return [
+        await run(
+          "resolve-places",
+          async () => {
+            if (options.dryRun) {
+              const p = await proposePlaces();
+              return { recordsAffected: 0, detail: `DRY RUN — ${p.detail}` };
+            }
+            const out = await resolvePlaces();
+            return { recordsAffected: out.resolved, detail: out.detail };
           },
           triggeredById,
         ),

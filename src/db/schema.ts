@@ -13,6 +13,7 @@ import {
   pgEnum,
   primaryKey,
   check,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 
@@ -1144,6 +1145,136 @@ export const leadQualificationReviewEnum = pgEnum("lead_qualification_review", [
   "clarification",
 ]);
 
+/* ══════════════════════════════════════════════════ where a shop actually is
+
+   THE PLACE MASTER, read off the book rather than typed into it.
+
+   `customers.city` is what the sheet says, and on the real book that is 1,165
+   distinct strings across 5,925 shops — 675 of them naming one shop, 355
+   carrying a comma because whole postal addresses were dropped into the
+   column. `beat`, `area` and `territory_region` are empty on every row. So a
+   journey is proposed against a flat datalist of whatever anybody spelled, a
+   territory is allocated by comparing that same text, and there is no third
+   rung to allocate an area with.
+
+   No rule over those strings can produce a hierarchy — the city is the first
+   comma-separated field in one row and the sixth in the next. What produces
+   one is the COORDINATE: 4,930 of these shops carry a pin somebody stood on,
+   and a reverse geocode of one answers with the administrative tree the shop
+   is actually in.
+
+   It is a table and not a derivation like `knownPlaces`, because a tree needs
+   ids: a journey stop, a territory row and a report all have to name the same
+   node, and naming it by text is what put "bhiwendi" and "bhiwandi" in two
+   territories. It still obeys that function's rule — every node is built from
+   shops that resolved to it, so the picker can never offer somewhere no
+   customer is.                                                              */
+
+export const places = pgTable(
+  "places",
+  {
+    id: text("id").primaryKey(),
+    /**
+     * `state` | `district` | `city` | `area`, coarsest first.
+     *
+     * TEXT AND NOT AN ENUM. A value added to an enum may not be USED in the
+     * transaction that adds it and drizzle-kit runs every pending migration in
+     * one, so a fifth rung would fail only on a database built from scratch —
+     * which is CI, and never the machine it was written on. `PLACE_KINDS` in
+     * `lib/place-parse.ts` is the vocabulary, pure and client-safe because the
+     * picker is a client component.
+     */
+    kind: text("kind").notNull(),
+    /** As shown. The first spelling seen wins and nothing rewrites it. */
+    name: text("name").notNull(),
+    /** `placeKey(name)` — the fold two spellings share, and what a match compares on. */
+    key: text("key").notNull(),
+    /**
+     * What this was picked UNDER. Null on a state, the top of the tree.
+     *
+     * A real self-reference rather than the empty string `mbosUserTerritories`
+     * uses for the same idea: that column stores a NAME and this stores an ID,
+     * and a parent deleted out from under its children is the one thing an id
+     * must not allow.
+     */
+    parentId: text("parent_id").references((): AnyPgColumn => places.id, {
+      onDelete: "cascade",
+    }),
+    /**
+     * How many shops resolve here. A CACHE, rebuilt with the tree.
+     *
+     * The picker prints it, because a city of 1 is usually a typo and a
+     * district of 400 is where somebody means to start — the same reason
+     * `knownPlaces` carries a count on every node.
+     */
+    shops: integer("shops").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    /*
+     * TWO INDEXES FOR ONE RULE. Postgres treats two NULLs as distinct, so a
+     * single unique index over (kind, key, parent_id) would happily create
+     * Maharashtra twice. The partial pair says the rule at both ends of the
+     * tree.
+     */
+    uniqueIndex("places_root_key")
+      .on(t.kind, t.key)
+      .where(sql`${t.parentId} is null`),
+    uniqueIndex("places_child_key")
+      .on(t.kind, t.key, t.parentId)
+      .where(sql`${t.parentId} is not null`),
+    index("places_parent_idx").on(t.parentId, t.kind),
+  ],
+);
+
+/**
+ * WHAT THE GEOCODER SAID ABOUT ONE SHOP, kept verbatim.
+ *
+ * The reason it is kept is the lesson the Taken Order tab already taught: a
+ * hash-driven sync re-reads nothing when the RULE changes, so 294 rows stayed
+ * muted on the strength of a decision already reversed in the code. A reverse
+ * geocode costs a request per shop against somebody else's rate limit and
+ * re-reading what is stored costs nothing — without this table, improving how
+ * an answer is READ would mean spending 4,930 requests to find out whether the
+ * improvement helped. `resolve-places-reparse` is the command that exists
+ * because of it, the twin of `taken-order-reparse`.
+ *
+ * A SHOP IS ASKED ONCE. `lookedUpAt` is stamped whether or not an answer came
+ * back, so a run does not spend its budget re-asking the unanswerable — the
+ * discipline `geocode-job-service.ts` already keeps one table over.
+ */
+export const customerPlaceLookups = pgTable(
+  "customer_place_lookups",
+  {
+    customerId: text("customer_id")
+      .primaryKey()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /**
+     * `gps` | `geocode` | `pincode` — WHICH EVIDENCE was asked.
+     *
+     * Not how good it is. A field pin and a geocoded address are both
+     * coordinates and are not the same claim: one is somebody standing in the
+     * shop, the other is Ola's reading of a line of text, which outside the
+     * metros is the centre of a locality and can be several hundred metres
+     * from the door.
+     */
+    source: text("source").notNull(),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    /** Exactly what came back. A parse is a reading of this and can be redone. */
+    raw: jsonb("raw"),
+    /**
+     * False means we asked and got nothing usable — distinguishable from never
+     * having asked, which is the absence of the row. Two different facts about
+     * a shop, and no screen may render them alike.
+     */
+    ok: boolean("ok").notNull().default(false),
+    lookedUpAt: timestamp("looked_up_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("customer_place_lookups_source_idx").on(t.source, t.ok)],
+);
+
 export const customers = pgTable(
   "customers",
   {
@@ -1899,6 +2030,48 @@ export const customers = pgTable(
     /** Wider than `region`, which the sheet fills — this is the sales territory. */
     territoryRegion: text("territory_region"),
 
+    /* ---- WHERE THIS SHOP ACTUALLY IS, resolved rather than typed ----
+     *
+     * The four columns above are what the SHEET says, and on the real book
+     * that is 1,165 distinct `city` strings for 5,925 shops with `beat`,
+     * `area` and `territory_region` empty on every row. These four are what a
+     * reverse geocode of the shop's own pin says, which is a tree somebody can
+     * pick down: state → district → city → area.
+     *
+     * DERIVED, never hand-edited — `resolvePlaces()` in
+     * `place-service.ts` rebuilds them, and the raw evidence each one came
+     * from is kept in `customer_place_lookups` so improving the READING costs
+     * nothing. The sheet columns are left exactly as they are and go on being
+     * overwritten by their projections; nothing here replaces one.
+     *
+     * Four ids and not one, so a screen asks its own question: the territory
+     * picker wants the district, the journey picker wants the city, and a
+     * report groups by the state without walking a parent chain.
+     *
+     * NULL IS THE HONEST ANSWER for a shop with no pin and no address.
+     * Forcing it into the state its typed text happens to name would put a
+     * guess in a column every screen reads as a fact.
+     */
+    resolvedStateId: text("resolved_state_id").references(() => places.id),
+    resolvedDistrictId: text("resolved_district_id").references(() => places.id),
+    resolvedCityId: text("resolved_city_id").references(() => places.id),
+    resolvedAreaId: text("resolved_area_id").references(() => places.id),
+    /** `gps` | `geocode` | `pincode` | `manual` — which evidence answered. */
+    placeSource: text("place_source"),
+    placeResolvedAt: timestamp("place_resolved_at", { withTimezone: true }),
+    /**
+     * A PERSON CHOSE THIS, and the rebuild leaves the row alone.
+     *
+     * The same mark as `amDecidedAt` and `orders.approvedAt`, guarding the
+     * same thing: a job that runs unattended must not undo somebody's
+     * decision. Separate from `placeSource` because they answer different
+     * questions — the source says how to READ the figure, this says whether
+     * anything may TOUCH it, which is the split `bills.paymentPosition` and
+     * `bills.paymentDecidedAt` already keep.
+     */
+    placeDecidedAt: timestamp("place_decided_at", { withTimezone: true }),
+    placeDecidedById: text("place_decided_by_id").references(() => users.id),
+
     customerType: customerTypeEnum("customer_type"),
     potential: customerPotentialEnum("potential"),
     /**
@@ -1978,6 +2151,8 @@ export const customers = pgTable(
      */
     index("customers_sales_manager_idx").on(t.salesManagerId),
     index("customers_relationship_owner_idx").on(t.relationshipOwnerId),
+    index("customers_resolved_district_idx").on(t.resolvedDistrictId),
+    index("customers_resolved_city_idx").on(t.resolvedCityId),
     index("customers_sales_manager_name_idx").on(t.salesManagerPersonName),
     index("customers_name_idx").on(t.name),
     index("customers_phone_idx").on(t.phone),

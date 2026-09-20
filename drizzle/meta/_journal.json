@@ -1079,6 +1079,13 @@
       "when": 1789885360355,
       "tag": "0154_what_the_share_is_of",
       "breakpoints": true
+    },
+    {
+      "idx": 158,
+      "version": "7",
+      "when": 1789931048129,
+      "tag": "0158_a_place_is_read_off_the_book",
+      "breakpoints": true
     }
   ]
 }

@@ -58,6 +58,7 @@ const files = [
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
   "src/lib/seat-mirrors.test.ts",
+  "src/lib/place-master.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
   // The dashboard reads its four figures from `queueProgress`, which must stay
