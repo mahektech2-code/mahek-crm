@@ -9,6 +9,7 @@ import {
   normaliseMobile,
   stageRefusal,
   followUpRefusal,
+  viewMatch,
   type DuplicateMatch,
   type LeadThresholds,
   type VisitCapThresholds,
@@ -243,11 +244,51 @@ export async function getLead(id: string): Promise<Lead | null> {
 
 /** Still being worked — what the More screen counts on its row. */
 export async function openLeadCount(): Promise<number> {
+  /*
+   * THE LAST READER OF THE SIX-WORD COLUMN, and it had to stop being one.
+   *
+   * It counted `stage NOT IN ('Converted','Lost')` — the legacy column, in the
+   * legacy vocabulary. That was close enough while `legacyStageFor` kept the
+   * two in step, and "close enough, kept in step by a function maintained
+   * somewhere else" is exactly the shape that drifts: `Converted` was not even
+   * offered as a chip until this release, so the column could already hold a
+   * word no screen would show.
+   *
+   * `viewMatch` is the reading the whole book takes now — the chips, the badge
+   * on the row and this badge on More — so a lead counted here as still being
+   * worked is one the salesman can actually find when he taps it. That is the
+   * only promise a badge makes, and two readings of "still open" is how it
+   * comes to be broken.
+   *
+   * Both arms of the match are needed, exactly as they are on the book: a row
+   * carries `funnelStage`, or the six-word column where nothing has ever sent
+   * one. Dropping either loses half the leads.
+   */
+  const done = (['converted', 'lost'] as const).map(viewMatch);
+  const clauses: string[] = [];
+  const args: string[] = [];
+  for (const m of done) {
+    if (!m) continue;
+    if (m.rungs.length) {
+      clauses.push(`funnelStage IN (${m.rungs.map(() => '?').join(',')})`);
+      args.push(...m.rungs);
+    }
+    if (m.legacy.length) {
+      clauses.push(
+        `(funnelStage IS NULL AND stage IN (${m.legacy.map(() => '?').join(',')}))`,
+      );
+      args.push(...m.legacy);
+    }
+  }
+
+  const where = clauses.length ? ` AND NOT (${clauses.join(' OR ')})` : '';
   const row = await one<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM leads WHERE archived = 0 AND stage NOT IN ('Converted','Lost')`,
+    `SELECT COUNT(*) AS n FROM leads WHERE archived = 0${where}`,
+    args,
   );
   return row?.n ?? 0;
 }
+
 
 export function notesOf(lead: Pick<Lead, 'notes'>): LeadNote[] {
   if (!lead.notes) return [];

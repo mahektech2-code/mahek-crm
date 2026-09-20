@@ -27,17 +27,31 @@ import { isParked, isTerminal, type LeadStage } from './funnel';
  * would leave every parked lead invisible on the morning it was supposed to
  * return.
  *
- * ONE CLAUSE OF THE SERVER'S OVERDUE WINDOW IS DELIBERATELY NOT COPIED, and
- * copying it would have emptied this screen. The office adds
+ * ONE CLAUSE OF THE SERVER'S OVERDUE WINDOW WAS DELIBERATELY NOT COPIED, and
+ * refusing to copy it is what found the bug at the other end. The office added
  * `lead_next_action_outcome is null`, reading that column as whether anybody
- * has written down what happened. On THIS phone that column holds the
- * opposite: `next-action-sheet.tsx` asks "what you expect to come back with"
- * and writes it in the same breath as the action and the day. So a salesman
- * who did the thorough job — action, day, person AND what he is after — would
- * have had that lead silently excluded from Overdue for ever, while the
- * half-filled ones showed up. The two ends mean different things by one word,
- * which is worth knowing about and is not this file's to settle; what this
- * file can do is not act on the word it does not own.
+ * had written down what happened. On this phone it plainly holds the opposite:
+ * `next-action-sheet.tsx` asks "what you expect to come back with" and writes
+ * it in the same breath as the action and the day.
+ *
+ * The phone was right and the office was wrong. That column is §24's FOURTH
+ * ANSWER — the schema says so, and `advanceLeadStage` refuses a move without
+ * one — so the clause excluded every lead that had followed the rule and
+ * admitted only the ones that had not. A salesman who did the thorough job had
+ * that lead silently out of Overdue for ever while the half-filled ones showed
+ * up. `overdueWindow` and the record's own next-action band have both been
+ * corrected; nothing anywhere records whether the call was made, so there is
+ * no second half to the sentence at either end. The two windows agree now.
+ *
+ * ---------------------------------------------------------------------------
+ * THIS IS THE NARROW READING, AND THE BOOK'S OWN CHIPS ARE WIDER ON PURPOSE.
+ * `LEAD_WHENS` in `engines/leads.ts` answers "when does this lead next want
+ * him" over the EARLIEST of three days — §24's action, the salesman's own
+ * diary (`nextFollowUpDate`) and a park reading back. This file answers §24
+ * alone, which is a smaller question and the right one for a worklist: the
+ * diary is his own note to himself and is not a thing the office is owed.
+ * They are meant to differ, and the row on each says which day it is talking
+ * about, so nobody has to reconcile two numbers by eye.
  *
  * ---------------------------------------------------------------------------
  * EVERY COMPARISON IS STRING-TO-STRING, and that is not laziness. These are
