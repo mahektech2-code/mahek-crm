@@ -34,7 +34,7 @@ import {
   REQUEST_STATUS_LABEL,
   listSummary,
 } from "@/lib/price-list-labels";
-import type { CustomerPricing, PricingOptions } from "@/lib/price-list-views";
+import type { CustomerPricing, PricingApp, PricingOptions } from "@/lib/price-list-views";
 import { WhyThisPriceModal } from "./modals/why-this-price-modal";
 import { SpecialPriceModal } from "./modals/special-price-modal";
 import { AssignCustomerListModal } from "./modals/assign-customer-list-modal";
@@ -52,7 +52,7 @@ export function CustomerPricesPanel({
   canManage: boolean;
   /** Where this app's price lists live, for the link on the list's name. */
   basePath: string;
-  app: "sales" | "crm";
+  app: PricingApp;
   gstBp: number;
   lists: PricingOptions["lists"];
 }) {

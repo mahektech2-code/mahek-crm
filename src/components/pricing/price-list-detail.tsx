@@ -43,7 +43,7 @@ import {
 import { ConfirmDialog, RowMenu, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { useRouter } from "next/navigation";
-import type { PriceListDetail as Detail, PricingOptions, RateRow, ScopeView } from "@/lib/price-list-views";
+import type { PriceListDetail as Detail, PricingApp, PricingOptions, RateRow, ScopeView } from "@/lib/price-list-views";
 import {
   FREIGHT_TERM_HINT,
   LIST_STATUS_LABEL,
@@ -77,7 +77,7 @@ export function PriceListDetailScreen({
   detail,
   options,
 }: {
-  app: "sales" | "crm";
+  app: PricingApp;
   basePath: string;
   canManage: boolean;
   todayIso: string;
