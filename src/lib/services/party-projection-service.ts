@@ -72,6 +72,22 @@ const DEACTIVATED_BY_MASTER = "Marked Deactive on the customer master";
 
 const normal = (s: string | null) => (s ? s.trim().toLowerCase() : null);
 
+/**
+ * The Sales Party tab's `Payment type` as the resolution engine reads it.
+ *
+ * "Paid" and "To Pay" are the only two answers that mean anything — transport
+ * built into the price, or paid by the shop on delivery — and anything else is
+ * NULL rather than a guess: an unrecognised word read as one of the two would
+ * price a whole state off the wrong list, silently, and null is a state the
+ * engine already handles by accepting a list of either term.
+ */
+function freightTermOf(raw: string | null): "paid" | "to_pay" | null {
+  const word = raw?.trim().toLowerCase().replace(/\s+/g, " ") ?? "";
+  if (word === "paid") return "paid";
+  if (word === "to pay") return "to_pay";
+  return null;
+}
+
 export async function projectParties(
   options: PartyProjectionOptions = {},
 ): Promise<PartyProjectionReport> {
@@ -109,6 +125,11 @@ export async function projectParties(
       city: customers.city,
       region: customers.region,
       priceTag: customers.priceTag,
+      // The other two halves of which price list applies. Read for the same
+      // reason `priceTag` is: the sheet fills a blank and never corrects a
+      // person, so the projection has to be able to tell the two apart.
+      freightTerm: customers.freightTerm,
+      deliveryType: customers.deliveryType,
       leadSource: customers.leadSource,
       creditDays: customers.creditDays,
       kind: customers.kind,
@@ -316,6 +337,25 @@ export async function projectParties(
         ...(party.tagPricelist?.trim() && !customer.priceTag?.trim()
           ? { priceTag: party.tagPricelist.trim() }
           : {}),
+        /*
+         * WHO PAYS THE FREIGHT, and how the goods go — the second half of
+         * which price list applies.
+         *
+         * "Odisha Paid" is "Odisha To Pay" plus twelve rupees a litre, so a
+         * shop whose freight term is unknown matches a list of either and is
+         * priced from whichever the resolver happens to reach first. The sheet
+         * is the only place this is ever stated, and it is stated beside the
+         * price tag that is already mirrored here — mirroring one and not the
+         * others left the resolution engine with a column it could never read.
+         *
+         * Same rule as the tag above: fill a blank, never correct a person.
+         */
+        ...(freightTermOf(party.paymentType) && !customer.freightTerm?.trim()
+          ? { freightTerm: freightTermOf(party.paymentType) }
+          : {}),
+        ...(party.deliveryType?.trim() && !customer.deliveryType?.trim()
+          ? { deliveryType: party.deliveryType.trim() }
+          : {}),
         ...(party.area && !customer.city.trim() ? { city: party.area } : {}),
         ...(party.state && !customer.region?.trim() ? { region: party.state } : {}),
         ...(party.counterType && !customer.leadSource?.trim()
@@ -385,6 +425,8 @@ export async function projectParties(
         creditTermDays: party.creditDays ?? 30,
         creditDays: party.creditDays,
         priceTag: party.tagPricelist?.trim() || null,
+        freightTerm: freightTermOf(party.paymentType),
+        deliveryType: party.deliveryType?.trim() || null,
         customerSince: party.sinceDate,
         ownerId: options.leadOwnerId ?? null,
       });

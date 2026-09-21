@@ -152,6 +152,7 @@ export const SALES_NAV: NavGroup[] = [
       { href: "/sales/payments", label: "Payments", icon: "money" },
       { href: "/sales/invoices", label: "Invoices", icon: "doc" },
       { href: "/sales/catalogue", label: "Catalogue & rates", icon: "grid" },
+      { href: "/sales/price-lists", label: "Price lists", icon: "money" },
     ],
   },
   {

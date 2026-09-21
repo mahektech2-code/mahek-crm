@@ -514,6 +514,21 @@ export const CAPABILITIES = [
    */
   "distributor.terms",
   "distributor.approve",
+  /*
+   * PRICE LISTS — two capabilities, because reading a price and setting one
+   * are different acts by different people.
+   *
+   * `pricelist.read` is in no set, which is the deliberate meaning of "every
+   * associate holds it": a telecaller pricing an order and a salesman standing
+   * in a shop both need the customer's list in front of them, and a price they
+   * cannot see is a price they guess. `pricelist.manage` — importing, editing,
+   * publishing, scoping and deciding a special price — sits in
+   * ACCOUNTS_OR_MANAGER beside `target.set`, and for the same reason: the
+   * accounts desk is who issues these lists at Mahek, and a manager coaching a
+   * team still needs to act on one without asking accounts to do it for them.
+   */
+  "pricelist.read",
+  "pricelist.manage",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -738,6 +753,9 @@ const ACCOUNTS_OR_MANAGER: ReadonlySet<Capability> = new Set<Capability>([
    * which shops are worth marking still needs to be able to do it themselves.
    */
   "customer.classify",
+  /* Importing, editing, publishing and scoping a price list, and deciding a
+   * special price. See the `pricelist.read` paragraph in CAPABILITIES. */
+  "pricelist.manage",
 ]);
 
 /**

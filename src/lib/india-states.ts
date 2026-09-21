@@ -100,6 +100,12 @@ function tidy(raw: string): string {
  * An unrecognised value comes back tidied rather than dropped or guessed at.
  * A place this file has not been taught is still a place customers are in.
  */
+/** Whether this spelling names a state or union territory this file knows. */
+export function isKnownState(raw: string | null | undefined): boolean {
+  const key = stateKey(raw);
+  return key !== "" && BY_KEY.has(key);
+}
+
 export function canonicalState(raw: string | null | undefined): string {
   const key = stateKey(raw);
   if (!key) return "";

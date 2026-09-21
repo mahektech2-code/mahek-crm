@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth";
+import { isManager, requireUser } from "@/lib/auth";
 import { categoryValue } from "@/lib/complaint-labels";
 import { cached } from "@/lib/reference-cache";
 import { getScope, scopeLabel } from "@/lib/scope";
@@ -205,6 +205,18 @@ export default async function QueuePage({
       maxComplaintImages={config["attachments.maxPerComplaint"]}
       searchEnabled={config["products.searchOnOrderForms"]}
       searchMinChars={config["products.searchMinChars"]}
+      /* Pricing, resolved on the server. The level is the caller's own — an
+         admin holds everything, a manager holds the manager ceiling, and
+         everybody else holds whatever an associate may give, which ships as
+         nothing at all. */
+      discountAuthority={{
+        level:
+          user.role === "admin" ? "admin" : isManager(user) ? "manager" : "associate",
+        associateMaxBp: config["pricing.associateMaxDiscountBp"],
+        managerMaxBp: config["pricing.managerMaxDiscountBp"],
+      }}
+      gstBp={config["pricing.gstBp"]}
+      useListForOrderValue={config["pricing.useListForOrderValue"]}
       userName={user.name}
       products={productOptions}
       scripts={scriptRows.map((a) => ({

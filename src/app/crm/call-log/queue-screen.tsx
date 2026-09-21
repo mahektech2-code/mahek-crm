@@ -17,6 +17,7 @@ import {
 import { ConfirmDialog, FilterPills, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
+import type { DiscountAuthorityInput } from "@/lib/price-list-views";
 import {
   CallPanel,
   type CallTarget,
@@ -120,6 +121,9 @@ export function QueueScreen({
   userName,
   products,
   scripts,
+  discountAuthority,
+  gstBp,
+  useListForOrderValue,
 }: {
   /**
    * The business day, from the server. A date is shown with its year only when
@@ -148,6 +152,16 @@ export function QueueScreen({
   /** The signed-in telecaller, for script placeholders. */
   userName: string;
   products: ProductOption[];
+  /**
+   * What this telecaller may take off a price on their own, and the GST the
+   * lines are grossed up by. Resolved on the server: a ceiling that only
+   * exists in a browser is a ceiling a posted payload walks past, and the
+   * save re-checks it regardless.
+   */
+  discountAuthority: DiscountAuthorityInput;
+  gstBp: number;
+  /** `pricing.useListForOrderValue` — off, the rates are reference only. */
+  useListForOrderValue: boolean;
   scripts: ScriptOption[];
   activity: {
     connected: number;
@@ -712,6 +726,10 @@ export function QueueScreen({
 
       <CallPanel
         target={openTarget}
+        customerId={openTarget?.customerId}
+        discountAuthority={discountAuthority}
+        gstBp={gstBp}
+        useListForOrderValue={useListForOrderValue}
         complaintCategories={categories}
         quickNotes={quickNotes}
         singleSelectOutcomes={singleSelectOutcomes}
