@@ -21,6 +21,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  attachments,
   auditLog,
   customers,
   finishedGoods,
@@ -608,6 +609,63 @@ describe("a document becomes a list", () => {
     });
     assert.equal(published.ok, false);
     assert.match(published.ok ? "" : published.error, /matched to a product/i);
+  });
+});
+
+describe("the file a list was read from", () => {
+  test("whoever may read a price list may open it, and a stranger cannot", async () => {
+    const { canRead } = await import("@/lib/services/attachment-service");
+    const attachmentId = id("att");
+    const documentId = id("pld");
+    await db.insert(attachments).values({
+      id: attachmentId,
+      filename: "Odisha To Pay.pdf",
+      contentType: "application/pdf",
+      sizeBytes: 1024,
+      storedRef: "test/ref",
+      contentHash: randomUUID(),
+      // `createAttachment` writes this once the bytes are stored; a fixture
+      // that leaves the default says the upload never finished.
+      status: "available",
+      uploadedById: manager.id,
+      parentType: "price_list_document",
+      parentId: documentId,
+    });
+    await db.insert(priceListDocuments).values({
+      id: documentId,
+      attachmentId,
+      fileHash: randomUUID(),
+      filename: "Odisha To Pay.pdf",
+      parseStatus: "parsed",
+      uploadedById: manager.id,
+    });
+
+    /* A price list document has no customer behind it, so `canRead` cannot
+     * fall through to a customer's scope. Both of these hold `pricelist.read`
+     * — it is every associate's — which is the rule, and the test is that the
+     * branch exists at all rather than refusing everybody the way the MBOS
+     * media parents did before their own fix. */
+    setTestUser(manager);
+    assert.equal(await canRead(attachmentId), true);
+    setTestUser(telecaller);
+    assert.equal(await canRead(attachmentId), true);
+
+    /* Somebody holding no app at all holds no capability, so no file. */
+    const outsider = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Outsider",
+        email: "outsider@test.local",
+        phone: "9820777777",
+        passwordHash: "x",
+        role: "associate",
+        initials: "OU",
+      })
+      .returning();
+    setTestUser(outsider[0]);
+    assert.equal(await canRead(attachmentId), false);
+    setTestUser(manager);
   });
 });
 
