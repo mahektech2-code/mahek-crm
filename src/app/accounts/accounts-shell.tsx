@@ -157,6 +157,14 @@ export function AccountsShell({
          * tab bolted onto Sales targets.
          */
         { href: "/accounts/customer-targets", label: "Customer targets", icon: "target" },
+        /*
+         * What each shop pays, and the PDFs the office issues it as.
+         *
+         * Beside the targets rather than under Money: a price list is not a
+         * figure waiting on today's decision, it is the standing answer every
+         * order is priced from — and this is the desk that issues them.
+         */
+        { href: "/accounts/price-lists", label: "Price lists", icon: "ledger" },
       ],
     },
     {

@@ -361,6 +361,12 @@ export const APP_MODULES: AppModule[] = [
     "Accounts",
     "A rupee quota per customer per month — the same screen the CRM's own Monthly Targets reaches, from a second door. Where a person's target asks what they should sell overall, this asks what one account should buy.",
   ),
+  accounts(
+    "price-lists",
+    "Price lists",
+    "Accounts",
+    "Mahek's price lists end to end — import a PDF, review what it read, publish, and say who it applies to. THE DESK THAT ISSUES THESE LISTS IS THIS ONE: `pricelist.manage` sits in ACCOUNTS_OR_MANAGER, so an accounts manager has held it since the module shipped and had nowhere to use it, exactly as `target.set` did before `accounts.targets` existed.",
+  ),
   accounts("record", "Record a payment", "Money"),
   accounts(
     "payment-history",

@@ -54,7 +54,7 @@ import {
   TAX_BASIS_LABEL,
   discountTermSentence,
 } from "@/lib/price-list-labels";
-import type { DocumentView, ParseGrid, ParseRowView, PricingOptions } from "@/lib/price-list-views";
+import type { DocumentView, ParseGrid, ParseRowView, PricingApp, PricingOptions } from "@/lib/price-list-views";
 import type { PriceDeliveryBasis, PriceFreightTerm, PriceParsedHeader } from "@/db/schema";
 import { longDate, money, periodLabel, stamp } from "@/lib/format";
 import { updateDocumentHeader, reparseDocument } from "@/lib/actions/price-lists";
@@ -83,7 +83,7 @@ export function DocumentReviewScreen({
   options,
   lists,
 }: {
-  app: "crm" | "sales";
+  app: PricingApp;
   basePath: string;
   canManage: boolean;
   todayIso: string;

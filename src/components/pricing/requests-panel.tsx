@@ -24,7 +24,7 @@ import { useToast } from "@/components/ui/toast";
 import { money, stamp } from "@/lib/format";
 import { REQUEST_STATUS_LABEL } from "@/lib/price-list-labels";
 import { withdrawPriceRequest } from "@/lib/actions/price-lists";
-import type { RequestView } from "@/lib/price-list-views";
+import type { PricingApp, RequestView } from "@/lib/price-list-views";
 import { DecideRequestModal } from "./modals/decide-request-modal";
 
 const STATUS_TONE: Record<RequestView["status"], "warn" | "success" | "danger" | "muted"> = {
@@ -42,7 +42,7 @@ export function RequestsPanel({
   requests,
   todayIso,
 }: {
-  app: "sales" | "crm";
+  app: PricingApp;
   /** Where this app's price lists live, for links out of the table. */
   basePath: string;
   /** `pricelist.manage` — whether Decide is offered. The action checks again. */

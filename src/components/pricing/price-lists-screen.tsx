@@ -39,7 +39,7 @@ import {
 import { ConfirmDialog, FilterPills, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
-import type { PriceListSummary, PricingCounts, PricingOptions } from "@/lib/price-list-views";
+import type { PriceListSummary, PricingApp, PricingCounts, PricingOptions } from "@/lib/price-list-views";
 import type { PriceListStatus } from "@/db/schema";
 import { FREIGHT_TERM_LABEL, LIST_STATUS_LABEL, LIST_STATUS_TONE } from "@/lib/price-list-labels";
 import { deleteDraftPriceList } from "@/lib/actions/price-lists";
@@ -62,7 +62,7 @@ export function PriceListsScreen({
   counts,
   options,
 }: {
-  app: "sales" | "crm";
+  app: PricingApp;
   basePath: string;
   canManage: boolean;
   todayIso: string;

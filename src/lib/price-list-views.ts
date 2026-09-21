@@ -21,6 +21,16 @@ import type {
 } from "@/db/schema";
 import type { Resolution } from "@/lib/engines/price-resolution";
 
+/**
+ * WHICH DOOR A PRICE LIST SCREEN WAS OPENED THROUGH.
+ *
+ * One feature, three mounts: the Sales Dashboard, the CRM, and the Accounts
+ * desk — which is where these lists are actually issued. It changes the links
+ * and a sentence or two and nothing else, because a second copy of the screens
+ * would be a second answer to what a shop pays.
+ */
+export type PricingApp = "sales" | "crm" | "accounts";
+
 export type PriceListSummary = {
   id: string;
   refNo: string | null;
