@@ -23,7 +23,6 @@ import {
 } from "@/lib/actions/sales";
 import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
 import { healthView } from "@/lib/customer-health";
-import { MultiSelect } from "@/components/ui/multi-select";
 import { cx } from "@/components/ui/primitives";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import {
@@ -35,14 +34,12 @@ import {
 } from "@/lib/lead-views";
 import { TileStrip } from "@/components/leads/tile-strip";
 import {
-  AGE_BUCKETS,
-  HEALTH_BUCKETS,
-  NEXT_BUCKETS,
-  POTENTIAL_BUCKETS,
-  PRIORITY_BUCKETS,
-  SALES_TYPE_BUCKETS,
-  type FilterOption,
-} from "@/lib/lead-filters";
+  LEAD_FILTER_COLUMNS,
+  LeadFilterBar,
+  type LeadFilterColumn,
+  type LeadFilterOptions,
+} from "@/components/leads/filter-bar";
+import type { PlaceTree } from "@/lib/services/sales-service";
 import {
   LEAD_PRIORITIES,
   priorityLabel,
@@ -94,34 +91,16 @@ import {
 } from "@/components/console/parts";
 
 /**
- * THE EIGHT COLUMNS THAT CAN BE NARROWED, in the order they appear in the
- * table — so the filter bar reads left to right exactly like the header under
- * it, and "which control filters which column" is never a question.
+ * THE COLUMNS THIS SCREEN CAN BE NARROWED BY — all of them.
  *
- * Declared once and iterated: the URL parameter, the ticked state, the clear
- * action and the bar itself all walk this list, which is what stops a ninth
- * filter being added to the bar and quietly not being cleared by "Clear all".
+ * The list, the order, the words and the panel are `components/leads/filter-bar.tsx`'s,
+ * shared with the stage board, which used to carry its own copy: same
+ * parameters, same bucket lists, two sets of markup — and they had already
+ * drifted two filters apart, so a narrowing that existed on one screen simply
+ * did not on the other with nothing anywhere saying so.
  */
-const FILTER_COLUMNS = [
-  "owner",
-  "source",
-  "potential",
-  /* §4.1 — the manager's own judgement, sitting immediately after the
-     salesman's estimate because the pair is only readable together: the whole
-     point of the field is that a shop can be worth a great deal and still not
-     be this fortnight's work. */
-  "priority",
-  /* Which ladder, drawn immediately before the rung and read before it for a
-     reason: a RUNG IS NOT A TRACK. `suspect` is the foot of all three, so a
-     stage ticked on its own answers with every ladder at once — which is how
-     a bar on the pipeline reading 40 opened a list of 140 before this existed. */
-  "salesType",
-  "stage",
-  "next",
-  "age",
-  "health",
-] as const;
-type FilterColumn = (typeof FILTER_COLUMNS)[number];
+const FILTER_COLUMNS = LEAD_FILTER_COLUMNS;
+type FilterColumn = LeadFilterColumn;
 
 /** Fifteen by default — see `LEADS_PER_PAGE`. The rest are for a wide monitor. */
 const PER_PAGE = [15, 25, 50, 100] as const;
@@ -173,6 +152,7 @@ export function LeadsScreen({
   desks,
   canPrioritise,
   viewer,
+  places,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -202,11 +182,15 @@ export function LeadsScreen({
   /** What is ticked, read off the URL by the page. */
   filters: Record<FilterColumn, string[]>;
   /** What there is to tick: owner, source and stage are read off the book. */
-  options: {
-    owners: Array<FilterOption & { count: number }>;
-    sources: Array<FilterOption & { count: number }>;
-    stages: Array<FilterOption & { count: number }>;
-  };
+  options: LeadFilterOptions;
+  /**
+   * STATE → CITY → AREA, read off the same list and counted over it.
+   *
+   * Handed down rather than fetched by the picker, like every other option on
+   * this screen: a dropdown that has to reach a server before it can offer
+   * anything is one that offers nothing on the first press.
+   */
+  places: PlaceTree;
   /**
    * §8.4 — WHICH CUT OF THE BOOK THIS IS, off the URL.
    *
@@ -369,22 +353,14 @@ export function LeadsScreen({
   }, [typed, urlQ, navigate]);
 
 
-  /* The search is a filter, so it counts towards "is anything narrowed" and is
-     cleared by the same button. A "Clear filters" that leaves a search term in
-     the box is one people press twice and then stop trusting. */
-  const anyFilter = FILTER_COLUMNS.some((c) => filters[c].length > 0) || Boolean(urlQ);
+  /* The search is a filter, so it is cleared by the same button — the bar
+     works out whether anything is narrowed. A "Clear all" that leaves a search
+     term in the box is one people press twice and then stop trusting. */
   const clearFilters = () => {
     setTyped("");
     setPushedQ("");
     navigate({ ...Object.fromEntries(FILTER_COLUMNS.map((c) => [c, undefined])), q: undefined });
   };
-
-  /* The count goes on the label rather than the value: "Pritesh Bipin Doshi
-     (511)" is what tells a manager which name is worth ticking, and it is the
-     one thing a dropdown of twenty names can say that a list of twenty names
-     cannot. */
-  const withCounts = (rows: Array<FilterOption & { count: number }>) =>
-    rows.map((r) => ({ value: r.value, label: `${r.label} (${r.count})` }));
 
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
   const [acting, setActing] = React.useState<Acting | null>(null);
@@ -693,12 +669,13 @@ export function LeadsScreen({
             what is selected, then the rows, then the pager.
           */}
           <div className="rounded-[6px] border border-line bg-surface">
-          <FilterBar
+          <LeadFilterBar
+            className="border-b border-line px-4 py-3"
+            columns={FILTER_COLUMNS}
             filters={filters}
             options={options}
-            withCounts={withCounts}
+            places={places}
             navigate={navigate}
-            anyFilter={anyFilter}
             onClear={clearFilters}
             total={pageInfo.total}
             listTotal={pageInfo.listTotal}
@@ -2039,161 +2016,6 @@ function DeskLine({
 }
 
 
-/**
- * The filter bar.
- *
- * Every control is a `MultiSelect` — the same Excel-style checkbox dropdown
- * the customers list uses, which already searches above eight options, scrolls
- * its own list without closing, and portals out of the table's `overflow` so
- * it is not clipped. A second dropdown written here would be a second set of
- * those bugs.
- *
- * OWNER, SOURCE AND STAGE ARE READ OFF THE BOOK and carry their counts;
- * potential, next, age and health are named ranges from `lib/lead-filters.ts`,
- * because a dropdown of four hundred distinct ages is not a filter. The
- * counts are on the labels rather than beside them: `MultiSelect` draws a
- * label, and "Pritesh Bipin Doshi (511)" is what tells somebody which name is
- * worth ticking.
- */
-function FilterBar({
-  filters,
-  options,
-  withCounts,
-  navigate,
-  anyFilter,
-  onClear,
-  total,
-  listTotal,
-  search,
-  onSearch,
-}: {
-  filters: Record<FilterColumn, string[]>;
-  options: {
-    owners: Array<FilterOption & { count: number }>;
-    sources: Array<FilterOption & { count: number }>;
-    stages: Array<FilterOption & { count: number }>;
-  };
-  withCounts: (rows: Array<FilterOption & { count: number }>) => FilterOption[];
-  navigate: (patch: Record<string, string | number | undefined>) => void;
-  anyFilter: boolean;
-  onClear: () => void;
-  total: number;
-  listTotal: number;
-  /** What is typed NOW, which is not always what the URL carries — see below. */
-  search: string;
-  onSearch: (v: string) => void;
-}) {
-  const pick = (column: FilterColumn) => (next: string[]) =>
-    navigate({ [column]: next.join(",") || undefined });
-
-  return (
-    /* THE PANEL'S OWN GUTTER, which is what the complaint was about: the bar
-       sat on the page margin and the table started on its own, so the first
-       control and the first column were on two different left edges and the
-       eye had to find the table twice. `px-4` is the cell padding, so the
-       search box now lines up with the Lead column beneath it. */
-    <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
-      {/*
-        FIRST, BECAUSE IT IS WHAT SOMEBODY REACHES FOR.
-        Seven dropdowns answer "which of these known values"; none of them
-        answers "I am looking for Orange City and I know part of the name",
-        which is the question a list of three thousand leads is opened with.
-        Without it the only way to find one lead was the browser's own find,
-        over whatever page happened to be loaded.
-      */}
-      <SearchBox value={search} onChange={onSearch} />
-      <MultiSelect
-        label="Owner"
-        placeholder="All owners"
-        options={withCounts(options.owners)}
-        selected={filters.owner}
-        onChange={pick("owner")}
-        title="Who is working the lead. Nobody is a real answer and is offered as one."
-      />
-      <MultiSelect
-        label="Source"
-        placeholder="All sources"
-        options={withCounts(options.sources)}
-        selected={filters.source}
-        onChange={pick("source")}
-      />
-      <MultiSelect
-        label="Potential"
-        placeholder="Any potential"
-        options={[...POTENTIAL_BUCKETS]}
-        selected={filters.potential}
-        onChange={pick("potential")}
-        title="Somebody's estimate of what the shop could spend in a month. Not estimated is not the same as nothing."
-      />
-      <MultiSelect
-        label="Priority"
-        placeholder="Any priority"
-        options={[...PRIORITY_BUCKETS]}
-        selected={filters.priority}
-        onChange={pick("priority")}
-        title="How hard a manager has asked for this one to be pushed — not what it is worth. Not set is the one most of the book sits on, and it is a real answer rather than a gap."
-      />
-      <MultiSelect
-        label="Sales type"
-        placeholder="All ladders"
-        options={[...SALES_TYPE_BUCKETS]}
-        selected={filters.salesType}
-        onChange={pick("salesType")}
-        title="Which of the three ladders this lead climbs, and the fourth answer that is not one. A RUNG is not a track — Suspect is the foot of all three — so narrowing by stage alone answers with every ladder at once."
-      />
-      <MultiSelect
-        label="Stage"
-        placeholder="All stages"
-        options={withCounts(options.stages)}
-        selected={filters.stage}
-        onChange={pick("stage")}
-      />
-      <MultiSelect
-        label="Next"
-        placeholder="Any next step"
-        options={[...NEXT_BUCKETS]}
-        selected={filters.next}
-        onChange={pick("next")}
-        title="The follow-up somebody promised. None promised is the one worth looking at."
-      />
-      <MultiSelect
-        label="Age"
-        placeholder="Any age"
-        options={[...AGE_BUCKETS]}
-        selected={filters.age}
-        onChange={pick("age")}
-      />
-      <MultiSelect
-        label="Health"
-        placeholder="Any health"
-        options={[...HEALTH_BUCKETS]}
-        selected={filters.health}
-        onChange={pick("health")}
-        title="What the health column says. A lead that has never ordered is in no band at all — that is an option rather than a gap."
-      />
-
-      {anyFilter ? (
-        <button
-          type="button"
-          onClick={onClear}
-          className="h-8.5 cursor-pointer rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-muted hover:bg-canvas hover:text-body"
-        >
-          Clear filters
-        </button>
-      ) : null}
-
-      <span className="flex-1" />
-      {/* What the filters found, against what there is. A count that only ever
-          showed the page would say "10" on every screen in the product. */}
-      <span className="text-[13px] text-muted">
-        {anyFilter
-          ? `${total.toLocaleString("en-IN")} of ${listTotal.toLocaleString("en-IN")}`
-          : `${listTotal.toLocaleString("en-IN")} ${listTotal === 1 ? "lead" : "leads"}`}
-      </span>
-    </div>
-  );
-}
-
 /* ═══════════════════════════════════════════════════════════════ the batch */
 
 /**
@@ -2248,16 +2070,39 @@ function BulkBar({
 
       <span className="min-w-2 flex-1" />
 
+      {/*
+        ONE PRIMARY BUTTON AND A MENU, rather than four buttons in a row.
+
+        Four at once is four things to read before pressing one, and on a bar
+        that appears the moment somebody ticks a box that reading happens every
+        time. Changing the owner is what a selection is made for nine times out
+        of ten — the whole reason "select all NNN this filter reaches" exists is
+        moving a departed salesman's book — so it is the button, and the rest
+        are behind a named one. Archive keeps its own colour inside the menu
+        rather than being promoted out of it: it is the destructive one, and a
+        destructive control drawn permanently beside a routine one is how it
+        gets pressed.
+      */}
       {showArchived ? (
         <BulkButton onClick={() => onAct("restore")}>Restore them</BulkButton>
       ) : (
         <>
-          <BulkButton onClick={() => onAct("reassign")}>Change owner</BulkButton>
-          <BulkButton onClick={() => onAct("stage")}>Change stage</BulkButton>
-          <BulkButton onClick={() => onAct("chase")}>Chase owners</BulkButton>
-          <BulkButton onClick={() => onAct("archive")} danger>
-            Archive
-          </BulkButton>
+          <button
+            type="button"
+            onClick={() => onAct("reassign")}
+            className="h-8 cursor-pointer rounded-[4px] bg-ink px-3 text-[13px] font-medium text-white hover:opacity-90"
+          >
+            Change owner
+          </button>
+          <RowMenu
+            label="More actions"
+            title={`What else can be done to these ${count === 1 ? "lead" : "leads"}`}
+            items={[
+              { label: "Change stage", run: () => onAct("stage") },
+              { label: "Chase the owners", run: () => onAct("chase") },
+              { label: "Archive them", run: () => onAct("archive"), danger: true },
+            ]}
+          />
         </>
       )}
     </div>
@@ -2285,45 +2130,6 @@ function BulkButton({
     >
       {children}
     </button>
-  );
-}
-
-/**
- * The search box.
- *
- * It sits in the filter bar and behaves like the seven dropdowns beside it —
- * the value lands in the URL, so a search is a thing somebody sends to
- * somebody else and the narrowing happens in the database rather than in a
- * browser holding one page. What is different is the DEBOUNCE: a dropdown is
- * one click and one navigation, and a search box is one navigation per
- * keystroke unless something stops it.
- *
- * The placeholder names the fields rather than saying "Search", because what
- * it reaches is not guessable: the owner's name is in there, which is the
- * single most useful thing to be able to type and the last thing anybody would
- * assume a box above a table of shops would match.
- */
-function SearchBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="relative">
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        aria-label="Search leads"
-        placeholder="Search a shop, a town, a phone number, an owner…"
-        title="Every word has to appear somewhere: the shop, the company, the phone, the town, the area, the notes or the owner's name."
-        className="h-8.5 w-[280px] rounded-[4px] border border-line bg-surface px-2.5 pr-14 text-[13px] text-ink outline-none placeholder:text-muted focus:border-brand"
-      />
-      {value ? (
-        <button
-          type="button"
-          onClick={() => onChange("")}
-          className="absolute top-1/2 right-1.5 -translate-y-1/2 cursor-pointer rounded-[3px] px-1.5 py-0.5 text-[12px] text-muted hover:bg-canvas hover:text-ink"
-        >
-          Clear
-        </button>
-      ) : null}
-    </div>
   );
 }
 

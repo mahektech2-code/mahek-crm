@@ -19,7 +19,14 @@ import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
 import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
-import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
+import {
+  TERRITORY_BEAT_SQL,
+  TERRITORY_REGION_SQL,
+  qualify,
+  stateKeySql,
+} from "@/lib/territory-sql";
+import { territoryClause, type Territory } from "@/lib/territory-rules";
+import { decodePlaces } from "@/lib/lead-places";
 import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
 import { metresBetween } from "@/lib/geo";
 import { dropInaccurateFixes } from "../engines/trail-gaps";
@@ -1727,6 +1734,35 @@ export function leadFilterClause(
     parts.push(
       sql`and c.lead_stage::text in (${sql.join(stages.map((v) => sql`${v}`), sql`, `)})`,
     );
+  }
+
+  /*
+   * WHERE THE SHOP IS, AND IT IS THE TERRITORY CLAUSE RATHER THAN A SECOND
+   * READING OF THE SAME COLUMNS.
+   *
+   * A manager narrowing the list to Nagpur and a salesman allocated Nagpur are
+   * asking one question, and answering it twice is how two screens come to
+   * disagree about one shop: the sheet spells a state twenty-four ways
+   * (Gujrat 97 beside Gujarat 31) and a city three, and every one of those
+   * folds lives in `territory-rules.ts`. Re-deriving it here would be a copy
+   * that drifts the first time somebody teaches that file a new spelling —
+   * and the half that drifts would be this one, because a filter returning
+   * slightly too few rows looks exactly like a filter that worked.
+   *
+   * A PICK IS A PATH, so a city is matched AND-ed with its state and two picks
+   * are OR-ed. `territoryClause` is told the alias because this statement
+   * selects `from customers c` while every territory caller selects it plain.
+   */
+  const places = decodePlaces(splitFilter(filters.place));
+  if (places.length) {
+    const territories: Territory[] = places.map((p) =>
+      p.beat
+        ? { kind: "beat", value: p.beat, parent: p.city ?? "" }
+        : p.city
+          ? { kind: "city", value: p.city, parent: p.state }
+          : { kind: "state", value: p.state },
+    );
+    parts.push(sql`and ${territoryClause(territories, "c")}`);
   }
 
   anyOf(splitFilter(filters.potential), (v) => {
@@ -5275,6 +5311,39 @@ export type PlaceTree = {
 };
 
 export async function knownPlaces(): Promise<PlaceTree> {
+  return placeTreeFrom(sql``);
+}
+
+/**
+ * THE SAME TREE, COUNTED OVER THE LEADS LIST — because a count has to describe
+ * what the filter will find.
+ *
+ * `knownPlaces` counts the whole book, which is right for allocating a
+ * territory and wrong above a list of leads: on the real book that is 5,926
+ * shops against 3,777 leads, so a city offering "412" and then answering with
+ * 63 rows is a number nobody can get behind. It is the same grouping through
+ * the same expressions, narrowed by the same `where` the filter dropdowns
+ * beside it are built from — and deliberately NOT narrowed by the filters
+ * themselves, for the reason `leadFilterOptions` gives: a place that vanishes
+ * as you tick a box in the dropdown next to it is a place you cannot widen a
+ * search back out to.
+ */
+export async function leadPlaceTree(archived = false): Promise<PlaceTree> {
+  const scope = await managerScope();
+  return placeTreeFrom(sql`
+     where c.lead_stage is not null
+       and c.lead_archived = ${archived}
+       ${leadsVisible(scope)}`);
+}
+
+/**
+ * The grouping both of them are, in one place.
+ *
+ * Two copies of this query is two answers to "what places are there", and the
+ * one that drifts is whichever screen nobody is looking at — which is the
+ * failure `territory-sql.ts` already carries a file-length note about.
+ */
+async function placeTreeFrom(where: SQL): Promise<PlaceTree> {
   const rows = await db.execute<{
     region: string | null;
     city: string | null;
@@ -5283,9 +5352,10 @@ export async function knownPlaces(): Promise<PlaceTree> {
   }>(sql`
     select ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} as region,
            nullif(trim(c.city), '') as city,
-           nullif(trim(c.beat), '') as beat,
+           ${sql.raw(qualify(TERRITORY_BEAT_SQL, "c"))} as beat,
            count(*)::int as shops
       from customers c
+      ${where}
      group by 1, 2, 3
   `);
 

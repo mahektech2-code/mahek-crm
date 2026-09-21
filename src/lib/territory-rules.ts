@@ -20,7 +20,12 @@
  * silent and in the wrong direction.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
+import {
+  TERRITORY_BEAT_SQL,
+  TERRITORY_REGION_SQL,
+  qualify,
+  stateKeySql,
+} from "@/lib/territory-sql";
 import { stateVariants } from "@/lib/india-states";
 
 /** The kinds a territory can be, coarsest first. */
@@ -42,7 +47,10 @@ const COLUMN: Record<TerritoryKind, string> = {
   state: TERRITORY_REGION_SQL,
   region: TERRITORY_REGION_SQL,
   city: "city",
-  beat: "beat",
+  /* Both spellings of the third rung — see `TERRITORY_BEAT_SQL`. The picker
+     reads the same expression, so a chip and the filter behind it cannot
+     disagree about which shops a beat has. */
+  beat: TERRITORY_BEAT_SQL,
 };
 
 /**
@@ -73,28 +81,37 @@ export type Territory = {
   parent?: string;
 };
 
-/** Matches every spelling of a state, never the one somebody happened to click. */
-function stateMatch(value: string): SQL {
+/**
+ * WHICH TABLE THE COLUMNS BELONG TO, defaulted to the one every caller had.
+ *
+ * Every territory caller selects `from customers` unaliased, so `customers.city`
+ * was hard-coded — and a bare `customers.` prefix is not a name Postgres can
+ * resolve inside `from customers c`, which is how the leads list spells it. It
+ * is a parameter rather than a second copy of the clause: two readings of
+ * "which shops are in Nagpur" is precisely what this file exists to prevent,
+ * and the half that drifts would be the one nobody is comparing.
+ */
+function stateMatch(value: string, table: string): SQL {
   /* A STATE IS MATCHED ON EVERY SPELLING OF IT. The sheet writes this column
      and holds Gujrat 97 beside Gujarat 31, so comparing the text made each
      spelling its own territory and a chip saying "Gujarat" covered a quarter
      of Gujarat with nothing on the screen saying so. */
   const keys = stateVariants(value);
   if (!keys.length) return sql`false`;
-  return sql`${sql.raw(stateKeySql(qualify(TERRITORY_REGION_SQL, "customers")))} in ${sql`(${sql.join(
+  return sql`${sql.raw(stateKeySql(qualify(TERRITORY_REGION_SQL, table)))} in ${sql`(${sql.join(
     keys.map((k) => sql`${k}`),
     sql`, `,
   )})`}`;
 }
 
 /** Plain, trimmed, case-insensitive — how three people spell one city. */
-function plainMatch(kind: "city" | "beat", value: string): SQL {
+function plainMatch(kind: "city" | "beat", value: string, table: string): SQL {
   /* Each column inside the expression is qualified, not just the first. A bare
      column name inside a correlated subquery binds to the INNER table and the
      condition silently becomes false — the rule AGENTS.md records under "in raw
      SQL, qualify every column of the outer table", which shipped once already
      and passes both types and unit tests when it is wrong. */
-  const column = sql.raw(qualify(COLUMN[kind], "customers"));
+  const column = sql.raw(qualify(COLUMN[kind], table));
   return sql`lower(trim(coalesce(${column}, ''))) = ${value.trim().toLowerCase()}`;
 }
 
@@ -112,14 +129,14 @@ function plainMatch(kind: "city" | "beat", value: string): SQL {
  * the whole of Maharashtra — `and`, not `or`, down a branch. Across branches it
  * is still `or`: two states is both states.
  */
-export function territoryClause(territories: Territory[]): SQL {
+export function territoryClause(territories: Territory[], table = "customers"): SQL {
   if (!territories.length) return sql`false`;
 
   const parts = territories.map((t) => {
     const own =
       t.kind === "state" || t.kind === "region"
-        ? stateMatch(t.value)
-        : plainMatch(t.kind, t.value);
+        ? stateMatch(t.value, table)
+        : plainMatch(t.kind, t.value, table);
 
     const parentKind = PARENT_KIND[t.kind];
     const parent = t.parent?.trim();
@@ -130,7 +147,9 @@ export function territoryClause(territories: Territory[]): SQL {
        rather than a refusal: a city allocated before the hierarchy existed must
        not silently stop matching. */
     const above =
-      parentKind === "state" ? stateMatch(parent) : plainMatch(parentKind, parent);
+      parentKind === "state"
+        ? stateMatch(parent, table)
+        : plainMatch(parentKind, parent, table);
     return sql`(${above} and ${own})`;
   });
 

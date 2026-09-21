@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "./territory-sql";
+import {
+  TERRITORY_BEAT_SQL,
+  TERRITORY_REGION_SQL,
+  qualify,
+  stateKeySql,
+} from "./territory-sql";
 import { stateKey } from "./india-states";
 
 /**
@@ -67,4 +72,23 @@ test("the SQL fold and the JavaScript fold are twins", () => {
   /* And the JavaScript side agrees on what that means. */
   assert.equal(stateKey("TAMIL NADU"), "tamilnadu");
   assert.equal(stateKey("Jammu & Kashmir"), "jammukashmir");
+});
+
+test("the third rung reads both columns the sheet could have filled", () => {
+  /* `beat` and `area` are the same rung asked two ways and BOTH are empty on
+     all 5,926 production rows. Reading one of them is how the rung stays empty
+     after somebody fills the other, with nothing on any screen saying why. */
+  assert.match(TERRITORY_BEAT_SQL, /\bbeat\b/);
+  assert.match(TERRITORY_BEAT_SQL, /\barea\b/);
+  assert.ok(
+    TERRITORY_BEAT_SQL.indexOf("beat") < TERRITORY_BEAT_SQL.indexOf("area"),
+    "beat has to win where it is set",
+  );
+  assert.match(TERRITORY_BEAT_SQL, /nullif/);
+
+  const out = qualify(TERRITORY_BEAT_SQL, "c");
+  assert.match(out, /c\.beat/);
+  assert.match(out, /c\.area/);
+  assert.equal(/(?<!\.)\bbeat\b/.test(out), false, "an unqualified column is left");
+  assert.equal(/(?<!\.)\barea\b/.test(out), false, "an unqualified column is left");
 });

@@ -28,8 +28,28 @@
 export const TERRITORY_REGION_SQL =
   "coalesce(nullif(trim(territory_region), ''), nullif(trim(region), ''))";
 
+/**
+ * THE THIRD RUNG, and it falls through for the same reason the first does.
+ *
+ * `beat` is the route a salesman walks and `area` is where a shop sits inside
+ * a town; both are free text the sheet was meant to fill, and BOTH ARE EMPTY on
+ * all 5,926 rows in production. They are the same rung asked two ways — a
+ * salesman narrowing "Nagpur" says "Sadar", and whether the office happens to
+ * have typed that under Beat or under Area is not a distinction anybody
+ * filtering a list is making.
+ *
+ * So one expression reads both, `beat` winning where somebody fills it, which
+ * is exactly the treatment `TERRITORY_REGION_SQL` gives `territory_region` over
+ * `region` one paragraph up. It moves nothing today — neither column has a
+ * value anywhere — and what it buys is that whichever one the sheet eventually
+ * fills is the one the picker offers and the one the filter matches, rather
+ * than the rung staying empty because the data landed in the other column.
+ */
+export const TERRITORY_BEAT_SQL =
+  "coalesce(nullif(trim(beat), ''), nullif(trim(area), ''))";
+
 /** Every column name a territory expression can contain. */
-const COLUMNS = ["territory_region", "region", "city", "beat"] as const;
+const COLUMNS = ["territory_region", "region", "city", "beat", "area"] as const;
 
 /**
  * The same expression, with every column name prefixed by a table.

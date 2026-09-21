@@ -6,14 +6,13 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { money, shortDate } from "@/lib/format";
 import { cx } from "@/components/ui/primitives";
-import { MultiSelect } from "@/components/ui/multi-select";
 import {
-  AGE_BUCKETS,
-  HEALTH_BUCKETS,
-  NEXT_BUCKETS,
-  POTENTIAL_BUCKETS,
-  type FilterOption,
-} from "@/lib/lead-filters";
+  LEAD_FILTER_COLUMNS,
+  LeadFilterBar,
+  type LeadFilterColumn,
+  type LeadFilterOptions,
+} from "@/components/leads/filter-bar";
+import type { PlaceTree } from "@/lib/services/sales-service";
 import { SALES_TYPES, salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
 import type { BoardCard, LeadBoard } from "@/lib/services/lead-board-service";
 import { AdvanceStage } from "../record/advance-stage";
@@ -21,22 +20,17 @@ import { LeadTabs } from "../lead-tabs";
 import { Button, Empty, Pill, ScreenHeader, plural } from "@/components/console/parts";
 
 /**
- * The same seven columns the Leads list can be narrowed by, in the same order.
+ * THE LIST'S COLUMNS, LESS THE LADDER — because the ladder is what this screen
+ * IS.
  *
- * Declared once and iterated, exactly as the list declares them: the URL
- * parameter, the ticked state and "Clear filters" all walk this array, which is
- * what stops an eighth filter being added to the bar and quietly not cleared.
+ * Everything else is shared with the list down to the words, the bucket lists
+ * and the panel: see `components/leads/filter-bar.tsx`. This used to be a
+ * second copy of the whole bar, and the copy had already fallen two filters
+ * behind — a narrowing offered on the list and absent here, with nothing on
+ * either screen saying so.
  */
-const FILTER_COLUMNS = [
-  "owner",
-  "source",
-  "potential",
-  "stage",
-  "next",
-  "age",
-  "health",
-] as const;
-type FilterColumn = (typeof FILTER_COLUMNS)[number];
+const FILTER_COLUMNS = LEAD_FILTER_COLUMNS.filter((c) => c !== "salesType");
+type FilterColumn = LeadFilterColumn;
 
 /** The URL's word for the leads that carry no sales type. See `page.tsx`. */
 const LEGACY = "legacy";
@@ -62,6 +56,7 @@ export function BoardScreen({
   typeKey,
   filters,
   options,
+  places,
   canWork,
   canOverride,
   overrideAllowed,
@@ -72,11 +67,9 @@ export function BoardScreen({
   /** Which ladder is drawn — a sales type, or `legacy`. */
   typeKey: string;
   filters: Record<FilterColumn, string[]>;
-  options: {
-    owners: Array<FilterOption & { count: number }>;
-    sources: Array<FilterOption & { count: number }>;
-    stages: Array<FilterOption & { count: number }>;
-  };
+  options: LeadFilterOptions;
+  /** State → city → area, counted over the leads list. See the Where picker. */
+  places: PlaceTree;
   canWork: boolean;
   canOverride: boolean;
   /** `leads.allowManagerOverride`. Off means nobody may, however senior. */
@@ -214,16 +207,22 @@ export function BoardScreen({
         />
       </div>
 
-      <FilterBar
+      <LeadFilterBar
+        className="mb-3"
+        columns={FILTER_COLUMNS}
         filters={filters}
         options={options}
+        places={places}
         navigate={navigate}
-        anyFilter={anyFilter}
         onClear={() =>
           navigate(Object.fromEntries(FILTER_COLUMNS.map((c) => [c, undefined])))
         }
         total={board.total}
         listTotal={board.listTotal}
+        /* Both figures are this ladder's — the board is one sales type at a
+           time, so "of 511" would be a total from a population the screen is
+           not showing. */
+        totalSuffix=" on this ladder"
       />
 
       {pending ? (
@@ -633,119 +632,3 @@ function TypeChip({
   );
 }
 
-/**
- * The list's filter bar, drawn over the board.
- *
- * It is a second rendering of one control rather than a second SET of controls:
- * the options, the bucket lists and the URL parameters are all the list's, so a
- * filter ticked here and the same filter ticked there narrow to the same rows.
- * The counts on the option labels are the list's too — counted over the
- * UNFILTERED book on purpose, so a dropdown's options do not disappear as you
- * tick boxes in the dropdown beside it.
- */
-function FilterBar({
-  filters,
-  options,
-  navigate,
-  anyFilter,
-  onClear,
-  total,
-  listTotal,
-}: {
-  filters: Record<FilterColumn, string[]>;
-  options: {
-    owners: Array<FilterOption & { count: number }>;
-    sources: Array<FilterOption & { count: number }>;
-    stages: Array<FilterOption & { count: number }>;
-  };
-  navigate: (patch: Record<string, string | number | undefined>) => void;
-  anyFilter: boolean;
-  onClear: () => void;
-  total: number;
-  listTotal: number;
-}) {
-  const pick = (column: FilterColumn) => (next: string[]) =>
-    navigate({ [column]: next.join(",") || undefined });
-
-  const withCounts = (rows: Array<FilterOption & { count: number }>) =>
-    rows.map((r) => ({ value: r.value, label: `${r.label} (${r.count})` }));
-
-  return (
-    <div className="mb-3 flex flex-wrap items-center gap-2">
-      <MultiSelect
-        label="Owner"
-        placeholder="All owners"
-        options={withCounts(options.owners)}
-        selected={filters.owner}
-        onChange={pick("owner")}
-        title="Who is working the lead. Nobody is a real answer and is offered as one."
-      />
-      <MultiSelect
-        label="Source"
-        placeholder="All sources"
-        options={withCounts(options.sources)}
-        selected={filters.source}
-        onChange={pick("source")}
-      />
-      <MultiSelect
-        label="Potential"
-        placeholder="Any potential"
-        options={[...POTENTIAL_BUCKETS]}
-        selected={filters.potential}
-        onChange={pick("potential")}
-        title="Somebody's estimate of what the shop could spend in a month. Not estimated is not the same as nothing."
-      />
-      <MultiSelect
-        label="Stage"
-        placeholder="All stages"
-        options={withCounts(options.stages)}
-        selected={filters.stage}
-        onChange={pick("stage")}
-        title="Narrowing to a rung empties every column but that one. The board is the shape of the whole ladder, so this is usually the filter to leave alone."
-      />
-      <MultiSelect
-        label="Next"
-        placeholder="Any next step"
-        options={[...NEXT_BUCKETS]}
-        selected={filters.next}
-        onChange={pick("next")}
-        title="The follow-up somebody promised. None promised is the one worth looking at."
-      />
-      <MultiSelect
-        label="Age"
-        placeholder="Any age"
-        options={[...AGE_BUCKETS]}
-        selected={filters.age}
-        onChange={pick("age")}
-      />
-      <MultiSelect
-        label="Health"
-        placeholder="Any health"
-        options={[...HEALTH_BUCKETS]}
-        selected={filters.health}
-        onChange={pick("health")}
-        title="What the health column says. A lead that has never ordered is in no band at all — that is an option rather than a gap."
-      />
-
-      {anyFilter ? (
-        <button
-          type="button"
-          onClick={onClear}
-          className="h-8.5 cursor-pointer rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-muted hover:bg-canvas hover:text-body"
-        >
-          Clear filters
-        </button>
-      ) : null}
-
-      <span className="flex-1" />
-      {/* Both figures are this ladder's — the board is one sales type at a
-          time, so "of 511" would be a total from a population the screen is not
-          showing. */}
-      <span className="text-[13px] text-muted">
-        {anyFilter
-          ? `${total.toLocaleString("en-IN")} of ${listTotal.toLocaleString("en-IN")} on this ladder`
-          : `${listTotal.toLocaleString("en-IN")} ${listTotal === 1 ? "lead" : "leads"} on this ladder`}
-      </span>
-    </div>
-  );
-}
