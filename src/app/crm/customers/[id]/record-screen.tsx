@@ -57,6 +57,12 @@ import {
   DeliveryRelations,
   type Relation,
 } from "@/components/crm/delivery-relations";
+import { CustomerPricesPanel } from "@/components/pricing/customer-prices-panel";
+import type {
+  CustomerPricing,
+  DiscountAuthorityInput,
+  PricingOptions,
+} from "@/lib/price-list-views";
 import {
   ageLabel,
   monthLabel,
@@ -112,6 +118,12 @@ export function RecordScreen({
   canReassign,
   canAssignSalesManager,
   canHandOver,
+  pricing,
+  pricingLists,
+  gstBp,
+  canManagePrices,
+  discountAuthority,
+  useListForOrderValue,
   backOfficePeople,
   amReasons,
   amSearchThreshold,
@@ -172,6 +184,25 @@ export function RecordScreen({
    * question answered on the client.
    */
   canHandOver: boolean;
+  /**
+   * WHAT THIS SHOP PAYS — the resolved list, its rates and anything asked for.
+   *
+   * Null where nothing could be read for them at all, which is not the same as
+   * "no list applies": that case arrives as a `pricing` with a null
+   * `resolution`, and the panel says so in words. A missing read draws no
+   * panel rather than an empty one.
+   */
+  pricing: CustomerPricing | null;
+  /** Every list somebody could be put on, for the assign dialog. */
+  pricingLists: PricingOptions["lists"];
+  /** `pricing.gstBp` — the fallback where a list carries none of its own. */
+  gstBp: number;
+  /** `pricelist.manage`. The action checks again; this only decides a button. */
+  canManagePrices: boolean;
+  /** What this caller may take off a price on their own — see the call panel. */
+  discountAuthority: DiscountAuthorityInput;
+  /** `pricing.useListForOrderValue` — off, the rates are reference only. */
+  useListForOrderValue: boolean;
   /** Accounts and current employees both — none of the three seats needs a login. */
   backOfficePeople: Array<{ id: string; name: string; role?: string }>;
   /** `people.amChangeReasons`, asked for whenever a manager changes. */
@@ -672,6 +703,19 @@ export function RecordScreen({
             />
           ))}
         </ScrollPanel>
+
+        {/* What they pay, straight after what they have bought — the two
+            questions a telecaller reads in that order before ringing. */}
+        {pricing ? (
+          <CustomerPricesPanel
+            pricing={pricing}
+            canManage={canManagePrices}
+            basePath="/crm/price-lists"
+            app="crm"
+            gstBp={gstBp}
+            lists={pricingLists}
+          />
+        ) : null}
 
         <ScrollPanel
           title="Bills"
@@ -1271,6 +1315,10 @@ export function RecordScreen({
       {calling ? (
         <CallPanel
           target={callTarget}
+          customerId={customer.id}
+          discountAuthority={discountAuthority}
+          gstBp={gstBp}
+          useListForOrderValue={useListForOrderValue}
           complaintCategories={complaintCategories}
           quickNotes={quickNotes}
           singleSelectOutcomes={singleSelectOutcomes}

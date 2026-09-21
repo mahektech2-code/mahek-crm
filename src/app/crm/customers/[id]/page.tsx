@@ -4,7 +4,7 @@ import { orderCountsSql } from "@/lib/order-status";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { orders, payments } from "@/db/schema";
-import { requireUser } from "@/lib/auth";
+import { isManager, requireUser } from "@/lib/auth";
 import {
   assertCustomerInScope,
   NotPermittedError,
@@ -28,6 +28,10 @@ import {
 import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { popularProducts } from "@/lib/services/product-service";
+import {
+  customerPricing,
+  pricingOptions,
+} from "@/lib/services/price-list-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
 import { targetFor } from "@/lib/services/worklist-services";
 import { customerStatusLabel, daysBetween } from "@/lib/format";
@@ -81,8 +85,25 @@ export default async function CustomerRecordPage({
   const day = await today();
   const period = await currentPeriod();
 
-  const [config, timeline, timelineCounts, messages, target, followUp, stats] =
-    await Promise.all([
+  const [
+    config,
+    timeline,
+    timelineCounts,
+    messages,
+    target,
+    followUp,
+    stats,
+    /*
+     * WHAT THIS SHOP PAYS, and what there is to put them on.
+     *
+     * Read here rather than inside the panel because the resolution is as of a
+     * BUSINESS DATE and a browser's idea of today is its own — and because a
+     * price the telecaller reads while preparing the call has to arrive with
+     * the rest of the record rather than after it.
+     */
+    pricing,
+    pricingLists,
+  ] = await Promise.all([
     getConfig(),
     // The FIRST PAGE of it, not the history. See `customerTimeline`.
     customerTimeline(id, { limit: TIMELINE_PAGE }),
@@ -144,6 +165,8 @@ export default async function CustomerRecordPage({
       .where(and(eq(orders.customerId, id)))
       .limit(1)
       .then((r) => r[0]),
+    customerPricing(id, day),
+    pricingOptions(),
   ]);
 
   const [quickNoteRows, productRows, amChanges, backOfficePeople] = await Promise.all([
@@ -280,6 +303,23 @@ export default async function CustomerRecordPage({
       // while the two beside it stay accounts' and admin's.
       canAssignSalesManager={await canFor(user, "customer.assignSalesManager")}
       canHandOver={await canFor(user, "customer.handOver")}
+      /* The prices panel: what this shop pays, why, and the two things a
+         telecaller can do about it. Null where the customer read is out of
+         scope for pricing — the panel is then simply not drawn. */
+      pricing={pricing}
+      pricingLists={pricingLists.lists}
+      gstBp={config["pricing.gstBp"]}
+      canManagePrices={await canFor(user, "pricelist.manage")}
+      /* What this caller may take off a price on their own. Resolved here
+         because a ceiling that only exists in a browser is not a ceiling; the
+         save re-checks it against the same two settings. */
+      discountAuthority={{
+        level:
+          user.role === "admin" ? "admin" : isManager(user) ? "manager" : "associate",
+        associateMaxBp: config["pricing.associateMaxDiscountBp"],
+        managerMaxBp: config["pricing.managerMaxDiscountBp"],
+      }}
+      useListForOrderValue={config["pricing.useListForOrderValue"]}
       backOfficePeople={backOfficePeople}
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}

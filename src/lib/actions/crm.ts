@@ -162,6 +162,16 @@ export type SaveInteractionActionInput = {
   notes?: string;
   quickNoteIds?: string[];
   productQuantities?: Record<string, number>;
+  /**
+   * Product id → discount in BASIS POINTS, where the caller gave one.
+   *
+   * Absent on every call site that cannot price an order, and an empty map is
+   * deliberately not sent: no discount and a discount of zero are the same
+   * money and different facts, and the second is a decision somebody made.
+   * The service re-checks each one against the caller's own authority — a
+   * form is not a rule.
+   */
+  lineDiscounts?: Record<string, number>;
   followUpDate?: string;
   /** No order: the day they named, or that they named none. See the service. */
   noOrderNextCallDate?: string;
@@ -228,6 +238,7 @@ export async function saveInteractionAction(
       notes: raw.notes,
       quickNoteIds: raw.quickNoteIds ?? [],
       productQuantities: raw.productQuantities ?? {},
+      lineDiscounts: raw.lineDiscounts ?? {},
       followUpDate: raw.followUpDate,
       noOrderNextCallDate: raw.noOrderNextCallDate,
       noOrderNoCommitment: raw.noOrderNoCommitment ?? false,

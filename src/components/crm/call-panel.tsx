@@ -34,6 +34,14 @@ import {
   today,
 } from "@/lib/format";
 import { describeQuantity } from "@/lib/catalogue";
+import {
+  discountAuthority as discountAuthorityOf,
+  priceLine,
+} from "@/lib/engines/price-math";
+import type {
+  CustomerRates,
+  DiscountAuthorityInput,
+} from "@/lib/price-list-views";
 import { addLabel, dropLabel } from "@/lib/notes";
 import { ImagePicker } from "@/components/crm/image-picker";
 import { outcomeFieldRequired, outcomeFieldsVisible } from "@/lib/call-outcomes";
@@ -396,6 +404,30 @@ type CallPanelProps = {
   queueTotal?: number;
   /** True once the last row has been worked. */
   queueComplete?: boolean;
+
+  /* ------------------------------------------------------------- pricing */
+  /*
+   * ALL FIVE ARE OPTIONAL, and the panel prices nothing without them.
+   *
+   * This drawer is opened from five screens and only some of them are server
+   * pages that can resolve a price list; the rest open it with a customer and
+   * nothing else. Absent, the form behaves exactly as it did before price
+   * lists existed — quantities and no money — which is what keeps every
+   * existing call site working untouched.
+   */
+  /** The shop being priced. Falls back to `target.customerId`. */
+  customerId?: string;
+  /** A seed for the products already on screen; the rest are fetched as typed. */
+  customerRates?: CustomerRates;
+  /** What THIS caller may give away on their own. Re-checked on the server. */
+  discountAuthority?: DiscountAuthorityInput;
+  gstBp?: number;
+  /**
+   * `pricing.useListForOrderValue`. Off, the rates are shown for reference and
+   * nothing is totalled — a value computed from a list nobody has agreed to
+   * use for valuing orders is a confident wrong number on a target screen.
+   */
+  useListForOrderValue?: boolean;
 };
 
 type FormProps = CallPanelProps & {
@@ -524,6 +556,11 @@ function CallPanelForm({
   tab,
   setTab,
   onLogged,
+  customerId,
+  customerRates,
+  discountAuthority,
+  gstBp,
+  useListForOrderValue = false,
 }: FormProps) {
   useEscape(onClose);
   // No router here: the refresh belongs to the dialog's dismissal, one level
@@ -680,6 +717,72 @@ function CallPanelForm({
       controller.abort();
     };
   }, [productQuery, target, searchEnabled, searchMinChars]);
+
+  /* ------------------------------------------------------------- pricing */
+
+  /**
+   * WHAT THIS SHOP PAYS FOR WHAT IS ON THE FORM.
+   *
+   * Asked of the server rather than worked out here, because a rate is
+   * resolved as of a BUSINESS DATE against scopes this browser has never
+   * seen. It is asked again whenever the SET of products changes — not on
+   * every keystroke of a quantity, which changes the money and not the rate —
+   * and answers are kept keyed on that set, so taking a line off and putting
+   * it back costs nothing.
+   *
+   * The seed is what the page already knew. Everything else arrives a search
+   * at a time, exactly as the products themselves do.
+   */
+  const pricingCustomerId = customerId ?? target?.customerId ?? null;
+  const [rateCache, setRateCache] = React.useState<Record<string, CustomerRates>>(
+    () => (customerRates ? { [Object.keys(customerRates).sort().join(",")]: customerRates } : {}),
+  );
+  const rateKey = Object.keys(quantities).sort().join(",");
+  const rates: CustomerRates = React.useMemo(
+    () => ({ ...(customerRates ?? {}), ...(rateCache[rateKey] ?? {}) }),
+    [customerRates, rateCache, rateKey],
+  );
+
+  React.useEffect(() => {
+    if (!pricingCustomerId || !rateKey) return;
+    if (rateCache[rateKey]) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetch(
+        `/api/price-lists/customers/${pricingCustomerId}/rates?products=${encodeURIComponent(rateKey)}`,
+        { signal: controller.signal },
+      )
+        .then((r) => (r.ok ? r.json() : {}))
+        .then((d: CustomerRates) => setRateCache((c) => ({ ...c, [rateKey]: d })))
+        /* No rate is the same answer as no list: the form shows quantities and
+           no money, which is what it did before any of this existed. */
+        .catch(() => {});
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [pricingCustomerId, rateKey, rateCache]);
+
+  /**
+   * A discount, per line, in PERCENT as typed — basis points on the way out.
+   *
+   * Drawn only where the caller has any authority at all. A box that refuses
+   * every number it is given is worse than no box: it teaches somebody that
+   * the form is broken rather than that the answer is to ask a manager.
+   */
+  const [lineDiscounts, setLineDiscounts] = React.useState<Record<string, string>>({});
+  const mayDiscount =
+    !!discountAuthority &&
+    (discountAuthority.level !== "associate" || discountAuthority.associateMaxBp > 0);
+
+  /** Basis points for a typed percent. Blank and rubbish are both nothing. */
+  function discountBpOf(productId: string): number {
+    const typed = (lineDiscounts[productId] ?? "").trim();
+    if (!typed) return 0;
+    const n = Number(typed);
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : 0;
+  }
 
   /**
    * The bill a payment script is about.
@@ -1042,6 +1145,48 @@ function CallPanelForm({
     return parts.join(" · ");
   })();
 
+  /**
+   * WHAT EACH COUNTED LINE IS WORTH, and what the order comes to.
+   *
+   * `priceLine` is the same pure function the server runs on the way in, so
+   * the figure the telecaller reads out and the figure the ledger stores
+   * cannot be two arithmetics. A line whose product no list prices is absent
+   * from this rather than counted at zero — a total that quietly omits a
+   * product is worse than one that says it cannot be given.
+   */
+  const pricedLines = countedLines
+    .map((l) => {
+      const rate = rates[l.product.id];
+      if (!rate || !rate.offered) return null;
+      return {
+        productId: l.product.id,
+        rate,
+        priced: priceLine({
+          rateExGstPaise: rate.rateExGstPaise,
+          cans: l.qty,
+          discountBp: discountBpOf(l.product.id),
+          gstBp: rate.gstBp ?? gstBp ?? 0,
+        }),
+      };
+    })
+    .filter((l): l is NonNullable<typeof l> => l !== null);
+
+  /** Null where the list is not what values an order — see `useListForOrderValue`. */
+  const orderTotals =
+    useListForOrderValue && pricedLines.length
+      ? {
+          netExPaise: pricedLines.reduce((sum, l) => sum + l.priced.netExPaise, 0),
+          gstPaise: pricedLines.reduce((sum, l) => sum + l.priced.gstPaise, 0),
+          totalPaise: pricedLines.reduce((sum, l) => sum + l.priced.totalPaise, 0),
+          /* Counted lines with no rate behind them. Said out loud under the
+             total, because the number is otherwise short by exactly them. */
+          unpriced: countedLines.length - pricedLines.length,
+        }
+      : null;
+
+  const listName =
+    Object.values(rates).find((r) => r.listName)?.listName ?? null;
+
   function applyChip(n: QuickNoteOption) {
     const alreadyPicked = picked.includes(n.id);
 
@@ -1146,12 +1291,47 @@ function CallPanelForm({
       return;
     }
 
+    /*
+     * A DISCOUNT ABOVE WHAT THIS PERSON MAY GIVE IS REFUSED HERE AND AGAIN ON
+     * THE SERVER.
+     *
+     * The engine's own sentence is what the field shows — "you may give up to
+     * 2% on your own" tells somebody what to do next, and a bare "not allowed"
+     * teaches them to press the button again. The server runs the same
+     * function against the caller's real level, because a form is not a rule.
+     */
+    if (mayDiscount && discountAuthority) {
+      const refusals: Record<string, string> = {};
+      for (const l of countedLines) {
+        const bp = discountBpOf(l.product.id);
+        if (!bp) continue;
+        const verdict = discountAuthorityOf(bp, discountAuthority.level, {
+          associateMaxBp: discountAuthority.associateMaxBp,
+          managerMaxBp: discountAuthority.managerMaxBp,
+        });
+        if (!verdict.allowed && verdict.reason) {
+          refusals[`lineDiscount.${l.product.id}`] = verdict.reason;
+        }
+      }
+      if (Object.keys(refusals).length) {
+        setErrors((e) => ({ ...e, ...refusals }));
+        return;
+      }
+    }
+
     setBusy(true);
     try {
       const productQuantities: Record<string, number> = {};
       for (const [pid, raw] of Object.entries(quantities)) {
         const q = Number(raw);
         if (Number.isFinite(q) && q > 0) productQuantities[pid] = Math.round(q);
+      }
+      /* Basis points, and only where one was actually given: an empty map
+         means nobody discounted anything, which is not the same as zeros. */
+      const discounts: Record<string, number> = {};
+      for (const pid of Object.keys(productQuantities)) {
+        const bp = discountBpOf(pid);
+        if (bp > 0) discounts[pid] = bp;
       }
 
       const result = await run(
@@ -1162,6 +1342,7 @@ function CallPanelForm({
           notes,
           quickNoteIds: picked,
           productQuantities,
+          lineDiscounts: Object.keys(discounts).length ? discounts : undefined,
           followUpDate: needsFollowUp ? followUpDate : undefined,
           noOrderNextCallDate:
             needsNextCall && !noOrderNoCommitment && noOrderNextCallDate
@@ -2691,7 +2872,18 @@ function CallPanelForm({
                               <div className="bg-canvas px-2.5 py-[7px] text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
                                 Added products
                               </div>
-                              {onThisOrder.map((l) => (
+                              {onThisOrder.map((l) => {
+                                const rate = rates[l.product.id];
+                                const worth =
+                                  rate && rate.offered && counts(l)
+                                    ? priceLine({
+                                        rateExGstPaise: rate.rateExGstPaise,
+                                        cans: l.qty,
+                                        discountBp: discountBpOf(l.product.id),
+                                        gstBp: rate.gstBp ?? gstBp ?? 0,
+                                      })
+                                    : null;
+                                return (
                                 <div
                                   key={l.product.id}
                                   className="flex items-center gap-3 border-t border-divider bg-surface px-2.5 py-2"
@@ -2712,7 +2904,51 @@ function CallPanelForm({
                                         How many cans?
                                       </span>
                                     )}
+                                    {/* The rate, and which list said so. A price
+                                        a telecaller cannot attribute is one the
+                                        customer argues with. */}
+                                    {rate && rate.offered ? (
+                                      <span className="block truncate text-[11px] text-muted">
+                                        {money(rate.rateInclGstPaise)} / can ·{" "}
+                                        {rate.listName}
+                                      </span>
+                                    ) : null}
+                                    {errors[`lineDiscount.${l.product.id}`] ? (
+                                      <span className="block text-[11px] text-danger">
+                                        {errors[`lineDiscount.${l.product.id}`]}
+                                      </span>
+                                    ) : null}
                                   </span>
+                                  {mayDiscount && rate && rate.offered ? (
+                                    <span className="flex flex-none items-center gap-1">
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        inputMode="decimal"
+                                        value={lineDiscounts[l.product.id] ?? ""}
+                                        onChange={(e) =>
+                                          setLineDiscounts((d) => ({
+                                            ...d,
+                                            [l.product.id]: e.target.value,
+                                          }))
+                                        }
+                                        placeholder="0"
+                                        aria-label={`Discount percent on ${l.product.name}`}
+                                        className={cx(
+                                          "h-8 w-[56px] rounded-[4px] border px-2 text-right text-sm",
+                                          errors[`lineDiscount.${l.product.id}`]
+                                            ? "border-danger"
+                                            : "border-line",
+                                        )}
+                                      />
+                                      <span className="text-[11px] text-muted">%</span>
+                                    </span>
+                                  ) : null}
+                                  {useListForOrderValue && worth ? (
+                                    <span className="w-[92px] flex-none text-right text-[13px] tabular-nums text-ink">
+                                      {money(worth.totalPaise)}
+                                    </span>
+                                  ) : null}
                                   <input
                                     type="number"
                                     min={0}
@@ -2732,7 +2968,47 @@ function CallPanelForm({
                                     <Icon name="close" size={14} />
                                   </button>
                                 </div>
-                              ))}
+                                );
+                              })}
+
+                              {/* WHAT THE ORDER COMES TO, where the list is what
+                                  values one. Off, the rates above are reference
+                                  and nothing is totalled — see the prop. */}
+                              {orderTotals ? (
+                                <div className="border-t border-line bg-canvas px-2.5 py-2 text-[13px]">
+                                  <div className="flex justify-between gap-3">
+                                    <span className="text-muted">Ex-GST</span>
+                                    <span className="tabular-nums text-ink">
+                                      {money(orderTotals.netExPaise)}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between gap-3">
+                                    <span className="text-muted">GST</span>
+                                    <span className="tabular-nums text-ink">
+                                      {money(orderTotals.gstPaise)}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 flex justify-between gap-3 border-t border-divider pt-1 font-medium">
+                                    <span className="text-ink">Total</span>
+                                    <span className="tabular-nums text-ink">
+                                      {money(orderTotals.totalPaise)}
+                                    </span>
+                                  </div>
+                                  {orderTotals.unpriced ? (
+                                    <p className="mt-1 text-[11px] text-warn-ink">
+                                      {orderTotals.unpriced}{" "}
+                                      {orderTotals.unpriced === 1 ? "line is" : "lines are"}{" "}
+                                      not on this shop&rsquo;s list, so the total is short
+                                      by {orderTotals.unpriced === 1 ? "it" : "them"}.
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ) : listName && countedLines.length ? (
+                                <div className="border-t border-line bg-canvas px-2.5 py-2 text-[11px] text-muted">
+                                  Rates are from {listName}, shown for reference — an
+                                  order is still worth what accounts bill for it.
+                                </div>
+                              ) : null}
                             </div>
                           ) : null}
 

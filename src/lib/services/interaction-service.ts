@@ -29,6 +29,9 @@ import {
   today,
 } from "../recompute";
 import { isAttemptAllowed } from "../engines/escalation";
+import { discountAuthority } from "../engines/price-math";
+import { ratesForCustomer } from "./price-list-service";
+import { isManager } from "../auth";
 import type { NextStep, NextStepKind } from "../engines/next-step";
 import { consecutiveNoAnswerSql, nextStepForCustomer } from "./queue-service";
 import { closeRemindersOnEvidence } from "./worklist-services";
@@ -128,6 +131,17 @@ export const saveInteractionSchema = z.object({
 
   /** Product id → quantity. Zero and blank are dropped, never stored. */
   productQuantities: z.record(z.string(), z.coerce.number()).default({}),
+
+  /**
+   * Product id → discount in BASIS POINTS, where the caller gave one.
+   *
+   * Checked here against the caller's own authority and NOT against whatever
+   * the form drew: a server action is a URL, and the ceiling that only exists
+   * in a browser is the ceiling a posted payload walks straight past. The rate
+   * it applies to is resolved on this side too — a rate arriving from a client
+   * is a price the client chose.
+   */
+  lineDiscounts: z.record(z.string(), z.coerce.number()).default({}),
 
   followUpDate: z.string().optional(),
 
@@ -798,6 +812,49 @@ export async function saveInteraction(
     }
   }
 
+  /* ------------------------------------------------------------ pricing */
+
+  /*
+   * WHAT THE LIST SAYS THESE CANS ARE WORTH, resolved HERE.
+   *
+   * The form shows a rate and the form is not where a rate is decided: it is
+   * resolved for whoever is being BILLED, as of today's business date, from
+   * the scopes on the published lists. A rate that arrived in the payload
+   * would be a price the caller chose, which is the whole thing price lists
+   * exist to stop.
+   *
+   * A discount above what this person may give on their own is REFUSED rather
+   * than flagged. The order has not happened yet — nothing is lost by saying
+   * no, the message names the way forward, and the alternative is a rate given
+   * away with nobody's name against it, which is what the order sheet already
+   * shows happening at 10%.
+   */
+  const lineRates = lines.length
+    ? await ratesForCustomer(billingCustomer.id, lines.map((l) => l.productId), day)
+    : {};
+  const priceListId = Object.values(lineRates)[0]?.listId ?? null;
+
+  const level: "associate" | "manager" | "admin" =
+    ctx.user.role === "admin" ? "admin" : isManager(ctx.user) ? "manager" : "associate";
+  const ceilings = {
+    associateMaxBp: config["pricing.associateMaxDiscountBp"],
+    managerMaxBp: config["pricing.managerMaxDiscountBp"],
+  };
+  const discounts: Record<string, number> = {};
+  for (const l of lines) {
+    const raw = input.lineDiscounts[l.productId];
+    const bp = Number.isFinite(raw) ? Math.round(Number(raw)) : 0;
+    if (!bp) continue;
+    const verdict = discountAuthority(bp, level, ceilings);
+    if (!verdict.allowed) {
+      return err(
+        verdict.reason ?? "That discount is above what you may give on your own.",
+        "not_permitted",
+      );
+    }
+    discounts[l.productId] = bp;
+  }
+
   // 9. Notes length.
   const maxNotes = config["interactions.maxNotesLength"];
   if (input.notes && input.notes.length > maxNotes) {
@@ -899,6 +956,9 @@ export async function saveInteraction(
         // is what stops the queue chasing them, but nothing about money moves
         // until this is approved.
         status: "pending_approval",
+        /* Which list priced it, written once. A revision published next month
+           must not rewrite what was quoted today. */
+        priceListId,
         creditDays,
         paymentDueDate: addDays(orderedOn, creditDays),
       });
@@ -1389,11 +1449,25 @@ export async function saveInteraction(
 
     /* ------------------------------------------------------ product lines */
     for (const l of lines) {
+      const rate = lineRates[l.productId] ?? null;
+      const bp = discounts[l.productId] ?? null;
       await tx.insert(interactionProductLines).values({
         id: id("ipl"),
         interactionId,
         productId: l.productId,
         quantity: l.quantity,
+        /* Null and not zero where no list resolved — which reads on a screen
+           as "no list rate" rather than as a can worth nothing. */
+        listRateExGstPaise: rate?.rateExGstPaise ?? null,
+        discountBp: bp,
+        /*
+         * Who ALLOWED it, and only where somebody had to. A discount inside
+         * what an associate may give on their own needed nobody's permission,
+         * so naming a person there would invent an approval that never
+         * happened; above it, the caller is the person whose authority it was.
+         */
+        discountAuthorisedById:
+          bp != null && bp > ceilings.associateMaxBp ? ctx.user.id : null,
       });
     }
 

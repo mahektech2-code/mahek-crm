@@ -228,6 +228,15 @@ export async function listPriceLists(filter?: {
 
 /* ------------------------------------------------------------------ rates */
 
+/** The same coercion, for a term whose threshold is a bigint. */
+function toDiscountTerm(t: Omit<DiscountTermView, "sentence">): DiscountTermView {
+  const term = {
+    ...t,
+    thresholdPaise: t.thresholdPaise == null ? null : Number(t.thresholdPaise),
+  };
+  return { ...term, sentence: discountTermSentence(term) };
+}
+
 const RATE_SELECT = sql`
   select r.id, r.product_id as "productId", p.name as "productName",
          b.name as "brandName", f.name as "formulationName",
@@ -247,8 +256,23 @@ const RATE_SELECT = sql`
 
 type RawRate = Omit<RateRow, "perLitrePaise">;
 
+/**
+ * A BIGINT COMES BACK AS A STRING, and that is the trap in this whole file.
+ *
+ * `db.execute` runs raw SQL, so drizzle's `{ mode: "number" }` never gets a
+ * look in: postgres.js hands a bigint over as text because it cannot promise a
+ * JavaScript number holds it. The type says `number`, the value is `"228100"`,
+ * and nothing complains until a screen adds two of them and prints
+ * "228100228600". Every rate that leaves this file is coerced here.
+ */
 function withPerLitre(row: RawRate): RateRow {
-  return { ...row, perLitrePaise: perLitrePaise(Number(row.rateExGstPaise), row.millilitresPerCan) };
+  const ex = Number(row.rateExGstPaise);
+  return {
+    ...row,
+    rateExGstPaise: ex,
+    rateInclGstPaise: Number(row.rateInclGstPaise),
+    perLitrePaise: perLitrePaise(ex, row.millilitresPerCan),
+  };
 }
 
 /**
@@ -399,7 +423,7 @@ export async function priceListDetail(id: string): Promise<PriceListDetail | nul
       termsText: row.termsText,
       signatory: row.signatory,
       notes: row.notes,
-      freightPerLitrePaise: row.freightPerLitrePaise == null ? null : Number(row.freightPerLitrePaise),
+        freightPerLitrePaise: row.freightPerLitrePaise == null ? null : Number(row.freightPerLitrePaise),
       withdrawReason: row.withdrawReason,
       publishedByName: row.publishedByName,
       createdByName: row.createdByName,
@@ -407,7 +431,7 @@ export async function priceListDetail(id: string): Promise<PriceListDetail | nul
     rates,
     grid: buildGrid(rates),
     scopes,
-    discountTerms: [...termRows].map((t) => ({ ...t, sentence: discountTermSentence(t) })),
+    discountTerms: [...termRows].map(toDiscountTerm),
     document,
     versions: [...versionRows],
     children: [...childRows],
@@ -702,7 +726,7 @@ export async function customerPricing(customerId: string, todayIso: string): Pro
         select t.id, t.kind, t.percent_bp as "percentBp", t.threshold_litres as "thresholdLitres",
                t.threshold_paise as "thresholdPaise", t.raw_text as "rawText"
           from price_list_discount_terms t where t.price_list_id = ${resolution.listId}
-      `))].map((t) => ({ ...t, sentence: discountTermSentence(t) }))
+      `))].map(toDiscountTerm)
     : [];
 
   const [lastOrder] = await db.execute<{ listId: string | null; listName: string | null; orderedAt: string }>(sql`
@@ -1152,7 +1176,10 @@ export async function pricingOptions(): Promise<PricingOptions> {
     `),
   ]);
 
-  const byKind = (kind: string) => [...placeRows].filter((p) => p.kind === kind).map(({ kind: _k, ...rest }) => rest);
+  const byKind = (kind: string): PlaceOption[] =>
+    [...placeRows]
+      .filter((p) => p.kind === kind)
+      .map((p) => ({ key: p.key, label: p.label, parentKey: p.parentKey, parentLabel: p.parentLabel, shops: p.shops }));
   const states = byKind("state");
   const cities = byKind("city");
 
