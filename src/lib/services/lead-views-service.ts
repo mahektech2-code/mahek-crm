@@ -132,7 +132,17 @@ export async function leadViewClause(view: LeadView, day: string): Promise<SQL> 
     case "lost30":
       return sql`c.lead_stage = 'lost'
                  and c.lead_stage_since is not null
-                 and c.lead_stage_since >= ${day}::date - ${LOST_WINDOW_DAYS}`;
+                 and c.lead_stage_since >= ${day}::date - ${LOST_WINDOW_DAYS}::int`;
+    /* `::int` ON THE PARAMETER, and it is the whole of what made this page
+     * open. A bind parameter beside a date has no type of its own, so
+     * Postgres resolved `date - $n` as `date - date`, which yields an integer,
+     * and then had no operator for `date >= integer`. The counts query threw,
+     * the header could not be drawn and /crm/leads answered a blank page on
+     * the first morning the pipeline was live. Every other subtraction of a
+     * number from a date in `src/` already carried the cast — this was the one
+     * that did not, and `date-arithmetic-bind.test.ts` now reads the source
+     * for the spelling, because it type-checks, lints and fails only at the
+     * database. */
 
     /*
      * THE REGISTER IS BOTH HALVES OF ONE CHAIN, which is why it is one view.
