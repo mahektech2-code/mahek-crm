@@ -156,8 +156,45 @@ export function LivePanel({
     setSelectedId((current) => (current === id ? null : id));
   }, []);
 
+  /*
+   * FULL SCREEN IS A LAYOUT AND NOT A BROWSER MODE.
+   *
+   * The browser's own fullscreen would take the tab bar with it, which is more
+   * than anybody asked for, and it owns the Escape key — so the shop record a
+   * pin opens could not be closed with Escape without also throwing the map out
+   * of fullscreen. This gives the map the window instead: the whole panel goes
+   * fixed, the map fills it and the team list stays beside it, because the
+   * point of the screen is still which salesman, and a map you cannot pick a
+   * name on is a picture. It lives HERE rather than in the map for the same
+   * reason the selection does — both halves are laid out by this component,
+   * and neither can own a fact the other has to read.
+   */
+  const [fullscreen, setFullscreen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      /* The shop record drawer closes on Escape itself, and it is drawn ABOVE
+         the fullscreen panel — so Escape with one open means "close the thing
+         on top", not "give the window back". Leaving both to fire would close
+         a drawer and drop the map out of fullscreen in one keystroke, which is
+         a control nobody can aim. */
+      if (document.querySelector('[role="dialog"]')) return;
+      setFullscreen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
+
   return (
-    <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_clamp(280px,30%,360px)]">
+    <div
+      className={
+        fullscreen
+          ? "fixed inset-0 z-50 grid grid-cols-1 gap-3 bg-canvas p-3 lg:grid-cols-[minmax(0,1fr)_clamp(280px,30%,360px)]"
+          : "grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_clamp(280px,30%,360px)]"
+      }
+    >
       <StreetMap
         day={day}
         rows={frame.rows}
@@ -169,11 +206,17 @@ export function LivePanel({
         tripBreakMinutes={tripBreakMinutes}
         staleAfterSeconds={staleAfterSeconds}
         view={view}
+        fullscreen={fullscreen}
+        onToggleFullscreen={() => setFullscreen((on) => !on)}
         selectedId={selectedId}
         apiKey={olaMapsKey}
         keysSpent={olaKeysSpent}
       />
-      <div className="flex flex-col gap-2">
+      {/* The list scrolls WITHIN the window in fullscreen rather than pushing
+          the page down: the panel is fixed to the viewport, so anything taller
+          than it would simply be unreachable. `min-h-0` is what lets a grid
+          child shrink enough to scroll at all. */}
+      <div className={"flex flex-col gap-2 " + (fullscreen ? "min-h-0 overflow-y-auto" : "")}>
         {isToday ? <FeedMode mode={mode} pollSeconds={pollSeconds} /> : null}
         <TeamList
           rows={frame.rows}
