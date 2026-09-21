@@ -3667,7 +3667,60 @@ export type ActivityPoint = {
   capturedAt: Date | null;
   ageSeconds: number | null;
   source: string | null;
+  /**
+   * THE SHOP BEHIND A VISIT, and null on every other kind of act.
+   *
+   * A mark on the map used to say "Visit" and nothing else, which is the one
+   * question nobody was asking: a manager looking at a day already knows his
+   * salesman made visits, and what he wants to know is WHICH shops and in what
+   * order. The join is `mbos_visits.id = a.entity_id` — the handset's own visit
+   * id is what the sync dispatcher writes into `entity_id`, so the two are the
+   * same row — and the fields are flat and nullable rather than a nested
+   * object, because these rows come back from a raw `db.execute` and go
+   * straight down the live feed as JSON.
+   *
+   * It is NOT a second reading of the visit: `outcome` and the two timestamps
+   * are the visit's own columns, read here so the card a pin opens and the
+   * Visits screen cannot disagree about one call.
+   */
+  customerId: string | null;
+  customerName: string | null;
+  customerKind: string | null;
+  thirdParty: boolean | null;
+  visitStartAt: Date | null;
+  visitEndAt: Date | null;
+  durationSeconds: number | null;
+  visitOutcome: string | null;
 };
+
+/**
+ * The columns every activity read selects — one list, because there are two of
+ * them and they feed the same screen.
+ *
+ * `activityPointsForDay` renders the first paint and `liveDeltaFor` pushes
+ * everything after it, so a column added to one and not the other is a mark
+ * that has a shop on it until the page is left open for a minute. They were
+ * two hand-typed lists; this is one.
+ */
+const ACTIVITY_COLUMNS = sql`
+  a.user_id as "salesmanId", a.entity_type as "entityType",
+  a.entity_id as "entityId", a.lat, a.lng,
+  a.accuracy_m as "accuracyM", a.captured_at as "capturedAt",
+  a.age_seconds as "ageSeconds", a.source,
+  v.customer_id as "customerId", c.name as "customerName",
+  c.kind::text as "customerKind", c.third_party as "thirdParty",
+  v.check_in_at as "visitStartAt", v.check_out_at as "visitEndAt",
+  v.duration_seconds as "durationSeconds", v.outcome::text as "visitOutcome"
+`;
+
+/**
+ * And the join behind them. LEFT, and gated on the entity type: every other
+ * kind of activity has no visit and must still come back as a row.
+ */
+const ACTIVITY_VISIT_JOIN = sql`
+  left join mbos_visits v on a.entity_type = 'visit' and v.id = a.entity_id
+  left join customers c on c.id = v.customer_id
+`;
 
 /**
  * Everything the team did today, and where.
@@ -3684,11 +3737,9 @@ export type ActivityPoint = {
 export async function activityPointsForDay(day: string): Promise<ActivityPoint[]> {
   const scope = await managerScope();
   return db.execute<ActivityPoint>(sql`
-    select a.user_id as "salesmanId", a.entity_type as "entityType",
-           a.entity_id as "entityId", a.lat, a.lng,
-           a.accuracy_m as "accuracyM", a.captured_at as "capturedAt",
-           a.age_seconds as "ageSeconds", a.source
+    select ${ACTIVITY_COLUMNS}
       from mbos_activity_locations a
+      ${ACTIVITY_VISIT_JOIN}
      where a.lat is not null and a.lng is not null
        and (a.captured_at ${IST_DAY})::date = ${day}::date
        ${onlyMine(scope, "a.user_id")}
@@ -3836,11 +3887,9 @@ export async function liveDeltaFor(
 
     withActivity
       ? (db.execute<ActivityPoint>(sql`
-          select a.user_id as "salesmanId", a.entity_type as "entityType",
-                 a.entity_id as "entityId", a.lat, a.lng,
-                 a.accuracy_m as "accuracyM", a.captured_at as "capturedAt",
-                 a.age_seconds as "ageSeconds", a.source
+          select ${ACTIVITY_COLUMNS}
             from mbos_activity_locations a
+            ${ACTIVITY_VISIT_JOIN}
            where a.lat is not null and a.lng is not null
              and a.captured_at >= ${dayStart} and a.captured_at < ${dayEnd}
              and a.created_at > ${since}::timestamptz

@@ -18,6 +18,9 @@ import { departedTrailIds, trailLayerIds, trailSourceId } from "@/lib/map-layers
 import { formatDistance } from "@/lib/geo";
 import type { ActivityPoint, LastKnown, ShopPin, TrackPoint } from "@/lib/services/sales-service";
 import { activityLabel } from "@/lib/mbos/activity-labels";
+import { accountTypeLabel } from "@/lib/account-types";
+import { markMs, numberVisits, otherMarks } from "@/lib/engines/visit-marks";
+import { VISIT_OUTCOME_LABEL, label as wordFor } from "@/components/console/words";
 import {
   OlaMapsStyleSwitcher,
   olaMapsStyle,
@@ -436,6 +439,53 @@ function dwellFeatureCollection(stops: DwellStop[]): GeoJSON.FeatureCollection {
   };
 }
 
+/** What one visit pin knows about itself — read back off the feature on a click. */
+function visitFeatureCollection(
+  visits: Array<ActivityPoint & { seq: number }>,
+  staleAfterSeconds: number,
+): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: visits.map((v) => ({
+      type: "Feature" as const,
+      properties: {
+        seq: String(v.seq),
+        customerId: v.customerId,
+        customerName: v.customerName,
+        accountType: accountTypeLabel({
+          kind: v.customerKind ?? "customer",
+          thirdParty: v.thirdParty ?? false,
+        }),
+        outcome: wordFor(VISIT_OUTCOME_LABEL, v.visitOutcome ?? "visited"),
+        when: visitWhen(v),
+        /* The same rule the activity dot follows: a stale fix is drawn hollow
+           rather than hidden, because the visit is certain and only its place
+           is not. */
+        stale: (v.ageSeconds ?? 0) > staleAfterSeconds ? 1 : 0,
+      },
+      geometry: { type: "Point" as const, coordinates: [v.lng, v.lat] },
+    })),
+  };
+}
+
+/**
+ * The visit's own hours, as far as they are known.
+ *
+ * A visit that never closed has no check-out and no duration — the salesman
+ * walked out of signal, and `mbos_visits` says so with nulls rather than
+ * guessing an end. The card says "from 10:42" in that case instead of drawing
+ * a range whose second half nobody recorded.
+ */
+function visitWhen(v: ActivityPoint): string {
+  const start = markMs(v.visitStartAt);
+  if (!start) return "";
+  const from = clock(new Date(start));
+  const end = markMs(v.visitEndAt);
+  if (!end) return `from ${from}`;
+  const held = v.durationSeconds ? ` (${formatMinutes(v.durationSeconds / 60)})` : "";
+  return `${from}\u2013${clock(new Date(end))}${held}`;
+}
+
 /** The work, marked where it was done — see `dwellFeatureCollection` above. */
 function activityFeatureCollection(
   marks: ActivityPoint[],
@@ -469,7 +519,89 @@ function lowestOwnLayer(map: maplibregl.Map): string | undefined {
   return map
     .getStyle()
     .layers.map((l) => l.id)
-    .find((id) => id.startsWith("trail-") || id === "dwells" || id === "activity");
+    .find(
+      (id) =>
+        id.startsWith("trail-") || id === "dwells" || id === "activity" || id === "visits",
+    );
+}
+
+/**
+ * The card a visit pin opens, built by hand because a MapLibre popup takes an
+ * element and not a component.
+ *
+ * It reads the feature's own properties rather than looking the visit up
+ * again: they were put there by `visitFeatureCollection` from the row the
+ * server sent, and a second read would be a second answer. The classes are the
+ * app's own — the stylesheet is global, so a popup is styled like everything
+ * else rather than like a map library.
+ */
+function visitCard(
+  props: Record<string, unknown>,
+  onOpenRecord: (customerId: string) => void,
+): HTMLElement {
+  const text = (key: string) => (typeof props[key] === "string" ? (props[key] as string) : "");
+  const el = document.createElement("div");
+  el.className = "min-w-[190px] pr-3 text-[12px] text-ink";
+
+  const head = document.createElement("p");
+  head.className = "text-[11px] text-muted";
+  head.textContent = [`Visit ${text("seq")}`, text("when")].filter(Boolean).join(" · ");
+  el.append(head);
+
+  const name = document.createElement("p");
+  name.className = "mt-0.5 text-[13px] font-semibold text-ink";
+  name.textContent = text("customerName");
+  el.append(name);
+
+  const what = document.createElement("p");
+  what.className = "mt-0.5 text-muted";
+  what.textContent = [text("accountType"), text("outcome")].filter(Boolean).join(" · ");
+  el.append(what);
+
+  /* A shop we can no longer name is a shop there is nothing to open, and a
+     dead link is worse than none. It cannot happen from the query as written;
+     it is guarded because a popup is built from whatever the feature carries. */
+  const customerId = text("customerId");
+  if (customerId) {
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "mt-1.5 text-[12px] font-medium text-[#5223E0] hover:underline";
+    open.textContent = "Open record \u2192";
+    open.addEventListener("click", () => onOpenRecord(customerId));
+    el.append(open);
+  }
+  return el;
+}
+
+/**
+ * WHETHER A CLICK LANDED ON A VISIT, asked by the two layers underneath it.
+ *
+ * MapLibre fires every layer-scoped handler whose features are under the
+ * cursor, so clicking a numbered pin that happens to sit inside a dwell ring
+ * — which is most of them, since a visit IS somewhere he stood still — opened
+ * the visit card AND a "Stopped 5 min" popup on top of it, each half covering
+ * the other. The visit is the more specific answer and the one that was aimed
+ * at, so it wins and the general marks stand down. It is asked of the map
+ * rather than tracked in a flag: two handlers firing in an order nothing
+ * guarantees is exactly where a flag goes wrong.
+ */
+function overVisit(map: maplibregl.Map, point: maplibregl.Point): boolean {
+  const layers = ["visits", "visit-labels"].filter((id) => map.getLayer(id));
+  if (!layers.length) return false;
+  return map.queryRenderedFeatures(point, { layers }).length > 0;
+}
+
+/**
+ * Showing and hiding the numbered visits, moved on the map that already exists
+ * — the same imperative pattern the book pins use, and for the same reason: a
+ * toggle that rebuilt the map would refetch every tile to hide a dozen dots.
+ */
+function setVisitLayersVisible(map: maplibregl.Map, visible: boolean) {
+  for (const id of ["visits", "visit-labels"]) {
+    if (map.getLayer(id)) {
+      map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
+    }
+  }
 }
 
 function highlightMarker(el: HTMLDivElement, selected: boolean) {
@@ -490,6 +622,8 @@ export function StreetMap({
   tripBreakMinutes,
   staleAfterSeconds,
   view,
+  fullscreen,
+  onToggleFullscreen,
   selectedId,
   apiKey,
   keysSpent,
@@ -507,6 +641,9 @@ export function StreetMap({
   tripBreakMinutes: number;
   staleAfterSeconds: number;
   view: "now" | "today";
+  /** Whether the map has been given the whole window — see `live-panel.tsx`. */
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
   /** Whoever is picked in the team list beside this — see the effect below. */
   selectedId: string | null;
   /** Ola Maps' key, read once server-side and handed down — see the doc comment above. */
@@ -571,11 +708,24 @@ export function StreetMap({
      step: `drawOverlays` reads it on every style switch, and a ref used
      above where it is written reads as an accident. */
   const showBookRef = React.useRef(true);
+  /* The numbered visits, shown by default and turnable off for a manager who
+     wants the bare shape of a day. Held as a ref beside its state for the same
+     reason the book is: `drawOverlays` runs again on every Map/Satellite
+     switch and reads it imperatively. */
+  const [showVisits, setShowVisits] = React.useState(true);
+  const showVisitsRef = React.useRef(true);
   /* Which shop's record is open. The same drawer Territory's map opens. */
   const [selectedShopId, setSelectedShopId] = React.useState<string | null>(null);
 
   const pinned = rows.filter((r) => r.lat != null && r.lng != null);
-  const marks = view === "today" ? activity : [];
+  const allMarks = view === "today" ? activity : [];
+  /* THE VISITS COME OUT OF THE ACTIVITY AND ARE DRAWN AS THEIR OWN THING.
+     Every act was one identical dot, so a visit — the only mark with a shop
+     and an order behind it — read as the same event as an expense logged on
+     the way home. A visit with no customer behind it stays in the general
+     layer rather than being dropped: it is still a mark somebody made. */
+  const visits = numberVisits(allMarks);
+  const marks = otherMarks(allMarks);
   const trails = view === "today" ? [...tracks.entries()] : [];
   const stops = view === "today" ? [...dwells.values()].flat() : [];
 
@@ -589,7 +739,12 @@ export function StreetMap({
   const points: [number, number][] = [
     ...pinned.map((r) => [r.lng as number, r.lat as number] as [number, number]),
     ...trails.flatMap(([, ps]) => ps.map((p) => [p.lng, p.lat] as [number, number])),
+    /* Both halves of the activity. The visits were taken out of `marks` to be
+       drawn as their own layer, and leaving them out here would let a shop
+       reached on a handset whose trail is dead sit outside the opening view —
+       the one visit on the day that most needs looking at. */
     ...marks.map((a) => [a.lng, a.lat] as [number, number]),
+    ...visits.map((v) => [v.lng, v.lat] as [number, number]),
   ];
 
   const bookCounts = countByTone(book);
@@ -623,7 +778,7 @@ export function StreetMap({
    * so a Satellite switch draws what is on screen now rather than what was on
    * screen at nine o'clock.
    */
-  const frame = React.useRef({ pinned, trails, marks, stops, points });
+  const frame = React.useRef({ pinned, trails, marks, visits, stops, points });
   /** Whose trail has a source and layers on the map — see `lib/map-layers.ts`. */
   const drawnTrails = React.useRef<string[]>([]);
   /** Read by the marker rebuild, which has to put the ring back where it was. */
@@ -648,11 +803,12 @@ export function StreetMap({
       .map(([id, ps]) => `${id}#${ps.length}@${ps.length ? ps[ps.length - 1].at.getTime() : 0}`)
       .join("|"),
     `m${marks.length}`,
+    `v${visits.length}`,
     `s${stops.length}`,
   ].join("~");
 
   React.useEffect(() => {
-    frame.current = { pinned, trails, marks, stops, points };
+    frame.current = { pinned, trails, marks, visits, stops, points };
     redraw.current?.();
     /* The signature IS the dependency — see its own note. The arrays it is
        built from change identity every render and say nothing by doing so. */
@@ -786,7 +942,7 @@ export function StreetMap({
 
       built.on("click", "activity", (e: maplibregl.MapLayerMouseEvent) => {
         const f = e.features?.[0];
-        if (!f) return;
+        if (!f || overVisit(built, e.point)) return;
         new maplibregl.Popup({ closeButton: false })
           .setLngLat(e.lngLat)
           .setText(String(f.properties?.label ?? ""))
@@ -795,9 +951,44 @@ export function StreetMap({
       built.on("mouseenter", "activity", () => (built.getCanvas().style.cursor = "pointer"));
       built.on("mouseleave", "activity", () => (built.getCanvas().style.cursor = ""));
 
-      built.on("click", "dwells", (e: maplibregl.MapLayerMouseEvent) => {
+      /*
+       * A VISIT PIN OPENS A CARD, not a line of text.
+       *
+       * Every other popup on this map is one sentence, and one sentence is the
+       * right answer for a stop or a leg. A visit is four facts — which call of
+       * the day, which shop, what kind of account, what came of it — and the
+       * way into the record itself, which is the thing a manager is actually
+       * reaching for when he clicks a shop he does not recognise. It opens the
+       * SAME drawer a book pin opens, so a figure read off a visit and one read
+       * off the shop underneath it are one answer.
+       *
+       * Bound to both layers IN ONE HANDLER, which is the part worth saying:
+       * the number sits above the disc, so a click landing on a digit hits
+       * `visit-labels` and one bound only to `visits` would do nothing — a pin
+       * that works everywhere except its middle. Registered as two handlers
+       * instead, a click landing on both opened two identical cards stacked on
+       * each other, each covering the other's "Open record".
+       */
+      const VISIT_LAYERS = ["visits", "visit-labels"];
+      built.on("click", VISIT_LAYERS, (e: maplibregl.MapLayerMouseEvent) => {
         const f = e.features?.[0];
         if (!f) return;
+        const popup = new maplibregl.Popup({ closeButton: true, maxWidth: "260px" })
+          .setLngLat(e.lngLat)
+          .addTo(built);
+        popup.setDOMContent(
+          visitCard(f.properties ?? {}, (id) => {
+            setSelectedShopId(id);
+            popup.remove();
+          }),
+        );
+      });
+      built.on("mouseenter", VISIT_LAYERS, () => (built.getCanvas().style.cursor = "pointer"));
+      built.on("mouseleave", VISIT_LAYERS, () => (built.getCanvas().style.cursor = ""));
+
+      built.on("click", "dwells", (e: maplibregl.MapLayerMouseEvent) => {
+        const f = e.features?.[0];
+        if (!f || overVisit(built, e.point)) return;
         new maplibregl.Popup({ closeButton: false })
           .setLngLat(e.lngLat)
           .setText(String(f.properties?.label ?? ""))
@@ -993,7 +1184,7 @@ export function StreetMap({
       }
 
       function drawEverything() {
-        const { trails, marks, stops } = frame.current;
+        const { trails, marks, visits, stops } = frame.current;
 
         /* MapLibre's compact attribution starts EXPANDED, and stays that way
            until the map is DRAGGED — that is the only event its minimiser
@@ -1073,7 +1264,9 @@ export function StreetMap({
              added UNDER the shared fix, dwell and activity layers if those are
              already up, so a late arrival is not drawn over the marks it is
              supposed to run beneath. */
-          const under = ["trail-points", "dwells", "activity"].find((l) => built.getLayer(l));
+          const under = ["trail-points", "dwells", "activity", "visits"].find((l) =>
+            built.getLayer(l),
+          );
           built.addSource(`trail-${id}`, {
             type: "geojson",
             data: trailFeatureCollection(segments),
@@ -1276,6 +1469,57 @@ export function StreetMap({
             },
           });
         });
+
+        /*
+         * THE VISITS, NUMBERED — the top layer on the map, and the only one
+         * that names a shop.
+         *
+         * Two layers over one source rather than an HTML marker apiece: a
+         * marker is bound to the map and would have to be torn down and
+         * rebuilt on every delta, while a source takes `setData` and repaints.
+         * It is also what keeps the numbers on top of everything — MapLibre
+         * draws in the order layers were added, and these are added last.
+         *
+         * The number is drawn with `allow-overlap` and `ignore-placement` on
+         * purpose. MapLibre's default is to drop a label that collides with
+         * another, which on a beat where two shops are next door would silently
+         * take a number off the map and leave a dot that says nothing — the
+         * failure this whole layer exists to end, arriving from the other side.
+         */
+        upsert("visits", visitFeatureCollection(visits, staleAfterSeconds), () => {
+          built.addSource("visits", {
+            type: "geojson",
+            data: visitFeatureCollection(visits, staleAfterSeconds),
+          });
+          built.addLayer({
+            id: "visits",
+            type: "circle",
+            source: "visits",
+            paint: {
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 9, 16, 12],
+              "circle-color": ["case", ["==", ["get", "stale"], 1], "#FFFFFF", "#5223E0"],
+              /* A white ring, because a violet disc on the violet end of a
+                 trail is the same shape twice. */
+              "circle-stroke-width": 2,
+              "circle-stroke-color": ["case", ["==", ["get", "stale"], 1], "#5223E0", "#FFFFFF"],
+            },
+          });
+          built.addLayer({
+            id: "visit-labels",
+            type: "symbol",
+            source: "visits",
+            layout: {
+              "text-field": ["get", "seq"],
+              "text-size": 11,
+              "text-allow-overlap": true,
+              "text-ignore-placement": true,
+            },
+            paint: {
+              "text-color": ["case", ["==", ["get", "stale"], 1], "#5223E0", "#FFFFFF"],
+            },
+          });
+        });
+        setVisitLayersVisible(built, showVisitsRef.current);
       }
 
       built.on("style.load", drawOverlays);
@@ -1543,6 +1787,24 @@ export function StreetMap({
     if (built) setBookPinsVisible(built, showBook);
   }, [showBook]);
 
+  React.useEffect(() => {
+    showVisitsRef.current = showVisits;
+    const built = map.current;
+    if (built) setVisitLayersVisible(built, showVisits);
+  }, [showVisits]);
+
+  /*
+   * A MAP THAT HAS JUST BEEN GIVEN THE WHOLE WINDOW HAS TO BE TOLD.
+   *
+   * MapLibre watches its container and resizes itself, so this is belt and
+   * braces rather than the mechanism — but the resize it sees is a CSS change
+   * with no layout event behind it, and a canvas left at the old size draws a
+   * fullscreen map into a third of the screen. It costs one call.
+   */
+  React.useEffect(() => {
+    map.current?.resize();
+  }, [fullscreen]);
+
   /*
    * Picking somebody in the team list moves the CAMERA on the map that
    * already exists — it does not rebuild it. Rebuilding would refetch the
@@ -1701,7 +1963,7 @@ export function StreetMap({
 
   if (!apiKey) {
     return (
-      <Frame key="no-key">
+      <Frame key="no-key" fullscreen={fullscreen} onToggleFullscreen={onToggleFullscreen}>
         <div className="flex h-full flex-col items-center justify-center px-6 text-center">
           <p className="text-[15px] font-semibold text-ink">
             {keysSpent ? "Every Ola Maps key has run out" : "The map needs a key"}
@@ -1720,7 +1982,7 @@ export function StreetMap({
 
   if (failed) {
     return (
-      <Frame key="failed">
+      <Frame key="failed" fullscreen={fullscreen} onToggleFullscreen={onToggleFullscreen}>
         <div className="flex h-full flex-col items-center justify-center px-6 text-center">
           <p className="text-[15px] font-semibold text-ink">The map could not be drawn</p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
@@ -1733,7 +1995,7 @@ export function StreetMap({
   }
 
   return (
-    <Frame key="map">
+    <Frame key="map" fullscreen={fullscreen} onToggleFullscreen={onToggleFullscreen}>
       {/*
         THE HOST IS ALWAYS MOUNTED, and "nothing to place yet" is drawn OVER it
         rather than instead of it.
@@ -1781,8 +2043,31 @@ export function StreetMap({
           reading. "412 shops" beside a map reads as the book; "within 10 km
           of the team" says what it actually is, which is the half somebody
           would otherwise have to be told. */}
-      {book.length ? (
+      {book.length || visits.length ? (
         <div className="absolute top-11 left-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-x-3 gap-y-1.5 rounded-[6px] border border-line bg-surface/95 px-3 py-2 text-[12px] text-ink shadow-[0_1px_4px_rgba(22,22,22,0.15)]">
+          {/* THE VISITS FIRST, because they are the day and the shops are the
+              ground it is read against. The count is what is PINNED: a visit
+              made where the handset could get no fix is on no map, and a legend
+              claiming otherwise would have somebody counting dots against the
+              Visits screen and finding one missing. */}
+          {visits.length ? (
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={showVisits}
+                onChange={(e) => setShowVisits(e.target.checked)}
+              />
+              <span
+                className="inline-flex h-4 w-4 flex-none items-center justify-center rounded-full text-[9px] font-semibold text-white"
+                style={{ background: "#5223E0" }}
+                aria-hidden
+              >
+                1
+              </span>
+              Visits pinned ({visits.length})
+            </label>
+          ) : null}
+          {book.length ? (
           <label className="flex cursor-pointer items-center gap-1.5">
             <input
               type="checkbox"
@@ -1793,6 +2078,7 @@ export function StreetMap({
               ? `Within ${radiusKm} km of the team (${book.length})`
               : `Nearby shops (${book.length})`}
           </label>
+          ) : null}
           {(["customer", "lead", "third", "closed"] as BookPinTone[])
             .filter((tone) => bookCounts[tone] > 0)
             .map((tone) => (
@@ -1814,11 +2100,55 @@ export function StreetMap({
   );
 }
 
-/** One shape for the map and the state that replaces it. */
-function Frame({ children }: { children: React.ReactNode }) {
+/**
+ * One shape for the map and the state that replaces it.
+ *
+ * **Fullscreen is a HEIGHT here and a layout in `live-panel.tsx`.** The panel
+ * is what takes the window; this only has to stop imposing a height on itself,
+ * because the fixed `calc(100vh-280px)` is subtracting a header, a banner and a
+ * paragraph that are not on the screen any more. `min-h` goes with it — a
+ * minimum taller than the window is a map you have to scroll to see the bottom
+ * of, which is the opposite of what the button was pressed for.
+ */
+function Frame({
+  children,
+  fullscreen,
+  onToggleFullscreen,
+}: {
+  children: React.ReactNode;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
+}) {
   return (
-    <div className="relative overflow-hidden rounded-[6px] border border-line bg-surface">
-      <div className="relative h-[calc(100vh-280px)] min-h-[480px] bg-[#F0F2F6]">{children}</div>
+    <div
+      className={
+        "relative overflow-hidden border border-line bg-surface " +
+        (fullscreen ? "h-full rounded-none" : "rounded-[6px]")
+      }
+    >
+      <div
+        className={
+          "relative bg-[#F0F2F6] " +
+          (fullscreen ? "h-full" : "h-[calc(100vh-280px)] min-h-[480px]")
+        }
+      >
+        {children}
+        {/* BOTTOM-RIGHT, on its own. The style switcher and the legend are one
+            cluster of controls about WHAT is drawn, top-left, and MapLibre owns
+            the top-right; this is about how much of the screen the map gets,
+            which is neither. It lives in the frame rather than beside the
+            legend so that it is there in every state — a map that could not be
+            drawn at all is exactly when somebody wants the window back. */}
+        <button
+          type="button"
+          onClick={onToggleFullscreen}
+          title={fullscreen ? "Leave full screen (Esc)" : "Fill the window"}
+          className="absolute right-2 bottom-8 z-10 inline-flex items-center gap-1.5 rounded-[4px] border border-line bg-surface px-2.5 py-1 text-[12px] font-medium text-body shadow-[0_1px_4px_rgba(22,22,22,0.25)] hover:bg-canvas"
+        >
+          <span aria-hidden>{fullscreen ? "\u2921" : "\u2922"}</span>
+          {fullscreen ? "Exit full screen" : "Full screen"}
+        </button>
+      </div>
     </div>
   );
 }

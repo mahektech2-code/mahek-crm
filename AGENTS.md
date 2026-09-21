@@ -5068,6 +5068,52 @@ nowhere on the map — inventing a spot for them is the one thing a map of
 where people are must not do. The list reads the newest of the trail, the
 check-in and each visit, so somebody whose tracking is off still appears.
 
+**A VISIT IS NUMBERED AND NAMES ITS SHOP; every other act is still a dot.**
+Every mark on the day was one identical circle labelled with its kind, so
+"Visit" answered the question nobody was asking — a manager reading a day
+already knows his salesman made visits, and what he cannot see is WHICH shops
+and in what ORDER. The numbering is per SALESMAN, because it is the order of
+his own day: two men on one screen both have a Visit 1, and the card names the
+shop. `lib/engines/visit-marks.ts` is the rule, pure like every engine here,
+because the map that draws it is a client component that cannot import
+anything declared beside `server-only` — and because a rule deciding the
+number on four hundred pins a day should be exercisable without a map key.
+
+**It counts the PINS, and the card carries the clock for that reason.** A visit
+made where the handset could get no fix is on no map at all — there is nowhere
+to put it, and inventing a spot is the one thing a map of where things happened
+must not do — so the numbers are over what is drawn and the legend says
+"Visits pinned". The check-in time on the card is what reconciles a pin against
+`/sales/visits`, which lists every visit whether or not it has a position.
+
+**The shop travels WITH the activity row, on both of its reads.** The visit
+behind a mark is a left join onto `mbos_visits` and `customers` in
+`ACTIVITY_COLUMNS` — one column list, because `activityPointsForDay` renders
+the first paint and `liveDeltaFor` pushes everything after it, and a column
+added to one and not the other is a mark that has a shop on it until the page
+has been open a minute. It rides the live feed for free: `mergeActivity` keys
+on `(entityType, entityId)`, so a visit that lands at three o'clock is numbered
+and drawn without the page being asked for the day again.
+
+**The card is a card because a visit is four facts, and it opens the same
+drawer a shop pin opens.** Every other popup on this map is one sentence, which
+is the right answer for a stop or a leg; this one carries which call of the day,
+the shop, what kind of account and what came of it, and then the way into
+`CustomerQuickView` — the same two reads the CRM's own record page makes, so a
+figure read off a visit and one read off the shop under it are one answer. The
+dwell ring and the activity dot underneath it stand down when a click lands on
+a visit (`overVisit`): MapLibre fires every layer handler under the cursor, and
+two popups each covering half of the other is a control nobody can aim.
+
+**FULL SCREEN IS A LAYOUT, NOT THE BROWSER'S.** The browser's own fullscreen
+takes the tab bar with it, which is more than anybody asked for, and it owns the
+Escape key — so the shop record a pin opens could not be closed with Escape
+without also throwing the map out of fullscreen. `live-panel.tsx` goes fixed to
+the viewport instead and KEEPS THE TEAM LIST beside the map, because the screen
+is still about which salesman and a map you cannot pick a name on is a picture.
+Escape gives the window back, unless a drawer is open, in which case it belongs
+to the drawer.
+
 **The trail can be snapped onto the road it was walked on, and Snap-to-Road
 specifically never has to run for the map to work.** At the fifteen-second
 sampling density this app uses, a raw GPS line already hugs the road on its
