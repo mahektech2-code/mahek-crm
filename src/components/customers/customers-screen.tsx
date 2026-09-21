@@ -38,7 +38,6 @@ import { VoiceTextarea } from "@/components/ui/dictate";
 import { Icon } from "@/components/shell/icons";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import {
-  createCustomer,
   createRemindersBulk,
   decideDeactivation,
   decideReactivation,
@@ -272,7 +271,6 @@ export function CustomersScreen({
     slowPayers: number;
     withComplaints: number;
     directCustomers: number;
-    leads: number;
     thirdParties: number;
   };
 }) {
@@ -379,7 +377,6 @@ export function CustomersScreen({
     [sort, sortTable, navigate],
   );
 
-  const [addOpen, setAddOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Row | null>(null);
   const [bulkRemind, setBulkRemind] = React.useState(false);
   const [changingAm, setChangingAm] = React.useState(false);
@@ -585,7 +582,7 @@ export function CustomersScreen({
     <div className="px-6 pt-6 pb-10">
       <PageHeader
         title="Customers"
-        subtitle={`${scopeLabel} · Every account in the book, with the figures a telecaller needs mid-call.`}
+        subtitle={`${scopeLabel} · Every account we invoice or deliver to, with the figures a telecaller needs mid-call. Leads are in Lead Management.`}
         actions={
           <>
             <Button
@@ -631,9 +628,16 @@ export function CustomersScreen({
             >
               Transfer sales manager
             </Button>
-            <Button variant="primary" onClick={() => setAddOpen(true)}>
-              Add lead
-            </Button>
+            {/*
+              THERE IS NO "ADD LEAD" HERE ANY MORE, and it went with the rows
+              it created. This button opened a form that hard-coded
+              `kind: "lead"` — so on a table that no longer lists leads it
+              wrote a record and returned the reader to a list the record was
+              not on, which reads as a save that failed. Capturing a lead is
+              `/crm/leads/intake`, beside the ladder and the gates that are
+              the rest of the work on one; it is reached from the Lead
+              Management section of the sidebar, like every other lead screen.
+            */}
           </>
         }
       />
@@ -647,19 +651,17 @@ export function CustomersScreen({
           },
           /*
            * The split, which is the answer to "what is in this book" and was
-           * previously unknowable without running SQL. It is also the progress
-           * bar for the marking work: third parties climbs as the team works
-           * through them, and leads falls by the same amount.
+           * previously unknowable without running SQL. Two tiles rather than
+           * three: a Leads count sat here while leads were on the table, and
+           * it is gone with them. Left behind it would be the one figure on
+           * the strip counting rows nobody can reach from this screen, and
+           * the three would no longer add up to the Customers tile above
+           * them — which is the first thing anybody checks.
            */
           {
             label: "Direct customers",
             value: String(totals.directCustomers),
             sub: "bill with us",
-          },
-          {
-            label: "Leads",
-            value: String(totals.leads),
-            sub: "not ordered yet",
           },
           {
             label: "Third-party customers",
@@ -905,35 +907,66 @@ export function CustomersScreen({
                       onChange={() => toggle(r.id)}
                     />
                   </Td>
+                  {/*
+                    A NAME IS GIVEN A CEILING, because several hundred of
+                    these are not names.
+
+                    `customers.name` holds whatever the sheet typed, and on
+                    the real book that includes whole postal addresses offered
+                    as a shop — "3, New Golden Nest Rd, Phase 9, Sonam Sagar,
+                    Indira Nagar, Mira Road East, Thane, Mira Bhayandar,
+                    Maharashtra 401105, India" is one row of it. A `Td` holds
+                    its line rather than wrapping, for the good reason the
+                    primitive documents, and a table laid out automatically
+                    then gives the column whatever that line asks for: one
+                    address pushed Contact person, Phone, Type and the three
+                    seats off the right-hand edge for EVERY row on the page,
+                    including the four hundred whose names are four words
+                    long. The column is sized for its worst row, and the worst
+                    row here is unbounded.
+
+                    So the ceiling is on a block INSIDE the cell rather than
+                    on the cell: `max-width` on a `td` is advisory under
+                    automatic layout and browsers are free to ignore it, which
+                    is why the two screens that already truncate this way put
+                    it where it binds. The full name rides on `title`, so the
+                    row that was clipped is still readable without opening it,
+                    and the badges are held clear with `shrink-0` — a flag
+                    saying this account is a slow payer must not be the thing
+                    the ellipsis eats.
+                  */}
                   <Td className="font-medium text-ink">
-                    <Link
-                      href={recordHref(r.id)}
-                      // Every row on the page is visible at once, so the
-                      // default prefetch renders every customer's page on
-                      // the one shared vCPU this app runs on.
-                      prefetch={false}
-                      className="no-underline"
-                    >
-                      {r.name}
-                    </Link>
-                    {r.slowPayer ? (
-                      <span className="ml-2">
-                        <SlowPayerBadge />
-                      </span>
-                    ) : null}
-                    {r.deactivationRequested ? (
-                      <span className="ml-2">
-                        <Badge tone="warn">Deactivation asked</Badge>
-                      </span>
-                    ) : null}
-                    {/* A customer waiting to come back is worth flagging on
-                        the row: they are off every list until somebody says
-                        yes, so nothing else would surface them. */}
-                    {r.reactivationRequested ? (
-                      <span className="ml-2">
-                        <Badge tone="brand">Reactivation asked</Badge>
-                      </span>
-                    ) : null}
+                    <div className="flex max-w-[22rem] items-center">
+                      <Link
+                        href={recordHref(r.id)}
+                        // Every row on the page is visible at once, so the
+                        // default prefetch renders every customer's page on
+                        // the one shared vCPU this app runs on.
+                        prefetch={false}
+                        title={r.name}
+                        className="truncate no-underline"
+                      >
+                        {r.name}
+                      </Link>
+                      {r.slowPayer ? (
+                        <span className="ml-2 shrink-0">
+                          <SlowPayerBadge />
+                        </span>
+                      ) : null}
+                      {r.deactivationRequested ? (
+                        <span className="ml-2 shrink-0">
+                          <Badge tone="warn">Deactivation asked</Badge>
+                        </span>
+                      ) : null}
+                      {/* A customer waiting to come back is worth flagging on
+                          the row: they are off every list until somebody says
+                          yes, so nothing else would surface them. */}
+                      {r.reactivationRequested ? (
+                        <span className="ml-2 shrink-0">
+                          <Badge tone="brand">Reactivation asked</Badge>
+                        </span>
+                      ) : null}
+                    </div>
                   </Td>
                   <Td>{r.contactPerson}</Td>
                   <Td>{phoneDisplay(r.phone)}</Td>
@@ -1053,11 +1086,15 @@ export function CustomersScreen({
                     {/*
                       A lead has no BACK OFFICE manager — nobody raises
                       paperwork for an account that has not ordered, which is
-                      why the line below reads "Source" for one instead. Sales
-                      manager is different: who a lead's owner answers to is
-                      worth recording before it converts, which is why leads
-                      get this line and the "Add lead"/edit form both offer it
-                      too.
+                      why the line below reads "Source" for one instead.
+
+                      The `kind === "lead"` branch still fires on this table
+                      even though the table no longer lists leads, and that is
+                      not dead code: the mark wins over the kind, so a
+                      third-party shop is routinely a `lead` underneath — we
+                      have never invoiced it, because its distributor holds
+                      the bill. Those rows are exactly the ones with no back
+                      office seat to name.
                     */}
                     <span className="block text-sm text-body">
                       <span className="text-muted">Sales manager: </span>
@@ -1500,44 +1537,6 @@ export function CustomersScreen({
           );
           if (result.ok) {
             setSelected(new Set());
-            router.refresh();
-          }
-          return result.ok;
-        }}
-      />
-
-      <CustomerForm
-        open={addOpen}
-        title="Add lead"
-        people={backOfficePeople}
-        salesManagerPeople={salesManagerPeople}
-        salesManagerSuggestions={salesManagerSuggestions}
-        kind="lead"
-        canReassign={canReassign}
-        canAssignSalesManager={canAssignSalesManager}
-        amReasons={amReasons}
-        onClose={() => setAddOpen(false)}
-        onSubmit={async (values) => {
-          const result = await run(createCustomer(values));
-          if (result.ok && result.data) {
-            // A brand new record has no "before" to move FROM, so this is a
-            // plain assignment rather than a reassignment — no history row,
-            // no notification of a change, because nothing changed; it was
-            // simply set. Best-effort: a lead is still created even where
-            // this fails, and the seat can always be set from the edit form.
-            const salesManagerPicked = String(values.salesManagerId ?? "");
-            if (salesManagerPicked && salesManagerPicked !== SHEET_NAME_VALUE) {
-              await run(
-                assignSalesManager({
-                  scope: { kind: "ids", customerIds: [result.data.id] },
-                  target: salesManagerPicked.startsWith("emp:")
-                    ? { kind: "employee", employeeId: salesManagerPicked.slice(4) }
-                    : { kind: "user", userId: salesManagerPicked },
-                  reasonCode: String(values.amReasonCode ?? amReasons[0] ?? ""),
-                }),
-              );
-            }
-            setAddOpen(false);
             router.refresh();
           }
           return result.ok;

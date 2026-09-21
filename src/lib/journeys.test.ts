@@ -124,6 +124,7 @@ import { globalSearch ,
   listCustomersPage,
   listInteractions,
 } from "@/lib/queries";
+import { accountTypeParam } from "@/lib/account-types";
 import { describeQuantity } from "@/lib/catalogue";
 import {
   chooseCanonicalId,
@@ -9082,36 +9083,77 @@ describe("The sales manager is a third seat, and a manager's to set", () => {
   /**
    * A lead answers to its OWNER, which is a seat this can sit above exactly
    * as it sits above a customer's salesperson — worth recording before a
-   * lead has ever ordered, which is why the row card and the add/edit form
-   * both draw this line on a lead too.
+   * lead has ever ordered, which is why the record and the edit form both
+   * draw this line on a lead too.
+   *
+   * BUT NOT THROUGH THE FILTERS, and that half is the point of the second
+   * assertion. "Transfer sales manager" acts on whatever the Customers table
+   * is showing, and it runs `customerFilterClause` to work out what that is
+   * precisely so the two can never disagree; the table no longer shows a
+   * lead, so neither may the transfer. Moving a lead through a button whose
+   * whole promise is "the accounts that move are the accounts on the screen"
+   * would be the bulk action moving a set nobody reviewed, which is the one
+   * thing it exists not to do. The tick-list path still reaches a lead by id,
+   * because there the person named the record.
    */
-  test("a lead gets a sales manager exactly as a customer does", async () => {
+  test("a lead gets a sales manager by id, and is out of reach of the filters", async () => {
     await makeCustomer(priya.id, { name: "Real Customer" });
-    await makeCustomer(priya.id, {
+    const lead = await makeCustomer(priya.id, {
       name: "Just A Lead",
       kind: "lead",
       salesAmId: null,
     });
 
     setTestUser(manager);
-    const done = await assignSalesManager({
-      scope: { kind: "filters", filters: {} },
+    const byId = await assignSalesManager({
+      scope: { kind: "ids", customerIds: [lead.id] },
       target: { kind: "user", userId: rakesh.id },
+      reasonCode: REASON,
+    });
+    assert.equal(byId.ok, true, byId.ok ? "" : byId.error);
+    const [moved] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, lead.id));
+    assert.equal(
+      moved.salesManagerId,
+      rakesh.id,
+      "a lead's owner has a seat for this to sit above too",
+    );
+
+    // The whole book, through the filters, is one account and not two — and
+    // the count guard is what says so rather than the write quietly touching
+    // a different set. `expectedCount: 2` is what a screen that still listed
+    // the lead would have sent.
+    const stale = await assignSalesManager({
+      scope: { kind: "filters", filters: {} },
+      target: { kind: "user", userId: priya.id },
       reasonCode: REASON,
       expectedCount: 2,
     });
-    assert.equal(done.ok, true, done.ok ? "" : done.error);
+    assert.equal(stale.ok, false, "the filters reached a lead the table does not show");
 
-    const [lead] = await db
-      .select()
-      .from(customers)
-      .where(eq(customers.name, "Just A Lead"));
-    assert.equal(lead.salesManagerId, rakesh.id, "a lead's owner has a seat for this to sit above too");
+    const done = await assignSalesManager({
+      scope: { kind: "filters", filters: {} },
+      target: { kind: "user", userId: priya.id },
+      reasonCode: REASON,
+      expectedCount: 1,
+    });
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
     const [customer] = await db
       .select()
       .from(customers)
       .where(eq(customers.name, "Real Customer"));
-    assert.equal(customer.salesManagerId, rakesh.id);
+    assert.equal(customer.salesManagerId, priya.id);
+    const [untouched] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, lead.id));
+    assert.equal(
+      untouched.salesManagerId,
+      rakesh.id,
+      "a whole-book transfer moved a lead that was never on the screen",
+    );
   });
 
   test("re-assigning to the same person writes nothing", async () => {
@@ -10185,10 +10227,19 @@ describe("third-party customers and their distributors", () => {
     assert.equal(stillThere?.thirdParty, true, "the flag never reached the engine");
   });
 
-  test("a converted account leaves the lead count and joins the third-party one", async () => {
-    // One question, three answers. A converted lead must not be counted in
-    // both, or the split says 1,079 records across 1,178 rows and nobody
-    // trusts it.
+  test("a lead is not on the customer table at all, and converting one puts it there", async () => {
+    /*
+     * ONE QUESTION, TWO ANSWERS on this screen. A lead is an account that has
+     * never ordered and the whole of the work on one is in Lead Management,
+     * so the customer table does not list it — which makes conversion the
+     * moment a shop APPEARS here rather than a moment it changes category.
+     *
+     * The second lead is the control: it is created, it is never converted,
+     * and it must be absent from every count and every row at both ends. The
+     * distributor is a real direct customer, so the table is never empty and
+     * an assertion that the lead is missing cannot pass by everything being
+     * missing.
+     */
     await makeCustomer(priya.id, { kind: "lead", name: "Shop To Convert" });
     await makeCustomer(priya.id, { kind: "lead", name: "Genuine Lead" });
     const distributor = await makeCustomer(priya.id, {
@@ -10198,35 +10249,72 @@ describe("third-party customers and their distributors", () => {
 
     setTestUser(manager);
     const before = await listCustomersPage({});
-    assert.equal(before.totals.leads, 2);
     assert.equal(before.totals.thirdParties, 0);
+    assert.ok(
+      !before.rows.some((r) => r.kind === "lead" && !r.thirdParty),
+      "a lead was listed on the customer table",
+    );
+    assert.equal(
+      before.totals.directCustomers + before.totals.thirdParties,
+      before.total,
+      "the two counts do not add up to what the table is showing",
+    );
+    assert.equal(
+      before.bookTotal,
+      before.total,
+      "the book total counts rows the table cannot show",
+    );
 
-    const shop = before.rows.find((r) => r.name === "Shop To Convert")!;
+    // Converted through the distributor, which is the only way a shop that
+    // has never ordered belongs on this list: somebody bills for it.
+    const [{ id: shopId }] = await db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(eq(customers.name, "Shop To Convert"));
     assert.equal(
       (await convertToThirdParty({
-        customerIds: [shop.id],
+        customerIds: [shopId],
         distributors: [{ distributorId: distributor.id }],
       })).ok,
       true,
     );
 
     const after = await listCustomersPage({});
-    assert.equal(after.totals.leads, 1, "a converted account was still counted as a lead");
     assert.equal(after.totals.thirdParties, 1);
+    assert.ok(
+      after.rows.some((r) => r.id === shopId),
+      "a converted shop never reached the customer table",
+    );
+    assert.ok(
+      !after.rows.some((r) => r.name === "Genuine Lead"),
+      "an unconverted lead reached the customer table",
+    );
     assert.equal(
-      after.totals.directCustomers + after.totals.leads + after.totals.thirdParties,
+      after.totals.directCustomers + after.totals.thirdParties,
       after.total,
-      "the three counts do not add up to the book",
+      "the two counts do not add up to what the table is showing",
     );
 
-    // And the filters agree with the counts.
-    const asLeads = await listCustomersPage({ thirdParty: "lead" });
-    assert.ok(
-      !asLeads.rows.some((r) => r.id === shop.id),
-      "the Leads filter still offered a converted account",
-    );
+    // And the filter agrees with the count. `?party=lead` is no longer a code
+    // the screen can send — `accountTypeParam` drops it — so the one thing
+    // left to check is that the mark filter finds exactly the converted shop.
     const asThird = await listCustomersPage({ thirdParty: "yes" });
-    assert.deepEqual(asThird.rows.map((r) => r.id), [shop.id]);
+    assert.deepEqual(asThird.rows.map((r) => r.id), [shopId]);
+  });
+
+  test("a bookmarked ?party=lead reads as no filter, never as an empty book", async () => {
+    /*
+     * The link is in somebody's bookmarks and in somebody's email, because it
+     * was an option on this screen for a year. Carried through to the query as
+     * a live code it would reach a clause that can only be false now, and the
+     * screen would answer "no customers" to a person who asked for leads —
+     * which reads as a book that has been lost rather than as a filter that no
+     * longer exists. Dropped, it is the whole list, and the filter control
+     * shows nothing picked.
+     */
+    assert.equal(accountTypeParam("lead"), undefined);
+    assert.equal(accountTypeParam("lead,yes"), "yes");
+    assert.equal(accountTypeParam("customer"), "customer");
   });
 
   test("the sheet's delivery party links to a record, and creates none", async () => {
