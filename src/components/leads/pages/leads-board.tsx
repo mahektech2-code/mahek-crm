@@ -6,7 +6,7 @@ import { splitFilter, type LeadFilters } from "@/lib/lead-filters";
 import { SALES_TYPES, type LeadSalesType } from "@/lib/lead-labels";
 import { leadBoard } from "@/lib/services/lead-board-service";
 import { canLead } from "@/lib/services/lead-console-service";
-import { leadFilterOptions } from "@/lib/services/sales-service";
+import { leadFilterOptions, leadPlaceTree } from "@/lib/services/sales-service";
 import { BoardScreen } from "@/components/leads/board/board-screen";
 
 
@@ -72,11 +72,17 @@ export async function Body({
   const asked = salesTypeFrom(params.type);
   const salesType: LeadSalesType | null = asked === undefined ? "direct" : asked;
 
+  /* THE LIST'S FILTERS, and all of them — `place` and `priority` were simply
+     missing here, so two narrowings that existed on the list did not exist on
+     the board with nothing on either screen saying so. Both are read by
+     `leadFilterClause`, which is the one clause both screens run. */
   const filters: LeadFilters = {
     owner: params.owner,
     source: params.source,
     stage: params.stage,
+    place: params.place,
     potential: params.potential,
+    priority: params.priority,
     next: params.next,
     age: params.age,
     health: params.health,
@@ -85,7 +91,7 @@ export async function Body({
   const day = await today();
   const config = await getConfig();
 
-  const [board, options] = await Promise.all([
+  const [board, options, places] = await Promise.all([
     leadBoard(day, {
       salesType,
       filters,
@@ -95,6 +101,7 @@ export async function Body({
       },
     }),
     leadFilterOptions(false),
+    leadPlaceTree(false),
   ]);
 
   return (
@@ -105,12 +112,21 @@ export async function Body({
         owner: splitFilter(filters.owner),
         source: splitFilter(filters.source),
         stage: splitFilter(filters.stage),
+        place: splitFilter(filters.place),
+        /* The ladder is the SCREEN here, picked by the chips above the board
+           and carried on `type`, so the list's own ladder filter is not drawn
+           and has nothing ticked. It is passed rather than omitted because a
+           missing key and an empty one read alike on a screen and only one of
+           them is a decision. */
+        salesType: [],
         potential: splitFilter(filters.potential),
+        priority: splitFilter(filters.priority),
         next: splitFilter(filters.next),
         age: splitFilter(filters.age),
         health: splitFilter(filters.health),
       }}
       options={options}
+      places={places}
       canWork={await canLead(user, "lead.work")}
       canOverride={(await canLead(user, "lead.override")) && config["leads.allowManagerOverride"]}
       overrideAllowed={config["leads.allowManagerOverride"]}

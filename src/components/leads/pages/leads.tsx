@@ -7,6 +7,7 @@ import {
   archivedLeadsCount,
   fieldTeam,
   leadFilterOptions,
+  leadPlaceTree,
   leadsPage,
   LEADS_PER_PAGE,
 } from "@/lib/services/sales-service";
@@ -111,6 +112,10 @@ export async function Body({
     source: params.source,
     stage: params.stage,
     salesType: params.salesType,
+    /* WHERE THE SHOP IS — state, city or area, as `,`-separated paths.
+       See `lib/lead-places.ts` for why a place is a path and why each one is
+       escaped before it joins a comma-separated parameter. */
+    place: params.place,
     potential: params.potential,
     priority: params.priority,
     next: params.next,
@@ -130,6 +135,7 @@ export async function Body({
     options,
     viewer,
     tiles,
+    places,
   ] = await Promise.all([
       leadsPage(day, {
         archived: showArchived,
@@ -169,6 +175,15 @@ export async function Body({
       showArchived
         ? null
         : leadTileCounts(day, { archived: false, filters }),
+      /*
+       * The place tree, counted over THIS list rather than over the whole
+       * book. It rides in the same `Promise.all` as everything else, so the
+       * Where picker costs the screen no round trip of its own — and it is
+       * fetched with the page rather than on the first press of the filter
+       * button, because a picker that has to reach a server before it can
+       * offer anything is one that offers nothing exactly when it is opened.
+       */
+      leadPlaceTree(showArchived),
     ]);
 
   return (
@@ -193,6 +208,7 @@ export async function Body({
         source: splitFilter(filters.source),
         salesType: splitFilter(filters.salesType),
         stage: splitFilter(filters.stage),
+        place: splitFilter(filters.place),
         potential: splitFilter(filters.potential),
         priority: splitFilter(filters.priority),
         next: splitFilter(filters.next),
@@ -200,6 +216,7 @@ export async function Body({
         health: splitFilter(filters.health),
       }}
       options={options}
+      places={places}
       view={view}
       tiles={tiles}
       showArchived={showArchived}

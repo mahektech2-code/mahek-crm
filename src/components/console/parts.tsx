@@ -484,7 +484,27 @@ export type RowMenuItem = {
   title?: string;
 };
 
-export function RowMenu({ items }: { items: RowMenuItem[] }) {
+/**
+ * A LABEL TURNS IT INTO A DROPDOWN OF BUTTONS, which is the other shape the
+ * same popover is wanted in.
+ *
+ * A `···` on the end of a row is right where the actions belong to THAT row
+ * and there is no room to say so. Above a table it is the wrong control: a bar
+ * offering four buttons at once is four things to read before pressing one,
+ * and the same four behind a named button are one. Rather than a second
+ * popover with its own open state, its own outside-click and its own way of
+ * being clipped by a `Card`'s overflow, the trigger is a parameter.
+ */
+export function RowMenu({
+  items,
+  label,
+  title,
+}: {
+  items: RowMenuItem[];
+  /** Absent draws the `···`. Given, draws a named button with a chevron. */
+  label?: string;
+  title?: string;
+}) {
   const [open, setOpen] = React.useState(false);
   /* Fixed to the viewport, positioned from the trigger's own measured
    * rect — not `absolute` inside the row. Every table here sits in an
@@ -537,10 +557,36 @@ export function RowMenu({ items }: { items: RowMenuItem[] }) {
       <span
         ref={triggerRef}
         onClick={toggle}
-        title="Actions"
-        className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
+        role={label ? "button" : undefined}
+        aria-haspopup={label ? "menu" : undefined}
+        aria-expanded={label ? open : undefined}
+        title={title ?? "Actions"}
+        className={
+          label
+            ? "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body hover:bg-canvas"
+            : "inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
+        }
       >
-        <SalesIcon name="dots" size={16} />
+        {label ? (
+          <>
+            <span>{label}</span>
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={"flex-none text-muted transition-transform " + (open ? "rotate-180" : "")}
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </>
+        ) : (
+          <SalesIcon name="dots" size={16} />
+        )}
       </span>
       {open && pos ? (
         <div

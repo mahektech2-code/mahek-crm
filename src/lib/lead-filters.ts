@@ -173,6 +173,21 @@ export type LeadFilters = {
    * matches NULL, so it cannot ride on the same clause as the other three.
    */
   salesType?: string;
+  /**
+   * WHERE THE SHOP IS, as `,`-separated paths — see `lib/lead-places.ts`.
+   *
+   * It is a path and not a value because "Nagpur" alone is not an answer: the
+   * city column is what the sheet typed, and a city is matched AND-ed with its
+   * state exactly as `territoryClause` matches an allocated one. That is
+   * deliberate rather than convenient — the filter and the territory a salesman
+   * was allocated read ONE expression, so the list and his handset can never
+   * disagree about which shops a place has.
+   *
+   * It rides on the same comma-separated parameter every other multi-select
+   * here uses, which it can only do because each path is escaped: 355 of the
+   * 1,165 city strings on the real book carry a comma. See `encodePlace`.
+   */
+  place?: string;
   potential?: string;
   /** §4.1 — the manager's own. See `PRIORITY_BUCKETS` and `lead-priority.ts`. */
   priority?: string;

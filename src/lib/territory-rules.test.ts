@@ -91,3 +91,19 @@ test("the hierarchy is stated once, and it is what the screens read", () => {
   assert.equal(PARENT_KIND.city, "state");
   assert.equal(PARENT_KIND.beat, "city");
 });
+
+test("the clause can be told which table the columns are on", () => {
+  /* Every territory caller selects `from customers` unaliased; the leads list
+     selects `from customers c`, and `customers.city` is not a name Postgres can
+     resolve there. It is a parameter rather than a second copy of the clause —
+     two readings of "which shops are in Nagpur" is the drift this file exists
+     to prevent, and the half that drifts is the one nobody compares. */
+  const one: Territory[] = [{ kind: "city", value: "Nagpur", parent: "Maharashtra" }];
+
+  const aliased = dialect.sqlToQuery(territoryClause(one, "c")).sql;
+  assert.match(aliased, /c\.city/);
+  assert.doesNotMatch(aliased, /customers\./);
+
+  /* And the default is what every existing caller already relies on. */
+  assert.match(dialect.sqlToQuery(territoryClause(one)).sql, /customers\.city/);
+});

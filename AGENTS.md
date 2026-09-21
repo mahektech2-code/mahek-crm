@@ -403,6 +403,64 @@ so the city somebody means is at the top and the long tail of addresses is
 below it. Shops naming no state are counted and said out loud: no territory can
 reach them, which is a real consequence of switching the default off.
 
+**THE SAME TREE NARROWS THE LEADS LIST, and it is the same CLAUSE underneath.**
+A manager asking for Nagpur and a salesman allocated Nagpur are asking one
+question, so the Where filter on the leads list and the board hands its picks
+to `territoryClause` rather than writing a second reading of the same columns.
+That matters because the sheet spells a state twenty-four ways and a city
+three, and every one of those folds lives in `territory-rules.ts`: a copy here
+would drift the day somebody teaches that file a new spelling, and the half
+that drifts would be the filter — a list returning slightly too few rows looks
+exactly like a list that worked. `territoryClause` takes a table name for it,
+because every territory caller selects `from customers` plain and the leads
+list selects `from customers c`.
+
+**A PLACE IS A PATH, and it is ESCAPED before it joins a comma-separated
+parameter.** "Nagpur" alone is not an answer — two states can each hold a town
+of one name — so `lib/lead-places.ts` carries the branch: `Maharashtra>Nagpur`,
+narrowest rung last, matched AND-ed down the branch and OR-ed across branches
+exactly as an allocated territory is. It rides on the same `,`-separated URL
+parameter every other multi-select here uses, which it can only do because each
+path is escaped: 355 of the 1,165 `city` strings on the real book CARRY A
+COMMA. Unescaped, one pick becomes eight that must all match, which is a filter
+that silently answers nothing. Escaped, it is an ordinary parameter and
+`splitFilter`, "Clear all" and "Select everything this filter reaches" go on
+working with no special case — which is the point, because a filter needing its
+own handling in four places is one that gets forgotten in the fifth.
+
+**THE THIRD RUNG READS `beat` OR `area`, and neither is filled yet.**
+`TERRITORY_BEAT_SQL` is the same fall-through `TERRITORY_REGION_SQL` makes one
+rung up: both columns are free text the sheet was meant to fill, both are empty
+on all 5,926 rows, and which of the two the office eventually types into is not
+a distinction anybody filtering a list is making. It moves nothing today and it
+is what stops the rung staying empty after somebody fills the other column. A
+city with no areas recorded says so in words rather than drawing an empty list,
+which on this book is every city.
+
+**THE FILTER BAR IS A BUTTON RATHER THAN A WALL, and there is ONE of it.**
+Ten dropdowns drawn side by side wrap onto three rows on a laptop, each
+labelled only by the placeholder inside it — so the screen opened with more
+filter than table and the first question anybody asked was which of the ten
+boxes was which. Ten controls drawn at once is not ten options offered; it is
+one option offered ten times, and the ones nobody can find are the ones nobody
+uses. `components/leads/filter-bar.tsx` is a search box, one button carrying
+how many filters are on, and a removable chip per filter that IS on — because a
+narrowing hidden inside a panel is one somebody forgets they set, and then the
+table is right and the screen is lying. The list and the stage board share it:
+they each had their own copy and the copies had already drifted two filters
+apart, so a narrowing offered on one screen simply did not exist on the other.
+
+**AND A BAR OF FOUR BUTTONS IS ONE BUTTON AND A MENU.** The selection bar
+appears the moment somebody ticks a box, so four buttons side by side is four
+things to read every time. Changing the owner is what a selection is made for
+nine times out of ten — moving a departed salesman's book is the whole reason
+"select all NNN this filter reaches" exists — so that is the button and the
+rest sit behind a named one. `RowMenu` takes a `label` now and draws a named
+trigger instead of the `···`, rather than a second popover with its own open
+state and its own way of being clipped by a Card's overflow. Archive keeps its
+colour INSIDE the menu rather than being promoted out of it: a destructive
+control drawn permanently beside a routine one is how it gets pressed.
+
 **Changing where somebody works TOMBSTONES the shops that leave.** A pull says
 what exists and only a tombstone says what stopped, so without this a salesman
 moved from Maharashtra to Gujarat keeps every Maharashtra shop on the phone for
