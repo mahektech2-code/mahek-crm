@@ -113,7 +113,28 @@ export function DocumentReviewScreen({
           title={document.filename}
           subtitle="Reading the file. This stays here until it is done — you can leave the tab open."
         />
-        <ReadingWatch documentId={document.id} filename={document.filename} onDone={() => router.refresh()} />
+        <ReadingWatch
+          documentId={document.id}
+          filename={document.filename}
+          /* Seeded from what the SERVER already knows, so the first frame
+           * shows the stage the file is actually at rather than "waiting to
+           * start" until the first poll lands. */
+          seed={{
+            parseStatus: document.parseStatus,
+            stageNote: document.stageNote,
+            stageStartedAt: document.stageStartedAt,
+            confidence: document.confidence,
+            problems: document.problems,
+            rowCount: document.rowCount,
+            matchedCount: document.matchedCount,
+            suggestedCount: document.suggestedCount,
+            heldCount: document.heldCount,
+            pageCount: document.pageCount,
+            layout: document.layout,
+            header: document.header,
+          }}
+          onDone={() => router.refresh()}
+        />
       </>
     );
   }
@@ -418,13 +439,16 @@ export function DocumentReviewScreen({
 function ReadingWatch({
   documentId,
   filename,
+  seed,
   onDone,
 }: {
   documentId: string;
   filename: string;
+  /** What the server had when it rendered — the first frame, before any poll. */
+  seed: DocumentStatusPoll;
   onDone: () => void;
 }) {
-  const [status, setStatus] = React.useState<DocumentStatusPoll | null>(null);
+  const [status, setStatus] = React.useState<DocumentStatusPoll>(seed);
 
   React.useEffect(() => {
     let live = true;
