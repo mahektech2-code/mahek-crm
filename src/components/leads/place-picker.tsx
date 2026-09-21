@@ -75,20 +75,32 @@ export function PlacePicker({
    * places whose parent the screen no longer shows as ticked.
    */
   function flip(p: PlacePick) {
+    const inState = (x: PlacePick) => sameText(x.state, p.state);
+    /* A CITY IS COMPARED WITH ITS STATE, never on its own. Two states can each
+       hold a town of one name — which is the whole reason a pick is a path —
+       so a beat ticked under one Nagpur must not prune the other Nagpur. */
+    const inCity = (x: PlacePick) => inState(x) && sameText(x.city, p.city);
+
     const next = has(p)
-      ? picks.filter(
-          (x) =>
-            !samePlace(x, p) &&
-            !(p.city && !p.beat && sameText(x.city, p.city) && sameText(x.state, p.state)) &&
-            !(!p.city && sameText(x.state, p.state)),
-        )
+      ? /* Unticking takes the branch below it with it: a pick whose parent the
+           screen no longer shows as ticked is one still narrowing the list with
+           nothing on the screen accounting for it. */
+        picks.filter((x) => {
+          if (samePlace(x, p)) return false;
+          if (p.beat) return true;
+          if (p.city) return !inCity(x);
+          return !inState(x);
+        })
       : [
           ...picks.filter((x) => {
             /* The wider pick this one sits under is the PATH to it, never a
-               second grant. */
-            if (p.city && !p.beat) return !(sameText(x.state, p.state) && !x.city);
-            if (p.beat) return !(sameText(x.city, p.city) && !x.beat);
-            return true;
+               second grant — held as both, the clause ORs them and answers with
+               the wider place, which is the opposite of what the narrower tick
+               meant. And the narrower ones under it are superseded: ticking a
+               whole city after picking two of its areas means the city. */
+            if (p.beat) return !(inCity(x) && !x.beat);
+            if (p.city) return !(inState(x) && !x.city) && !(inCity(x) && x.beat);
+            return !inState(x);
           }),
           p,
         ];
@@ -129,6 +141,7 @@ export function PlacePicker({
       {open ? (
         <CitiesIn
           state={tree.states.find((s) => s.state === open)!}
+          picked={picked}
           has={has}
           flip={flip}
         />
@@ -151,10 +164,13 @@ export function PlacePicker({
 /** One open state, and its cities. */
 function CitiesIn({
   state,
+  picked,
   has,
   flip,
 }: {
   state: StateNode;
+  /** The encoded paths, for counting what is picked INSIDE a city. */
+  picked: string[];
   has: (p: PlacePick) => boolean;
   flip: (p: PlacePick) => void;
 }) {
@@ -197,9 +213,23 @@ function CitiesIn({
         ) : (
           cities.map((c) => {
             const on = has({ state: state.state, city: c.city });
+            /* OPEN WHILE ANYTHING INSIDE IT IS PICKED, not only while the city
+               itself is — ticking an area PRUNES the city pick it sits under,
+               so reading the tick alone made the area chips vanish under the
+               finger that ticked one, leaving an unticked city and no way back
+               to the areas. */
+            const insideCount = picked
+              .map(decodePlace)
+              .filter(
+                (x): x is PlacePick =>
+                  x !== null &&
+                  Boolean(x.beat) &&
+                  sameText(x.state, state.state) &&
+                  sameText(x.city, c.city),
+              ).length;
             /* One area under a city is not a narrowing — it is the city said
                twice. The territory dialog draws the same rule. */
-            const areas = on && c.beats.length > 1 ? c.beats : [];
+            const areas = (on || insideCount > 0) && c.beats.length > 1 ? c.beats : [];
             return (
               <div key={c.city}>
                 <label className="flex cursor-pointer items-start gap-2 rounded-[4px] px-1.5 py-1 hover:bg-surface">
@@ -243,7 +273,7 @@ function CitiesIn({
                     than drawn as an empty row. `beat` and `area` are empty on
                     every shop on the real book, so a city that offers no areas
                     is the ordinary case and not a screen that failed. */}
-                {on && !areas.length ? (
+                {(on || insideCount > 0) && !areas.length ? (
                   <p className="mt-0.5 mb-1 ml-6 border-l border-line pl-2 text-[11px] text-muted">
                     No areas recorded inside {c.city} yet.
                   </p>
