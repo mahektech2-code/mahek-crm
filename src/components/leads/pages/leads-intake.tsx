@@ -1,12 +1,12 @@
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
-import { today } from "@/lib/recompute";
 import { canLead } from "@/lib/services/lead-console-service";
 import {
   leadSourceOptions,
   nextActionOwners,
 } from "@/lib/services/lead-intake-service";
+import { distributorOptions } from "@/lib/services/distributor-service";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { IntakeForm } from "@/components/leads/intake/intake-form";
 
@@ -25,12 +25,11 @@ import { IntakeForm } from "@/components/leads/intake/intake-form";
  * somebody holding Intake on the strength of a module they were deliberately
  * not given.
  *
- * Three things are read, and each of them is a real answer rather than a list
- * typed into a screen: the sources already in use (so screen 6 does not inherit
- * a fourth spelling of "Website"), who a next action may be owed by, and
- * whether `leads.requireNextAction` is in force. The day comes from the server
- * because the React Compiler rules forbid reading the clock during a render,
- * and a default date computed in a browser is the browser's idea of today.
+ * What is read is a real answer rather than a list typed into a screen: the
+ * sources already in use (so screen 6 does not inherit a fourth spelling of
+ * "Website"), who a lead's Owner may be, and — for the third-party ladder only
+ * — the direct customers `crm/distributor-picker.tsx` already offers as who
+ * may bill a shop, which is what "Under" asks for at capture.
  */
 export async function Body({
   workspace,
@@ -39,12 +38,19 @@ export async function Body({
 }) {
   const user = await requireUser();
 
-  const [sources, owners, config, day, canWork] = await Promise.all([
+  const [sources, owners, config, canWork, canPrioritise, distributors] = await Promise.all([
     leadSourceOptions(),
     nextActionOwners(),
     getConfig(),
-    today(),
     canLead(user, "lead.work"),
+    /* Priority is the manager's judgement — `setLeadPriority` asks for
+       `lead.verify`, and so does the capture action. */
+    canLead(user, "lead.verify"),
+    /*
+     * §23's "Under" picker — the same eligibility rule `convertToThirdParty`
+     * enforces, read whole rather than capped. See `distributorOptions`.
+     */
+    distributorOptions(),
   ]);
 
   return (
@@ -54,9 +60,9 @@ export async function Body({
         sources={sources}
         sourceOptions={config["leads.sources"]}
         owners={owners}
-        today={day}
-        requireNextAction={config["leads.requireNextAction"]}
         canWork={canWork}
+        canPrioritise={canPrioritise}
+        distributors={distributors}
       />
     </div>
   );

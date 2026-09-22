@@ -352,6 +352,36 @@ export async function distributorCandidates(
   };
 }
 
+/**
+ * EVERY account that may be named as who bills a shop, for a plain `select`.
+ *
+ * Screen 5's "Under" is a select rather than the search box
+ * `crm/distributor-picker.tsx` draws, because that box asks
+ * `/api/distributors/search`, which is gated on `customer.classify` — and the
+ * person raising a lead holds `lead.work`, which is not it. So the page reads
+ * this on the server instead. It is `distributorCandidates`' own predicate
+ * with neither of its costs: no per-row counts over `orders`, and NO CAP.
+ * A select that silently stops at five hundred is the "capped list that does
+ * not say so" the picker exists to avoid — somebody whose distributor is the
+ * five hundred and first concludes we do not hold the account. Ordered by
+ * name, because a native select is scanned by typing the first letters.
+ */
+export async function distributorOptions(): Promise<
+  Array<{ id: string; name: string; city: string | null }>
+> {
+  return db
+    .select({ id: customers.id, name: customers.name, city: customers.city })
+    .from(customers)
+    .where(
+      and(
+        eq(customers.kind, "customer"),
+        eq(customers.thirdParty, false),
+        ne(customers.status, "deactivated"),
+      ),
+    )
+    .orderBy(asc(customers.name), asc(customers.id));
+}
+
 /*
  * "Third-party accounts with nobody billing them" was a function here and is
  * now a value of the customers list's own type filter. It is the same
