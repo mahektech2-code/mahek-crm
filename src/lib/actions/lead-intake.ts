@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, customers, notifications, users } from "@/db/schema";
+import { auditLog, customerDistributors, customers, notifications, users } from "@/db/schema";
 import { requireCapability } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
@@ -41,12 +41,16 @@ import {
  * time, and the ladder decides which GATES apply, so a wrong guess does not
  * mislabel a lead: it blocks the person working it.
  *
- * **§24 is satisfied in the same write, or not at all.** A lead raised with
- * nothing owed by anybody is precisely the state the rule exists to prevent,
- * and the four next-action columns live on `customers` — so they go in the
- * INSERT rather than through a second call to `setLeadNextAction`, which would
- * be a separate transaction and would leave a lead with no action behind it
- * whenever the second write failed.
+ * **§24 IS NO LONGER ASKED AT SCREEN 5, and that is deliberate.** A telecaller
+ * capturing a call has no diary to promise a day from, and demanding one here
+ * was the field this form lost people on. §24 still holds — the gate engine
+ * refuses to move a lead off Suspect with nothing owed by anybody, exactly as
+ * it already does for a lead this screen raises with no owner at all — so a
+ * lead captured here is unowed until somebody at the desk or in the field
+ * picks it up, the same as any other channel that does not know the answer
+ * yet. Screen 34's bulk import kept its own copy of the question, because a
+ * spreadsheet of a hundred rows is filled in by somebody who DOES have that
+ * answer for each one.
  *
  * **`owner_id` is never the person doing the capturing.** A telecaller taking
  * a call is not the person who will walk to the shop, and on a file of a
@@ -157,7 +161,23 @@ const captureSchema = z.object({
   /** Who it belongs to. Absent means UNASSIGNED, which is a real answer. */
   ownerId: z.string().min(1).nullable().optional(),
 
+  /**
+   * §24's four answers, still accepted here because `captureLeadBatch`
+   * (screen 34) reuses this same writer for every row of a file, with one
+   * batch-wide answer. Screen 5's own form no longer asks for it — see the
+   * file header — so a desk capture simply never sends one.
+   */
   nextAction: nextActionSchema.optional(),
+
+  /**
+   * §23 — WHO BILLS THIS SHOP, asked at capture rather than reconstructed at
+   * conversion. Meaningful only on the third-party ladder; the action ignores
+   * it for anything else, because the picker itself only draws it there.
+   * Validated against the same rule `convertToThirdParty` enforces — a direct
+   * customer, not itself marked third-party — so a stale tab cannot name an
+   * account that could never actually bill a shop.
+   */
+  distributorCustomerId: z.string().min(1).nullable().optional(),
 
   /**
    * Set only after the person has been shown the account this telephone number
@@ -168,6 +188,15 @@ const captureSchema = z.object({
   allowDuplicate: z.boolean().optional(),
 
   notes: z.string().trim().max(2000).optional(),
+
+  /**
+   * How hard the team should push this one. Distinct from `potential` (what
+   * the shop could be worth) — this is a judgement about urgency, and it is
+   * the one field on this form that is normally set later, by a manager, via
+   * `setLeadPriority`. Captured here only when the person raising the lead
+   * already knows it is worth saying, which is why it stays optional.
+   */
+  priority: z.enum(["high", "medium", "low"]).nullable().optional(),
 });
 
 export type CaptureLeadInput = z.input<typeof captureSchema>;
@@ -249,25 +278,10 @@ export async function captureLead(
       );
     }
 
-    /*
-     * §24, read from configuration rather than from a required field on this
-     * form. A team that has turned the rule off is a team this screen must not
-     * enforce it on anyway — and one that has it on must not be able to raise a
-     * lead here that the funnel will immediately flag as unowed.
-     */
-    if (config["leads.requireNextAction"] && !v.nextAction) {
-      return err(
-        "An active lead may not sit with nothing owed by anybody. Say what happens next, on what day, and who is doing it.",
-        "rule_violation",
-        [{ field: "nextAction.action", message: "Required." }],
-      );
-    }
-
-    /* The picker is not a permission: the person a next action is owed by has
-       to be somebody who can sign in and see it. Same check as the owner of
-       the lead itself, for the same reason — a book on a disabled account is a
-       book nobody is working. */
-    const idsToCheck = [v.nextAction?.ownerId, v.ownerId].filter(
+    /* The picker is not a permission: the owner, and whoever a next action is
+       owed by (screen 34's batch-wide answer, riding through per row), both
+       have to be somebody who can sign in and see it. */
+    const idsToCheck = [v.ownerId, v.nextAction?.ownerId].filter(
       (id): id is string => Boolean(id),
     );
     for (const id of Array.from(new Set(idsToCheck))) {
@@ -281,6 +295,52 @@ export async function captureLead(
           "That person cannot sign in, so nothing can be owed by them.",
           "validation",
           [{ field: id === v.ownerId ? "ownerId" : "nextAction.ownerId", message: "Not an active account." }],
+        );
+      }
+    }
+
+    /*
+     * "UNDER" IS THE THIRD-PARTY LADDER'S OWN QUESTION, so it is validated only
+     * there — the picker offers nothing on the other two ladders, and a stray
+     * value from a stale tab is ignored rather than refused. Where it is
+     * meaningful the rule is `convertToThirdParty`'s own: an account we bill
+     * ourselves, `kind = 'customer'`, not itself marked third-party, and not
+     * deactivated — the same three sentences, so a distributor good enough to
+     * be named here is good enough to survive conversion.
+     */
+    const distributorId =
+      v.salesType === "third_party" ? (v.distributorCustomerId ?? null) : null;
+    if (distributorId) {
+      const [d] = await db
+        .select({
+          id: customers.id,
+          name: customers.name,
+          kind: customers.kind,
+          thirdParty: customers.thirdParty,
+          status: customers.status,
+        })
+        .from(customers)
+        .where(eq(customers.id, distributorId))
+        .limit(1);
+      if (!d) {
+        return err(
+          "That account no longer exists.",
+          "validation",
+          [{ field: "distributorCustomerId", message: "Not found." }],
+        );
+      }
+      if (d.kind !== "customer" || d.thirdParty) {
+        return err(
+          `${d.name} cannot bill a shop — a distributor is an account we invoice directly.`,
+          "rule_violation",
+          [{ field: "distributorCustomerId", message: "Not a direct customer." }],
+        );
+      }
+      if (d.status === "deactivated") {
+        return err(
+          `${d.name} is deactivated, so it cannot be named as who bills this shop.`,
+          "rule_violation",
+          [{ field: "distributorCustomerId", message: "Deactivated." }],
         );
       }
     }
@@ -333,13 +393,33 @@ export async function captureLead(
         leadCompetitor: v.competitor || null,
         leadRequirement: v.requirement || null,
         leadApplication: v.application || null,
+        leadPriority: v.priority ?? null,
 
-        /* §24 in the same statement as the lead. Not a second write. */
+        /* §24, where somebody answered it — screen 34's batch-wide next
+           action, riding through this shared writer one row at a time. */
         leadNextAction: v.nextAction?.action ?? null,
         leadNextActionDate: v.nextAction?.date ?? null,
         leadNextActionOwnerId: v.nextAction?.ownerId ?? null,
         leadNextActionOutcome: v.nextAction?.outcome || null,
       });
+
+      /*
+       * §23 — WHO BILLS THIS SHOP, in the same transaction as the lead it
+       * describes. Validated above; `distributorId` is already narrowed to the
+       * third-party ladder and to an eligible account. `isPrimary` is true
+       * because this is the only distributor named for a lead this new — there
+       * is nothing yet for it to conflict with.
+       */
+      if (distributorId) {
+        await tx.insert(customerDistributors).values({
+          id: gen("cd"),
+          customerId,
+          distributorCustomerId: distributorId,
+          isPrimary: true,
+          createdById: ctx.user.id,
+          updatedById: ctx.user.id,
+        });
+      }
 
       /*
        * §R — where the account began, on the shared stream, in the SAME
@@ -380,6 +460,7 @@ export async function captureLead(
           stage: foot,
           ownerId: v.ownerId ?? null,
           nextActionOwnerId: v.nextAction?.ownerId ?? null,
+          distributorCustomerId: distributorId,
           duplicateAllowed: Boolean(v.allowDuplicate),
         },
       });
