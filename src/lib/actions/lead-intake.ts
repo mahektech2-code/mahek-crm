@@ -6,7 +6,8 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, customerDistributors, customers, notifications, users } from "@/db/schema";
-import { requireCapability } from "@/lib/access-control";
+import { canFor, requireCapability } from "@/lib/access-control";
+import { LEAD_PRIORITIES } from "@/lib/lead-priority";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
@@ -190,13 +191,13 @@ const captureSchema = z.object({
   notes: z.string().trim().max(2000).optional(),
 
   /**
-   * How hard the team should push this one. Distinct from `potential` (what
-   * the shop could be worth) — this is a judgement about urgency, and it is
-   * the one field on this form that is normally set later, by a manager, via
-   * `setLeadPriority`. Captured here only when the person raising the lead
-   * already knows it is worth saying, which is why it stays optional.
+   * How hard the team should push this one — the MANAGER'S judgement, and
+   * `setLeadPriority` holds it to `lead.verify`. Accepted here only from
+   * somebody who holds that too (checked below, not just by hiding the field),
+   * because otherwise raising a lead would be a way round the one capability
+   * that decides who may say it.
    */
-  priority: z.enum(["high", "medium", "low"]).nullable().optional(),
+  priority: z.enum(LEAD_PRIORITIES).nullable().optional(),
 });
 
 export type CaptureLeadInput = z.input<typeof captureSchema>;
@@ -244,6 +245,14 @@ export async function captureLead(
      * A sentence is what makes it get picked when it is true, and the sentences
      * are what tell Mahek which eleventh source is worth adding to the list.
      */
+    if (v.priority && !(await canFor(ctx.user, "lead.verify"))) {
+      return err(
+        "Priority is set by a manager. Raise the lead without it and ask them to set it.",
+        "not_permitted",
+        [{ field: "priority", message: "Set by a manager." }],
+      );
+    }
+
     const sources = config["leads.sources"];
     if (!sources.some((o) => o.code === v.source)) {
       return err(
@@ -416,6 +425,9 @@ export async function captureLead(
           customerId,
           distributorCustomerId: distributorId,
           isPrimary: true,
+          /* Said the way the handset's own write says it, so the panel on the
+             record shows where the arrangement came from. */
+          note: "Named when the lead was raised",
           createdById: ctx.user.id,
           updatedById: ctx.user.id,
         });

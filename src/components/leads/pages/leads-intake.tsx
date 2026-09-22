@@ -6,7 +6,7 @@ import {
   leadSourceOptions,
   nextActionOwners,
 } from "@/lib/services/lead-intake-service";
-import { distributorCandidates } from "@/lib/services/distributor-service";
+import { distributorOptions } from "@/lib/services/distributor-service";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { IntakeForm } from "@/components/leads/intake/intake-form";
 
@@ -38,19 +38,19 @@ export async function Body({
 }) {
   const user = await requireUser();
 
-  const [sources, owners, config, canWork, distributors] = await Promise.all([
+  const [sources, owners, config, canWork, canPrioritise, distributors] = await Promise.all([
     leadSourceOptions(),
     nextActionOwners(),
     getConfig(),
     canLead(user, "lead.work"),
+    /* Priority is the manager's judgement — `setLeadPriority` asks for
+       `lead.verify`, and so does the capture action. */
+    canLead(user, "lead.verify"),
     /*
-     * §23's "Under" picker — the same eligibility rule `crm/distributor-picker.tsx`
-     * and `convertToThirdParty` already enforce: a direct customer, not itself
-     * marked third-party. Fetched wide rather than search-as-you-type, because
-     * this is a plain select and not a typeahead — see the field's own note in
-     * `intake-form.tsx`.
+     * §23's "Under" picker — the same eligibility rule `convertToThirdParty`
+     * enforces, read whole rather than capped. See `distributorOptions`.
      */
-    distributorCandidates("", { limit: 500 }),
+    distributorOptions(),
   ]);
 
   return (
@@ -61,7 +61,8 @@ export async function Body({
         sourceOptions={config["leads.sources"]}
         owners={owners}
         canWork={canWork}
-        distributors={distributors.hits}
+        canPrioritise={canPrioritise}
+        distributors={distributors}
       />
     </div>
   );

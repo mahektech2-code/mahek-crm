@@ -68,6 +68,7 @@ export function IntakeForm({
   sourceOptions,
   owners,
   canWork,
+  canPrioritise,
   distributors,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
@@ -77,6 +78,8 @@ export function IntakeForm({
   sourceOptions: { code: string; label: string }[];
   owners: NextActionOwner[];
   canWork: boolean;
+  /** `lead.verify` — priority is a manager's word, so nobody else is offered it. */
+  canPrioritise: boolean;
   /**
    * §23's "Under" — who bills this shop, for the third-party ladder only.
    * The same direct-customer candidates `crm/distributor-picker.tsx` already
@@ -585,26 +588,33 @@ export function IntakeForm({
                 Additional information
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12">
-                <Field label="Note (optional)" error={errors.notes} className="lg:col-span-8">
+                <Field
+                  label="Note (optional)"
+                  error={errors.notes}
+                  className={canPrioritise ? "lg:col-span-8" : "lg:col-span-12"}
+                >
                   <Textarea
                     rows={3}
                     value={f.notes}
                     onChange={(e) => set("notes")(e.target.value)}
                   />
                 </Field>
+                {canPrioritise ? (
                 <Field label="Priority (optional)" error={errors.priority} className="lg:col-span-4">
                   <Select
                     value={f.priority}
                     onChange={(e) => set("priority")(e.target.value)}
                   >
-                    <option value="" disabled hidden>
-                      Select priority&hellip;
-                    </option>
+                    {/* Selectable, not a disabled placeholder: the field is
+                        optional, and a choice made by mistake has to be
+                        undoable without abandoning the form. */}
+                    <option value="">Not set</option>
                     <option value="high">High</option>
                     <option value="medium">Medium</option>
                     <option value="low">Low</option>
                   </Select>
                 </Field>
+                ) : null}
               </div>
             </div>
           </Card>
