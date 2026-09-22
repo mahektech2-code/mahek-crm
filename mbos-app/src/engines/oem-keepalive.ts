@@ -49,6 +49,11 @@ export type Oem =
   | 'samsung'
   | 'oneplus'
   | 'realme'
+  /* Honor was Huawei's own sub-brand and both run EMUI's App launch screen.
+     It is here because `phone-readiness.ts` carried a Huawei path and this
+     file did not, so the same handset was given a menu by one screen and told
+     "we do not know where it is on your phone" by the other. */
+  | 'huawei'
   | 'other';
 
 export type KeepAliveStep = {
@@ -87,19 +92,121 @@ export function oemOf(manufacturer: string | null | undefined): Oem {
   if (m.includes('oppo')) return 'oppo';
   if (m.includes('vivo') || m.includes('iqoo')) return 'vivo';
   if (m.includes('samsung')) return 'samsung';
+  if (m.includes('huawei') || m.includes('honor')) return 'huawei';
   return 'other';
 }
 
-/** Where autostart lives, in that OEM's own words. Empty where there is none. */
-const AUTOSTART: Record<Oem, string> = {
-  xiaomi: 'Settings → Apps → Manage apps → MahekOne → turn on Autostart, and set Battery saver to No restrictions.',
-  oppo: 'Settings → Battery → App battery usage → MahekOne → Allow background activity, and turn on Auto-launch.',
-  realme: 'Settings → Battery → App battery usage → MahekOne → Allow background activity, and turn on Auto-launch.',
-  oneplus: 'Settings → Battery → Battery usage → MahekOne → set to Unrestricted, and turn off Sleep standby optimisation.',
-  vivo: 'Settings → Battery → Background power consumption → MahekOne → Allow. Then Settings → Apps → Autostart → turn MahekOne on.',
-  samsung: 'Settings → Battery → Background usage limits → add MahekOne to Never sleeping apps.',
-  other: '',
+/**
+ * THE NAME TO LOOK FOR IN THE PHONE'S OWN SETTINGS, and it was wrong in two
+ * different ways at once.
+ *
+ * Every path below ends by telling somebody to find this app in a list. This
+ * file called it "MahekOne" and `phone-readiness.ts` called it "MBOS", and the
+ * label Android actually draws in that list is neither: it is `expo.name` from
+ * `app.json`, which is **Mahek MBOS**. So a salesman hunting an autostart list
+ * was looking for a name that is not on his screen — which is the exact failure
+ * the header of this file warns about for menu paths, arriving through the app's
+ * own name instead. He does not conclude he is looking at the wrong row; he
+ * concludes the instructions are wrong and stops following them.
+ *
+ * It is a constant and interpolated rather than typed into eight strings,
+ * because the day the launcher label changes is the day eight paths quietly
+ * start naming something that no longer exists.
+ */
+export const APP_LABEL = 'Mahek MBOS';
+
+/**
+ * WHERE THE SWITCH LIVES, IN THAT PHONE'S OWN WORDS — one table, for both
+ * screens.
+ *
+ * There were TWO. This file fed "Keep tracking on" and `phone-readiness.ts`
+ * fed the start-of-day gate, and the same vivo handset was told to go to
+ * `Settings → Battery → Background power consumption` by one and
+ * `Settings → Apps → Special app access → Autostart` by the other, under two
+ * different names for the app. That is worse than either answer alone: a man
+ * given two paths for one switch has been told by the app itself that it does
+ * not know, and the header above says exactly what that costs — he stops
+ * believing the rest of the screen.
+ *
+ * `label` is the setting as the phone spells it, and it is what the gate draws
+ * as a row title, because a row headed "Autostart" on a phone whose menu says
+ * "Background power consumption" is the same failure one level up. `path` is
+ * where it lives; `also` is the second setting on the same phone that undoes
+ * the first, which on several of these is the one that actually matters.
+ *
+ * `null` is an honest "we do not know where it is on your phone" — never a
+ * guess. A confident wrong path is worse than an admitted vague one.
+ */
+export type OemWords = { label: string; path: string; also: string | null };
+
+const OEM_WORDS: Record<Oem, OemWords | null> = {
+  /* vivo and iQOO are one company and one skin, Funtouch. This is the handset
+     the whole gate was built for, and it is the one where both of the old
+     tables were half right: OriginOS moved Autostart under Special app access
+     and left the background-power screen where it was, so both are named and
+     the second is the one that undoes the first. */
+  vivo: {
+    label: 'Autostart',
+    path: `Settings → Apps → Special app access → Autostart → switch ${APP_LABEL} on.`,
+    also:
+      `Then Settings → Battery → Background power consumption management → ${APP_LABEL} → ` +
+      'Allow high background power consumption.',
+  },
+  xiaomi: {
+    label: 'Autostart',
+    path: `Settings → Apps → Manage apps → ${APP_LABEL} → Autostart → switch it on.`,
+    also: 'Then on the same page: Battery saver → No restrictions.',
+  },
+  /* Realme runs ColorOS too, and both skins call it the same thing. They are
+     kept apart from OnePlus because that MENU PATH differs. */
+  oppo: {
+    label: 'Auto-launch',
+    path: `Settings → Apps → App management → ${APP_LABEL} → Auto-launch → switch it on.`,
+    also: `Then Settings → Battery → App battery management → ${APP_LABEL} → Allow background running.`,
+  },
+  realme: {
+    label: 'Auto-launch',
+    path: `Settings → Apps → App management → ${APP_LABEL} → Auto-launch → switch it on.`,
+    also: `Then Settings → Battery → App battery management → ${APP_LABEL} → Allow background running.`,
+  },
+  oneplus: {
+    label: 'Battery optimisation',
+    path: `Settings → Apps → ${APP_LABEL} → Battery usage → Unrestricted.`,
+    also: 'Then Settings → Battery → More → Advanced optimisation → switch Deep optimisation off.',
+  },
+  huawei: {
+    label: 'App launch',
+    path: `Settings → Battery → App launch → ${APP_LABEL} → Manage manually.`,
+    also: 'Switch on all three: Auto-launch, Secondary launch and Run in background.',
+  },
+  /* Samsung has no autostart list as such; what it has is the list of apps it
+     never puts to sleep. Different wording, same job. */
+  samsung: {
+    label: 'Never sleeping apps',
+    path: `Settings → Battery → Background usage limits → Never sleeping apps → add ${APP_LABEL}.`,
+    also: `Also check ${APP_LABEL} is not in the Sleeping apps or Deep sleeping apps list on the same page.`,
+  },
+  other: null,
 };
+
+/**
+ * That phone's words, or the honest generic ones.
+ *
+ * READ BY BOTH SCREENS — `app/tracking-setup.tsx` through `keepAliveSteps`
+ * below, and the start-of-day gate through `engines/phone-readiness.ts`, which
+ * imports this rather than keeping the second copy it used to.
+ */
+export function oemWords(oem: Oem): OemWords {
+  return (
+    OEM_WORDS[oem] ?? {
+      label: `Let ${APP_LABEL} run in the background`,
+      path:
+        'Open your phone Settings and look for Battery, then for anything about background apps, ' +
+        `app launch or autostart. Set ${APP_LABEL} so the phone never stops it.`,
+      also: null,
+    }
+  );
+}
 
 /**
  * What this handset needs doing, in the order to do it.
@@ -115,25 +222,32 @@ const AUTOSTART: Record<Oem, string> = {
  * your phone" is to not claim to.
  */
 export function keepAliveSteps(oem: Oem): KeepAliveStep[] {
-  const steps: KeepAliveStep[] = [
+  const words = oemWords(oem);
+  return [
     {
       key: 'battery',
-      title: 'Let MahekOne run in the background',
+      title: `Let ${APP_LABEL} run in the background`,
       detail:
-        'Android stops apps it thinks are using battery. This one has to keep recording while your day is open. Tap Allow on the box that appears.',
+        'Android stops apps it thinks are using battery. This one has to keep recording while your ' +
+        'day is open. Tap Allow on the box that appears.',
       grantable: true,
     },
-  ];
-  const path = AUTOSTART[oem];
-  if (path) {
-    steps.push({
+    {
+      /* THE STEP IS ALWAYS OFFERED NOW, and the words are what change.
+         
+         It used to be dropped entirely on a handset whose make nobody had
+         mapped — the honest half of that was refusing to print a guessed menu
+         path, and the dishonest half was that the screen then showed one step
+         and implied there was nothing else to do. `oemWords` answers with a
+         real path or with generic wording that admits it is generic, so the
+         step can stand either way and the salesman is never told a setting he
+         has to find does not exist. */
       key: 'autostart',
-      title: 'Allow it to start on its own',
-      detail: path,
+      title: words.label,
+      detail: words.path + (words.also ? ' ' + words.also : ''),
       grantable: false,
-    });
-  }
-  return steps;
+    },
+  ];
 }
 
 /**

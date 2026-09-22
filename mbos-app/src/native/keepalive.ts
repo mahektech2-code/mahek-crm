@@ -105,6 +105,15 @@ const AUTOSTART_COMPONENTS: Record<Oem, { packageName: string; className: string
     { packageName: 'com.vivo.permissionmanager', className: 'com.vivo.permissionmanager.activity.BgStartUpManagerActivity' },
     { packageName: 'com.iqoo.secure', className: 'com.iqoo.secure.ui.phoneoptimize.BgStartUpManager' },
   ],
+  /* EMUI, and Honor while it was Huawei's own sub-brand. The three are tried
+     newest-name-first, the same ordering every family here uses: these are
+     private activities and they get renamed between OS versions, so the list
+     ends at a screen that cannot disappear rather than at a best guess. */
+  huawei: [
+    { packageName: 'com.huawei.systemmanager', className: 'com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity' },
+    { packageName: 'com.huawei.systemmanager', className: 'com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity' },
+    { packageName: 'com.huawei.systemmanager', className: 'com.huawei.systemmanager.optimize.process.ProtectActivity' },
+  ],
   samsung: [
     { packageName: 'com.samsung.android.lool', className: 'com.samsung.android.sm.battery.ui.BatteryActivity' },
   ],

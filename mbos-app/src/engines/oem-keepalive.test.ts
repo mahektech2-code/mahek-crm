@@ -1,12 +1,27 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  APP_LABEL,
   keepAliveSteps,
   oemOf,
+  oemWords,
   RESTART_ANSWER,
   shouldOfferSetup,
   trackingVerdict,
+  type Oem,
 } from './oem-keepalive';
+
+/** Every make this app knows the words for, plus the one it does not. */
+const ALL_OEMS: Oem[] = [
+  'xiaomi',
+  'oppo',
+  'vivo',
+  'samsung',
+  'oneplus',
+  'realme',
+  'huawei',
+  'other',
+];
 
 describe('which handset this is', () => {
   it('folds the sub-brands onto the OEM whose settings they run', () => {
@@ -43,19 +58,29 @@ describe('which handset this is', () => {
 
 describe('what a handset is asked to do', () => {
   it('always asks for battery first', () => {
-    for (const oem of ['xiaomi', 'oppo', 'vivo', 'samsung', 'oneplus', 'realme', 'other'] as const) {
+    for (const oem of ALL_OEMS) {
       assert.equal(keepAliveSteps(oem)[0].key, 'battery');
     }
   });
 
-  /* A handset with no quirk we know of gets the battery step alone. Printing
-     an autostart path we are guessing at sends somebody looking for a menu
-     that is not there. */
-  it('claims no autostart path it does not have', () => {
-    assert.deepEqual(
-      keepAliveSteps('other').map((s) => s.key),
-      ['battery'],
-    );
+  /*
+   * A HANDSET NOBODY HAS MAPPED STILL GETS THE STEP, with wording that admits
+   * it is generic — and that is a REVERSAL.
+   *
+   * It used to get the battery step alone, on the reasoning that printing a
+   * guessed menu path sends somebody looking for a menu that is not there. Half
+   * of that still holds and is still enforced below: no path is invented. The
+   * other half was the mistake — a screen showing one step says there is one
+   * thing to do, and on these handsets there are two. The start-of-day gate had
+   * always drawn the row with generic wording, so the two screens disagreed
+   * about whether the second switch even existed, which is the drift this
+   * consolidation is about.
+   */
+  it('offers the step on a handset nobody has mapped, without inventing a path', () => {
+    const autostart = keepAliveSteps('other').find((s) => s.key === 'autostart');
+    assert.ok(autostart, 'an unmapped handset is told there is one thing to do');
+    assert.doesNotMatch(autostart.detail, /Settings →/, 'a menu path was invented');
+    assert.match(autostart.detail, /look for Battery/);
   });
 
   /*
@@ -72,10 +97,31 @@ describe('what a handset is asked to do', () => {
     assert.equal(steps.find((s) => s.key === 'autostart')?.grantable, false);
   });
 
-  it('names MahekOne in every path, so he can find the row', () => {
-    for (const oem of ['xiaomi', 'oppo', 'vivo', 'samsung', 'oneplus', 'realme'] as const) {
+  /*
+   * THE NAME IN THE PATH IS THE NAME ON HIS SCREEN, which it was not.
+   *
+   * Every path ends by telling somebody to find this app in a list. This engine
+   * said "MahekOne", the gate's engine said "MBOS", and Android draws neither:
+   * it draws `expo.name`, which is "Mahek MBOS". A man hunting a row under a
+   * name that is not there concludes the instructions are wrong, not that he is
+   * on the wrong row. `APP_LABEL` is asserted rather than the literal, so the
+   * day the launcher label changes this test moves with it.
+   */
+  it('names the app the way the settings list on the phone does', () => {
+    for (const oem of ALL_OEMS) {
       const detail = keepAliveSteps(oem).find((s) => s.key === 'autostart')!.detail;
-      assert.ok(detail.includes('MahekOne'), `${oem} path does not say which app to look for`);
+      assert.ok(detail.includes(APP_LABEL), `${oem} path does not say which app to look for`);
+    }
+  });
+
+  /* ONE TABLE, so the gate and this screen cannot send one handset to two
+     different menus. The gate reads `oemWords` too — see
+     `engines/phone-readiness.ts`, which used to hold a second copy of it. */
+  it('is the same words the start-of-day gate prints', () => {
+    for (const oem of ALL_OEMS) {
+      const words = oemWords(oem);
+      const detail = keepAliveSteps(oem).find((s) => s.key === 'autostart')!.detail;
+      assert.ok(detail.startsWith(words.path), `${oem} draws a path of its own`);
     }
   });
 });

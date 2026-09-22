@@ -1,4 +1,5 @@
 import { isoDate } from '../lib/format';
+import { oemOf, oemWords } from './oem-keepalive';
 
 /**
  * Whether this phone can be trusted to record a day before the day is started.
@@ -85,96 +86,30 @@ export type Readiness = {
 /* ------------------------------------------------------------ the words */
 
 /**
- * THE MANUFACTURER CHANGES THE WORDS AND NEVER THE RULE.
+ * THE MANUFACTURER CHANGES THE WORDS AND NEVER THE RULE, and there is ONE
+ * table of those words.
  *
  * Every one of these phones has the same setting and not one of them calls it
  * the same thing. A salesman told to find "Autostart" on a phone whose menu
  * says "Background power consumption" does not conclude that his phone is
- * unusual — he concludes the app is wrong about his phone, and the next thing
- * he does is ring the office to be told to ignore the screen. So the row is
- * titled with HIS phone's own word and the path is the path he will actually
- * walk.
+ * unusual — he concludes the app is wrong about his phone, and rings the office
+ * to be told to ignore the screen.
  *
- * `label` is the setting as the phone spells it; `path` is where it lives;
- * `also` is the second setting on the same phone that undoes the first, which
- * on several of these is the one that actually matters.
+ * WHICH IS EXACTLY WHAT THIS FILE CAUSED, by keeping a second copy of the
+ * table. `engines/oem-keepalive.ts` fed the "Keep tracking on" screen and this
+ * fed the start-of-day gate, and the two had drifted: one vivo handset was sent
+ * to `Settings → Apps → Special app access → Autostart` by this screen and to
+ * `Settings → Battery → Background power consumption` by the other, under two
+ * different names for the app — neither of which was the name Android actually
+ * draws in that list. Two answers for one switch is the app telling somebody it
+ * does not know, and that costs more than either answer alone would have.
  *
- * An unrecognised manufacturer gets honest generic wording. NEVER A GUESS: a
- * confident wrong path is worse than an admitted vague one, because a man who
- * cannot find "Autostart" where we said it was stops believing the rest of the
- * screen too.
+ * So the words live there and are imported here. The GATE stays this file's —
+ * which rung stops a day is a different question from what the switch is called
+ * on a Realme — and that split is the point: one file decides what is demanded,
+ * one decides what it is called.
  */
-type Oem = { label: string; path: string; also: string | null };
-
-const GENERIC: Oem = {
-  label: 'Let MBOS run in the background',
-  path:
-    'Open your phone Settings and look for Battery, then for anything about background apps, ' +
-    'app launch or autostart. Set MBOS so the phone never stops it.',
-  also: null,
-};
-
-function oemWords(manufacturer: string | null): Oem {
-  const m = (manufacturer ?? '').trim().toLowerCase();
-  if (!m) return GENERIC;
-
-  /* vivo and iQOO are one company and one skin, Funtouch. This is the phone
-     the whole gate was built for. */
-  if (m.includes('vivo') || m.includes('iqoo')) {
-    return {
-      label: 'Autostart',
-      path:
-        'Settings → Apps → Special app access → Autostart → switch MBOS on.',
-      also:
-        'Then Settings → Battery → Background power consumption management → MBOS → ' +
-        'Allow high background power consumption.',
-    };
-  }
-
-  if (m.includes('xiaomi') || m.includes('redmi') || m.includes('poco')) {
-    return {
-      label: 'Autostart',
-      path: 'Settings → Apps → Manage apps → MBOS → Autostart → switch it on.',
-      also: 'Then on the same MBOS page: Battery saver → No restrictions.',
-    };
-  }
-
-  /* Realme runs ColorOS too, and both skins call it the same thing. */
-  if (m.includes('oppo') || m.includes('realme')) {
-    return {
-      label: 'Auto-launch',
-      path: 'Settings → Apps → App management → MBOS → Auto-launch → switch it on.',
-      also: 'Then Settings → Battery → App battery management → MBOS → Allow background running.',
-    };
-  }
-
-  if (m.includes('oneplus')) {
-    return {
-      label: 'Battery optimisation',
-      path: 'Settings → Apps → MBOS → Battery usage → Unrestricted.',
-      also: 'Then Settings → Battery → More → Advanced optimisation → switch Deep optimisation off.',
-    };
-  }
-
-  if (m.includes('huawei') || m.includes('honor')) {
-    return {
-      label: 'App launch',
-      path: 'Settings → Battery → App launch → MBOS → Manage manually.',
-      also: 'Switch on all three: Auto-launch, Secondary launch and Run in background.',
-    };
-  }
-
-  if (m.includes('samsung')) {
-    return {
-      label: 'Never sleeping apps',
-      path:
-        'Settings → Battery → Background usage limits → Never sleeping apps → add MBOS.',
-      also: 'Also check MBOS is not in the Sleeping apps or Deep sleeping apps list on the same page.',
-    };
-  }
-
-  return GENERIC;
-}
+/* The import is at the top of the file, beside the other one. */
 
 /* ------------------------------------------------------------ the rules */
 
@@ -376,7 +311,11 @@ function batteryItem(i: ReadinessInput): ReadinessItem {
  * ordering lives on the screen where it can watch him come back.
  */
 function autostartItem(i: ReadinessInput): ReadinessItem {
-  const oem = oemWords(i.manufacturer);
+  /* `oemOf` folds the sub-brands — a Redmi is MIUI, an iQOO is Funtouch — and
+     `oemWords` is the one table. Two steps rather than one function taking a
+     raw manufacturer string, because the fold is what "Keep tracking on" needs
+     on its own to decide which steps to draw. */
+  const oem = oemWords(oemOf(i.manufacturer));
   const where = oem.path + (oem.also ? ' ' + oem.also : '');
   const prev = i.previousWorkedDay;
 
