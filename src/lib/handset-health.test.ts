@@ -6,6 +6,7 @@ import {
   handsetNotes,
   trackerStalled,
   trailHasGaps,
+  trailHasStopped,
   trailIsDead,
   uploaderSilenceMs,
   type HandsetFacts,
@@ -188,6 +189,91 @@ describe("checked in, reporting, and no trail at all", () => {
        visit, so this salesman has a pin, a place and a time — which is exactly
        what hid him. Only `trailSeenAt` answers the question. */
     assert.equal(trailIsDead({ ...vivo(), trailSeenAt: new Date(NOW - 3_600_000) }, T, NOW), false);
+  });
+});
+
+describe("a route that ran and then stopped", () => {
+  /* The shape nothing on this panel could see. He is out, he was being
+     tracked all morning, and his positions stopped arriving at half past
+     seven — `trailIsDead` answers false because there IS a trail, and the row
+     drew "Last seen 07:30" beside a green dot with nothing saying it was
+     ninety minutes stale. It was reported as the map being broken. */
+  const stopped = (over: Partial<HandsetFacts> = {}) =>
+    facts({
+      checkInAt: new Date(NOW - 5 * 3_600_000),
+      trailSeenAt: new Date(NOW - 100 * 60_000),
+      lastHeardAt: new Date(NOW - 60_000),
+      ...over,
+    });
+
+  test("is exactly what a dead trail cannot answer", () => {
+    assert.equal(trailIsDead(stopped(), T, NOW), false);
+    assert.equal(trailHasStopped(stopped(), T, NOW), true);
+  });
+
+  test("the two can never both fire on one handset", () => {
+    /* One fact, one sentence — and the banners upstairs count these
+       separately, so a handset in both would be counted twice. */
+    const dead = facts({ trailSeenAt: null, checkInAt: new Date(NOW - 5 * 3_600_000) });
+    assert.equal(trailIsDead(dead, T, NOW), true);
+    assert.equal(trailHasStopped(dead, T, NOW), false);
+  });
+
+  test("names it, and above the silence that merely measures it", () => {
+    assert.deepEqual(texts(stopped()), ["Route stopped reaching us 1 hr 40 min ago"]);
+  });
+
+  test("fires on a phone in constant contact, which is the point", () => {
+    /* A handset flushing a backlog posts every few minutes and moves
+       `last_seen_at` every time, so every other column reads as a phone
+       working perfectly while every reading it sends is hours old. */
+    const talking = stopped({ lastHeardAt: new Date(NOW - 5_000) });
+    assert.deepEqual(texts(talking), ["Route stopped reaching us 1 hr 40 min ago"]);
+  });
+
+  test("late is not lost, and the phone is what says which", () => {
+    /* Fixes still on the handset mean the route exists and is travelling.
+       Drawn as a fault that is a manager ringing a salesman doing nothing
+       wrong, which is how a panel teaches people to ignore it. */
+    const holding = handsetNotes(stopped({ queuedPositions: 40 }), T, NOW)[0];
+    assert.equal(holding.tone, "warn");
+    assert.match(holding.detail ?? "", /comes up as soon as it has a connection/);
+
+    const gone = handsetNotes(stopped({ queuedPositions: 0 }), T, NOW)[0];
+    assert.equal(gone.tone, "bad");
+    assert.match(gone.detail ?? "", /autostart/);
+  });
+
+  test("an unreported queue takes the softer sentence, never the louder one", () => {
+    /* Null is not zero. A build too old to report its queue has told us
+       nothing, and claiming the work is lost on the strength of an absent
+       column is the one failure this whole file is written against. */
+    assert.equal(handsetNotes(stopped({ queuedPositions: null }), T, NOW)[0].tone, "warn");
+  });
+
+  test("stays quiet inside the threshold and speaks the moment it is past", () => {
+    const inside = stopped({ trailSeenAt: new Date(NOW - 90 * 60_000) });
+    assert.deepEqual(texts(inside), []);
+
+    const past = stopped({ trailSeenAt: new Date(NOW - 91 * 60_000) });
+    assert.deepEqual(texts(past), ["Route stopped reaching us 1 hr 31 min ago"]);
+  });
+
+  test("says nothing once the day is closed", () => {
+    /* A day he has checked out of produced whatever it was going to produce,
+       and every past row would otherwise carry this for ever. */
+    assert.equal(trailHasStopped(stopped({ dayOpen: false }), T, NOW), false);
+    assert.deepEqual(texts(stopped({ dayOpen: false })), []);
+  });
+
+  test("sits under a line that names the cause, never above it", () => {
+    /* This is what the route cost; the recorder line is the fault itself, and
+       the thing to act on comes first. */
+    const stalled = stopped({ trackerStalledAt: new Date(NOW - 2 * 3_600_000) });
+    assert.deepEqual(texts(stalled), [
+      "His phone stopped the tracker — 2 hr ago",
+      "Route stopped reaching us 1 hr 40 min ago",
+    ]);
   });
 });
 
