@@ -62,6 +62,59 @@ export async function fetchUpdateInBackground(): Promise<'none' | 'ready' | 'off
   }
 }
 
+/**
+ * CAN THIS BUILD RESTART ITSELF? Asked before a button is drawn, never after
+ * it is pressed.
+ *
+ * `reloadAsync` REJECTS in development, in Expo Go, and on any build where
+ * `updates.enabled` is false — which is every build made before `eas init`
+ * wrote the URL. A restart button drawn on one of those is a button that
+ * appears to do nothing, which is the mistake the microphone made and
+ * AGENTS.md records: a control that fails when pressed is worse than one never
+ * offered. So the screen asks this first and prints the manual instruction
+ * instead where the answer is no — closing the app by hand reaches the same
+ * place, it just takes a sentence to say.
+ */
+export function canRestart(): boolean {
+  return Updates.isEnabled;
+}
+
+/**
+ * Restart MahekOne, because a setting the phone reads at startup has changed.
+ *
+ * THE ONE PLACE THIS IS A REMEDY is a day recording at the foreground floor
+ * after the OEM switches have been changed under it —
+ * `engines/oem-keepalive.ts` holds that rule and the reason. Everywhere else a
+ * restart costs somebody a half-typed order and buys nothing.
+ *
+ * It is NOT the same act as `fetchUpdateInBackground`, which deliberately does
+ * not reload: that one would restart the app under somebody mid-visit to
+ * deliver a cosmetic change. This one is a button he pressed, on a screen that
+ * says what it does, with nothing else on it to lose — and it picks up any
+ * bundle already downloaded as a side effect rather than as its purpose.
+ *
+ * NOTHING IS LOST BY IT. Every record on this handset is in SQLite and the
+ * outbox survives a restart by design, which is the whole reason the app can
+ * be reaped on the road. The screen says so, because "restart" is a word people
+ * have learned to be frightened of.
+ *
+ * `false` means it did not happen and the caller must say so. The promise
+ * resolves immediately BEFORE the reload is posted to the main thread, so
+ * `true` means the instruction went in — there is nothing after it to observe,
+ * and no code here may assume it runs.
+ */
+export async function restartApp(): Promise<boolean> {
+  if (!canRestart()) return false;
+  try {
+    await Updates.reloadAsync();
+    return true;
+  } catch {
+    /* A module installed wrongly, or a runtime that has no reference to reload.
+       Either way the honest answer is the manual one, and the screen has it. */
+    return false;
+  }
+}
+
 /** What is actually running, for the Sync screen to print. */
 export function runningBuild(): { id: string; embedded: boolean; channel: string | null } {
   return {

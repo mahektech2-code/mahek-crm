@@ -11,6 +11,7 @@ import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { acknowledgePhoneSetup } from '../src/data/day-gate';
 import { readReadiness } from '../src/data/phone-readiness';
+import { RESTART_ANSWER } from '../src/engines/oem-keepalive';
 import type { ItemState, Readiness, ReadinessItem } from '../src/engines/phone-readiness';
 import {
   openAppSettings,
@@ -209,6 +210,19 @@ export default function PhoneSetupScreen() {
           Some phones switch MBOS off in your pocket to save battery. When that happens the office cannot
           see a single thing you did all day — and nothing on your phone says so. These few settings stop
           it.
+        </T>
+        {/* THE QUESTION THIS SCREEN MADE PEOPLE RING THE OFFICE WITH.
+            
+            It walks a man to an autostart switch and said nothing about what to
+            do afterwards, so the team worked it out between themselves and
+            arrived at rebooting the handset — which is not the step, costs him
+            ten minutes of a morning, and teaches him that none of this makes a
+            difference. The sentence is `RESTART_ANSWER` and it lives in
+            `engines/oem-keepalive.ts`, because the Keep tracking on screen asks
+            for the same switches and two screens answering this differently is
+            how a team ends up trusting neither. */}
+        <T s="small" style={{ color: C.muted, marginTop: 6 }}>
+          {RESTART_ANSWER}
         </T>
       </Card>
 

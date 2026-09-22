@@ -9,6 +9,7 @@ import { mayRetryBackground, type Demotion } from '../engines/trail-retry';
 import { decideFlush } from '../engines/flush-answer';
 import { isoDate } from '../lib/format';
 import { chooseCapture, trackingDeadlineSeconds } from '../engines/capture';
+import type { CaptureMode } from '../engines/oem-keepalive';
 import {
   available as serviceAvailable,
   drainFixes,
@@ -857,9 +858,28 @@ function stopWatching(): void {
   }
 }
 
+/**
+ * WHICH MECHANISM IS HOLDING THE ROUTE UP, in the words a screen can explain.
+ *
+ * `mode` is this file's own state and has been unreadable from outside it for
+ * as long as it has existed — `isTracking()` collapsed all three answers to a
+ * boolean, and nothing anywhere called even that. So no screen on the handset
+ * could tell a salesman the one thing he most needs to know after changing a
+ * setting: whether it worked. He was handed two settings screens, a sentence
+ * saying we cannot check the second one, and no way to find out either.
+ *
+ * The floor is named `floor` rather than `foreground`, because what a screen
+ * has to say about it is "only while the app is open" and `foreground` reads to
+ * anybody outside this file as the good case. `engines/oem-keepalive.ts` turns
+ * it into words.
+ */
+export function captureMode(): CaptureMode {
+  return mode === 'foreground' ? 'floor' : mode;
+}
+
 /** Is the trail running right now, one way or the other? */
 export function isTracking(): boolean {
-  return mode !== null;
+  return captureMode() !== null;
 }
 
 /**
