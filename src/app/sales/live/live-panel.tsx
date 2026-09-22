@@ -225,6 +225,7 @@ export function LivePanel({
           onSelect={toggle}
           thresholds={handsetThresholds}
           nowMs={clockMs}
+          isToday={isToday}
         />
       </div>
     </div>

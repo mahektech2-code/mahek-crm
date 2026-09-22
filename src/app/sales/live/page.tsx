@@ -3,7 +3,7 @@ import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
 import { nowMs, shortDateWithYear } from "@/lib/format";
-import { trackerStalled, trailHasGaps, trailIsDead } from "@/lib/handset-health";
+import { trackerStalled, trailHasGaps, trailHasStopped, trailIsDead } from "@/lib/handset-health";
 import { today } from "@/lib/recompute";
 import { liveOlaKey } from "@/lib/services/ola-key-service";
 import {
@@ -149,6 +149,27 @@ export default async function Page({
       )
     : [];
 
+  /* A TRAIL THAT RAN AND STOPPED, which `deadTrail` above cannot count: that
+     one answers false the moment there is any position at all, so a route
+     that ended at four in the afternoon fell between every banner on this
+     screen and every note on its own row. It is the commonest shape of a lost
+     day and it was the one with nothing said about it — and worse, the
+     handset behind it is usually in perfect contact with us, flushing a
+     backlog, which reads on every other column as a phone working properly.
+     Mutually exclusive with `deadTrail` by construction, so no handset is
+     counted in both. Today only, for the reason the two above are. */
+  const stoppedTrail = isToday
+    ? rows.filter(
+        (r) =>
+          !r.onLeave &&
+          trailHasStopped(
+            { ...r, dayOpen: Boolean(r.checkInAt && !r.checkOutAt) },
+            { noTrailMinutes: config["mbos.location.noTrailMinutes"] },
+            clockMs,
+          ),
+      )
+    : [];
+
   /* THE PHONE ITSELF SAYING ITS TRACKER IS STOPPED, counted as its own thing.
      It is not the row above: `deadTrail` is inferred here from an absence of
      positions, and this is the handset's own watchdog reporting the tracker
@@ -264,6 +285,14 @@ export default async function Page({
           tone="danger"
           title={`${plural(deadTrail.length, "salesman", "salesmen")} out today with no trail at all`}
           body="Punched in, the handset reporting, and not one position recorded since — which is the tracking service on the phone rather than a signal problem, however long the row underneath says it has been quiet. Their Location permission is usually correct and worth nothing here: these handsets start the service properly and then kill it, so the fix is to allow MahekOne to autostart and set its battery usage to unrestricted, in the phone's own battery settings, then punch out and back in. Each row says how long the man has been out, and names the permission itself only where that is also wrong."
+        />
+      ) : null}
+
+      {stoppedTrail.length ? (
+        <Banner
+          tone="warn"
+          title={`${plural(stoppedTrail.length, "salesman", "salesmen")} whose route has stopped reaching us`}
+          body="They are out, they were being tracked, and their positions have stopped arriving — so the map is showing where each of them was rather than where he is, and the time on the row is the time of that fix and not of the last contact. That distinction is the whole of this banner: a handset catching up a backlog talks to us constantly while every reading it sends is hours old, which reads on every other column as a phone working perfectly. Each row says how long it has been, and whether the phone is holding the missing part — if it is, the work is safe and merely late."
         />
       ) : null}
 

@@ -2,7 +2,12 @@
 
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { formatDistance } from "@/lib/geo";
-import { handsetNotes, type HandsetThresholds, type NoteTone } from "@/lib/handset-health";
+import {
+  ageWords,
+  handsetNotes,
+  type HandsetThresholds,
+  type NoteTone,
+} from "@/lib/handset-health";
 import type { LastKnown } from "@/lib/services/sales-service";
 
 /**
@@ -39,6 +44,7 @@ export function TeamList({
   onSelect,
   thresholds,
   nowMs,
+  isToday,
 }: {
   rows: LastKnown[];
   /** Null outside the "today" view — there is no trail to measure yet. */
@@ -51,6 +57,12 @@ export function TeamList({
    * codebase runs under forbids reading the clock during render.
    */
   nowMs: number;
+  /**
+   * Whether the day on screen is TODAY — which decides whether an age beside
+   * a fix means anything. See `seenLine`, and the banners on the page above,
+   * which are gated on it for the same reason.
+   */
+  isToday: boolean;
 }) {
   return (
     <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
@@ -100,7 +112,7 @@ export function TeamList({
               </span>
               <span className="mt-0.5 block truncate text-[12px] text-muted">{whereLine(r)}</span>
               <span className="block text-[12px] text-muted">
-                {seenLine(r)}
+                {seenLine(r, nowMs, isToday, thresholds.noTrailMinutes)}
                 {distanceMetres ? ` · ${formatDistance(distanceMetres.get(r.salesmanId) ?? 0)}` : ""}
               </span>
               {r.deviceModel ? (
@@ -167,9 +179,38 @@ function whereLine(r: LastKnown): string {
   return r.place ?? "On the road";
 }
 
-function seenLine(r: LastKnown): string {
+/**
+ * AND HOW OLD THAT IS, because a clock time is not an age.
+ *
+ * "Last seen 16:12" is read at a glance as a recent fact, and the glance is
+ * what this row is for — a manager scanning eight of them does not subtract
+ * 16:12 from the wall clock, he reads a time and moves on. On a phone whose
+ * trail stopped at four, that is the whole of what the screen told him, and
+ * it is what was reported as the map being broken: the handset was in
+ * constant contact and every reading in those batches was hours old.
+ *
+ * IT IS THE TIME OF THE FIX AND NEVER THE TIME IT ARRIVED — see `seenAt` on
+ * the service, which says so deliberately and is right to. Nothing here
+ * changes that; what it adds is the age, so the two cannot be confused by
+ * somebody reading quickly.
+ *
+ * SAID ONLY WHERE IT MEANS SOMETHING, like every other line on this panel. A
+ * fresh fix needs no age beside it, and a day in March measured against this
+ * afternoon's clock is an arithmetic that says nothing about that Tuesday —
+ * which is why the banners upstairs are gated on `isToday` for exactly this
+ * reason. The threshold is the office's own `noTrailMinutes`, so the age
+ * appears on precisely the rows that have a note explaining it.
+ */
+function seenLine(
+  r: LastKnown,
+  nowMs: number,
+  isToday: boolean,
+  noTrailMinutes: number,
+): string {
   if (!r.seenAt) return "No fix today";
-  return `Last seen ${clock(r.seenAt)}`;
+  const at = new Date(r.seenAt).getTime();
+  const stale = isToday && Number.isFinite(at) && nowMs - at > noTrailMinutes * 60_000;
+  return `Last seen ${clock(r.seenAt)}${stale ? ` · ${ageWords(at, nowMs)} ago` : ""}`;
 }
 
 function dotColour(r: LastKnown): string {

@@ -5058,6 +5058,56 @@ login and nowhere else, so four screens calling it "last synced" were showing
 the last time somebody typed their password, and a handset syncing perfectly all
 week read as untouched since Monday.
 
+**AND THAT COLUMN MOVING IS NOT THE ROUTE ARRIVING, which is the confusion it
+caused the moment it started working.** `last_seen_at` is when the phone last
+SPOKE; the time on the team row is the time written on the newest FIX, and the
+service says so deliberately — "the time on the answer is the time of the fix
+and never now". A handset flushing a backlog satisfies both at once: it posts
+every few minutes, so the office reads a phone in constant contact, and every
+reading in those batches was taken hours ago, so the map draws him where he
+was at four. Both numbers are right and they are about different things, and
+the screen printed only one of them. It was reported as the map being broken.
+
+**A TRAIL THAT RAN AND STOPPED HAD NO SENTENCE ANYWHERE, and it is the
+commonest shape of a lost route.** `trailIsDead` answers false the moment
+`trailSeenAt` is non-null — it was written for a handset that produced NOTHING
+all day, and says so in its own signature — so a day that ran all morning and
+stopped at four had a pin, a place, a green dot and "Last seen 16:12", with
+every banner on the screen counting zero. The only line that fired was the
+silence note, which measures an interval and names nothing, and which does not
+fire at all on the case this exists for, because the phone is not silent.
+`trailHasStopped` is the complement, on the SAME `noTrailMinutes` — how long a
+working handset may produce no position is one question, and whether the count
+before the silence was zero or four hundred does not change the answer. The two
+are mutually exclusive by the null check, so one fact still gets one sentence
+and no handset is counted in both banners. The row now prints the age beside
+the clock time as well, on precisely the rows that have a note explaining it.
+
+**WHETHER THE WORK IS LOST OR MERELY LATE IS THE PHONE'S TO ANSWER.** A
+recorder reporting fixes still queued is a route that exists and is
+travelling; drawn as a fault that is a manager ringing a salesman who is doing
+nothing wrong. Null queued is neither — a build too old to report its buffer
+has told us nothing, and it takes the softer sentence.
+
+**AND `uploads` IS A BELIEF, WHICH IS WHAT ACTUALLY COST THE DAY.** The
+recorder answers true whenever the cadence is set, a credential is held, the
+server has not refused it, the day is open and the service is up — and every
+one of those survives an uploader that is wedged against a captive wifi or a
+socket that times out for ever. `chooseSender` agreed with the belief, so the
+app left the queue alone while the phone sat in its owner's hand, online, with
+the app OPEN, holding hours of his route and able to post it in one pass. It
+now takes the queue back on EVIDENCE — not one batch accepted for longer than
+any honest retry could account for, AND fixes actually held — both of which
+the recorder already reports about itself. Both halves are load bearing: the
+buffer check alone would accuse every phone on a quiet afternoon of an
+absence, and the silence check alone would take the queue off a recorder that
+is working. The threshold is well above the recorder's own five-minute retry
+ceiling, because reading three ordinary retries as a wedge is two owners and
+no draining. Taking it back when THIS side cannot send either is still right:
+the rows move out of a ring buffer that drops its oldest at the cap and into a
+table that drops nothing, and a fix's id is its own reading, so the worst a
+double send costs is a round trip.
+
 **A HEALTHY PHONE SAYS NOTHING AT ALL.** A row listing four green facts is a
 specification sheet, and the one line that matters gets read as furniture — the
 mistake the microphone made when it was drawn at the weight of the resize grip.

@@ -643,9 +643,21 @@ async function drainService(): Promise<number> {
    * those going false hands the queue back here, which is what makes the
    * handover unambiguous in BOTH directions: the check-out clears the deadline
    * and the flush that follows it picks up the last few minutes of the day.
+   *
+   * AND THE TWO READINGS BESIDE IT ARE WHAT CATCH AN UPLOADER THAT BELIEVES
+   * ALL FIVE AND IS STILL SENDING NOTHING — see `chooseSender`, which is
+   * where that whole argument lives. They are already on the state this call
+   * returns; nothing extra is asked of the handset to answer it.
    */
   const state = await serviceState();
-  if (chooseSender({ serviceAvailable: true, nativeUploads: state.uploads }) === 'native') {
+  if (
+    chooseSender({
+      serviceAvailable: true,
+      nativeUploads: state.uploads,
+      lastUploadAgoSeconds: state.lastUploadAgoSeconds,
+      buffered: state.buffered,
+    }) === 'native'
+  ) {
     return 0;
   }
 
