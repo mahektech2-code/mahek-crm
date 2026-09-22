@@ -4,7 +4,16 @@ import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
-import { keepAliveSteps, type KeepAliveStep } from '../src/engines/oem-keepalive';
+import {
+  keepAliveSteps,
+  RESTART_ANSWER,
+  trackingVerdict,
+  type CaptureMode,
+  type KeepAliveStep,
+  type TrackingVerdict,
+} from '../src/engines/oem-keepalive';
+import { captureMode } from '../src/sync/trail';
+import { canRestart, restartApp } from '../src/native/updates';
 import {
   markAsked,
   openAutostartSettings,
@@ -61,11 +70,26 @@ export default function TrackingSetupScreen() {
    * looks like, and it is never drawn as a tick.
    */
   const [exemption, setExemption] = React.useState<BatteryExemption>('unknown');
+  /*
+   * WHETHER ANY OF IT WORKED, which this screen could not say.
+   *
+   * It walked a salesman through two settings screens and stopped. The whole
+   * team then asked the office the same question — restart the app, or restart
+   * the phone? — because nothing here answered it, and a team guessing at a
+   * recovery step does the wrong one and concludes the settings made no
+   * difference. `captureMode` is what the trail is actually doing right now and
+   * `trackingVerdict` is the one place it becomes words.
+   */
+  const [capture, setCapture] = React.useState<CaptureMode>(null);
+  const [restarting, setRestarting] = React.useState(false);
 
   const reread = React.useCallback(() => {
     void batteryExemption()
       .then(setExemption)
       .catch(() => setExemption('unknown'));
+    /* Read rather than awaited: it is this process's own state, so there is
+       nothing to fail and nothing to wait for. */
+    setCapture(captureMode());
   }, []);
 
   useFocusEffect(
@@ -101,6 +125,34 @@ export default function TrackingSetupScreen() {
          appears to do nothing. */
       notify('Could not open that screen — you can reach it from Android Settings');
     }
+  };
+
+  const verdict: TrackingVerdict = trackingVerdict({ capture, exemption, canRestart: canRestart() });
+
+  /*
+   * THE CTA THAT DOES THE THING, rather than a sentence telling him to.
+   *
+   * `restart_app` really restarts MahekOne; `recheck` re-reads the phone. What
+   * neither of them is, ever, is a phone restart — see the engine for why that
+   * folk remedy is not offered. A restart that could not be performed says so
+   * instead of leaving him watching a button do nothing, which is the one
+   * outcome that would teach this screen's whole audience to ignore it.
+   */
+  const act = async () => {
+    if (verdict.action === 'recheck') {
+      reread();
+      notify('Checked — nothing has changed on this phone');
+      return;
+    }
+    if (verdict.action !== 'restart_app' || restarting) return;
+    setRestarting(true);
+    if (!(await restartApp())) {
+      setRestarting(false);
+      notify('Could not restart it — close MahekOne completely and open it again');
+    }
+    /* No `finally`. On the path that worked there is nothing after this: the
+       reload is already posted to the main thread and no code here may assume
+       it runs. Clearing the flag would be a state update racing a teardown. */
   };
 
   return (
@@ -184,9 +236,67 @@ export default function TrackingSetupScreen() {
         </Card>
       ))}
 
+      {/* AND THEN WHAT — the step the screen stopped one short of.
+          
+          Both buttons above open a settings screen and come back, and until now
+          that was the end of it: nothing said whether it had worked, and
+          nothing answered the question the whole team ended up ringing the
+          office with. This row is the answer, with the one thing to press on
+          it. It is drawn LAST because it is about what the two steps above
+          achieved, and it is drawn always — a handset that is recording
+          properly is exactly as worth saying out loud as one that is not,
+          since "did it work" is the question being asked either way. */}
+      <View
+        style={{
+          marginTop: 14,
+          padding: 16,
+          borderRadius: radius.lg,
+          borderWidth: 1,
+          borderColor: verdict.tone === 'act' ? C.danger : C.border,
+          backgroundColor: C.surface,
+          gap: 8,
+        }}>
+        <T
+          style={[
+            { fontSize: 15, color: verdict.tone === 'act' ? C.danger : C.ink },
+            weight(600),
+          ]}>
+          {verdict.title}
+        </T>
+        <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>{verdict.detail}</T>
+
+        {verdict.action === 'restart_app' ? (
+          <PrimaryButton
+            label={restarting ? 'Restarting…' : 'Restart MahekOne'}
+            onPress={() => void act()}
+            disabled={restarting}
+            style={{ borderRadius: radius.xl }}
+          />
+        ) : null}
+        {verdict.action === 'recheck' ? (
+          <SecondaryButton
+            label="Check this phone again"
+            onPress={() => void act()}
+            style={{ borderRadius: radius.xl }}
+          />
+        ) : null}
+
+        {/* The phone half, from the one constant both screens read. */}
+        <T style={{ fontSize: 13, lineHeight: 19, color: C.muted }}>{RESTART_ANSWER}</T>
+      </View>
+
+      {/* WHAT SKIPPING COSTS, said accurately. This read "skipping it blocks
+          nothing", which is true of this screen and false of the app: the
+          start-of-day gate in `data/day-gate.ts` stops a day opening on a
+          handset whose last worked day recorded nothing at all, and that is
+          precisely the handset that skipped these steps. Two screens
+          disagreeing about whether a setting is compulsory is how a team
+          concludes neither of them means anything. */}
       <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 14 }}>
-        Nothing here is compulsory and skipping it blocks nothing. Your day is still recorded while
-        the app is open either way.
+        Nothing here is asked of you twice, and your day is still recorded while the app is open
+        either way. What it costs to skip is the part of the day your phone is in your pocket — and
+        a day that records nothing at all can stop the next morning from starting until this is
+        sorted out.
       </T>
     </AppFrame>
   );

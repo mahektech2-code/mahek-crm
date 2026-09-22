@@ -38,6 +38,9 @@ import {
 import { followUpCounts, visitsToday } from '../src/data/visits';
 import { stopCounts } from '../src/data/journey';
 import { lastPullAt } from '../src/sync/api';
+import { stalledAt } from '../src/sync/trail';
+import { lastAskedAt } from '../src/native/keepalive';
+import { shouldOfferSetup } from '../src/engines/oem-keepalive';
 import { withinGeofence } from '../src/engines/geo';
 import { fixOf, getFix } from '../src/native/location';
 import { ensureLocationPermission } from '../src/native/permissions';
@@ -247,9 +250,46 @@ export default function Home() {
   }, []);
 
 
+  /*
+   * WHETHER TO PUT THE TRACKING SETUP IN FRONT OF HIM, which nothing ever did.
+   *
+   * `shouldOfferSetup` was written with the engine, tested, and never called by
+   * anything — so the only door to the screen that walks somebody through the
+   * two OEM switches was a card on the Sync screen, which people open when they
+   * think their WORK is stuck rather than when their location has gone quiet.
+   * The switches decide whether a route is recorded at all, they cannot be read
+   * by any Android API, and the man they are about never saw the screen.
+   *
+   * Home is where it belongs because home is the screen he opens in the
+   * morning, before the day that will or will not be recorded.
+   */
+  const [offerSetup, setOfferSetup] = React.useState(false);
+
   const load = React.useCallback(() => {
     if (!userId) return;
     const iso = isoDate(new Date());
+
+    /*
+     * Its own read, deliberately not in the `Promise.all` below: that one
+     * settles the whole day card together and a failure of it blanks the
+     * screen with a sentence. Whether to offer a settings screen is not worth
+     * that, so it fails to `false` — no row — and the Sync card is still there.
+     */
+    void (async () => {
+      const [stalled, asked, days] = await Promise.all([
+        stalledAt(),
+        lastAskedAt(),
+        getConfig<number>('mbos.location.trackingSetupRemindDays', 14),
+      ]);
+      setOfferSetup(
+        shouldOfferSetup({
+          askedAt: asked,
+          trailStalled: stalled !== null,
+          now: Date.now(),
+          remindAfterMs: Math.max(1, days) * 24 * 60 * 60 * 1000,
+        }),
+      );
+    })().catch(() => setOfferSetup(false));
     void Promise.all([
       stopCounts(),
       collectionDue(),
@@ -978,6 +1018,52 @@ export default function Home() {
           </Pressable>
         </Card>
       )}
+
+      {/* ---- whether this phone will record the day at all ----
+
+          THE SWITCHES NOBODY WAS EVER SHOWN. Autostart and the OEM battery
+          manager decide whether a route is recorded once the phone goes in a
+          pocket, no Android API can read either, and the screen that walks
+          somebody through them was reachable from exactly one place: a card on
+          the Sync screen, which is opened when somebody thinks his WORK is
+          stuck. `shouldOfferSetup` had been written to answer when to put it in
+          front of him and nothing called it.
+
+          It sits UNDER the day card rather than above it, because starting the
+          day is what he opened this screen to do and a settings prompt in front
+          of that is a prompt he learns to swipe past. It is drawn quietly for
+          the same reason — the danger colour belongs to the tracker having
+          actually stopped, which is the Sync card's sentence, not this one's. */}
+      {offerSetup ? (
+        <Pressable
+          onPress={() => router.push('/tracking-setup?from=home')}
+          accessibilityRole="button"
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+            minHeight: 56,
+            paddingHorizontal: 16,
+            marginTop: 12,
+            borderWidth: 1,
+            borderColor: C.border,
+            backgroundColor: C.surface,
+            borderRadius: radius.card,
+          }}>
+          {/* `pin` and not `location`: `Icon` takes `IconName | string` and
+              falls back silently on a name it does not have, so a typo here is
+              a blank square rather than a compile error. */}
+          <Icon name="pin" size={20} color={C.primaryDeep} strokeWidth={1.5} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Keep tracking on</Text>
+            <T s="caption" style={{ color: C.muted }}>
+              Two settings on your phone decide whether your route is recorded. Takes a minute.
+            </T>
+          </View>
+          <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
+        </Pressable>
+      ) : null}
+
 
       {/* ---- the six numbers ---- */}
       <Card padded={false} style={{ marginTop: 22, overflow: 'hidden' }}>

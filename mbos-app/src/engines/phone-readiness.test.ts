@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { phoneReadiness, type ItemKey, type ReadinessInput, type Readiness } from './phone-readiness';
+import { APP_LABEL } from './oem-keepalive';
 
 /**
  * The gate, pinned.
@@ -284,7 +285,11 @@ test('an unknown manufacturer gets honest generic wording, never a guess', () =>
      the screen too. */
   for (const m of [null, '', '   ', 'Nothing', 'Lava']) {
     const a = item(phoneReadiness({ ...GOOD, manufacturer: m }), 'autostart');
-    assert.equal(a.title, 'Let MBOS run in the background', String(m));
+    /* `APP_LABEL` rather than the words, because the app's launcher label is
+       what a salesman is hunting for in a settings list and this test moves
+       with it the day that changes. It used to pin "MBOS", which is not the
+       name Android draws for this build — see the note on APP_LABEL. */
+    assert.equal(a.title, `Let ${APP_LABEL} run in the background`, String(m));
     assert.match(a.detail, /look for Battery/);
     /* And it does not claim a menu name it cannot know. */
     assert.ok(!/Funtouch|Never sleeping|Secondary launch/.test(a.detail), String(m));
