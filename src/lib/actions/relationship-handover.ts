@@ -8,7 +8,7 @@ import { db } from "@/db";
 import { auditLog, customers, users } from "@/db/schema";
 import { requireCapability } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
-import { customerFilterClause } from "@/lib/queries";
+import { customerScopeClause } from "@/lib/queries";
 import { err, okVoid, fromThrown, type Result } from "@/lib/result";
 import {
   HANDOVER_REFUSALS,
@@ -102,6 +102,13 @@ export async function handOverRelationships(raw: HandOverInput): Promise<Result>
      * Scoped as well as named. The ids come from a page the reader was shown,
      * so this changes nothing in practice — and it means a hand-built request
      * cannot reach past what its author can see.
+     *
+     * `customerScopeClause` rather than `customerFilterClause({})`: the second
+     * now drops leads with the Customers table, and a lead among the selection
+     * is a case this handler answers PROPERLY a few lines down, by name — "8
+     * handed over, 2 were leads". Narrowing here instead would have taken that
+     * sentence away and left "Those customers no longer exist." in its place,
+     * which is the wrong answer to a different question.
      */
     const rows = await db
       .select({
@@ -114,7 +121,7 @@ export async function handOverRelationships(raw: HandOverInput): Promise<Result>
       .from(customers)
       .where(
         and(
-          await customerFilterClause({}),
+          await customerScopeClause(),
           inArray(customers.id, input.customerIds),
         ),
       );

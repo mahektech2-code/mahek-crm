@@ -1694,6 +1694,65 @@ evidence list, and third parties with nobody billing them, which should be
 empty and is not on a book converted before distributors were recorded. A row
 nobody can account for is worse than one that says why it is there.
 
+**BUT THE CUSTOMER TABLE SHOWS ONLY TWO OF THE THREE.** A lead is an account
+that has never ordered, and everything anybody DOES to one — the three ladders,
+§28's gates, the qualification call, the capture form, the nurture sequence —
+is in Lead Management. Listed here as well, it was the largest single category
+on the screen: 3,634 of 5,926 rows on the real book, worked from the one page
+that offers none of the controls for working them, and read by two people who
+could not see each other's half of it. So the Customers list is Direct customer
+and Third-party customer, and `/crm/leads` is where a lead is. Nothing about a
+lead's RECORD changed — its page is reachable and still draws every seat — and
+`accountTypeLabel` still answers "Lead", because the Sales Dashboard's maps and
+the handset's own list legitimately draw one.
+
+**`NOT_A_LEAD_SQL` is the rule, and it is the NEGATION of the filter it
+replaced rather than `kind <> 'lead'`.** The mark wins over the kind, so a shop
+we deliver to and do not bill is routinely a `lead` by kind — we have never
+invoiced it, because its distributor holds the bill. A bare `kind <> 'lead'`
+would take those shops off the third-party list, which is the one list they
+belong on.
+
+**It lives in `customerFiltersOnly`, which is the one place every reader of
+that table passes.** The list, the tiles above it, the book total, both filter
+dropdowns and the two bulk actions that act on whatever the filters match.
+Enforced in the list alone, "Transfer sales manager" over a filtered book would
+have moved three and a half thousand leads nobody had seen on the screen they
+pressed it from — which is precisely the thing `customerFilterClause` exists to
+prevent, arriving through the door it was built to hold shut.
+
+**The IDS path of those two actions is the exception, and it is a different
+question.** `customerFilterClause({})` used to be the scope and nothing else,
+which is why a tick-list reached for it — the ids name the records, and the
+clause was only ever there so a hand-built request cannot reach past what its
+author can see. It is not the scope any more. `customerScopeClause` is, and
+both id paths read it: a lead's record page still draws the sales manager seat,
+and refusing that write with "Those customers no longer exist." would be a
+sentence that is not true about a record somebody is looking at.
+
+**And both filter DROPDOWNS are narrowed with it.** `listCityFilterOptions` and
+`listAmFilterOptions` were a pass over the whole scoped book, which was right
+while the book and the table were one population. A city that exists only on
+leads, or a salesperson whose accounts are all leads, would otherwise be
+offered and answer zero rows — the failure both of those functions already had
+a paragraph warning about, arriving from a direction neither anticipated.
+
+**There is no "Add lead" on the Customers screen.** It hard-coded `kind:
+"lead"`, so on a table that no longer lists leads it wrote a record and
+returned the reader to a list the record was not on, which reads as a save that
+failed. `/crm/leads/intake` is the capture form, beside the rest of the work on
+a lead.
+
+**And a name is given a ceiling on that table.** `customers.name` holds
+whatever the sheet typed, and several hundred of them are whole postal
+addresses offered as a shop. A `Td` holds its line rather than wrapping — the
+primitive documents why — so an automatic table layout sized the Customer
+column for its worst row, and one address pushed Contact person, Phone, Type
+and the three seats off the right-hand edge for every row on the page. The
+ceiling is on a block INSIDE the cell, because `max-width` on a `td` is
+advisory under automatic layout; the full name rides on `title`, and the badges
+carry `shrink-0` so a slow-payer flag is never what the ellipsis eats.
+
 **A LEAD CLIMBS A LADDER, AND WHICH LADDER IS THE FIRST THING ASKED.** Mahek
 sells three ways and they are not the same job: a direct customer is worked
 towards a first order, a distributor towards an appointment, and a third-party

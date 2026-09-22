@@ -32,18 +32,31 @@ export function accountTypeLabel(row: {
 }
 
 /**
- * The type filter, and one of its options is not a type at all.
+ * The type filter, and two of its options are not types at all.
+ *
+ * THE CUSTOMER TABLE HAS TWO TYPES, and a lead is not one of them. A lead is
+ * an account that has never ordered, and the whole of the work on one — the
+ * ladder, the gates, the qualification, the capture form — lives in Lead
+ * Management. Leaving it on this list meant the largest single category on
+ * the customer table was accounts that are not customers yet, worked from a
+ * screen that offers none of the controls for working them; 3,634 of the
+ * 5,926 rows on the real book. `customerFiltersOnly` is where that is
+ * enforced, so the list, the tiles and the two bulk actions cannot disagree
+ * about it, and `Leads` is gone from here so the control cannot offer a
+ * filter the query would answer empty.
  *
  * "Delivered to on another's bill" is the EVIDENCE — the accounts the order
  * sheet shows taking goods somebody else was invoiced for, whether or not
  * anybody has converted them yet. It is the list the conversion work is
  * actually done from, and it was reachable only by typing `?party=delivered`
- * into the address bar before it was given a name here.
+ * into the address bar before it was given a name here. It is narrowed by the
+ * same rule as everything else on this screen: a LEAD taking delivery on
+ * somebody else's bill is conversion work that belongs to Lead Management,
+ * and one exception is how a rule stops being one.
  */
 export const ACCOUNT_TYPE_FILTERS = [
   ALL_ACCOUNT_TYPES,
   "Direct customers",
-  "Leads",
   "Third-party customers",
   "Delivered to on another's bill",
   /* The tidying list, and it should be empty: converting names a distributor
@@ -56,18 +69,25 @@ export const ACCOUNT_TYPE_FILTERS = [
 /** The control's own word → the query parameter `listCustomersPage` reads. */
 export const ACCOUNT_TYPE_PARAM: Record<string, string | undefined> = {
   "Direct customers": "customer",
-  Leads: "lead",
   "Third-party customers": "yes",
   "Delivered to on another's bill": "delivered",
   "Third party, nobody billing": "nodistributor",
 };
 
-/** The values `?party=` may carry. Anything else is no filter at all. */
+/**
+ * The values `?party=` may carry. Anything else is no filter at all.
+ *
+ * `lead` is deliberately absent, and its absence is what makes a bookmarked
+ * `?party=lead` read as no filter rather than as an empty book: the code is
+ * dropped by `accountTypeParam` below, exactly as `?party=nonsense` is. Kept
+ * as an accepted code it would reach a clause that can only ever be false —
+ * a screen answering "no customers" to somebody who asked for leads, with
+ * nothing on it saying where leads went.
+ */
 export type AccountTypeParam =
   | "yes"
   | "no"
   | "delivered"
-  | "lead"
   | "customer"
   | "nodistributor";
 
@@ -75,7 +95,6 @@ const ACCOUNT_TYPE_CODES = new Set<string>([
   "yes",
   "no",
   "delivered",
-  "lead",
   "customer",
   "nodistributor",
 ]);

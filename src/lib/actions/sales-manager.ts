@@ -15,7 +15,7 @@ import {
 } from "@/db/schema";
 import { requireCapability } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
-import { customerFilterClause } from "@/lib/queries";
+import { customerFilterClause, customerScopeClause } from "@/lib/queries";
 import { err, okVoid, fromThrown, type Result } from "@/lib/result";
 import { notifyUsers } from "../notify";
 
@@ -212,11 +212,20 @@ export async function assignSalesManager(
 
     const where =
       input.scope.kind === "ids"
-        ? // Scoped as well as named. A tick-list comes from a page the reader
-          // was shown, so this changes nothing in practice — and it means a
-          // hand-built request cannot reach past what its author can see.
+        ? /*
+           * Scoped as well as named. A tick-list comes from a page the reader
+           * was shown, so this changes nothing in practice — and it means a
+           * hand-built request cannot reach past what its author can see.
+           *
+           * `customerScopeClause` and not `customerFilterClause({})`, which is
+           * what this was while the two were the same thing. They are not any
+           * more: the second also drops leads, because the Customers table
+           * does, and the record page that draws this control for a LEAD is
+           * reached from Lead Management rather than from that table. See
+           * `customerScopeClause` for the whole of it.
+           */
           and(
-            await customerFilterClause({}),
+            await customerScopeClause(),
             inArray(customers.id, input.scope.customerIds),
           )
         : await customerFilterClause(input.scope.filters);

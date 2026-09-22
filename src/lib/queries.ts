@@ -472,7 +472,6 @@ export type CustomerListPage = {
     withComplaints: number;
     /** The split, over everything the other filters match. */
     directCustomers: number;
-    leads: number;
     thirdParties: number;
   };
 };
@@ -623,6 +622,24 @@ const CITY_FILTER_SQL = sql<string>`coalesce(btrim(customers.city), '')`;
  * real and are exactly who somebody is looking for when they ask which of the
  * book has no address — dropping them would make a filter that cannot reach
  * them, and the count at the top of the screen would never add up.
+ *
+ * AND A FILTER MAY ONLY OFFER WHAT THE TABLE CAN SHOW, which is why this and
+ * `listAmFilterOptions` below it are narrowed by `NOT_A_LEAD_SQL` rather than
+ * by the scope alone.
+ *
+ * Both were a pass over the whole scoped book, which was right while the book
+ * and the table were the same population. They no longer are: a city that
+ * exists only on leads, or a salesperson whose accounts are all leads, would
+ * be offered in the dropdown and answer zero rows — which is the failure the
+ * paragraph above and `listAmFilterOptions`'s own ("a filter offering a name
+ * the column does not render is a filter somebody tries once") both warn
+ * about, arriving from a direction neither of them could have anticipated.
+ * The shop counts would have been wrong in the same motion, and those are
+ * printed in the label.
+ *
+ * Every caller is either the customer table itself or one of the two target
+ * screens, which are direct customers and nothing else — so this can only
+ * narrow, never lose an option somebody could have used.
  */
 export async function listCityFilterOptions(): Promise<
   { value: string; label: string }[]
@@ -633,7 +650,7 @@ export async function listCityFilterOptions(): Promise<
   const rows = await db
     .select({ city: CITY_FILTER_SQL, shops: sql<number>`count(*)::int` })
     .from(customers)
-    .where(scoped)
+    .where(scoped ? and(scoped, NOT_A_LEAD_SQL) : NOT_A_LEAD_SQL)
     .groupBy(CITY_FILTER_SQL)
     .orderBy(sql`count(*) desc`, CITY_FILTER_SQL);
 
@@ -714,7 +731,8 @@ export const listAmFilterOptions = cache(async function listAmFilterOptions(): P
         backOfficeName: customers.backOfficeName,
       })
       .from(customers)
-      .where(scoped),
+      // Narrowed for the reason stated above `listCityFilterOptions`.
+      .where(scoped ? and(scoped, NOT_A_LEAD_SQL) : NOT_A_LEAD_SQL),
   ]);
 
   const nameById = new Map(userRows.map((u) => [u.id, u.name]));
@@ -786,6 +804,33 @@ export async function customerFilterClause(
 }
 
 /**
+ * WHO THIS READER MAY TOUCH, and nothing else — no filters, and NOT the
+ * customer table's own narrowing.
+ *
+ * `customerFilterClause({})` used to be exactly this, which is why the two
+ * bulk actions reach for it when they are given a list of IDS rather than a
+ * set of filters: the ids name the records and the clause was only ever there
+ * so a hand-built request cannot reach past what its author can see. It stopped
+ * being exactly this the day the customer table dropped leads, and the two are
+ * answering different questions now — "may this person act on this record" and
+ * "is this record on that screen".
+ *
+ * A LEAD'S RECORD PAGE IS STILL REACHABLE, from Lead Management, and it still
+ * offers the sales manager seat. Left on `customerFilterClause`, setting it
+ * there would have been refused with "Those customers no longer exist." — a
+ * sentence that is not true about a record somebody is looking at, on a screen
+ * that draws the control.
+ *
+ * The FILTERS path of both actions goes on reading `customerFilterClause`,
+ * because there the promise is the other one: the accounts that move are the
+ * accounts on the screen you pressed it from.
+ */
+export async function customerScopeClause(): Promise<SQL | undefined> {
+  const ctx = await resolveScope();
+  return scopedToUsers(scopedUserIds(ctx.scope));
+}
+
+/**
  * The same five filters, and NOT the scope.
  *
  * Every caller above wants both, which is why they are welded together there.
@@ -802,7 +847,21 @@ export async function customerFilterClause(
 export function customerFiltersOnly(
   filters: CustomerListFilters = {},
 ): SQL | undefined {
-  const where: SQL[] = [];
+  /*
+   * A LEAD IS NOT ON THE CUSTOMER TABLE, and this is the one place that is
+   * enforced rather than a rule each screen remembers.
+   *
+   * It is not a filter — nothing on any screen can turn it off — which is why
+   * it is pushed before the five that are. Everything that answers "which
+   * customers" for this table reads this function: the list, the tiles above
+   * it, the book total, and the two bulk actions that act on whatever the
+   * filters match. Enforced in the list alone, "Transfer sales manager" over
+   * a filtered book would have moved three and a half thousand leads nobody
+   * had seen on the screen they pressed it from.
+   *
+   * See `NOT_A_LEAD_SQL` for why it is not `kind <> 'lead'`.
+   */
+  const where: SQL[] = [NOT_A_LEAD_SQL];
 
   const q = filters.query?.trim();
   if (q) {
@@ -952,6 +1011,27 @@ export function resolveSort<T extends string>(
  */
 export const DIRECT_CUSTOMER_SQL = sql`customers.kind = 'customer' and not customers.third_party`;
 
+/**
+ * NOT A LEAD, in SQL — the rule the whole customer table is narrowed by.
+ *
+ * A lead is an account that has never ordered, and everything anybody does to
+ * one — the ladder, §28's gates, the qualification call, the capture form —
+ * is in Lead Management. On this book that was 3,634 of 5,926 rows: the
+ * largest single category on the customer table was accounts that are not
+ * customers, listed on the one screen with none of the controls for working
+ * them. The table has two types now, Direct customer and Third-party
+ * customer, and `lib/account-types.ts` says the same thing for the screens.
+ *
+ * It is the NEGATION of the `lead` filter this file used to offer and not a
+ * bare `kind <> 'lead'`, and that difference is the whole of it: the mark
+ * wins over the kind, so a shop we deliver to and do not bill is routinely a
+ * `lead` by kind — it has never been invoiced by us, because its distributor
+ * is. `kind <> 'lead'` would take those shops off the third-party list, which
+ * is the one list they belong on, and the count above the table would fall
+ * with nothing on the screen saying why.
+ */
+export const NOT_A_LEAD_SQL = sql`not (customers.kind = 'lead' and not customers.third_party)`;
+
 /** One account-type filter's own clause — the value `customerFilterClause` used to inline directly. */
 function thirdPartyClause(value: string): SQL {
   switch (value) {
@@ -959,12 +1039,16 @@ function thirdPartyClause(value: string): SQL {
       return sql`customers.third_party`;
     case "no":
       return sql`not customers.third_party`;
-    // A marked account is not offered as a lead or a direct customer, because
-    // the mark is the more specific answer to the same question. Reading the
-    // kind alone would put every marked shop back in the list the filter
-    // exists to take it out of.
-    case "lead":
-      return sql`customers.kind = 'lead' and not customers.third_party`;
+    // A marked account is not offered as a direct customer, because the mark
+    // is the more specific answer to the same question. Reading the kind
+    // alone would put every marked shop back in the list the filter exists to
+    // take it out of.
+    //
+    // There is no `lead` case any more, and it is gone from `ACCOUNT_TYPE_CODES`
+    // in the same breath, so nothing can ask for one: every row this function
+    // is consulted about has already been through `NOT_A_LEAD_SQL`, and a
+    // clause that can only be false is a filter that answers "no customers"
+    // to somebody who asked for leads.
     case "customer":
       return DIRECT_CUSTOMER_SQL;
     case "nodistributor":
@@ -1028,8 +1112,6 @@ export async function listCustomersPage(
        */
       directCustomers: sql<number>`count(*) filter (
         where customers.kind = 'customer' and not customers.third_party)::int`,
-      leads: sql<number>`count(*) filter (
-        where customers.kind = 'lead' and not customers.third_party)::int`,
       thirdParties: sql<number>`count(*) filter (where customers.third_party)::int`,
       withComplaints: sql<number>`count(*) filter (where (
         select count(*) from ${complaints}
@@ -1040,10 +1122,19 @@ export async function listCustomersPage(
     .from(customers)
     .where(clause);
 
+  /*
+   * THE BOOK, and the book is what this table can show.
+   *
+   * `NOT_A_LEAD_SQL` beside the scope, because "2,292 of 5,926 in the book"
+   * is a sentence that invites somebody to go looking for the missing three
+   * and a half thousand on this screen, where they are not and are never
+   * going to be. The denominator has to be the same population as the
+   * numerator or it is not telling anybody anything.
+   */
   const [book] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(customers)
-    .where(scoped);
+    .where(scoped ? and(scoped, NOT_A_LEAD_SQL) : NOT_A_LEAD_SQL);
 
   const total = Number(agg?.total ?? 0);
   const pageCount = Math.max(1, Math.ceil(total / perPage));
@@ -1133,7 +1224,6 @@ export async function listCustomersPage(
     pageCount,
     totals: {
       directCustomers: Number(agg?.directCustomers ?? 0),
-      leads: Number(agg?.leads ?? 0),
       thirdParties: Number(agg?.thirdParties ?? 0),
       outstanding: Number(agg?.outstanding ?? 0),
       slowPayers: Number(agg?.slowPayers ?? 0),
