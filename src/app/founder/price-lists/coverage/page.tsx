@@ -14,13 +14,13 @@ import { PageHeader } from "@/components/ui/primitives";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { CoveragePanel } from "@/components/pricing/coverage-panel";
 
-export const metadata = { title: "Coverage — Accounts — MahekOne" };
+export const metadata = { title: "Coverage — Founder Dashboard — MahekOne" };
 
 export default async function Page() {
   const user = await requireUser();
   const day = await today();
   const [canManage, report, options] = await Promise.all([
-    priceListDoorCanManage(user, "accounts"),
+    priceListDoorCanManage(user, "founder"),
     coverageReport(day),
     pricingOptions(),
   ]);
@@ -31,9 +31,9 @@ export default async function Page() {
         title="Coverage"
         subtitle="Which shops a published list names, and which are priced from nothing at all."
       />
-      <PricingSubNav basePath="/accounts/price-lists" current="coverage" />
+      <PricingSubNav basePath="/founder/price-lists" current="coverage" />
       <CoveragePanel
-        basePath="/accounts/price-lists"
+        basePath="/founder/price-lists"
         report={report}
         canManage={canManage}
         lists={options.lists}

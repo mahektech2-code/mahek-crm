@@ -1,5 +1,5 @@
+import { priceListDoorCanManage } from "@/lib/price-list-door";
 import { requireUser } from "@/lib/auth";
-import { canFor } from "@/lib/access-control";
 import { today } from "@/lib/recompute";
 import { listPriceLists, pricingCounts, pricingOptions } from "@/lib/services/price-list-service";
 import { PriceListsScreen } from "@/components/pricing/price-lists-screen";
@@ -23,7 +23,7 @@ export default async function Page() {
     listPriceLists(),
     pricingCounts(),
     pricingOptions(),
-    canFor(user, "pricelist.manage"),
+    priceListDoorCanManage(user, "accounts"),
     today(),
   ]);
 

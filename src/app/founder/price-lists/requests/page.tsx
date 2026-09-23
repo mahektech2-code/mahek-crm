@@ -1,6 +1,6 @@
 import { priceListDoorCanManage } from "@/lib/price-list-door";
 /* ---------------------------------------------------------------------------
- * WHO HAS ASKED FOR A DIFFERENT PRICE — the CRM's door onto one table.
+ * WHO HAS ASKED FOR A DIFFERENT PRICE — the Sales Dashboard's door onto one table.
  *
  * Both apps render the SAME panel over the same read, because a request
  * waiting in one app and missing from the other is how one sits undecided for
@@ -14,31 +14,31 @@ import { PageHeader } from "@/components/ui/primitives";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { RequestsPanel } from "@/components/pricing/requests-panel";
 
-export const metadata = { title: "Special price requests - MahekOne CRM" };
+export const metadata = { title: "Special price requests — Founder Dashboard — MahekOne" };
 
 export default async function Page() {
   const user = await requireUser();
   const [canManage, day, requests] = await Promise.all([
-    priceListDoorCanManage(user, "crm"),
+    priceListDoorCanManage(user, "founder"),
     today(),
     listRequests(),
   ]);
 
   return (
-    <>
+    <div className="p-6">
       <PageHeader
         title="Special price requests"
         subtitle="What a shop has asked to pay, what they pay today, and what was decided."
       />
-      <PricingSubNav basePath="/crm/price-lists" current="requests" />
+      <PricingSubNav basePath="/founder/price-lists" current="requests" />
       <RequestsPanel
-        app="crm"
-        basePath="/crm/price-lists"
+        app="founder"
+        basePath="/founder/price-lists"
         canManage={canManage}
         currentUserId={user.id}
         requests={requests}
         todayIso={day}
       />
-    </>
+    </div>
   );
 }

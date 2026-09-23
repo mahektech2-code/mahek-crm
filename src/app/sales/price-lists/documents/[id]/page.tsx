@@ -1,3 +1,4 @@
+import { priceListDoorCanManage } from "@/lib/price-list-door";
 /*
  * ONE DOCUMENT, READ BACK — the Sales Dashboard's door.
  *
@@ -8,7 +9,6 @@
  */
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { canFor } from "@/lib/access-control";
 import { documentDetail, pricingOptions } from "@/lib/services/price-list-service";
 import { today } from "@/lib/recompute";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
@@ -23,7 +23,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const [detail, options, canManage, todayIso] = await Promise.all([
     documentDetail(id),
     pricingOptions(),
-    canFor(user, "pricelist.manage"),
+    priceListDoorCanManage(user, "sales"),
     today(),
   ]);
 

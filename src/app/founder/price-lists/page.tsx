@@ -4,7 +4,7 @@ import { today } from "@/lib/recompute";
 import { listPriceLists, pricingCounts, pricingOptions } from "@/lib/services/price-list-service";
 import { PriceListsScreen } from "@/components/pricing/price-lists-screen";
 
-export const metadata = { title: "Price lists - MahekOne CRM" };
+export const metadata = { title: "Price lists — Founder Dashboard — MahekOne" };
 
 /**
  * Every price list, read once.
@@ -23,15 +23,15 @@ export default async function Page() {
     listPriceLists(),
     pricingCounts(),
     pricingOptions(),
-    priceListDoorCanManage(user, "crm"),
+    priceListDoorCanManage(user, "founder"),
     today(),
   ]);
 
   return (
-    <div className="px-6 pt-6 pb-10">
+    <div className="p-6">
       <PriceListsScreen
-        app="crm"
-        basePath="/crm/price-lists"
+        app="founder"
+        basePath="/founder/price-lists"
         canManage={canManage}
         todayIso={todayIso}
         lists={lists}

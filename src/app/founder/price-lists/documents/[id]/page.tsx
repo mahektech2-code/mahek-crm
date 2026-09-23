@@ -14,7 +14,7 @@ import { today } from "@/lib/recompute";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { DocumentReviewScreen } from "@/components/pricing/document-review-screen";
 
-export const metadata = { title: "Review a price list — Accounts — MahekOne" };
+export const metadata = { title: "Review a price list — Founder Dashboard — MahekOne" };
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -23,7 +23,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const [detail, options, canManage, todayIso] = await Promise.all([
     documentDetail(id),
     pricingOptions(),
-    priceListDoorCanManage(user, "accounts"),
+    priceListDoorCanManage(user, "founder"),
     today(),
   ]);
 
@@ -31,10 +31,10 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 
   return (
     <div className="p-6">
-      <PricingSubNav basePath="/accounts/price-lists" current="documents" />
+      <PricingSubNav basePath="/founder/price-lists" current="documents" />
       <DocumentReviewScreen
-        app="accounts"
-        basePath="/accounts/price-lists"
+        app="founder"
+        basePath="/founder/price-lists"
         canManage={canManage}
         todayIso={todayIso}
         document={detail.document}

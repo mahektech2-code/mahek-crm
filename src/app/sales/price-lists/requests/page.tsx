@@ -1,3 +1,4 @@
+import { priceListDoorCanManage } from "@/lib/price-list-door";
 /* ---------------------------------------------------------------------------
  * WHO HAS ASKED FOR A DIFFERENT PRICE — the Sales Dashboard's door onto one table.
  *
@@ -7,7 +8,6 @@
  * a link — the Sales Dashboard has no customer record page to link to.
  * ------------------------------------------------------------------------- */
 import { requireUser } from "@/lib/auth";
-import { canFor } from "@/lib/access-control";
 import { today } from "@/lib/recompute";
 import { listRequests } from "@/lib/services/price-list-service";
 import { PageHeader } from "@/components/ui/primitives";
@@ -19,7 +19,7 @@ export const metadata = { title: "Special price requests — Sales Dashboard —
 export default async function Page() {
   const user = await requireUser();
   const [canManage, day, requests] = await Promise.all([
-    canFor(user, "pricelist.manage"),
+    priceListDoorCanManage(user, "sales"),
     today(),
     listRequests(),
   ]);

@@ -24,12 +24,12 @@ import type { Resolution } from "@/lib/engines/price-resolution";
 /**
  * WHICH DOOR A PRICE LIST SCREEN WAS OPENED THROUGH.
  *
- * One feature, three mounts: the Sales Dashboard, the CRM, and the Accounts
- * desk — which is where these lists are actually issued. It changes the links
+ * One feature, four mounts: the Sales Dashboard and the CRM, which READ them,
+ * and the Accounts desk and the Founder Dashboard, which issue them. It changes the links
  * and a sentence or two and nothing else, because a second copy of the screens
  * would be a second answer to what a shop pays.
  */
-export type PricingApp = "sales" | "crm" | "accounts";
+export type PricingApp = "sales" | "crm" | "accounts" | "founder";
 
 export type PriceListSummary = {
   id: string;

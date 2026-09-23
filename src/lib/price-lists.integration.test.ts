@@ -75,7 +75,12 @@ let telecaller: typeof users.$inferSelect;
 let nano20: typeof products.$inferSelect;
 let nano5: typeof products.$inferSelect;
 
-async function makeUser(name: string, role: "associate" | "manager", app: "crm" | "sales" = "crm") {
+async function makeUser(
+  name: string,
+  role: "associate" | "manager",
+  app: "crm" | "sales" | "accounts" | "founder" = "crm",
+  alsoApp?: "accounts" | "founder",
+) {
   const [row] = await db
     .insert(users)
     .values({
@@ -89,6 +94,7 @@ async function makeUser(name: string, role: "associate" | "manager", app: "crm" 
     })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: row.id, app, role });
+  if (alsoApp) await db.insert(appAccess).values({ id: id("aca"), userId: row.id, app: alsoApp, role });
   return row;
 }
 
@@ -203,7 +209,10 @@ beforeEach(async () => {
   invalidateConfig();
   await seedConfig();
 
-  manager = await makeUser("Vikram", "manager", "sales");
+  /* A sales manager for the team scope, AND the Accounts desk for the price
+   * desk — a Sales Dashboard manager alone may no longer change a price list
+   * (see `PRICE_DESK` in access-control.ts). */
+  manager = await makeUser("Vikram", "manager", "sales", "accounts");
   telecaller = await makeUser("Priya", "associate", "crm");
   /* The telecaller reports to the manager, which is what makes her book part
    * of his team's. Without it a manager cannot open a customer she owns —

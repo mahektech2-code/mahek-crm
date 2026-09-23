@@ -59,6 +59,8 @@ function refresh(customerId?: string) {
   try {
     revalidatePath("/sales/price-lists");
     revalidatePath("/crm/price-lists");
+    revalidatePath("/accounts/price-lists");
+    revalidatePath("/founder/price-lists");
     if (customerId) revalidatePath(`/crm/customers/${customerId}`);
   } catch {
     /* No request context — a job or a test. */
