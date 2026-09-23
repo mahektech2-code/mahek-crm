@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { mbosAttendanceDays, mbosDevices, mbosPositions } from "@/db/schema";
 import { authenticate } from "@/lib/services/mbos-service";
 import { getConfig } from "@/lib/config/store";
+import { dayBoundaryWindow } from "@/lib/business-date";
 import { readDeviceState } from "@/lib/mbos/device-state";
 
 /* ---------------------------------------------------------------------------
@@ -232,7 +233,11 @@ export async function POST(request: Request) {
   const newest = new Date(Math.max(...times) + EDGE_GRACE_MS);
 
   const sessions = await db
-    .select({ checkInAt: mbosAttendanceDays.checkInAt, checkOutAt: mbosAttendanceDays.checkOutAt })
+    .select({
+      day: mbosAttendanceDays.day,
+      checkInAt: mbosAttendanceDays.checkInAt,
+      checkOutAt: mbosAttendanceDays.checkOutAt,
+    })
     .from(mbosAttendanceDays)
     .where(
       and(
@@ -250,10 +255,36 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, stored: 0, tracking: "no-session-yet" });
   }
 
+  /*
+   * AN OPEN DAY ENDS WHEN ITS DAY DOES, not never.
+   *
+   * It used to run to infinity, on the reasoning that an open day is one still
+   * being worked. That is true of TODAY and of nothing else: once a day is
+   * over, `markMissedCheckouts` closes it at the last evidence it can see —
+   * and where it can see none it deliberately leaves the check-out null, marks
+   * the day `auto_checked_out` and never looks at it again. So a test check-in
+   * nobody used became a session with no end, and every fix that person sent
+   * afterwards fell inside it. On production two such days from August
+   * authorised a salesman's trail through the night and a whole un-checked-in
+   * day a month later, which is the beacon on somebody's evening this route
+   * exists to refuse.
+   *
+   * The end is the day's own closing boundary, from the working-day
+   * configuration, so "which day does this fix belong to" is answered here the
+   * way the attendance row's `day` was. A day worked past midnight and not yet
+   * closed refuses its after-midnight fixes as `no-session-yet` or `partial` —
+   * the handset keeps them — and the nightly close decides the rest.
+   */
+  const workingDay = {
+    timezone: config["workingDay.timezone"],
+    dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+    workingDays: config["workingDay.workingDays"],
+  };
   const windows = sessions.map((s) => ({
     from: s.checkInAt!.getTime() - EDGE_GRACE_MS,
-    /* An open day runs to now, which is to say it has no end yet. */
-    to: s.checkOutAt ? s.checkOutAt.getTime() + EDGE_GRACE_MS : Number.POSITIVE_INFINITY,
+    to: s.checkOutAt
+      ? s.checkOutAt.getTime() + EDGE_GRACE_MS
+      : Date.parse(dayBoundaryWindow(s.day, workingDay).end),
   }));
 
   const inside = values.filter((v) => {
