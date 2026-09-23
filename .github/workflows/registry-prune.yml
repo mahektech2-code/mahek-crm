@@ -1,0 +1,126 @@
+# Make room in the container registry, on its own.
+#
+# WHY THIS EXISTS AT ALL, given `Deploy` already prunes. Because that copy can
+# only run after a deploy has SUCCEEDED — `prune` needs `deploy` needs `build`
+# — and the one thing that reliably breaks `build` is the registry being full:
+#
+#     denied: quota exceeded
+#
+# So the job that makes room is unreachable in exactly the state that needs it
+# made. It is a deadlock, and it is not theoretical: it took the droplet a
+# release behind twice, and it reads on the Actions page as a red `build` and a
+# SKIPPED `deploy`, which looks like a broken build rather than a full disk.
+#
+# This is the same logic with the dependency removed, so it can be run by a
+# person at the moment the quota bites. It deletes nothing the deploy's own
+# copy would not, and it keeps the rule that matters most.
+#
+# It does NOT replace the copy in `Deploy`. Housekeeping that only happens when
+# somebody notices is housekeeping that does not happen; the automatic one is
+# still what keeps the quota down, and this is the way out when it has already
+# failed.
+name: Registry prune
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: "How many tags to keep besides `latest` and whatever production is serving."
+        default: "3"
+
+concurrency:
+  # Never against a deploy, and never against itself: a collection puts the
+  # registry read-only, and a push that lands inside one fails `401` in a way
+  # that reads as a bad credential.
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    env:
+      HAVE_TOKEN: ${{ secrets.DO_API_TOKEN != '' && 'yes' || 'no' }}
+    steps:
+      - name: Say so if the registry cannot be pruned
+        if: env.HAVE_TOKEN != 'yes'
+        run: |
+          echo '::error title=Registry not pruned::DO_API_TOKEN is not set. DOCR_TOKEN cannot do this - it is registry-scoped, and the registry API needs an account token.'
+          exit 1
+
+      # NEVER DELETE THE IMAGE THE DROPLET IS ON — and this workflow needs that
+      # rule more than the deploy's copy does, not less. It is run precisely
+      # after a run of failed deploys, which is exactly when the tag production
+      # is serving has fallen outside the newest N.
+      - name: What production is running
+        id: live
+        continue-on-error: true
+        env:
+          KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${KEY}" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          echo "${HOSTS}" > ~/.ssh/known_hosts
+          image="$(ssh -o BatchMode=yes deploy@"${HOST}" 'grep "^IMAGE=" /opt/mahekone/.env' | head -1)"
+          echo "live=${image##*:}" >> "$GITHUB_OUTPUT"
+          echo "Production is on ${image##*:}"
+
+      - uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_API_TOKEN }}
+
+      - name: Prune old images from the registry
+        env:
+          LIVE: ${{ steps.live.outputs.live }}
+          KEEP: ${{ inputs.keep }}
+        run: |
+          set -euo pipefail
+
+          # JSON, not `--format`: doctl prints all four columns with the header
+          # whatever it is asked for, so a column-position read takes the
+          # manifest digest and deletes nothing while reporting success.
+          doctl registry repository list-tags app -o json > /tmp/tags.json
+
+          node -e '
+            const rows = require("/tmp/tags.json");
+            const keepCount = Number(process.env.KEEP) || 3;
+            const live = (process.env.LIVE || "").trim();
+            const named = rows.filter(r => r.tag)
+              .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+            const protect = new Set(["latest"]);
+            if (live) protect.add(live);
+            const keep = new Set([
+              ...protect,
+              ...named.filter(r => !protect.has(r.tag)).slice(0, keepCount).map(r => r.tag),
+            ]);
+            const del = named.filter(r => !keep.has(r.tag)).map(r => r.tag);
+            console.error(`keeping: ${[...keep].join(", ")}`);
+            if (!live) console.error("::warning::Could not read what production is running, so only the newest tags are protected. Check before re-running a deploy.");
+            process.stdout.write(del.join("\n"));
+          ' > /tmp/delete.txt
+
+          if [ ! -s /tmp/delete.txt ]; then
+            echo '::notice::Nothing to prune, so nothing to collect. If a push is still failing on quota, raise the keep input or check the repository name.'
+            exit 0
+          fi
+
+          echo "Deleting $(wc -l < /tmp/delete.txt) tag(s)."
+          while read -r tag; do
+            [ -z "${tag}" ] && continue
+            doctl registry repository delete-tag app "${tag}" --force || true
+          done < /tmp/delete.txt
+
+          # Deleting a tag frees nothing until a collection runs. Started and
+          # left, never waited on: DigitalOcean will not begin until every
+          # write-scoped push token issued before the request has expired —
+          # about a quarter of an hour — and the collection itself takes about
+          # 25 seconds. THAT WAIT IS WHY A DEPLOY RE-RUN SHOULD NOT FOLLOW THIS
+          # IMMEDIATELY: give it twenty minutes, or the push lands inside the
+          # read-only window and fails 401 looking like a bad credential.
+          if doctl registry garbage-collection start --include-untagged-manifests --force; then
+            echo "::notice::Garbage collection started. It begins in about fifteen minutes and takes under a minute. Wait for it before re-running Deploy."
+          else
+            echo "::notice::A garbage collection was already running; letting it finish."
+          fi
