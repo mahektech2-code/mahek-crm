@@ -13,7 +13,7 @@
  * They need mahekone_test, which `npm run test:db` creates from the committed
  * migrations. The harness truncates between tests.
  */
-import { before, beforeEach, describe, test } from "node:test";
+import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
@@ -75,7 +75,12 @@ let telecaller: typeof users.$inferSelect;
 let nano20: typeof products.$inferSelect;
 let nano5: typeof products.$inferSelect;
 
-async function makeUser(name: string, role: "associate" | "manager", app: "crm" | "sales" = "crm") {
+async function makeUser(
+  name: string,
+  role: "associate" | "manager",
+  app: "crm" | "sales" | "accounts" | "founder" = "crm",
+  alsoApp?: "accounts" | "founder",
+) {
   const [row] = await db
     .insert(users)
     .values({
@@ -89,6 +94,7 @@ async function makeUser(name: string, role: "associate" | "manager", app: "crm" 
     })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: row.id, app, role });
+  if (alsoApp) await db.insert(appAccess).values({ id: id("aca"), userId: row.id, app: alsoApp, role });
   return row;
 }
 
@@ -184,6 +190,16 @@ before(async () => {
   TODAY = await today();
 });
 
+/*
+ * Close the pool, as every other integration suite does. Without it the run's
+ * last test passes and node then waits on idle connections until Postgres
+ * drops them — about an hour in CI, twice, for these two suites.
+ */
+after(async () => {
+  setTestUser(null);
+  await db.$client.end();
+});
+
 beforeEach(async () => {
   /* Every suite here truncates the tables it touches — there is one test
    * database and the runner takes the files one at a time. Without it the
@@ -203,7 +219,10 @@ beforeEach(async () => {
   invalidateConfig();
   await seedConfig();
 
-  manager = await makeUser("Vikram", "manager", "sales");
+  /* A sales manager for the team scope, AND the Accounts desk for the price
+   * desk — a Sales Dashboard manager alone may no longer change a price list
+   * (see `PRICE_DESK` in access-control.ts). */
+  manager = await makeUser("Vikram", "manager", "sales", "accounts");
   telecaller = await makeUser("Priya", "associate", "crm");
   /* The telecaller reports to the manager, which is what makes her book part
    * of his team's. Without it a manager cannot open a customer she owns —

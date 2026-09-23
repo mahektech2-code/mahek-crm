@@ -68,6 +68,10 @@ const files = [
   // four real documents, so what is left for a database is publishing,
   // superseding, the hierarchy through the real service, and the refusal.
   "src/lib/price-lists.integration.test.ts",
+  // Lists made here rather than read in: the editor's sheet becomes exactly
+  // its rates, publishing stores the PDF read back cell by cell, and the
+  // price desk is Accounts and the Founder Dashboard — not a sales manager.
+  "src/lib/price-sheets.integration.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
   // The dashboard reads its four figures from `queueProgress`, which must stay

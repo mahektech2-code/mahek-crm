@@ -522,10 +522,9 @@ export const CAPABILITIES = [
    * associate holds it": a telecaller pricing an order and a salesman standing
    * in a shop both need the customer's list in front of them, and a price they
    * cannot see is a price they guess. `pricelist.manage` — importing, editing,
-   * publishing, scoping and deciding a special price — sits in
-   * ACCOUNTS_OR_MANAGER beside `target.set`, and for the same reason: the
-   * accounts desk is who issues these lists at Mahek, and a manager coaching a
-   * team still needs to act on one without asking accounts to do it for them.
+   * publishing, scoping, duplicating and deciding a special price — is the
+   * PRICE DESK's, below, and nobody else's: see `PRICE_DESK` for who that is
+   * and why the CRM and Sales managers who held it at first no longer do.
    */
   "pricelist.read",
   "pricelist.manage",
@@ -753,9 +752,6 @@ const ACCOUNTS_OR_MANAGER: ReadonlySet<Capability> = new Set<Capability>([
    * which shops are worth marking still needs to be able to do it themselves.
    */
   "customer.classify",
-  /* Importing, editing, publishing and scoping a price list, and deciding a
-   * special price. See the `pricelist.read` paragraph in CAPABILITIES. */
-  "pricelist.manage",
 ]);
 
 /**
@@ -1022,6 +1018,30 @@ export { conflictsFor, ROLE_CONFLICTS, type RoleConflict } from "@/lib/role-conf
  */
 const DESK_CHECKS: ReadonlySet<Capability> = new Set<Capability>(["lead.gstValidate"]);
 
+/**
+ * THE PRICE DESK — who may change what a shop pays. Granted BY APP, like
+ * `DESK_CHECKS`, and at both levels of the two apps named in the matrix.
+ *
+ * It shipped in `ACCOUNTS_OR_MANAGER`, which spread it into `BOOK_MANAGEMENT`
+ * and so handed it to every CRM manager and every Sales Dashboard manager.
+ * Mahek's instruction was the opposite: a price list is added, changed and
+ * deleted by the accounts team or from the founder's desk, and the two apps
+ * that QUOTE prices — the telecaller's CRM and the sales manager's dashboard —
+ * read them and never write them. The person chasing a number must not also
+ * be the person setting the price that number is measured in, which is the
+ * same reasoning that keeps `order.approve` off managers.
+ *
+ * BOTH levels of Accounts, not only the manager: Mahek said "the accounts
+ * team", and the lists are typed up at that desk by whoever holds it. Both
+ * levels of Founder, because a founder grant is not split by seniority in any
+ * way that means something here.
+ *
+ * The screens enforce the other half by MOUNT: `/crm/price-lists` and
+ * `/sales/price-lists` draw no control that writes, even for somebody who
+ * holds this capability through Accounts — see `priceListDoorCanManage`.
+ */
+const PRICE_DESK: ReadonlySet<Capability> = new Set<Capability>(["pricelist.manage"]);
+
 const restricted = new Set<Capability>([
   ...MANAGER_ONLY,
   ...ACCOUNTS_ONLY,
@@ -1029,6 +1049,7 @@ const restricted = new Set<Capability>([
   ...ADMIN_ONLY,
   ...SHARED,
   ...DESK_CHECKS,
+  ...PRICE_DESK,
 ]);
 
 /**
@@ -1122,13 +1143,22 @@ const MATRIX: Record<AppId, AppMatrix> = {
     manager: [...BOOK_WORK, ...BOOK_MANAGEMENT, "lead.gstValidate"],
   },
   /* The desk. An associate records and reads; the manager decides. */
+  /* The Price Desk rides here BY NAME at both levels — see `PRICE_DESK`. */
   accounts: {
-    associate: [...LEDGER_WORK, "lead.gstValidate"],
-    manager: [...LEDGER_WORK, ...LEDGER_DECISIONS, "lead.gstValidate"],
+    associate: [...LEDGER_WORK, "lead.gstValidate", "pricelist.read", "pricelist.manage"],
+    manager: [...LEDGER_WORK, ...LEDGER_DECISIONS, "lead.gstValidate", "pricelist.read", "pricelist.manage"],
   },
-  /* Reading screens. Nothing here writes, so neither level carries a write. */
+  /* Reading screens. Nothing here writes, so neither level carries a write —
+     with one exception: the founder's desk may add, change and delete a price
+     list, which Mahek named explicitly. See `PRICE_DESK`. */
   reports: { associate: [], manager: ["team.report"] },
-  founder: { associate: [], manager: ["team.report"] },
+  /* `pricelist.read` is named too: it arrives with `BOOK_WORK`, which neither
+     of these apps is given, so without it the desk that writes the lists
+     could not poll a document it had just uploaded. */
+  founder: {
+    associate: ["pricelist.read", "pricelist.manage"],
+    manager: ["team.report", "pricelist.read", "pricelist.manage"],
+  },
   /* Salaries and home addresses. Reading is the grant; there is no capability
      inside it yet, and inventing one nothing checks would be worse. */
   hrms: { associate: [], manager: [] },

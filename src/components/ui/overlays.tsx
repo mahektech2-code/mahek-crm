@@ -340,7 +340,9 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
                 // Shrink-wrapped to the longest label, between those two.
                 width: "max-content",
               }}
-              className="animate-fade-in fixed z-50 flex flex-col overflow-hidden rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+              /* Above the modals (z-70): a row menu inside a dialog — the price
+                 list editor's grid has one per line — was drawn underneath it. */
+              className="animate-fade-in fixed z-[95] flex flex-col overflow-hidden rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
               {items.map((item, i) => (
                 <button

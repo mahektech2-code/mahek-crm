@@ -1,3 +1,4 @@
+import { priceListDoorCanManage } from "@/lib/price-list-door";
 import { notFound } from "next/navigation";
 import { customerRecordDetail } from "@/lib/services/customer-record-service";
 import { orderCountsSql } from "@/lib/order-status";
@@ -309,7 +310,7 @@ export default async function CustomerRecordPage({
       pricing={pricing}
       pricingLists={pricingLists.lists}
       gstBp={config["pricing.gstBp"]}
-      canManagePrices={await canFor(user, "pricelist.manage")}
+      canManagePrices={await priceListDoorCanManage(user, "crm")}
       /* What this caller may take off a price on their own. Resolved here
          because a ceiling that only exists in a browser is not a ceiling; the
          save re-checks it against the same two settings. */

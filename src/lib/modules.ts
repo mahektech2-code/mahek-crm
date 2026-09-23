@@ -365,7 +365,7 @@ export const APP_MODULES: AppModule[] = [
     "price-lists",
     "Price lists",
     "Accounts",
-    "Mahek's price lists end to end — import a PDF, review what it read, publish, and say who it applies to. THE DESK THAT ISSUES THESE LISTS IS THIS ONE: `pricelist.manage` sits in ACCOUNTS_OR_MANAGER, so an accounts manager has held it since the module shipped and had nowhere to use it, exactly as `target.set` did before `accounts.targets` existed.",
+    "Mahek's price lists end to end — create, duplicate, import PDFs in bulk, review what they read, publish, export, and say who each applies to. THE DESK THAT ISSUES THESE LISTS IS THIS ONE: `pricelist.manage` is the Price Desk's (Accounts and the Founder Dashboard), and the CRM and Sales Dashboard doors are read-only.",
   ),
   accounts("record", "Record a payment", "Money"),
   accounts(
@@ -711,6 +711,12 @@ export const APP_MODULES: AppModule[] = [
     "CRM",
     "Company",
     "The order book's own five, with links into the Reports app for the full breakdown.",
+  ),
+  founder(
+    "price-lists",
+    "Price lists",
+    "Company",
+    "Mahek's price lists — create, duplicate, import, publish and export them. The founder's desk is one of the two that may change a price; the CRM and the Sales Dashboard only read them.",
   ),
 
   /* -------------------------------------------------- the Website Enquiries app */

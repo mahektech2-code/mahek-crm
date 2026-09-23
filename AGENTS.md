@@ -2194,6 +2194,53 @@ cost because it is the only number on the row would put believable wrong
 figures on every target screen. `pricelist` is refused by `checkConsistency`
 until a customer price list actually exists.
 
+**A PRICE LIST IS CHANGED AT TWO DESKS AND READ AT FOUR.** `pricelist.manage`
+is the Price Desk's (`PRICE_DESK` in `access-control.ts`), granted by name at
+both levels of Accounts and of the Founder Dashboard, and nowhere else. It
+shipped in `ACCOUNTS_OR_MANAGER`, which spread it into every CRM and Sales
+Dashboard manager; Mahek's instruction was that the two apps that QUOTE prices
+never set them. The screens enforce the other half by MOUNT —
+`priceListDoorCanManage` answers false on `/crm/price-lists` and
+`/sales/price-lists` whatever the person holds, so a telecaller's screen never
+grows an edit button because somebody also wears the Accounts hat.
+`price-desk-grant.test.ts` pins both. `pricelist.read` is named on Accounts and
+Founder too: it arrives with `BOOK_WORK`, which neither is given, and without
+it the desk that uploads a PDF could not poll it being read.
+
+**A LIST MADE HERE IS THE IMPORTER'S MIRROR IMAGE.** `lib/price-sheet.ts` holds
+one `PriceSheet` model — header, pack columns, printed rows, clauses,
+discounts — and the PDF (`price-sheet-pdf.ts`, pdf-lib, isomorphic), the HTML
+print page, the CSV export and the editor's grid are all drawn from it. Every
+label it writes is one `parsePackColumn` and `parseHeader` read back to the
+same fact, and `price-sheet.test.ts` proves it by drawing a PDF and reading it
+with `unpdf` and the real parser — including Mahek's own Odisha Paid list,
+redrawn. Change a label or a figure format and that test goes red before a
+shop receives an unreadable list.
+
+**PUBLISHING STORES THE PAPER, READ BACK.** `savePriceSheet` publishes and
+then draws the PDF, runs it through the import pipeline (`verifySheet`:
+extract, parse, match, compare) and keeps it as the list's `document_id`, with
+staged rows saying cell by cell whether the paper agrees. The editor's
+Preview step runs the same read-back on demand. Nothing is stored for a
+draft — a draft has not been issued. The PDF's dates are fixed at the epoch so
+the same list always draws the same bytes, which is what the document table's
+hash dedupe relies on.
+
+**The editor never rewrites a published list.** Opening one makes a new
+VERSION (`mode: "version"`) that supersedes it on publish and inherits its
+scopes if it names none — the rule `price-lists.ts` already keeps. A draft is
+replaced wholesale on each save, because the sheet IS the list: a row taken
+off the grid is a rate taken off the list, which a merge cannot express.
+
+**A duplicate does not copy who it applies to unless asked.** Two published
+lists naming the same shops compete for them on a priority nobody set.
+
+**Bulk import is one workbench.** The import modal reads files three at a
+time, lets each be checked, corrected and approved in place, and "Approve all
+ready" goes through `publishDocument` once per file — the same action and
+checks as the review screen, never a looser batch path. "Ready" means read,
+nothing held, a name and a date.
+
 **How many quick notes an outcome takes is configuration, not a column.**
 `interactions.singleSelectOutcomes` names the outcomes that take exactly one —
 No Order today. Putting it on each `quick_notes` row would let two rows for the

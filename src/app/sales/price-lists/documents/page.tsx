@@ -1,3 +1,4 @@
+import { priceListDoorCanManage } from "@/lib/price-list-door";
 /*
  * THE DOCUMENTS WAITING TO BECOME PRICE LISTS — the Sales Dashboard's door.
  *
@@ -11,7 +12,7 @@
  * to act on is a list people stop opening.
  */
 import { requireUser } from "@/lib/auth";
-import { canFor } from "@/lib/access-control";
+import { today } from "@/lib/recompute";
 import { listDocuments } from "@/lib/services/price-list-service";
 import { PageHeader } from "@/components/ui/primitives";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
@@ -28,9 +29,10 @@ export default async function Page({
   const params = await searchParams;
   const view = params.view === "all" ? "all" : "waiting";
 
-  const [canManage, documents] = await Promise.all([
-    canFor(user, "pricelist.manage"),
+  const [canManage, documents, todayIso] = await Promise.all([
+    priceListDoorCanManage(user, "sales"),
     listDocuments({ view }),
+    today(),
   ]);
 
   return (
@@ -45,6 +47,7 @@ export default async function Page({
         canManage={canManage}
         documents={documents}
         openImport={params.import === "1"}
+        todayIso={todayIso}
       />
     </div>
   );

@@ -86,7 +86,7 @@ export function PublishDocumentModal({
 }
 
 /** "Odisha To Pay — August 2026", from whatever the filename and the header gave up. */
-function suggestedName(document: DocumentView): string {
+export function suggestedName(document: DocumentView): string {
   const hints = document.filenameHints;
   const header = document.header;
   const term = hints?.freightTerm ?? header?.freightTerm ?? null;
