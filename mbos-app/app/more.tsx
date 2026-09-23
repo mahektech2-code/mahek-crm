@@ -153,6 +153,9 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
          rather than open the thing it names. */
       { label: 'App preferences', badge: '', route: 'profile' },
         { label: 'Sync', badge: n.toSend ? n.toSend + ' to send' : '', route: 'sync' },
+        /* The walkthrough opens on its own once per build; this is the way back
+           to it for somebody who pressed "Do this later". */
+        { label: 'Set up your phone', badge: '', route: 'setup' },
         /* A refusal has its own row: it is not something waiting to go out, it
            is something the office has already said no to. */
         { label: 'Not accepted', badge: n.rejected ? String(n.rejected) : '', route: 'rejections' },

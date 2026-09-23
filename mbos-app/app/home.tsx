@@ -44,6 +44,7 @@ import { shouldOfferSetup } from '../src/engines/oem-keepalive';
 import { withinGeofence } from '../src/engines/geo';
 import { fixOf, getFix } from '../src/native/location';
 import { ensureLocationPermission } from '../src/native/permissions';
+import { walkthroughDue } from '../src/data/setup-walkthrough';
 import { queueOdometerPhoto, queueSelfie } from '../src/native/capture';
 import { SelfieCamera, type SelfieResult } from '../src/components/ui/selfie-camera';
 import { OdometerCamera, type OdometerResult } from '../src/components/ui/odometer-camera';
@@ -245,8 +246,18 @@ export default function Home() {
    * cannot see him. Asked once here, when nothing is riding on the answer.
    * `ensureLocationPermission` is a no-op after the first time either way.
    */
+  /*
+   * UNLESS THE SETUP WALKTHROUGH IS DUE, which asks for it itself along with
+   * everything else the phone needs. A fresh install, and an update that left
+   * something missing, goes there first — once per build, see
+   * `shouldOpenWalkthrough` — and firing the location dialog here as well
+   * would put a popup over the screen that is about to ask for it properly.
+   */
   React.useEffect(() => {
-    void ensureLocationPermission();
+    void walkthroughDue().then((due) => {
+      if (due) router.push('/setup');
+      else void ensureLocationPermission();
+    });
   }, []);
 
 
