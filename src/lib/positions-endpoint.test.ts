@@ -386,8 +386,9 @@ describe("A batch the server cannot file is never acknowledged as stored", () =>
             { id: fixIdOf(at(11)), at: at(11).getTime(), ...HERE, accuracyM: 12 },
             { id: "junk-2", at: at(12).getTime(), lat: 999, lng: 999 },
             /* BEFORE the check-in, so outside the day — an open day runs to
-               now, so nothing after it can be outside. This is the real
-               straddle and the only row that may still be held. */
+               the end of its own day, so nothing later that day can be
+               outside. This is the real straddle and the only row that may
+               still be held. */
             { id: fixIdOf(at(6)), at: at(6).getTime(), ...HERE, accuracyM: 12 },
           ],
         }),
@@ -413,6 +414,55 @@ describe("A batch the server cannot file is never acknowledged as stored", () =>
 
     assert.equal(body.tracking, "no-session-yet");
     assert.equal(await storedCount(), 0);
+  });
+
+  test("a day nobody ever closed does not file fixes from the days after it", async () => {
+    /*
+     * PRODUCTION'S SHAPE. Two test check-ins from August had no evidence
+     * behind them, so `markMissedCheckouts` marked them `auto_checked_out` and
+     * left the check-out null — correctly, since nobody knows when they ended —
+     * and never looked at them again. An open day ran to infinity, so a month
+     * later they filed a salesman's whole night and a day he never checked in
+     * for. Nothing today is open here: the fixes have no session to belong to.
+     */
+    const longAgo = new Date(Date.now() - 30 * 86_400_000).toLocaleDateString("en-CA", {
+      timeZone: "Asia/Kolkata",
+    });
+    await db.insert(mbosAttendanceDays).values({
+      id: id("att"),
+      userId: salesman.id,
+      day: longAgo,
+      checkInAt: new Date(Date.parse(`${longAgo}T08:00:00+05:30`)),
+      autoCheckedOut: true,
+    });
+
+    const answer = await post([{ at: at(10) }, { at: at(23, 30) }]);
+    const body = (await answer.json()) as Record<string, unknown>;
+
+    assert.equal(
+      body.tracking,
+      "no-session-yet",
+      "an abandoned day from last month was treated as still running",
+    );
+    assert.equal(await storedCount(), 0, "the privacy rule leaked through a day nobody closed");
+  });
+
+  test("a day left open is still open until its own midnight, and no further", async () => {
+    // Yesterday, checked in at nine and not yet closed by the nightly: the
+    // evening is his, the small hours of today are not.
+    await openDay();
+    const pastMidnight = at(24, 30);
+
+    const answer = await post([{ at: at(22) }, { at: pastMidnight }]);
+    const body = (await answer.json()) as Record<string, unknown>;
+
+    assert.equal(body.stored, 1, JSON.stringify(body));
+    assert.equal(body.tracking, "partial");
+    assert.deepEqual(
+      body.filed,
+      [fixIdOf(at(22))],
+      "the after-midnight fix was filed against yesterday, or the 10pm one was not",
+    );
   });
 
   test("tracking switched off in the office still says so before anything else", async () => {
