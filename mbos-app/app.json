@@ -2,7 +2,7 @@
   "expo": {
     "name": "Mahek MBOS",
     "slug": "mbos",
-    "version": "1.10.0",
+    "version": "1.11.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -19,7 +19,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "in.mahek.mbos",
-      "versionCode": 15,
+      "versionCode": 16,
       "edgeToEdgeEnabled": true,
       "permissions": [
         "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
