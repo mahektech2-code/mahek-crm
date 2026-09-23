@@ -66,6 +66,10 @@ import { NewVersionModal } from "@/components/pricing/modals/new-version-modal";
 import { BulkReviseModal } from "@/components/pricing/modals/bulk-revise-modal";
 import { DerivedListModal } from "@/components/pricing/modals/derived-list-modal";
 import { CompareModal } from "@/components/pricing/modals/compare-modal";
+import { DuplicateModal } from "@/components/pricing/modals/duplicate-modal";
+import { PriceListEditor, type EditorOpen } from "@/components/pricing/editor/price-list-editor";
+import { MenuButton } from "@/components/pricing/menu-button";
+import { Icon } from "@/components/pricing/icons";
 
 const MANAGE_TITLE = "Only somebody who manages price lists can do this.";
 
@@ -107,6 +111,8 @@ export function PriceListDetailScreen({
   const [scopeToRemove, setScopeToRemove] = React.useState<ScopeView | null>(null);
   const [termOpen, setTermOpen] = React.useState<{ id: string | null } | null>(null);
   const [termToRemove, setTermToRemove] = React.useState<string | null>(null);
+  const [editor, setEditor] = React.useState<EditorOpen | null>(null);
+  const [duplicating, setDuplicating] = React.useState(false);
 
   const term = termOpen ? detail.discountTerms.find((t) => t.id === termOpen.id) ?? null : null;
 
@@ -177,16 +183,32 @@ export function PriceListDetailScreen({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <Link href={`${basePath}/${list.id}/print`}>
-            <Button variant="secondary">Print</Button>
-          </Link>
+          <MenuButton
+            label="PDF & export"
+            width={300}
+            items={[
+              { key: "open", label: "Open the PDF", description: "In Mahek's own layout, drawn from these rates.", icon: <Icon name="pdf" />, onSelect: () => window.open(`/api/price-lists/${list.id}/pdf`, "_blank", "noopener") },
+              { key: "download", label: "Download the PDF", icon: <Icon name="upload" />, onSelect: () => window.location.assign(`/api/price-lists/${list.id}/pdf?download=1`) },
+              { key: "csv", label: "Export as a spreadsheet", description: "One row per price; reads back into the editor.", icon: <Icon name="table" />, onSelect: () => window.location.assign(`/api/price-lists/export?format=csv&ids=${list.id}`) },
+              { key: "print", label: "Print", icon: <Icon name="doc" />, onSelect: () => router.push(`${basePath}/${list.id}/print`) },
+              ...(detail.document?.attachmentId
+                ? [{ key: "source", label: "The document it came from", description: detail.document.filename, icon: <Icon name="doc" />, divider: true, onSelect: () => window.open(`/api/attachments/${detail.document!.attachmentId}`, "_blank", "noopener") }]
+                : []),
+            ]}
+          />
           <Button variant="secondary" onClick={() => setComparing(true)}>
             Compare
           </Button>
           {canManage ? (
             <>
-              <Button variant="secondary" onClick={() => setEditing(true)}>
-                Edit
+              <Button variant="secondary" onClick={() => setDuplicating(true)}>
+                Duplicate
+              </Button>
+              <Button variant="secondary" onClick={() => setEditor({ kind: "edit", listId: list.id })}>
+                {draft ? "Open in the editor" : "New version in the editor"}
+              </Button>
+              <Button variant="ghost" onClick={() => setEditing(true)} title="Name, reference, dates and terms, without opening the editor">
+                Edit details
               </Button>
               <RowMenu
                 items={[
@@ -781,6 +803,20 @@ export function PriceListDetailScreen({
         onConfirm={() => (termToRemove ? dropTerm(termToRemove) : undefined)}
         onClose={() => setTermToRemove(null)}
       />
+      <PriceListEditor open={editor} onClose={() => setEditor(null)} app={app} basePath={basePath} options={options} todayIso={todayIso} />
+      {duplicating ? (
+        <DuplicateModal
+          list={{ id: list.id, name: list.name, refNo: list.refNo, rateCount: detail.rates.length, scopeCount: detail.scopes.length }}
+          takenNames={options.lists.map((l) => l.name)}
+          todayIso={todayIso}
+          basePath={basePath}
+          onClose={() => setDuplicating(false)}
+          onOpenInEditor={() => {
+            setDuplicating(false);
+            setEditor({ kind: "new", source: "copy", fromListId: list.id });
+          }}
+        />
+      ) : null}
     </div>
   );
 }

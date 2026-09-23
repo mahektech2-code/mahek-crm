@@ -18,7 +18,7 @@ import { PageHeader } from "@/components/ui/primitives";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { DocumentsPanel } from "@/components/pricing/documents-panel";
 
-export const metadata = { title: "Price list documents — Accounts — MahekOne" };
+export const metadata = { title: "Price list documents — Founder Dashboard — MahekOne" };
 
 export default async function Page({
   searchParams,
@@ -30,7 +30,7 @@ export default async function Page({
   const view = params.view === "all" ? "all" : "waiting";
 
   const [canManage, documents, todayIso] = await Promise.all([
-    priceListDoorCanManage(user, "accounts"),
+    priceListDoorCanManage(user, "founder"),
     listDocuments({ view }),
     today(),
   ]);
@@ -41,9 +41,9 @@ export default async function Page({
         title="Price lists"
         subtitle="A price list starts as a file somebody was sent. This is what has arrived and what is holding each one up."
       />
-      <PricingSubNav basePath="/accounts/price-lists" current="documents" />
+      <PricingSubNav basePath="/founder/price-lists" current="documents" />
       <DocumentsPanel
-        basePath="/accounts/price-lists"
+        basePath="/founder/price-lists"
         canManage={canManage}
         documents={documents}
         openImport={params.import === "1"}

@@ -15,5 +15,5 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   await requireUser();
   const found = await sheetForList(id);
   if (!found) notFound();
-  return <PrintSheet sheet={found.sheet} listId={id} backHref={`/sales/price-lists/${id}`} />;
+  return <PrintSheet sheet={found.sheet} listId={id} backHref={`/founder/price-lists/${id}`} />;
 }
