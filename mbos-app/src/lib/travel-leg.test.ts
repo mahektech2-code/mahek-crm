@@ -2,6 +2,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  arrivalNeedsMeter,
   arrivalPrompt,
   checkFare,
   checkOdometer,
@@ -108,6 +109,16 @@ test('the arrival prompt names the camera on a metered mode and not otherwise', 
   const free = arrivalPrompt({ requiresOdometer: false, odometerStartKm: null });
   assert.match(free.button, /start the visit/i);
   assert.doesNotMatch(free.button, /meter/i);
+});
+
+test('arriving on an own-vehicle DAY does not read the meter — the punch-out does', () => {
+  /* "Start visit" on a bike day sets off with no reading, because the day's
+     meter was read at the punch-in. Asking at the shop door is what this
+     feature exists to stop. */
+  assert.equal(arrivalNeedsMeter({ requiresOdometer: true, odometerStartKm: null }), false);
+  /* A journey that did set off on a reading still closes on one. */
+  assert.equal(arrivalNeedsMeter({ requiresOdometer: true, odometerStartKm: 41208 }), true);
+  assert.equal(arrivalNeedsMeter({ requiresOdometer: false, odometerStartKm: null }), false);
 });
 
 test('a leg prints a distance or a fare, and never invents either', () => {

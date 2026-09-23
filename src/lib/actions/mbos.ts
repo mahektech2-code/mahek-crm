@@ -5618,7 +5618,27 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
    * ever did. The visit legs on such a day arrive `claimExcluded`, priced by
    * nothing, and this pair is what they were excluded in favour of.
    */
-  if ((p.origin === "visit" || p.origin === "session") && mode.requiresOdometer) {
+  /*
+   * TWO LEGS CARRY NO CLAIM, AND DEMANDING READINGS OF THEM REFUSED REAL WORK.
+   *
+   * A visit leg on an own-vehicle day arrives `claimExcluded` with no readings
+   * at all, because the punch-in and the punch-out are what measure the day —
+   * asking the meter at every shop is the thing sessions were built to stop.
+   * The rule below still demanded a departure reading of it, so every journey
+   * on a bike day was refused, and a visit that depended on one went with it.
+   * Nothing is paid on such a leg, so there is nothing for a reading to prove.
+   *
+   * And a leg CLOSED AT ITS OWN READING measures nothing. The handset closes a
+   * session nobody punched out of, and a trip called off, exactly that way —
+   * no second photograph, because nobody is standing at the meter — and
+   * refusing that close left the day open on the server for ever. A second
+   * photograph of a distance of zero proves nothing a first one did not.
+   */
+  const excludedVisit = p.origin === "visit" && p.claimExcluded === true;
+  const closedAtOwnReading =
+    p.endedAt != null && p.odometerStartKm != null && p.odometerEndKm === p.odometerStartKm;
+
+  if ((p.origin === "visit" || p.origin === "session") && mode.requiresOdometer && !excludedVisit) {
     if (p.odometerStartKm == null || !p.odometerPhotoId) {
       return {
         kind: "rejected",
@@ -5632,7 +5652,7 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
     }
     /* Only once it has ENDED. A leg still on the road has no arrival reading
        yet and that is its ordinary state, not a fault. */
-    if (p.endedAt != null && (p.odometerEndKm == null || !p.odometerEndPhotoId)) {
+    if (p.endedAt != null && !closedAtOwnReading && (p.odometerEndKm == null || !p.odometerEndPhotoId)) {
       return {
         kind: "rejected",
         value: reject(

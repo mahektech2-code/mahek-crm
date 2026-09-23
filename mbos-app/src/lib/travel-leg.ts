@@ -108,6 +108,21 @@ export function checkFare(typed: string): FareVerdict {
 /* ────────────────────────────────────────────────────── what to say next */
 
 /**
+ * Whether arriving at the shop has to read the meter.
+ *
+ * ONLY WHERE THE JOURNEY SET OFF ON A READING. On an own-vehicle day the
+ * punch-in read the meter and the punch-out will read it again, so "Start
+ * visit" deliberately sets off with no reading — and this used to ask for one
+ * at the door anyway, because it looked only at whether the MODE has a meter.
+ * That put the camera back in front of him at every shop, the one thing the
+ * day-level reading was built to stop, and sent an end reading with nothing to
+ * subtract it from.
+ */
+export function arrivalNeedsMeter(leg: { requiresOdometer: boolean; odometerStartKm: number | null }): boolean {
+  return leg.requiresOdometer && leg.odometerStartKm != null;
+}
+
+/**
  * What the arrival step is asking for, said as one sentence and one button.
  *
  * The button words are the load-bearing half. "I have arrived" on a metered
