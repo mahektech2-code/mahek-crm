@@ -25,6 +25,7 @@ const TABS: Tab[] = [
   { href: "/founder/people", label: "People" },
   { href: "/founder/crm", label: "CRM" },
   { href: "/founder/price-lists", label: "Price lists" },
+  { href: "/founder/whatsapp", label: "WhatsApp" },
 ];
 
 export function FounderShell({

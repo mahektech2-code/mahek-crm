@@ -61,6 +61,14 @@ export const SECRET_NAMES = {
   "sarvam.apiKey": "SARVAM_API_KEY",
   "openai.apiKey": "OPENAI_API_KEY",
   "msg91.authKey": "MSG91_AUTH_KEY",
+  /**
+   * WhatsApp's sending key — Wati's v3 API token (a scoped `wati_…` key). It
+   * authenticates every template sent from the business number and signs the
+   * webhook address Wati reports delivery back to (see `lib/wati.ts`). Holding
+   * it does not switch anything on: nothing is sent unless the founder has
+   * switched the service on as well.
+   */
+  "wati.apiToken": "WATI_API_TOKEN",
   /*
    * FIVE OLA ACCOUNTS' KEYS, SPENT IN THIS ORDER, and four of them empty on
    * every deployment that has not needed them.

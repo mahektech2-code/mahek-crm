@@ -528,6 +528,12 @@ export const CAPABILITIES = [
    */
   "pricelist.read",
   "pricelist.manage",
+  /**
+   * Switching WhatsApp sending through the API on or off, and deciding which
+   * approved Wati template each CRM template goes out as. The FOUNDER'S alone —
+   * see `FOUNDER_DESK`.
+   */
+  "whatsapp.activate",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -1042,6 +1048,21 @@ const DESK_CHECKS: ReadonlySet<Capability> = new Set<Capability>(["lead.gstValid
  */
 const PRICE_DESK: ReadonlySet<Capability> = new Set<Capability>(["pricelist.manage"]);
 
+/**
+ * WHETHER WHATSAPP LEAVES THE BUILDING THROUGH THE API — the founder's, and
+ * nobody else's. Mahek's instruction: a message goes out through Wati only if
+ * the founder has switched the service on, and the switch lives on the
+ * Founder Dashboard alone.
+ *
+ * An administrator holds every capability by construction, so the capability
+ * by itself would hand the switch to anybody holding the Admin Console. The
+ * actions behind it therefore also demand that the hat which granted it is
+ * the FOUNDER app's (`requireFounderDesk` in `whatsapp-switch-service.ts`) —
+ * an admin who has been given the Founder Dashboard can use it, and an admin
+ * who has not cannot reach it through the side door.
+ */
+const FOUNDER_DESK: ReadonlySet<Capability> = new Set<Capability>(["whatsapp.activate"]);
+
 const restricted = new Set<Capability>([
   ...MANAGER_ONLY,
   ...ACCOUNTS_ONLY,
@@ -1050,6 +1071,7 @@ const restricted = new Set<Capability>([
   ...SHARED,
   ...DESK_CHECKS,
   ...PRICE_DESK,
+  ...FOUNDER_DESK,
 ]);
 
 /**
@@ -1156,8 +1178,8 @@ const MATRIX: Record<AppId, AppMatrix> = {
      of these apps is given, so without it the desk that writes the lists
      could not poll a document it had just uploaded. */
   founder: {
-    associate: ["pricelist.read", "pricelist.manage"],
-    manager: ["team.report", "pricelist.read", "pricelist.manage"],
+    associate: ["pricelist.read", "pricelist.manage", "whatsapp.activate"],
+    manager: ["team.report", "pricelist.read", "pricelist.manage", "whatsapp.activate"],
   },
   /* Salaries and home addresses. Reading is the grant; there is no capability
      inside it yet, and inventing one nothing checks would be worse. */

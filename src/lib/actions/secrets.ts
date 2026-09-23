@@ -131,6 +131,7 @@ const LABELS: Record<SecretName, string> = {
   "sarvam.apiKey": "The Sarvam key",
   "openai.apiKey": "The OpenAI key",
   "msg91.authKey": "The MSG91 key",
+  "wati.apiToken": "The Wati key",
   "olamaps.apiKey": "The Ola Maps key",
   "olamaps.apiKey2": "The second Ola Maps key",
   "olamaps.apiKey3": "The third Ola Maps key",
@@ -149,7 +150,9 @@ const LABELS: Record<SecretName, string> = {
 const USED_FROM: Record<SecretName, string> = {
   "sarvam.apiKey": "Dictation uses it from the next recording.",
   "openai.apiKey": "Dictation uses it from the next recording.",
-  "msg91.authKey": "WhatsApp sending uses it from the next message.",
+  "msg91.authKey": "Nothing uses it — WhatsApp goes through Wati.",
+  "wati.apiToken":
+    "WhatsApp sending uses it from the next message — but only while the founder has the service switched on. The webhook address changes with it, so paste the new one into Wati.",
   "olamaps.apiKey":
     "The Live map and Territory's shop map draw their streets from the next time either is opened.",
   /* A spare is INSURANCE and the sentence has to say so, or somebody reads it

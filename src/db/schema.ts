@@ -3622,6 +3622,13 @@ export const waTemplates = pgTable("wa_templates", {
   appliesTo: destKindEnum("applies_to").notNull().default("personal"),
   active: boolean("active").notNull().default(true),
   usageCount: integer("usage_count").notNull().default(0),
+  /**
+   * The Meta-approved template in Wati this one is sent as. Null means it is
+   * never sent through the API — WhatsApp refuses a business-initiated message
+   * that is not an approved template, so an unlinked template can only ever go
+   * out the manual way. Set from the Founder Dashboard, beside the switch.
+   */
+  watiTemplateName: text("wati_template_name"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdById: text("created_by_id"),
@@ -3676,6 +3683,8 @@ export const waMessages = pgTable(
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     readAt: timestamp("read_at", { withTimezone: true }),
     failureReason: text("failure_reason"),
+    /** WhatsApp's own id for a message the API sent (wamid…), for tracing one in Wati. Our id travels to Wati as its local_message_id, which is what the webhooks are matched on. */
+    providerRef: text("provider_ref"),
 
     idempotencyKey: text("idempotency_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -3697,15 +3706,51 @@ export const waMessages = pgTable(
   ],
 );
 
-export const waReplies = pgTable("wa_replies", {
-  id: text("id").primaryKey(),
-  customerId: text("customer_id")
-    .notNull()
-    .references(() => customers.id, { onDelete: "cascade" }),
-  message: text("message").notNull(),
-  actioned: boolean("actioned").notNull().default(false),
-  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const waReplies = pgTable(
+  "wa_replies",
+  {
+    id: text("id").primaryKey(),
+    /**
+     * Null when the number matches no customer. A reply from a number the book
+     * does not know is still a reply somebody sent us, and dropping it because
+     * nobody could file it is how a customer's message goes unanswered.
+     */
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "cascade" }),
+    message: text("message").notNull(),
+    actioned: boolean("actioned").notNull().default(false),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    /** The sender's WhatsApp number as Wati reports it — country code, no +. */
+    waId: text("wa_id"),
+    senderName: text("sender_name"),
+    /** WhatsApp's id for the incoming message. Unique, so a webhook Wati retries lands once. */
+    providerMessageId: text("provider_message_id"),
+  },
+  (t) => [uniqueIndex("wa_replies_provider_message_id_key").on(t.providerMessageId)],
+);
+
+/**
+ * THE FOUNDER'S SWITCH for sending WhatsApp through the API. One row per
+ * decision and never an update: the switch's state is the newest row, and the
+ * rows beneath it are the record of who turned it on or off, when, and why.
+ *
+ * Deliberately NOT an `app_settings` key. Settings are edited on the Settings
+ * screen by anybody holding `config.write`, and this is the one decision about
+ * messaging that Mahek said belongs to the founder alone. No row at all means
+ * OFF — a deployment that has never been switched on sends nothing.
+ */
+export const whatsappServiceEvents = pgTable(
+  "whatsapp_service_events",
+  {
+    id: text("id").primaryKey(),
+    active: boolean("active").notNull(),
+    note: text("note"),
+    changedById: text("changed_by_id").references(() => users.id),
+    /** Stored beside the id so the history still reads after somebody leaves. */
+    changedByName: text("changed_by_name").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("whatsapp_service_events_at_idx").on(t.at.desc())],
+);
 
 /* -------------------------------------------------------- §3.11 monthly target */
 
