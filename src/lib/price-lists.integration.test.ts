@@ -13,7 +13,7 @@
  * They need mahekone_test, which `npm run test:db` creates from the committed
  * migrations. The harness truncates between tests.
  */
-import { before, beforeEach, describe, test } from "node:test";
+import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
@@ -188,6 +188,16 @@ async function publishStateList(input: {
 before(async () => {
   await seedConfig();
   TODAY = await today();
+});
+
+/*
+ * Close the pool, as every other integration suite does. Without it the run's
+ * last test passes and node then waits on idle connections until Postgres
+ * drops them — about an hour in CI, twice, for these two suites.
+ */
+after(async () => {
+  setTestUser(null);
+  await db.$client.end();
 });
 
 beforeEach(async () => {
