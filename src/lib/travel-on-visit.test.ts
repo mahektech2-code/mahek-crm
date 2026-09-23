@@ -453,6 +453,90 @@ describe("A visit leg is held to the standard the app was present for", () => {
     assert.equal(done.odometerEndKm, done.odometerStartKm, "it measures nothing");
     assert.match(done.note ?? "", /Shutter/);
   });
+
+  test("closed at its own reading needs no second photograph — it is how the handset closes one", async () => {
+    /* `closeAbandoned` on the handset writes the start reading as the end and
+       takes no photograph, because nobody is at the meter. Refusing that left
+       the leg open on the server for ever; production refused it for three
+       salesmen before this. */
+    const legId = id("leg");
+    await depart(legId);
+    const [leg] = await db.select().from(mbosTravelLegs).where(eq(mbosTravelLegs.id, legId));
+
+    const [out] = await ingestSyncBatch(principal, [
+      item({
+        entityType: "travel_leg",
+        entityId: legId,
+        op: "update",
+        payload: {
+          day: "2026-09-10",
+          modeKey: "own_bike",
+          customerId: shop.id,
+          startedAt: Date.now() - 60_000,
+          endedAt: Date.now(),
+          odometerStartKm: 41208,
+          odometerPhotoId: leg.odometerPhotoId,
+          odometerEndKm: 41208,
+          note: "Closed automatically at the end of the day — no punch-out was recorded.",
+          origin: "visit",
+        },
+      }),
+    ]);
+    assert.equal(out.status, "accepted", JSON.stringify(out));
+  });
+
+  test("a SESSION closed at its own reading is accepted too, and a real punch-out still needs its photo", async () => {
+    const legId = id("leg");
+    await depart(legId, { origin: "session", purpose: "session", customerId: null, toLabel: null });
+    const [leg] = await db.select().from(mbosTravelLegs).where(eq(mbosTravelLegs.id, legId));
+    const close = (over: Record<string, unknown>) =>
+      ingestSyncBatch(principal, [
+        item({
+          entityType: "travel_leg",
+          entityId: legId,
+          op: "update",
+          payload: {
+            day: "2026-09-10",
+            modeKey: "own_bike",
+            startedAt: Date.now() - 60_000,
+            endedAt: Date.now(),
+            odometerStartKm: 41208,
+            odometerPhotoId: leg.odometerPhotoId,
+            origin: "session",
+            ...over,
+          },
+        }),
+      ]);
+
+    /* A punch-out that claims forty kilometres with no picture of the meter
+       is still refused — that reading is the whole of the day's claim. */
+    const [claimed] = await close({ odometerEndKm: 41248 });
+    assert.equal(claimed.status, "rejected", JSON.stringify(claimed));
+
+    const [auto] = await close({ odometerEndKm: 41208 });
+    assert.equal(auto.status, "accepted", JSON.stringify(auto));
+  });
+
+  test("a visit leg on an own-vehicle day needs no readings — the punch-in and punch-out measure it", async () => {
+    /* What the handset sends from "Start visit" once a session is open on a
+       bike: the session's mode, no meter, and `claimExcluded`. Every one of
+       these was refused, and the visit hanging off it with it. */
+    const [out] = await ingestSyncBatch(principal, [
+      item({
+        entityType: "travel_leg",
+        payload: {
+          day: "2026-09-10",
+          modeKey: "own_bike",
+          customerId: shop.id,
+          startedAt: Date.now(),
+          origin: "visit",
+          claimExcluded: true,
+          claimExcludedReason: "Counted in the meter readings taken at the punch-in and the punch-out.",
+        },
+      }),
+    ]);
+    assert.equal(out.status, "accepted", JSON.stringify(out));
+  });
 });
 
 /* ═══════════════════════════════════════════ the evidence, and who sees it */

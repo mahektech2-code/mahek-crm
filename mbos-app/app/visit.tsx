@@ -18,7 +18,14 @@ import {
   type TravelLeg,
   type TravelMode,
 } from '../src/data/travel';
-import { arrivalPrompt, checkFare, legLine, navigationLine, travellingFor } from '../src/lib/travel-leg';
+import {
+  arrivalNeedsMeter,
+  arrivalPrompt,
+  checkFare,
+  legLine,
+  navigationLine,
+  travellingFor,
+} from '../src/lib/travel-leg';
 import { suspectFor, visitCapThresholds } from '../src/data/leads';
 import { visitCapLabel, visitCapState, type VisitCapThresholds } from '../src/engines/leads';
 import { useCustomer, useStore } from '../src/state/store';
@@ -397,7 +404,12 @@ export default function Visit() {
   }, [custId, visitStart, arrival, checkedIntoShop]);
 
   const legMode = leg ? modes.find((m) => m.key === leg.modeKey) ?? null : null;
-  const needsMeter = !!legMode?.requiresOdometer;
+  /* Not on an own-vehicle DAY: that journey set off with no reading because
+     the punch-in and punch-out measure the day. See `arrivalNeedsMeter`. */
+  const needsMeter = arrivalNeedsMeter({
+    requiresOdometer: !!legMode?.requiresOdometer,
+    odometerStartKm: leg?.odometerStartKm ?? null,
+  });
 
   /* ---- how far there is left to go ----
    *
