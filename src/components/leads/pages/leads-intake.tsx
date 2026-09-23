@@ -2,10 +2,7 @@ import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { canLead } from "@/lib/services/lead-console-service";
-import {
-  leadSourceOptions,
-  nextActionOwners,
-} from "@/lib/services/lead-intake-service";
+import { nextActionOwners } from "@/lib/services/lead-intake-service";
 import { distributorOptions } from "@/lib/services/distributor-service";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { IntakeForm } from "@/components/leads/intake/intake-form";
@@ -25,11 +22,10 @@ import { IntakeForm } from "@/components/leads/intake/intake-form";
  * somebody holding Intake on the strength of a module they were deliberately
  * not given.
  *
- * What is read is a real answer rather than a list typed into a screen: the
- * sources already in use (so screen 6 does not inherit a fourth spelling of
- * "Website"), who a lead's Owner may be, and — for the third-party ladder only
- * — the direct customers `crm/distributor-picker.tsx` already offers as who
- * may bill a shop, which is what "Under" asks for at capture.
+ * What is read is a real answer rather than a list typed into a screen: who a
+ * lead's Owner may be, and — for the third-party ladder only — the direct
+ * customers `crm/distributor-picker.tsx` already offers as who may bill a
+ * shop, which is what "Under" asks for at capture.
  */
 export async function Body({
   workspace,
@@ -38,8 +34,7 @@ export async function Body({
 }) {
   const user = await requireUser();
 
-  const [sources, owners, config, canWork, canPrioritise, distributors] = await Promise.all([
-    leadSourceOptions(),
+  const [owners, config, canWork, canPrioritise, distributors] = await Promise.all([
     nextActionOwners(),
     getConfig(),
     canLead(user, "lead.work"),
@@ -57,7 +52,6 @@ export async function Body({
     <div className="p-6">
       <LeadTabs workspace={workspace} />
       <IntakeForm workspace={workspace}
-        sources={sources}
         sourceOptions={config["leads.sources"]}
         owners={owners}
         canWork={canWork}

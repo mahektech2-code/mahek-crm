@@ -4,14 +4,12 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Card, Field, Input, Select, Textarea, cx } from "@/components/ui/primitives";
+import { Card, Field, Input, Select, cx } from "@/components/ui/primitives";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { offeredSalesTypes, salesTypeLabel, type LeadSalesType } from "@/lib/lead-labels";
 import { captureLead } from "@/lib/actions/lead-intake";
-import type {
-  LeadSourceOption,
-  NextActionOwner,
-} from "@/lib/services/lead-intake-service";
+import type { NextActionOwner } from "@/lib/services/lead-intake-service";
 import { Banner, Button, Pill, ScreenHeader } from "@/components/console/parts";
 
 /* ---------------------------------------------------------------------------
@@ -64,7 +62,6 @@ type Answer = LeadSalesType | "undecided";
 
 export function IntakeForm({
   workspace,
-  sources,
   sourceOptions,
   owners,
   canWork,
@@ -73,7 +70,6 @@ export function IntakeForm({
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
-  sources: LeadSourceOption[];
   /** The configured ten. A picker, not a suggestion — see the block below. */
   sourceOptions: { code: string; label: string }[];
   owners: NextActionOwner[];
@@ -448,24 +444,6 @@ export function IntakeForm({
                   </Field>
                 ) : null}
               </div>
-
-              {sources.length ? (
-                <div className="mt-4 flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] tracking-[0.04em] text-muted uppercase">
-                    Already in use
-                  </span>
-                  {sources.slice(0, 8).map((s) => (
-                    <button
-                      key={s.source}
-                      type="button"
-                      onClick={() => set("source")(s.source)}
-                      className="rounded-[9px] border border-line bg-surface px-2 py-[3px] text-[12px] text-body hover:bg-canvas"
-                    >
-                      {s.source} · {s.count}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
             </div>
 
             {/* ─────────────────────────────────────────────── customer / company */}
@@ -593,10 +571,11 @@ export function IntakeForm({
                   error={errors.notes}
                   className={canPrioritise ? "lg:col-span-8" : "lg:col-span-12"}
                 >
-                  <Textarea
+                  <VoiceTextarea
                     rows={3}
                     value={f.notes}
                     onChange={(e) => set("notes")(e.target.value)}
+                    onDictate={set("notes")}
                   />
                 </Field>
                 {canPrioritise ? (
