@@ -71,6 +71,13 @@ import {
   mbosUserTerritories,
   mbosPositions,
   mbosPriceList,
+  priceRequests,
+  priceListParseRows,
+  priceListRates,
+  priceListScopes,
+  priceListDiscountTerms,
+  priceLists,
+  priceListDocuments,
   mbosSamples,
   mbosSchemes,
   mbosSyncReceipts,
@@ -523,6 +530,16 @@ async function main() {
     mbosPriceList,
     mbosSchemes,
     mbosDevices,
+    /* --- price lists: they point at products, customers, attachments and
+       users, all further down. Rates, scopes and terms before their list;
+       the list before the document it names. --- */
+    priceRequests,
+    priceListParseRows,
+    priceListRates,
+    priceListScopes,
+    priceListDiscountTerms,
+    priceLists,
+    priceListDocuments,
     /* --- the rest of what points at users, customers or complaints --- */
     queueSnapshots,
     timelineEvents,
