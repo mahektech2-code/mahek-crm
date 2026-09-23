@@ -106,6 +106,7 @@ function ToastItem({
   return (
     <div
       role="status"
+      data-print="hide"
       onMouseEnter={() => {
         if (!timer.current) return;
         clearTimeout(timer.current);

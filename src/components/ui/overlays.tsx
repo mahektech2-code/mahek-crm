@@ -307,7 +307,7 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
   }, [open]);
 
   return (
-    <span className="relative inline-block">
+    <span className="relative inline-block" data-print="hide">
       <button
         ref={buttonRef}
         title="More actions"

@@ -72,13 +72,14 @@ export function AppFrame({
   scroll?: boolean;
 }) {
   return (
-    <div className="flex h-screen min-w-shell-floor flex-col overflow-hidden bg-canvas">
-      {header}
-      <div className="flex min-h-0 flex-1">
-        {sidebar}
+    <div className="flex h-screen min-w-shell-floor flex-col overflow-hidden bg-canvas print:block print:h-auto print:min-w-0 print:overflow-visible print:bg-white">
+      {/* Off the paper: an exported PDF is the screen, not the app around it. */}
+      <div className="contents print:hidden">{header}</div>
+      <div className="flex min-h-0 flex-1 print:block">
+        <div className="contents print:hidden">{sidebar}</div>
         <main
           className={cx(
-            "relative min-w-0 flex-1",
+            "relative min-w-0 flex-1 print:block",
             scroll && "overflow-y-auto",
             fade && "animate-fade-in",
           )}
@@ -86,7 +87,7 @@ export function AppFrame({
           {bleed ? (
             children
           ) : (
-            <div className="mx-auto w-full max-w-measure">{children}</div>
+            <div className="mx-auto w-full max-w-measure print:max-w-none">{children}</div>
           )}
         </main>
       </div>
