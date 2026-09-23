@@ -27,6 +27,7 @@ import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { Icon } from "@/components/shell/icons";
 import { useToast } from "@/components/ui/toast";
+import { ExportMenu } from "@/components/ui/export-menu";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { setTarget, setTargetsBulk } from "@/lib/actions/crm";
 import { money, moneyShort, pct, periodLabel } from "@/lib/format";
@@ -457,7 +458,7 @@ export function MonthlyTargetsScreen({
     <div className="px-6 pt-6 pb-10">
       <PageHeader
         title="Monthly targets"
-        subtitle={`${scopeLabel} · Per customer, per month. Where no target was set, a default is applied and marked.`}
+        subtitle={`${periodLabel(period)} · ${scopeLabel} · Per customer, per month. Where no target was set, a default is applied and marked.`}
         actions={
           <>
             <Select
@@ -471,6 +472,29 @@ export function MonthlyTargetsScreen({
                 </option>
               ))}
             </Select>
+            <ExportMenu
+              name={`Monthly targets, ${periodLabel(period)}`}
+              csv={() => [
+                [
+                  "Customer",
+                  "Target (Rs)",
+                  "Achieved (Rs)",
+                  "Gap (Rs)",
+                  "Achievement (%)",
+                  "Account manager",
+                  "Default target",
+                ],
+                ...rows.map((r) => [
+                  r.customerName,
+                  Math.round(r.target / 100),
+                  Math.round(r.achieved / 100),
+                  Math.round(r.gap / 100),
+                  r.percent,
+                  r.ownerName ?? "",
+                  r.isDefault ? "Yes" : "",
+                ]),
+              ]}
+            />
             <Button
               variant="primary"
               disabled={!canSet}

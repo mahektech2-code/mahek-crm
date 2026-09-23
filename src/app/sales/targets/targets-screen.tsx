@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { MonthNav } from "@/components/ui/month-nav";
+import { ExportMenu } from "@/components/ui/export-menu";
+import { targetsCsv } from "@/lib/target-export";
 import { monthName } from "@/components/ui/month";
 import { PersonPicker, type Person } from "@/components/crm/person-picker";
 import { money } from "@/lib/format";
@@ -142,6 +144,12 @@ export function TargetsScreen({
         actions={
           <div className="flex items-center gap-1 text-[13px]">
             <MonthNav month={period} basePath="/sales/targets" paramName="period" />
+            <span className="ml-2">
+              <ExportMenu
+                name={`Sales targets, ${monthName(period)}`}
+                csv={() => targetsCsv(allRows, existingCustomerTargets)}
+              />
+            </span>
             <Link
               href={`/sales/performance?month=${period}`}
               className="ml-2 rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"

@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { MonthNav } from "@/components/ui/month-nav";
+import { ExportMenu } from "@/components/ui/export-menu";
 import { monthName } from "@/components/ui/month";
 import { money } from "@/lib/format";
 import { activitySub, collectionSub } from "@/lib/performance-labels";
@@ -67,11 +68,40 @@ export default async function Page({
   return (
     <div className="p-6">
       <PageHeader
-        title="My performance"
+        title={
+          <>
+            My performance
+            {/* "My" names nobody once it is a PDF on somebody else's phone. */}
+            <span className="hidden print:inline"> — {reading.userName}</span>
+          </>
+        }
         subtitle={`${monthName(period)} — ${reading.workingDaysElapsed} of ${reading.workingDaysTotal} working days gone`}
         actions={
-          <div className="flex items-center gap-1 text-[13px]">
+          <div className="flex items-center gap-2 text-[13px]">
             <MonthNav month={period} basePath="/crm/performance" paramName="period" />
+            <ExportMenu
+              name={`${reading.userName}, performance, ${monthName(period)}`}
+              csv={[
+                ["Component", "Actual", "Target", "Achieved (%)", "Points"],
+                ...reading.score.components.map((c) => {
+                  const unit =
+                    c.key === "revenue" || c.key === "collection"
+                      ? (v: number) => Math.round(v / 100)
+                      : c.key === "volume"
+                        ? (v: number) => Math.round(v / 1000)
+                        : (v: number) => v;
+                  return [
+                    COMPONENT_LABEL[c.key] ?? c.key,
+                    c.key === "mix" ? "" : unit(c.actual),
+                    c.key === "mix" ? "" : unit(c.target),
+                    c.achievementBp === null ? "" : Math.round(c.achievementBp / 100),
+                    (c.pointsBp / 100).toFixed(1),
+                  ];
+                }),
+                ["Total score", "", "", "", (reading.score.totalBp / 100).toFixed(1)],
+                ["Rating", reading.rating, "", "", ""],
+              ]}
+            />
           </div>
         }
       />
@@ -319,3 +349,11 @@ function litres(ml: number): string {
   return `${Math.round(ml / 1000).toLocaleString("en-IN")} L`;
 }
 
+const COMPONENT_LABEL: Record<string, string> = {
+  revenue: "Revenue excl. GST (Rs)",
+  volume: "Volume (L)",
+  mix: "Product mix",
+  newCustomers: "New customers",
+  collection: "Collection (Rs)",
+  activity: "Activity",
+};

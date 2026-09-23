@@ -21,6 +21,8 @@ import {
 } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader, Modal, RowMenu, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { ExportMenu } from "@/components/ui/export-menu";
+import { targetsCsv } from "@/lib/target-export";
 import { PersonPicker, type Person } from "@/components/crm/person-picker";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { money, moneyShort, periodLabel } from "@/lib/format";
@@ -116,7 +118,7 @@ export function TargetsScreen({
     <div className="px-6 pt-6 pb-10">
       <PageHeader
         title="Sales targets"
-        subtitle="Per person, per month — revenue, volume, new customers, collection and product mix. Nothing reaches anybody until it is published. The list is telecallers and field sales by default; add anybody else by hand."
+        subtitle={`${periodLabel(period)} — per person, per month: revenue, volume, new customers, collection and product mix. Nothing reaches anybody until it is published. The list is telecallers and field sales by default; add anybody else by hand.`}
         actions={
           <>
             <Select
@@ -130,6 +132,10 @@ export function TargetsScreen({
                 </option>
               ))}
             </Select>
+            <ExportMenu
+              name={`Sales targets, ${periodLabel(period)}`}
+              csv={() => targetsCsv(allRows, existingCustomerTargets)}
+            />
             {addable.length ? (
               <Button variant="secondary" onClick={() => setPicking(true)}>
                 + Add someone

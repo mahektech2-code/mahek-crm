@@ -439,3 +439,60 @@
   animation: nav-progress 6s var(--ease-swift) forwards;
   pointer-events: none;
 }
+
+/*
+ * PAPER. `ExportMenu`'s PDF is the browser printing the screen, so this is the
+ * whole of what makes a screen fit to send: landscape A4 with real margins,
+ * colours kept (a red shortfall that prints grey is a different document), the
+ * app's frame taken off in `AppFrame`, and every box that scrolls on screen
+ * opened out — paper cannot scroll, so anything clipped is simply missing.
+ * `--print-zoom` is measured from the widest table at the click.
+ */
+@page {
+  size: A4 landscape;
+  margin: 10mm;
+}
+
+@media print {
+  html {
+    zoom: var(--print-zoom, 1);
+  }
+
+  html,
+  body {
+    height: auto !important;
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  main,
+  main .overflow-auto,
+  main .overflow-x-auto,
+  main .overflow-y-auto,
+  main .overflow-hidden {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  main [class*="max-h-"] {
+    max-height: none !important;
+  }
+
+  thead th {
+    position: static !important;
+  }
+
+  tr,
+  img,
+  svg {
+    break-inside: avoid;
+  }
+
+  /* A row's own Change / Set / Open buttons are for the screen, not the reader. */
+  main td button[class*="border"],
+  .nav-progress,
+  [data-print="hide"] {
+    display: none !important;
+  }
+}
