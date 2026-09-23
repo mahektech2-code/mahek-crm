@@ -442,7 +442,17 @@ jobs:
             const del = named.filter(r => !keep.has(r.tag)).map(r => r.tag);
             console.error(`keeping: ${[...keep].join(", ")}`);
             if (!live) console.error("::warning::Could not read what production is running, so only the newest tags are protected.");
-            process.stdout.write(del.join("\n"));
+            /* A TRAILING NEWLINE, and it is not a tidiness. `del.join` alone
+               leaves the last tag unterminated, and the shell below reads
+               this file line by line: `read` returns non-zero at an
+               unterminated EOF, so the loop assigns that tag and then does
+               NOT run its body for it. The last tag was never deleted, on
+               every run this has ever had. With exactly one tag due — which
+               is the ordinary case, since one arrives per deploy and one
+               falls out of the keep window — that is nothing deleted at all,
+               reported as success. It is also what `wc -l` counts, so the
+               log said "Deleting 0 tag(s)" and nobody read it as a fault. */
+            process.stdout.write(del.length ? del.join("\n") + "\n" : "");
           ' > /tmp/delete.txt
 
           # NOTHING DELETED MEANS NOTHING TO COLLECT, so no collection is
@@ -455,7 +465,10 @@ jobs:
           fi
 
           echo "Deleting $(wc -l < /tmp/delete.txt) tag(s)."
-          while read -r tag; do
+          # The guard is belt and braces beside the trailing newline above:
+          # either alone fixes this, and a file that has lost its terminator
+          # some other way must not quietly drop a tag again.
+          while read -r tag || [ -n "${tag}" ]; do
             [ -z "${tag}" ] && continue
             doctl registry repository delete-tag app "${tag}" --force || true
           done < /tmp/delete.txt

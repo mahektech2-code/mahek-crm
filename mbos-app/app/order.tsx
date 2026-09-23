@@ -6,6 +6,7 @@ import { Card, Input, ListCard, PrimaryButton, SectionLabel, T } from '../src/co
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, shadow, tabular, type, weight } from '../src/theme/tokens';
 import { inr, inrFromPaise, plural } from '../src/lib/format';
+import { productLines } from '../src/lib/product-lines';
 import {
   billingChoicesFor,
   frequentProducts,
@@ -564,8 +565,18 @@ export default function OrderScreen() {
                       },
                       pressed && { opacity: 0.9 },
                     ]}>
-                    <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{k.name}</T>
-                    <T s="caption" style={{ marginTop: 2 }}>{k.formulation ?? k.brand ?? ''}</T>
+                    {/* THE FORMULATION LEADS — `src/lib/product-lines.ts`, the
+                        same rule the CRM's order form runs. The SKU moves down a
+                        line rather than off the card: two tiles can now headline
+                        one liquid and the pack is what tells them apart. The
+                        brand is the fallback where no formulation is filed, as
+                        before. */}
+                    <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
+                      {productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).lead}
+                    </T>
+                    <T s="caption" style={{ marginTop: 2 }}>
+                      {productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).detail ?? ''}
+                    </T>
                     <T style={[{ fontSize: 15, color: C.primaryDeep, marginTop: 10 }, weight(500)]}>+ Add</T>
                   </Pressable>
                 ))}
@@ -603,9 +614,18 @@ export default function OrderScreen() {
                       backgroundColor: on ? C.primaryTint : C.surface,
                     }}>
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <T style={{ fontSize: 15, color: C.ink }}>{k.name}</T>
+                      <T style={{ fontSize: 15, color: C.ink }}>
+                        {productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).lead}
+                      </T>
                       <T s="caption">
-                        {[k.formulation ?? k.brand, k.sellingPricePaise != null ? inrFromPaise(k.sellingPricePaise) + ' / can' : null]
+                        {[
+                          /* The SKU and its pack, which is what separates two
+                             rows headlining one liquid — so it is no longer the
+                             optional half of this line. The rate rides with it
+                             exactly as before. */
+                          productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).detail,
+                          k.sellingPricePaise != null ? inrFromPaise(k.sellingPricePaise) + ' / can' : null,
+                        ]
                           .filter(Boolean)
                           .join(' · ')}
                       </T>
@@ -703,10 +723,31 @@ export default function OrderScreen() {
                   <Card key={line.productId} padded={false} style={{ paddingHorizontal: 16, paddingVertical: 14 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(600)]}>{line.productName}</T>
-                        <T s="micro" style={{ marginTop: 2 }}>
-                          {priced?.schemeNote ?? known[line.productId]?.formulation ?? ''}
-                        </T>
+                        {/* THE CART LINE LEADS ON THE FORMULATION TOO, and the
+                            SKU is drawn rather than folded away: this is the
+                            list a salesman reads back at a counter before
+                            saving, and two lines of one order can now headline
+                            the same liquid. A SCHEME NOTE still wins the caption
+                            where there is one — it is a live statement about
+                            this line's price and outranks a restatement of what
+                            the line is. */}
+                        {(() => {
+                          const row = productLines({
+                            displayName: line.productName,
+                            subtitle: known[line.productId]?.formulation,
+                          });
+                          const caption = priced?.schemeNote ?? row.detail ?? '';
+                          return (
+                            <>
+                              <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(600)]}>
+                                {row.lead}
+                              </T>
+                              <T s="micro" style={{ marginTop: 2 }}>
+                                {caption}
+                              </T>
+                            </>
+                          );
+                        })()}
                       </View>
                       <Pressable
                         onPress={() => dropLine(line.productId)}

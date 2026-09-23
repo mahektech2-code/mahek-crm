@@ -26,6 +26,7 @@ import { currentSession } from '../src/data/session';
 import { PROSPECT_CONDITIONS, labelOf, stageLabel } from '../src/engines/funnel';
 import { pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { productLines } from '../src/lib/product-lines';
 
 /**
  * §5 §6 — the eight answers a Suspect owes, on ONE screen.
@@ -404,8 +405,12 @@ export default function ProspectForm() {
           {hits.map((p) => (
             <Choice
               key={p.id}
-              label={p.name}
-              sub={p.formulation ?? undefined}
+              /* The formulation leads and the SKU sits under it — the same
+                 rule the order form runs, in `src/lib/product-lines.ts`.
+                 What is PICKED is unchanged: the id and the product's own
+                 name, never the liquid's. */
+              label={productLines({ displayName: p.name, subtitle: p.formulation }).lead}
+              sub={productLines({ displayName: p.name, subtitle: p.formulation }).detail ?? undefined}
               selected={false}
               onPress={() => pickProduct({ id: p.id, name: p.name })}
               style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}

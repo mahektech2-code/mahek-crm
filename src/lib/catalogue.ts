@@ -152,3 +152,55 @@ export function lineValuePaise(
   // A customer price list is not built yet; until it is, nothing is claimed.
   return typedPaise;
 }
+
+/* ----------------------------------------------------------- what a row says */
+
+/**
+ * WHICH LINE LEADS ON A PRODUCT ROW, and it is the FORMULATION now.
+ *
+ * Mahek sets a mix target on a formulation — `sales_target_categories` carries
+ * `formulation_id`, nineteen liquids rather than the three categories above
+ * them — and asked for the screens to match, so a salesman reads the same word
+ * on the row he is adding to an order as on the target he is being judged
+ * against. It was the other way round: the SKU name led and the formulation was
+ * an 11px grey subtitle underneath it.
+ *
+ * WHAT IS *NOT* CHANGING IS WHAT IS ORDERED. Only a SKU can be put on an order
+ * line — that rule is the whole reason the catalogue has four levels — and two
+ * SKUs of one formulation differ only by their pack. So the SKU never leaves
+ * the row, it moves to the second line: `Nano` over `Nano Thinner - 20 Liter
+ * (Loose)`. Leading with the formulation ALONE would collapse two hundred
+ * orderable rows onto nineteen labels and make the list ambiguous exactly where
+ * a telecaller is on a call, which is the one place this app cannot afford it.
+ *
+ * It is also deliberately NOT `displayName`, which several callers PERSIST —
+ * `product-field.tsx` writes it into a form value, `customer-info-service.ts`
+ * prints it as the product's name. A composer that rewrote that field would
+ * quietly start storing a liquid's name where a product's name belongs. This
+ * returns the two lines to DRAW and touches neither the name nor the id.
+ *
+ * `detail` is null rather than empty in the two cases where a second line would
+ * say nothing: no formulation on the row at all — a pre-catalogue SKU, or one
+ * nobody has filed, which is most of an imported book — and a formulation whose
+ * name is already the whole of the product's. A row whose second line repeats
+ * its first reads as a rendering fault, and a BLANK headline over a real name is
+ * worse: the fallback is always that there is exactly one line and it is the one
+ * that identifies the thing.
+ */
+export function productLines(row: {
+  /** The SKU as it is named and packed — `displayName` from the product service. */
+  displayName: string;
+  /** The formulation. Null on a pre-catalogue row, and on an unmatched one. */
+  subtitle: string | null | undefined;
+}): { lead: string; detail: string | null } {
+  const sku = row.displayName.trim();
+  const formulation = (row.subtitle ?? "").trim();
+
+  if (!formulation) return { lead: sku, detail: null };
+  /* Case-insensitively, because "nano" filed against "Nano Thinner" is the
+     same restatement as "Nano" is, and neither is worth a second line. */
+  if (!sku || sku.toLowerCase() === formulation.toLowerCase()) {
+    return { lead: formulation, detail: null };
+  }
+  return { lead: formulation, detail: sku };
+}

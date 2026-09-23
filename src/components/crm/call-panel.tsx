@@ -33,7 +33,7 @@ import {
   shortDate,
   today,
 } from "@/lib/format";
-import { describeQuantity } from "@/lib/catalogue";
+import { describeQuantity, productLines } from "@/lib/catalogue";
 import {
   discountAuthority as discountAuthorityOf,
   priceLine,
@@ -978,6 +978,19 @@ function CallPanelForm({
     : products.filter((p) => frequentProductIds.includes(p.id));
   const productLabel = (p: ProductOption) =>
     p.packSize ? `${p.name} - ${p.packSize}` : p.name;
+  /*
+   * THE FORMULATION LEADS AND THE SKU SITS UNDER IT — `lib/catalogue.ts` holds
+   * the rule and says why. Composed here once rather than at the three list
+   * sites below, which is where the old arrangement drifted: the frequent tile
+   * printed the subtitle in one place, the search row printed it with the match
+   * reason appended, and the order line did not print it at all.
+   *
+   * `productLabel` stays exactly as it was and is still what the remove dialog
+   * names, because that sentence has to identify the LINE — "Take Nano off this
+   * order" is ambiguous on a customer who buys two packs of it.
+   */
+  const productRow = (p: ProductOption) =>
+    productLines({ displayName: productLabel(p), subtitle: p.subtitle });
 
   /**
    * Every product this panel has laid eyes on: the starter list, what this
@@ -2724,9 +2737,9 @@ function CallPanelForm({
                                       <span className="flex items-start gap-1.5">
                                         <span
                                           className="block min-w-0 flex-1 truncate text-sm font-medium text-ink"
-                                          title={p.name}
+                                          title={productLabel(p)}
                                         >
-                                          {productLabel(p)}
+                                          {productRow(p).lead}
                                         </span>
                                         {touched ? (
                                           <button
@@ -2740,8 +2753,11 @@ function CallPanelForm({
                                         ) : null}
                                       </span>
                                       <span className="mt-2 flex items-center justify-between gap-2">
-                                        <span className="min-w-0 truncate text-xs text-muted">
-                                          {p.subtitle ?? ""}
+                                        <span
+                                          className="min-w-0 truncate text-xs text-muted"
+                                          title={productLabel(p)}
+                                        >
+                                          {productRow(p).detail ?? ""}
                                         </span>
                                         <input
                                           type="number"
@@ -2821,12 +2837,21 @@ function CallPanelForm({
                                   >
                                     <span className="min-w-0 flex-1">
                                       <span className="block truncate text-sm text-ink">
-                                        {productLabel(p)}
+                                        {productRow(p).lead}
                                       </span>
-                                      {p.subtitle || p.matchedOn ? (
-                                        <span className="block truncate text-[11px] text-muted">
-                                          {p.subtitle}
-                                          {p.subtitle && p.matchedOn ? " · " : ""}
+                                      {/* The SKU and the pack, which is what
+                                          separates two rows now headlining one
+                                          liquid — so this line is no longer
+                                          optional where a formulation is filed.
+                                          The match reason rides with it exactly
+                                          as before. */}
+                                      {productRow(p).detail || p.matchedOn ? (
+                                        <span
+                                          className="block truncate text-[11px] text-muted"
+                                          title={productLabel(p)}
+                                        >
+                                          {productRow(p).detail}
+                                          {productRow(p).detail && p.matchedOn ? " · " : ""}
                                           {p.matchedOn ? `matched ${p.matchedOn}` : ""}
                                         </span>
                                       ) : null}
@@ -2890,8 +2915,25 @@ function CallPanelForm({
                                 >
                                   <span className="min-w-0 flex-1">
                                     <span className="block truncate text-sm font-medium text-ink">
-                                      {productLabel(l.product)}
+                                      {productRow(l.product).lead}
                                     </span>
+                                    {/* THE SKU IS DRAWN ON A LINE OF ITS OWN
+                                        HERE, not folded into the quantity line
+                                        beneath it. This is the list a telecaller
+                                        reads back to a customer before saving,
+                                        and with the formulation leading, two
+                                        lines of an order can now headline the
+                                        same word — so which pack each one is has
+                                        to be its own statement rather than a
+                                        fragment sharing a row with "6 cans". */}
+                                    {productRow(l.product).detail ? (
+                                      <span
+                                        className="block truncate text-[11px] text-muted"
+                                        title={productLabel(l.product)}
+                                      >
+                                        {productRow(l.product).detail}
+                                      </span>
+                                    ) : null}
                                     {l.raw.trim() !== "" && l.qty > 0 ? (
                                       <span className="block truncate text-[11px] text-muted">
                                         {describeQuantity(l.qty, {
