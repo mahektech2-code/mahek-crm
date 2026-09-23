@@ -5048,6 +5048,24 @@ destroys a morning to win a race by thirty seconds. `no-session-yet` is the one
 answer that means hold on to them, and the handset drops them itself after a
 week, because a queue that only ever grows is the other way to lose a day.
 
+**EVERY PERMISSION IS ASKED IN ONE WALKTHROUGH, straight after sign-in.**
+Android grants nothing at install, and the app used to ask in five places —
+location on home, notifications at boot, the camera at the first selfie, the
+microphone at the first dictation, battery and autostart only on the
+start-of-day gate — so "which settings do I need" was answered by whichever
+the app tripped over first. `/setup` is the one list, in the only order that
+works: the four popups back to back, location switched on, "Allow all the
+time" (after the foreground permission, or Android refuses it outright; on
+Android 11+ it is a Settings page, not a popup, and the app opens that page),
+the battery popup, and the manufacturer's autostart screen with that
+manufacturer's words. `engines/setup-walkthrough.ts` is the rule and it opens
+**once per build** where anything is outstanding — a fresh install, and an
+update that left something missing — never on every open. It gates nothing:
+"Do this later" is always there, and `/phone-setup` keeps the job of refusing
+a day. Autostart is confirmed by the salesman because no API can read it, and
+the mark lives in the handset's own store, which a reinstall wipes exactly
+when the switch resets.
+
 **"NO FIX TODAY" WAS FOUR DIFFERENT PROBLEMS WEARING ONE SENTENCE.** The
 background permission set to "while using the app", location switched off on
 the phone itself, no signal since breakfast, and a flat battery — four causes,
