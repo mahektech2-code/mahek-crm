@@ -338,6 +338,141 @@ export async function setFormulationNotes(
   }
 }
 
+/**
+ * WHETHER A MIX TARGET MAY BE AIMED AT THIS LIQUID.
+ *
+ * Not the same act as retiring it, and the console draws the two separately for
+ * that reason. `active` decides whether its SKUs are offered on an order at all;
+ * this decides whether a manager setting next month's mix sees it in the list he
+ * picks three bands from. On this book most of the nineteen formulations are real
+ * and are not things to aim a month at, so without this the list was nineteen
+ * alphabetical rows with nothing marking the three that matter.
+ *
+ * IT CHANGES NO TARGET THAT EXISTS. A band already set on a liquid is read by id
+ * and never asks this question — the same discipline `active` keeps — because a
+ * target somebody typed is a decision, and withdrawing a liquid from the offer
+ * list in the middle of a month must not silently drop a share out of somebody's
+ * score. The message says so, because "removed from mix targets" is a sentence a
+ * manager would otherwise read as exactly that.
+ *
+ * The residual is refused, the same shape as retiring it is refused and for the
+ * same reason: value from a product naming no formulation has to land somewhere
+ * or the shares stop adding up. A CHECK constraint says it too — this is the half
+ * that can explain itself.
+ */
+export async function setFormulationOfferedForMix(
+  rowId: string,
+  offered: boolean,
+): Promise<Result<undefined>> {
+  try {
+    const user = await actor();
+    const [before] = await db
+      .select()
+      .from(productFormulations)
+      .where(eq(productFormulations.id, rowId));
+    if (!before) return fail("No such formulation.", "not_found");
+    if (!offered && before.isResidual) {
+      return fail(
+        "Other is where value from an unclassified product lands — take it off the list and the shares stop adding up.",
+        "rule_violation",
+      );
+    }
+
+    await db
+      .update(productFormulations)
+      .set({ offerForMix: offered, updatedAt: new Date() })
+      .where(eq(productFormulations.id, rowId));
+    await audit(
+      user.id,
+      "catalogue.formulationOfferedForMix",
+      rowId,
+      { offerForMix: before.offerForMix },
+      { offerForMix: offered },
+    );
+    refresh();
+    return ok(
+      undefined,
+      offered
+        ? `${before.name} can be given a mix target again.`
+        : `${before.name} is off the mix target list. Targets already set on it are untouched and go on scoring.`,
+    );
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "That did not save.");
+  }
+}
+
+/**
+ * Move a formulation up or down the offer list.
+ *
+ * `display_order` has been on that table since it was created and was read by
+ * NOTHING — the one list that needed it ordered by name — so an admin who put the
+ * three liquids that matter at the top watched them stay in the alphabet.
+ *
+ * It SWAPS with its neighbour rather than renumbering the table, so the write is
+ * two rows whatever the list is worth, and it works on a book where every row
+ * still reads 0: the neighbour is chosen by the SAME ordering the offer list
+ * reads — `display_order` then name — so the first move of an untouched list
+ * swaps two alphabetical neighbours, which is exactly what pressing up on the
+ * second row means. Renumbering from scratch would be one statement per row and a
+ * different answer depending on which ties the planner broke.
+ */
+export async function moveFormulation(
+  rowId: string,
+  direction: "up" | "down",
+): Promise<Result<undefined>> {
+  try {
+    const user = await actor();
+    /* The list as the offer screen orders it, so "the one above" means the row
+       the admin can actually see above it. Residual first in that sort is
+       deliberate there and irrelevant here — it is pinned by its own flag. */
+    const all = await db
+      .select({
+        id: productFormulations.id,
+        name: productFormulations.name,
+        order: productFormulations.displayOrder,
+      })
+      .from(productFormulations)
+      .orderBy(asc(productFormulations.displayOrder), asc(productFormulations.name));
+
+    const at = all.findIndex((r) => r.id === rowId);
+    if (at === -1) return fail("No such formulation.", "not_found");
+    const swapWith = all[direction === "up" ? at - 1 : at + 1];
+    /* Already at the end. Not a failure — the button is simply drawn on a row
+       that cannot move, and refusing loudly would read as a fault. */
+    if (!swapWith) return ok(undefined, `${all[at].name} is already at the ${direction === "up" ? "top" : "bottom"}.`);
+
+    /*
+     * EQUAL ORDERS ARE THE ORDINARY CASE, not the edge one: every row defaults
+     * to 0, so on an untouched book both numbers are the same and swapping them
+     * would change nothing at all while reporting success. The pair is written as
+     * two distinct numbers around the position, which is what actually separates
+     * them, and the rest of the list keeps whatever it had.
+     */
+    const mine = all[at].order;
+    const theirs = swapWith.order;
+    const [lower, upper] = mine === theirs ? [theirs - 1, theirs] : [theirs, mine];
+    const moved = direction === "up" ? lower : upper;
+    const displaced = direction === "up" ? upper : lower;
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(productFormulations)
+        .set({ displayOrder: moved, updatedAt: new Date() })
+        .where(eq(productFormulations.id, rowId));
+      await tx
+        .update(productFormulations)
+        .set({ displayOrder: displaced, updatedAt: new Date() })
+        .where(eq(productFormulations.id, swapWith.id));
+    });
+
+    await audit(user.id, "catalogue.formulationMoved", rowId, { displayOrder: mine }, { displayOrder: moved });
+    refresh();
+    return ok(undefined, `${all[at].name} moved ${direction}.`);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "That did not save.");
+  }
+}
+
 /* ------------------------------------------------------------- categories */
 
 /**

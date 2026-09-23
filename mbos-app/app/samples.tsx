@@ -23,6 +23,7 @@ import { getCustomer, listCustomersPage, searchProducts, type Customer } from '.
 import { isoDate, plural } from '../src/lib/format';
 import { type CodedOption } from '../src/engines/funnel';
 import { useStore } from '../src/state/store';
+import { productLines } from '../src/lib/product-lines';
 
 /**
  * Samples given out and never followed up are the quietest way a sales day
@@ -517,8 +518,12 @@ function RequestSheet({
               {hits.map((p) => (
                 <Choice
                   key={p.id}
-                  label={p.name}
-                  sub={p.formulation ?? undefined}
+                  /* The formulation leads and the SKU sits under it — the same
+                     rule the order form runs, in `src/lib/product-lines.ts`.
+                     What is PICKED is unchanged: the id and the product's own
+                     name, never the liquid's. */
+                  label={productLines({ displayName: p.name, subtitle: p.formulation }).lead}
+                  sub={productLines({ displayName: p.name, subtitle: p.formulation }).detail ?? undefined}
                   selected={false}
                   onPress={() => { setProduct({ id: p.id, name: p.name }); setQuery(''); }}
                   style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}

@@ -1121,6 +1121,13 @@
       "when": 1789936589226,
       "tag": "0160_a_price_list_is_the_whole_company_s",
       "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "7",
+      "when": 1789936649226,
+      "tag": "0161_a_mix_target_is_aimed_at_a_shortlist",
+      "breakpoints": true
     }
   ]
 }
