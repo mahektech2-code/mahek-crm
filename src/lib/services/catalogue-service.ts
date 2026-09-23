@@ -129,6 +129,10 @@ export async function listHierarchy() {
         id: productFormulations.id,
         name: productFormulations.name,
         active: productFormulations.active,
+        /* Whether a mix target may be aimed at it — a different question from
+           `active`, and the one the console has to be able to answer. */
+        offerForMix: productFormulations.offerForMix,
+        isResidual: productFormulations.isResidual,
         notes: productFormulations.notes,
         brands: sql<number>`(select count(*)::int from product_brands b where b.formulation_id = ${productFormulations.id})`,
         skus: sql<number>`(select count(*)::int from products p where p.formulation_id = ${productFormulations.id})`,

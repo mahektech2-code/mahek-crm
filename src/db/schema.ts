@@ -2609,6 +2609,36 @@ export const productFormulations = pgTable(
      */
     isResidual: boolean("is_residual").notNull().default(false),
     active: boolean("active").notNull().default(true),
+    /**
+     * MAY A MIX TARGET BE AIMED AT THIS LIQUID — which is not `active`.
+     *
+     * `active` answers whether the liquid is in the catalogue: retire it and its
+     * SKUs stop being offered on orders. This answers the other question, and the
+     * two are routinely different — a liquid can be very much on sale and still be
+     * nothing to aim a salesman's month at. `mixCategories()` offered every active
+     * one, so on this book a manager picked three bands out of nineteen
+     * alphabetical rows every month with nothing marking the three that matter.
+     *
+     * TRUE by default, so nothing moved on the day it landed, and no stored band is
+     * read through it: the bands on a target are read by id and never ask, because a
+     * target somebody typed is a decision and taking a liquid off the offer list
+     * mid-month must not silently drop a share out of a score. That is the
+     * discipline `active` already keeps one line up.
+     *
+     * The residual may never be withheld — value from a product naming no
+     * formulation has to land somewhere or the shares stop adding up — and that is a
+     * CHECK constraint as well as a guard in the action, because a constraint is the
+     * half that survives somebody writing SQL by hand.
+     */
+    offerForMix: boolean("offer_for_mix").notNull().default(true),
+    /**
+     * Where it sits in the offer list, smallest first.
+     *
+     * It has been on this table since it was created and was read by NOTHING:
+     * `mixCategories()` ordered by name, so the column was a promise the one list
+     * that needed it never kept. It is read now, which is what makes the three
+     * liquids a manager actually aims at reachable without hunting an alphabet.
+     */
     displayOrder: integer("display_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2619,6 +2649,9 @@ export const productFormulations = pgTable(
     uniqueIndex("product_formulations_residual_key")
       .on(t.isResidual)
       .where(sql`is_residual`),
+    /* The residual is where unclassified value lands, so it can no more be taken
+       off the offer list than it can be retired. See `offerForMix`. */
+    check("product_formulations_residual_offered", sql`not is_residual or offer_for_mix`),
   ],
 );
 

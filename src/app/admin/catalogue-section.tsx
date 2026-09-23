@@ -26,8 +26,10 @@ import {
   moveCategory,
   nameHeldRow,
   removeAlias,
+  moveFormulation,
   renameLevel,
   runCatalogueImport,
+  setFormulationOfferedForMix,
   setLevelActive,
   setSkuActive,
   updateSku,
@@ -753,6 +755,13 @@ function BrandsTab({
                 <Th className={pinnedHead("left")}>Formulation</Th>
                 <Th align="right">Brand lines</Th>
                 <Th align="right">SKUs</Th>
+                {/* A MIX TARGET IS AIMED AT A SHORTLIST, and this is where the
+                    shortlist is chosen. Its own column rather than folded into
+                    the Retire button beside it, because they are two different
+                    acts: retiring takes a liquid's SKUs off every order form,
+                    and this only decides what a manager sees when he sets next
+                    month's mix. */}
+                <Th>In mix targets</Th>
                 <Th className={pinnedHead("right")} align="right">
                   {""}
                 </Th>
@@ -773,6 +782,21 @@ function BrandsTab({
                     <>
                       <Td align="right">{f.brands}</Td>
                       <Td align="right">{f.skus}</Td>
+                      <Td>
+                        <MixOffer
+                          id={f.id}
+                          name={f.name}
+                          offered={f.offerForMix}
+                          isResidual={f.isResidual}
+                          /* The list is already in the order the offer list
+                             reads, so first and last are the two rows with
+                             nowhere to go. */
+                          first={i === 0}
+                          last={i === data.hierarchy.formulations.length - 1}
+                          canWrite={canWrite}
+                          refresh={refresh}
+                        />
+                      </Td>
                     </>
                   }
                 />
@@ -782,6 +806,91 @@ function BrandsTab({
         </div>
       </Card>
     </>
+  );
+}
+
+/**
+ * WHETHER A MIX TARGET MAY BE AIMED AT THIS LIQUID, and where it sits in the
+ * list.
+ *
+ * Two controls in one cell because they answer one question — what a manager sees
+ * when he sets next month's mix — and neither is the same act as Retire, which
+ * takes the liquid's SKUs off every order form in the building.
+ *
+ * WHAT IT SAYS WHEN IT TAKES ONE OFF is the load-bearing part: "targets already
+ * set on it are untouched". Without that sentence an admin reads this as
+ * withdrawing a target somebody is being judged against this month, which it
+ * deliberately is not.
+ *
+ * The residual cannot be withheld — value from a product naming no formulation
+ * has to land somewhere or the shares stop adding up — and it says so on the row
+ * rather than offering a control that refuses.
+ */
+function MixOffer({
+  id,
+  name,
+  offered,
+  isResidual,
+  first,
+  last,
+  canWrite,
+  refresh,
+}: {
+  id: string;
+  name: string;
+  offered: boolean;
+  isResidual: boolean;
+  first: boolean;
+  last: boolean;
+  canWrite: boolean;
+  refresh: () => void;
+}) {
+  const { busy, run } = useAction(refresh);
+  const why = canWrite ? undefined : "Configuration is changed by a manager.";
+
+  if (isResidual) {
+    return (
+      <span className="text-[12px] text-muted" title={`${name} catches every product nobody has classified.`}>
+        Always — catches the rest
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex items-center gap-1">
+      <Button
+        variant="ghost"
+        disabled={!canWrite || busy}
+        title={why}
+        onClick={() => void run(() => setFormulationOfferedForMix(id, !offered))}
+      >
+        {offered ? "Offered" : "Not offered"}
+      </Button>
+      {/* Only where it IS offered: moving a row nobody can pick reorders a list
+          it does not appear in. */}
+      {offered ? (
+        <>
+          <Button
+            variant="ghost"
+            disabled={!canWrite || busy || first}
+            title={first ? "Already at the top." : why}
+            onClick={() => void run(() => moveFormulation(id, "up"))}
+            aria-label={`Move ${name} up the mix target list`}
+          >
+            ↑
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={!canWrite || busy || last}
+            title={last ? "Already at the bottom." : why}
+            onClick={() => void run(() => moveFormulation(id, "down"))}
+            aria-label={`Move ${name} down the mix target list`}
+          >
+            ↓
+          </Button>
+        </>
+      ) : null}
+    </span>
   );
 }
 
