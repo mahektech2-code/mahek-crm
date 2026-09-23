@@ -9,6 +9,7 @@ import {
   lineValuePaise,
   litresFor,
   matchKey,
+  productLines,
   weightFor,
 } from "./catalogue";
 import { FINISHED_GOODS, SKUS, BRANDS, FORMULATIONS } from "@/db/catalogue-seed";
@@ -157,6 +158,71 @@ describe("the product master itself", () => {
   test("no SKU carries a price, because the document has none", () => {
     for (const s of SKUS) {
       assert.ok(!("sellingPricePaise" in s), `${s.name} claims a price the source never gave`);
+    }
+  });
+});
+
+describe("which line leads on a product row", () => {
+  /*
+   * THE FORMULATION LEADS, because that is the level a mix target is set on and
+   * a salesman should read the same word on both screens.
+   */
+  test("puts the formulation first and the SKU underneath", () => {
+    assert.deepEqual(
+      productLines({ displayName: "Nano Thinner - 20 Liter (Loose)", subtitle: "Nano" }),
+      { lead: "Nano", detail: "Nano Thinner - 20 Liter (Loose)" },
+    );
+  });
+
+  /*
+   * AND THE SKU NEVER LEAVES THE ROW. Two SKUs of one formulation differ only
+   * by their pack, so a row carrying the formulation alone would be ambiguous
+   * on the one screen — a telecaller mid-call — that cannot afford it. This is
+   * the assertion that would fail if somebody later "tidied" the second line
+   * away.
+   */
+  test("keeps two SKUs of one formulation apart", () => {
+    const a = productLines({ displayName: "Nano Thinner - 20 Liter (Loose)", subtitle: "Nano" });
+    const b = productLines({ displayName: "Nano Thinner - 20 Liter (6 Can/Box)", subtitle: "Nano" });
+    assert.equal(a.lead, b.lead);
+    assert.notEqual(a.detail, b.detail, "the pack is what separates them");
+  });
+
+  /*
+   * NO FORMULATION IS MOST OF AN IMPORTED BOOK — a pre-catalogue SKU, or one
+   * nobody has filed. The headline falls back to the name rather than being
+   * blank, because a row whose first line is empty over a real second line is
+   * unreadable.
+   */
+  test("falls back to the name where no formulation is filed", () => {
+    for (const subtitle of [null, undefined, "", "   "]) {
+      assert.deepEqual(productLines({ displayName: "Some Old Thinner - 5 L", subtitle }), {
+        lead: "Some Old Thinner - 5 L",
+        detail: null,
+      });
+    }
+  });
+
+  /* A second line that repeats the first reads as a rendering fault. */
+  test("says it once where the two are the same words", () => {
+    assert.deepEqual(productLines({ displayName: "Nano", subtitle: "Nano" }), {
+      lead: "Nano",
+      detail: null,
+    });
+    assert.deepEqual(productLines({ displayName: "nano", subtitle: "Nano" }), {
+      lead: "Nano",
+      detail: null,
+    });
+  });
+
+  /* Never a blank headline, whatever arrives. */
+  test("never returns an empty lead", () => {
+    for (const row of [
+      { displayName: "", subtitle: "Nano" },
+      { displayName: "   ", subtitle: "Nano" },
+      { displayName: "Nano Thinner", subtitle: null },
+    ]) {
+      assert.ok(productLines(row).lead.length > 0, JSON.stringify(row));
     }
   });
 });

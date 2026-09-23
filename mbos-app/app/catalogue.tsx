@@ -7,6 +7,7 @@ import { color as C, type, weight } from '../src/theme/tokens';
 import { inrFromPaise, plural } from '../src/lib/format';
 import { searchProducts } from '../src/data/customers';
 import { useStore } from '../src/state/store';
+import { productLines } from '../src/lib/product-lines';
 
 type Row = Awaited<ReturnType<typeof searchProducts>>[number];
 
@@ -109,13 +110,20 @@ export default function CatalogueScreen() {
         paddingVertical: 14,
       }}>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{x.name}</T>
-        {/* Depot stock is not in the payload, so the row carries the
-            formulation instead of a confident "In stock" nothing has
-            checked — one liquid sells under three names, and this is
-            what separates two SKUs read out mid-conversation. */}
+        {/* THE FORMULATION LEADS, the same rule as the order form's rows —
+            `src/lib/product-lines.ts`. Depot stock is still not in the payload,
+            so what the second line carries is the SKU and its packing rather
+            than a confident "In stock" nothing has checked; with the liquid
+            headlining, that SKU is also the only thing separating two rows read
+            out mid-conversation, so it is drawn rather than optional. */}
+        <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
+          {productLines({ displayName: x.name, subtitle: x.formulation ?? x.brand }).lead}
+        </T>
         <T style={{ fontSize: 13, color: C.muted }}>
-          {[x.formulation ?? x.brand, x.cansPerBox ? x.cansPerBox + ' per box' : null]
+          {[
+            productLines({ displayName: x.name, subtitle: x.formulation ?? x.brand }).detail,
+            x.cansPerBox ? x.cansPerBox + ' per box' : null,
+          ]
             .filter(Boolean)
             .join(' · ')}
         </T>
