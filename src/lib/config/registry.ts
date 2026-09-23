@@ -1865,6 +1865,17 @@ export const SETTINGS = [
     max: 1440,
   },
   {
+    key: "mbos.location.trackingSetupRemindDays",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often a salesman is reminded to set his phone up for tracking",
+    description:
+      "Days. The two OEM switches that decide whether a route is recorded at all — autostart and the battery manager — cannot be set by this app and cannot even be read: no Android has an API for the first, on anybody's phone. So the only thing available is putting the screen that walks somebody through them in front of him, and until now nothing did: the rule for when to offer it was written, tested, and never called, so the sole way to reach that screen was a card on the Sync screen, which people open when they think their WORK is stuck rather than when their location has gone quiet. This is the gap between offers to a handset that has been asked and has not acted on it. Two things override it outright and neither is governed by this number: a handset that has never been asked is asked immediately, and a handset the watchdog has just caught with the tracker silenced is asked whatever it says, because that is evidence the switches are not holding and it is the one moment the steps are worth reading again. Lower it and a salesman who has decided not to bother is nagged; raise it and a phone that quietly lost the setting in an OS update goes a season without being asked. It does not gate the start-of-day screen, which is its own rule.",
+    default: 14,
+    min: 1,
+    max: 365,
+  },
+  {
     key: "mbos.location.serviceWatchdogMinutes",
     type: "integer",
     category: "mbos-location",

@@ -25,6 +25,7 @@ import {
   calls,
   complaints,
   complaintStatusHistory,
+  customerDistributors,
   customers,
   followUpAttempts,
   followUpStates,
@@ -168,6 +169,7 @@ import {
   revertThirdParty,
   updateDistributor,
 } from "@/lib/actions/third-party";
+import { captureLead } from "@/lib/actions/lead-intake";
 import {
   deliveryAddressesFor,
   distributorCandidates,
@@ -10669,5 +10671,93 @@ describe("An order has a billing party and a delivery party", () => {
     });
     const [row] = await db.select().from(orders).where(eq(orders.customerId, customer.id));
     assert.equal(row.deliveryCustomerId, null);
+  });
+});
+
+describe("screen 5 — raising a lead, its \"Under\" and its priority", () => {
+  const base = () => ({
+    name: `Shop ${randomUUID().slice(0, 6)}`,
+    phone: String(9100000000 + Math.floor(Math.random() * 99999999)),
+    city: "Nagpur",
+    source: "telecalling",
+  });
+
+  test("a third-party lead names who bills it, in the same write", async () => {
+    const distributor = await makeCustomer(priya.id, { name: "Under Alpha", kind: "customer" });
+    setTestUser(priya);
+    const r = await captureLead({
+      ...base(),
+      salesType: "third_party",
+      distributorCustomerId: distributor.id,
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    if (!r.ok) return;
+
+    const links = await db
+      .select()
+      .from(customerDistributors)
+      .where(eq(customerDistributors.customerId, r.data.customerId));
+    assert.equal(links.length, 1);
+    assert.equal(links[0].distributorCustomerId, distributor.id);
+    assert.equal(links[0].isPrimary, true);
+    // Only conversion writes the mark; naming a distributor at capture does not.
+    const [row] = await db
+      .select({ thirdParty: customers.thirdParty })
+      .from(customers)
+      .where(eq(customers.id, r.data.customerId));
+    assert.equal(row.thirdParty, false);
+  });
+
+  test("Under is ignored off the third-party ladder, and refused when it cannot bill", async () => {
+    const distributor = await makeCustomer(priya.id, { name: "Under Beta", kind: "customer" });
+    setTestUser(priya);
+    const direct = await captureLead({
+      ...base(),
+      salesType: "direct",
+      distributorCustomerId: distributor.id,
+    });
+    assert.equal(direct.ok, true, direct.ok ? "" : direct.error);
+    if (direct.ok) {
+      const links = await db
+        .select()
+        .from(customerDistributors)
+        .where(eq(customerDistributors.customerId, direct.data.customerId));
+      assert.equal(links.length, 0, "a direct lead was given a distributor");
+    }
+
+    const lead = await makeCustomer(priya.id, { kind: "lead" });
+    const refused = await captureLead({
+      ...base(),
+      salesType: "third_party",
+      distributorCustomerId: lead.id,
+    });
+    assert.equal(refused.ok, false, "a lead was named as who bills a shop");
+
+    const gone = await makeCustomer(priya.id, { kind: "customer", status: "deactivated" });
+    const refusedToo = await captureLead({
+      ...base(),
+      salesType: "third_party",
+      distributorCustomerId: gone.id,
+    });
+    assert.equal(refusedToo.ok, false, "a deactivated account was named as who bills a shop");
+  });
+
+  test("priority is a manager's word, at capture as on the record", async () => {
+    setTestUser(priya);
+    const asTelecaller = await captureLead({ ...base(), priority: "high" });
+    assert.equal(asTelecaller.ok, false, "a telecaller set a lead's priority");
+
+    const unprioritised = await captureLead({ ...base() });
+    assert.equal(unprioritised.ok, true, unprioritised.ok ? "" : unprioritised.error);
+
+    setTestUser(manager);
+    const asManager = await captureLead({ ...base(), priority: "high" });
+    assert.equal(asManager.ok, true, asManager.ok ? "" : asManager.error);
+    if (!asManager.ok) return;
+    const [row] = await db
+      .select({ leadPriority: customers.leadPriority })
+      .from(customers)
+      .where(eq(customers.id, asManager.data.customerId));
+    assert.equal(row.leadPriority, "high");
   });
 });

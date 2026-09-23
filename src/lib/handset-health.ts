@@ -313,6 +313,52 @@ export function trailIsDead(
 }
 
 /**
+ * THE TRAIL RAN AND THEN STOPPED, which is the half `trailIsDead` cannot see.
+ *
+ * That function answers false the moment `trailSeenAt` is non-null, and it
+ * says so in its own signature — it was written for a handset that produced
+ * NOTHING all day. A trail that ran all morning and stopped at four in the
+ * afternoon is not that handset: it has a `trailSeenAt`, it has a pin, it has
+ * a place, and the team list prints "Last seen 16:12" beside a green dot. So
+ * the commonest shape of a lost route had no sentence anywhere on this panel,
+ * and the one line that did fire was the silence note underneath — which
+ * measures an interval and names nothing, and which does not fire at all on
+ * the case this exists for.
+ *
+ * THAT CASE IS A PHONE WE ARE HEARING FROM PERFECTLY. A handset flushing a
+ * backlog posts batches every few minutes, and each one moves
+ * `mbos_devices.last_seen_at` — so the office reads a handset in constant
+ * contact while every position in those batches is hours old, because the
+ * uploader stopped at four and the queue is only now catching up. Both
+ * readings are true and they are about different things: one is when the
+ * phone last spoke, the other is when it last knew where it was. A manager
+ * with no line telling him which is which concludes the map is broken, and
+ * that is what was reported.
+ *
+ * IT IS THE SAME THRESHOLD AS A DEAD TRAIL, deliberately. "How long may a
+ * working handset produce no position before this panel says so" is one
+ * question, and `noTrailMinutes` is the office's one answer to it; whether
+ * the count before the silence was zero or four hundred does not change how
+ * long the silence may run. A second setting would be a second answer to one
+ * question, invisible on the screen that sets the first.
+ *
+ * The two are mutually exclusive by the null check, so one fact still gets
+ * one sentence and the banners cannot count one handset twice.
+ */
+export function trailHasStopped(
+  f: Pick<HandsetFacts, "dayOpen" | "trailSeenAt">,
+  t: Pick<HandsetThresholds, "noTrailMinutes">,
+  nowMs: number,
+): boolean {
+  if (!f.dayOpen) return false;
+  const last = ms(f.trailSeenAt);
+  /* Nothing at all is `trailIsDead`'s to say, and saying it twice would put
+     two sentences on one row about one absence. */
+  if (last === null) return false;
+  return nowMs - last > t.noTrailMinutes * 60_000;
+}
+
+/**
  * THE HANDSET'S OWN WATCHDOG SAYS ITS TRACKER IS STOPPED.
  *
  * Its own function for the same reason `trailIsDead` and `trailHasGaps` have
@@ -680,6 +726,42 @@ export function handsetNotes(
           "The check-in reached MahekOne and not one position has since, so this is the tracking service on his phone rather than a handset we cannot hear from — the silence line, if there is one below, is measuring an interval and not naming this. The usual cause is the phone killing the service after it started perfectly well: ask him to allow MahekOne to autostart and to set its battery usage to unrestricted, in the phone's own battery settings, then check out and back in. Only if this row also says something about Location is the permission worth changing.",
       });
     }
+  }
+
+  /*
+   * IT RAN AND IT STOPPED — see `trailHasStopped`, whose note this is.
+   *
+   * It sits here because it is the other half of the block above it: that one
+   * is a day that produced nothing, this one is a day that stopped producing,
+   * and they cannot both fire. It sits ABOVE the silence line for the reason
+   * that line's own comment gives — a duration belongs under something that
+   * names the fault, and until this existed there was nothing for it to sit
+   * under on the commonest shape of a lost route.
+   *
+   * WHETHER THE WORK IS LOST OR MERELY LATE IS THE WHOLE OF WHAT IT SAYS, and
+   * the phone is what answers it. A handset reporting fixes still queued is a
+   * handset whose route is safe and travelling: the positions exist, they are
+   * on the phone, and they arrive when it gets a connection — drawn as a
+   * fault, that is a manager ringing a salesman who is doing nothing wrong,
+   * which is how a panel teaches people to ignore it. A handset reporting
+   * nothing queued and no recent position is the opposite reading: the route
+   * is not waiting anywhere we can see, and those kilometres are gone.
+   *
+   * Null queued is NOT read as zero, here as everywhere else on this row: a
+   * build too old to report its queue has told us nothing about it, and the
+   * honest answer to an unknown is the one that does not claim the work is
+   * lost. It takes the softer sentence.
+   */
+  const stoppedAt = ms(f.trailSeenAt);
+  if (stoppedAt !== null && trailHasStopped(f, t, nowMs)) {
+    const holding = f.queuedPositions === null || f.queuedPositions > 0;
+    notes.push({
+      tone: holding ? "warn" : "bad",
+      text: `Route stopped reaching us ${ageWords(stoppedAt, nowMs)} ago`,
+      detail: holding
+        ? "His trail ran and then stopped arriving. The phone says it is still holding fixes, so this is the sending rather than the recording — the work is on the handset and comes up as soon as it has a connection, and the map is behind rather than wrong. Nothing to do unless it stays behind all day, and note that the phone can be in constant contact with us while this is true: a batch arriving now can be carrying readings from hours ago."
+        : "His trail ran and then stopped arriving, and the phone is not reporting anything held back — so unlike the line about a queue, this route is not waiting somewhere it can be recovered from. The usual cause is the phone killing the tracking service part-way through the day: ask him to allow MahekOne to autostart and to set its battery usage to unrestricted, then check out and back in. Anything else on this row naming the recorder or the permission is the fault itself; this is what it has cost so far.",
+    });
   }
 
   /*
