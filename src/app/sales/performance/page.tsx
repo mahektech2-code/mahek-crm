@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { MonthNav } from "@/components/ui/month-nav";
+import { ExportMenu } from "@/components/ui/export-menu";
 import { monthName } from "@/components/ui/month";
 import { money, moneyShort } from "@/lib/format";
 import {
@@ -93,6 +94,51 @@ export default async function Page({
               ← Back to targets
             </Link>
             <MonthNav month={month} basePath="/sales/performance" />
+            <span className="ml-2">
+              <ExportMenu
+                name={`Performance, ${monthName(month)}`}
+                csv={[
+                  [
+                    "Person",
+                    "Score (of 100)",
+                    "Rating",
+                    "Revenue excl. GST (Rs)",
+                    "Revenue achieved (%)",
+                    "Volume (L)",
+                    "Volume achieved (%)",
+                    "Mix achieved (%)",
+                    "New customers",
+                    "Collected (Rs)",
+                    "Collection achieved (%)",
+                    "Activity",
+                    "Activity achieved (%)",
+                    "Wants attention",
+                  ],
+                  ...rows.map((r) => {
+                    const by = (k: string) => {
+                      const bp = r.score.components.find((c) => c.key === k)?.achievementBp;
+                      return bp === null || bp === undefined ? "" : Math.round(bp / 100);
+                    };
+                    return [
+                      r.userName,
+                      r.hasTarget ? (r.score.totalBp / 100).toFixed(1) : "",
+                      r.hasTarget ? r.rating : "No target set",
+                      Math.round(r.actuals.revenuePaise / 100),
+                      by("revenue"),
+                      Math.round(r.actuals.millilitres / 1000),
+                      by("volume"),
+                      r.mix.achievementBp === null ? "" : Math.round(r.mix.achievementBp / 100),
+                      r.actuals.newCustomers,
+                      Math.round(r.actuals.collectionPaise / 100),
+                      by("collection"),
+                      r.actuals.activity,
+                      by("activity"),
+                      r.alerts.map((a) => a.message).join(" | "),
+                    ];
+                  }),
+                ]}
+              />
+            </span>
           </div>
         }
       />

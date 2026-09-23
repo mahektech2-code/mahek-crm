@@ -7,6 +7,7 @@ import { readAttendanceVerdict } from "@/lib/attendance-labels";
 import type { PerformanceRow, SalesmanRecord } from "@/lib/services/sales-service";
 import type { DayEvidence as DayEvidenceType } from "@/lib/services/day-evidence-service";
 import { DayCheck } from "./day-check";
+import { ExportMenu } from "@/components/ui/export-menu";
 import { CustomerName } from "@/components/console/customer-name";
 import {
   Cell,
@@ -128,12 +129,35 @@ export function SalesmanScreen({
           </>
         }
         actions={
-          <Link
-            href={`/sales/journeys?salesman=${s.id}`}
-            className="inline-flex h-8.5 items-center rounded-[4px] border border-line bg-surface px-3 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            Plan a route
-          </Link>
+          <>
+            <ExportMenu
+              name={`${s.name}, ${month}`}
+              csv={() => [
+                ["Figure", month, "Last month"],
+                ["Orders taken", thisMonth?.orders ?? 0, lastMonth?.orders ?? ""],
+                [
+                  "Order value (Rs)",
+                  Math.round((thisMonth?.orderValuePaise ?? 0) / 100),
+                  lastMonth ? Math.round(lastMonth.orderValuePaise / 100) : "",
+                ],
+                [
+                  "Collected (Rs)",
+                  Math.round((thisMonth?.collectedPaise ?? 0) / 100),
+                  lastMonth ? Math.round(lastMonth.collectedPaise / 100) : "",
+                ],
+                ["Visits", thisMonth?.visits ?? 0, lastMonth?.visits ?? ""],
+                ["Verified visits", thisMonth?.verifiedVisits ?? 0, lastMonth?.verifiedVisits ?? ""],
+                ["New shops", thisMonth?.newCustomers ?? 0, lastMonth?.newCustomers ?? ""],
+                ["Days worked", thisMonth?.daysWorked ?? 0, lastMonth?.daysWorked ?? ""],
+              ]}
+            />
+            <Link
+              href={`/sales/journeys?salesman=${s.id}`}
+              className="inline-flex h-8.5 items-center rounded-[4px] border border-line bg-surface px-3 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              Plan a route
+            </Link>
+          </>
         }
       />
 
