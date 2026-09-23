@@ -5,6 +5,7 @@ import { sheetsForLists } from "@/lib/services/price-sheet-service";
 import { renderPriceSheetsPdf } from "@/lib/price-sheet-pdf";
 import { CSV_HEADERS, sheetCsvRows, type SheetProduct } from "@/lib/price-sheet";
 import { toCsv } from "@/lib/csv";
+import { calendarDate } from "@/lib/business-date";
 import { pricingOptions } from "@/lib/services/price-list-service";
 
 /**
@@ -38,7 +39,8 @@ export async function GET(request: Request) {
 
   const sheets = await sheetsForLists(ids);
   if (!sheets.length) return NextResponse.json({ error: "None of those lists exist." }, { status: 404 });
-  const stamp = new Date().toISOString().slice(0, 10);
+  // The date in Mumbai, not in UTC — an export taken at 2am IST is today's file.
+  const stamp = calendarDate(new Date());
 
   if (format === "pdf") {
     const bytes = await renderPriceSheetsPdf(sheets.map((s) => s.sheet));
