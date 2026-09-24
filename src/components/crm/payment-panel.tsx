@@ -21,6 +21,7 @@ import {
   logPaymentFollowUpAction,
   queueMessage,
   confirmMessageSent,
+  sendWhatsAppNow,
   recordPayment,
 } from "@/lib/actions/crm";
 import { ageLabel, money, shortDate, stamp, today as todayISO } from "@/lib/format";
@@ -292,6 +293,25 @@ function PanelBody({
     if (result.ok) setCopiedId(result.data.id);
   }
 
+  /**
+   * The API route: one press sends the reminder from the business number and
+   * stamps it, exactly as confirming a pasted one does. Refused — with the
+   * reason in the toast — whenever it cannot go that way, and the copy route
+   * is still on the screen beneath the refusal.
+   */
+  async function sendNow() {
+    if (!panel || !message || message.blocked) return;
+    setConfirming(true);
+    try {
+      const result = await run(
+        sendWhatsAppNow({ customerId: panel.customerId, templateId: message.templateId }),
+      );
+      if (result.ok) onSaved();
+    } finally {
+      setConfirming(false);
+    }
+  }
+
   async function markSent() {
     if (!copiedId) return;
     setConfirming(true);
@@ -551,11 +571,13 @@ function PanelBody({
               disabled={Boolean(message?.blocked) || confirming}
               title={message?.blocked ? "Fill the missing merge fields first" : undefined}
               onClick={() =>
-                message?.mode === "automatic" || copiedId ? markSent() : copyMessage()
+                message?.mode === "automatic" ? sendNow() : copiedId ? markSent() : copyMessage()
               }
             >
               {message?.mode === "automatic"
-                ? "Send message"
+                ? confirming
+                  ? "Sending…"
+                  : "Send on WhatsApp"
                 : copiedId
                   ? "Mark as sent"
                   : "Copy message first"}
@@ -1199,8 +1221,9 @@ function MessageTab({
 
         {message.mode === "automatic" ? (
           <div className="mt-4 rounded-[6px] border border-line p-4 text-[13px] text-muted">
-            Sends from the connected business number and updates the last follow-up date.
-            Delivery and read status come back automatically.
+            Sends from the business number, as the approved WhatsApp template, and
+            updates the last follow-up date. Delivered and read ticks come back on
+            their own — nothing to copy and nothing to confirm.
           </div>
         ) : (
           <div className="mt-4 overflow-hidden rounded-[6px] border border-line">

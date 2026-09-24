@@ -1557,6 +1557,51 @@ waiting for the second would chase somebody who has already heard from us.
 `dest_kind` is shared with `wa_messages`, so read that column as
 personal-or-group only; nothing writes `both` to it.
 
+**WHATSAPP GOES THROUGH WATI ONLY WHILE THE FOUNDER HAS IT SWITCHED ON.** The
+switch is `whatsapp_service_events` — one row per decision, the newest wins, no
+row means OFF — on the Founder Dashboard's WhatsApp screen and nowhere else. It
+is deliberately not an `app_settings` key: settings are edited by anybody with
+`config.write`, and this is the one messaging decision Mahek gave to the
+founder alone. `whatsapp.activate` sits in the Founder app's row of the matrix,
+and because an administrator holds every capability by construction,
+`requireFounderDesk` also demands that the hat which granted it is the
+Founder's. The old `whatsapp.mode` setting is retired and read by nothing.
+
+**It replaced a stub that marked messages sent without sending them.**
+`sendAutomatic` used to set `sent` and stamp `lastConfirmedWhatsappDate` with a
+comment saying the provider call would go there, so flipping the setting to
+automatic would have taken customers off the Call Log on the strength of
+messages that never left. It now calls Wati or refuses, and refuses — sending
+nothing — unless every one of these holds: switch on, key present
+(`wati.apiToken` / `WATI_API_TOKEN`), personal leg, unedited, template linked to
+an APPROVED Wati template, customer not do-not-contact, a real Indian mobile not
+shared by three or more shops, `whatsapp.contactsPerWeekLimit` not reached, and
+every template variable filled. `lib/whatsapp-delivery.ts` is the rule, pure, so
+the screen that draws "Send" and the service that sends cannot disagree.
+
+**The manual route never goes away.** Groups cannot be reached through the API,
+an edited message is no longer the approved wording, and an unlinked template
+has nothing to send as — every one of those falls back to copy, paste and
+confirm with the reason on the screen. The customer is stamped only when Wati
+accepts the message, and a failure reported later by webhook takes the stamp
+back (`recomputeLastWhatsapp`).
+
+**Our `wa_messages.id` travels to Wati as `local_message_id`**, and every
+delivery webhook is matched on it. `/api/whatsapp/wati/[token]` receives them;
+the token is an HMAC of the API key, because Wati's webhook settings take a URL
+and nothing else — rotating the key rotates the address. Receiving does not
+depend on the switch: a read tick or a customer's reply is a fact about the
+world. Status only moves forward (a late "delivered" never demotes "read"), and
+a reply from a number the book does not know is stored with a null customer
+rather than dropped, and listed on the founder's screen.
+
+**A payment reminder that went is a follow-up attempt.** The collections plan
+dates the next stage-1 nudge from the newest WhatsApp row in
+`follow_up_attempts`, and no path that sent a reminder — manual or otherwise —
+ever wrote one, so stage-1 customers came back due every day.
+`recordReminderAttempt` writes it once a reminder is actually sent, keyed on
+the message.
+
 **A customer record is a FIXED-LENGTH page, however old the account is.** Every
 panel on it is the same height and scrolls inside itself, and the reads behind
 them are capped — the timeline at ten entries a page (`TIMELINE_PAGE`, one

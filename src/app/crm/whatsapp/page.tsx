@@ -1,10 +1,10 @@
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { dayActivity, listCustomers, today } from "@/lib/queries";
-import { getConfig } from "@/lib/config/store";
 import { getFollowUpWorklist, listBills } from "@/lib/services/payment-service";
 import {
   WA_MESSAGE_LIMIT,
+  deliveryContext,
   findResumableRun,
   listMessages,
   messageCount,
@@ -35,7 +35,6 @@ export default async function WhatsappPage({
   const day = await today();
 
   const [
-    config,
     customers,
     templates,
     messages,
@@ -46,8 +45,8 @@ export default async function WhatsappPage({
     bills,
     unconfirmed,
     messageTotal,
+    delivery,
   ] = await Promise.all([
-    getConfig(),
     listCustomers(),
     listTemplates(),
     listMessages(),
@@ -71,7 +70,13 @@ export default async function WhatsappPage({
      * reads as a message log that stopped growing months ago.
      */
     messageCount(),
+    deliveryContext(),
   ]);
+
+  // Whether ANY message can go through the API right now. Per template it is
+  // narrower still — an unlinked template is manual whatever this says — and
+  // the send tab works that out from `watiTemplateName` on each template.
+  const apiOn = delivery.serviceOn && delivery.hasToken;
 
   // Every STATED open bill per customer, oldest first — feeds {{bill_no}},
   // {{bill_due}} and the full {{bills_list}} a statement actually needs. An
@@ -119,14 +124,26 @@ export default async function WhatsappPage({
       isManager={isManager(user)}
       // Manual is the default and stays fully usable — automatic sending is an
       // addition, never a replacement.
-      mode={config["whatsapp.mode"]}
+      mode={apiOn ? "automatic" : "manual"}
+      apiOffReason={
+        apiOn
+          ? null
+          : !delivery.serviceOn
+            ? "The founder has not switched WhatsApp sending on, so every message is copied and pasted."
+            : "WhatsApp sending is on, but no Wati key is configured."
+      }
       // Automatic sending is configured but the last attempts failed. Derived
       // from the messages themselves rather than a health-check endpoint we do
       // not have — a banner that cannot be wrong is better than one that is
       // green because nothing has been asked of it.
       sendingFailing={
-        config["whatsapp.mode"] === "automatic" &&
-        messages.some((m) => m.status === "failed")
+        apiOn &&
+        messages.some(
+          (m) =>
+            m.status === "failed" &&
+            m.mode === "automatic" &&
+            now - m.updatedAt.getTime() < 24 * 3_600_000,
+        )
       }
       initialCustomerId={customer ?? customerPayload[0]?.id ?? ""}
       initialTab={tab === "run" || tab === "templates" || tab === "log" ? tab : "send"}
@@ -138,6 +155,7 @@ export default async function WhatsappPage({
         body: t.body,
         appliesTo: t.appliesTo,
         uses: t.usageCount,
+        watiTemplateName: t.watiTemplateName,
         archived: !t.active,
         updatedAt: t.updatedAt.toISOString(),
       }))}
@@ -157,6 +175,7 @@ export default async function WhatsappPage({
         createdAt: m.preparedAt.toISOString(),
         copiedAt: m.copiedAt?.toISOString() ?? null,
         confirmedSentAt: m.confirmedSentAt?.toISOString() ?? null,
+        failureReason: m.failureReason,
       }))}
       replies={replies.map((r) => ({
         id: r.id,
@@ -181,6 +200,7 @@ export default async function WhatsappPage({
                 customerName: r.customerName,
                 status: r.status,
                 done: r.done,
+                destKind: r.destKind as "personal" | "group",
               })),
               // The record set is the state, so a refresh resumes exactly here.
               current: activeRun.current

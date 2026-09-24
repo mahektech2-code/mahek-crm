@@ -1577,9 +1577,9 @@ export const SETTINGS = [
     key: "whatsapp.mode",
     type: "text",
     category: "whatsapp",
-    label: "Mode",
+    label: "Mode (retired)",
     description:
-      "Manual means copy-and-confirm. Switching to automatic must need no code change beyond credentials.",
+      "No longer read. Sending through the WhatsApp API is switched on and off by the founder, on the Founder Dashboard's WhatsApp screen — a setting anybody holding the Settings screen could flip was the wrong home for that decision. Kept so a stored value still resolves.",
     default: "manual",
     options: ["manual", "automatic"],
   },

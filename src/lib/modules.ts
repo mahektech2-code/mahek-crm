@@ -718,6 +718,12 @@ export const APP_MODULES: AppModule[] = [
     "Company",
     "Mahek's price lists — create, duplicate, import, publish and export them. The founder's desk is one of the two that may change a price; the CRM and the Sales Dashboard only read them.",
   ),
+  founder(
+    "whatsapp",
+    "WhatsApp",
+    "Company",
+    "The switch that decides whether WhatsApp messages go to customers through the API at all, which approved Wati template each message is sent as, and what has gone out. Nothing is sent through the API unless it is switched on here.",
+  ),
 
   /* -------------------------------------------------- the Website Enquiries app */
   /*

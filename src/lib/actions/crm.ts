@@ -33,7 +33,6 @@ import {
 import { SCOPE_COOKIE_NAME } from "@/lib/scope";
 import {
   getConfig,
-  invalidateConfig,
   updateSetting,
   updateSettings,
 } from "@/lib/config/store";
@@ -73,6 +72,8 @@ import {
   prepareLegs,
   saveTemplate as saveTemplateService,
   sendAutomatic,
+  sendNow,
+  sendRunViaApi,
   setRunStatus,
 } from "@/lib/services/whatsapp-service";
 import {
@@ -1444,15 +1445,32 @@ export async function setTargetsBulk(input: {
 
 /* --------------------------------------------------------------- whatsapp */
 
-export async function setWaMode(mode: "manual" | "automatic"): Promise<Result> {
+/**
+ * Prepare and send one payment reminder or template message through Wati, in
+ * one press. Refuses — sending nothing — whenever the message cannot go that
+ * way, and the refusal says why, so the screen can fall back to copy-paste.
+ */
+export async function sendWhatsAppNow(input: {
+  customerId: string;
+  templateId: string;
+}): Promise<Result<{ messageId: string }>> {
   try {
-    const ctx = await requireCapability("config.write");
-    const r = await updateSetting("whatsapp.mode", mode, ctx.user.id);
-    invalidateConfig();
+    const r = await sendNow({ ...input, idempotencyKey: randomUUID() });
     refreshAll();
-    return r.ok
-      ? okVoid(`WhatsApp set to ${mode}`)
-      : err(r.error, "validation");
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Every personal message still waiting in a run, sent through the API. */
+export async function sendRunThroughApi(
+  runId: string,
+): Promise<Result<{ sent: number; left: number; problems: string[] }>> {
+  try {
+    const r = await sendRunViaApi(runId);
+    refreshAll();
+    return r;
   } catch (e) {
     return fromThrown(e);
   }
@@ -1532,9 +1550,7 @@ export async function queueMessage(input: {
       },
       legs.length > 1
         ? "Both messages are ready - work them one at a time"
-        : legs[0].mode === "automatic"
-          ? "Ready to send"
-          : "Copied - confirm once you have sent it",
+        : "Copied - confirm once you have sent it",
     );
   } catch (e) {
     return fromThrown(e);

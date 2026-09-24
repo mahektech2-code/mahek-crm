@@ -35,11 +35,14 @@ import {
   pauseRun,
   queueMessage,
   saveTemplate,
+  sendMessageAutomatic,
+  sendRunThroughApi,
+  sendWhatsAppNow,
   setCustomerGroup,
-  setWaMode,
   startRun,
 } from "@/lib/actions/crm";
 import { applyMerge, fieldLabel, mergeValues, missingFields, usedFields } from "@/lib/merge";
+import { deliveryRoute } from "@/lib/whatsapp-delivery";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { money, phoneDisplay, stamp } from "@/lib/format";
 import { CardGrid } from "@/components/ui/card-grid";
@@ -90,6 +93,8 @@ type Template = {
   body: string;
   appliesTo: "personal" | "group" | "both";
   uses: number;
+  /** The approved Wati template this one is sent as; null = manual only. */
+  watiTemplateName: string | null;
   archived: boolean;
   updatedAt: string;
 };
@@ -109,6 +114,7 @@ type Message = {
   /** Separate from confirmedSentAt on purpose — copying is not sending. */
   copiedAt: string | null;
   confirmedSentAt: string | null;
+  failureReason: string | null;
 };
 
 /** The message lifecycle, in the words a telecaller would use. */
@@ -137,6 +143,7 @@ type RunRecipient = {
   customerName: string;
   status: string;
   done: boolean;
+  destKind: "personal" | "group";
 };
 
 type Run = {
@@ -164,7 +171,10 @@ type Tab = "send" | "run" | "templates" | "log";
 export function WhatsappScreen(props: {
   scopeLabel: string;
   isManager: boolean;
+  /** `automatic` = the founder has switched API sending on and a key exists. */
   mode: "manual" | "automatic";
+  /** Why nothing can go through the API, when `mode` is manual. */
+  apiOffReason: string | null;
   sendingFailing: boolean;
   initialCustomerId: string;
   initialTab: Tab;
@@ -232,10 +242,10 @@ export function WhatsappScreen(props: {
                 )}
               />
               <span className="text-[13px] font-medium text-ink">
-                {mode === "automatic" ? "Connected" : "Manual sending"}
+                {mode === "automatic" ? "WhatsApp API on" : "Manual sending"}
               </span>
               <span className="text-[13px] font-normal text-muted">
-                {mode === "automatic" ? "sends automatically" : "copy and paste"}
+                {mode === "automatic" ? "linked templates send directly" : "copy and paste"}
               </span>
             </button>
           </span>
@@ -249,9 +259,9 @@ export function WhatsappScreen(props: {
       {sendingFailing ? (
         <Callout tone="danger">
           <span className="text-sm text-ink">
-            Automatic sending is unavailable - the API is configured but not
-            responding. The manual flow below is ready to use, so nothing is
-            blocked.
+            Some messages sent through the WhatsApp API in the last day
+            failed - the Log tab says why for each one. The manual flow below
+            is ready to use, so nothing is blocked.
           </span>
           <span className="flex-1" />
           <Button size="sm" variant="secondary" onClick={() => setConnOpen(true)}>
@@ -341,6 +351,7 @@ export function WhatsappScreen(props: {
       {tab === "run" ? (
         <RunTab
           run={run}
+          mode={mode}
           elapsedMinutes={runElapsedMinutes}
           previewTime={props.previewTime}
           templates={templates.filter((t) => !t.archived)}
@@ -362,6 +373,7 @@ export function WhatsappScreen(props: {
                     <Th>Applies to</Th>
                     <Th>Last edited</Th>
                     <Th align="right">Times used</Th>
+                    <Th>WhatsApp API</Th>
                     <Th>Status</Th>
                   </tr>
                 </thead>
@@ -383,6 +395,19 @@ export function WhatsappScreen(props: {
                       </Td>
                       <Td>{stamp(t.updatedAt)}</Td>
                       <Td align="right">{t.uses}</Td>
+                      <Td
+                        title={
+                          t.watiTemplateName
+                            ? "Sent as this approved Wati template when API sending is on"
+                            : "Not linked — only the founder links templates, on the Founder Dashboard"
+                        }
+                      >
+                        {t.watiTemplateName ? (
+                          <span className="font-mono text-[12px] text-ink">{t.watiTemplateName}</span>
+                        ) : (
+                          <span className="text-muted">Manual only</span>
+                        )}
+                      </Td>
                       <Td>
                         <Badge tone={t.archived ? "muted" : "success"}>
                           {t.archived ? "Archived" : "Live"}
@@ -414,15 +439,8 @@ export function WhatsappScreen(props: {
       <ConnectionModal
         open={connOpen}
         mode={mode}
-        isManager={isManager}
+        apiOffReason={props.apiOffReason}
         onClose={() => setConnOpen(false)}
-        onSave={async (next) => {
-          const result = await act(setWaMode(next));
-          if (result.ok) {
-            setConnOpen(false);
-            router.refresh();
-          }
-        }}
       />
 
       <GroupModal
@@ -555,6 +573,17 @@ function SendComposer({
 
   const missing = template ? missingFields(template.body, values) : [];
   const used = template ? usedFields(template.body) : [];
+
+  // The same rule the server sends by (`lib/whatsapp-delivery.ts`). `mode`
+  // already folds the founder's switch and the key together; the rest is about
+  // this message — a group or both-ways send, an edit, an unlinked template.
+  const apiRoute = deliveryRoute({
+    serviceOn: mode === "automatic",
+    hasToken: mode === "automatic",
+    destKind: dest === "personal" ? "personal" : "group",
+    watiTemplateName: template?.watiTemplateName,
+    edited,
+  });
 
   const activeLegs: Array<"personal" | "group"> =
     dest === "both" ? ["personal", "group"] : [dest];
@@ -807,25 +836,19 @@ function SendComposer({
           </div>
         </Card>
 
-        {mode === "automatic" ? (
+        {apiRoute.via === "api" && template ? (
           <Card className="p-5">
             <Button
               variant="primary"
-              disabled={busy}
+              disabled={busy || missing.length > 0}
+              title={missing.length ? "Fill the missing fields on the customer record first" : undefined}
               className="w-full"
               onClick={async () => {
                 setBusy(true);
-                // `finally`: `act` re-throws what the action threw, and this
-                // button is the only way the message gets copied at all.
+                // `finally`: `act` re-throws what the action threw.
                 try {
                   const result = await act(
-                    queueMessage({
-                      customerId: customer.id,
-                      templateId: template?.id ?? null,
-                      body,
-                      edited,
-                      destKind: dest,
-                    }),
+                    sendWhatsAppNow({ customerId: customer.id, templateId: template.id }),
                   );
                   if (result.ok) {
                     onSent();
@@ -836,14 +859,19 @@ function SendComposer({
                 }
               }}
             >
-              Send message
+              {busy ? "Sending…" : "Send on WhatsApp"}
             </Button>
             <p className="mt-2.5 text-[13px] text-muted">
-              Sends from the connected business number. Delivery and read status come back
-              automatically.
+              Goes from the business number to {nameOfLeg("personal")} as the approved
+              template &ldquo;{template.watiTemplateName}&rdquo;. Delivered and read ticks
+              come back on their own.
             </p>
           </Card>
         ) : (
+          <>
+          {mode === "automatic" && apiRoute.via === "manual" ? (
+            <p className="-mb-2 text-[13px] text-muted">{apiRoute.why}</p>
+          ) : null}
           <Card className="overflow-hidden">
             <div className="border-b border-line px-4 py-3 text-sm font-semibold text-ink">
               {dest === "both" ? "Send it both ways" : "Send it in three steps"}
@@ -962,6 +990,7 @@ function SendComposer({
               rings them straight after your message.
             </div>
           </Card>
+          </>
         )}
 
         {copyFallback ? (
@@ -1050,6 +1079,7 @@ function Step({
 
 function RunTab({
   run,
+  mode,
   elapsedMinutes,
   templates,
   customers,
@@ -1057,6 +1087,7 @@ function RunTab({
   recipientIds,
 }: {
   run: Run | null;
+  mode: "manual" | "automatic";
   elapsedMinutes: number;
   previewTime: string;
   templates: Template[];
@@ -1071,6 +1102,8 @@ function RunTab({
   const [templateId, setTemplateId] = React.useState(templates[0]?.id ?? "");
   const [filterKey, setFilterKey] = React.useState<"stage1" | "slow" | "over60">("stage1");
   const [copied, setCopied] = React.useState(false);
+  const [bulkArmed, setBulkArmed] = React.useState(false);
+  const [bulkBusy, setBulkBusy] = React.useState(false);
 
   // The hint in the header promises these, so they have to work. Ignored while
   // a field has focus, or typing "s" in a note would skip the customer.
@@ -1227,6 +1260,10 @@ function RunTab({
   const worked = sent + skipped;
   const percent = total ? Math.round((worked / total) * 100) : 0;
   const elapsed = elapsedMinutes;
+  // What the API could take off this run's hands right now: its personal legs
+  // still waiting, if the run's template is linked to an approved Wati one.
+  const runWati = templates.find((t) => t.id === run.templateId)?.watiTemplateName ?? null;
+  const waitingPersonal = run.recipients.filter((r) => !r.done && r.destKind === "personal").length;
 
   return (
     <div>
@@ -1251,6 +1288,36 @@ function RunTab({
           C copy · Enter mark sent · S skip
         </span>
         <span className="flex-1" />
+        {mode === "automatic" && runWati && waitingPersonal > 0 ? (
+          // Two presses, not a browser confirm: this sends to real customers
+          // from the business number, and a single stray click must not.
+          <Button
+            size="sm"
+            variant={bulkArmed ? "primary" : "secondary"}
+            disabled={bulkBusy}
+            title={`Sends as the approved Wati template "${runWati}". Groups stay in the run for pasting.`}
+            onClick={async () => {
+              if (!bulkArmed) {
+                setBulkArmed(true);
+                return;
+              }
+              setBulkBusy(true);
+              try {
+                await act(sendRunThroughApi(run.id));
+                router.refresh();
+              } finally {
+                setBulkBusy(false);
+                setBulkArmed(false);
+              }
+            }}
+          >
+            {bulkBusy
+              ? "Sending…"
+              : bulkArmed
+                ? `Confirm: send ${waitingPersonal} now`
+                : `Send ${waitingPersonal} through WhatsApp`}
+          </Button>
+        ) : null}
         <Button
           size="sm"
           variant="secondary"
@@ -1452,7 +1519,8 @@ function LogTab({
   limit: number;
   isManager: boolean;
 }) {
-  const { push } = useToast();
+  const { push, run: act } = useToast();
+  const router = useRouter();
   const [query, setQuery] = React.useState("");
   const [modeFilter, setModeFilter] = React.useState("All modes");
   const [statusFilter, setStatusFilter] = React.useState("All statuses");
@@ -1463,7 +1531,9 @@ function LogTab({
 
   const filtered = messages.filter((m) => {
     const q = query.trim().toLowerCase();
-    if (modeFilter !== "All modes" && m.mode !== modeFilter.toLowerCase()) return false;
+    // "Connected" is the word on the screen for `automatic` in the row; the
+    // two never matched, so the filter emptied the list.
+    if (modeFilter !== "All modes" && m.mode !== (modeFilter === "Connected" ? "automatic" : "manual")) return false;
     if (statusFilter !== "All statuses" && m.status !== statusFilter) return false;
     if (!q) return true;
     return (
@@ -1587,31 +1657,49 @@ function LogTab({
                     ) : null}
                   </Td>
                   <Td>{m.sentByName}</Td>
-                  <Td className="capitalize">{m.mode}</Td>
+                  <Td>{m.mode === "automatic" ? "WhatsApp API" : "Manual"}</Td>
                   <Td>
                     <span className="inline-flex items-center gap-1.5">
+                      {/* The stored status is lower case; this compared it to
+                          capitalised words, so a failed message drew green. */}
                       <Badge
                         tone={
-                          m.status === "Copied"
+                          m.status === "copied" || m.status === "queued"
                             ? "warn"
-                            : m.status === "Cancelled" || m.status === "Failed"
+                            : m.status === "cancelled" || m.status === "failed"
                               ? "danger"
                               : "success"
                         }
                       >
-                        {m.status}
+                        {STATUS_LABEL[m.status] ?? m.status}
                       </Badge>
-                      {m.status === "Read" || m.status === "Delivered" ? (
+                      {m.status === "read" || m.status === "delivered" ? (
                         <span
                           className={cx(
                             "text-[11px]",
-                            m.status === "Read" ? "text-brand" : "text-line-strong",
+                            m.status === "read" ? "text-brand" : "text-line-strong",
                           )}
                         >
                           ✓✓
                         </span>
                       ) : null}
                     </span>
+                    {m.status === "failed" && m.failureReason ? (
+                      <span className="mt-1 block max-w-[320px] text-[12px] text-danger">
+                        {m.failureReason}
+                      </span>
+                    ) : null}
+                    {m.status === "failed" && m.mode === "automatic" ? (
+                      <button
+                        className="mt-1 cursor-pointer text-[12px] text-brand"
+                        onClick={async () => {
+                          await act(sendMessageAutomatic(m.id));
+                          router.refresh();
+                        }}
+                      >
+                        Try again
+                      </button>
+                    ) : null}
                   </Td>
                 </Tr>
               ))}
@@ -1652,67 +1740,47 @@ function LogTab({
 type ConnectionProps = {
   open: boolean;
   mode: "manual" | "automatic";
-  isManager: boolean;
+  apiOffReason: string | null;
   onClose: () => void;
-  onSave: (mode: "manual" | "automatic") => Promise<void>;
 };
 
-function ConnectionModal(props: ConnectionProps) {
-  if (!props.open) return null;
-  return <ConnectionModalBody key={props.mode} {...props} />;
-}
-
-function ConnectionModalBody({ open, mode, isManager, onClose, onSave }: ConnectionProps) {
-  const [next, setNext] = React.useState(mode);
-
+/**
+ * What the connection IS, and where it is decided. This used to let a manager
+ * flip sending to automatic from here — a setting, behind a stub that marked
+ * messages sent without sending them. The decision is the founder's now, on the
+ * Founder Dashboard, so this says which way it stands and nothing more.
+ */
+function ConnectionModal({ open, mode, apiOffReason, onClose }: ConnectionProps) {
+  if (!open) return null;
   return (
     <Modal
       open={open}
       onClose={onClose}
       title="WhatsApp connection"
       footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            disabled={!isManager}
-            title={isManager ? undefined : "Changing the connection is a manager action"}
-            onClick={() => onSave(next)}
-          >
-            Save
-          </Button>
-        </>
+        <Button variant="secondary" onClick={onClose}>
+          Close
+        </Button>
       }
     >
-      <p className="mb-3 text-sm text-body">
-        Manual sending always works - a telecaller copies the message and pastes it into
-        WhatsApp, then confirms. Connected sending needs the Business API and sends
-        straight from the app.
-      </p>
-      <div className="flex flex-col gap-2">
-        {(
-          [
-            { key: "manual" as const, label: "Manual", sub: "Copy and paste, confirm afterwards" },
-            { key: "automatic" as const, label: "Connected", sub: "Sends automatically via the Business API" },
-          ]
-        ).map((o) => (
-          <button
-            key={o.key}
-            onClick={() => setNext(o.key)}
-            className={cx(
-              "cursor-pointer rounded-[4px] border px-3 py-2.5 text-left",
-              next === o.key
-                ? "border-brand bg-brand-soft"
-                : "border-line bg-surface hover:bg-canvas",
-            )}
-          >
-            <span className="block text-sm font-medium text-ink">{o.label}</span>
-            <span className="block text-[13px] text-muted">{o.sub}</span>
-          </button>
-        ))}
+      <div className="mb-3 flex items-center gap-2">
+        <span
+          className={cx("block h-2 w-2 rounded-full", mode === "automatic" ? "bg-success" : "bg-warn")}
+        />
+        <span className="text-sm font-medium text-ink">
+          {mode === "automatic" ? "Sending through the WhatsApp API is on" : "Manual sending"}
+        </span>
       </div>
+      <p className="mb-3 text-sm text-body">
+        {mode === "automatic"
+          ? "A template linked to an approved Wati template goes straight from the business number to the customer's own number. Groups, edited messages and unlinked templates are still copied and pasted, exactly as before."
+          : (apiOffReason ?? "Every message is copied, pasted into WhatsApp and confirmed.")}
+      </p>
+      <p className="text-[13px] text-muted">
+        Only the founder can switch API sending on or off, and link templates to
+        Wati - on the Founder Dashboard, under WhatsApp. Manual sending always
+        works, whichever way it is set.
+      </p>
     </Modal>
   );
 }
