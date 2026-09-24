@@ -6,6 +6,7 @@ import { auditLog, waTemplates, whatsappServiceEvents } from "@/db/schema";
 import { requireCapability, NotPermittedError } from "../access-control";
 import { err, okVoid, type Result } from "../result";
 import { isApproved, listWatiTemplates } from "../wati";
+import { specKey } from "../wati-templates";
 
 /* ---------------------------------------------------------------------------
  * The founder's switch for WhatsApp sending, and the template links beside it.
@@ -110,6 +111,16 @@ export async function linkWatiTemplate(
   if (!template) return err("That template no longer exists.", "not_found");
 
   const name = watiTemplateName?.trim() || null;
+  // A template whose variables are filled by a rule set can only be sent as
+  // the Wati template those rules were written for. Linking "Payment
+  // follow-up" to an ORDER template would send a customer a payment total
+  // under the words of an order reminder.
+  if (name && template.watiSpec && specKey(name) !== template.watiSpec) {
+    return err(
+      `${template.name} is filled by the ${template.watiSpec} rules, so it can only be sent as a ${template.watiSpec} template in Wati (any _v version).`,
+      "validation",
+    );
+  }
   if (name) {
     const listed = await listWatiTemplates({ fresh: true });
     if (!listed.ok) return err(`Could not check the template with Wati: ${listed.error}`, "rule_violation");

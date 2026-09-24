@@ -3629,6 +3629,13 @@ export const waTemplates = pgTable("wa_templates", {
    * out the manual way. Set from the Founder Dashboard, beside the switch.
    */
   watiTemplateName: text("wati_template_name"),
+  /**
+   * The rule set in `lib/wati-templates.ts` that fills this template's
+   * variables — and refuses it, with reasons, when any of them would be
+   * untrue. Null for the older free-text templates, which keep the merge
+   * fields in `whatsapp-service.ts`.
+   */
+  watiSpec: text("wati_spec"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdById: text("created_by_id"),

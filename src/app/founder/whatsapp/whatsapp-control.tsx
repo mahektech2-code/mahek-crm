@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   CardHeader,
+  Input,
   Callout,
   MetricStrip,
   PageHeader,
@@ -20,7 +21,14 @@ import {
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { stamp } from "@/lib/format";
-import { linkWatiTemplateAction, setWhatsappServiceAction } from "@/lib/actions/whatsapp-founder";
+import {
+  findCustomersAction,
+  founderPreviewAction,
+  linkWatiTemplateAction,
+  sendTestAction,
+  setWhatsappServiceAction,
+} from "@/lib/actions/whatsapp-founder";
+import type { MessagePreview } from "@/lib/services/whatsapp-service";
 import {
   SecretCredentialRow,
   type SecretMeta,
@@ -52,6 +60,9 @@ type CrmTemplateRow = {
   escalationStage: number | null;
   body: string;
   watiTemplateName: string | null;
+  /** Filled by a rule set in lib/wati-templates.ts; null for the older free-text ones. */
+  spec: string | null;
+  specParams: string[] | null;
 };
 
 type Health =
@@ -205,6 +216,9 @@ export function WhatsappControl(props: {
         mergeFields={props.mergeFields}
         error={props.watiTemplatesError}
       />
+
+      {/* --------------------------------------------- try it on a customer */}
+      <TryOnCustomer templates={props.crmTemplates.filter((t) => t.spec)} />
 
       {/* ----------------------------------------------------- connection */}
       <Card className="mb-4">
@@ -458,8 +472,16 @@ function LinkRow({
 
   const chosen = approved.find((t) => t.name === choice) ?? null;
   const unknown = chosen
-    ? chosen.params.filter((p) => !mergeFields.includes(p === "name" ? "customer" : p))
+    ? chosen.params.filter((p) =>
+        template.specParams
+          ? !template.specParams.includes(p)
+          : !mergeFields.includes(p === "name" ? "customer" : p),
+      )
     : [];
+  // A rule-set template is only offered the Wati templates written for it.
+  const offered = template.spec
+    ? approved.filter((t) => t.name.replace(/_v\d+$/, "") === template.spec)
+    : approved;
   const dirty = choice !== (template.watiTemplateName ?? "");
   // A link to a template Wati no longer shows as approved is kept visible, not
   // silently dropped from the select — sends refuse until it is fixed.
@@ -481,7 +503,7 @@ function LinkRow({
             {stale ? (
               <option value={template.watiTemplateName!}>{template.watiTemplateName} (no longer approved)</option>
             ) : null}
-            {approved.map((t) => (
+            {offered.map((t) => (
               <option key={t.name} value={t.name}>
                 {t.name}
                 {t.language ? ` · ${t.language}` : ""}
@@ -562,5 +584,166 @@ function CopyLine({ value }: { value: string }) {
         Copy
       </Button>
     </div>
+  );
+}
+
+/* --------------------------------------------------- try it on a customer */
+
+/**
+ * Pick any customer and any rule-set template, and see exactly what they
+ * would receive — or every reason they would not. Then, if you like, send
+ * that exact message to your OWN phone. Nothing here touches the customer.
+ */
+function TryOnCustomer({ templates }: { templates: CrmTemplateRow[] }) {
+  const { run } = useToast();
+  const [q, setQ] = React.useState("");
+  const [found, setFound] = React.useState<Array<{ id: string; name: string; city: string | null }>>([]);
+  const [customer, setCustomer] = React.useState<{ id: string; name: string } | null>(null);
+  const [templateId, setTemplateId] = React.useState(templates[0]?.id ?? "");
+  const [preview, setPreview] = React.useState<MessagePreview | null>(null);
+  const [phone, setPhone] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+
+  if (!templates.length) return null;
+  const template = templates.find((t) => t.id === templateId);
+
+  return (
+    <Card className="mb-4">
+      <CardHeader
+        title="Try it on a customer"
+        hint="See exactly what a customer would receive, with their real bills and orders — or why they would not get it. Nothing is sent to them."
+      />
+      <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-[13px] font-medium text-ink">Customer</label>
+          <div className="flex gap-2">
+            <Input
+              value={q}
+              placeholder="Type two letters of a name"
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={async (e) => {
+                if (e.key !== "Enter") return;
+                const r = await run(findCustomersAction(q));
+                if (r.ok) setFound(r.data);
+              }}
+            />
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                const r = await run(findCustomersAction(q));
+                if (r.ok) setFound(r.data);
+              }}
+            >
+              Find
+            </Button>
+          </div>
+          {found.length ? (
+            <div className="mt-2 max-h-48 overflow-auto rounded-[4px] border border-line">
+              {found.map((c) => (
+                <button
+                  key={c.id}
+                  className={cx(
+                    "block w-full cursor-pointer px-3 py-1.5 text-left text-[13px] hover:bg-canvas",
+                    customer?.id === c.id ? "bg-brand-soft font-medium" : "",
+                  )}
+                  onClick={() => {
+                    setCustomer({ id: c.id, name: c.name });
+                    setPreview(null);
+                  }}
+                >
+                  {c.name}
+                  {c.city ? <span className="text-muted"> · {c.city}</span> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <label className="mt-4 mb-1 block text-[13px] font-medium text-ink">Template</label>
+          <Select
+            value={templateId}
+            onChange={(e) => {
+              setTemplateId(e.target.value);
+              setPreview(null);
+            }}
+          >
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
+
+          <Button
+            className="mt-3"
+            disabled={!customer || busy}
+            onClick={async () => {
+              if (!customer) return;
+              setBusy(true);
+              try {
+                const r = await run(founderPreviewAction(customer.id, templateId));
+                if (r.ok) setPreview(r.data);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {customer ? `Preview for ${customer.name}` : "Pick a customer first"}
+          </Button>
+        </div>
+
+        <div>
+          {preview ? (
+            preview.ok ? (
+              <>
+                <div className="mb-1 text-[13px] text-muted">
+                  {preview.route === "automatic"
+                    ? "Would go through the API, with its buttons:"
+                    : `Would be copied and pasted — ${preview.manualWhy ?? ""}`}
+                </div>
+                <div className="rounded-[6px] border border-brand-softer bg-brand-soft px-3 py-2.5 text-[14px] leading-[21px] whitespace-pre-wrap text-ink">
+                  {preview.body}
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <Input
+                    value={phone}
+                    placeholder="Your WhatsApp number"
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                  <Button
+                    variant="secondary"
+                    disabled={busy || !phone.trim() || !template?.watiTemplateName}
+                    title={template?.watiTemplateName ? undefined : "Link this template to its approved Wati template first"}
+                    onClick={async () => {
+                      if (!customer) return;
+                      setBusy(true);
+                      try {
+                        await run(sendTestAction(customer.id, templateId, phone));
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Send test to me
+                  </Button>
+                </div>
+                <p className="mt-1.5 text-[12px] text-muted">
+                  Sends this exact message to the number you type — never to the customer.
+                  Works even while sending is switched off.
+                </p>
+              </>
+            ) : (
+              <div className="rounded-[6px] border border-danger-soft bg-danger-soft px-3 py-2.5 text-[13px] text-danger">
+                <span className="block font-medium">{customer?.name} would NOT be sent this:</span>
+                {preview.reasons.map((r) => (
+                  <span key={r} className="mt-1 block">{r}</span>
+                ))}
+              </div>
+            )
+          ) : (
+            <p className="text-[13px] text-muted">The message, or the reasons it would be refused, appears here.</p>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
