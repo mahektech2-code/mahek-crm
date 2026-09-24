@@ -724,3 +724,50 @@ test("what the customer bought before settles 'nano'; otherwise several rows ask
   assert.equal(chooseProduct("nano thinner - 5 liter", fresh).state, "matched");
   assert.equal(chooseProduct("xyz", []).state, "none");
 });
+
+/* ------------------------------------------- from the real call log */
+
+test("the office's own spellings of a missed call are heard", () => {
+  for (const note of [
+    "Busy",
+    "BUSY",
+    "Phone rang",
+    "Phone rang but dont answer",
+    "No Incoming calls available",
+    "No in coming call available",
+    "Wrong Number",
+    "Number does not exist",
+    "Going in to voice mail",
+    "Temporary out of service",
+    "not pickup",
+    "CALL KA  RING  NHI  LAGA  RAHA HAI",
+    "The party is repeatedly disconnecting the phone.",
+  ]) {
+    assert.ok(readSignals(note).noAnswer.found, note);
+  }
+  /* A sentence that mentions a busy customer is still a conversation. */
+  assert.equal(readSignals("He is busy with Ganpati, call next week").noAnswer.found, false);
+  assert.equal(readSignals("Phone rang and he said send the rate").noAnswer.found, false);
+});
+
+test("'on 19th' and a day-first date are read", () => {
+  const kinds = (t: string) => parseDateCues(t).map((c) => c.cue);
+  assert.deepEqual(kinds("still stock is available, call next week on 19th").at(-1), {
+    kind: "day_of_month",
+    day: 19,
+    month: null,
+  });
+  assert.deepEqual(kinds("18-8-2026 aja delivery hoila"), [{ kind: "absolute", date: "2026-08-18" }]);
+});
+
+test("a delivery update is its own outcome", () => {
+  const a = decideCallActions(
+    input({
+      reading: reading({
+        intents: [{ intent: "transport_follow_up", confidence: 90, evidence: "Material dispatched today" }],
+      }),
+    }),
+  );
+  assert.equal(a.primary?.fill?.outcome, "transport_follow_up");
+  assert.equal(a.primary?.fill?.callReason, "delivery_transport");
+});

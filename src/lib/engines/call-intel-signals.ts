@@ -63,13 +63,26 @@ const NO_ANSWER: RegExp[] = [
      conversation. Only the phone being busy is a missed call. */
   /\bnahi utha(?:ya|i)\b|\bnot reachable\b|\b(?:phone|line|number|call)\s+(?:is\s+)?busy\b|\bbusy (?:tone|aa raha|aaya|aa rha)\b/iu,
   /\bnr\b|\bn\.r\.?\b|\brnr\b/iu,
+  /*
+   * FROM THE CALL LOG ITSELF (Sep 2026, 374 logged missed calls). These are
+   * how this office actually writes it. "Phone rang" here means it rang and
+   * nobody answered — thirteen times, never once for a conversation.
+   */
+  /\bno\s*in\s*coming\s+calls?\b|\bincoming\s+calls?\s+(?:not\s+)?(?:available|receivable|can\s*(?:not|'?t)?\s*be\s+received)\b|\bno\s+out\s*going\b/iu,
+  /\b(?:wrong|invalid)\s+number\b|\bnumber\s+(?:is\s+)?(?:wrong|invalid|does\s*(?:not|n'?t)\s+exist|not\s+in\s+service)\b/iu,
+  /\bvoice\s*mail\b|\bout\s+of\s+service\b|\bcall\s+forwarded\b/iu,
+  /\bnot?\s+pick\s*up\b|\bno\s+pickup\b|\bring\s+(?:nhi|nahi)\s+(?:lag|lagta|laga)|\bblock\s+(?:kela|kiya|kar\s+diya)\b|\bn\s+response\b/iu,
+  /\b(?:hanging\s+up|keeps?\s+(?:getting\s+)?disconnect(?:ing)?|repeatedly\s+disconnect(?:ing)?)\b/iu,
+  /\bphone\s+rang\b(?![^.\n]{0,30}\b(?:spoke|said|told|answered|picked)\b)/iu,
+  /* The whole note is one word — a status, not a sentence. */
+  /^\s*(?:busy|ringing|not\s+reachable|switched?\s*off|currently\s+not\s+available)\s*[.!]*\s*$/iu,
   /(?:फोन|फ़ोन|कॉल)\s+(?:नहीं|नही)\s+(?:उठाया|उठाई|लगा|लगी)/u,
 ];
 
 const TENTATIVE: RegExp[] = [
   /\b(?:may|might|maybe|perhaps|possibly|probably)\b[^.\n]{0,40}\border/iu,
   /\bwill (?:think|see|check|confirm|let (?:you|us) know|decide|inform)\b/iu,
-  /\b(?:let (?:us|me) know|get back|revert)\b/iu,
+  /\b(?:let (?:us|me|you) know|get back|revert)\b/iu,
   /\bshayad\b|\bsochenge\b|\bsoch(?:kar|ke)\b|\bdekhenge\b|\bdekhte hain\b|\bbatayenge\b|\bbata denge\b|\bconfirm karenge\b/iu,
   /शायद|सोचेंगे|सोचकर|देखेंगे|बताएंगे|बता देंगे/u,
   /\bif (?:required|needed|they need)\b|\bjarurat (?:padi|hogi)\b|ज़रूरत (?:पड़ी|होगी)/iu,

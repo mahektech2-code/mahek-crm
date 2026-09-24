@@ -720,6 +720,7 @@ function intentForOutcome(outcome: string): CallIntent | null {
     case "not_interested":
     case "complaint":
     case "casual_talk":
+    case "transport_follow_up":
       return outcome;
     default:
       return null;

@@ -545,12 +545,26 @@ export function parseDateCues(text: string): ParsedCue[] {
     if (month)
       push(m.index!, m[0], { kind: "day_of_month", day: Number(m[1]), month });
   }
-  for (const m of lower.matchAll(/\bon the (\d{1,2})(?:st|nd|rd|th)\b/gu)) {
+  /* "on the 19th", and the office's own "on 19th" */
+  for (const m of lower.matchAll(
+    /\bon (?:the )?(\d{1,2})(?:st|nd|rd|th)\b/gu,
+  )) {
     push(m.index!, m[0], {
       kind: "day_of_month",
       day: Number(m[1]),
       month: null,
     });
+  }
+  /* 18-8-2026, 18/08/26 — day first, as India writes it. */
+  for (const m of lower.matchAll(
+    /\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})\b/gu,
+  )) {
+    const d = Number(m[1]);
+    const mo = Number(m[2]);
+    const y = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+      push(m.index!, m[0], { kind: "absolute", date: iso(y, mo, d) });
+    }
   }
 
   return found

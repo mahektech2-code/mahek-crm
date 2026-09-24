@@ -30,6 +30,7 @@ export const CALL_INTENTS = [
   "payment_promised",
   "no_answer",
   "follow_up",
+  "transport_follow_up",
   "casual_talk",
 ] as const;
 
@@ -45,6 +46,7 @@ export const CALL_INTENT_LABEL: Record<CallIntent, string> = {
   payment_promised: "Payment promised",
   no_answer: "No answer",
   follow_up: "Follow-up required",
+  transport_follow_up: "Delivery / transport update",
   casual_talk: "Relationship call",
 };
 
@@ -68,6 +70,7 @@ export const INTENT_OUTCOME: Record<CallIntent, string> = {
   payment_promised: "payment_promised",
   no_answer: "no_answer",
   follow_up: "follow_up",
+  transport_follow_up: "transport_follow_up",
   casual_talk: "casual_talk",
 };
 
@@ -89,6 +92,7 @@ export const INTENT_PRECEDENCE: CallIntent[] = [
   "opportunity",
   "no_order",
   "follow_up",
+  "transport_follow_up",
   "no_answer",
   "casual_talk",
 ];
@@ -131,4 +135,5 @@ export const INTENT_CALL_REASON: Partial<Record<CallIntent, string>> = {
   sample_required: "product_enquiry",
   payment_promised: "payment_outstanding",
   follow_up: "followup_previous",
+  transport_follow_up: "delivery_transport",
 };
