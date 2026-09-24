@@ -891,8 +891,6 @@ export async function evaluateCallAssistant({
     dayBoundaryHour: config["workingDay.dayBoundaryHour"],
     workingDays: config["workingDay.workingDays"],
   };
-  const classifier = await latestClassifier();
-
   /* A spread of outcomes rather than the newest hundred, which would be most
      of one telecaller's no-answers. */
   const rows = await db.execute<{
@@ -929,6 +927,31 @@ export async function evaluateCallAssistant({
 
   let agreed = 0;
   let confidentAgreed = 0;
+  /*
+   * THE CLASSIFIER IS TRAINED HERE, on everything except the calls under
+   * test. Reading the stored one would test it on calls it learned from, and
+   * would also mean this cannot run until the nightly has — which is exactly
+   * when somebody wants to know whether to trust it.
+   */
+  const tested = new Set(rows.map((r) => r.notes));
+  const learnFrom = (
+    await trainingExamples(config["callIntel.trainingMonths"])
+  ).filter((e) => !tested.has(e.text));
+  const classifier: LoadedClassifier | null =
+    learnFrom.length >= 50
+      ? (() => {
+          const evaluation = crossValidate(learnFrom, {
+            folds: 5,
+            confidentAt: config["callIntel.classifierVetoPercent"] / 100,
+          });
+          return {
+            model: train(learnFrom),
+            trusted: evaluation.confidentAccuracy >= TRUSTED_WHEN_SURE,
+            trustedLabels: trustedLabels(evaluation),
+          };
+        })()
+      : null;
+
   for (const r of rows) {
     const reading = await readWithModel({
       text: { spoken: "", english: "", typedNote: r.notes },
