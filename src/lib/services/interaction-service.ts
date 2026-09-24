@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import {
   auditLog,
+  callAiDrafts,
   callOpportunities,
   calls,
   complaints,
@@ -306,6 +307,16 @@ export const saveInteractionSchema = z.object({
 
   /** Telecallers double-click, and a duplicate corrupts three figures at once. */
   idempotencyKey: z.string().min(8),
+
+  /**
+   * The call assistant's reading this call was filled from, when it was.
+   *
+   * Written onto that reading in this transaction — what the call was SAVED
+   * as, beside what the assistant suggested — which is how anybody finds out
+   * how often the suggestion was right, and what the next training run learns
+   * from. It changes nothing about the call itself.
+   */
+  aiDraftId: z.string().optional(),
 });
 
 export type SaveInteractionInput = z.input<typeof saveInteractionSchema>;
@@ -636,6 +647,13 @@ export async function saveInteraction(
         if (!codes.has(outcomeDetail[f.key])) {
           return fieldError(`outcomeDetail.${f.key}`, `Pick a valid ${f.label.toLowerCase()}.`);
         }
+      }
+      if (f.kind === "number" && outcomeDetail[f.key]) {
+        const n = Number(outcomeDetail[f.key].replace(/,/g, ""));
+        if (!Number.isFinite(n) || n < 0) {
+          return fieldError(`outcomeDetail.${f.key}`, `${f.label} has to be a number.`);
+        }
+        outcomeDetail[f.key] = String(Math.round(n));
       }
       if (f.kind === "date" && outcomeDetail[f.key]) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(outcomeDetail[f.key])) {
@@ -1027,7 +1045,14 @@ export async function saveInteraction(
           dayBoundaryHour: config["workingDay.dayBoundaryHour"],
           workingDays: config["workingDay.workingDays"],
         }),
-        note: input.notes?.trim() || "Payment promised",
+        note: [
+          Number(outcomeDetail.promisedAmount) > 0
+            ? `Promised ${money(Math.round(Number(outcomeDetail.promisedAmount)) * 100)}.`
+            : "",
+          input.notes?.trim() || (Number(outcomeDetail.promisedAmount) > 0 ? "" : "Payment promised"),
+        ]
+          .filter(Boolean)
+          .join(" "),
         type: "payment_promise",
         systemGenerated: true,
         createdById: ctx.user.id,
@@ -1324,6 +1349,37 @@ export async function saveInteraction(
         updatedById: ctx.user.id,
       });
       produced.push("opportunity");
+    }
+
+    /* ------------------------------------------ what the assistant read
+     *
+     * Only the caller's own reading, and only one not already spent on another
+     * call — a draft id replayed from a stale tab must not relabel a call it
+     * never described.
+     */
+    if (input.aiDraftId) {
+      await tx
+        .update(callAiDrafts)
+        .set({
+          callId: interactionId,
+          savedOutcome: input.outcome ?? (input.interactionType === "order_received" ? "order_taken" : null),
+          savedDetail: {
+            outcomeDetail,
+            followUpDate: input.followUpDate ?? null,
+            noOrderNextCallDate: input.noOrderNextCallDate ?? null,
+            paymentPromiseDate: input.paymentPromiseDate ?? null,
+            products: Object.keys(input.productQuantities ?? {}),
+            opportunity: input.opportunity ?? null,
+          },
+          savedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(callAiDrafts.id, input.aiDraftId),
+            eq(callAiDrafts.userId, ctx.user.id),
+            sql`${callAiDrafts.callId} is null`,
+          ),
+        );
     }
 
     /* ------------------------------------- the promises this call settles */
