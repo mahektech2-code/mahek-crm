@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useToast } from "@/components/ui/toast";
-import { seedLeads } from "@/lib/sales-lead-pipeline/mock-data";
+import { MOCK_TODAY, seedLeads } from "@/lib/sales-lead-pipeline/mock-data";
 import { PEOPLE_LIST, PROSPECT_REASONS, QUALIFICATION_CONDITIONS, STAGE_LABEL, personName } from "@/lib/sales-lead-pipeline/reference";
 import type { Lead, ModalKind } from "@/lib/sales-lead-pipeline/types";
 
@@ -103,7 +103,7 @@ const FIELD_TO_LEAD_KEY: Record<string, keyof Lead> = {
 
 export function LeadPipelineProvider({ children }: { children: React.ReactNode }) {
   const [leads, setLeads] = React.useState<Lead[]>(() => seedLeads());
-  const [today] = React.useState(() => new Date("2026-09-23T00:00:00"));
+  const [today] = React.useState(() => new Date(`${MOCK_TODAY}T00:00:00`));
   const [modal, setModal] = React.useState<Modal>({ kind: null, leadId: null });
   const toast = useToast();
 
@@ -152,7 +152,7 @@ export function LeadPipelineProvider({ children }: { children: React.ReactNode }
         next.conversionReason = reasonCode;
         next.verification = { done: false, result: null };
         next.nextAction = "Manager verification call";
-        next.nextActionDate = today.toISOString().slice(0, 10);
+        next.nextActionDate = MOCK_TODAY;
         next.nextActionResp = "amit";
         next.expectedOutcome = "Verify the visit and open qualification";
 
@@ -168,7 +168,7 @@ export function LeadPipelineProvider({ children }: { children: React.ReactNode }
       closeModal();
       toast.push("Converted to Prospect — manager notified");
     },
-    [update, today, stamp, closeModal, toast],
+    [update, stamp, closeModal, toast],
   );
 
   const doVerify = React.useCallback<Ctx["doVerify"]>(
@@ -226,15 +226,15 @@ export function LeadPipelineProvider({ children }: { children: React.ReactNode }
 
         if (done) {
           next.nextAction = "Complete qualification visit";
-          next.nextActionDate = today.toISOString().slice(0, 10);
+          next.nextActionDate = MOCK_TODAY;
           next.nextActionResp = l.owner;
         } else if (result === "followup_required") {
           next.nextAction = "Follow-up before qualification can open";
-          next.nextActionDate = today.toISOString().slice(0, 10);
+          next.nextActionDate = MOCK_TODAY;
           next.nextActionResp = "amit";
         } else {
           next.nextAction = "Review with salesman — verification failed";
-          next.nextActionDate = today.toISOString().slice(0, 10);
+          next.nextActionDate = MOCK_TODAY;
           next.nextActionResp = "amit";
         }
         return next;
@@ -242,7 +242,7 @@ export function LeadPipelineProvider({ children }: { children: React.ReactNode }
       closeModal();
       toast.push(done_message(result));
     },
-    [update, today, stamp, closeModal, toast],
+    [update, stamp, closeModal, toast],
   );
 
   const doQualifyToggle = React.useCallback<Ctx["doQualifyToggle"]>(
@@ -293,12 +293,12 @@ export function LeadPipelineProvider({ children }: { children: React.ReactNode }
     (id) => {
       update(id, (l) => ({
         ...l,
-        sample: l.sample ? { ...l.sample, state: "dispatched", dispatchedAt: today.toISOString().slice(0, 10) } : l.sample,
+        sample: l.sample ? { ...l.sample, state: "dispatched", dispatchedAt: MOCK_TODAY } : l.sample,
         timeline: [...l.timeline, { d: stamp(), kind: "sales_manager", title: "Sample dispatched" }],
       }));
       toast.push("Marked dispatched");
     },
-    [update, stamp, today, toast],
+    [update, stamp, toast],
   );
 
   const doMarkSampleReceived = React.useCallback<Ctx["doMarkSampleReceived"]>(
@@ -306,12 +306,12 @@ export function LeadPipelineProvider({ children }: { children: React.ReactNode }
       update(id, (l) => ({
         ...l,
         stage: "sample_received",
-        sample: l.sample ? { ...l.sample, state: "received", receivedAt: today.toISOString().slice(0, 10) } : l.sample,
+        sample: l.sample ? { ...l.sample, state: "received", receivedAt: MOCK_TODAY } : l.sample,
         timeline: [...l.timeline, { d: stamp(), kind: "salesman", title: "Sample received, confirmed by customer" }],
       }));
       toast.push("Marked received");
     },
-    [update, stamp, today, toast],
+    [update, stamp, toast],
   );
 
   const doSampleReview = React.useCallback<Ctx["doSampleReview"]>(
@@ -346,14 +346,14 @@ export function LeadPipelineProvider({ children }: { children: React.ReactNode }
     (id, quantity, expectedOrderDate, blocker) => {
       update(id, (l) => ({
         ...l,
-        commitment: { quantity, expectedOrderDate, recordedBy: "amit", recordedAt: today.toISOString().slice(0, 10) },
+        commitment: { quantity, expectedOrderDate, recordedBy: "amit", recordedAt: MOCK_TODAY },
         negotiation: { ...(l.negotiation ?? { visitDone: false, blockers: [] }), blockers: blocker === "No blocker" ? [] : [blocker] },
         timeline: [...l.timeline, { d: stamp(), kind: "sales_manager", title: "Commitment recorded", meta: `${quantity}, expected ${expectedOrderDate}` }],
       }));
       closeModal();
       toast.push("Commitment saved");
     },
-    [update, today, stamp, closeModal, toast],
+    [update, stamp, closeModal, toast],
   );
 
   const doConfirmOrder = React.useCallback<Ctx["doConfirmOrder"]>(
@@ -363,13 +363,13 @@ export function LeadPipelineProvider({ children }: { children: React.ReactNode }
         ...l,
         stage: "first_order",
         product: product || l.product,
-        order: { amount, litres, orderedAt: today.toISOString().slice(0, 10), reference },
+        order: { amount, litres, orderedAt: MOCK_TODAY, reference },
         timeline: [...l.timeline, { d: stamp(), kind: "sales_manager", title: "Confirmed Actual Order → First Order", meta: reference }],
       }));
       closeModal();
       toast.push("Actual order confirmed");
     },
-    [update, today, stamp, closeModal, toast],
+    [update, stamp, closeModal, toast],
   );
 
   const doConfirmAgreement = React.useCallback<Ctx["doConfirmAgreement"]>(
@@ -400,13 +400,13 @@ export function LeadPipelineProvider({ children }: { children: React.ReactNode }
     (id, reasonCode, note) => {
       update(id, (l) => ({
         ...l,
-        lost: { reason: reasonCode, by: "amit", date: today.toISOString().slice(0, 10) },
+        lost: { reason: reasonCode, by: "amit", date: MOCK_TODAY },
         timeline: [...l.timeline, { d: stamp(), kind: "sales_manager", title: "Marked Lost", meta: "Reason: " + reasonCode + (note ? " — " + note : "") }],
       }));
       closeModal();
       toast.push("Marked Lost");
     },
-    [update, today, stamp, closeModal, toast],
+    [update, stamp, closeModal, toast],
   );
 
   const doReassign = React.useCallback<Ctx["doReassign"]>(

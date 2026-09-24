@@ -1,3 +1,4 @@
+import { addDays } from "@/lib/format";
 import type { Lead } from "./types";
 
 /**
@@ -8,13 +9,12 @@ import type { Lead } from "./types";
  * prototype's stages/fields map onto `customers`/`mbos_leads`) is decided
  * separately. Every lead below is fictional.
  */
+/** The fixed business date the mock book is seeded around, as a calendar
+ * date — never derived from a Date, which would answer in UTC. */
+export const MOCK_TODAY = "2026-09-23";
+
 export function seedLeads(): Lead[] {
-  const today = new Date("2026-09-23T00:00:00");
-  const iso = (offsetDays: number) => {
-    const d = new Date(today);
-    d.setDate(d.getDate() + offsetDays);
-    return d.toISOString().slice(0, 10);
-  };
+  const iso = (offsetDays: number) => addDays(MOCK_TODAY, offsetDays);
 
   const leads: Lead[] = [
     {
