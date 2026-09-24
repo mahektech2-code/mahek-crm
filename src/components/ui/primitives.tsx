@@ -221,49 +221,63 @@ export type Metric = {
   deltaTone?: "success" | "danger" | "muted";
   sub?: string;
   tone?: "ink" | "danger" | "success";
+  /**
+   * Optional. A tile with this set is a real control, not just a number —
+   * every existing caller omits it and keeps rendering exactly as before;
+   * only a caller that opts in gets a clickable tile.
+   */
+  onClick?: () => void;
 };
 
 export function MetricStrip({ metrics }: { metrics: Metric[] }) {
   return (
     <Card className="mb-4 flex flex-wrap items-start gap-x-8 gap-y-3.5 px-5 py-3.5">
-      {metrics.map((m) => (
-        <div key={m.label}>
-          <div className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
-            {m.label}
-          </div>
-          <div className="mt-0.5 flex items-baseline gap-2">
-            <span
-              className={cx(
-                "text-[22px] leading-7 font-semibold",
-                m.tone === "danger"
-                  ? "text-danger"
-                  : m.tone === "success"
-                    ? "text-success"
-                    : "text-ink",
-              )}
-            >
-              {m.value}
-            </span>
-            {m.delta ? (
+      {metrics.map((m) => {
+        const Tag = m.onClick ? "button" : "div";
+        return (
+          <Tag
+            key={m.label}
+            type={m.onClick ? "button" : undefined}
+            onClick={m.onClick}
+            className={cx("text-left", m.onClick && "cursor-pointer")}
+          >
+            <div className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+              {m.label}
+            </div>
+            <div className="mt-0.5 flex items-baseline gap-2">
               <span
                 className={cx(
-                  "text-[13px] font-medium",
-                  m.deltaTone === "danger"
+                  "text-[22px] leading-7 font-semibold",
+                  m.tone === "danger"
                     ? "text-danger"
-                    : m.deltaTone === "muted"
-                      ? "text-muted"
-                      : "text-success",
+                    : m.tone === "success"
+                      ? "text-success"
+                      : "text-ink",
                 )}
               >
-                {m.delta}
+                {m.value}
               </span>
+              {m.delta ? (
+                <span
+                  className={cx(
+                    "text-[13px] font-medium",
+                    m.deltaTone === "danger"
+                      ? "text-danger"
+                      : m.deltaTone === "muted"
+                        ? "text-muted"
+                        : "text-success",
+                  )}
+                >
+                  {m.delta}
+                </span>
+              ) : null}
+            </div>
+            {m.sub ? (
+              <div className="text-xs whitespace-nowrap text-muted">{m.sub}</div>
             ) : null}
-          </div>
-          {m.sub ? (
-            <div className="text-xs whitespace-nowrap text-muted">{m.sub}</div>
-          ) : null}
-        </div>
-      ))}
+          </Tag>
+        );
+      })}
     </Card>
   );
 }
