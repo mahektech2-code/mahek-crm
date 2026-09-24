@@ -16,6 +16,7 @@ import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { NextStepDialog } from "@/components/crm/next-step-dialog";
+import { CallAssistant, type AssistantApply } from "@/components/crm/call-assistant";
 import {
   holdOtherReasonsUntilReminder,
   saveInteractionAction,
@@ -634,6 +635,22 @@ function CallPanelForm({
   const [oppValue, setOppValue] = React.useState("");
   const [oppDate, setOppDate] = React.useState("");
 
+  /*
+   * THE CALL ASSISTANT'S FOOTPRINT on this form. Which reading the form was
+   * filled from (sent with the save, so the reading learns what the call was
+   * really logged as), which fields it filled (said back above the form, so
+   * nobody saves a date they did not read), products it matched that this
+   * panel has not otherwise seen, and whether it opened the opportunity box
+   * on a call direction that does not usually ask.
+   */
+  const aiDraftId = React.useRef<string | null>(null);
+  const [aiFilled, setAiFilled] = React.useState<string[]>([]);
+  const [aiProducts, setAiProducts] = React.useState<ProductOption[]>([]);
+  const [aiOpportunity, setAiOpportunity] = React.useState(false);
+  /* A proposal waiting for the one thing the assistant cannot tell from the
+     words: which way the call went. Held rather than half-applied — an outcome
+     with no direction is a form the save refuses. */
+  const [aiPending, setAiPending] = React.useState<AssistantApply | null>(null);
   const [showAllProducts, setShowAllProducts] = React.useState(false);
   const [showAllFrequent, setShowAllFrequent] = React.useState(false);
   /** The line a typed zero is asking to remove, if any. */
@@ -920,6 +937,12 @@ function CallPanelForm({
         : `Attempt ${target.noAnswerCount + 1} — we have rung ${target.noAnswerCount} time${target.noAnswerCount === 1 ? "" : "s"} since anybody last answered.`;
   const unbacked = isInbound ? unbackedBy(callReason) : null;
 
+  /* Asked on every inbound call, and on an outbound one where the assistant
+     heard a "maybe" — the client's rule is that a customer who MAY order is
+     an opportunity, and on an outbound call there was otherwise nowhere to
+     put one. */
+  const offersOpportunity = isInbound || aiOpportunity;
+
   const needsProducts = isOrderReceived || outcome === "order_taken";
   const needsFollowUp = outcome === "follow_up";
   const needsNextCall = outcome === "no_order";
@@ -1017,8 +1040,9 @@ function CallPanelForm({
       });
     }
     for (const p of remote?.items ?? []) map.set(p.id, p);
+    for (const p of aiProducts) if (!map.has(p.id)) map.set(p.id, p);
     return map;
-  }, [products, info, remote]);
+  }, [products, info, remote, aiProducts]);
 
   // What the list shows. Nothing typed: the starter list, which is the book's
   // best sellers. Typed: whatever the server found, because it matches the
@@ -1296,7 +1320,7 @@ function CallPanelForm({
     }
     /* A yes with nothing named is the box left half-filled. Refused here and
        not silently dropped, or the telecaller believes they recorded one. */
-    if (isInbound && hasOpportunity && !oppProduct.trim()) {
+    if (offersOpportunity && hasOpportunity && !oppProduct.trim()) {
       setErrors((e) => ({
         ...e,
         "opportunity.product": "Name what they might buy, or answer No.",
@@ -1401,7 +1425,7 @@ function CallPanelForm({
           /* Only where somebody said yes. "No" is the absence of a record
              rather than an empty one — there is nothing to chase. */
           opportunity:
-            isInbound && hasOpportunity && oppProduct.trim()
+            offersOpportunity && hasOpportunity && oppProduct.trim()
               ? {
                   product: oppProduct.trim(),
                   estimatedQuantity: oppQuantity.trim() || undefined,
@@ -1421,6 +1445,7 @@ function CallPanelForm({
           sourceModule: target.sourceModule ?? "ad_hoc",
           queuePosition: target.queuePosition,
           idempotencyKey: idempotencyKey.current,
+          aiDraftId: aiDraftId.current ?? undefined,
         }),
       );
 
@@ -1473,7 +1498,124 @@ function CallPanelForm({
     setOrderDate(today());
     setErrors({});
     setSaved(null);
+    aiDraftId.current = null;
+    setAiPending(null);
+    setAiFilled([]);
+    setAiProducts([]);
+    setAiOpportunity(false);
     idempotencyKey.current = crypto.randomUUID();
+  }
+
+  /**
+   * Put the assistant's proposal into this form.
+   *
+   * It FILLS; it never overwrites. A field somebody has already typed into is
+   * theirs and is left alone — the only thing replaced is the outcome itself,
+   * because pressing "Fill the form" on a suggestion IS choosing it. Every
+   * field it touched is named in the banner above the form, and nothing is
+   * saved until the ordinary Save is pressed.
+   */
+  function applyAssistant({ suggestion, draftId, direction }: AssistantApply) {
+    const fill = suggestion.fill;
+    if (!fill || !target) return;
+    aiDraftId.current = draftId;
+    const filled: string[] = [];
+
+    /* Direction: the words, else the queue (which only ever dials out). Where
+       neither says, the form asks as it always did. */
+    const nextType: InteractionType | null =
+      type && type !== "order_received"
+        ? type
+        : (direction ?? (target.sourceModule === "call_queue" ? "outbound_call" : null));
+    if (!nextType) {
+      setAiPending({ suggestion, draftId, direction });
+      setAiFilled([`outcome: ${OUTCOME_LABEL[fill.outcome] ?? fill.outcome}`]);
+      return;
+    }
+    setAiPending(null);
+    if (nextType !== type) setType(nextType);
+    const inbound = nextType === "inbound_call";
+
+    const allowed = nextType ? (OUTCOMES[nextType as Exclude<InteractionType, "order_received">] ?? []) : [];
+    if (!nextType || allowed.includes(fill.outcome as never)) {
+      setOutcome(fill.outcome);
+      filled.push(`outcome: ${OUTCOME_LABEL[fill.outcome] ?? fill.outcome}`);
+    }
+
+    if (inbound && fill.callReason && !callReason) {
+      setCallReason(fill.callReason);
+      filled.push(`why they called: ${CALL_REASON_LABEL[fill.callReason] ?? fill.callReason}`);
+    }
+
+    const detail = Object.entries(fill.outcomeDetail).filter(([k]) => !(outcomeDetail[k] ?? "").trim());
+    if (detail.length) {
+      setOutcomeDetail((d) => {
+        const next = { ...d };
+        for (const [k, v] of detail) if (!(next[k] ?? "").trim()) next[k] = v;
+        return next;
+      });
+      filled.push(`${detail.length} answer${detail.length === 1 ? "" : "s"} below`);
+    }
+
+    if (fill.followUpDate && !followUpDate) {
+      setFollowUpDate(fill.followUpDate);
+      filled.push(`follow-up on ${shortDate(fill.followUpDate)}`);
+    }
+    if (fill.noOrderNextCallDate && !noOrderNextCallDate) {
+      setNoOrderNextCallDate(fill.noOrderNextCallDate);
+      setNoOrderNoCommitment(false);
+      filled.push(`call back on ${shortDate(fill.noOrderNextCallDate)}`);
+    }
+    if (fill.payDate && !payDate) {
+      setPayDate(fill.payDate);
+      filled.push(`payment on ${shortDate(fill.payDate)}`);
+    }
+
+    if (fill.orderLines?.length) {
+      setAiProducts((prev) => [
+        ...prev,
+        ...fill.orderLines!.map((l) => ({
+          id: l.productId,
+          name: l.name,
+          packSize: null,
+          subtitle: null,
+          millilitresPerCan: null,
+          cansPerBox: 1,
+        })),
+      ]);
+      setQuantities((q) => {
+        const next = { ...q };
+        for (const l of fill.orderLines!) {
+          if (next[l.productId] === undefined) next[l.productId] = l.quantity ? String(l.quantity) : "";
+        }
+        return next;
+      });
+      filled.push(`${fill.orderLines.length} product${fill.orderLines.length === 1 ? "" : "s"}`);
+    }
+
+    if (fill.complaint) {
+      if (fill.complaint.category && complaintCategories.some((c) => c.value === fill.complaint!.category)) {
+        setCategory(fill.complaint.category);
+      }
+      if (fill.complaint.description && !complaintDescription.trim()) {
+        setComplaintDescription(fill.complaint.description);
+        filled.push("the complaint in their words");
+      }
+      if (fill.complaint.requestCn) setRequestCn(true);
+    }
+
+    if (fill.opportunity) {
+      setAiOpportunity(true);
+      setHasOpportunity(true);
+      if (!oppProduct.trim()) setOppProduct(fill.opportunity.product);
+      if (!oppQuantity.trim() && fill.opportunity.quantity) setOppQuantity(fill.opportunity.quantity);
+      if (!oppValue.trim() && fill.opportunity.valueRupees) setOppValue(String(fill.opportunity.valueRupees));
+      if (!oppDate && fill.opportunity.date) setOppDate(fill.opportunity.date);
+      filled.push("the opportunity");
+    }
+
+    setErrors({});
+    setAiFilled(filled);
   }
 
   if (!target) return null;
@@ -2081,6 +2223,20 @@ function CallPanelForm({
                 )}
               >
                 <div className="mx-auto max-w-[720px]">
+                  {!saved && target ? (
+                    <CallAssistant
+                      key={target.customerId}
+                      customerId={target.customerId}
+                      customerName={target.name}
+                      customerPhone={target.phone}
+                      interactionType={type}
+                      notes={notes}
+                      onNotes={setNotes}
+                      onApply={applyAssistant}
+                      complaintCategories={complaintCategories}
+                      maxComplaintImages={maxComplaintImages}
+                    />
+                  ) : null}
                   {saved ? (
                     <div className="rounded-[6px] border border-line bg-surface p-5 text-center">
                       <div className="text-lg font-semibold text-ink">
@@ -2109,14 +2265,29 @@ function CallPanelForm({
                       <div className="text-[15px] font-semibold text-ink">
                         How did this interaction happen?
                       </div>
-                      <p className="mt-1 mb-3.5 text-[13px] text-muted">
-                        Pick one to start. Everything after this depends on it.
-                      </p>
+                      {aiFilled.length ? (
+                        <p className="mt-1 mb-3.5 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2 text-[13px] text-body">
+                          The assistant has the form ready ({aiFilled.join(" · ")}).
+                          It could not tell from what was said who rang whom — pick
+                          one and the form opens filled in.
+                        </p>
+                      ) : (
+                        <p className="mt-1 mb-3.5 text-[13px] text-muted">
+                          Pick one to start. Everything after this depends on it.
+                        </p>
+                      )}
                       <div className="flex flex-col gap-2">
                         {TYPES.map((t) => (
                           <button
                             key={t.key}
-                            onClick={() => setType(t.key)}
+                            onClick={() => {
+                              setType(t.key);
+                              /* The direction was the one thing the assistant
+                                 was waiting for; now the rest can go in. */
+                              if (aiPending && t.key !== "order_received") {
+                                applyAssistant({ ...aiPending, direction: t.key });
+                              }
+                            }}
                             className="flex cursor-pointer items-center gap-3 rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left hover:border-brand"
                           >
                             <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[#5223E0]">
@@ -2341,6 +2512,14 @@ function CallPanelForm({
                         {callReason ? ` · ${CALL_REASON_LABEL[callReason]}` : ""}
                         {outcome ? ` · ${OUTCOME_LABEL[outcome]}` : ""}
                       </button>
+
+                      {aiFilled.length ? (
+                        <p className="mb-3.5 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2 text-[13px] text-body">
+                          <span className="font-medium text-ink">Filled from what you said: </span>
+                          {aiFilled.join(" · ")}. Check each one before you save —
+                          nothing is saved until you press Save.
+                        </p>
+                      ) : null}
 
                       {/* --------------------------------- the ledger, read back
                           Not a figure the telecaller has to go and find: the
@@ -3220,7 +3399,7 @@ function CallPanelForm({
                           A record, not a lead: a lead here is an account that
                           has never ordered, and about thirty readers of
                           `customers.kind` are built on exactly that. */}
-                      {isInbound ? (
+                      {offersOpportunity ? (
                         <div className="mb-3.5 rounded-[4px] border border-line p-3">
                           <Field label="Did this call turn up a sales opportunity?">
                             <div className="flex items-center gap-4">
