@@ -160,6 +160,8 @@ function parseRupees(input?: string): number | null {
 
 export type SaveInteractionActionInput = {
   customerId: string;
+  /** The call assistant's reading this form was filled from, if any. */
+  aiDraftId?: string;
   interactionType: "outbound_call" | "inbound_call" | "order_received";
   outcome?: string | null;
   notes?: string;
@@ -265,6 +267,7 @@ export async function saveInteractionAction(
       sourceModule: raw.sourceModule ?? "ad_hoc",
       queuePosition: raw.queuePosition,
       idempotencyKey: raw.idempotencyKey ?? randomUUID(),
+      aiDraftId: raw.aiDraftId,
     });
     if (!result.ok) return result;
 

@@ -137,32 +137,47 @@ export function RequestSample({
   );
 }
 
+/**
+ * The form on its own, for a caller that opens it from somewhere other than
+ * this button — the call assistant, which has heard the product, the quantity
+ * and the application and opens the form holding them. Everything else is the
+ * same form: the same unqualified warning, the same action, the same refusal.
+ */
+export function RequestSampleForm(props: React.ComponentProps<typeof RequestForm>) {
+  return <RequestForm {...props} />;
+}
+
 function RequestForm({
   customerId,
   customerName,
   defaultProductId,
   defaultProductName,
   defaultApplication,
+  defaultCans,
   leadStage,
   salesType,
   reasons,
   onClose,
+  onRequested,
 }: {
   customerId: string;
   customerName: string;
   defaultProductId: string | null;
   defaultProductName: string | null;
   defaultApplication: string | null;
+  /** Cans, where somebody heard a number. One otherwise, as it always was. */
+  defaultCans?: number | null;
   leadStage: LeadStage | null;
   salesType: LeadSalesType | null;
   reasons: ReadonlyArray<{ code: string; label: string }>;
   onClose: () => void;
+  onRequested?: () => void;
 }) {
   const router = useRouter();
   const toast = useToast();
 
   const [productId, setProductId] = React.useState<string | null>(defaultProductId);
-  const [cans, setCans] = React.useState("1");
+  const [cans, setCans] = React.useState(String(defaultCans && defaultCans > 0 ? Math.round(defaultCans) : 1));
   const [application, setApplication] = React.useState(defaultApplication ?? "");
   /* The first of the configured codes, so the commonest answer is already
      chosen and the field is never submitted empty by somebody who did not
@@ -199,6 +214,7 @@ function RequestForm({
         return;
       }
       onClose();
+      onRequested?.();
       toast.push(result.message ?? "Sample requested.");
       router.refresh();
     } finally {

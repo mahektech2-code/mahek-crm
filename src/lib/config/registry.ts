@@ -1725,6 +1725,97 @@ export const SETTINGS = [
     default: "gpt-5-mini",
   },
 
+  /* ------------------------------------------------ the call assistant
+   *
+   * The telecaller speaks about the call and the assistant proposes the form
+   * it would have produced. It never saves anything; these decide how much it
+   * is trusted to fill before it has to ask.
+   */
+  {
+    key: "callIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the call",
+    description:
+      "After a telecaller speaks or types about a call, suggest the outcome, dates, products and reminders it implies. Suggestions fill the call form for the telecaller to check — nothing is saved without them. Off removes the button everywhere immediately.",
+    default: true,
+  },
+  {
+    key: "callIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Call assistant model",
+    description:
+      "The OpenAI model that reads the call. Where OpenAI cannot answer, Sarvam is asked instead, and where neither can, the assistant still points at a form using what it has learned from past calls — and asks rather than fills.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "callIntel.confirmBelowPercent",
+    type: "integer",
+    category: "voice",
+    label: "Ask when less sure than",
+    description:
+      "Below this confidence the assistant does not fill the form — it asks the telecaller which it was. Higher asks more often and guesses less.",
+    default: 70,
+    min: 30,
+    max: 100,
+  },
+  {
+    key: "callIntel.classifierVetoPercent",
+    type: "integer",
+    category: "voice",
+    label: "When past calls disagree",
+    description:
+      "The assistant also checks how calls worded like this one were logged before. When that check is at least this sure of a DIFFERENT outcome, the telecaller is asked instead of the form being filled.",
+    default: 85,
+    min: 50,
+    max: 100,
+  },
+  {
+    key: "callIntel.noAnswerRetryWorkingDays",
+    type: "integer",
+    category: "voice",
+    label: "Try a missed call again after",
+    description:
+      "Working days. On a call nobody answered, the assistant offers a reminder this far ahead. The Call Log's own retry rules are unaffected.",
+    default: 1,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "callIntel.duplicateWindowDays",
+    type: "integer",
+    category: "voice",
+    label: "Same reminder if within",
+    description:
+      "Days. An open reminder due this close to a new one is treated as the same one — the assistant offers to move it rather than add a second.",
+    default: 7,
+    min: 0,
+    max: 60,
+  },
+  {
+    key: "callIntel.exampleCalls",
+    type: "integer",
+    category: "voice",
+    label: "Past calls shown to the model",
+    description:
+      "How many similar calls from this company's own history the model is shown as examples of how the office logs things. Zero sends none.",
+    default: 6,
+    min: 0,
+    max: 20,
+  },
+  {
+    key: "callIntel.trainingMonths",
+    type: "integer",
+    category: "voice",
+    label: "Learn from calls of the last",
+    description:
+      "Months of logged calls the nightly pass learns the office's shorthand from. Longer is steadier; shorter follows a change in how people write notes sooner.",
+    default: 12,
+    min: 1,
+    max: 60,
+  },
+
   /* ═══════════════════════════════════════════════ MBOS — field sales, §9
    *
    * Every one of these is a number somebody in the field will argue with, and
@@ -4133,6 +4224,14 @@ export type Config = {
   "voice.transcriptionModel": string;
   "voice.openaiTranscriptionModel": string;
   "voice.languageModel": string;
+  "callIntel.enabled": boolean;
+  "callIntel.model": string;
+  "callIntel.confirmBelowPercent": number;
+  "callIntel.classifierVetoPercent": number;
+  "callIntel.noAnswerRetryWorkingDays": number;
+  "callIntel.duplicateWindowDays": number;
+  "callIntel.exampleCalls": number;
+  "callIntel.trainingMonths": number;
 
   /* ------------------------------------------------- MBOS — field sales */
   "mbos.location.gpsAccuracyThresholdM": number;

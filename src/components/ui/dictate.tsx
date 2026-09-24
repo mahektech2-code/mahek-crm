@@ -333,11 +333,23 @@ const CAPTURE_FALLBACK: CaptureSettings = {
 
 type Phase = "recording" | "working" | "review" | "failed";
 
+/**
+ * What came back beside the English. The call assistant keeps the transcript
+ * in the language it was spoken in — the client asked for the original to be
+ * kept for checking — so the modal hands it over rather than dropping it.
+ */
+export type DictationMeta = {
+  spoken: string;
+  language: string | null;
+  servedBy: "sarvam" | "openai" | null;
+};
+
 function DictationBody({
   maxSeconds,
   capture,
   canRefine,
   hasExistingText,
+  importLabel,
   onImport,
   onClose,
 }: {
@@ -347,7 +359,9 @@ function DictationBody({
   /** Tighten and Rewrite need a text model; without one they are not offered. */
   canRefine: boolean;
   hasExistingText: boolean;
-  onImport: (text: string, replace: boolean) => void;
+  /** Overrides the main button's words, where importing does more than fill a box. */
+  importLabel?: string;
+  onImport: (text: string, replace: boolean, meta: DictationMeta) => void;
   onClose: () => void;
 }) {
   const [phase, setPhase] = React.useState<Phase>("recording");
@@ -369,6 +383,7 @@ function DictationBody({
   const [english, setEnglish] = React.useState("");
   const [spoken, setSpoken] = React.useState("");
   const [language, setLanguage] = React.useState<string | null>(null);
+  const [servedBy, setServedBy] = React.useState<DictationMeta["servedBy"]>(null);
   const [showSpoken, setShowSpoken] = React.useState(false);
   const [busy, setBusy] = React.useState<"tighten" | "rewrite" | null>(null);
   const [instruction, setInstruction] = React.useState("");
@@ -414,6 +429,7 @@ function DictationBody({
       setEnglish(json.english);
       setSpoken(json.spoken);
       setLanguage(json.language ?? null);
+      setServedBy(json.servedBy === "sarvam" || json.servedBy === "openai" ? json.servedBy : null);
       setPhase("review");
     } catch {
       setError("The connection dropped before the recording finished sending.");
@@ -869,16 +885,16 @@ function DictationBody({
           <Button
             variant="secondary"
             disabled={!english.trim()}
-            onClick={() => onImport(english.trim(), true)}
+            onClick={() => onImport(english.trim(), true, { spoken, language, servedBy })}
           >
             Replace what is there
           </Button>
         ) : null}
         <Button
           disabled={!english.trim()}
-          onClick={() => onImport(english.trim(), false)}
+          onClick={() => onImport(english.trim(), false, { spoken, language, servedBy })}
         >
-          {hasExistingText ? "Add to what is there" : "Put it in the box"}
+          {importLabel ?? (hasExistingText ? "Add to what is there" : "Put it in the box")}
         </Button>
       </div>
     </div>
@@ -892,22 +908,65 @@ export function DictateButton({
   hasExistingText = false,
   disabled,
   className,
+  renderTrigger,
+  importLabel,
+  modalTitle = "Say it instead",
   /* Shown on hover and read out by a screen reader. The words live here
    * rather than in the layout, so twenty fields do not each carry a sentence. */
   title = "Speak instead of typing. Say it in any language.",
 }: {
   /** `replace` is false for an append — the default, and the safe one. */
-  onImport: (text: string, replace: boolean) => void;
+  onImport: (text: string, replace: boolean, meta: DictationMeta) => void;
   hasExistingText?: boolean;
   disabled?: boolean;
   className?: string;
   title?: string;
+  /**
+   * A control of the caller's own in place of the corner microphone — the
+   * call assistant's is a full-width button, because it is the first thing
+   * on the panel rather than furniture on a box. Same modal, same rules.
+   */
+  renderTrigger?: (open: () => void) => React.ReactNode;
+  importLabel?: string;
+  modalTitle?: string;
 }) {
   const dictation = useDictation();
   const [open, setOpen] = React.useState(false);
 
   /* Off, unconfigured, or a browser that cannot record: draw nothing. */
   if (!dictation.available) return null;
+
+  const modal = (
+    <Modal
+      open={open}
+      onClose={() => setOpen(false)}
+      title={modalTitle}
+      width={560}
+      footer={null}
+    >
+      <DictationBody
+        maxSeconds={dictation.maxSeconds}
+        capture={dictation.capture ?? CAPTURE_FALLBACK}
+        canRefine={dictation.canRefine}
+        hasExistingText={hasExistingText}
+        importLabel={importLabel}
+        onClose={() => setOpen(false)}
+        onImport={(text, replace, meta) => {
+          onImport(text, replace, meta);
+          setOpen(false);
+        }}
+      />
+    </Modal>
+  );
+
+  if (renderTrigger) {
+    return (
+      <>
+        {renderTrigger(() => setOpen(true))}
+        {modal}
+      </>
+    );
+  }
 
   return (
     <>
@@ -978,26 +1037,8 @@ export function DictateButton({
           )}
         </span>
       </span>
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        title="Say it instead"
-        width={560}
-        footer={null}
-      >
-        {/* Unmounted on close, so every visit starts a fresh recording. */}
-        <DictationBody
-          maxSeconds={dictation.maxSeconds}
-          capture={dictation.capture ?? CAPTURE_FALLBACK}
-          canRefine={dictation.canRefine}
-          hasExistingText={hasExistingText}
-          onClose={() => setOpen(false)}
-          onImport={(text, replace) => {
-            onImport(text, replace);
-            setOpen(false);
-          }}
-        />
-      </Modal>
+      {/* Unmounted on close, so every visit starts a fresh recording. */}
+      {modal}
     </>
   );
 }

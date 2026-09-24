@@ -2498,6 +2498,92 @@ export const callOpportunities = pgTable(
   ],
 );
 
+/* ---------------------------------------------------------------------------
+ * WHAT THE CALL ASSISTANT HEARD, WHAT IT PROPOSED, AND WHAT WAS SAVED.
+ *
+ * One row per time a telecaller asked the assistant to read a call. It keeps
+ * three things, and each is there for a reason:
+ *
+ *   THE TRANSCRIPT, in the language it was spoken and in English. The client
+ *   asked for the original to be kept "for future checking", and it is the
+ *   only way anybody can later tell whether a wrong suggestion was the model
+ *   mishearing or the customer changing their mind. The AUDIO is still never
+ *   stored — `lib/dictation.ts` says why, and nothing here reverses it.
+ *
+ *   THE PROPOSAL, exactly as the card drew it. A suggestion is a claim about
+ *   what the call was, and a claim nobody can read back later cannot be
+ *   checked.
+ *
+ *   THE ANSWER — the outcome the call was actually saved as, written by
+ *   `saveInteraction` in the call's own transaction. The difference between
+ *   `suggested_outcome` and `saved_outcome` is the assistant's report card,
+ *   and it is also the next training example: nothing labels data better
+ *   than a telecaller correcting a suggestion.
+ *
+ * `call_id` is null until the call is saved, and stays null for a reading that
+ * was abandoned — that is a fact worth counting too.
+ * ------------------------------------------------------------------------- */
+export const callAiDrafts = pgTable(
+  "call_ai_drafts",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    callId: text("call_id"),
+    /** What was said, in the language it was said in. */
+    spoken: text("spoken").notNull().default(""),
+    /** The English the telecaller was shown. */
+    english: text("english").notNull().default(""),
+    language: text("language"),
+    /** `sarvam`, `openai`, or `typed` where the note was typed rather than spoken. */
+    heardBy: text("heard_by"),
+    /** The model's structured reading, as it came back. Null where no model answered. */
+    reading: jsonb("reading"),
+    /** The card as drawn: every suggestion, question and duplicate. */
+    analysis: jsonb("analysis").notNull(),
+    /** Which model read it, e.g. `openai:gpt-5-mini`. Null where none did. */
+    model: text("model"),
+    classifierLabel: text("classifier_label"),
+    classifierProbability: doublePrecision("classifier_probability"),
+    suggestedOutcome: text("suggested_outcome"),
+    /** The outcome of the suggestion the telecaller applied, if any. */
+    appliedOutcome: text("applied_outcome"),
+    savedOutcome: text("saved_outcome"),
+    savedDetail: jsonb("saved_detail").$type<Record<string, unknown>>(),
+    latencyMs: integer("latency_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    savedAt: timestamp("saved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("call_ai_drafts_customer_idx").on(t.customerId, t.createdAt.desc()),
+    index("call_ai_drafts_user_idx").on(t.userId, t.createdAt.desc()),
+    index("call_ai_drafts_call_idx").on(t.callId),
+  ],
+);
+
+/**
+ * The classifier the assistant votes with, trained nightly from our own logged
+ * calls. A row per training run rather than one overwritten row, so a model
+ * that got worse can be seen getting worse — `evaluation` carries its
+ * cross-validated accuracy from the night it was made.
+ */
+export const callIntelModels = pgTable(
+  "call_intel_models",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    model: jsonb("model").notNull(),
+    trainedOn: integer("trained_on").notNull(),
+    evaluation: jsonb("evaluation"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("call_intel_models_kind_idx").on(t.kind, t.createdAt.desc())],
+);
+
 /* ----------------------------------------------------------------- §3.5 order */
 
 /* --------------------------------------------------------------- products */
