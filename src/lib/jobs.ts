@@ -889,6 +889,8 @@ export async function runJob(
               `${r.calls} logged calls read; the model answered on ${r.readByModel}.`,
               `Suggested outcome matched what was logged: ${pct(r.outcomeAgreement)}.`,
               `Filled with confidence on ${r.confident} — right on ${pct(r.confidentAgreement)} of those. Asked the telecaller on ${r.asked}.`,
+              `Sure of the outcome on ${r.outcomeSure} — right on ${r.outcomeSure ? pct(r.outcomeSureRight / r.outcomeSure) : "-"}. Asked which outcome on ${r.askedWhich}.`,
+              `The logged outcome was the suggestion or one of the offered choices on ${pct(r.calls ? r.inChoices / r.calls : 0)}.`,
               ...Object.entries(r.byOutcome).map(([o, v]) => `  ${o}: ${v.agreed}/${v.calls}`),
               ...r.misses.slice(0, 15).map((m) => `  miss — logged ${m.logged}, suggested ${m.suggested ?? "nothing"} (${m.state ?? "-"}): ${m.note}`),
             ];

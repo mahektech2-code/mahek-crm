@@ -771,3 +771,34 @@ test("a delivery update is its own outcome", () => {
   assert.equal(a.primary?.fill?.outcome, "transport_follow_up");
   assert.equal(a.primary?.fill?.callReason, "delivery_transport");
 });
+
+test("a passing remark does not outrank the point of the call", () => {
+  /* From the real call log: filed as a complaint before this rule. */
+  const a = decideCallActions(
+    input({
+      text: "Will make the payment in two days. Local thinner is coming for 60-70 rupees.",
+      reading: reading({
+        intents: [
+          { intent: "payment_promised", confidence: 90, evidence: "Will make the payment in two days" },
+          { intent: "complaint", confidence: 40, evidence: "local thinner 60-70 rupees" },
+        ],
+        payment: { amountRupees: null, mode: null, when: cue("in two days", { kind: "in_days", n: 2 }) },
+        complaint: { category: "pricing", description: "Local thinner is cheaper", requiredAction: null, creditNoteAsked: false },
+      }),
+    }),
+  );
+  assert.equal(a.primary?.intent, "payment_promised");
+  /* A strong complaint beside a strong payment still wins, as it should. */
+  const b = decideCallActions(
+    input({
+      reading: reading({
+        intents: [
+          { intent: "payment_promised", confidence: 90, evidence: "pay Friday" },
+          { intent: "complaint", confidence: 85, evidence: "drum leaked" },
+        ],
+        complaint: { category: "packaging_damage", description: "Drum leaked", requiredAction: "replacement", creditNoteAsked: false },
+      }),
+    }),
+  );
+  assert.equal(b.primary?.intent, "complaint");
+});

@@ -423,6 +423,9 @@ function reminderDuplicate(
 
 type Candidate = { intent: CallIntent; confidence: number; evidence: string };
 
+/** How close to the strongest intent another must be to outrank it by kind. */
+const PRECEDENCE_BAND = 15;
+
 export function decideCallActions(input: DecideInput): CallAnalysis {
   const { reading } = input;
   const rules: RuleSignals = readSignals(input.text);
@@ -505,8 +508,20 @@ export function decideCallActions(input: DecideInput): CallAnalysis {
       INTENT_PRECEDENCE.indexOf(a.intent) - INTENT_PRECEDENCE.indexOf(b.intent),
   );
 
-  /* ------------------------------------------------- the primary */
-  let primaryCandidate: Candidate | null = ordered[0] ?? null;
+  /* ------------------------------------------------- the primary
+   *
+   * PRECEDENCE DECIDES ONLY AMONG THE STRONG. Ranking a complaint above a
+   * payment is right when both were plainly said, and wrong when the
+   * "complaint" was a passing remark about a competitor's price: on the real
+   * call log that ranking filed "will pay in two days — local thinner is
+   * cheaper" as a complaint. So an intent competes on precedence only if it is
+   * within PRECEDENCE_BAND points of the strongest one; the rest stay extras.
+   */
+  const strongest = Math.max(0, ...ordered.map((c) => c.confidence));
+  const contenders = ordered.filter(
+    (c) => c.confidence >= strongest - PRECEDENCE_BAND,
+  );
+  let primaryCandidate: Candidate | null = contenders[0] ?? null;
 
   /* No model at all — the classifier alone points at a form, and ASKS. */
   if (!reading && top) {
