@@ -428,3 +428,31 @@ export function manualText(filled: string): { ok: true; text: string } | { ok: f
   }
   return { ok: true, text };
 }
+
+/* ------------------------------------------------------ the rule clocks */
+
+/**
+ * Where a customer stands on a template's own clock, for the automation rules:
+ * a payment template counts DAYS OVERDUE (the oldest undisputed stated bill,
+ * past its due date); an order template counts DAYS PAST THE EXPECTED ORDER
+ * DATE (negative before it). Null when the clock does not apply at all —
+ * nothing overdue, or no measured cycle and last order to count from. The
+ * same definitions the variables above print, so a rule "15 days overdue"
+ * and a message saying "overdue by 15 days" can never disagree.
+ */
+export function ruleClock(
+  kind: "payment" | "order",
+  f: CustomerFacts,
+): { day: number; overduePaise: number } | null {
+  if (kind === "payment") {
+    const overdue = f.openBills.filter((b) => b.balancePaise > 0 && !b.disputed && b.dueDate < f.today);
+    if (!overdue.length) return null;
+    const oldest = overdue.reduce((a, b) => (b.dueDate < a.dueDate ? b : a));
+    return {
+      day: daysBetween(oldest.dueDate, f.today),
+      overduePaise: overdue.reduce((s, b) => s + b.balancePaise, 0),
+    };
+  }
+  if (!f.lastOrder || !f.cycle.measured || f.cycle.days <= 0) return null;
+  return { day: daysBetween(addDays(f.lastOrder.date, f.cycle.days), f.today), overduePaise: 0 };
+}

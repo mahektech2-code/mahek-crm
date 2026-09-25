@@ -29,6 +29,7 @@ import {
   setWhatsappServiceAction,
 } from "@/lib/actions/whatsapp-founder";
 import type { MessagePreview } from "@/lib/services/whatsapp-service";
+import { WhatsappTabs } from "./whatsapp-tabs";
 import {
   SecretCredentialRow,
   type SecretMeta,
@@ -152,6 +153,7 @@ export function WhatsappControl(props: {
         title="WhatsApp"
         subtitle="Whether messages go to customers through the WhatsApp API at all is decided here, and only here. Off, every screen copies and pastes exactly as before."
       />
+      <WhatsappTabs current="setup" />
 
       {/* ------------------------------------------------------- the switch */}
       <Card className="mb-4 overflow-hidden">

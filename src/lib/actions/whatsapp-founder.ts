@@ -13,6 +13,17 @@ import {
   sendTestMessage,
   type MessagePreview,
 } from "@/lib/services/whatsapp-service";
+import {
+  deleteRule,
+  previewAutomation,
+  runAutomation,
+  saveAutomationSettings,
+  saveRule,
+  setRuleStatus,
+  type RuleInput,
+  type RunSummary,
+} from "@/lib/services/whatsapp-automation-service";
+import type { RuleStatus, WindowSettings } from "@/lib/whatsapp-rules";
 
 /* ---------------------------------------------------------------------------
  * The Founder Dashboard's WhatsApp screen — its two writes.
@@ -87,6 +98,79 @@ export async function findCustomersAction(
   try {
     await requireFounderDesk();
     return ok(await findCustomersByName(q));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ------------------------------------------------------------- automation */
+
+
+function refreshAutomation() {
+  revalidatePath("/founder/whatsapp/automation");
+}
+
+export async function saveWindowAction(w: WindowSettings): Promise<Result> {
+  try {
+    const r = await saveAutomationSettings(w);
+    refreshAutomation();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function saveRuleAction(input: RuleInput): Promise<Result<{ id: string }>> {
+  try {
+    const r = await saveRule(input);
+    refreshAutomation();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function setRuleStatusAction(id: string, status: RuleStatus): Promise<Result> {
+  try {
+    const r = await setRuleStatus(id, status);
+    refreshAutomation();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function deleteRuleAction(id: string): Promise<Result> {
+  try {
+    const r = await deleteRule(id);
+    refreshAutomation();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Works out every enabled rule (or the ones named) right now. Never sends. */
+export async function previewAutomationAction(ruleIds?: string[]): Promise<Result<RunSummary>> {
+  try {
+    const r = await previewAutomation(ruleIds);
+    refreshAutomation();
+    return ok(r, `${r.wouldSend} would be sent`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * The hourly pass, now, on the founder's word — with every gate the schedule
+ * has: the window, the service switch, Live rules only, the daily limit.
+ */
+export async function runLiveNowAction(): Promise<Result<RunSummary>> {
+  try {
+    await requireFounderDesk();
+    const r = await runAutomation({ source: "schedule" });
+    refreshAutomation();
+    return ok(r, r.runId ? `${r.sent} sent · ${r.wouldSend} previewed` : r.note);
   } catch (e) {
     return fromThrown(e);
   }

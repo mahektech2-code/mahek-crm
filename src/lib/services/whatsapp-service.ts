@@ -654,6 +654,19 @@ export async function cancelMessage(messageId: string): Promise<Result> {
  */
 export async function sendAutomatic(messageId: string): Promise<Result> {
   const ctx = await resolveScope();
+  return sendAutomaticAs(messageId, { id: ctx.user.id, checkScope: true });
+}
+
+/**
+ * The send itself, for whoever is sending: a person (whose book the customer
+ * must be in) or an automation rule (acting for the founder who set it live,
+ * with no request and so no book to check). Every other check is identical.
+ */
+async function sendAutomaticAs(
+  messageId: string,
+  actor: { id: string; checkScope: boolean },
+): Promise<Result> {
+  const ctx = { user: { id: actor.id } };
   const config = await getConfig();
   const delivery = await deliveryContext();
 
@@ -665,7 +678,7 @@ export async function sendAutomatic(messageId: string): Promise<Result> {
 
   const [customer] = await db.select().from(customers).where(eq(customers.id, message.customerId));
   if (!customer) return err("That customer no longer exists.", "not_found");
-  await assertCustomerInScope(customer);
+  if (actor.checkScope) await assertCustomerInScope(customer);
   if (customer.doNotContact) return err(`${customer.name} is marked do not contact.`, "rule_violation");
 
   const [template] = message.templateId
@@ -1516,4 +1529,78 @@ export async function findCustomersByName(q: string) {
     .where(sql`${customers.name} ilike ${"%" + term.replace(/[%_]/g, "") + "%"}`)
     .orderBy(asc(customers.name))
     .limit(10);
+}
+
+/* --------------------------------------------------------- rule-driven sends */
+
+/**
+ * One message for one automation rule: prepared and, unless `dry`, sent.
+ *
+ * The idempotency key is rule + customer + DAY, so two runs of the scheduler
+ * that overlap — or the same hour run twice — can only ever produce one row,
+ * and a second attempt finds it and stops. Everything about whether the
+ * message is TRUE is still the template's rule set, rendered from fresh facts.
+ * The personal number only: a group cannot be reached through the API.
+ */
+export async function sendForRule(input: {
+  customerId: string;
+  templateId: string;
+  triggerId: string;
+  actorId: string;
+  day: string;
+}): Promise<Result<{ messageId: string }>> {
+  const idempotencyKey = `auto:${input.triggerId}:${input.customerId}:${input.day}`;
+  const [existing] = await db
+    .select({ id: waMessages.id })
+    .from(waMessages)
+    .where(eq(waMessages.idempotencyKey, idempotencyKey));
+  if (existing) return err("Already handled today by this rule.", "conflict");
+
+  const [customer] = await db.select().from(customers).where(eq(customers.id, input.customerId));
+  if (!customer) return err("That customer no longer exists.", "not_found");
+  const [template] = await db.select().from(waTemplates).where(eq(waTemplates.id, input.templateId));
+  if (!template) return err("That template no longer exists.", "not_found");
+  const spec = specOf(template);
+  if (!spec) return err("Only a template with a rule set can be sent automatically.", "rule_violation");
+
+  const rendered = await renderForCustomer(spec, input.customerId);
+  if (!rendered.ok) return err(rendered.reasons.join(" "), "rule_violation");
+  const destination = customer.whatsappPhone ?? customer.phone;
+  if (!destination) return err("No number on record.", "validation");
+
+  const messageId = id("wam");
+  const inserted = await db
+    .insert(waMessages)
+    .values({
+      id: messageId,
+      customerId: input.customerId,
+      templateId: template.id,
+      templateName: template.name,
+      userId: input.actorId,
+      mode: "manual",
+      destKind: "personal",
+      resolvedDestination: destination,
+      body: fillBody(template.body, rendered.params),
+      status: "prepared",
+      triggerId: input.triggerId,
+      idempotencyKey,
+      createdById: input.actorId,
+      updatedById: input.actorId,
+    })
+    .onConflictDoNothing()
+    .returning({ id: waMessages.id });
+  if (!inserted.length) return err("Already handled today by this rule.", "conflict");
+
+  const sent = await sendAutomaticAs(messageId, { id: input.actorId, checkScope: false });
+  if (!sent.ok) {
+    // A refusal before anything left leaves a row nobody will work — mark it
+    // cancelled with the reason, so the log says why and the key still stops
+    // a second attempt today.
+    await db
+      .update(waMessages)
+      .set({ status: "cancelled", failureReason: sent.error, updatedAt: new Date() })
+      .where(and(eq(waMessages.id, messageId), eq(waMessages.status, "prepared")));
+    return sent;
+  }
+  return ok({ messageId }, sent.message);
 }
