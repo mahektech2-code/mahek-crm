@@ -1608,7 +1608,7 @@ suffix is the same message): the Wati variable names it fills, and the checks
 that make its sentences TRUE. `wa_templates.wati_spec` ties a CRM template to
 one, and a spec'd template is rendered by those rules on every route — the
 preview, the manual copy and the API send — so no route can send what another
-would refuse. `0163` inserted the eight and archived every free-text template
+would refuse. `0165` inserted the eight and archived every free-text template
 (archived, not deleted: `wa_messages` keeps a key to the template it came from).
 
 **A variable is a true value or the message is refused.** Never defaulted,
@@ -2790,6 +2790,59 @@ the default one. `VoiceTextarea` decides the joining and the `maxLength`
 ceiling in one place rather than at twenty call sites that would each get one
 of them slightly wrong — `maxLength` stops typing but not a programmatic set,
 so the box would otherwise accept more than the field will save.
+
+**THE CALL ASSISTANT PROPOSES THE FORM, AND NEVER WRITES A RECORD.** The
+telecaller presses one button on the call panel and says what happened, in
+any language, or types it. `lib/services/call-intel-service.ts` reads it and
+`components/crm/call-assistant.tsx` shows what it understood: the outcome,
+the dates, the products, the amount, the feedback, and what else the call
+produced. "Fill the form" puts that into the ordinary call form, filling only
+fields nobody has typed in, and the ordinary Save is still the only thing
+that writes. A sample, a complaint on a call filed as something else, or a
+second reminder opens its own ordinary form, filled in. The one row the
+assistant writes is `call_ai_drafts`: the transcript in the language it was
+spoken, the proposal, and, written by `saveInteraction` in the call's own
+transaction, what the call was actually saved as. The audio is still never
+stored.
+
+**Three readers, because each is wrong in a different direction.** The
+language model (`callIntel.model`, OpenAI then Sarvam) extracts everything
+into `callReadingSchema`, whose coded answers are built from the same lists
+the form draws, so it cannot answer in a code the save would refuse. The
+rules (`engines/call-intel-signals.ts`) look only for what is expensive to
+miss: do-not-call, a missed call, "maybe", and money in Indian number words.
+The classifier (`engines/call-intel-classifier.ts`), Naive Bayes trained
+nightly on our own logged notes, votes on the outcome. It votes against the
+model ONLY if its own cross-validation says it is right at least 80% of the
+time when sure, because Naive Bayes is overconfident by construction.
+`engines/call-intel-decide.ts` combines them and is where the client's rules
+live.
+
+**The model reports date CUES, never dates.** "After 15 days" comes back as
+`{in_days: 15}` with the words it came from, and `engines/call-intel-dates.ts`
+does the arithmetic against the business date and the working week. That file
+also parses the same words itself. Where the two readings land on different
+days, or "next Friday" can mean two days, or the day has already gone, the
+date is left EMPTY and the candidates are offered as buttons.
+
+**Unsure means ASK, and a default is never filled in.** Below
+`callIntel.confirmBelowPercent`, or where a trusted classifier disagrees, the
+card asks "Which was it?" with each candidate ready to apply. A date nobody
+said is a question with suggestions, not a filled field. "I may order next
+week" is an opportunity, never an order: an order needs the model to say
+confirmed AND no "maybe" in the words. Do-not-call is shown whenever either
+reader hears it, and the option that writes it is always the telecaller's
+click. Existing open reminders, complaints, opportunities and samples are
+read first, and a match is named, with a move offered in place of a second
+reminder.
+
+**Examples come from our own book, not from a fine-tune.** Each request shows
+the model the past calls whose notes read most like this one
+(`calls_notes_trgm_idx`, trigram KNN), one per distinct note, and leaves out
+any note the office itself logged two ways. `npm run jobs -- call-intel-train`
+relearns the classifier (nightly too), and `npm run jobs -- call-intel-eval
+--limit=80` runs the whole pipeline over logged calls and reports how often
+its outcome matches the one somebody chose.
 
 **THE SALESMAN GETS THE SAME MICROPHONE, and he needed it more than the
 telecaller did.** A telecaller types slowly with a customer on the line; a

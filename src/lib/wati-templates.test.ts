@@ -211,7 +211,7 @@ describe("guards", () => {
 /* ---------------------------- the bodies the migration puts in the CRM */
 
 describe("the eight template bodies", () => {
-  const sql = readFileSync(new URL("../../drizzle/0163_whatsapp_templates_follow_their_rules.sql", import.meta.url), "utf8");
+  const sql = readFileSync(new URL("../../drizzle/0165_whatsapp_templates_follow_their_rules.sql", import.meta.url), "utf8");
   const rows = [...sql.matchAll(/'tpl_wati_(\w+)'.*?\$b\$([\s\S]*?)\$b\$/g)].map((m) => ({ key: m[1], body: m[2] }));
 
   test("there is one for every rule set", () => {

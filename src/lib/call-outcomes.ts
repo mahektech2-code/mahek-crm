@@ -229,6 +229,21 @@ export function deskForAction(action: string | null | undefined): string | null 
  * through one loop.
  */
 const OUTCOME_FIELDS: Record<string, ReasonField[]> = {
+  payment_promised: [
+    /*
+     * HOW MUCH, beside the date the form already asked. Optional: a customer
+     * who says "I will clear it Friday" has promised a day and not a figure,
+     * and refusing the save over a number nobody said would lose the date.
+     * Where it is given it rides into the reminder's note, which is what the
+     * person ringing on Friday reads first.
+     */
+    {
+      key: "promisedAmount",
+      label: "Amount promised (₹)",
+      kind: "number",
+      hint: "Whole rupees, as they said it. Leave it empty if they named no figure.",
+    },
+  ],
   no_order: [
     {
       key: "whyNoOrder",

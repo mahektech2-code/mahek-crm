@@ -35,7 +35,7 @@ type BooleanOption = {
 const isFlag = (name: string): name is keyof typeof FLAGS => name in FLAGS;
 
 /** Options that carry a value, as --name=value. */
-const VALUES = ["owner", "password"] as const;
+const VALUES = ["owner", "password", "limit"] as const;
 
 export type ParsedJobArgs =
   | { ok: true; job: string; options: JobOptions }
@@ -86,9 +86,12 @@ export const JOB_USAGE = [
   "  --reassign        move customers that already exist to --owner",
   "  --password=<pw>   for accounts provision-team creates",
   "  --dry-run         report what would change and write nothing",
+  "  --limit=<n>       how many logged calls call-intel-eval reads",
   "",
   "  npm run jobs -- nightly",
   "  npm run jobs -- sheet-payments",
   "  npm run jobs -- project-sheet --owner=vikram@mahek.in --bills",
   "  npm run jobs -- revert-sheet-paid --dry-run",
+  "  npm run jobs -- call-intel-train",
+  "  npm run jobs -- call-intel-eval --limit=80",
 ].join("\n");

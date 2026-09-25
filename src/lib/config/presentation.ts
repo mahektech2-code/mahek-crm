@@ -270,6 +270,14 @@ export const PRESENTATION: Record<string, Presentation> = {
   "voice.transcriptionModel": { tab: "Voice", group: "Models", control: "text" },
   "voice.openaiTranscriptionModel": { tab: "Voice", group: "Models", control: "text" },
   "voice.languageModel": { tab: "Voice", group: "Models", control: "text" },
+  "callIntel.enabled": { tab: "Voice", group: "Call assistant", control: "bool" },
+  "callIntel.model": { tab: "Voice", group: "Call assistant", control: "text" },
+  "callIntel.confirmBelowPercent": { tab: "Voice", group: "Call assistant", unit: "%" },
+  "callIntel.classifierVetoPercent": { tab: "Voice", group: "Call assistant", unit: "%" },
+  "callIntel.noAnswerRetryWorkingDays": { tab: "Voice", group: "Call assistant", unit: "working days" },
+  "callIntel.duplicateWindowDays": { tab: "Voice", group: "Call assistant", unit: "days" },
+  "callIntel.exampleCalls": { tab: "Voice", group: "Call assistant", unit: "calls" },
+  "callIntel.trainingMonths": { tab: "Voice", group: "Call assistant", unit: "months" },
 };
 
 /* ------------------------------------------------------ entity collections */
