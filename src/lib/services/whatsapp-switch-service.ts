@@ -1,8 +1,8 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, waTemplates, whatsappServiceEvents } from "@/db/schema";
+import { appAccess, auditLog, waTemplates, whatsappServiceEvents } from "@/db/schema";
 import { requireCapability, NotPermittedError } from "../access-control";
 import { err, okVoid, type Result } from "../result";
 import { isApproved, listWatiTemplates } from "../wati";
@@ -52,8 +52,16 @@ export async function serviceHistory(limit = 20) {
  */
 export async function requireFounderDesk() {
   const ctx = await requireCapability("whatsapp.activate");
-  if (ctx.authorisedIn !== "founder") throw new NotPermittedError("whatsapp.activate");
-  return ctx;
+  // Asked of the GRANTS, not of which hat `requireCapability` happened to
+  // credit: an administrator who also holds the Founder Dashboard carries the
+  // capability in every app, and the hat it reports can be any of them.
+  const [founder] = await db
+    .select({ id: appAccess.id })
+    .from(appAccess)
+    .where(and(eq(appAccess.userId, ctx.user.id), eq(appAccess.app, "founder")))
+    .limit(1);
+  if (!founder) throw new NotPermittedError("whatsapp.activate");
+  return { ...ctx, authorisedIn: "founder" as const };
 }
 
 export async function setWhatsappService(input: {

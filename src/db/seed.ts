@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import { db, sql as client } from "./index";
 import {
+  waAutomationRuns,
+  waAutomationSettings,
+  waTriggers,
+  whatsappServiceEvents,
   appAccess,
   appSettings,
   attendance,
@@ -555,6 +559,12 @@ async function main() {
     bugReports,
     feedback,
     attendance,
+    // WhatsApp automation and the founder's switch point at users and at
+    // templates; the automation rules cascade from their template anyway.
+    waAutomationRuns,
+    waTriggers,
+    waAutomationSettings,
+    whatsappServiceEvents,
     waReplies,
     waMessages,
     waRuns,

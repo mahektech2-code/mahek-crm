@@ -257,7 +257,7 @@ export function WhatsappControl(props: {
             title="Replies from numbers not on the book"
             hint="Kept rather than dropped. Put the number on the right customer and future replies file themselves."
           />
-          <table className="w-full">
+          <div className="overflow-x-auto"><table className="w-full">
             <thead>
               <tr>
                 <Th>Received</Th>
@@ -277,7 +277,7 @@ export function WhatsappControl(props: {
                 </Tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </Card>
       ) : null}
 
@@ -285,7 +285,7 @@ export function WhatsappControl(props: {
       <Card className="overflow-hidden">
         <CardHeader title="Who switched it, and when" hint="Every change is kept. Nothing here is ever edited." />
         {props.history.length ? (
-          <table className="w-full">
+          <div className="overflow-x-auto"><table className="w-full">
             <thead>
               <tr>
                 <Th>When</Th>
@@ -306,7 +306,7 @@ export function WhatsappControl(props: {
                 </Tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         ) : (
           <p className="px-5 py-4 text-[13px] text-muted">Never switched. It has been off since the start.</p>
         )}
@@ -431,7 +431,7 @@ function TemplateLinks({
         does not allow line breaks inside a variable.
       </p>
       {crmTemplates.length ? (
-        <table className="w-full">
+        <div className="overflow-x-auto"><table className="w-full">
           <thead>
             <tr>
               <Th>CRM template</Th>
@@ -444,7 +444,7 @@ function TemplateLinks({
               <LinkRow key={`${t.id}:${t.watiTemplateName ?? ""}`} template={t} approved={approved} mergeFields={mergeFields} />
             ))}
           </tbody>
-        </table>
+        </table></div>
       ) : (
         <p className="px-5 py-4 text-[13px] text-muted">No live templates in the CRM yet.</p>
       )}

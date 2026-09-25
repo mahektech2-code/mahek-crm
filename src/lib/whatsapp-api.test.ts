@@ -498,3 +498,15 @@ test("the same order follow-up is refused while the cycle is only the default", 
   assert.match(r.error, /not been measured/);
   assert.equal(sends.length, 0);
 });
+
+test("an administrator who also holds the Founder Dashboard can switch it — whichever hat is credited", async () => {
+  const both = await makeUser("Owner", "admin", [
+    { app: "crm", role: "admin" },
+    { app: "admin", role: "admin" },
+    { app: "founder", role: "admin" },
+  ]);
+  setTestUser(both);
+  const r = await setWhatsappService({ active: true });
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  assert.equal((await db.select().from(whatsappServiceEvents)).length, 1);
+});

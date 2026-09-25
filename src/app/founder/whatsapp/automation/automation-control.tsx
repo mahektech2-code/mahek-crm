@@ -362,7 +362,7 @@ function RuleGroup(props: {
         }
       />
       {props.rules.length ? (
-        <table className="w-full">
+        <div className="overflow-x-auto"><table className="w-full">
           <thead>
             <tr>
               <Th>Template</Th>
@@ -425,7 +425,7 @@ function RuleGroup(props: {
               </Tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       ) : (
         <p className="px-5 py-4 text-[13px] text-muted">No rules yet.</p>
       )}
@@ -591,7 +591,7 @@ function RunDetail({ run, title, onClose }: { run: RunSummary; title: string; on
             <span className="text-muted">{open === r.ruleId ? "▾" : "▸"}</span>
           </button>
           {open === r.ruleId && r.rows.length ? (
-            <table className="w-full">
+            <div className="overflow-x-auto"><table className="w-full">
               <thead>
                 <tr>
                   <Th>Customer</Th>
@@ -612,7 +612,7 @@ function RunDetail({ run, title, onClose }: { run: RunSummary; title: string; on
                   </Tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           ) : null}
         </div>
       ))}
@@ -626,7 +626,7 @@ function RunsCard({ runs }: { runs: RunView[] }) {
     <Card className="overflow-hidden">
       <CardHeader title="Recent runs" hint="Every scheduled check and every preview, with what each rule did or would have done." />
       {runs.length ? (
-        <table className="w-full">
+        <div className="overflow-x-auto"><table className="w-full">
           <thead>
             <tr>
               <Th>When</Th>
@@ -662,7 +662,7 @@ function RunsCard({ runs }: { runs: RunView[] }) {
               </React.Fragment>
             ))}
           </tbody>
-        </table>
+        </table></div>
       ) : (
         <p className="px-5 py-4 text-[13px] text-muted">Nothing has run yet. Press Preview now to see who each rule would reach today.</p>
       )}
