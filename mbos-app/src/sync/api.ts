@@ -285,8 +285,18 @@ export async function login(args: { mobile: string; password?: string; otp?: str
   });
 }
 
-export async function requestOtp(mobile: string): Promise<{ sent: boolean }> {
+/**
+ * Sends a sign-in code on WhatsApp to the work number on this account. The
+ * code is then posted to `login` as `otp` in place of the password.
+ */
+export async function requestOtp(mobile: string): Promise<{ ok: boolean; sentTo: string; expiresInMinutes: number }> {
   return request('/api/mbos/auth/otp', { method: 'POST', auth: false, body: JSON.stringify({ mobile }) });
+}
+
+/** Whether the server can send codes at all — the sign-in screen asks before drawing the option. */
+export async function otpAvailable(): Promise<boolean> {
+  const r = await request<{ available: boolean }>('/api/mbos/auth/otp', { method: 'GET', auth: false });
+  return Boolean(r?.available);
 }
 
 /* -------------------------------------------------------------- bootstrap */

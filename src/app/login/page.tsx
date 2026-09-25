@@ -11,6 +11,7 @@ import {
 import { Icon } from "@/components/shell/icons";
 import { longDate, today } from "@/lib/format";
 import { LoginForm } from "./login-form";
+import { codesOffered } from "@/lib/actions/auth";
 
 export const metadata = { title: "Sign in - MahekOne" };
 
@@ -117,7 +118,7 @@ export default async function LoginPage({
             </div>
           ) : null}
 
-          <LoginForm />
+          <LoginForm codesOffered={await codesOffered()} />
 
           <div className="mt-5 flex items-center gap-2.5">
             <span className="h-px flex-1 bg-line" />

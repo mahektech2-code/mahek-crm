@@ -1156,6 +1156,13 @@
       "when": 1790283178688,
       "tag": "0166_whatsapp_rules_the_founder_sets",
       "breakpoints": true
+    },
+    {
+      "idx": 166,
+      "version": "7",
+      "when": 1790283238688,
+      "tag": "0167_sign_in_with_a_whatsapp_code",
+      "breakpoints": true
     }
   ]
 }

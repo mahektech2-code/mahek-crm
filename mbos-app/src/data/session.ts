@@ -227,8 +227,9 @@ async function offlineValidityDays(): Promise<number> {
  *
  * There were three controls for it and none of them did anything. "Forgot
  * password" raised a toast DESCRIBING a three-step flow — mobile, OTP, new
- * password — that has never existed: `/api/mbos/auth/otp`, which the handset's
- * own `requestOtp` calls, is not a route on the server. Profile's "Reset
+ * password — that did not exist then: `/api/mbos/auth/otp`, which the handset's
+ * own `requestOtp` calls, was not a route on the server. (It is now, for
+ * signing in with a WhatsApp code — see the sign-in screen.) Profile's "Reset
  * password" said "A link to set a new password has been sent to your mobile",
  * and nothing was sent. A salesman locked out of MBOS had no way back in, and
  * was told help was on the way.
