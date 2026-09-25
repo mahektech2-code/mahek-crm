@@ -215,3 +215,37 @@ test("outside the rule's day range the customer is not touched at all", async ()
   assert.equal(s.rules[0].inRange, 0, "35 days overdue is past 15");
   assert.equal(sends.length, 0);
 });
+
+test("the tracker follows one message from send to read to reply, and says which rule applies", async () => {
+  const { applyWatiEvent } = await import("@/lib/services/whatsapp-service");
+  const { parseWatiEvent } = await import("@/lib/whatsapp-delivery");
+  const { latestMessageFor, messagesForCustomer, ruleOutlookFor, trackerPage } = await import(
+    "@/lib/services/whatsapp-tracker-service"
+  );
+  await serviceOn();
+  const r1 = await rule(await template("payment_followup_1", "payment_followup_1_v2"));
+  await runAutomation({ source: "schedule", now: at("10:52") });
+  const [m] = await db.select().from(waMessages).where(eq(waMessages.customerId, shopId));
+
+  await applyWatiEvent(parseWatiEvent({ eventType: "sentMessageDELIVERED_v2", localMessageId: m.id }));
+  await applyWatiEvent(parseWatiEvent({ eventType: "sentMessageREAD_v2", localMessageId: m.id }));
+  await applyWatiEvent(parseWatiEvent({ eventType: "message", waId: "919820011001", whatsappMessageId: "wamid.R1", text: "Will pay Friday" }));
+
+  const latest = (await latestMessageFor([shopId]))[shopId];
+  assert.equal(latest.status, "read");
+  assert.ok(latest.deliveredAt && latest.readAt && latest.repliedAt, "every receipt is carried");
+  assert.equal(latest.viaRule, true);
+
+  const history = await messagesForCustomer(shopId);
+  assert.equal(history.length, 1);
+
+  const outlook = await ruleOutlookFor(shopId, "payment");
+  const mine = outlook.find((o) => o.ruleId === r1)!;
+  assert.equal(mine.inRange, true);
+  assert.match(mine.verdict, /35 days overdue — inside/);
+
+  const page = await trackerPage({ days: 7 });
+  assert.equal(page.funnel.read, 1);
+  assert.equal(page.funnel.replied, 1);
+  assert.equal((await trackerPage({ days: 7, source: "person" })).rows.length, 0);
+});

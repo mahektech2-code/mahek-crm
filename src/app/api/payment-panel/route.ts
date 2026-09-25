@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getFollowUpPanel } from "@/lib/services/payment-followup-service";
 import { previewPaymentReminder } from "@/lib/services/whatsapp-service";
+import { messagesForCustomer, ruleOutlookFor } from "@/lib/services/whatsapp-tracker-service";
 
 /**
  * Everything the follow-up modal needs, in one round trip: the account, and
@@ -18,8 +19,14 @@ export async function GET(request: Request) {
   try {
     const panel = await getFollowUpPanel(customerId);
     if (!panel) return NextResponse.json({ panel: null }, { status: 200 });
-    const message = await previewPaymentReminder(customerId, panel.stage);
-    return NextResponse.json({ panel, message });
+    const [message, messages, rules] = await Promise.all([
+      previewPaymentReminder(customerId, panel.stage),
+      messagesForCustomer(customerId, 15),
+      ruleOutlookFor(customerId, "payment"),
+    ]);
+    // The conversation so far and the rules that will act next, beside the
+    // message about to be sent — so nobody sends by hand what a rule just sent.
+    return NextResponse.json({ panel, message, whatsapp: { messages, rules } });
   } catch {
     // Out of scope, or gone. The modal says so rather than showing an error.
     return NextResponse.json({ panel: null }, { status: 200 });

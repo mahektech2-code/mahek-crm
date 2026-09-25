@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
 
-/** Setup (the switch, templates, connection) and Automation (the rules). */
-export function WhatsappTabs({ current }: { current: "setup" | "automation" }) {
+/** Setup (the switch, templates, connection), Automation (the rules), Messages (the tracker). */
+export function WhatsappTabs({ current }: { current: "setup" | "automation" | "messages" }) {
   const tabs = [
     { key: "setup", href: "/founder/whatsapp", label: "Setup" },
     { key: "automation", href: "/founder/whatsapp/automation", label: "Automation" },
+    { key: "messages", href: "/founder/whatsapp/messages", label: "Messages" },
   ] as const;
   return (
     <div className="mb-4 flex items-center border-b border-line">
