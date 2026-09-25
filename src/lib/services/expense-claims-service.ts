@@ -126,3 +126,90 @@ export async function claimDays(opts: { from: string; to: string }): Promise<Cla
      order by d.day desc, u.name asc
   `);
 }
+
+/* ------------------------------------------------------ what a day is made of */
+
+export type ClaimLineFile = { id: string; filename: string; contentType: string; gone: boolean };
+
+export type ClaimLine = {
+  id: string;
+  kind: string;
+  claimedPaise: number;
+  eligiblePaise: number | null;
+  remarks: string | null;
+  vendorName: string | null;
+  billNumber: string | null;
+  /** Every file filed under the claim — a bill is often two photographs. */
+  files: ClaimLineFile[];
+};
+
+/**
+ * The claims behind one day, with the bills behind each claim.
+ *
+ * The Decide dialog used to show a day as two totals and nothing else, so a
+ * manager approved or cut a day's money without one bill in front of them —
+ * the bills were stored and could not be seen. Scoped by the same
+ * `managerScope` the day list is, so an id typed into a request reaches only a
+ * day the list would have drawn. Null where it would not.
+ */
+export async function claimLinesForDay(dayId: string): Promise<ClaimLine[] | null> {
+  const scope = await managerScope();
+  const [day] = await db.execute<{ userId: string }>(sql`
+    select d.user_id as "userId" from mbos_expense_days d where d.id = ${dayId}
+  `);
+  if (!day) return null;
+  if (scope.salesmanIds !== null && !scope.salesmanIds.includes(day.userId)) return null;
+
+  const lines = await db.execute<{
+    id: string;
+    kind: string;
+    claimedPaise: number | string;
+    eligiblePaise: number | string | null;
+    remarks: string | null;
+    vendorName: string | null;
+    billNumber: string | null;
+  }>(sql`
+    select e.id, coalesce(e.kind, e.category::text) as kind,
+           e.amount_paise as "claimedPaise", e.eligible_paise as "eligiblePaise",
+           e.remarks, e.vendor_name as "vendorName", e.bill_number as "billNumber"
+      from mbos_expenses e
+     where e.expense_day_id = ${dayId}
+       and e.superseded_by_id is null
+     order by e.expense_date, e.id
+  `);
+  if (!lines.length) return [];
+
+  const ids = lines.map((l) => l.id);
+  const files = await db.execute<{
+    parentId: string;
+    id: string;
+    filename: string;
+    contentType: string;
+    status: string;
+  }>(sql`
+    select a.parent_id as "parentId", a.id, a.filename, a.content_type as "contentType",
+           a.status::text as status
+      from attachments a
+     where a.parent_type = 'mbos_expense'
+       and a.parent_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+     order by a.created_at, a.id
+  `);
+
+  return lines.map((l) => ({
+    id: l.id,
+    kind: l.kind,
+    claimedPaise: Number(l.claimedPaise),
+    eligiblePaise: l.eligiblePaise == null ? null : Number(l.eligiblePaise),
+    remarks: l.remarks,
+    vendorName: l.vendorName,
+    billNumber: l.billNumber,
+    files: files
+      .filter((f) => f.parentId === l.id)
+      .map((f) => ({
+        id: f.id,
+        filename: f.filename,
+        contentType: f.contentType,
+        gone: f.status === "removed",
+      })),
+  }));
+}

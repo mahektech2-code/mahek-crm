@@ -3,7 +3,8 @@ import { View, Text, Pressable } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
-import { Card, SecondaryButton, T } from '../src/components/ui/primitives';
+import { Card, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { promptsForExpenses } from '../src/lib/travel-leg';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
@@ -214,6 +215,9 @@ export default function Home() {
    */
   const [readErr, setReadErr] = React.useState<string | null>(null);
   const [starting, setStarting] = React.useState(false);
+  /* The day's mode, held while the after-punch-out prompt is up. Null is no
+     prompt. See `promptsForExpenses`. */
+  const [claimPrompt, setClaimPrompt] = React.useState<{ modeLabel: string | null } | null>(null);
 
   /*
    * The clock, as state and ticked — never read during render.
@@ -800,6 +804,17 @@ export default function Home() {
           ? `Punched out · ${durationLabel(out.workedMinutes)} worked`
           : (out.reason ?? 'The day was already closed.'),
       );
+      /* Not on a meter day — the readings are the claim. On every other day
+         the fares only reach the office if he raises them, so he is asked
+         now, while he still remembers the auto from the station. */
+      if (
+        out.ok &&
+        promptsForExpenses(
+          session ? { modeKey: session.modeKey, odometerStartKm: session.odometerStartKm } : null,
+        )
+      ) {
+        setClaimPrompt({ modeLabel: sessionMode?.label ?? null });
+      }
     } finally {
       setStarting(false);
     }
@@ -1429,6 +1444,33 @@ export default function Home() {
                 answerMode.current = null;
               }}
             />
+          </View>
+        </View>
+      </BottomSheet>
+
+      {/* ─────────────────────────── after the punch-out: raise the day's costs */}
+      <BottomSheet open={!!claimPrompt} onClose={() => setClaimPrompt(null)}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
+          <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
+            Add today&apos;s expenses
+          </T>
+          <T s="small" style={{ marginTop: 6 }}>
+            {(claimPrompt?.modeLabel
+              ? `You travelled by ${claimPrompt.modeLabel.toLowerCase()} today. `
+              : '') +
+              'Fares, food and anything else you spent reach the office only if you add them — with a photo or PDF of each bill. It takes a minute now.'}
+          </T>
+          <View style={{ marginTop: 14 }}>
+            <PrimaryButton
+              label="Add expenses"
+              onPress={() => {
+                setClaimPrompt(null);
+                router.push({ pathname: '/expenses', params: { add: '1' } });
+              }}
+            />
+          </View>
+          <View style={{ marginTop: 10 }}>
+            <SecondaryButton label="Later" onPress={() => setClaimPrompt(null)} />
           </View>
         </View>
       </BottomSheet>
