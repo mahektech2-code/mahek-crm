@@ -9,6 +9,7 @@ import {
   readyItems,
   recoverInterrupted,
   type QueueItem,
+  autoRetryStuck,
 } from './queue';
 import { applyPull } from './pull';
 import { flush as flushTrail } from './trail';
@@ -59,6 +60,9 @@ export async function syncNow(opts: { manual?: boolean } = {}): Promise<SyncOutc
   running = true;
   try {
     await recoverInterrupted();
+    /* Refused and exhausted records go back in the queue on their own, every
+       few hours — see `autoRetryStuck`. Never allowed to stop the sync. */
+    await autoRetryStuck().catch(() => 0);
 
     const items = await readyItems();
     let accepted = 0;
