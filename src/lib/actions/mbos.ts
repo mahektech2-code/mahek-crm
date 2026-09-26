@@ -7569,6 +7569,17 @@ export async function raiseRejectionTask(
   const customerId = customerIdOf(item);
   if (!customerId) return;
 
+  /* ONCE per order. Handsets now resend refused records on their own every
+     few hours, and the server judges each resend afresh — so an order that is
+     still wrong is refused again, and without this every pass would put a
+     second "ring back" on his list and a second bell on his phone. */
+  const [already] = await db
+    .select({ id: mbosTasks.id })
+    .from(mbosTasks)
+    .where(and(eq(mbosTasks.sourceType, "rejected_order"), eq(mbosTasks.sourceId, item.entityId)))
+    .limit(1);
+  if (already) return;
+
   const day = await today();
   await db
     .insert(mbosTasks)
