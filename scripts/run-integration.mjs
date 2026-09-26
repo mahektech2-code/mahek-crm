@@ -44,6 +44,9 @@ const files = [
   // The call assistant: learning from logged calls, reading with no model,
   // and the save writing back what the call was really logged as.
   "src/lib/call-intel.test.ts",
+  // The visit assistant: scope, no model, the switch, and the visit writing
+  // back what it was really saved as.
+  "src/lib/visit-intel.test.ts",
   "src/lib/accounts.test.ts",
   "src/lib/bill-paging.test.ts",
   "src/lib/feedback.test.ts",

@@ -98,6 +98,12 @@ export type SaveVisitArgs = {
   requirement?: string | null;
   monthlyVolumeLitres?: number | null;
   quantityCans?: number | null;
+  /*
+   * The visit assistant's reading this visit was filled from, if he used it.
+   * The office writes what the visit was SAVED as beside what was proposed,
+   * which is how anybody learns whether the assistant is right.
+   */
+  aiDraftId?: string | null;
 };
 
 export async function saveVisit(args: SaveVisitArgs): Promise<string> {
@@ -314,6 +320,7 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       requirement: args.requirement ?? undefined,
       monthlyVolumeLitres: args.monthlyVolumeLitres ?? undefined,
       quantityCans: args.quantityCans ?? undefined,
+      aiDraftId: args.aiDraftId ?? undefined,
       clientCreatedAt: base.clientCreatedAt,
       deviceId: base.deviceId,
     },

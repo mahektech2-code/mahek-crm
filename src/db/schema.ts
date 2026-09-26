@@ -2527,6 +2527,12 @@ export const callAiDrafts = pgTable(
   "call_ai_drafts",
   {
     id: text("id").primaryKey(),
+    /**
+     * `call` — the CRM's call assistant; `visit` — the handset's visit
+     * assistant. One table because both are the same record: what was heard,
+     * what was proposed, and what it was finally saved as.
+     */
+    channel: text("channel").notNull().default("call"),
     customerId: text("customer_id")
       .notNull()
       .references(() => customers.id, { onDelete: "cascade" }),
@@ -2534,6 +2540,8 @@ export const callAiDrafts = pgTable(
       .notNull()
       .references(() => users.id),
     callId: text("call_id"),
+    /** The visit a `visit` draft was saved as, written by the sync handler. */
+    visitId: text("visit_id"),
     /** What was said, in the language it was said in. */
     spoken: text("spoken").notNull().default(""),
     /** The English the telecaller was shown. */
@@ -2562,6 +2570,7 @@ export const callAiDrafts = pgTable(
     index("call_ai_drafts_customer_idx").on(t.customerId, t.createdAt.desc()),
     index("call_ai_drafts_user_idx").on(t.userId, t.createdAt.desc()),
     index("call_ai_drafts_call_idx").on(t.callId),
+    index("call_ai_drafts_visit_idx").on(t.visitId),
   ],
 );
 
