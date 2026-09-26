@@ -2,7 +2,8 @@ import "server-only";
 import { cache } from "react";
 import { and, asc, desc, eq, inArray, lte, or, sql, type Column, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
+import { APP_TIMEZONE, asDate, calendarDate } from "@/lib/business-date";
+import type { TrackedMessage } from "@/lib/whatsapp-status";
 import {
   TIMELINE_KINDS,
   TIMELINE_PAGE,
@@ -1711,6 +1712,10 @@ export type CustomerMessage = {
   /** Empty for older rows that recorded a template but no body. */
   body: string;
   edited: boolean;
+  /** The receipts, for the tracker: every one written by WhatsApp or a person. */
+  receipts: TrackedMessage;
+  /** Sent by a founder's automation rule rather than a person. */
+  viaRule: boolean;
 };
 
 /**
@@ -1728,6 +1733,12 @@ export type CustomerMessage = {
  * now follows: the panel is a fixed height, the read is a page, and the count
  * is the whole history so the sentence at the top stays true.
  */
+/** A timestamp from raw SQL as ISO, or null — raw rows can carry strings. */
+function isoOf(v: unknown): string | null {
+  const d = asDate(v);
+  return d ? d.toISOString() : null;
+}
+
 export async function customerMessages(
   customerId: string,
   limit = 50,
@@ -1743,12 +1754,25 @@ export async function customerMessages(
     template_name: string | null;
     body: string;
     edited: boolean;
+    prepared_at: unknown;
+    sent_at: unknown;
+    confirmed_sent_at: unknown;
+    delivered_at: unknown;
+    read_at: unknown;
+    failure_reason: string | null;
+    trigger_id: string | null;
+    replied_at: unknown;
   }>(sql`
     select m.id,
            coalesce(m.confirmed_sent_at, m.sent_at, m.copied_at, m.prepared_at) as at,
            u.name as by, m.status::text as status, m.mode::text as mode,
            m.resolved_destination as destination, m.dest_kind::text as dest_kind,
-           m.template_name, m.body, m.edited
+           m.template_name, m.body, m.edited,
+           m.prepared_at, m.sent_at, m.confirmed_sent_at, m.delivered_at, m.read_at,
+           m.failure_reason, m.trigger_id,
+           (select min(r.received_at) from wa_replies r
+             where r.customer_id = m.customer_id
+               and r.received_at > coalesce(m.sent_at, m.confirmed_sent_at, m.prepared_at)) as replied_at
       from wa_messages m join users u on u.id = m.user_id
      where m.customer_id = ${customerId}
      order by at desc, m.id desc
@@ -1771,6 +1795,18 @@ export async function customerMessages(
       templateName: r.template_name,
       body: r.body ?? "",
       edited: r.edited,
+      viaRule: Boolean(r.trigger_id),
+      receipts: {
+        status: r.status,
+        mode: r.mode,
+        preparedAt: isoOf(r.prepared_at) ?? new Date(r.at).toISOString(),
+        sentAt: isoOf(r.sent_at),
+        confirmedSentAt: isoOf(r.confirmed_sent_at),
+        deliveredAt: isoOf(r.delivered_at),
+        readAt: isoOf(r.read_at),
+        failureReason: r.failure_reason,
+        repliedAt: isoOf(r.replied_at),
+      },
     })),
     total: Number(count?.n ?? 0),
   };

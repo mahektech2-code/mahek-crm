@@ -47,9 +47,13 @@ import type {
 import type { PayOutcomeDefinition } from "@/lib/services/payment-followup-service";
 import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 import { Pager } from "@/components/ui/pager";
+import { DeliveryStatus } from "@/components/whatsapp/delivery-status";
+import type { TrackerRow } from "@/lib/services/whatsapp-tracker-service";
 
 type Row = WorklistRow & {
   openBills: Array<{ id: string; billNo: string; balance: number; dueDate: string }>;
+  /** The newest WhatsApp message to this customer, and how far it got. */
+  lastWa: TrackerRow | null;
 };
 
 function plural(n: number, noun: string): string {
@@ -549,6 +553,16 @@ export function PaymentsScreen({
                         }, waiting for accounts`
                       : ""}
                   </div>
+                  {r.lastWa ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-muted">
+                      <span>Last WhatsApp</span>
+                      <DeliveryStatus m={r.lastWa} />
+                      <span className="truncate">
+                        {r.lastWa.templateName ?? "Message"} ·{" "}
+                        {r.lastWa.viaRule ? "sent by an automatic rule" : `by ${r.lastWa.sentBy}`}
+                      </span>
+                    </div>
+                  ) : null}
                   {dueReason.get(r.customerId) &&
                   (tab === "calls" || tab === "messages") ? (
                     <div className="mt-0.5 text-[13px] text-brand">

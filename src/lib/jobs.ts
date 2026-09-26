@@ -103,6 +103,7 @@ export type JobName =
   | "recompute-performance"
   | "snapshot-customer-health"
   | "sweep-unconfirmed"
+  | "whatsapp-automation"
   | "escalate-complaint-sla"
   | "auto-eod"
   | "roll-reminders"
@@ -528,6 +529,20 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   const results: JobResult[] = [];
 
   results.push(await run("mbos-hourly", mbosHourly, triggeredById));
+
+  // The founder's WhatsApp rules. The pass checks the sending window itself
+  // (10 am–1 pm IST unless the founder changed it) and returns at once
+  // outside it, so running every hour costs nothing between checks.
+  results.push(
+    await run("whatsapp-automation", async () => {
+      const { runAutomation } = await import("./services/whatsapp-automation-service");
+      const r = await runAutomation({ source: "schedule" });
+      return {
+        recordsAffected: r.sent,
+        detail: `${r.sent} sent, ${r.wouldSend} would send — ${r.note}`,
+      };
+    }, triggeredById),
+  );
 
   results.push(
     await run("sweep-unconfirmed", async () => {

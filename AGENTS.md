@@ -1602,6 +1602,37 @@ ever wrote one, so stage-1 customers came back due every day.
 `recordReminderAttempt` writes it once a reminder is actually sent, keyed on
 the message.
 
+**EIGHT TEMPLATES, EACH A RULE SET, AND EVERY OLDER ONE ARCHIVED.**
+`lib/wati-templates.ts` holds one spec per approved Wati template (a `_vN`
+suffix is the same message): the Wati variable names it fills, and the checks
+that make its sentences TRUE. `wa_templates.wati_spec` ties a CRM template to
+one, and a spec'd template is rendered by those rules on every route — the
+preview, the manual copy and the API send — so no route can send what another
+would refuse. `0165` inserted the eight and archived every free-text template
+(archived, not deleted: `wa_messages` keeps a key to the template it came from).
+
+**A variable is a true value or the message is refused.** Never defaulted,
+blanked, "N/A", or rounded into a different figure. The bill list and its total
+are built from the SAME rows (stated, unpaid, not disputed; overdue by
+`effectiveDueDate`), one line, oldest first, five listed and "+ N more" with
+the total over all of them; amounts share one precision per message so they
+add up on the customer's screen. A cycle is quoted only when MEASURED
+(`cycle_is_default` false). "Is due around" is refused after the expected date
+and "was expected" before it. A reported or held payment refuses every payment
+template, a pending order or an open Taken Order line refuses every order one,
+and leads and third-party shops never get order templates.
+
+**Facts are read at the moment of sending**, not when the message was
+prepared — a payment confirmed between the two changes the bill list.
+
+**A pasted copy has no buttons.** The approved wording says "tap an option
+below"; `manualText` turns each such sentence into an ask to reply, and refuses
+a body that still mentions tapping, so a new phrasing in Wati fails loudly
+rather than pointing a customer at buttons that are not there.
+
+**Which template goes on which day is NOT here.** That is Mahek's timeline and
+belongs to the scheduler; these rules answer only "is this message true".
+
 **A customer record is a FIXED-LENGTH page, however old the account is.** Every
 panel on it is the same height and scrolls inside itself, and the reads behind
 them are capped — the timeline at ten entries a page (`TIMELINE_PAGE`, one

@@ -72,8 +72,10 @@ import {
   prepareLegs,
   saveTemplate as saveTemplateService,
   sendAutomatic,
+  previewMessage,
   sendNow,
   sendRunViaApi,
+  type MessagePreview,
   setRunStatus,
 } from "@/lib/services/whatsapp-service";
 import {
@@ -1461,6 +1463,19 @@ export async function sendWhatsAppNow(input: {
     const r = await sendNow({ ...input, idempotencyKey: randomUUID() });
     refreshAll();
     return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** What this customer would receive from this template, on the route it would take. */
+export async function previewWhatsAppMessage(input: {
+  customerId: string;
+  templateId: string;
+  destKind: "personal" | "group";
+}): Promise<Result<MessagePreview>> {
+  try {
+    return ok(await previewMessage(input.customerId, input.templateId, input.destKind));
   } catch (e) {
     return fromThrown(e);
   }
