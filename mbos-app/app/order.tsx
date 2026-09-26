@@ -160,10 +160,20 @@ export default function OrderScreen() {
     React.useCallback(() => {
       let live = true;
       if (!custId) return;
-      void Promise.all([frequentProducts(custId), starterProducts()]).then(([f, starter]) => {
+      /* And whatever is already in the cart. A line is drawn only for a
+         product this screen has been shown, and the visit assistant fills the
+         cart from a product the salesman named — which may be neither
+         frequent nor a starter. Without this the line sat in the cart
+         undrawn, counted by nothing on the screen. */
+      const inCartIds = Object.keys(useStore.getState().cart);
+      void Promise.all([
+        frequentProducts(custId),
+        starterProducts(),
+        productsByIds(inCartIds),
+      ]).then(([f, starter, inCart]) => {
         if (!live) return;
         setFrequent(f);
-        remember([...f, ...starter]);
+        remember([...f, ...starter, ...inCart]);
       });
       return () => {
         live = false;

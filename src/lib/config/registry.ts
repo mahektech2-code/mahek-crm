@@ -1740,6 +1740,31 @@ export const SETTINGS = [
       "After a telecaller speaks or types about a call, suggest the outcome, dates, products and reminders it implies. Suggestions fill the call form for the telecaller to check — nothing is saved without them. Off removes the button everywhere immediately.",
     default: true,
   },
+  /*
+   * THE VISIT ASSISTANT — the call assistant's counterpart on the handset.
+   * Its own switch, because the two are used by different people on different
+   * devices and a team may want one without the other. It shares the call
+   * assistant's confidence floor: "ask when less sure than" is one judgement
+   * about how often a person should be asked, not two.
+   */
+  {
+    key: "visitIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the visit",
+    description:
+      "On the MBOS handset, after a salesman speaks or types about a visit, suggest the outcome, the day to come back, and the order, payment, complaint or sample the visit implies. Suggestions fill the visit for the salesman to check — nothing is saved without him. Off removes the button from every handset on its next sync.",
+    default: true,
+  },
+  {
+    key: "visitIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Visit assistant model",
+    description:
+      "The OpenAI model that reads a visit. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the salesman fills the visit as usual.",
+    default: "gpt-5-mini",
+  },
   {
     key: "callIntel.model",
     type: "text",
@@ -4232,6 +4257,8 @@ export type Config = {
   "callIntel.duplicateWindowDays": number;
   "callIntel.exampleCalls": number;
   "callIntel.trainingMonths": number;
+  "visitIntel.enabled": boolean;
+  "visitIntel.model": string;
 
   /* ------------------------------------------------- MBOS — field sales */
   "mbos.location.gpsAccuracyThresholdM": number;

@@ -51,6 +51,15 @@ import { fixOf, getFix, type Fix } from '../src/native/location';
 import { queueOdometerPhoto, queueRecording, takePhoto } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
 import { VoiceField } from '../src/components/ui/dictate';
+import { VisitAssistant, type VisitAssistantHandlers } from '../src/components/visit-assistant';
+import {
+  cartFrom,
+  complaintDraft,
+  fillVisit,
+  paymentFill,
+  requirementFill,
+  sampleDraft,
+} from '../src/engines/visit-assist';
 import { NavigateButton } from '../src/components/ui/navigate';
 
 /**
@@ -114,6 +123,9 @@ export default function Visit() {
   const markVisitDone = useStore((s) => s.markVisitDone);
   const askConfirm = useStore((s) => s.askConfirm);
   const checkedIntoShop = useStore((s) => s.checkedIntoShop);
+  const cart = useStore((s) => s.cart);
+  const payAmt = useStore((s) => s.payAmt);
+  const payMode = useStore((s) => s.payMode);
   const arrival = useStore((s) => s.arrival);
   const setArrival = useStore((s) => s.setArrival);
 
@@ -154,6 +166,20 @@ export default function Visit() {
   const [fix, setFix] = React.useState<Fix | null>(null);
   const [fixReason, setFixReason] = React.useState<string | null>(null);
   const [voiceNoteId, setVoiceNoteId] = React.useState<string | null>(null);
+  /*
+   * THE VISIT ASSISTANT'S THREE PIECES OF STATE.
+   *
+   * `heard` is the last dictation in the language it was spoken in — the
+   * assistant reads both, because a name or a number is often clearer in the
+   * words it was said in than in their English. `nextDatePicked` is whether he
+   * chose the return day himself: the cycle's suggestion is the screen's, not
+   * his, and a date the customer named may replace it where his own choice
+   * may not. `aiDraftId` is the reading the visit was filled from, carried on
+   * the save so the office can see what was proposed beside what was kept.
+   */
+  const [heard, setHeard] = React.useState<{ spoken: string; english: string; language: string | null } | null>(null);
+  const [nextDatePicked, setNextDatePicked] = React.useState(false);
+  const [aiDraftId, setAiDraftId] = React.useState<string | null>(null);
   /*
    * §B — is this shop still a Suspect, and is a decision due?
    *
@@ -1085,6 +1111,7 @@ export default function Visit() {
         requirement: reqWhat.trim() || null,
         monthlyVolumeLitres: Number(reqLitres.replace(/[^\d]/g, '')) || null,
         quantityCans: Number(reqCans.replace(/[^\d]/g, '')) || null,
+        aiDraftId,
       });
     } catch {
       savingRef.current = false;
@@ -1135,6 +1162,93 @@ export default function Visit() {
     leavingRef.current = true;
     router.replace('/saved');
   }
+
+  /*
+   * WHAT EACH OF THE ASSISTANT'S PROPOSALS DOES ON THIS SCREEN.
+   *
+   * Every one of them fills a form and stops. The order and the receipt open
+   * their own screens with the cart and the amount already in — he still
+   * presses their Submit. The complaint and the sample open this screen's own
+   * sheets with the draft filled — he still presses their button. The outcome
+   * and the day go into the form only where he has not answered them himself
+   * (`fillVisit`). Nothing here writes a record, and the visit's Save is
+   * still the only thing that saves the visit.
+   *
+   * Picking a follow-on also picks its outcome chip where none is chosen yet,
+   * because opening the order screen from a visit filed as "Visited" would
+   * leave the checklist asking for a follow-on it has already had.
+   */
+  const outcomeIfNone = (k: 'order' | 'payment' | 'complaint' | 'sample') => {
+    if (outcome == null) set({ outcome: k });
+  };
+  const assistant: VisitAssistantHandlers = {
+    onFill: (analysis) => {
+      const f = fillVisit({ outcome, nextDate, nextDatePicked }, analysis);
+      if (Object.keys(f.patch).length) set(f.patch as Parameters<typeof set>[0]);
+      notify(
+        f.filled.length
+          ? 'Filled ' + f.filled.join(' and ') + (f.kept.length ? ' · kept ' + f.kept.join(' and ') : '') + ' — check it, then Save'
+          : f.kept.length
+            ? 'Kept ' + f.kept.join(' and ') + ' — nothing else to fill'
+            : 'Nothing to fill — answer the questions on the card',
+      );
+    },
+    onChooseOutcome: (key) => set({ outcome: key as NonNullable<typeof outcome> }),
+    onChooseDate: (iso) => {
+      set({ nextDate: iso });
+      setNextDatePicked(true);
+    },
+    onOrder: (a, picked) => {
+      const r = cartFrom(a, cart, picked);
+      set({ cart: r.cart });
+      outcomeIfNone('order');
+      notify(
+        r.missing
+          ? `${r.added} line${r.added === 1 ? '' : 's'} added · ${r.missing} still to add by hand`
+          : `${r.added} line${r.added === 1 ? '' : 's'} added — check the quantities`,
+      );
+      router.push('/order?from=visit');
+    },
+    onPayment: (a) => {
+      set(paymentFill(a, { payAmt, payMode }));
+      outcomeIfNone('payment');
+      router.push('/pay?from=visit');
+    },
+    onComplaint: (a) => {
+      setDraft(complaintDraft(a, COMPLAINT_CATEGORIES));
+      setFormErr(null);
+      outcomeIfNone('complaint');
+      setForm('complaint');
+    },
+    onSample: (a) => {
+      const d = sampleDraft(
+        a,
+        reasons.map((r) => r.code),
+      );
+      /* The sheet lists the starter products; a matched product that is not
+         among them is added to the list, or the pick would be invisible. */
+      if (d.sku && !products.some((x) => x.id === d.sku)) {
+        setProducts((prev) => [{ id: d.sku, name: d.skuName ?? '', packSize: null }, ...prev]);
+      }
+      setDraft(d);
+      setFormErr(null);
+      outcomeIfNone('sample');
+      setForm('sample');
+    },
+    onRequirement: (a) => {
+      const r = requirementFill(a, { what: reqWhat, litres: reqLitres, cans: reqCans });
+      if (r.what != null) setReqWhat(r.what);
+      if (r.litres != null) setReqLitres(r.litres);
+      if (r.cans != null) setReqCans(r.cans);
+      notify(Object.keys(r).length ? 'Requirement filled — check it below' : 'The requirement is already filled in');
+    },
+    onDecision: (d) => {
+      setDecision(d);
+      setDecisionErr(null);
+      notify('Chosen on the lead card above — change it there if that is not right');
+    },
+    onDraft: setAiDraftId,
+  };
 
   /*
    * ─────────────────────────────────────────── at the door, not through it
@@ -1713,6 +1827,7 @@ export default function Visit() {
             onChangeText={(v) => set({ note: v })}
             keepAudio="keep"
             onRecording={(uri, _seconds, mode) => void keepVoiceNote(uri, mode)}
+            onHeard={setHeard}
           />
           {voiceNoteId ? (
             <Text style={[type.caption, { marginTop: 6 }]}>
@@ -1721,6 +1836,13 @@ export default function Visit() {
           ) : null}
         </View>
       </Card>
+
+      {/* ---- what the assistant made of it ----
+          Directly under the note, because the note is what it reads, and above
+          the outcome chips, because those are the first thing it fills. */}
+      {c ? (
+        <VisitAssistant customerId={c.id} note={note} heard={heard} handlers={assistant} />
+      ) : null}
 
       {/* ---- how it went ---- */}
       <View style={{ marginTop: 16 }}>
@@ -2117,7 +2239,10 @@ export default function Visit() {
           selected={calOpen === 'trial' ? draft.trial ?? trialDefault : nextDate}
           onPick={(iso) => {
             if (calOpen === 'trial') setDraft({ ...draft, trial: iso });
-            else set({ nextDate: iso });
+            else {
+              set({ nextDate: iso });
+              setNextDatePicked(true);
+            }
             setCalOpen(null);
           }}
         />
