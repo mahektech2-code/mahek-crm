@@ -38,6 +38,16 @@ test("a prefix matches the app root and everything under it, and nothing else", 
   assert.equal(appFor("/crm-export"), null);
 });
 
+test("the Sales Manager lead pipeline resolves as the Sales Dashboard, and /sales does not swallow it", () => {
+  /* `/sales-lead-pipeline` starts with `/sales` but is not under it. The prefix
+     rule is what keeps `/salesx` from claiming `/sales`, and this route is the
+     one place a separate prefix is needed to reach the same app. */
+  assert.equal(appFor("/sales-lead-pipeline"), "sales");
+  assert.equal(appFor("/sales-lead-pipeline/list"), "sales");
+  assert.equal(appFor("/sales-lead-pipeline/cus_123"), "sales");
+  assert.equal(appFor("/sales-lead-pipelinex"), null);
+});
+
 test("the old orders slug still resolves to accounts", () => {
   /* `orders` was renamed to `accounts` by ALTER TYPE and the URL is kept alive
      by a permanent redirect. The redirect fires after this runs, so the header

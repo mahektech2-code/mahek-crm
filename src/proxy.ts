@@ -38,6 +38,12 @@ const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["/accounts", "accounts"],
   ["/orders", "accounts"], // the old slug, still redirected
   ["/sales", "sales"],
+  /* The Sales Manager's lead pipeline. It is the Sales Dashboard's `sales.leads`
+     module drawn on its own route, and it has to resolve as that app: without
+     this line a request here names NO app, and scope falls back to the widest
+     level the account holds anywhere — which is a manager elsewhere and an
+     associate on the Sales Dashboard reading (and writing) as a manager. */
+  ["/sales-lead-pipeline", "sales"],
   ["/people", "people"],
   ["/reports", "reports"],
   ["/hrms", "hrms"],
