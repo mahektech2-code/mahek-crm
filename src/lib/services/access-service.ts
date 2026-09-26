@@ -8,7 +8,7 @@ import { asc, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appModuleAccess, employees, users } from "@/db/schema";
 import { APPS, type AppId } from "@/lib/apps";
-import { moduleKeysForApp, modulesForApp } from "@/lib/modules";
+import { moduleAllowed, moduleKeysForApp, modulesForApp } from "@/lib/modules";
 
 /* ---------------------------------------------------------------------------
  * Who can open what, read for the Access screen.
@@ -159,6 +159,7 @@ function buildGrants(
   apps: AppId[],
   modulesByApp: Map<AppId, string[]>,
   roleFor: (app: AppId) => Role | null,
+  accountRole: Role,
 ): AppGrant[] {
   return APPS.filter((a) => apps.includes(a.id)).map((a) => {
     const stored = modulesByApp.get(a.id) ?? [];
@@ -167,11 +168,15 @@ function buildGrants(
     // once in `moduleAllowed` and shown here rather than re-derived.
     const whole = stored.length === 0;
     const role = roleFor(a.id);
+    /* Asked of `moduleAllowed` with the same level `listUserModules` reads — the
+       grant's own, else the account's — so this screen cannot show a module as
+       withheld that the guard lets an administrator through. */
+    const administrator = (role ?? accountRole) === "admin";
     const modules: ModuleGrant[] = all.map((m) => ({
       key: m.key,
       label: m.label,
       group: m.group,
-      granted: whole || stored.includes(m.key),
+      granted: moduleAllowed(m.key, stored, a.id, administrator),
     }));
     return {
       app: a.id,
@@ -291,6 +296,7 @@ export async function listAccess(): Promise<AccessRow[]> {
         appsByUser.get(u.id) ?? [],
         modulesByUser.get(u.id) ?? new Map(),
         (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? null,
+        u.role as Role,
       ),
       roles: heldRoles,
       conflicts: conflictsFor(heldHats),

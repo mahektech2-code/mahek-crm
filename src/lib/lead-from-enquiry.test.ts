@@ -446,6 +446,36 @@ describe("D — the desk is granted, not inherited", () => {
     assert.equal(await canOpenModule(manager.id, DESK_MODULE), false);
   });
 
+  test("an administrator holds the desk even with explicit CRM rows that leave it out; the same rows on a manager do not", async () => {
+    const rows = ["crm.dashboard", "crm.customers"];
+    const narrowedAdmin = await makeUser("Narrowed Administrator", "admin", ["crm"]);
+    await grantCrmModules(narrowedAdmin.id, rows);
+    const sameRowsManager = await makeUser("Same Rows Manager", "manager", ["crm"]);
+    await grantCrmModules(sameRowsManager.id, rows);
+
+    assert.equal(await canOpenModule(narrowedAdmin.id, DESK_MODULE), true, "the administrator's hat carries the desk");
+    assert.equal(await canOpenModule(sameRowsManager.id, DESK_MODULE), false, "the same rows on a manager do not");
+    /* Only the offByDefault module is reached: an administrator narrowed on purpose stays narrowed elsewhere. */
+    assert.equal(await canOpenModule(narrowedAdmin.id, "crm.leads"), false);
+    assert.equal(await canOpenModule(narrowedAdmin.id, "crm.settings"), false);
+    assert.equal(await canOpenModule(narrowedAdmin.id, "crm.customers"), true);
+  });
+
+  test("the grant's own level wins over the account's, a grant with none falls back to it, and no grant is no administrator", async () => {
+    const grantSaysManager = await makeUser("Admin Account Manager Grant", "admin", ["crm"]);
+    await db.update(appAccess).set({ role: "manager" }).where(eq(appAccess.userId, grantSaysManager.id));
+    await grantCrmModules(grantSaysManager.id, ["crm.dashboard"]);
+    assert.equal(await canOpenModule(grantSaysManager.id, DESK_MODULE), false);
+
+    const grantNamesNone = await makeUser("Admin Grant Without Level", "admin", ["crm"]);
+    await db.update(appAccess).set({ role: null }).where(eq(appAccess.userId, grantNamesNone.id));
+    await grantCrmModules(grantNamesNone.id, ["crm.dashboard"]);
+    assert.equal(await canOpenModule(grantNamesNone.id, DESK_MODULE), true);
+
+    const noGrant = await makeUser("Admin Without The CRM", "admin", ["enquiries"]);
+    assert.equal(await canOpenModule(noGrant.id, DESK_MODULE), false, "an administrator elsewhere holds nothing here");
+  });
+
   test("the desk's writes refuse somebody without it, though they hold lead.work like every CRM associate", async () => {
     const enquiryId = await makeEnquiry("QUOTE");
     const made = await createLead(enquiryId, { ownerId: null });

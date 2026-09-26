@@ -6,6 +6,7 @@ import {
   appAccess,
   appModuleAccess,
   attendance,
+  users,
   type User,
 } from "@/db/schema";
 import { APPS, webApps, type AppDefinition, type AppId } from "./apps";
@@ -67,7 +68,19 @@ export const listUserModules = cache(async function listUserModules(
     .where(and(eq(appModuleAccess.userId, userId), eq(appModuleAccess.app, app)));
 
   const granted = rows.map((r) => r.module);
-  return modulesForApp(app).filter((m) => moduleAllowed(m.key, granted, app));
+
+  /* The level held IN THIS APP: the grant's own, else the account's — the same
+     fall-through `levelInApp` makes. No grant means no level, so a person who
+     was never given the app gains nothing from this. */
+  const [hat] = await db
+    .select({ grant: appAccess.role, account: users.role })
+    .from(appAccess)
+    .innerJoin(users, eq(users.id, appAccess.userId))
+    .where(and(eq(appAccess.userId, userId), eq(appAccess.app, app)))
+    .limit(1);
+  const administrator = hat !== undefined && (hat.grant ?? hat.account) === "admin";
+
+  return modulesForApp(app).filter((m) => moduleAllowed(m.key, granted, app, administrator));
 });
 
 /**
