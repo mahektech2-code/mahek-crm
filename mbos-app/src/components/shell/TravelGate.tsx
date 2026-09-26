@@ -4,51 +4,34 @@ import { router } from 'expo-router';
 
 import { BottomSheet } from '../ui/overlays';
 import { SecondaryButton, T } from '../ui/primitives';
-import { OdometerCamera, type OdometerResult } from '../ui/odometer-camera';
 import { color as C, weight } from '../../theme/tokens';
 import { useStore } from '../../state/store';
 import { useBoot } from '../../state/boot';
-import {
-  departForVisit,
-  openSessionLeg,
-  travelModesFor,
-  type TravelLeg,
-  type TravelMode,
-} from '../../data/travel';
-import { TravelModeList } from '../ui/travel-mode-list';
-import { legPricedBySession, stopMustAskMode } from '../../lib/travel-leg';
+import { departForVisit, openSessionLeg } from '../../data/travel';
+import { visitLegPlan } from '../../lib/travel-leg';
 import { getConfig } from '../../data/config';
 import { isoDate } from '../../lib/format';
 import { fixOf, getFix } from '../../native/location';
-import { queueOdometerPhoto } from '../../native/capture';
 
 /**
- * The question that comes before every visit: how are you getting there.
+ * What happens between "Visit" and the visit — and it is no longer a question.
  *
- * **IT IS MOUNTED ONCE, IN `AppFrame`.** Four places in this app start a visit
- * — the route screen's Next stop card, a customer's record, the customer list
- * and the home screen's quick actions — and every one of them has to ask, or
- * the answer becomes optional by accident on whichever screen somebody
- * forgets. So they all do the same thing, which is set `travelTo` on the
- * store, and this is the one place that reads it. A gate each screen wired up
- * for itself would be four gates, and three of them would be right.
+ * **IT IS MOUNTED ONCE, IN `AppFrame`.** Four places start a visit — the route
+ * screen's Next stop card, a customer's record, the customer list and the home
+ * screen's quick actions — and every one of them sets `travelTo` on the store,
+ * so this is still the one place the start of a journey is decided.
  *
- * **THE MODES ARE ROWS, NOT A LIST IN THIS FILE.** `travel_modes` is pulled
- * from MahekOne and an admin edits it, `requiresOdometer` is what decides
- * whether the camera opens, and "Auto/Local Transport" is plainly the start of
- * a list rather than the end of one. A mode typed into this screen would be a
- * second answer to a question the office already answers.
+ * **NOTHING IS ASKED HERE ANY MORE.** It used to ask how he was getting to each
+ * shop, open a meter camera, and ask for the fare on the way out; the field
+ * would not answer it. Travel is now asked twice a day — the vehicle at the
+ * punch-in, the meter at the punch-out where there is one — and every fare is
+ * claimed in Expenses. `visitLegPlan` (pure, in `lib/travel-leg.ts`) decides
+ * how the journey is recorded instead: silently, under the day's own mode, so
+ * the arrival geofence and the dwell clock still work; or not at all, where he
+ * never punched in, rather than under a vehicle nobody named.
  *
- * **NOTHING IS WRITTEN UNTIL THE CAMERA CLOSES.** Backing out at any point
- * leaves no half-open journey behind — which is why the order is question,
- * then photograph, then write, and not the other way round. It is the same
- * order `startDay` uses for the attendance selfie and for the same reason.
- *
- * **The GPS is asked for ALONGSIDE the camera, never before it.** Awaiting a
- * fix first would make him watch a spinner and then take a photograph; asked
- * together, the radio has the whole length of the photograph to settle, which
- * costs nothing and makes the fix better. A leg is never refused for want of
- * one: where he set off from is evidence, and the meter is the record.
+ * **The GPS is asked for, never waited on beyond its own timeout.** Where he
+ * set off from is evidence; a leg is never refused for want of it.
  */
 export function TravelGate() {
   const to = useStore((s) => s.travelTo);
@@ -58,58 +41,9 @@ export function TravelGate() {
   const arrival = useStore((s) => s.arrival);
   const boot = useBoot();
   const userId = boot.session?.user.id ?? '';
-
-  const [modes, setModes] = React.useState<TravelMode[]>([]);
-  const [session, setSession] = React.useState<TravelLeg | null>(null);
-  const [sessionMode, setSessionMode] = React.useState<TravelMode | null>(null);
-  const [maxKm, setMaxKm] = React.useState(400);
-  const [busy, setBusy] = React.useState(false);
-
-  /* The camera and the mode that opened it, held together: the mode is what
-     decides whether the reading is required at all, and a camera open with no
-     mode behind it would have nothing to write its answer onto. */
-  const [metering, setMetering] = React.useState(false);
-  const answerOdometer = React.useRef<((r: OdometerResult) => void) | null>(null);
-
-  /*
-   * READ WHEN THE QUESTION IS ASKED, not once when the app started.
-   *
-   * The session is what decides whether there is a question at all, and it
-   * changes in the middle of a day — he punches out for lunch on his bike and
-   * punches back in on a bus. Read at mount only, this sheet would spend the
-   * afternoon answering for the morning's vehicle.
-   */
-  React.useEffect(() => {
-    if (!to || !userId) return;
-    let live = true;
-    void Promise.all([
-      travelModesFor('leg'),
-      getConfig<number>('mbos.travel.maxLegKilometres', 400),
-      openSessionLeg(userId),
-    ]).then(async ([rows, km, running]) => {
-      if (!live) return;
-      setModes(rows);
-      setMaxKm(km);
-      setSession(running);
-      if (running) {
-        const all = await travelModesFor('day');
-        if (live) setSessionMode(all.find((m) => m.key === running.modeKey) ?? null);
-      } else if (live) {
-        setSessionMode(null);
-      }
-    });
-    return () => {
-      live = false;
-    };
-  }, [to, userId]);
+  const starting = React.useRef(false);
 
   const close = () => set({ travelTo: null });
-
-  const askOdometer = () =>
-    new Promise<OdometerResult>((resolve) => {
-      answerOdometer.current = resolve;
-      setMetering(true);
-    });
 
   /*
    * A JOURNEY CANNOT BEGIN WHILE HE IS STANDING AT A SHOP.
@@ -119,10 +53,6 @@ export function TravelGate() {
    * has just reached, because the only thing that knows otherwise is the
    * arrival on disk. Setting off from here would leave that arrival with
    * nothing left that could ever close it.
-   *
-   * The same shop and a different one are two different sentences: one is "you
-   * are already there", the other names where he actually is. Both lead to the
-   * same place, which is the check-in he has not made.
    */
   const outstanding = arrival && arrival.checkedInAt == null ? arrival : null;
 
@@ -132,93 +62,48 @@ export function TravelGate() {
     router.push('/visit');
   };
 
-  /* The two rules that decide whether this sheet opens and whether the leg it
-     produces is a claim. PURE and in `lib/travel-leg.ts`, because both fail
-     silently in the field and neither could be tested from in here. */
-  const facts = session ? { modeKey: session.modeKey, odometerStartKm: session.odometerStartKm } : null;
-  const sessionAnswers = !!sessionMode && !stopMustAskMode(facts);
-  const pricedBySession = legPricedBySession(facts);
-
-  const choose = async (mode: TravelMode, opts?: { askMeter?: boolean }) => {
-    if (!to || busy || !userId) return;
-    setBusy(true);
-    try {
-      const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
-      /* Started, not awaited. See the note at the top of the file. */
-      const fixing = getFix({ accuracyThresholdM: threshold });
-
-      let odometer: { km: number; photoId: string } | null = null;
-      if (mode.requiresOdometer && opts?.askMeter !== false) {
-        const shot = await askOdometer();
-        /*
-         * Cancelled. NOTHING has been written, so there is nothing to undo —
-         * and no toast either: he has just pressed a button whose words say
-         * what it abandons, and repeating that back is noise. The fix is
-         * abandoned with it, because a location for a journey that did not
-         * happen is a record of somewhere somebody stood while nothing did.
-         */
-        if (!shot) return;
-        try {
-          odometer = { km: shot.km, photoId: await queueOdometerPhoto(shot.uri, 'pending') };
-        } catch {
-          /* The photograph could not be written to this phone, so there is no
-             evidence and therefore no leg. It fails LOUDLY rather than opening
-             an unevidenced one — which is the whole point of the hard gate. */
-          notify('The photo could not be saved on this phone, so nothing was recorded. Try again.');
-          return;
-        }
-      }
-
-      const fix = fixOf(await fixing);
-
-      const out = await departForVisit({
-        userId,
-        day: isoDate(new Date()),
-        customerId: to.customerId,
-        customerName: to.customerName,
-        modeKey: mode.key,
-        purpose: 'visit',
-        fix: fix ? { lat: fix.lat, lng: fix.lng } : null,
-        odometer,
-        claimExcluded: pricedBySession,
-        claimExcludedReason: pricedBySession
-          ? 'Counted in the meter readings taken at the punch-in and the punch-out.'
-          : null,
-      });
-      if (!out.ok) {
-        notify(out.reason);
-        return;
-      }
-
-      /* The visit is prepared but its clock does NOT start — that happens at
-         the arrival, on the visit screen. See `beginVisit` in the store. */
-      beginVisit(to.customerId);
-      set({ travelTo: null, gps: fix ? 'locked' : 'off' });
-      router.push('/visit');
-    } catch {
-      notify('That journey could not be started on this phone. Nothing has been lost — try again.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /*
-   * THE SHEET IS NOT DRAWN WHEN THERE IS NOTHING TO ASK.
-   *
-   * A sheet that opened, said "Own bike", and closed itself would be a screen
-   * flashing past eleven times a day to tell him what he told it this morning.
-   * The departure happens straight away, with the session's mode and no meter
-   * — the meter was read at the punch-in and will be read again at the
-   * punch-out, and asking here would be the twenty-two photographs this change
-   * exists to remove.
-   */
   React.useEffect(() => {
-    if (!to || !sessionAnswers || !sessionMode || busy || outstanding) return;
-    void choose(sessionMode, { askMeter: false });
-    /* `choose` is redeclared on every render and depending on it would fire
-       this on each one; the guards above are what make it run once. */
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [to, sessionAnswers, sessionMode, outstanding]);
+    if (!to || !userId || outstanding || starting.current) return;
+    starting.current = true;
+    void (async () => {
+      try {
+        const plan = visitLegPlan(await openSessionLeg(userId).then((s) =>
+          s ? { modeKey: s.modeKey, odometerStartKm: s.odometerStartKm } : null,
+        ));
+        let gps: 'locked' | 'off' | 'acquiring' = 'acquiring';
+        if (plan.record) {
+          const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
+          const fix = fixOf(await getFix({ accuracyThresholdM: threshold }));
+          gps = fix ? 'locked' : 'off';
+          const out = await departForVisit({
+            userId,
+            day: isoDate(new Date()),
+            customerId: to.customerId,
+            customerName: to.customerName,
+            modeKey: plan.modeKey,
+            purpose: 'visit',
+            fix: fix ? { lat: fix.lat, lng: fix.lng } : null,
+            odometer: null,
+            claimExcluded: plan.claimExcluded,
+            claimExcludedReason: plan.reason,
+          });
+          /* A journey that could not be written must not cost the visit: he
+             is going to that shop either way. The form opens as it did before
+             journeys existed, and the office flags the check-in distance. */
+          if (!out.ok) notify(out.reason);
+        }
+        beginVisit(to.customerId);
+        set({ travelTo: null, gps });
+        router.push('/visit');
+      } catch {
+        set({ travelTo: null });
+        notify('That visit could not be started on this phone. Nothing has been lost — try again.');
+      } finally {
+        starting.current = false;
+      }
+    })();
+    /* `beginVisit`, `set` and `notify` are stable store actions. */
+  }, [to, userId, outstanding, beginVisit, set, notify]);
 
   if (to && outstanding) {
     const same = outstanding.customerId === to.customerId;
@@ -230,7 +115,7 @@ export function TravelGate() {
           </T>
           <T s="small" style={{ marginTop: 6 }}>
             {same
-              ? 'The journey is finished and the meter is read. All that is left is to check in when you go inside.'
+              ? 'You have arrived. All that is left is to check in when you go inside.'
               : 'One shop at a time — check in there, or save the visit, before setting off again.'}
           </T>
           <View style={{ marginTop: 14 }}>
@@ -244,53 +129,5 @@ export function TravelGate() {
     );
   }
 
-  return (
-    <>
-      <BottomSheet open={!!to && !metering && !sessionAnswers} onClose={close}>
-        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
-          <T style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
-            How are you getting there?
-          </T>
-          <T s="small" style={{ marginTop: 4 }}>
-            {to?.customerName ?? ''}
-          </T>
-
-          <TravelModeList modes={modes} where="leg" busy={busy} onPick={(m) => void choose(m)} />
-
-          {/* An empty list is not a broken screen and must not look like one.
-              `travel_modes` is reference data, so a handset that has not
-              bootstrapped has none — and the honest answer is to say so rather
-              than draw nothing under a question. */}
-          {modes.length === 0 ? (
-            <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 10 }}>
-              The travel modes have not reached this phone yet. Sync, then start the visit again.
-            </T>
-          ) : (
-            <T style={{ fontSize: 12, lineHeight: 16, color: C.muted, marginTop: 14 }}>
-              The visit starts when you tell it you have arrived, so the ride is not
-              counted as time in the shop.
-            </T>
-          )}
-
-          <View style={{ marginTop: 12 }}>
-            <SecondaryButton label="Not going yet" onPress={close} />
-          </View>
-        </View>
-      </BottomSheet>
-
-      <OdometerCamera
-        open={metering}
-        title="Photograph the meter"
-        subtitle="Before you set off — this is where the trip is measured from."
-        cancelLabel="Cancel — do not start this journey"
-        previousKm={null}
-        maxLegKilometres={maxKm}
-        onDone={(result) => {
-          setMetering(false);
-          answerOdometer.current?.(result);
-          answerOdometer.current = null;
-        }}
-      />
-    </>
-  );
+  return null;
 }

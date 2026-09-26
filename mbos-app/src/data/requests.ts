@@ -188,6 +188,11 @@ export async function claimExpense(args: {
   kind?: string;
   amountPaise: number;
   billPhotoId: string | null;
+  /**
+   * Every file behind the claim, the bill first. `billPhotoId` is kept as the
+   * first of them for the local row and for an office that reads one column.
+   */
+  attachmentIds?: string[];
   remarks: string;
   /** Who it was paid to, and the bill number. What a duplicate is caught on. */
   vendorName?: string | null;
@@ -234,13 +239,20 @@ export async function claimExpense(args: {
       vendorName: args.vendorName ?? undefined,
       billNumber: args.billNumber ?? undefined,
       exceptionReason: args.exceptionReason ?? undefined,
+      attachmentIds: args.attachmentIds?.length ? args.attachmentIds : undefined,
     },
     /* The day has to reach the office first, or the line arrives naming a day
        that is not there yet. PROTOCOL.md §3. */
     dependsOn: [expenseDayId],
   });
 
-  if (args.billPhotoId) await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.billPhotoId]);
+  /* Every file, not only the first: each was queued as `pending` when it was
+     picked, and one left behind uploads parented to nothing. The server binds
+     them too, for the ones that went up before this claim existed. */
+  const files = [...new Set([...(args.billPhotoId ? [args.billPhotoId] : []), ...(args.attachmentIds ?? [])])];
+  for (const mediaId of files) {
+    await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, mediaId]);
+  }
   await raiseApproval({
     type: 'expense_claim',
     subjectType: 'expense',

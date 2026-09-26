@@ -1273,6 +1273,28 @@ this form is not a staff directory. Without `RESEND_API_KEY` and `MAIL_FROM`
 the mail is written to the server log rather than sent, and the screen says so
 rather than claiming it went.
 
+**A WHATSAPP CODE IS THE OTHER WAY IN, offered only where it can work.**
+`lib/services/otp-service.ts` sends a one-time code to the WORK NUMBER ON THE
+ACCOUNT — never to a number typed at the screen — for signing in (web and the
+MBOS handset), changing a password, and resetting a forgotten one. It is
+switched on by naming an APPROVED Wati authentication template in
+`auth.otp.whatsappTemplateName`; blank or unapproved, every screen shows the
+password alone and says nothing about codes (a control that fails when pressed
+is worse than one never offered). It does not depend on the founder's WhatsApp
+switch — that one is about messages to customers.
+
+**Only a salted hash of each code is stored** (`auth_otps`, `sha256(id:code)`),
+one row per code, one use, one purpose — a sign-in code cannot change a
+password. Wrong guesses, lifetime, the resend cooldown and the per-window cap are
+the `auth.otp.*` settings. A code sign-in goes through `completeSignIn`, the
+same tail as a password; on the handset it takes the password's place inside
+`runLoginChecks`, so every later check (active, the field app, device binding)
+still applies, and it leaves no offline credential behind. Where codes are on,
+changing a password takes a code instead of the current password.
+
+**`otp_channel` was declared in schema.ts and never created by a migration**;
+`0168` creates it, guarded.
+
 ## Layout
 
 ```
@@ -1601,6 +1623,37 @@ dates the next stage-1 nudge from the newest WhatsApp row in
 ever wrote one, so stage-1 customers came back due every day.
 `recordReminderAttempt` writes it once a reminder is actually sent, keyed on
 the message.
+
+**EIGHT TEMPLATES, EACH A RULE SET, AND EVERY OLDER ONE ARCHIVED.**
+`lib/wati-templates.ts` holds one spec per approved Wati template (a `_vN`
+suffix is the same message): the Wati variable names it fills, and the checks
+that make its sentences TRUE. `wa_templates.wati_spec` ties a CRM template to
+one, and a spec'd template is rendered by those rules on every route — the
+preview, the manual copy and the API send — so no route can send what another
+would refuse. `0165` inserted the eight and archived every free-text template
+(archived, not deleted: `wa_messages` keeps a key to the template it came from).
+
+**A variable is a true value or the message is refused.** Never defaulted,
+blanked, "N/A", or rounded into a different figure. The bill list and its total
+are built from the SAME rows (stated, unpaid, not disputed; overdue by
+`effectiveDueDate`), one line, oldest first, five listed and "+ N more" with
+the total over all of them; amounts share one precision per message so they
+add up on the customer's screen. A cycle is quoted only when MEASURED
+(`cycle_is_default` false). "Is due around" is refused after the expected date
+and "was expected" before it. A reported or held payment refuses every payment
+template, a pending order or an open Taken Order line refuses every order one,
+and leads and third-party shops never get order templates.
+
+**Facts are read at the moment of sending**, not when the message was
+prepared — a payment confirmed between the two changes the bill list.
+
+**A pasted copy has no buttons.** The approved wording says "tap an option
+below"; `manualText` turns each such sentence into an ask to reply, and refuses
+a body that still mentions tapping, so a new phrasing in Wati fails loudly
+rather than pointing a customer at buttons that are not there.
+
+**Which template goes on which day is NOT here.** That is Mahek's timeline and
+belongs to the scheduler; these rules answer only "is this message true".
 
 **A customer record is a FIXED-LENGTH page, however old the account is.** Every
 panel on it is the same height and scrolls inside itself, and the reads behind
@@ -2759,6 +2812,116 @@ the default one. `VoiceTextarea` decides the joining and the `maxLength`
 ceiling in one place rather than at twenty call sites that would each get one
 of them slightly wrong — `maxLength` stops typing but not a programmatic set,
 so the box would otherwise accept more than the field will save.
+
+**THE CALL ASSISTANT PROPOSES THE FORM, AND NEVER WRITES A RECORD.** The
+telecaller presses one button on the call panel and says what happened, in
+any language, or types it. `lib/services/call-intel-service.ts` reads it and
+`components/crm/call-assistant.tsx` shows what it understood: the outcome,
+the dates, the products, the amount, the feedback, and what else the call
+produced. "Fill the form" puts that into the ordinary call form, filling only
+fields nobody has typed in, and the ordinary Save is still the only thing
+that writes. A sample, a complaint on a call filed as something else, or a
+second reminder opens its own ordinary form, filled in. The one row the
+assistant writes is `call_ai_drafts`: the transcript in the language it was
+spoken, the proposal, and, written by `saveInteraction` in the call's own
+transaction, what the call was actually saved as. The audio is still never
+stored.
+
+**Three readers, because each is wrong in a different direction.** The
+language model (`callIntel.model`, OpenAI then Sarvam) extracts everything
+into `callReadingSchema`, whose coded answers are built from the same lists
+the form draws, so it cannot answer in a code the save would refuse. The
+rules (`engines/call-intel-signals.ts`) look only for what is expensive to
+miss: do-not-call, a missed call, "maybe", and money in Indian number words.
+The classifier (`engines/call-intel-classifier.ts`), Naive Bayes trained
+nightly on our own logged notes, votes on the outcome. It votes against the
+model ONLY if its own cross-validation says it is right at least 80% of the
+time when sure, because Naive Bayes is overconfident by construction.
+`engines/call-intel-decide.ts` combines them and is where the client's rules
+live.
+
+**The model reports date CUES, never dates.** "After 15 days" comes back as
+`{in_days: 15}` with the words it came from, and `engines/call-intel-dates.ts`
+does the arithmetic against the business date and the working week. That file
+also parses the same words itself. Where the two readings land on different
+days, or "next Friday" can mean two days, or the day has already gone, the
+date is left EMPTY and the candidates are offered as buttons.
+
+**Unsure means ASK, and a default is never filled in.** Below
+`callIntel.confirmBelowPercent`, or where a trusted classifier disagrees, the
+card asks "Which was it?" with each candidate ready to apply. A date nobody
+said is a question with suggestions, not a filled field. "I may order next
+week" is an opportunity, never an order: an order needs the model to say
+confirmed AND no "maybe" in the words. Do-not-call is shown whenever either
+reader hears it, and the option that writes it is always the telecaller's
+click. Existing open reminders, complaints, opportunities and samples are
+read first, and a match is named, with a move offered in place of a second
+reminder.
+
+**Examples come from our own book, not from a fine-tune.** Each request shows
+the model the past calls whose notes read most like this one
+(`calls_notes_trgm_idx`, trigram KNN), one per distinct note, and leaves out
+any note the office itself logged two ways. `npm run jobs -- call-intel-train`
+relearns the classifier (nightly too), and `npm run jobs -- call-intel-eval
+--limit=80` runs the whole pipeline over logged calls and reports how often
+its outcome matches the one somebody chose.
+
+**THE SALESMAN HAS THE SAME ASSISTANT, AND IT READS A VISIT RATHER THAN A
+CALL.** In the shop he speaks into the visit note's microphone, in any
+language, or types, and presses "Read my note". `/api/mbos/visit-assist` reads
+it (`lib/services/visit-intel-service.ts`) and the card on the visit screen
+(`mbos-app/src/components/visit-assistant.tsx`) shows what it understood: the
+outcome chip, the day to come back, and each follow-on the visit implies. "Fill
+the visit" fills the outcome and the day ONLY where he has not answered them
+himself (`engines/visit-assist.ts`, `fillVisit`). Each follow-on opens its own
+ordinary form with the answers in it: the order screen with the cart filled,
+the receipt with the amount and mode, the complaint and sample sheets drafted,
+the lead's requirement boxes. His Save on each is still the only thing that
+writes. The one row the assistant writes is `call_ai_drafts` with
+`channel = 'visit'`, and `handleVisit` writes what the visit was SAVED as onto
+it in the visit's own transaction. It writes only onto the salesman's own
+visit draft, so a payload naming somebody else's draft id marks nothing.
+
+**A visit is not a call, which is why it has its own reading and its own
+engine.** `visitReadingSchema` asks what a phone call never can. Was money
+HANDED OVER, which is a receipt to write now, or promised, which is a day to
+come back? Filing the second as the first puts cash in a salesman's pocket
+that is not there. Was anybody there at all? A shut shutter files as Shop
+closed and drops whatever a staff member guessed about an order. On a lead,
+what does the shop need? `engines/visit-intel-decide.ts` is pure and applies
+the call assistant's rules unchanged:
+
+- A maybe is not an order.
+- Unsure means ask. Two strong intents on different chips become a question.
+- An amount the model and `parseAmounts` disagree on is named twice.
+- Litres are asked about, never turned into cans.
+- An open complaint in the same category, or an open sample of the same
+  product, is named rather than proposed again.
+
+What it shares with the call assistant is imported, not copied: date cues
+through `datedFrom`, products through `chooseProduct`, and the model ladder
+through `lib/structured-read.ts`. Both assistants now call that one
+OpenAI-then-Sarvam function.
+
+**The Suspect verdict is a SUGGESTION he taps, and only where the cap demands
+it.** §28 is that no lead climbs a rung on its own, so "sounds like a prospect"
+selects the answer on the lead card and moves nothing. The requirement is
+proposed for leads only.
+
+**It has no classifier, deliberately.** The call assistant's third reader is
+trained on thousands of logged call notes. Visit notes were optional and most
+are blank, so a classifier trained on them would vote with confidence it has
+not earned. The drafts table is collecting the labelled pairs one will need.
+
+**It needs signal and says so before it is pressed.** A proposal that arrived
+through the outbox tomorrow would be a suggestion about a visit already saved,
+so unlike the visit it is never queued. `mbos.ai.visitAssistant` rides the
+pull as an ANSWER, the way `mbos.ai.dictation` does. It is worked out from
+`visitIntel.enabled` and whether a model key exists. No key and no model name
+crosses the wire, and the handset defaults to unavailable. The model is
+`visitIntel.model`, and the confidence floor is the call assistant's
+`callIntel.confirmBelowPercent`, because how often a person should be asked is
+one judgement, not two.
 
 **THE SALESMAN GETS THE SAME MICROPHONE, and he needed it more than the
 telecaller did.** A telecaller types slowly with a customer on the line; a
@@ -4783,6 +4946,33 @@ figure combining them is neither. There is no incentive column, because
 MahekOne sets no monthly target for a field salesman and a figure with nothing
 to be computed from would be an invention on the one screen where a wrong number
 is least forgivable.
+
+**TRAVEL IS ASKED TWICE A DAY, AND NEVER AT A SHOP — a reversal (Sep 2026).**
+The paragraphs below describe how a visit used to ask how he was travelling,
+open a meter camera, and ask for the bus fare on the way out. The field would
+not answer it: eleven shops is eleven questions. Now the vehicle is asked at
+the PUNCH-IN, the meter is read at the PUNCH-OUT where the day started on one,
+and nothing about travel is asked on the way to a shop, at the check-in or at
+the check-out. `TravelGate` asks nothing: `visitLegPlan` (pure, in
+`mbos-app/src/lib/travel-leg.ts`) records the visit's journey silently under
+the day's own mode, so the arrival geofence and the dwell clock still work, or
+records none where he never punched in — never a vehicle nobody named. A visit
+leg never carries a claim: a meter day is priced by its two readings, and every
+other day's fares are claimed in Expenses. The fare sheet at check-out is gone.
+
+**After a punch-out that the meter did not measure, he is asked to raise the
+day's costs.** `promptsForExpenses` decides it; the pop-up's button opens
+Expenses with the claim sheet already up, and "Later" is always an answer — the
+punch-out is done either way. A claim carries up to
+`mbos.expenses.maxAttachments` files — photographs, several from the gallery at
+once, or PDFs checked against `attachments.maxSizeMb` as they are picked — and
+`handleExpense` files EVERY one under the claim, including a file the media
+queue uploaded before the claim existed, parented to the handset's literal
+`pending`. Only the claimant's own uploads are moved. Expense files had no read
+rule and answered 404 to everybody; `canReadExpenseAttachment` reads them as
+his mileage evidence is read — him, or a Sales Dashboard holder with him in
+scope. The Decide dialog on `/sales/expenses` now shows each claim with its
+files; before, a manager decided a day's money from two totals.
 
 **HOW HE GOT TO THE SHOP IS ASKED WHEN HE SETS OFF, and "Start visit" now
 means "I am setting off".** Pressing it opens `TravelGate` — the modes from

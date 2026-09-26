@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pressable, TextInput, View } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Choice, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
@@ -11,7 +11,8 @@ import { claimExpense, expenseTotals, expensesOn, listExpenses, type Expense } f
 import { getConfig } from '../src/data/config';
 import { activePolicy, previewClaim, CLAIM_KINDS, type ClaimedLine, type LocalPolicy } from '../src/data/travel';
 import type { ExpenseKind } from '../src/engines/generated/expense-policy';
-import { takePhoto } from '../src/native/capture';
+import { pickDocuments, pickPhotos, takePhoto, type Picked } from '../src/native/capture';
+import { discardQueuedMedia } from '../src/sync/media';
 import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
@@ -33,16 +34,24 @@ import { color as C, radius, weight, tabular, type BadgeTone } from '../src/them
    days", so an office that set 15 had two contradictory sentences on one
    screen — and he plans around the wrong one and the claim is refused. */
 const exRule = (maxAgeDays: number) =>
-  'Every claim needs a photograph of the bill or proof of payment. Claims older than ' +
+  'Every claim needs the bill or proof of payment — photos or a PDF, as many as it takes. Claims older than ' +
   maxAgeDays +
   ' days are not accepted.';
 
 /** How much of the history this screen mounts. See `listExpenses`. */
 const EX_PAGE = 60;
 
-type Draft = { kind: string; amt: string; note: string; when: string; whenIso: string; billMediaId: string | null; billLabel: string | null };
+/**
+ * A file on the claim. `fresh` is one picked in this sheet: cancelling the
+ * sheet throws those away rather than leaving them to upload parented to
+ * nothing. A file carried in from a rejected claim is not fresh — it already
+ * belongs to that claim and must survive a change of mind.
+ */
+type DraftFile = Picked & { fresh: boolean };
 
-const EMPTY: Draft = { kind: '', amt: '', note: '', when: '', whenIso: '', billMediaId: null, billLabel: null };
+type Draft = { kind: string; amt: string; note: string; when: string; whenIso: string; files: DraftFile[] };
+
+const EMPTY: Draft = { kind: '', amt: '', note: '', when: '', whenIso: '', files: [] };
 
 /** The four things a claim has to carry, named the way he would say them. */
 type FieldKey = 'amt' | 'bill' | 'when' | 'note';
@@ -73,6 +82,11 @@ export default function ExpensesScreen() {
      the one he read here was the wrong one. */
   const [policy, setPolicy] = React.useState<LocalPolicy | null>(null);
   const [maxAgeDays, setMaxAgeDays] = React.useState(30);
+  /* Both office settings. The count is how many files a claim may carry; the
+     size is the server's own upload ceiling, checked here so a PDF it would
+     refuse is refused while he is looking. */
+  const [maxFiles, setMaxFiles] = React.useState(6);
+  const [maxSizeMb, setMaxSizeMb] = React.useState(5);
   /* What is ALREADY on the day he is claiming for. The policy caps a day, not a
      claim, so a preview priced without these reports the whole cap however much
      of it has gone — and he finds out at approval. */
@@ -113,12 +127,16 @@ export default function ExpensesScreen() {
          60 would have moved the sync and left the date picker greying out the
          same days. One question, one key. */
       getConfig<number>('mbos.expenses.backdatedDaysAllowed', 30),
-    ]).then(([e, t, p, age]) => {
+      getConfig<number>('mbos.expenses.maxAttachments', 6),
+      getConfig<number>('attachments.maxSizeMb', 5),
+    ]).then(([e, t, p, age, files, mb]) => {
       if (!live) return;
       setRows(e);
       setTotals(t);
       setPolicy(p);
       setMaxAgeDays(age);
+      setMaxFiles(files);
+      setMaxSizeMb(mb);
     });
     return () => {
       live = false;
@@ -127,6 +145,10 @@ export default function ExpensesScreen() {
 
   useFocusEffect(load);
 
+  /* Arriving from the punch-out's "Add expenses" opens the claim sheet
+     straight away — one tap from the prompt to the form. Once per arrival. */
+  const params = useLocalSearchParams<{ add?: string }>();
+  const openedFromPrompt = React.useRef(false);
   const patch = (p: Partial<Draft>) => {
     setEx((d) => ({ ...d, ...p }));
     setErr([]);
@@ -183,11 +205,11 @@ export default function ExpensesScreen() {
         policy,
         kind: kind as ExpenseKind,
         claimedPaise: exAmtPaise,
-        hasBill: ex.billMediaId != null,
+        hasBill: ex.files.length > 0,
         day: claimDay,
         alreadyClaimed,
       }),
-    [policy, kind, exAmtPaise, ex.billMediaId, claimDay, alreadyClaimed],
+    [policy, kind, exAmtPaise, ex.files.length, claimDay, alreadyClaimed],
   );
   const exOver = preview.excessPaise > 0;
   const capLine = preview.line;
@@ -217,6 +239,15 @@ export default function ExpensesScreen() {
     setEx({ ...EMPTY, kind: kinds[0]!.key, when: dmy(isoDate(today)), whenIso: isoDate(today) });
     setOpen(true);
   };
+
+  React.useEffect(() => {
+    if (params.add === '1' && !openedFromPrompt.current) {
+      openedFromPrompt.current = true;
+      add();
+    }
+    /* `add` reads only state this effect does not need to follow. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.add]);
 
   /**
    * Reopen a rejected claim.
@@ -255,13 +286,15 @@ export default function ExpensesScreen() {
       note: x.remarks ?? '',
       when: dmy(x.spentOn),
       whenIso: x.spentOn,
-      billMediaId: x.billPhotoId,
-      billLabel: x.billPhotoId ? 'Bill attached' : null,
+      files: x.billPhotoId ? [{ mediaId: x.billPhotoId, label: 'Bill attached', isPdf: false, fresh: false }] : [],
     });
     setOpen(true);
   };
 
-  const close = () => {
+  /* `sent` is false on Cancel: the files picked in this sheet are thrown away
+     rather than left to upload parented to nothing and be swept a night later. */
+  const close = (sent = false) => {
+    if (!sent) for (const f of ex.files) if (f.fresh) void discardQueuedMedia(f.mediaId);
     setOpen(false);
     setEx(EMPTY);
     setErr([]);
@@ -271,15 +304,46 @@ export default function ExpensesScreen() {
     setCal(false);
   };
 
-  /* The photograph is taken when the bill is in his hand, and queued straight
-     away — the claim it belongs to does not exist yet and does not need to. */
-  const attach = async (source: 'camera' | 'library') => {
-    const shot = await takePhoto({ parentType: 'expense', parentId: 'pending', kind: 'bill_photo', source });
-    if (!shot.ok) {
-      if (shot.reason !== 'cancelled') notify(shot.reason);
+  /* Taken when the bill is in his hand and queued straight away — the claim
+     it belongs to does not exist yet and does not need to. Three ways in,
+     because a bill arrives three ways: on paper, already in the gallery, or as
+     a PDF somebody mailed him. */
+  const room = Math.max(0, maxFiles - ex.files.length);
+  const addFiles = (picked: Picked[]) => {
+    setEx((d) => ({ ...d, files: [...d.files, ...picked.map((p) => ({ ...p, fresh: true }))] }));
+    setErr([]);
+  };
+  const attach = async (how: 'camera' | 'gallery' | 'pdf') => {
+    if (!room) return notify(`A claim can carry ${maxFiles} files — remove one to add another.`);
+    const parent = { parentType: 'expense', parentId: 'pending', kind: 'bill_photo' as const };
+    if (how === 'camera') {
+      const shot = await takePhoto({ ...parent, source: 'camera' });
+      if (!shot.ok) {
+        if (shot.reason !== 'cancelled') notify(shot.reason);
+        return;
+      }
+      return addFiles([{ mediaId: shot.mediaId, label: 'Photo', isPdf: false }]);
+    }
+    if (how === 'gallery') {
+      const got = await pickPhotos({ ...parent, max: room });
+      if (!got.ok) {
+        if (got.reason !== 'cancelled') notify(got.reason);
+        return;
+      }
+      return addFiles(got.picked);
+    }
+    const got = await pickDocuments({ ...parent, max: room, maxSizeMb });
+    if (!got.ok) {
+      if (got.reason !== 'cancelled') notify(got.reason);
       return;
     }
-    patch({ billMediaId: shot.mediaId, billLabel: source === 'camera' ? 'Photo attached' : 'File attached' });
+    addFiles(got.picked);
+    if (got.refused.length) notify('Not attached: ' + got.refused.join('; ') + '.');
+  };
+  const removeFile = (mediaId: string) => {
+    const f = ex.files.find((x) => x.mediaId === mediaId);
+    if (f?.fresh) void discardQueuedMedia(mediaId);
+    setEx((d) => ({ ...d, files: d.files.filter((x) => x.mediaId !== mediaId) }));
   };
 
   const send = async () => {
@@ -297,7 +361,7 @@ export default function ExpensesScreen() {
        thumb already is rather than the sheet scrolling to the first mark. */
     const missing: FieldKey[] = [];
     if (!exAmtPaise) missing.push('amt');
-    if (!ex.billMediaId) missing.push('bill');
+    if (!ex.files.length) missing.push('bill');
     if (!ex.whenIso.trim()) missing.push('when');
     if (!ex.note.trim()) missing.push('note');
     if (missing.length) return setErr(missing);
@@ -316,14 +380,15 @@ export default function ExpensesScreen() {
         category: kinds.find((k) => k.key === kind)?.category ?? 'other',
         kind,
         amountPaise: exAmtPaise,
-        billPhotoId: ex.billMediaId,
+        billPhotoId: ex.files[0]?.mediaId ?? null,
+        attachmentIds: ex.files.map((f) => f.mediaId),
         remarks: ex.note.trim(),
         /* Requirement 43 — asking for something outside policy takes a reason,
            and it is the note he has already written rather than a second box. */
         exceptionReason: exOver ? ex.note.trim() : null,
       });
 
-      close();
+      close(true);
       load();
       /* ONE source for what he is told, before and after.
          The toast used to read `overCap` off `claimExpense`, which prices
@@ -408,7 +473,7 @@ export default function ExpensesScreen() {
       ) : null}
 
       {/* ------------------------------------------------------ claim sheet */}
-      <BottomSheet open={open} onClose={close} scroll>
+      <BottomSheet open={open} onClose={() => close()} scroll>
         <T s="h2">{fixing ? 'Correct this claim' : 'Claim an expense'}</T>
 
         <View style={{ marginTop: 14 }}>
@@ -462,17 +527,22 @@ export default function ExpensesScreen() {
         </View>
 
         <View style={{ marginTop: 14 }}>
-          <T s="label" style={{ marginBottom: 6 }}>
-            Bill
-          </T>
-          {ex.billLabel ? (
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', marginBottom: 6 }}>
+            <T s="label">Bill and proof</T>
+            <T s="caption" style={{ marginLeft: 'auto' }}>
+              {ex.files.length + ' of ' + maxFiles}
+            </T>
+          </View>
+          {ex.files.map((f) => (
             <View
+              key={f.mediaId}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 8,
                 width: '100%',
                 minHeight: 52,
+                marginBottom: 6,
                 paddingLeft: 14,
                 paddingRight: 6,
                 borderWidth: 1,
@@ -480,31 +550,37 @@ export default function ExpensesScreen() {
                 borderRadius: radius.lg,
                 backgroundColor: C.successBg,
               }}>
-              <Icon name="tick" size={16} color={C.success} strokeWidth={2.4} />
-              <T style={[{ fontSize: 15, color: C.success }, weight(500)]}>{ex.billLabel}</T>
+              <Icon name={f.isPdf ? 'doc' : 'camera'} size={16} color={C.success} strokeWidth={2} />
+              <T numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.success }, weight(500)]}>
+                {f.label}
+              </T>
               <Pressable
                 accessibilityRole="button"
-                onPress={() => patch({ billMediaId: null, billLabel: null })}
-                style={{ marginLeft: 'auto', minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 10 }}>
-                <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>Change</T>
+                accessibilityLabel={'Remove ' + f.label}
+                onPress={() => removeFile(f.mediaId)}
+                style={{ minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 10 }}>
+                <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>Remove</T>
               </Pressable>
             </View>
-          ) : (
+          ))}
+          {room > 0 ? (
             <View style={{ flexDirection: 'row', gap: 8 }}>
               {[
-                { glyph: 'camera', label: 'Photograph it', source: 'camera' as const },
-                { glyph: 'clip', label: 'Upload a file', source: 'library' as const },
+                { glyph: 'camera', label: 'Photo', how: 'camera' as const },
+                { glyph: 'clip', label: 'Gallery', how: 'gallery' as const },
+                { glyph: 'doc', label: 'PDF', how: 'pdf' as const },
               ].map((b) => (
                 <Pressable
-                  key={b.label}
+                  key={b.how}
                   accessibilityRole="button"
-                  onPress={() => attach(b.source)}
+                  accessibilityLabel={b.how === 'camera' ? 'Photograph the bill' : b.how === 'gallery' ? 'Choose photos from the gallery' : 'Attach a PDF'}
+                  onPress={() => void attach(b.how)}
                   style={{
                     flex: 1,
                     flexDirection: 'row',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 8,
+                    gap: 6,
                     minHeight: 52,
                     borderWidth: 1,
                     borderStyle: 'dashed',
@@ -517,9 +593,9 @@ export default function ExpensesScreen() {
                 </Pressable>
               ))}
             </View>
-          )}
+          ) : null}
           <T style={{ fontSize: 13, lineHeight: 19, marginTop: 6, color: bad('bill') ? C.danger : C.muted }}>
-            Required on every claim — photo, PDF or a payment screenshot.
+            Required on every claim. Add every page, and the payment screenshot if you have one.
           </T>
           {bad('bill') ? (
             <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Attach the bill or proof of payment.</T>
@@ -592,7 +668,7 @@ export default function ExpensesScreen() {
         ) : null}
 
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-          <SecondaryButton label="Cancel" onPress={close} style={{ flex: 1 }} />
+          <SecondaryButton label="Cancel" onPress={() => close()} style={{ flex: 1 }} />
           <PrimaryButton
             label={sending ? 'Sending…' : fixing ? 'Send it again' : 'Send the claim'}
             onPress={send}

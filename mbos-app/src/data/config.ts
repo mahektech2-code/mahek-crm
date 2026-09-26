@@ -230,6 +230,9 @@ const DEFAULTS: Record<string, unknown> = {
    * pressed, which is the one thing this feature is not allowed to do.
    */
   'mbos.ai.dictation': { available: false },
+  /* The visit assistant, for the same reason: it needs a model key the phone
+     never holds, so it is off until the office says otherwise. */
+  'mbos.ai.visitAssistant': { available: false },
 
   /* leads */
   'mbos.leads.staleDays': 30,

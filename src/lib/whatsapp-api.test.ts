@@ -22,6 +22,9 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  bills,
+  orders,
+  paymentReceipts,
   customers,
   followUpAttempts,
   followUpStates,
@@ -34,7 +37,7 @@ import {
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { setWhatsappService } from "@/lib/services/whatsapp-switch-service";
-import { applyWatiEvent, sendNow } from "@/lib/services/whatsapp-service";
+import { applyWatiEvent, prepareMessage, sendNow } from "@/lib/services/whatsapp-service";
 import { parseWatiEvent } from "@/lib/whatsapp-delivery";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -72,8 +75,23 @@ function stubWati() {
             body: "Dear {{customer}}, {{outstanding}} is due.",
             custom_params: [{ name: "customer" }, { name: "outstanding" }],
           },
+          {
+            name: "payment_followup_1_v2",
+            status: "APPROVED",
+            body: "*PAYMENT FOLLOW-UP – {{customer_name}}*\n{{as_of_date}}\n{{bills_list}}\n*Total Overdue: ₹{{total_overdue}}*\nPlease tap an option below.",
+            custom_params: [{ name: "customer_name" }, { name: "as_of_date" }, { name: "bills_list" }, { name: "total_overdue" }],
+          },
+          {
+            name: "order_followup_due_passed_v2",
+            status: "APPROVED",
+            body: "{{customer_name}} {{cycle_days}} {{expected_order_date}} {{last_order_date}} {{days_since_last_order}} {{last_products}} Please tap an option below.",
+            custom_params: [
+              { name: "customer_name" }, { name: "cycle_days" }, { name: "expected_order_date" },
+              { name: "last_order_date" }, { name: "days_since_last_order" }, { name: "last_products" },
+            ],
+          },
         ],
-        total: 1,
+        total: 3,
       });
     }
     if (url.includes("/channels")) return json({ channels: [{ name: "Default", channel: "WhatsApp" }] });
@@ -141,8 +159,8 @@ beforeEach(async () => {
   await db.execute(sql`
     truncate table
       whatsapp_service_events, wa_replies, wa_messages, wa_runs, wa_templates,
-      follow_up_attempts, follow_up_states, audit_log, app_access, sessions,
-      customers, users, app_settings
+      follow_up_attempts, follow_up_states, payment_receipts, payments, bills,
+      orders, audit_log, app_access, sessions, customers, users, app_settings
     restart identity cascade
   `);
   invalidateConfig();
@@ -349,4 +367,146 @@ test("a reply is filed against the customer, once, and a stranger's is kept rath
   const stranger = rows.find((r) => r.providerMessageId === "wamid.IN2");
   assert.equal(mine?.customerId, shop.id);
   assert.equal(stranger?.customerId, null);
+});
+
+/* ------------------------------------------------------ rule-set templates */
+
+async function specTemplate(key: string, body: string, watiName: string | null) {
+  const tid = id("tpl");
+  await db.insert(waTemplates).values({
+    id: tid,
+    name: key,
+    category: key.startsWith("payment") ? "payment_reminder" : "reactivation",
+    body,
+    watiSpec: key,
+    watiTemplateName: watiName,
+  });
+  return tid;
+}
+
+/** Days before today, as a YYYY-MM-DD in IST. */
+function daysAgo(n: number): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(
+    new Date(Date.now() - n * 86_400_000),
+  );
+}
+
+async function overdueBill(no: string, rupees: number, ageDays: number) {
+  await db.insert(bills).values({
+    id: id("bil"),
+    customerId: shop.id,
+    billNo: no,
+    billDate: daysAgo(ageDays),
+    dueDate: daysAgo(ageDays - 30),
+    amount: rupees * 100,
+    paymentPosition: "stated",
+  });
+}
+
+test("a payment template sends the customer's real overdue bills, fresh at the moment of sending", async () => {
+  await overdueBill("MMI/1", 16424, 70);
+  await overdueBill("MMI/2", 8200, 50);
+  await overdueBill("MMI/NOTDUE", 5000, 5); // due in 25 days — not overdue
+  const tid = await specTemplate("payment_followup_1", "{{customer_name}} {{as_of_date}} {{bills_list}} ₹{{total_overdue}} Please tap an option below.", "payment_followup_1_v2");
+  await switchOn();
+
+  const r = await sendNow({ customerId: shop.id, templateId: tid, idempotencyKey: randomUUID() });
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  const sent = sends[0] as { template_name: string; recipients: Array<{ custom_params: Array<{ name: string; value: string }> }> };
+  assert.equal(sent.template_name, "payment_followup_1_v2");
+  const p = Object.fromEntries(sent.recipients[0].custom_params.map((x) => [x.name, x.value]));
+  assert.equal(p.customer_name, "Colour Camp");
+  assert.match(p.bills_list, /MMI\/1 – ₹16,424 \| .*MMI\/2 – ₹8,200$/);
+  assert.doesNotMatch(p.bills_list, /NOTDUE/);
+  assert.equal(p.total_overdue, "24,624");
+});
+
+test("a customer who has reported a payment is refused, and Wati is never called", async () => {
+  await overdueBill("MMI/1", 16424, 70);
+  await db.insert(paymentReceipts).values({
+    id: id("rcp"),
+    customerId: shop.id,
+    amount: 1_642_400,
+    receivedAt: daysAgo(1),
+    status: "reported",
+    idempotencyKey: randomUUID(),
+  });
+  const tid = await specTemplate("payment_followup_1", "{{customer_name}} {{as_of_date}} {{bills_list}} {{total_overdue}}", "payment_followup_1_v2");
+  await switchOn();
+  const r = await sendNow({ customerId: shop.id, templateId: tid, idempotencyKey: randomUUID() });
+  assert.equal(r.ok, false);
+  if (r.ok) return;
+  assert.match(r.error, /reported a payment/);
+  assert.equal(sends.length, 0);
+});
+
+test("with the switch off, the same template is a paste-able copy that asks for a reply, not a tap", async () => {
+  await overdueBill("MMI/1", 16424, 70);
+  const tid = await specTemplate("payment_followup_1", "{{customer_name}} {{as_of_date}} {{bills_list}} ₹{{total_overdue}}\n\nPlease tap an option below.", "payment_followup_1_v2");
+  const r = await prepareMessage({ customerId: shop.id, templateId: tid, idempotencyKey: randomUUID() });
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  if (!r.ok) return;
+  assert.equal(r.data.mode, "manual");
+  assert.match(r.data.body, /Please reply to this message\./);
+  assert.doesNotMatch(r.data.body, /tap/);
+  assert.match(r.data.body, /₹16,424/);
+});
+
+test("an order follow-up reads the last order, its products and the measured cycle", async () => {
+  await db.update(customers).set({ cycleDays: 28, cycleIsDefault: false }).where(eq(customers.id, shop.id));
+  await db.insert(orders).values({
+    id: id("ord"),
+    customerId: shop.id,
+    orderedAt: new Date(`${daysAgo(40)}T10:00:00+05:30`),
+    totalAmount: 4_850_000,
+    status: "confirmed",
+    lineItems: [
+      { product: "Nano Thinner 20L", quantity: 2, unitPrice: 0, amount: 0 },
+      { product: "PU Clear 4L", quantity: 1, unitPrice: 0, amount: 0 },
+    ],
+  });
+  const tid = await specTemplate(
+    "order_followup_due_passed",
+    "{{customer_name}} {{cycle_days}} {{expected_order_date}} {{last_order_date}} {{days_since_last_order}} {{last_products}}",
+    "order_followup_due_passed_v2",
+  );
+  await switchOn();
+  const r = await sendNow({ customerId: shop.id, templateId: tid, idempotencyKey: randomUUID() });
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  const p = Object.fromEntries(
+    (sends[0] as { recipients: Array<{ custom_params: Array<{ name: string; value: string }> }> }).recipients[0].custom_params.map((x) => [x.name, x.value]),
+  );
+  assert.equal(p.cycle_days, "28");
+  assert.equal(p.days_since_last_order, "40");
+  assert.equal(p.last_products, "Nano Thinner 20L, PU Clear 4L");
+});
+
+test("the same order follow-up is refused while the cycle is only the default", async () => {
+  await db.insert(orders).values({
+    id: id("ord"),
+    customerId: shop.id,
+    orderedAt: new Date(`${daysAgo(40)}T10:00:00+05:30`),
+    totalAmount: 4_850_000,
+    status: "confirmed",
+    lineItems: [{ product: "Nano Thinner 20L", quantity: 2, unitPrice: 0, amount: 0 }],
+  });
+  const tid = await specTemplate("order_followup_due_passed", "{{customer_name}}", "order_followup_due_passed_v2");
+  await switchOn();
+  const r = await sendNow({ customerId: shop.id, templateId: tid, idempotencyKey: randomUUID() });
+  assert.equal(r.ok, false);
+  if (r.ok) return;
+  assert.match(r.error, /not been measured/);
+  assert.equal(sends.length, 0);
+});
+
+test("an administrator who also holds the Founder Dashboard can switch it — whichever hat is credited", async () => {
+  const both = await makeUser("Owner", "admin", [
+    { app: "crm", role: "admin" },
+    { app: "admin", role: "admin" },
+    { app: "founder", role: "admin" },
+  ]);
+  setTestUser(both);
+  const r = await setWhatsappService({ active: true });
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  assert.equal((await db.select().from(whatsappServiceEvents)).length, 1);
 });

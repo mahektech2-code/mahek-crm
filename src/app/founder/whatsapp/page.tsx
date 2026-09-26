@@ -11,6 +11,7 @@ import {
   MERGE_FIELDS,
 } from "@/lib/services/whatsapp-service";
 import { WhatsappControl } from "./whatsapp-control";
+import { specFor } from "@/lib/wati-templates";
 
 export const metadata = { title: "WhatsApp - Founder Dashboard - MahekOne" };
 
@@ -85,6 +86,8 @@ export default async function Page() {
         escalationStage: t.escalationStage,
         body: t.body,
         watiTemplateName: t.watiTemplateName,
+        spec: t.watiSpec,
+        specParams: t.watiSpec ? [...(specFor(t.watiSpec)?.params ?? [])] : null,
       }))}
       mergeFields={[...MERGE_FIELDS]}
       counts={counts}

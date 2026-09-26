@@ -103,6 +103,7 @@ export type JobName =
   | "recompute-performance"
   | "snapshot-customer-health"
   | "sweep-unconfirmed"
+  | "whatsapp-automation"
   | "escalate-complaint-sla"
   | "auto-eod"
   | "roll-reminders"
@@ -133,7 +134,11 @@ export type JobName =
   | "provision-team"
   | "backfill-timeline"
   | "mbos-nightly"
-  | "mbos-hourly";
+  | "mbos-hourly"
+  /** Relearn the office's shorthand from logged calls, for the call assistant. */
+  | "call-intel-train"
+  /** Run the call assistant over logged calls and report how often it agrees. */
+  | "call-intel-eval";
 
 export type JobResult = { job: JobName; recordsAffected: number; detail: string };
 
@@ -365,7 +370,41 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     }, triggeredById),
   );
 
+  /* The call assistant's classifier, relearned from today's logged calls.
+     Last, and allowed to fail on its own: a vote the assistant can do without
+     for a day must never cost the caches above it. */
+  try {
+    results.push(await runCallIntelTraining(triggeredById));
+  } catch (e) {
+    console.error("Nightly: call assistant training failed:", e instanceof Error ? e.message : e);
+  }
+
   return results;
+}
+
+async function runCallIntelTraining(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "call-intel-train",
+    async () => {
+      const { trainCallClassifier } = await import("@/lib/services/call-intel-service");
+      const r = await trainCallClassifier();
+      if (!r.evaluation) {
+        return {
+          recordsAffected: 0,
+          detail: `Only ${r.trainedOn} logged calls with notes — not enough to learn from yet.`,
+        };
+      }
+      const pct = (n: number) => `${Math.round(n * 100)}%`;
+      return {
+        recordsAffected: r.trainedOn,
+        detail:
+          `Learned from ${r.trainedOn} calls (${r.vocabulary} words and pairs). ` +
+          `Cross-validated: ${pct(r.evaluation.accuracy)} right overall; ` +
+          `${pct(r.evaluation.confidentAccuracy)} right on the ${pct(r.evaluation.coverage)} it was sure of.`,
+      };
+    },
+    triggeredById,
+  );
 }
 
 /* -------------------------------------------------------- queue snapshot */
@@ -490,6 +529,20 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   const results: JobResult[] = [];
 
   results.push(await run("mbos-hourly", mbosHourly, triggeredById));
+
+  // The founder's WhatsApp rules. The pass checks the sending window itself
+  // (10 am–1 pm IST unless the founder changed it) and returns at once
+  // outside it, so running every hour costs nothing between checks.
+  results.push(
+    await run("whatsapp-automation", async () => {
+      const { runAutomation } = await import("./services/whatsapp-automation-service");
+      const r = await runAutomation({ source: "schedule" });
+      return {
+        recordsAffected: r.sent,
+        detail: `${r.sent} sent, ${r.wouldSend} would send — ${r.note}`,
+      };
+    }, triggeredById),
+  );
 
   results.push(
     await run("sweep-unconfirmed", async () => {
@@ -652,6 +705,8 @@ export type JobOptions = {
    * run gets.
    */
   dryRun?: boolean;
+  /** How many rows a sampling job reads — `call-intel-eval`. */
+  limit?: string;
 };
 
 export async function runJob(
@@ -834,6 +889,31 @@ export async function runJob(
       return [await runCustomerMasterSync(triggeredById)];
     case "customer-master-project":
       return [await runCustomerMasterProjection(options)];
+    case "call-intel-train":
+      return [await runCallIntelTraining(triggeredById)];
+    case "call-intel-eval":
+      return [
+        await run(
+          "call-intel-eval",
+          async () => {
+            const { evaluateCallAssistant } = await import("@/lib/services/call-intel-service");
+            const limit = Math.min(500, Math.max(1, Number(options.limit ?? 80) || 80));
+            const r = await evaluateCallAssistant({ limit });
+            const pct = (n: number) => `${Math.round(n * 100)}%`;
+            const lines = [
+              `${r.calls} logged calls read; the model answered on ${r.readByModel}.`,
+              `Suggested outcome matched what was logged: ${pct(r.outcomeAgreement)}.`,
+              `Filled with confidence on ${r.confident} — right on ${pct(r.confidentAgreement)} of those. Asked the telecaller on ${r.asked}.`,
+              `Sure of the outcome on ${r.outcomeSure} — right on ${r.outcomeSure ? pct(r.outcomeSureRight / r.outcomeSure) : "-"}. Asked which outcome on ${r.askedWhich}.`,
+              `The logged outcome was the suggestion or one of the offered choices on ${pct(r.calls ? r.inChoices / r.calls : 0)}.`,
+              ...Object.entries(r.byOutcome).map(([o, v]) => `  ${o}: ${v.agreed}/${v.calls}`),
+              ...r.misses.slice(0, 15).map((m) => `  miss — logged ${m.logged}, suggested ${m.suggested ?? "nothing"} (${m.state ?? "-"}): ${m.note}`),
+            ];
+            return { recordsAffected: r.calls, detail: lines.join("\n") };
+          },
+          triggeredById,
+        ),
+      ];
     default:
       throw new Error(`Unknown job "${job}".`);
   }

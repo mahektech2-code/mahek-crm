@@ -11,6 +11,7 @@ import {
   mbosAttendanceDays,
   mbosCourses,
   mbosDocuments,
+  mbosExpenses,
   mbosTravelLegs,
   paymentReceipts,
 } from "@/db/schema";
@@ -396,6 +397,10 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     return canReadTravelLegPhoto(row.parentId);
   }
 
+  if (row.parentType === "mbos_expense") {
+    return canReadExpenseAttachment(row.parentId);
+  }
+
   const customerId = await customerBehind(row.parentType, row.parentId);
   if (!customerId) return false;
 
@@ -552,9 +557,39 @@ async function canReadTravelLegPhoto(legId: string): Promise<boolean> {
     .from(mbosTravelLegs)
     .where(eq(mbosTravelLegs.id, legId));
   if (!leg) return false;
+  return canReadSalesmansOwnEvidence(leg.userId);
+}
 
+/**
+ * An expense claim's bills, photographs and PDFs.
+ *
+ * They had no rule at all: `mbos_expense` fell through to `customerBehind`,
+ * which looks for a customer an expense does not have, and every read was
+ * refused — to the salesman who claimed it and to the manager deciding it.
+ * The claim is evidence about a person's own spending, never about a
+ * customer, so it is read exactly as his mileage evidence is.
+ */
+async function canReadExpenseAttachment(expenseId: string): Promise<boolean> {
+  const [expense] = await db
+    .select({ userId: mbosExpenses.userId })
+    .from(mbosExpenses)
+    .where(eq(mbosExpenses.id, expenseId));
+  if (!expense) return false;
+  return canReadSalesmansOwnEvidence(expense.userId);
+}
+
+/**
+ * Evidence a salesman produced about HIMSELF — his meter, his bills: he may
+ * read it, and so may whoever holds the Sales Dashboard with him in scope.
+ *
+ * The grant is asked FIRST and is not optional: `managerScope` answers
+ * "national, sees everybody" for anybody with no region row, which is every
+ * plain salesman, so falling straight through to it would let one salesman
+ * open another's bills by id.
+ */
+async function canReadSalesmansOwnEvidence(ownerId: string): Promise<boolean> {
   const ctx = await resolveScope();
-  if (leg.userId === ctx.user.id) return true;
+  if (ownerId === ctx.user.id) return true;
 
   const { listUserApps } = await import("../access");
   const apps = await listUserApps(ctx.user.id);
@@ -566,7 +601,7 @@ async function canReadTravelLegPhoto(legId: string): Promise<boolean> {
      reads out of the same field in SQL. Reached only by somebody who already
      holds the Sales Dashboard. */
   if (scope.salesmanIds === null) return true;
-  return scope.salesmanIds.includes(leg.userId);
+  return scope.salesmanIds.includes(ownerId);
 }
 
 async function customerBehind(

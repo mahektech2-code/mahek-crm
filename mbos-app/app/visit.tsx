@@ -11,7 +11,6 @@ import {
   abandonLeg,
   arriveForVisit,
   arrivedLegFor,
-  attachTicketToLeg,
   bindLegToVisit,
   openLegOf,
   travelModes,
@@ -21,7 +20,6 @@ import {
 import {
   arrivalNeedsMeter,
   arrivalPrompt,
-  checkFare,
   legLine,
   navigationLine,
   travellingFor,
@@ -51,6 +49,15 @@ import { fixOf, getFix, type Fix } from '../src/native/location';
 import { queueOdometerPhoto, queueRecording, takePhoto } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
 import { VoiceField } from '../src/components/ui/dictate';
+import { VisitAssistant, type VisitAssistantHandlers } from '../src/components/visit-assistant';
+import {
+  cartFrom,
+  complaintDraft,
+  fillVisit,
+  paymentFill,
+  requirementFill,
+  sampleDraft,
+} from '../src/engines/visit-assist';
 import { NavigateButton } from '../src/components/ui/navigate';
 
 /**
@@ -114,6 +121,9 @@ export default function Visit() {
   const markVisitDone = useStore((s) => s.markVisitDone);
   const askConfirm = useStore((s) => s.askConfirm);
   const checkedIntoShop = useStore((s) => s.checkedIntoShop);
+  const cart = useStore((s) => s.cart);
+  const payAmt = useStore((s) => s.payAmt);
+  const payMode = useStore((s) => s.payMode);
   const arrival = useStore((s) => s.arrival);
   const setArrival = useStore((s) => s.setArrival);
 
@@ -154,6 +164,20 @@ export default function Visit() {
   const [fix, setFix] = React.useState<Fix | null>(null);
   const [fixReason, setFixReason] = React.useState<string | null>(null);
   const [voiceNoteId, setVoiceNoteId] = React.useState<string | null>(null);
+  /*
+   * THE VISIT ASSISTANT'S THREE PIECES OF STATE.
+   *
+   * `heard` is the last dictation in the language it was spoken in — the
+   * assistant reads both, because a name or a number is often clearer in the
+   * words it was said in than in their English. `nextDatePicked` is whether he
+   * chose the return day himself: the cycle's suggestion is the screen's, not
+   * his, and a date the customer named may replace it where his own choice
+   * may not. `aiDraftId` is the reading the visit was filled from, carried on
+   * the save so the office can see what was proposed beside what was kept.
+   */
+  const [heard, setHeard] = React.useState<{ spoken: string; english: string; language: string | null } | null>(null);
+  const [nextDatePicked, setNextDatePicked] = React.useState(false);
+  const [aiDraftId, setAiDraftId] = React.useState<string | null>(null);
   /*
    * §B — is this shop still a Suspect, and is a decision due?
    *
@@ -216,13 +240,12 @@ export default function Visit() {
   /*
    * ONE VISIT PER PRESS.
    *
-   * Four call sites reach `saveAndGo` — the save bar, the unverified path, the
-   * ticket sheet's Skip and its scrim, and `claimTicket`'s own `finally` — and
-   * the guard was a `useState` flag, which is read from the closure of the
-   * render that drew the control. While the ticket was being attached, a tap on
-   * Skip saved the visit and the `finally` then saved it AGAIN from an older
-   * closure where `saving` was still false: two rows, two queue items, two
-   * timeline events, and the office seeing one shop visited twice in a minute.
+   * More than one path reaches `saveAndGo`, and the guard was a `useState`
+   * flag, which is read from the closure of the render that drew the control —
+   * so a second tap arriving before the re-render saved the visit AGAIN: two
+   * rows, two queue items, two timeline events, and the office seeing one shop
+   * visited twice in a minute. (It was found on the fare sheet that used to
+   * sit on the way out.)
    * The ref is set synchronously, so whichever call arrives first shuts the
    * others out; the state beside it is only what the screen is drawn from.
    */
@@ -334,18 +357,6 @@ export default function Visit() {
   const [pinRequested, setPinRequested] = React.useState(false);
   const answerOdometer = React.useRef<((r: OdometerResult) => void) | null>(null);
 
-  /* ---- the ticket, asked once on the way out ---- */
-  const [ticketOpen, setTicketOpen] = React.useState(false);
-  const [ticketShot, setTicketShot] = React.useState<string | null>(null);
-  const [fare, setFare] = React.useState('');
-  const [ticketRef, setTicketRef] = React.useState('');
-  const [fareErr, setFareErr] = React.useState<string | null>(null);
-  const ticketBusyRef = React.useRef(false);
-  const [ticketBusy, setTicketBusy] = React.useState(false);
-  /* Carried across the ticket question so an unverified save that detours
-     through it still saves as unverified. Losing it here would silently
-     upgrade a flagged visit to a clean one. */
-  const [pendingUnverified, setPendingUnverified] = React.useState<string | null>(null);
   const [checkingIn, setCheckingIn] = React.useState(false);
 
   const custId = c?.id ?? null;
@@ -885,12 +896,10 @@ export default function Visit() {
    * an error that renders inside the Suspect card, six hundred points above the
    * button he had just pressed, with no toast and no change to the button. He
    * pressed Save, nothing appeared to happen, and the ordinary conclusion is
-   * that the handset is broken. Worse down the ticket path, where the fare was
-   * attached and toasted "Ticket added" while the visit silently did not save.
+   * that the handset is broken.
    *
-   * So it is a function both entry points ask, the sentence goes to the bottom
-   * of the screen as well as into the card, and the ticket sheet never opens on
-   * a save that cannot go through.
+   * So it is a function both entry points ask, and the sentence goes to the
+   * bottom of the screen as well as into the card.
    */
   function missingDecision(): string | null {
     if (capState === 'decide' && !decision) {
@@ -909,86 +918,17 @@ export default function Visit() {
   }
 
   /**
-   * The ticket, asked once, on the way out.
+   * Save, once the lead's decision is answered.
    *
-   * IT IS A QUESTION AND NEVER A GATE. Skipping is offered in words — the fare
-   * can still be added on the Travel screen, where the day is priced — so
-   * nobody skips it believing the money is gone. A bus ticket is a scrap of
-   * paper that gets lost between the seat and the shop door, and refusing the
-   * visit over one would mean refusing to record a visit that happened, which
-   * is the rule this whole screen is built on.
-   *
-   * Asked once and not again: a leg already carrying a fare goes straight
-   * through, because one trip is one fare and being asked twice is how
-   * somebody claims it twice.
+   * This used to ask for the bus or train fare on the way out. It does not any
+   * more: Mahek asks about travel at the punch-in and the punch-out and
+   * nowhere else, and every fare is claimed in Expenses — see `visitLegPlan`.
    */
-  function askTicketThenSave(unverifiedReason: string | null = null) {
-    /* Asked here as well as in the save, so the fare is never collected against
-       a visit that is about to be turned back. */
+  function saveWhenDecided(unverifiedReason: string | null = null) {
     const missing = missingDecision();
     if (missing) return refuseForDecision(missing);
-    const wants = leg && legMode?.requiresTicket && leg.ticketAmountPaise == null;
-    if (!wants) {
-      void saveAndGo(elapsedLabel(dwellSeconds), unverifiedReason);
-      return;
-    }
-    setTicketShot(null);
-    setFare('');
-    setTicketRef('');
-    setFareErr(null);
-    setPendingUnverified(unverifiedReason);
-    setTicketOpen(true);
+    void saveAndGo(elapsedLabel(dwellSeconds), unverifiedReason);
   }
-
-  const shootTicket = async () => {
-    if (!leg) return;
-    /* The SYSTEM camera here, unlike the odometer. This one really is a
-       photograph OF something — a printed ticket he is holding — with no
-       number to be typed against the image while it is on screen, so the
-       argument in `odometer-camera.tsx` does not carry across and the flash
-       and tap-to-focus people already know are worth more. */
-    const shot = await takePhoto({ parentType: 'travel_leg', parentId: leg.id, kind: 'ticket_photo' });
-    if (!shot.ok) {
-      if (shot.reason !== 'cancelled') notify(shot.reason);
-      return;
-    }
-    setTicketShot(shot.mediaId);
-  };
-
-  const claimTicket = async () => {
-    /* The ref, for the same reason as `savingRef`: `PrimaryButton` keeps a
-       button with a `whyDisabled` pressable on purpose, so a second tap runs
-       this handler from the render where `ticketBusy` was still false. */
-    if (!leg || ticketBusyRef.current) return;
-    const verdict = checkFare(fare);
-    if (!verdict.ok) {
-      setFareErr(verdict.why);
-      return;
-    }
-    ticketBusyRef.current = true;
-    setTicketBusy(true);
-    try {
-      await attachTicketToLeg({
-        legId: leg.id,
-        amountPaise: verdict.paise,
-        photoId: ticketShot,
-        reference: ticketRef.trim() || null,
-      });
-      setTicketOpen(false);
-      notify('Ticket added to today’s travel');
-      loadLeg();
-    } catch {
-      /* THE VISIT IS NOT LOST TO A FAILED FARE. He goes on to save it and the
-         ticket stays addable on the Travel screen — exactly what skipping
-         would have left him with. */
-      notify('The ticket could not be added just now — save the visit and add it from Travel.');
-      setTicketOpen(false);
-    } finally {
-      ticketBusyRef.current = false;
-      setTicketBusy(false);
-      void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
-    }
-  };
 
   async function saveAndGo(spent: string, unverifiedReason: string | null) {
     if (!c || savingRef.current) return;
@@ -1085,6 +1025,7 @@ export default function Visit() {
         requirement: reqWhat.trim() || null,
         monthlyVolumeLitres: Number(reqLitres.replace(/[^\d]/g, '')) || null,
         quantityCans: Number(reqCans.replace(/[^\d]/g, '')) || null,
+        aiDraftId,
       });
     } catch {
       savingRef.current = false;
@@ -1135,6 +1076,93 @@ export default function Visit() {
     leavingRef.current = true;
     router.replace('/saved');
   }
+
+  /*
+   * WHAT EACH OF THE ASSISTANT'S PROPOSALS DOES ON THIS SCREEN.
+   *
+   * Every one of them fills a form and stops. The order and the receipt open
+   * their own screens with the cart and the amount already in — he still
+   * presses their Submit. The complaint and the sample open this screen's own
+   * sheets with the draft filled — he still presses their button. The outcome
+   * and the day go into the form only where he has not answered them himself
+   * (`fillVisit`). Nothing here writes a record, and the visit's Save is
+   * still the only thing that saves the visit.
+   *
+   * Picking a follow-on also picks its outcome chip where none is chosen yet,
+   * because opening the order screen from a visit filed as "Visited" would
+   * leave the checklist asking for a follow-on it has already had.
+   */
+  const outcomeIfNone = (k: 'order' | 'payment' | 'complaint' | 'sample') => {
+    if (outcome == null) set({ outcome: k });
+  };
+  const assistant: VisitAssistantHandlers = {
+    onFill: (analysis) => {
+      const f = fillVisit({ outcome, nextDate, nextDatePicked }, analysis);
+      if (Object.keys(f.patch).length) set(f.patch as Parameters<typeof set>[0]);
+      notify(
+        f.filled.length
+          ? 'Filled ' + f.filled.join(' and ') + (f.kept.length ? ' · kept ' + f.kept.join(' and ') : '') + ' — check it, then Save'
+          : f.kept.length
+            ? 'Kept ' + f.kept.join(' and ') + ' — nothing else to fill'
+            : 'Nothing to fill — answer the questions on the card',
+      );
+    },
+    onChooseOutcome: (key) => set({ outcome: key as NonNullable<typeof outcome> }),
+    onChooseDate: (iso) => {
+      set({ nextDate: iso });
+      setNextDatePicked(true);
+    },
+    onOrder: (a, picked) => {
+      const r = cartFrom(a, cart, picked);
+      set({ cart: r.cart });
+      outcomeIfNone('order');
+      notify(
+        r.missing
+          ? `${r.added} line${r.added === 1 ? '' : 's'} added · ${r.missing} still to add by hand`
+          : `${r.added} line${r.added === 1 ? '' : 's'} added — check the quantities`,
+      );
+      router.push('/order?from=visit');
+    },
+    onPayment: (a) => {
+      set(paymentFill(a, { payAmt, payMode }));
+      outcomeIfNone('payment');
+      router.push('/pay?from=visit');
+    },
+    onComplaint: (a) => {
+      setDraft(complaintDraft(a, COMPLAINT_CATEGORIES));
+      setFormErr(null);
+      outcomeIfNone('complaint');
+      setForm('complaint');
+    },
+    onSample: (a) => {
+      const d = sampleDraft(
+        a,
+        reasons.map((r) => r.code),
+      );
+      /* The sheet lists the starter products; a matched product that is not
+         among them is added to the list, or the pick would be invisible. */
+      if (d.sku && !products.some((x) => x.id === d.sku)) {
+        setProducts((prev) => [{ id: d.sku, name: d.skuName ?? '', packSize: null }, ...prev]);
+      }
+      setDraft(d);
+      setFormErr(null);
+      outcomeIfNone('sample');
+      setForm('sample');
+    },
+    onRequirement: (a) => {
+      const r = requirementFill(a, { what: reqWhat, litres: reqLitres, cans: reqCans });
+      if (r.what != null) setReqWhat(r.what);
+      if (r.litres != null) setReqLitres(r.litres);
+      if (r.cans != null) setReqCans(r.cans);
+      notify(Object.keys(r).length ? 'Requirement filled — check it below' : 'The requirement is already filled in');
+    },
+    onDecision: (d) => {
+      setDecision(d);
+      setDecisionErr(null);
+      notify('Chosen on the lead card above — change it there if that is not right');
+    },
+    onDraft: setAiDraftId,
+  };
 
   /*
    * ─────────────────────────────────────────── at the door, not through it
@@ -1407,7 +1435,7 @@ export default function Visit() {
                 a second typed reason for a question already answered at the
                 door. */}
             <Pressable
-              onPress={() => (verdict.complete ? askTicketThenSave() : notify(verdict.firstFailure))}
+              onPress={() => (verdict.complete ? saveWhenDecided() : notify(verdict.firstFailure))}
               accessibilityLabel={verdict.complete ? 'Check out of the shop and save the visit' : verdict.firstFailure}
               style={[
                 { height: 52, paddingHorizontal: 24, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.complete ? C.primary : C.hairline },
@@ -1713,6 +1741,7 @@ export default function Visit() {
             onChangeText={(v) => set({ note: v })}
             keepAudio="keep"
             onRecording={(uri, _seconds, mode) => void keepVoiceNote(uri, mode)}
+            onHeard={setHeard}
           />
           {voiceNoteId ? (
             <Text style={[type.caption, { marginTop: 6 }]}>
@@ -1721,6 +1750,13 @@ export default function Visit() {
           ) : null}
         </View>
       </Card>
+
+      {/* ---- what the assistant made of it ----
+          Directly under the note, because the note is what it reads, and above
+          the outcome chips, because those are the first thing it fills. */}
+      {c ? (
+        <VisitAssistant customerId={c.id} note={note} heard={heard} handlers={assistant} />
+      ) : null}
 
       {/* ---- how it went ---- */}
       <View style={{ marginTop: 16 }}>
@@ -1845,10 +1881,7 @@ export default function Visit() {
               confirmLabel: 'Save unverified',
               run: (reason) => {
                 set({ overrodeReason: reason });
-                /* The ticket is asked for on BOTH save paths. A fare offered
-                   only on the clean one is a fare quietly lost on exactly the
-                   visits that already went wrong. */
-                askTicketThenSave(reason);
+                saveWhenDecided(reason);
               },
             })
           }
@@ -2117,131 +2150,13 @@ export default function Visit() {
           selected={calOpen === 'trial' ? draft.trial ?? trialDefault : nextDate}
           onPick={(iso) => {
             if (calOpen === 'trial') setDraft({ ...draft, trial: iso });
-            else set({ nextDate: iso });
+            else {
+              set({ nextDate: iso });
+              setNextDatePicked(true);
+            }
             setCalOpen(null);
           }}
         />
-      </BottomSheet>
-      {/* ────────────────────────────────────── the ticket, on the way out */}
-      <BottomSheet
-        open={ticketOpen}
-        /*
-          BACKING OUT IS SKIPPING, and it saves the visit rather than
-          cancelling it. A sheet that swallowed the save when dismissed would
-          make the ticket a gate by accident — he would press Save, tap
-          outside, and find nothing had happened.
-        */
-        onClose={() => {
-          /* Not while the fare is being written. The scrim and Skip stayed live
-             through `attachTicketToLeg`, so a tap here started the save and
-             `claimTicket`'s own `finally` started a second one. */
-          if (ticketBusy) return;
-          setTicketOpen(false);
-          void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
-        }}>
-        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
-          <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
-            {'Your ' + (legMode?.label ?? 'travel').toLowerCase() + ' ticket'}
-          </Text>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
-            Add what it cost and it goes onto today&rsquo;s travel straight away. If you
-            have not got it on you, skip — you can still add it on the Travel screen.
-          </Text>
-
-          <View style={{ marginTop: 14 }}>
-            <Text style={type.label}>What did it cost?</Text>
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 8,
-                marginTop: 6,
-                borderWidth: 1,
-                borderColor: fareErr ? C.danger : C.border,
-                borderRadius: radius.md,
-                paddingHorizontal: 14,
-              }}>
-              <Text style={[{ fontSize: 17, color: C.body }, weight(500)]}>₹</Text>
-              <TextInput
-                value={fare}
-                onChangeText={(v) => {
-                  setFare(v);
-                  if (fareErr) setFareErr(null);
-                }}
-                keyboardType="decimal-pad"
-                placeholder="40"
-                placeholderTextColor={C.faint}
-                autoFocus
-                accessibilityLabel="Ticket fare in rupees"
-                style={{ flex: 1, height: 52, fontSize: 18, color: C.ink }}
-              />
-            </View>
-            {fareErr ? (
-              <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>{fareErr}</Text>
-            ) : null}
-          </View>
-
-          {/* The PNR or ticket number, which is what a duplicate is caught on
-              — two people claiming one journey, or the same journey claimed
-              twice. Optional, because a local bus ticket has no number and
-              refusing the fare over one would lose the claim entirely. */}
-          <View style={{ marginTop: 12 }}>
-            <Text style={type.label}>Ticket or PNR number · optional</Text>
-            <View
-              style={{
-                marginTop: 6,
-                borderWidth: 1,
-                borderColor: C.border,
-                borderRadius: radius.md,
-                paddingHorizontal: 14,
-              }}>
-              <TextInput
-                value={ticketRef}
-                onChangeText={setTicketRef}
-                autoCapitalize="characters"
-                placeholder="If it has one"
-                placeholderTextColor={C.faint}
-                accessibilityLabel="Ticket or PNR number"
-                style={{ height: 52, fontSize: 16, color: C.ink }}
-              />
-            </View>
-          </View>
-
-          <Pressable
-            onPress={() => void shootTicket()}
-            style={{
-              height: 72,
-              marginTop: 12,
-              borderRadius: radius.md,
-              borderWidth: 1,
-              borderColor: ticketShot ? C.primary : C.border,
-              backgroundColor: ticketShot ? C.primaryTint : C.surface,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-            <Icon name="camera" size={22} color={ticketShot ? C.primaryDeep : C.body} strokeWidth={1.5} />
-            <Text style={[{ fontSize: 14, marginTop: 4, color: ticketShot ? C.primaryDeep : C.body }, weight(500)]}>
-              {ticketShot ? 'Ticket photographed ✓ — tap to retake' : 'Photograph the ticket · optional'}
-            </Text>
-          </Pressable>
-
-          <View style={{ marginTop: 16, gap: 10 }}>
-            <PrimaryButton
-              label={ticketBusy ? 'Adding…' : 'Add it and save the visit'}
-              onPress={() => void claimTicket()}
-              disabled={ticketBusy}
-              whyDisabled="Adding the ticket."
-            />
-            <SecondaryButton
-              label="Skip — I will add it later"
-              onPress={() => {
-                if (ticketBusy) return;
-                setTicketOpen(false);
-                void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
-              }}
-            />
-          </View>
-        </View>
       </BottomSheet>
     </AppFrame>
   );

@@ -809,26 +809,6 @@ export async function bindLegToVisit(legId: string, visitId: string): Promise<vo
   if (leg) await patchLeg(leg, { visitId });
 }
 
-/** The ticket, on a bus or a train, attached on the way out of the shop. */
-export async function attachTicketToLeg(args: {
-  legId: string;
-  amountPaise: number;
-  photoId: string | null;
-  reference: string | null;
-}): Promise<{ ok: boolean }> {
-  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [args.legId]);
-  if (!leg) return { ok: false };
-  await patchLeg(leg, {
-    ticketAmountPaise: args.amountPaise,
-    ticketPhotoId: args.photoId,
-    ticketReference: args.reference,
-  });
-  if (args.photoId) {
-    await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [leg.id, args.photoId]);
-  }
-  return { ok: true };
-}
-
 /**
  * Change a leg and re-send it WHOLE.
  *

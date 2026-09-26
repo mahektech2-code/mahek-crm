@@ -427,6 +427,8 @@ export default async function CustomerRecordPage({
         templateName: m.templateName,
         body: m.body,
         edited: m.edited,
+        receipts: m.receipts,
+        viaRule: m.viaRule,
       }))}
     />
   );

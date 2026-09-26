@@ -2534,6 +2534,101 @@ export const callOpportunities = pgTable(
   ],
 );
 
+/* ---------------------------------------------------------------------------
+ * WHAT THE CALL ASSISTANT HEARD, WHAT IT PROPOSED, AND WHAT WAS SAVED.
+ *
+ * One row per time a telecaller asked the assistant to read a call. It keeps
+ * three things, and each is there for a reason:
+ *
+ *   THE TRANSCRIPT, in the language it was spoken and in English. The client
+ *   asked for the original to be kept "for future checking", and it is the
+ *   only way anybody can later tell whether a wrong suggestion was the model
+ *   mishearing or the customer changing their mind. The AUDIO is still never
+ *   stored — `lib/dictation.ts` says why, and nothing here reverses it.
+ *
+ *   THE PROPOSAL, exactly as the card drew it. A suggestion is a claim about
+ *   what the call was, and a claim nobody can read back later cannot be
+ *   checked.
+ *
+ *   THE ANSWER — the outcome the call was actually saved as, written by
+ *   `saveInteraction` in the call's own transaction. The difference between
+ *   `suggested_outcome` and `saved_outcome` is the assistant's report card,
+ *   and it is also the next training example: nothing labels data better
+ *   than a telecaller correcting a suggestion.
+ *
+ * `call_id` is null until the call is saved, and stays null for a reading that
+ * was abandoned — that is a fact worth counting too.
+ * ------------------------------------------------------------------------- */
+export const callAiDrafts = pgTable(
+  "call_ai_drafts",
+  {
+    id: text("id").primaryKey(),
+    /**
+     * `call` — the CRM's call assistant; `visit` — the handset's visit
+     * assistant. One table because both are the same record: what was heard,
+     * what was proposed, and what it was finally saved as.
+     */
+    channel: text("channel").notNull().default("call"),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    callId: text("call_id"),
+    /** The visit a `visit` draft was saved as, written by the sync handler. */
+    visitId: text("visit_id"),
+    /** What was said, in the language it was said in. */
+    spoken: text("spoken").notNull().default(""),
+    /** The English the telecaller was shown. */
+    english: text("english").notNull().default(""),
+    language: text("language"),
+    /** `sarvam`, `openai`, or `typed` where the note was typed rather than spoken. */
+    heardBy: text("heard_by"),
+    /** The model's structured reading, as it came back. Null where no model answered. */
+    reading: jsonb("reading"),
+    /** The card as drawn: every suggestion, question and duplicate. */
+    analysis: jsonb("analysis").notNull(),
+    /** Which model read it, e.g. `openai:gpt-5-mini`. Null where none did. */
+    model: text("model"),
+    classifierLabel: text("classifier_label"),
+    classifierProbability: doublePrecision("classifier_probability"),
+    suggestedOutcome: text("suggested_outcome"),
+    /** The outcome of the suggestion the telecaller applied, if any. */
+    appliedOutcome: text("applied_outcome"),
+    savedOutcome: text("saved_outcome"),
+    savedDetail: jsonb("saved_detail").$type<Record<string, unknown>>(),
+    latencyMs: integer("latency_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    savedAt: timestamp("saved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("call_ai_drafts_customer_idx").on(t.customerId, t.createdAt.desc()),
+    index("call_ai_drafts_user_idx").on(t.userId, t.createdAt.desc()),
+    index("call_ai_drafts_call_idx").on(t.callId),
+    index("call_ai_drafts_visit_idx").on(t.visitId),
+  ],
+);
+
+/**
+ * The classifier the assistant votes with, trained nightly from our own logged
+ * calls. A row per training run rather than one overwritten row, so a model
+ * that got worse can be seen getting worse — `evaluation` carries its
+ * cross-validated accuracy from the night it was made.
+ */
+export const callIntelModels = pgTable(
+  "call_intel_models",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    model: jsonb("model").notNull(),
+    trainedOn: integer("trained_on").notNull(),
+    evaluation: jsonb("evaluation"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("call_intel_models_kind_idx").on(t.kind, t.createdAt.desc())],
+);
+
 /* ----------------------------------------------------------------- §3.5 order */
 
 /* --------------------------------------------------------------- products */
@@ -3665,6 +3760,13 @@ export const waTemplates = pgTable("wa_templates", {
    * out the manual way. Set from the Founder Dashboard, beside the switch.
    */
   watiTemplateName: text("wati_template_name"),
+  /**
+   * The rule set in `lib/wati-templates.ts` that fills this template's
+   * variables — and refuses it, with reasons, when any of them would be
+   * untrue. Null for the older free-text templates, which keep the merge
+   * fields in `whatsapp-service.ts`.
+   */
+  watiSpec: text("wati_spec"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdById: text("created_by_id"),
@@ -3721,6 +3823,8 @@ export const waMessages = pgTable(
     failureReason: text("failure_reason"),
     /** WhatsApp's own id for a message the API sent (wamid…), for tracing one in Wati. Our id travels to Wati as its local_message_id, which is what the webhooks are matched on. */
     providerRef: text("provider_ref"),
+    /** The founder-configured rule that sent this, when a rule did. Null for a message a person sent. */
+    triggerId: text("trigger_id"),
 
     idempotencyKey: text("idempotency_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -3762,6 +3866,100 @@ export const waReplies = pgTable(
     providerMessageId: text("provider_message_id"),
   },
   (t) => [uniqueIndex("wa_replies_provider_message_id_key").on(t.providerMessageId)],
+);
+
+/**
+ * ONE-TIME SIGN-IN CODES, sent on WhatsApp to the work number on the account.
+ *
+ * Only a hash of the code is stored (`sha256("<id>:<code>")`, salted by the
+ * row's own id), so a database dump holds nothing anybody can type. A code
+ * works once, for one purpose, until it expires or runs out of attempts —
+ * all three limits are `auth.otp.*` settings. Rows are never reused: asking
+ * again writes a new one, which is what makes the resend cooldown and the
+ * per-window cap countable.
+ */
+export const authOtps = pgTable(
+  "auth_otps",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** `login` (web or handset), `password_change`, `password_reset`. */
+    purpose: text("purpose").notNull(),
+    channel: otpChannelEnum("channel").notNull().default("whatsapp"),
+    /** The number it went to, as WhatsApp wants it (91XXXXXXXXXX). */
+    destination: text("destination").notNull(),
+    codeHash: text("code_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    /** Null until Wati accepted it; a code that never left is never valid. */
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    failureReason: text("failure_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("auth_otps_user_purpose_idx").on(t.userId, t.purpose, t.createdAt.desc())],
+);
+
+/**
+ * A RULE THAT SENDS ONE TEMPLATE AUTOMATICALLY — configured on the Founder
+ * Dashboard. Several rules may point at one template ("multiple logics"): a
+ * gentle reminder at 1–15 days and again, differently spaced, later on.
+ *
+ * `from_day`/`to_day` are measured on the template's own clock — days OVERDUE
+ * (oldest bill past its due date) for a payment template, days PAST THE
+ * EXPECTED ORDER DATE for an order one (negative = before it). Null `to_day`
+ * means no upper end. `status` is off / preview (worked out and logged, never
+ * sent) / live. Whether each message is TRUE is not decided here — that is
+ * the template's rule set in `lib/wati-templates.ts`, which every automated
+ * send still passes through.
+ */
+export const waTriggers = pgTable("wa_triggers", {
+  id: text("id").primaryKey(),
+  templateId: text("template_id")
+    .notNull()
+    .references(() => waTemplates.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("off"),
+  fromDay: integer("from_day").notNull(),
+  toDay: integer("to_day"),
+  repeatEveryDays: integer("repeat_every_days").notNull(),
+  maxSends: integer("max_sends"),
+  minAmountPaise: bigint("min_amount_paise", { mode: "number" }),
+  priority: integer("priority").notNull().default(100),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id").references(() => users.id),
+  updatedByName: text("updated_by_name"),
+});
+
+/** When automated WhatsApp may go out at all. One row, id `default`. */
+export const waAutomationSettings = pgTable("wa_automation_settings", {
+  id: text("id").primaryKey(),
+  windowStartHour: integer("window_start_hour").notNull().default(10),
+  windowEndHour: integer("window_end_hour").notNull().default(13),
+  /** ISO weekdays, 1 = Monday … 7 = Sunday. */
+  weekdays: integer("weekdays").array().notNull(),
+  dailyCap: integer("daily_cap").notNull().default(300),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id").references(() => users.id),
+  updatedByName: text("updated_by_name"),
+});
+
+/** One automation pass, and what each rule did — or would have done. */
+export const waAutomationRuns = pgTable(
+  "wa_automation_runs",
+  {
+    id: text("id").primaryKey(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    /** True when nothing was sent — a preview, or live rules held back. */
+    dry: boolean("dry").notNull(),
+    trigger: text("trigger").notNull(),
+    note: text("note"),
+    summary: jsonb("summary").notNull(),
+  },
+  (t) => [index("wa_automation_runs_started_idx").on(t.startedAt.desc())],
 );
 
 /**

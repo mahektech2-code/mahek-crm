@@ -9,7 +9,8 @@ import {
   legLine,
   legPricedBySession,
   navigationLine,
-  stopMustAskMode,
+  visitLegPlan,
+  promptsForExpenses,
   travellingFor,
 } from './travel-leg';
 
@@ -204,34 +205,39 @@ test('no reading yet says nothing at all', () => {
 
 /* ═════════════════════════ what the punch-in has already answered */
 
-describe('the session answers the journey', () => {
-  test('a man on his own bike is not asked again at each shop', () => {
-    assert.equal(stopMustAskMode({ modeKey: 'own_bike', odometerStartKm: 42_180 }), false);
-    assert.equal(stopMustAskMode({ modeKey: 'own_car', odometerStartKm: 88_400 }), false);
-    assert.equal(stopMustAskMode({ modeKey: 'walking', odometerStartKm: null }), false);
-    assert.equal(stopMustAskMode({ modeKey: 'customer_vehicle', odometerStartKm: null }), false);
+describe('a visit never asks how he got there', () => {
+  test('a meter day records the journey silently and never prices it', () => {
+    assert.deepEqual(visitLegPlan({ modeKey: 'own_bike', odometerStartKm: 42_180 }), {
+      record: true,
+      modeKey: 'own_bike',
+      claimExcluded: true,
+      reason: 'Counted in the meter readings taken at the punch-in and the punch-out.',
+    });
   });
 
-  test('public transport is the one day-level answer that leaves a question open', () => {
-    assert.equal(
-      stopMustAskMode({ modeKey: 'public_transport', odometerStartKm: null }),
-      true,
-      'the bus, the auto and the taxi genuinely change from one stop to the next',
-    );
+  test('a public-transport day records it silently too — the fares go to Expenses', () => {
+    const plan = visitLegPlan({ modeKey: 'public_transport', odometerStartKm: null });
+    assert.equal(plan.record, true);
+    assert.equal(plan.record && plan.claimExcluded, true, 'a fare claimed per stop AND in Expenses is paid twice');
+    assert.equal(plan.record && plan.modeKey, 'public_transport');
   });
 
-  test('NO SESSION MEANS ASK — a handset whose punch-in predates this build', () => {
-    assert.equal(
-      stopMustAskMode(null),
-      true,
-      'a silent default would put somebody’s mileage on a vehicle nobody named',
-    );
+  test('walking prices nothing and explains nothing', () => {
+    assert.deepEqual(visitLegPlan({ modeKey: 'walking', odometerStartKm: null }), {
+      record: true,
+      modeKey: 'walking',
+      claimExcluded: false,
+      reason: null,
+    });
+  });
+
+  test('NOT PUNCHED IN MEANS NO JOURNEY — never a vehicle nobody named', () => {
+    assert.deepEqual(visitLegPlan(null), { record: false });
   });
 
   test('the umbrella is a key, not a word written into the rule', () => {
-    /* An admin adding a second umbrella gets the same behaviour by naming it,
-       rather than by somebody remembering to edit a condition. */
-    assert.equal(stopMustAskMode({ modeKey: 'hired_car', odometerStartKm: null }, 'hired_car'), true);
+    const plan = visitLegPlan({ modeKey: 'hired_car', odometerStartKm: null }, 'hired_car');
+    assert.equal(plan.record && plan.claimExcluded, true);
   });
 });
 
@@ -253,5 +259,16 @@ describe('a leg the session already pays for', () => {
 
   test('no session excludes nothing', () => {
     assert.equal(legPricedBySession(null), false);
+  });
+});
+
+describe('the punch-out prompt for expenses', () => {
+  test('a meter day is claimed by its readings and is not prompted', () => {
+    assert.equal(promptsForExpenses({ modeKey: 'own_bike', odometerStartKm: 42_180 }), false);
+  });
+  test('a bus day, a walking day and a day with no session are prompted', () => {
+    assert.equal(promptsForExpenses({ modeKey: 'public_transport', odometerStartKm: null }), true);
+    assert.equal(promptsForExpenses({ modeKey: 'walking', odometerStartKm: null }), true);
+    assert.equal(promptsForExpenses(null), true);
   });
 });

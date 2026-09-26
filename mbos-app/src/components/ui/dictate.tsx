@@ -109,7 +109,7 @@ export function useDictation(): Dictation {
  * the direction it is wrong in matters: telling somebody they cannot dictate
  * when they can is how a feature stops being used.
  */
-function useOnline(): boolean {
+export function useOnline(): boolean {
   const [online, setOnline] = React.useState(true);
 
   React.useEffect(() => {
@@ -184,6 +184,14 @@ export type DictationResult = {
   /** The text the person approved, and where it should go. */
   text: string;
   replace: boolean;
+  /**
+   * What was actually said, in the language it was said in, and which
+   * language that was. Carried for the visit assistant, which reads BOTH:
+   * the English is somebody's rendering, and a name or a number is often
+   * clearer in the words it was spoken in.
+   */
+  spoken: string;
+  language: string | null;
 };
 
 /**
@@ -714,7 +722,7 @@ function DictationBody({
         </Pressable>
         <Pressable
           disabled={!english.trim()}
-          onPress={() => onImport({ text: english.trim(), replace: false })}
+          onPress={() => onImport({ text: english.trim(), replace: false, spoken, language })}
           style={{
             flex: 2,
             height: HIT + 4,
@@ -736,7 +744,7 @@ function DictationBody({
       {hasExistingText ? (
         <Pressable
           disabled={!english.trim()}
-          onPress={() => onImport({ text: english.trim(), replace: true })}
+          onPress={() => onImport({ text: english.trim(), replace: true, spoken, language })}
           style={{ height: HIT, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>
           <Text style={[{ fontSize: 15, color: C.muted }, weight(500)]}>
             Replace what is there instead
@@ -861,6 +869,7 @@ export function VoiceField({
    */
   keepAudio = 'drop',
   onRecording,
+  onHeard,
   style,
   ...rest
 }: React.ComponentProps<typeof Input> & {
@@ -868,6 +877,8 @@ export function VoiceField({
   onChangeText: (v: string) => void;
   keepAudio?: AudioDisposal;
   onRecording?: (uri: string, seconds: number, mode: 'dictate' | 'record') => void;
+  /** Told what was said, in its own language, each time dictation lands. */
+  onHeard?: (heard: { spoken: string; english: string; language: string | null }) => void;
 }) {
   const dictation = useDictation();
   const online = useOnline();
@@ -959,7 +970,8 @@ export function VoiceField({
             onRecording={(uri, seconds, mode) => onRecording?.(uri, seconds, mode)}
             onClose={() => setOpen(false)}
             onAgain={() => setTake((t) => t + 1)}
-            onImport={({ text, replace }) => {
+            onImport={({ text, replace, spoken, language }) => {
+              onHeard?.({ spoken, english: text, language });
               const joined = replace ? text : joinDictation(value, text);
               /* `maxLength` stops typing but not a programmatic set, so the
                  box would otherwise accept more than the form will save. */

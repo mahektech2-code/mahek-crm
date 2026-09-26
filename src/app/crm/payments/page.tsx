@@ -16,6 +16,7 @@ import {
 } from "@/lib/services/payment-followup-service";
 import { WORKLIST_TABS, type WorklistTab } from "@/lib/services/payment-service";
 import { PaymentsScreen } from "./payments-screen";
+import { latestMessageFor } from "@/lib/services/whatsapp-tracker-service";
 
 export const metadata = { title: "Payment follow-up - MahekOne CRM" };
 
@@ -96,6 +97,10 @@ export default async function PaymentsPage({
   // have netted off.
   const aging = agingSummary(bills);
 
+  // The newest WhatsApp message to each customer on this page, with how far it
+  // got — sent, delivered, read, replied. One read for the whole page.
+  const lastWa = await latestMessageFor(worklist.rows.map((r) => r.customerId));
+
   // Working days, from configuration — a collections push measured in calendar
   // days counts Sundays nobody is going to call on.
   const lastDay = `${day.slice(0, 8)}${String(daysInMonth(day)).padStart(2, "0")}`;
@@ -156,6 +161,7 @@ export default async function PaymentsPage({
       rows={worklist.rows.map((r) => ({
         ...r,
         openBills: openBillsByCustomer.get(r.customerId) ?? [],
+        lastWa: lastWa[r.customerId] ?? null,
       }))}
     />
   );

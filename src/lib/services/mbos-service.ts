@@ -17,6 +17,7 @@ import {
 import { getConfig } from "../config/store";
 import { liveOlaKey } from "./ola-key-service";
 import { dictationAvailability } from "../dictation-requests";
+import { visitAssistAvailability } from "../visit-assist-availability";
 import {
   territoriesFor,
   territoryClause,
@@ -25,6 +26,7 @@ import {
 import { policyForDate, resolveSubject } from "./expense-policy-service";
 import { describeRule } from "../expense-rule-forms";
 import { verifyPassword } from "../password";
+import { verifyOtp } from "./otp-service";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
 import { addDays, asDate, APP_TIMEZONE, type BusinessDate } from "../business-date";
@@ -98,6 +100,7 @@ export type LoginCheckFailure = {
   step:
     | "unknown_user"
     | "bad_password"
+    | "bad_otp"
     | "inactive"
     | "no_app_access"
     | "bootstrap_failed";
@@ -112,6 +115,8 @@ const MIN_PASSWORD_LENGTH = 8;
 export async function runLoginChecks(input: {
   mobile: string;
   password?: string;
+  /** A WhatsApp code instead of the password — see `lib/services/otp-service.ts`. */
+  otp?: string;
 }): Promise<LoginCheckSuccess | LoginCheckFailure> {
   const identifier = input.mobile.trim();
 
@@ -134,6 +139,13 @@ export async function runLoginChecks(input: {
   }
 
   /* 2 — does the password verify? */
+  // A code proves the same thing a password does — it went to the work number
+  // on this account — so it takes the password's place in the same order of
+  // checks, and every check after it still applies.
+  if (input.otp && !input.password) {
+    const verified = await verifyOtp(user.id, "login", input.otp);
+    if (!verified.ok) return { ok: false, step: "bad_otp", error: verified.error };
+  } else {
   const password = input.password ?? "";
   if (password.length < MIN_PASSWORD_LENGTH) {
     return {
@@ -148,6 +160,7 @@ export async function runLoginChecks(input: {
       step: "bad_password",
       error: "That password is not right. Try again, or use Forgot password on the web app to set a new one.",
     };
+  }
   }
 
   /* 3 — is the account still open? Named separately from the password, because
@@ -446,6 +459,10 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
     if (key.startsWith("mbos.") || key.startsWith("leads.")) out[key] = value;
   }
   out["products.priceSource"] = config["products.priceSource"];
+  /* The upload ceiling, so a PDF too large to accept is refused at the moment
+     it is picked — with the salesman looking — rather than failing in the
+     media queue hours later where nobody will ever see why. */
+  out["attachments.maxSizeMb"] = config["attachments.maxSizeMb"];
 
   /*
    * THE MAP KEY, and it is the one credential that goes down this wire.
@@ -510,6 +527,16 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
           canRefine: dictation.canRefine,
         }
       : { available: false, reason: dictation?.available === false ? dictation.reason : "unknown" };
+
+  /*
+   * WHETHER TO DRAW THE VISIT ASSISTANT, for the same reason as the microphone
+   * above: the answer rides down with the pull rather than being asked for
+   * while a salesman stands in a shop. The ANSWER crosses and nothing behind
+   * it — no model name, no key. Caught for the same reason too: a settings
+   * read failing must cost a button, never the bootstrap.
+   */
+  const visitAssist = await visitAssistAvailability().catch(() => null);
+  out["mbos.ai.visitAssistant"] = { available: visitAssist?.available === true };
 
   return out;
 }

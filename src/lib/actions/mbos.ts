@@ -7,6 +7,7 @@ import {
   attachmentParentEnum,
   attachments,
   bills,
+  callAiDrafts,
   complaints,
   customerDistributors,
   distributorProfiles,
@@ -173,10 +174,10 @@ export async function mbosLogin(input: {
   }
 
   /* Checks 1, 2, 3 and 4, in that order, each with its own sentence. */
-  const checks = await runLoginChecks({ mobile: input.mobile, password: input.password });
+  const checks = await runLoginChecks({ mobile: input.mobile, password: input.password, otp: input.otp });
   if (!checks.ok) {
     const status =
-      checks.step === "unknown_user" || checks.step === "bad_password" ? 401 : 403;
+      checks.step === "unknown_user" || checks.step === "bad_password" || checks.step === "bad_otp" ? 401 : 403;
     return { ok: false, status, step: checks.step, error: checks.error };
   }
   const user = checks.user;
@@ -838,7 +839,7 @@ type ScopedCustomer = {
  * different sentences, but they are the same ANSWER — neither confirms to a
  * handset that a customer it cannot see is real.
  */
-async function scopedCustomer(
+export async function scopedCustomer(
   principal: MbosPrincipal,
   customerId: unknown,
 ): Promise<{ ok: true; customer: ScopedCustomer } | { ok: false; value: Rejection }> {
@@ -1010,6 +1011,12 @@ const visitSchema = z.object({
   requirement: z.string().max(1000).nullish(),
   monthlyVolumeLitres: z.number().int().nonnegative().nullish(),
   quantityCans: z.number().int().nonnegative().nullish(),
+  /*
+   * THE VISIT ASSISTANT'S READING this visit was filled from, if any. The
+   * handler writes what the visit was SAVED as onto that draft, so the gap
+   * between what was proposed and what was kept can be measured.
+   */
+  aiDraftId: z.string().max(64).nullish(),
 });
 
 /**
@@ -1246,6 +1253,32 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   const checkOutAt = p.checkOutAt ? new Date(p.checkOutAt) : null;
 
   await db.transaction(async (tx) => {
+    /*
+     * What the assistant's proposal became, in the visit's own transaction —
+     * a visit that landed with its draft unmarked would read as a suggestion
+     * nobody took. Narrowed to HIS draft on the visit channel, so a payload
+     * naming somebody else's draft id updates nothing.
+     */
+    if (p.aiDraftId) {
+      await tx
+        .update(callAiDrafts)
+        .set({
+          savedOutcome: p.outcome,
+          savedAt: new Date(),
+          visitId: item.entityId,
+          savedDetail: {
+            nextFollowUpDate: p.nextFollowUpDate ?? null,
+            suspectDecision: p.suspectDecision ?? null,
+          },
+        })
+        .where(
+          and(
+            eq(callAiDrafts.id, p.aiDraftId),
+            eq(callAiDrafts.userId, principal.user.id),
+            eq(callAiDrafts.channel, "visit"),
+          ),
+        );
+    }
     await tx
       .insert(mbosVisits)
       .values({
@@ -5287,7 +5320,41 @@ const expenseSchema = z.object({
   billDate: z.string().nullish(),
   /** Requirement 43 — why he is claiming something outside policy. */
   exceptionReason: z.string().max(2000).nullish(),
+  /**
+   * EVERY file behind the claim — the bill, a second page, the payment
+   * screenshot, a PDF. `billPhotoId` stays as the first of them, so a handset
+   * that predates this list, and every screen that reads that one column,
+   * goes on working exactly as it did.
+   */
+  attachmentIds: z.array(z.string().min(1).max(100)).max(20).nullish(),
 });
+
+/**
+ * File a claim's attachments under the claim, on the server.
+ *
+ * The handset queues a photograph the moment it is taken — before the claim
+ * exists — naming its parent `pending`, and the media queue does not wait for
+ * the claim: a bill photographed while the form is still being filled in is
+ * routinely uploaded first, and lands in `attachments` parented to the literal
+ * string `pending`. Nobody can open a file filed there, and the claim reached
+ * the office with "no bill". So the claim binds what it names, when it
+ * arrives, whichever of the two got here first.
+ *
+ * Only this person's own uploads: a claim is a URL, and naming somebody else's
+ * attachment id must not move their file under this claim.
+ */
+async function bindExpenseAttachments(
+  principal: MbosPrincipal,
+  expenseId: string,
+  ids: ReadonlyArray<string>,
+): Promise<void> {
+  if (!ids.length) return;
+  await db
+    .update(attachments)
+    .set({ parentType: "mbos_expense", parentId: expenseId, updatedAt: new Date() })
+    .where(and(inArray(attachments.id, [...ids]), eq(attachments.uploadedById, principal.user.id)))
+    .catch(() => {});
+}
 
 async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
   const parsed = expenseSchema.safeParse(item.payload);
@@ -5323,7 +5390,11 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
    * take without a person entering it. Both name the way forward.
    */
 
-  if (p.amountPaise >= config["mbos.expenses.billPhotoThresholdPaise"] && !p.billPhotoId) {
+  const attachmentIds = [
+    ...new Set([...(p.billPhotoId ? [p.billPhotoId] : []), ...(p.attachmentIds ?? [])]),
+  ];
+
+  if (p.amountPaise >= config["mbos.expenses.billPhotoThresholdPaise"] && !attachmentIds.length) {
     return {
       kind: "rejected",
       value: reject(
@@ -5357,7 +5428,7 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
       amountPaise: p.amountPaise,
       expenseDate: p.expenseDate,
       remarks: p.description ?? null,
-      billPhotoId: p.billPhotoId ?? null,
+      billPhotoId: p.billPhotoId ?? attachmentIds[0] ?? null,
       claimId: p.claimId ?? null,
       kind: p.kind ?? p.category,
       sourceType: "manual",
@@ -5372,6 +5443,10 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
       deviceId: principal.deviceId,
     })
     .onConflictDoNothing({ target: mbosExpenses.id });
+
+  /* After the row, and on a retry too: a resend of the same claim is how a
+     file that arrived late gets filed. */
+  await bindExpenseAttachments(principal, item.entityId, attachmentIds);
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }

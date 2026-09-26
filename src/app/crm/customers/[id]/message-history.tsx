@@ -1,8 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Badge, Card, type Tone } from "@/components/ui/primitives";
+import { Card } from "@/components/ui/primitives";
 import { stamp } from "@/lib/format";
+import { DeliveryStatus } from "@/components/whatsapp/delivery-status";
+import type { TrackedMessage } from "@/lib/whatsapp-status";
 
 export type MessageEntry = {
   id: string;
@@ -16,37 +18,17 @@ export type MessageEntry = {
   templateName: string | null;
   body: string;
   edited: boolean;
+  /** Sent, delivered, read and replied — as WhatsApp or a person recorded them. */
+  receipts: TrackedMessage;
+  viaRule: boolean;
 };
 
 /**
- * A copied message and a confirmed one are different facts about whether the
- * customer heard from us, so they never share a tone. Anything still sitting
- * at `prepared` or `copied` reads as unfinished, because it is.
+ * Every message to the customer with how far it got. A copied message and a
+ * confirmed one are different facts about whether the customer heard from us,
+ * and an API send carries WhatsApp's own delivered and read receipts — the
+ * status is drawn by `DeliveryStatus`, the same badge every WhatsApp screen uses.
  */
-const STATUS_TONE: Record<string, Tone> = {
-  prepared: "muted",
-  copied: "warn",
-  queued: "muted",
-  sent_manually: "success",
-  sent: "success",
-  delivered: "success",
-  read: "success",
-  failed: "danger",
-  cancelled: "muted",
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  prepared: "Prepared",
-  copied: "Copied, not confirmed",
-  queued: "Queued",
-  sent_manually: "Confirmed sent",
-  sent: "Sent",
-  delivered: "Delivered",
-  read: "Read",
-  failed: "Failed",
-  cancelled: "Cancelled",
-};
-
 export function MessageHistory({
   messages,
   total,
@@ -82,10 +64,11 @@ export function MessageHistory({
               className="border-b border-divider pb-3.5 last:border-b-0 last:pb-0 [&+&]:pt-3.5"
             >
               <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={STATUS_TONE[m.status] ?? "neutral"}>
-                  {STATUS_LABEL[m.status] ?? m.status}
-                </Badge>
-                <span className="text-[11px] text-muted">{m.channelLabel}</span>
+                <DeliveryStatus m={m.receipts} showTime={false} />
+                <span className="text-[11px] text-muted">
+                  {m.channelLabel}
+                  {m.viaRule ? " · automatic rule" : ""}
+                </span>
                 <span className="text-[11px] text-muted">
                   ·{" "}
                   {m.destKind === "group"
@@ -114,6 +97,17 @@ export function MessageHistory({
                 </div>
               )}
 
+              {m.receipts.mode === "automatic" || m.receipts.repliedAt ? (
+                <div className="mt-1 flex flex-wrap gap-x-4 text-[11px] text-muted">
+                  {m.receipts.sentAt ? <span>Sent {stamp(m.receipts.sentAt)}</span> : null}
+                  {m.receipts.deliveredAt ? <span>Delivered {stamp(m.receipts.deliveredAt)}</span> : null}
+                  {m.receipts.readAt ? <span>Read {stamp(m.receipts.readAt)}</span> : null}
+                  {m.receipts.repliedAt ? <span>Replied {stamp(m.receipts.repliedAt)}</span> : null}
+                </div>
+              ) : null}
+              {m.receipts.status === "failed" && m.receipts.failureReason ? (
+                <div className="mt-1 text-[11px] text-danger">{m.receipts.failureReason}</div>
+              ) : null}
               {m.edited ? (
                 <div className="mt-1 text-[11px] text-muted">
                   Edited before sending

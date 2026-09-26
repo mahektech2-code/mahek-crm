@@ -41,6 +41,12 @@ const files = [
      place to start reading than one sentence naming the table. */
   "src/lib/mbos-columns.test.ts",
   "src/lib/journeys.test.ts",
+  // The call assistant: learning from logged calls, reading with no model,
+  // and the save writing back what the call was really logged as.
+  "src/lib/call-intel.test.ts",
+  // The visit assistant: scope, no model, the switch, and the visit writing
+  // back what it was really saved as.
+  "src/lib/visit-intel.test.ts",
   "src/lib/accounts.test.ts",
   "src/lib/bill-paging.test.ts",
   "src/lib/feedback.test.ts",
@@ -55,11 +61,16 @@ const files = [
   "src/lib/founder-dashboard.test.ts",
   "src/lib/expense-policy.test.ts",
   "src/lib/travel-on-visit.test.ts",
+  // An expense and every file behind it: several per claim, one that uploaded
+  // before the claim existed, who can open them, and the Decide dialog's read.
+  "src/lib/expense-attachments.test.ts",
   "src/lib/day-evidence.test.ts",
   "src/lib/check-in-gate.test.ts",
   "src/lib/credential-issue.test.ts",
   "src/lib/whatsapp-api.test.ts",
+  "src/lib/whatsapp-automation.test.ts",
   "src/lib/change-password.test.ts",
+  "src/lib/otp.test.ts",
   "src/lib/either-identifier.test.ts",
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",

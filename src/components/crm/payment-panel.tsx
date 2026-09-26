@@ -28,6 +28,8 @@ import { ageLabel, money, shortDate, stamp, today as todayISO } from "@/lib/form
 import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 import type { FollowUpPanelData } from "@/lib/services/payment-followup-service";
 import type { ReminderPreview } from "@/lib/services/whatsapp-service";
+import type { RuleOutlook, TrackerRow } from "@/lib/services/whatsapp-tracker-service";
+import { MessageTimeline, RuleOutlookList } from "@/components/whatsapp/message-timeline";
 import type { PayOutcomeDefinition } from "@/lib/services/payment-followup-service";
 
 /* ---------------------------------------------------------------------------
@@ -168,6 +170,7 @@ function PanelBody({
   const [tab, setTab] = React.useState<Tab>("account");
   const [panel, setPanel] = React.useState<FollowUpPanelData | null>(null);
   const [message, setMessage] = React.useState<ReminderPreview | null>(null);
+  const [wa, setWa] = React.useState<{ messages: TrackerRow[]; rules: RuleOutlook[] }>({ messages: [], rules: [] });
   const [loading, setLoading] = React.useState(true);
 
   const [outcome, setOutcome] = React.useState<string | null>(null);
@@ -192,6 +195,7 @@ function PanelBody({
         .then((d) => {
           setPanel(d.panel);
           setMessage(d.message ?? null);
+          setWa(d.whatsapp ?? { messages: [], rules: [] });
         })
         .catch(() => {})
         .finally(() => setLoading(false)),
@@ -507,6 +511,7 @@ function PanelBody({
           />
         ) : (
           <MessageTab
+            wa={wa}
             message={message}
             copied={Boolean(copiedId)}
             onCopy={copyMessage}
@@ -1148,21 +1153,41 @@ function LogTab(props: {
 /* ------------------------------------------------------------ message tab */
 
 function MessageTab({
+  wa,
   message,
   copied,
   onCopy,
   phone,
 }: {
+  wa: { messages: TrackerRow[]; rules: RuleOutlook[] };
   message: ReminderPreview | null;
   copied: boolean;
   onCopy: () => void;
   phone: string;
 }) {
+  const history = (
+    <div className="mx-auto mt-6 max-w-[720px] space-y-4">
+      <div>
+        <div className="mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
+          Messages to this customer
+        </div>
+        <MessageTimeline messages={wa.messages} />
+      </div>
+      <div>
+        <div className="mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
+          Automatic reminders for this customer
+        </div>
+        <RuleOutlookList rules={wa.rules} />
+      </div>
+    </div>
+  );
+
   if (!message) {
     return (
-      <div className="flex-1 px-6 py-10 text-sm text-muted">
+      <div className="flex-1 overflow-y-auto px-6 py-10 text-sm text-muted">
         No active payment reminder template. A manager can write one on the WhatsApp
         screen - until then, log a call instead.
+        {history}
       </div>
     );
   }
@@ -1266,6 +1291,7 @@ function MessageTab({
           </div>
         )}
       </div>
+      {history}
     </div>
   );
 }
