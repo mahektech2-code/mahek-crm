@@ -856,8 +856,17 @@ export function moduleAllowed(
   key: string,
   granted: readonly string[],
   app: AppId,
+  /**
+   * The person holds this app AS AN ADMINISTRATOR. Such a hat holds every
+   * module marked `offByDefault` whatever its rows say: that flag exists so a
+   * grant of the whole app does not carry the module to ordinary users, and an
+   * administrator is the one who hands it out. It reaches ONLY those modules —
+   * an administrator narrowed on purpose stays narrowed everywhere else.
+   */
+  administrator = false,
 ): boolean {
   const forApp = granted.filter((g) => getModule(g)?.app === app);
+  if (administrator && getModule(key)?.offByDefault) return true;
   return forApp.length === 0 || forApp.includes(key);
 }
 
