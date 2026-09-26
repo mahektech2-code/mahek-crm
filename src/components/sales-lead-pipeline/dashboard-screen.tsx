@@ -3,108 +3,86 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Card, MetricStrip, PageHeader, SectionLabel, type Tone } from "@/components/ui/primitives";
-import { useToast } from "@/components/ui/toast";
-import { useLeadPipeline } from "./provider";
-import { daysUntil, funnelCounts, type GateAction, gateActionFor, isDueToday, isOverdue, managerKpis, personalBookCounts } from "@/lib/sales-lead-pipeline/engine";
+import { daysUntil } from "@/lib/sales-lead-pipeline/engine";
 import { LeadStatusBadges } from "./badges";
 import { personName } from "@/lib/sales-lead-pipeline/reference";
 import { Icon } from "@/components/shell/icons";
+import type { DashboardData, PipelineRow } from "@/lib/sales-lead-pipeline/types";
 
-/** Maps a gate action's urgency onto the CRM's own existing badge tones. */
-function toneForGate(kind: GateAction["kind"]): Tone {
-  switch (kind) {
-    case "verify":
-    case "confirmOrder":
-      return "danger";
-    case "qualify":
-    case "requestSample":
-    case "sampleReview":
-    case "moveToNegotiation":
-    case "askOrder":
-      return "warn";
-    case "visit":
-      return "brand";
-    case "none":
-    case "closed":
-    case "awaitingVerification":
-    case "awaitingManagement":
-    default:
-      return "muted";
-  }
+const BASE = "/sales-lead-pipeline";
+
+/** Maps the verb on a focus row onto the CRM's own existing badge tones. */
+function toneForLabel(label: string | undefined): Tone {
+  if (!label) return "muted";
+  if (/verif|confirm|payment|dispatch/i.test(label)) return "danger";
+  if (/qualif|sample|negotiat|commit|order|move/i.test(label)) return "warn";
+  if (/convert|visit/i.test(label)) return "brand";
+  return "muted";
 }
 
-export function DashboardScreen() {
-  const { leads, today } = useLeadPipeline();
+/**
+ * The Sales Manager's morning, drawn from figures the SERVER counted.
+ *
+ * Every number here is a `count(*)` over the same scoped book the lead list
+ * uses (`leadTileCounts`, `verificationQueue`, `commitments`, `funnelByRung`),
+ * and every list is one page of `leadsPage` — so a tile and the list it opens
+ * cannot disagree, and nothing here loads the book into the browser.
+ */
+export function DashboardScreen({ data }: { data: DashboardData }) {
   const router = useRouter();
-  const toast = useToast();
-  const book = personalBookCounts(leads);
-  const mgr = managerKpis(leads, today);
-  const funnel = funnelCounts(leads);
+  const { book, manager: mgr, funnel, attention, focus } = data;
+  const today = new Date(`${data.today}T00:00:00`);
   const maxCount = Math.max(1, ...funnel.map((f) => f.count));
-
-  const active = leads.filter((l) => !l.lost);
-  const overdue = active.filter((l) => isOverdue(l, today));
-  const dueToday = active.filter((l) => isDueToday(l, today) && !overdue.includes(l));
-  const attention = [...overdue, ...dueToday].slice(0, 6);
-
-  const focus = active
-    .filter((l) => l.manager === "amit")
-    .slice(0, 7)
-    .map((l) => ({ lead: l, action: gateActionFor(l) }));
-
   const goto = (href: string) => router.push(href);
 
   return (
     <div className="p-6">
       <div className="text-[10.5px] font-semibold tracking-[0.06em] text-muted uppercase">Sales Manager workspace</div>
       <PageHeader
-        title="Good morning, Amit"
+        title={data.greeting}
         subtitle="Verification, nurturing and negotiation across the whole territory's funnel."
         actions={
           <>
             <Link
-              href="/sales-lead-pipeline/pipeline"
+              href={`${BASE}/pipeline`}
               className="inline-flex h-9 items-center gap-1.5 rounded-[4px] border border-line-strong bg-surface px-4 text-sm font-medium text-body hover:bg-canvas"
             >
               <Icon name="chart" size={15} />
               View pipeline
             </Link>
-            <button
-              type="button"
-              onClick={() =>
-                toast.push("New-lead capture is a salesman/telecaller field form — not part of this design pass.")
-              }
+            <Link
+              href="/sales/leads/intake"
               className="inline-flex h-9 items-center gap-1.5 rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover hover:border-brand-hover"
             >
               <Icon name="plus" size={15} />
               New lead
-            </button>
+            </Link>
           </>
         }
       />
 
       <MetricStrip
         metrics={[
-          { label: "My leads", value: String(book.mine), sub: "active", onClick: () => goto("/sales-lead-pipeline/list") },
-          { label: "Today's actions", value: String(dueToday.length), sub: "due today", onClick: () => goto("/sales-lead-pipeline/list?due=today") },
-          { label: "Overdue", value: String(overdue.length), tone: overdue.length ? "danger" : "ink", sub: "need a next action", onClick: () => goto("/sales-lead-pipeline/list?due=overdue") },
-          { label: "New suspects", value: String(book.suspects), onClick: () => goto("/sales-lead-pipeline/list?stage=suspect") },
-          { label: "Prospects", value: String(book.prospects), onClick: () => goto("/sales-lead-pipeline/list?stage=prospect") },
-          { label: "In sample", value: String(book.inSample), onClick: () => goto("/sales-lead-pipeline/list") },
-          { label: "Negotiations", value: String(book.negotiations), onClick: () => goto("/sales-lead-pipeline/list?stage=negotiation") },
-          { label: "Expected orders", value: String(book.expectedOrders), tone: "success" },
-          { label: "Lost (30d)", value: String(book.lost) },
+          { label: "My leads", value: String(book.mine), sub: "carrying one of your seats", onClick: () => goto(`${BASE}/list?view=mine`) },
+          { label: "Today's actions", value: String(book.today), sub: "due today", onClick: () => goto(`${BASE}/list?view=today`) },
+          { label: "Overdue", value: String(book.overdue), tone: book.overdue ? "danger" : "ink", sub: "need a next action", onClick: () => goto(`${BASE}/list?view=overdue`) },
+          { label: "New suspects", value: String(book.suspects), onClick: () => goto(`${BASE}/list?stage=suspect,new`) },
+          { label: "Prospects", value: String(book.prospects), onClick: () => goto(`${BASE}/list?stage=prospect,contacted`) },
+          { label: "In sample", value: String(book.sample), onClick: () => goto(`${BASE}/list?stage=sample_trial,sample_received,sample_review`) },
+          { label: "Negotiations", value: String(book.negotiation), onClick: () => goto(`${BASE}/list?stage=negotiation`) },
+          { label: "Expected orders", value: String(book.expected), tone: "success", sub: "a day and a size", onClick: () => goto(`${BASE}/list?view=expected`) },
+          { label: "Lost (30d)", value: String(book.lost30), onClick: () => goto(`${BASE}/list?view=lost30`) },
         ]}
       />
 
       <SectionLabel>Sales Manager — verification &amp; nurturing</SectionLabel>
       <MetricStrip
         metrics={[
-          { label: "Prospects Pending Verification", value: String(mgr.pendingVerification), tone: mgr.pendingVerification ? undefined : "ink", onClick: () => goto("/sales-lead-pipeline/list?stage=prospect") },
-          { label: "Verified Prospects", value: String(mgr.verifiedProspects), tone: "success" },
-          { label: "Verification Failed", value: String(mgr.verificationFailed), tone: mgr.verificationFailed ? "danger" : "ink" },
-          { label: "Sample Reviews Pending", value: String(mgr.sampleReviewsPending) },
-          { label: "Negotiations Pending", value: String(mgr.negotiationsPending), onClick: () => goto("/sales-lead-pipeline/list?stage=negotiation") },
+          { label: "Prospects Pending Verification", value: String(mgr.pendingVerification), tone: mgr.pendingVerification ? undefined : "ink", sub: "incl. calling-desk requests", onClick: () => goto("/sales/leads/qualify") },
+          { label: "Verified Prospects", value: String(mgr.verifiedProspects), tone: "success", sub: "verified, not yet qualifying", onClick: () => goto(`${BASE}/list?stage=prospect,contacted`) },
+          { label: "Verification Failed", value: String(mgr.verificationFailed), tone: mgr.verificationFailed ? "danger" : "ink", sub: "closed in the last 30 days" },
+          { label: "Sample Reviews Pending", value: String(mgr.sampleReviewsPending), sub: "shop has it, no verdict", onClick: () => goto(`${BASE}/list?stage=sample_received,sample_review`) },
+          { label: "Negotiations Pending", value: String(mgr.negotiationsPending), onClick: () => goto(`${BASE}/list?stage=negotiation`) },
           { label: "Awaiting Actual Order Confirmation", value: String(mgr.awaitingActualOrder), sub: "forecast only, not yet a sale" },
           { label: "Expected Orders This Week", value: String(mgr.expectedThisWeek), tone: "success", sub: "forecast dates due soon" },
         ]}
@@ -127,41 +105,21 @@ export function DashboardScreen() {
                   </div>
                 </div>
               ) : (
-                attention.map((l) => {
-                  const d = daysUntil(l.nextActionDate, today);
-                  const overdueRow = isOverdue(l, today);
-                  return (
-                    <Link
-                      key={l.id}
-                      href={`/sales-lead-pipeline/${l.id}`}
-                      className="flex items-center gap-3 border-b border-divider px-4 py-3 last:border-0 hover:bg-canvas"
-                    >
-                      <span className={`h-full w-1 flex-none self-stretch rounded ${overdueRow ? "bg-danger" : "bg-warn"}`} />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2">
-                          <span className="truncate text-sm font-medium text-ink">{l.name}</span>
-                          <LeadStatusBadges lead={l} />
-                        </span>
-                        <span className="block truncate text-[13px] text-muted">
-                          {l.nextAction ?? "—"} · {personName(l.nextActionResp)}
-                        </span>
-                      </span>
-                      <span className="flex-none text-right">
-                        <span className={`block text-[13px] font-semibold ${overdueRow ? "text-danger" : "text-warn-ink"}`}>
-                          {overdueRow ? `${Math.abs(d ?? 0)}d overdue` : d === 0 ? "Today" : `in ${d}d`}
-                        </span>
-                        <span className="block text-[11px] text-muted">{l.nextActionDate}</span>
-                      </span>
-                    </Link>
-                  );
-                })
+                attention.map((l) => <AttentionRow key={l.id} lead={l} today={today} />)
               )}
             </Card>
+            {book.overdue + book.today > attention.length ? (
+              <div className="mt-1.5 text-right text-[12.5px]">
+                <Link href={`${BASE}/list?view=overdue`} className="font-medium text-brand hover:text-brand-hover">
+                  See all {book.overdue} overdue →
+                </Link>
+              </div>
+            ) : null}
           </div>
 
           <div>
             <SectionLabel>Pipeline at a glance</SectionLabel>
-            <Link href="/sales-lead-pipeline/pipeline">
+            <Link href={`${BASE}/pipeline`}>
               <Card className="mt-1.5 px-5 pt-5 pb-2">
                 <div className="flex items-end gap-3" style={{ height: 90 }}>
                   {funnel.map((f) => (
@@ -190,24 +148,59 @@ export function DashboardScreen() {
           <SectionLabel>Sales Manager focus</SectionLabel>
           <Card className="mt-1.5">
             {focus.length === 0 ? (
-              <div className="px-5 py-8 text-center text-sm text-muted">Nothing in your book yet.</div>
+              <div className="px-5 py-8 text-center text-sm text-muted">No lead carries one of your seats yet.</div>
             ) : (
-              focus.map(({ lead, action }) => (
+              focus.map((lead) => (
                 <Link
                   key={lead.id}
-                  href={`/sales-lead-pipeline/${lead.id}`}
+                  href={`${BASE}/${lead.id}`}
                   className="flex items-center justify-between gap-3 border-b border-divider px-4 py-3 last:border-0 hover:bg-canvas"
                 >
                   <span className="min-w-0 truncate text-sm font-medium text-ink">{lead.name}</span>
-                  <Badge tone={toneForGate(action.kind)} className="flex-none">
-                    {"label" in action ? action.label : "Monitor"}
+                  <Badge tone={toneForLabel(lead.gateLabel)} className="flex-none">
+                    {lead.gateLabel ?? "Monitor"}
                   </Badge>
                 </Link>
               ))
             )}
           </Card>
+          {book.mine > focus.length ? (
+            <div className="mt-1.5 text-right text-[12.5px]">
+              <Link href={`${BASE}/list?view=mine`} className="font-medium text-brand hover:text-brand-hover">
+                See all {book.mine} →
+              </Link>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
+  );
+}
+
+function AttentionRow({ lead: l, today }: { lead: PipelineRow; today: Date }) {
+  const d = daysUntil(l.nextActionDate, today);
+  const overdueRow = d !== null && d < 0;
+  return (
+    <Link
+      href={`${BASE}/${l.id}`}
+      className="flex items-center gap-3 border-b border-divider px-4 py-3 last:border-0 hover:bg-canvas"
+    >
+      <span className={`h-full w-1 flex-none self-stretch rounded ${overdueRow ? "bg-danger" : "bg-warn"}`} />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium text-ink">{l.name}</span>
+          <LeadStatusBadges lead={l} />
+        </span>
+        <span className="block truncate text-[13px] text-muted">
+          {l.nextAction ?? "—"} · {personName(l.nextActionResp)}
+        </span>
+      </span>
+      <span className="flex-none text-right">
+        <span className={`block text-[13px] font-semibold ${overdueRow ? "text-danger" : "text-warn-ink"}`}>
+          {d === null ? "—" : overdueRow ? `${Math.abs(d)}d overdue` : d === 0 ? "Today" : `in ${d}d`}
+        </span>
+        <span className="block text-[11px] text-muted">{l.nextActionDate}</span>
+      </span>
+    </Link>
   );
 }

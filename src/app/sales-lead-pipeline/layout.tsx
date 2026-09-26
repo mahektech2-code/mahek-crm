@@ -1,51 +1,41 @@
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { listUserApps, requireModule } from "@/lib/access";
 import { ToastProvider } from "@/components/ui/toast";
-import { LeadPipelineProvider } from "@/components/sales-lead-pipeline/provider";
-import { LeadModals } from "@/components/sales-lead-pipeline/modals";
 
 /**
- * Sales Manager Lead Pipeline — implemented from the prototype at
- * https://claude.ai/artifact/55h5EhgTReQbiThhdhPxRU.
+ * Sales Manager — Lead Pipeline.
  *
- * SCOPE: Sales Manager only. Telecaller, Salesman, Team Manager, Back Office
- * and Management screens from the same prototype are deliberately not built
- * here.
+ * THIS IS THE SALES DASHBOARD'S `sales.leads` MODULE drawn on its own route, and
+ * it is guarded the way that module is: the `sales` GRANT first, then the
+ * module. `requireModule` on its own answers "may this person open this module"
+ * and deliberately knows nothing about whether the app was granted (no module
+ * rows means every module), so a layout that called only it would open the
+ * screens for somebody who was never given the Sales Dashboard at all. That is
+ * the failure `canOpenModule` exists to name, and it is asked here in the same
+ * order `/sales/layout.tsx` asks it.
  *
- * DATA: every lead, KPI and mutation on these screens is in-memory mock
- * state (`LeadPipelineProvider`) — nothing here reads or writes
- * `src/db/schema.ts`. `requireUser()` is the one real thing this layout does:
- * it is the existing, read-only session check every other app in the suite
- * uses, so this screen set still requires a signed-in user without adding
- * any new auth logic. It is deliberately NOT nested under `/sales/layout.tsx`
- * — that shell reads live database counts for its sidebar badges, which
- * would tie this mock feature's chrome to real data it has no business
- * reading yet, and would need this feature registered as a module in
- * `lib/modules.ts` — a decision for whoever wires this up to the real access
- * model, not this task.
+ * Nothing here adds a permission. What a person may SEE is `managerScope` +
+ * `leadsVisible` inside the reads; what they may DO is `requireCapability`
+ * inside the actions. `proxy.ts` names this route as the `sales` app, so scope
+ * is resolved against the Sales Dashboard grant and not the widest level the
+ * account holds elsewhere.
  *
- * NO CHROME OF ITS OWN. This flow is exactly two screens — Dashboard and
- * Lead Record — and neither is a tab inside a larger app shell, so there is
- * no sidebar and no nav bar here to switch between them: the Dashboard links
- * straight into a Lead Record and the Lead Record links straight back. A
- * previous pass added a top nav strip (Dashboard / Pipeline / All Leads);
- * that read as CRM chrome this flow was never meant to have, so it is gone
- * — `children` is the whole page.
+ * NO CHROME OF ITS OWN. This flow is Dashboard, Pipeline, All Leads and the Lead
+ * Record; each links to the next, so `children` is the whole page.
  */
-export default async function SalesLeadPipelineLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  await requireUser();
+export default async function SalesLeadPipelineLayout({ children }: { children: React.ReactNode }) {
+  const user = await requireUser();
+
+  const apps = await listUserApps(user.id);
+  if (!apps.includes("sales")) redirect("/apps");
+  await requireModule(user.id, "sales.leads");
 
   return (
     <ToastProvider>
-      <LeadPipelineProvider>
-        <div className="min-h-screen bg-canvas">
-          <div className="mx-auto w-full max-w-[1600px]">{children}</div>
-        </div>
-        <LeadModals />
-      </LeadPipelineProvider>
+      <div className="min-h-screen bg-canvas">
+        <div className="mx-auto w-full max-w-[1600px]">{children}</div>
+      </div>
     </ToastProvider>
   );
 }

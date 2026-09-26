@@ -94,6 +94,10 @@ const files = [
   // The telecaller's calling desk itself: three calls, Ready for Prospect, and
   // that asking for a Prospect is not being one.
   "src/lib/lead-calling-desk.test.ts",
+  // The Sales Manager lead pipeline: reads counted in SQL, every mutation
+  // persisted, the distributor track, and authorisation — including the one
+  // place read scope and write scope disagree, pinned rather than fixed.
+  "src/lib/sales-manager-pipeline.test.ts",
   // The dashboard reads its four figures from `queueProgress`, which must stay
   // exactly equal to what `getQueue` would have said. That equivalence is only
   // checkable against a real book, so it lives here rather than in the pure set.
