@@ -60,6 +60,21 @@ export const NOT_IN_SIDEBAR = ["/sales/approvals"];
  * Exactly one item, on purpose: everything pinned here is a row the sidebar can
  * never collapse, so a second one spends what the grouping was bought for.
  */
+/**
+ * WHERE THE SALES MANAGER WORKSPACE IS. It is not a module of its own: its
+ * route guard asks for `sales.leads`, so the link is offered to exactly the
+ * people who hold that module, by `salesNavAllowed` below. A separate module
+ * would have been a second grant to keep in step with the first, and one that
+ * reached every holder of the whole app the day it shipped.
+ */
+export const SALES_MANAGER_HREF = "/sales-lead-pipeline";
+
+/** The hrefs the sidebar may draw: the modules somebody holds, plus the link that rides on `sales.leads`. */
+export function salesNavAllowed(modules: readonly { key: string; href: string }[]): string[] {
+  const hrefs = modules.map((m) => m.href);
+  return modules.some((m) => m.key === "sales.leads") ? [...hrefs, SALES_MANAGER_HREF] : hrefs;
+}
+
 export const SALES_PINNED: NavItem[] = [
   { href: "/sales", label: "Today", icon: "home", exact: true },
 ];
@@ -133,6 +148,10 @@ export const SALES_NAV: NavGroup[] = [
     icon: "spark",
     items: [
       { href: "/sales/leads", label: "All Leads", icon: "spark", exact: true },
+      /* The Sales Manager workspace lives at its own route, outside `/sales`. It
+         is drawn on the SAME grant that guards it — `sales.leads` — see
+         `SALES_MANAGER_HREF` and the layout that reads it. */
+      { href: SALES_MANAGER_HREF, label: "Sales Manager", icon: "people" },
       { href: "/sales/leads/funnel", label: "Funnel & conversion", icon: "chart" },
       { href: "/sales/leads/intake", label: "Intake", icon: "doc" },
       { href: "/sales/leads/qualify", label: "Qualification", icon: "tick" },
