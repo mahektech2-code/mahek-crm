@@ -1273,6 +1273,28 @@ this form is not a staff directory. Without `RESEND_API_KEY` and `MAIL_FROM`
 the mail is written to the server log rather than sent, and the screen says so
 rather than claiming it went.
 
+**A WHATSAPP CODE IS THE OTHER WAY IN, offered only where it can work.**
+`lib/services/otp-service.ts` sends a one-time code to the WORK NUMBER ON THE
+ACCOUNT — never to a number typed at the screen — for signing in (web and the
+MBOS handset), changing a password, and resetting a forgotten one. It is
+switched on by naming an APPROVED Wati authentication template in
+`auth.otp.whatsappTemplateName`; blank or unapproved, every screen shows the
+password alone and says nothing about codes (a control that fails when pressed
+is worse than one never offered). It does not depend on the founder's WhatsApp
+switch — that one is about messages to customers.
+
+**Only a salted hash of each code is stored** (`auth_otps`, `sha256(id:code)`),
+one row per code, one use, one purpose — a sign-in code cannot change a
+password. Wrong guesses, lifetime, the resend cooldown and the per-window cap are
+the `auth.otp.*` settings. A code sign-in goes through `completeSignIn`, the
+same tail as a password; on the handset it takes the password's place inside
+`runLoginChecks`, so every later check (active, the field app, device binding)
+still applies, and it leaves no offline credential behind. Where codes are on,
+changing a password takes a code instead of the current password.
+
+**`otp_channel` was declared in schema.ts and never created by a migration**;
+`0168` creates it, guarded.
+
 ## Layout
 
 ```

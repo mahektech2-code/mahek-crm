@@ -3833,6 +3833,40 @@ export const waReplies = pgTable(
 );
 
 /**
+ * ONE-TIME SIGN-IN CODES, sent on WhatsApp to the work number on the account.
+ *
+ * Only a hash of the code is stored (`sha256("<id>:<code>")`, salted by the
+ * row's own id), so a database dump holds nothing anybody can type. A code
+ * works once, for one purpose, until it expires or runs out of attempts —
+ * all three limits are `auth.otp.*` settings. Rows are never reused: asking
+ * again writes a new one, which is what makes the resend cooldown and the
+ * per-window cap countable.
+ */
+export const authOtps = pgTable(
+  "auth_otps",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** `login` (web or handset), `password_change`, `password_reset`. */
+    purpose: text("purpose").notNull(),
+    channel: otpChannelEnum("channel").notNull().default("whatsapp"),
+    /** The number it went to, as WhatsApp wants it (91XXXXXXXXXX). */
+    destination: text("destination").notNull(),
+    codeHash: text("code_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    /** Null until Wati accepted it; a code that never left is never valid. */
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    failureReason: text("failure_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("auth_otps_user_purpose_idx").on(t.userId, t.purpose, t.createdAt.desc())],
+);
+
+/**
  * A RULE THAT SENDS ONE TEMPLATE AUTOMATICALLY — configured on the Founder
  * Dashboard. Several rules may point at one template ("multiple logics"): a
  * gentle reminder at 1–15 days and again, differently spaced, later on.

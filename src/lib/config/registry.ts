@@ -801,7 +801,7 @@ export const SETTINGS = [
     type: "text",
     category: "auth",
     label: "WhatsApp template name",
-    description: "The Meta-approved WhatsApp template the OTP is sent through. WhatsApp Business API refuses a free-form message to somebody who has not messaged first, so an OTP has to ride a template.",
+    description: "The name of the approved AUTHENTICATION template in Wati that sign-in codes are sent with (a copy-code template, one variable: the code). Naming one here is what switches WhatsApp codes on — for signing in on the web and on the MBOS handset, for changing a password and for resetting one. Blank, or not yet approved in Wati, and every screen offers the password alone.",
     default: "",
   },
   {

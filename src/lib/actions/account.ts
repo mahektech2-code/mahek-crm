@@ -11,7 +11,8 @@ import {
   requireUser,
   verifyPassword,
 } from "@/lib/auth";
-import { err as fail, okVoid as ok, type Result } from "@/lib/result";
+import { err as fail, ok as okData, okVoid as ok, type Result } from "@/lib/result";
+import { otpAvailability, sendOtp, verifyOtp } from "@/lib/services/otp-service";
 
 /* ---------------------------------------------------------------------------
  * What a person may do to their OWN account, from the account menu in every
@@ -27,7 +28,8 @@ import { err as fail, okVoid as ok, type Result } from "@/lib/result";
 
 const passwordChange = z
   .object({
-    current: z.string().min(1, "Enter your current password."),
+    current: z.string(),
+    code: z.string(),
     password: z.string().min(8, "Passwords must be at least 8 characters."),
     confirm: z.string(),
   })
@@ -40,7 +42,7 @@ const passwordChange = z
    * it is the worst answer available: somebody changing their password because
    * they think it has been seen would walk away believing they had.
    */
-  .refine((v) => v.password !== v.current, {
+  .refine((v) => !v.current || v.password !== v.current, {
     message: "That is the password you already have. Choose a different one.",
     path: ["password"],
   });
@@ -73,7 +75,8 @@ export async function changePassword(
   const user = await requireUser();
 
   const parsed = passwordChange.safeParse({
-    current: formData.get("current"),
+    current: formData.get("current") ?? "",
+    code: formData.get("code") ?? "",
     password: formData.get("password"),
     confirm: formData.get("confirm"),
   });
@@ -99,10 +102,25 @@ export async function changePassword(
     .limit(1);
   if (!row) return fail("That account no longer exists.", "not_found");
 
-  if (!(await verifyPassword(parsed.data.current, row.passwordHash))) {
-    return fail("That is not your current password.", "validation", [
-      { field: "current", message: "That is not your current password." },
-    ]);
+  // WHERE WhatsApp codes are set up, a code to the person's own phone is what
+  // proves it is them — Mahek's rule for changing a password. Where they are
+  // not, the current password does, exactly as before.
+  if ((await otpAvailability()).available) {
+    const verified = await verifyOtp(user.id, "password_change", parsed.data.code);
+    if (!verified.ok) {
+      return fail(verified.error, "validation", [{ field: "code", message: verified.error }]);
+    }
+  } else {
+    if (!parsed.data.current) {
+      return fail("Enter your current password.", "validation", [
+        { field: "current", message: "Enter your current password." },
+      ]);
+    }
+    if (!(await verifyPassword(parsed.data.current, row.passwordHash))) {
+      return fail("That is not your current password.", "validation", [
+        { field: "current", message: "That is not your current password." },
+      ]);
+    }
   }
 
   const passwordHash = await hashPassword(parsed.data.password);
@@ -147,4 +165,17 @@ export async function changePassword(
   return ok(
     "Password changed. Every other device signed in to this account has been signed out.",
   );
+}
+
+/** Sends the signed-in person a code on WhatsApp to change their password with. */
+export async function sendPasswordChangeCode(): Promise<Result<{ sentTo: string }>> {
+  const user = await requireUser();
+  const sent = await sendOtp(user.id, "password_change");
+  if (!sent.ok) return fail(sent.error);
+  return okData({ sentTo: sent.sentTo }, `Code sent to ${sent.sentTo} on WhatsApp`);
+}
+
+/** Whether the change-password dialog should ask for a code instead of the current password. */
+export async function passwordChangeUsesCode(): Promise<boolean> {
+  return (await otpAvailability()).available;
 }

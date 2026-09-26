@@ -8,6 +8,7 @@ import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { openPasswordReset, signIn as signInReal, type LoginStep } from '../src/data/session';
 import { useKeyboardHeight } from '../src/components/ui/keyboard';
+import { otpAvailable, requestOtp, ApiError } from '../src/sync/api';
 
 /**
  * Sign in.
@@ -59,6 +60,34 @@ export default function Login() {
   const [step, setStep] = React.useState(0);
   const [err, setErr] = React.useState<'mob' | 'pw' | 'inactive' | 'payload' | null>(null);
   const [pwShow, setPwShow] = React.useState(false);
+  /* Password, or a code on WhatsApp — the second offered only once the
+     server says it can send one (`/api/mbos/auth/otp`). */
+  const [method, setMethod] = React.useState<'password' | 'code'>('password');
+  const [codeOffered, setCodeOffered] = React.useState(false);
+  const [code, setCode] = React.useState('');
+  const [codeSentTo, setCodeSentTo] = React.useState<string | null>(null);
+  const [sendingCode, setSendingCode] = React.useState(false);
+  React.useEffect(() => {
+    let live = true;
+    otpAvailable().then((v) => { if (live) setCodeOffered(v); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+
+  async function sendCode() {
+    if (mob.length !== MOBILE_DIGITS) return setErr('mob');
+    setSendingCode(true);
+    setErr(null);
+    setServerMessage(null);
+    try {
+      const r = await requestOtp(mob.trim());
+      setCodeSentTo(r.sentTo);
+    } catch (e) {
+      setErr('pw');
+      setServerMessage(e instanceof ApiError && e.message ? e.message : 'The code could not be sent. Check your signal, or use your password.');
+    } finally {
+      setSendingCode(false);
+    }
+  }
   /* What the server actually said, shown verbatim — a generic "sign-in failed"
      leaves the salesman with nothing to do about it. */
   const [serverMessage, setServerMessage] = React.useState<string | null>(null);
@@ -105,7 +134,11 @@ export default function Login() {
        persists and two bootstraps writing into the same database. */
     if (stage === 'verifying') return;
     if (mob.length !== MOBILE_DIGITS) return setErr('mob');
-    if (pw.length < 8) return setErr('pw');
+    if (method === 'password' && pw.length < 8) return setErr('pw');
+    if (method === 'code' && code.replace(/\D/g, '').length < 4) {
+      setServerMessage(codeSentTo ? 'Enter the code from WhatsApp.' : 'Send yourself a code first.');
+      return setErr('pw');
+    }
 
     setErr(null);
     setServerMessage(null);
@@ -117,7 +150,7 @@ export default function Login() {
 
     const outcome = await signInReal({
       mobile: mob.trim(),
-      password: pw,
+      ...(method === 'code' ? { otp: code.replace(/\D/g, '') } : { password: pw }),
       remember,
       onStep: (s) => { if (live()) setStep(STEP_INDEX[s]); },
     });
@@ -302,18 +335,27 @@ export default function Login() {
               </Text>
             ) : null}
 
-            {/* NO METHOD TOGGLE, AND NO SMS STAGE.
-                It offered "SMS code" beside "Password" as a peer, and pressing
-                "Send the code" made no request at all — it moved the screen to
-                the code stage and toasted "Code sent by SMS". There is no OTP
-                service: `/api/mbos/auth/otp`, the route this app's own
-                `requestOtp` posts to, is not on the server. So the one method
-                that needs no password sent a salesman to watch an inbox that
-                would never receive anything. It follows the rule the microphone
-                already follows — a control that fails when pressed is worse
-                than one never offered — and is drawn only once there is a
-                service behind it. */}
+            {/* THE METHOD TOGGLE IS BACK, and only where it works. It was
+                removed because "SMS code" sent nothing — there was no route
+                behind it. `/api/mbos/auth/otp` now sends a real code on
+                WhatsApp, and this screen asks it first: no toggle is drawn on
+                a deployment that cannot send one. */}
+            {codeOffered ? (
+              <View style={{ flexDirection: 'row', marginTop: 16, borderWidth: 1, borderColor: C.border, borderRadius: radius.md, padding: 3 }}>
+                {(['password', 'code'] as const).map((m) => (
+                  <Pressable
+                    key={m}
+                    onPress={() => { setMethod(m); setErr(null); setServerMessage(null); }}
+                    style={{ flex: 1, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md - 2, backgroundColor: method === m ? C.primaryTint : 'transparent' }}>
+                    <Text style={[{ fontSize: 15, color: method === m ? C.ink : C.muted }, weight(method === m ? 600 : 400)]}>
+                      {m === 'password' ? 'Password' : 'WhatsApp code'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
               <View>
+                {method === 'password' ? (<>
                 <Text style={[type.label, { marginTop: 16, marginBottom: 6 }]}>Password</Text>
                 <View style={{ position: 'relative' }}>
                   <TextInput
@@ -367,6 +409,42 @@ export default function Login() {
                     {serverMessage ?? 'Password must be at least 8 characters.'}
                   </Text>
                 ) : null}
+                </>) : (
+                  <View>
+                    <Text style={[type.label, { marginTop: 16, marginBottom: 6 }]}>Code from WhatsApp</Text>
+                    {codeSentTo ? (
+                      <>
+                        <TextInput
+                          value={code}
+                          onChangeText={(v) => { setCode(v.replace(/\D/g, '').slice(0, 8)); setErr(null); setServerMessage(null); }}
+                          placeholder="6-digit code"
+                          placeholderTextColor={C.faint}
+                          keyboardType="number-pad"
+                          textContentType="oneTimeCode"
+                          autoComplete="sms-otp"
+                          style={{
+                            width: '100%', height: 52, borderWidth: 1, borderColor: err === 'pw' ? C.danger : C.border,
+                            borderRadius: radius.md, paddingHorizontal: 12, fontSize: 20, letterSpacing: 6, color: C.ink, backgroundColor: C.surface,
+                          }}
+                        />
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                          <Text style={{ fontSize: 14, color: C.muted }}>Sent to {codeSentTo} on WhatsApp</Text>
+                          <Pressable onPress={() => void sendCode()} disabled={sendingCode}>
+                            <Text style={[{ fontSize: 14, color: C.primary }, weight(500)]}>{sendingCode ? 'Sending…' : 'Send again'}</Text>
+                          </Pressable>
+                        </View>
+                      </>
+                    ) : (
+                      <PrimaryButton
+                        label={sendingCode ? 'Sending…' : 'Send me a code on WhatsApp'}
+                        onPress={() => void sendCode()}
+                      />
+                    )}
+                    {err === 'pw' && serverMessage ? (
+                      <Text style={{ fontSize: 14, color: C.danger, marginTop: 6 }}>{serverMessage}</Text>
+                    ) : null}
+                  </View>
+                )}
 
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 20 }}>
                   <Text style={{ fontSize: 15, color: C.body }}>Remember me</Text>

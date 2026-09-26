@@ -2,7 +2,11 @@
 
 import * as React from "react";
 import { useActionState } from "react";
-import { changePassword } from "@/lib/actions/account";
+import {
+  changePassword,
+  passwordChangeUsesCode,
+  sendPasswordChangeCode,
+} from "@/lib/actions/account";
 import { Modal } from "@/components/ui/modal";
 import { cx } from "@/components/ui/primitives";
 
@@ -23,6 +27,22 @@ const FIELD =
  */
 export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
   const [state, formAction, pending] = useActionState(changePassword, null);
+  // Whether this deployment proves it is you with a WhatsApp code (Mahek's
+  // rule) or, until codes are set up, with the current password. Null while
+  // asking, so neither field flashes up and is swapped out.
+  const [usesCode, setUsesCode] = React.useState<boolean | null>(null);
+  const [codeSent, setCodeSent] = React.useState<string | null>(null);
+  const [codeError, setCodeError] = React.useState<string | null>(null);
+  const [sending, setSending] = React.useState(false);
+  React.useEffect(() => {
+    let live = true;
+    passwordChangeUsesCode()
+      .then((v) => live && setUsesCode(v))
+      .catch(() => live && setUsesCode(false));
+    return () => {
+      live = false;
+    };
+  }, []);
   const saved = state && state.ok ? state : null;
 
   /** A message under the field it names, never under whichever came first. */
@@ -70,13 +90,59 @@ export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
             </div>
           ) : null}
 
-          <Field
-            name="current"
-            label="Current password"
-            autoComplete="current-password"
-            autoFocus
-            error={fieldError("current")}
-          />
+          {usesCode === null ? (
+            <p className="text-[13px] text-muted">One moment…</p>
+          ) : usesCode ? (
+            <div>
+              <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
+                Code from WhatsApp
+              </span>
+              <div className="flex gap-2">
+                <input
+                  name="code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="6-digit code"
+                  className={cx(FIELD, fieldError("code") ? "border-danger" : "border-line")}
+                />
+                <button
+                  type="button"
+                  disabled={sending}
+                  onClick={async () => {
+                    setSending(true);
+                    setCodeError(null);
+                    try {
+                      const r = await sendPasswordChangeCode();
+                      if (r.ok) setCodeSent(r.data.sentTo);
+                      else setCodeError(r.error);
+                    } finally {
+                      setSending(false);
+                    }
+                  }}
+                  className="h-10 flex-none cursor-pointer rounded-[6px] border border-line-strong bg-surface px-3 text-sm font-medium whitespace-nowrap text-body hover:bg-canvas disabled:cursor-progress disabled:opacity-70"
+                >
+                  {sending ? "Sending…" : codeSent ? "Send again" : "Send code"}
+                </button>
+              </div>
+              {fieldError("code") || codeError ? (
+                <span className="mt-1.5 block text-[13px] text-danger">{fieldError("code") ?? codeError}</span>
+              ) : (
+                <span className="mt-1.5 block text-[13px] text-muted">
+                  {codeSent
+                    ? `Sent to ${codeSent} on WhatsApp.`
+                    : "We send a code to the work number on your account."}
+                </span>
+              )}
+            </div>
+          ) : (
+            <Field
+              name="current"
+              label="Current password"
+              autoComplete="current-password"
+              autoFocus
+              error={fieldError("current")}
+            />
+          )}
           <Field
             name="password"
             label="New password"

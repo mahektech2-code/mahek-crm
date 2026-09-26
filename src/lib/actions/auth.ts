@@ -25,6 +25,13 @@ import {
 } from "@/lib/result";
 import { mailConfigured, sendMail } from "@/lib/mailer";
 import {
+  findAccount,
+  otpAvailability,
+  resetPasswordWithOtp,
+  sendOtp,
+  verifyOtp,
+} from "@/lib/services/otp-service";
+import {
   appOrigin,
   findLiveReset,
   hashResetToken,
@@ -104,7 +111,20 @@ export async function signIn(
     return fail(wrong);
   }
 
-  await createSession(user.id, parsed.data.remember);
+  return completeSignIn(user, parsed.data.remember, "sign-in");
+}
+
+/**
+ * Everything after the person is known to be who they say — whether that was
+ * proven by a password or by a WhatsApp code. One path, so the two ways in
+ * cannot drift into opening different things.
+ */
+async function completeSignIn(
+  user: typeof users.$inferSelect,
+  remember: boolean,
+  action: "sign-in" | "sign-in-code",
+): Promise<ActionResult> {
+  await createSession(user.id, remember);
   await recordSignIn(user.id, newId("att"));
   // Nothing wrote this column, so every screen that asked when somebody last
   // signed in answered "never" — including the console's list of accounts
@@ -113,7 +133,7 @@ export async function signIn(
     .update(users)
     .set({ lastLoginAt: new Date() })
     .where(eq(users.id, user.id));
-  await audit(user, "sign-in", "user", user.id);
+  await audit(user, action, "user", user.id);
 
   const apps = await listUserApps(user.id);
   if (!apps.length) {
@@ -376,4 +396,86 @@ export async function setAppAccess(
 
   await audit(manager, "set-app-access", "user", userId, apps.join(", "));
   return ok("App access updated");
+}
+
+/* ------------------------------------------------ WhatsApp one-time codes */
+
+const WRONG_ACCOUNT = "That did not match an account. Check the spelling, or ask your manager to reset it.";
+
+/** Whether the login and reset screens should offer a WhatsApp code at all. */
+export async function codesOffered(): Promise<boolean> {
+  return (await otpAvailability()).available;
+}
+
+/**
+ * Step one of signing in with a code: send it to the work number on the
+ * account. The screen shows the masked number so the person knows where to look.
+ */
+export async function requestSignInCode(
+  identifier: string,
+  purpose: "login" | "password_reset" = "login",
+): Promise<ActionResult<{ sentTo: string; expiresInMinutes: number }>> {
+  const user = identifier.trim() ? await findAccount(identifier) : null;
+  if (!user || !user.active) return fail(WRONG_ACCOUNT);
+  const sent = await sendOtp(user.id, purpose);
+  if (!sent.ok) return fail(sent.error);
+  await audit(user, purpose === "login" ? "sign-in-code-sent" : "reset-code-sent", "user", user.id);
+  return ok2({ sentTo: sent.sentTo, expiresInMinutes: sent.expiresInMinutes }, `Code sent to ${sent.sentTo} on WhatsApp`);
+}
+
+const codeSignIn = z.object({
+  identifier: z.string().trim().min(1, "Enter your work number or email address."),
+  code: z.string().trim().min(4, "Enter the code from WhatsApp."),
+  remember: z.boolean().default(true),
+});
+
+/** Step two: the code instead of a password. Everything after is `completeSignIn`. */
+export async function signInWithCode(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = codeSignIn.safeParse({
+    identifier: formData.get("identifier"),
+    code: formData.get("code"),
+    remember: formData.get("remember") === "on",
+  });
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  const user = await findAccount(parsed.data.identifier);
+  if (!user || !user.active) return fail(WRONG_ACCOUNT);
+  const verified = await verifyOtp(user.id, "login", parsed.data.code);
+  if (!verified.ok) return fail(verified.error);
+  return completeSignIn(user, parsed.data.remember, "sign-in-code");
+}
+
+const codeReset = z
+  .object({
+    identifier: z.string().trim().min(1, "Enter your work number or email address."),
+    code: z.string().trim().min(4, "Enter the code from WhatsApp."),
+    password: z.string().min(8, "Passwords must be at least 8 characters."),
+    confirm: z.string(),
+  })
+  .refine((v) => v.password === v.confirm, { message: "The two passwords do not match.", path: ["confirm"] });
+
+/**
+ * A forgotten password, reset with a WhatsApp code instead of an email link.
+ * Same consequences as the link: every session on the account ends, and any
+ * reset link still waiting stops working.
+ */
+export async function resetPasswordWithCode(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = codeReset.safeParse({
+    identifier: formData.get("identifier"),
+    code: formData.get("code"),
+    password: formData.get("password"),
+    confirm: formData.get("confirm"),
+  });
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  const user = await findAccount(parsed.data.identifier);
+  if (!user || !user.active) return fail(WRONG_ACCOUNT);
+  const done = await resetPasswordWithOtp(user.id, parsed.data.code, parsed.data.password);
+  if (!done.ok) return fail(done.error);
+  await audit(user, "reset-password-code", "user", user.id);
+  return ok("Password changed. Sign in with the new one.");
 }

@@ -174,10 +174,10 @@ export async function mbosLogin(input: {
   }
 
   /* Checks 1, 2, 3 and 4, in that order, each with its own sentence. */
-  const checks = await runLoginChecks({ mobile: input.mobile, password: input.password });
+  const checks = await runLoginChecks({ mobile: input.mobile, password: input.password, otp: input.otp });
   if (!checks.ok) {
     const status =
-      checks.step === "unknown_user" || checks.step === "bad_password" ? 401 : 403;
+      checks.step === "unknown_user" || checks.step === "bad_password" || checks.step === "bad_otp" ? 401 : 403;
     return { ok: false, status, step: checks.step, error: checks.error };
   }
   const user = checks.user;
