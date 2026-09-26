@@ -392,3 +392,24 @@ function adviseOn(message: string): string | null {
   }
   return null;
 }
+
+/**
+ * The claims behind a day, for the Decide dialog — read-only.
+ *
+ * Asked of the same people who can open the Sales Dashboard, and narrowed by
+ * the same scope its list is: a server action is a URL, and the dialog is not
+ * the only thing that can post to it.
+ */
+export async function claimLinesForDayAction(
+  dayId: string,
+): Promise<Result<import("@/lib/services/expense-claims-service").ClaimLine[]>> {
+  const user = await requireUser();
+  const { listUserApps } = await import("@/lib/access");
+  if (!(await listUserApps(user.id)).includes("sales")) {
+    return fail("The Sales Dashboard is not open to you.", "not_permitted");
+  }
+  const { claimLinesForDay } = await import("@/lib/services/expense-claims-service");
+  const lines = await claimLinesForDay(String(dayId));
+  if (lines === null) return fail("That day is not one you can see.", "not_found");
+  return ok(lines);
+}

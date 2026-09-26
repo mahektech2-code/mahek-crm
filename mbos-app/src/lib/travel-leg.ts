@@ -228,7 +228,7 @@ export function navigationLine(args: {
 /* ═══════════════════════════════ what the session has already answered */
 
 /**
- * THE TWO RULES THAT DECIDE WHETHER A STOP ASKS, AND WHETHER IT IS PAID.
+ * THE TWO RULES THAT DECIDE HOW A STOP IS RECORDED, AND WHETHER IT IS PAID.
  *
  * Both were expressions inside `TravelGate`, which is a component that imports
  * the database through `data/travel` — so neither could be exercised without a
@@ -243,20 +243,52 @@ export function navigationLine(args: {
 export type SessionFacts = { modeKey: string; odometerStartKm: number | null } | null;
 
 /**
- * Does the journey still have to ask how he is getting there?
+ * HOW A VISIT'S JOURNEY IS RECORDED — and it is never by asking.
  *
- * No, where he punched in on a vehicle — the bike is still the bike at the
- * eleventh shop. Yes for `public_transport`, which is a day-level umbrella
- * over fares that genuinely change from one stop to the next.
+ * This used to ask at every stop on a public-transport day (bus, auto or taxi,
+ * then the fare on the way out), and the field would not answer it: a man
+ * with eleven shops to walk into is not going to type a ₹20 auto fare eleven
+ * times. Mahek's decision (Sep 2026) is that travel is asked twice a day and
+ * nowhere else — the vehicle at the punch-in, the meter at the punch-out where
+ * there is one — and every fare is claimed in Expenses, once, at the end.
  *
- * NO SESSION ALSO MEANS ASK, and that is the half worth stating. It is a
- * handset whose punch-in predates this build, or a day opened before the
- * question existed — and the old per-stop sheet is the right answer for both.
- * A silent default would put somebody's mileage on a vehicle nobody named.
+ * So a visit either records its journey SILENTLY under the day's own mode, or
+ * records none:
+ *
+ * - PUNCHED IN: a leg under the session's mode, which is what keeps the arrival
+ *   geofence and the dwell clock working. It never carries a claim — on a
+ *   meter day the punch-in and punch-out readings already price the
+ *   kilometres, and on a public-transport day the fares are claimed in
+ *   Expenses; pricing the leg as well would pay the same ride twice.
+ * - NOT PUNCHED IN: no leg at all. A silent default would put somebody's
+ *   mileage on a vehicle nobody named. The visit opens straight onto the form,
+ *   exactly as it did before journeys existed.
  */
-export function stopMustAskMode(session: SessionFacts, umbrellaKey = 'public_transport'): boolean {
-  if (!session) return true;
-  return session.modeKey === umbrellaKey;
+export type VisitLegPlan =
+  | { record: false }
+  | { record: true; modeKey: string; claimExcluded: boolean; reason: string | null };
+
+export function visitLegPlan(session: SessionFacts, umbrellaKey = 'public_transport'): VisitLegPlan {
+  if (!session) return { record: false };
+  if (legPricedBySession(session)) {
+    return {
+      record: true,
+      modeKey: session.modeKey,
+      claimExcluded: true,
+      reason: 'Counted in the meter readings taken at the punch-in and the punch-out.',
+    };
+  }
+  if (session.modeKey === umbrellaKey) {
+    return {
+      record: true,
+      modeKey: session.modeKey,
+      claimExcluded: true,
+      reason: 'Fares on a public-transport day are claimed in Expenses.',
+    };
+  }
+  /* Walking, a customer's vehicle: nothing is priced either way, and a
+     sentence explaining a deduction that never happened is worse than none. */
+  return { record: true, modeKey: session.modeKey, claimExcluded: false, reason: null };
 }
 
 /**
@@ -270,4 +302,21 @@ export function stopMustAskMode(session: SessionFacts, umbrellaKey = 'public_tra
  */
 export function legPricedBySession(session: SessionFacts): boolean {
   return !!session && session.odometerStartKm !== null;
+}
+
+/**
+ * AFTER THE PUNCH-OUT: is there travel he has to claim by hand?
+ *
+ * Not on a meter day — the two readings ARE the claim, priced per kilometre
+ * with nothing to type. On every other day the fares (the bus, the auto, the
+ * train), and the food and anything else, reach the office only if he raises
+ * them in Expenses, and a day's fares are the easiest money to forget by the
+ * following week. So the punch-out asks him to do it now — a prompt, never a
+ * gate: "Later" is always an answer, because the punch-out itself is done.
+ *
+ * A day with no session at all (a punch-in from before the vehicle was asked)
+ * is prompted too: nothing measured it, so nothing is claimed unless he says.
+ */
+export function promptsForExpenses(session: SessionFacts): boolean {
+  return !legPricedBySession(session);
 }

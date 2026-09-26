@@ -4837,6 +4837,33 @@ MahekOne sets no monthly target for a field salesman and a figure with nothing
 to be computed from would be an invention on the one screen where a wrong number
 is least forgivable.
 
+**TRAVEL IS ASKED TWICE A DAY, AND NEVER AT A SHOP — a reversal (Sep 2026).**
+The paragraphs below describe how a visit used to ask how he was travelling,
+open a meter camera, and ask for the bus fare on the way out. The field would
+not answer it: eleven shops is eleven questions. Now the vehicle is asked at
+the PUNCH-IN, the meter is read at the PUNCH-OUT where the day started on one,
+and nothing about travel is asked on the way to a shop, at the check-in or at
+the check-out. `TravelGate` asks nothing: `visitLegPlan` (pure, in
+`mbos-app/src/lib/travel-leg.ts`) records the visit's journey silently under
+the day's own mode, so the arrival geofence and the dwell clock still work, or
+records none where he never punched in — never a vehicle nobody named. A visit
+leg never carries a claim: a meter day is priced by its two readings, and every
+other day's fares are claimed in Expenses. The fare sheet at check-out is gone.
+
+**After a punch-out that the meter did not measure, he is asked to raise the
+day's costs.** `promptsForExpenses` decides it; the pop-up's button opens
+Expenses with the claim sheet already up, and "Later" is always an answer — the
+punch-out is done either way. A claim carries up to
+`mbos.expenses.maxAttachments` files — photographs, several from the gallery at
+once, or PDFs checked against `attachments.maxSizeMb` as they are picked — and
+`handleExpense` files EVERY one under the claim, including a file the media
+queue uploaded before the claim existed, parented to the handset's literal
+`pending`. Only the claimant's own uploads are moved. Expense files had no read
+rule and answered 404 to everybody; `canReadExpenseAttachment` reads them as
+his mileage evidence is read — him, or a Sales Dashboard holder with him in
+scope. The Decide dialog on `/sales/expenses` now shows each claim with its
+files; before, a manager decided a day's money from two totals.
+
 **HOW HE GOT TO THE SHOP IS ASKED WHEN HE SETS OFF, and "Start visit" now
 means "I am setting off".** Pressing it opens `TravelGate` — the modes from
 `mbos_travel_modes`, an admin's rows rather than a list in a screen — and the
