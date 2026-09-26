@@ -9,6 +9,7 @@ import {
   NO_ORDER_REASONS,
   NOT_INTERESTED_REASONS,
 } from "@/lib/call-outcomes";
+import { CALLER_ROLES, CALL_REASON_CODES, DELIVERY_ISSUES } from "@/lib/call-reasons";
 
 /* ---------------------------------------------------------------------------
  * WHAT THE LANGUAGE MODEL IS ALLOWED TO SAY ABOUT A CALL.
@@ -212,6 +213,62 @@ export const callReadingSchema = z.object({
   casual: z
     .object({ purpose: z.enum(codes(CASUAL_TALK_PURPOSES)).nullable() })
     .nullable(),
+  /*
+   * WHY THEY RANG, and the answers that reason's form demands. Every inbound
+   * reason carries required boxes of its own — the product enquired about,
+   * what they asked about the money, what went wrong with a delivery — and a
+   * reason filled without them is a form that refuses to save. So the model
+   * answers them from the words, and says null where the words do not.
+   */
+  inbound: z
+    .object({
+      reason: z
+        .enum(CALL_REASON_CODES as [string, ...string[]])
+        .nullable()
+        .describe("Only when THE CUSTOMER called us: the main reason they rang."),
+      callerRole: z
+        .enum(codes(CALLER_ROLES))
+        .nullable()
+        .describe("Who at the customer rang, only if the words say: owner, purchase, accounts, store, production, other."),
+      callerName: z
+        .string()
+        .nullable()
+        .describe("The caller's name, if it was said."),
+      product: z
+        .string()
+        .nullable()
+        .describe("The product they asked or talked about, as named."),
+      customerQuery: z
+        .string()
+        .nullable()
+        .describe("What they asked, in one short English sentence."),
+      paymentStatus: z
+        .string()
+        .nullable()
+        .describe("What they say the payment position is: 'cheque posted Tuesday'."),
+      deliveryIssue: z
+        .enum(codes(DELIVERY_ISSUES))
+        .nullable()
+        .describe("For a delivery / transport call: what is wrong with it."),
+      orderRef: z
+        .string()
+        .nullable()
+        .describe("An order or invoice number they quoted, exactly."),
+      problem: z
+        .string()
+        .nullable()
+        .describe("For technical support: what is going wrong with the product."),
+      application: z
+        .string()
+        .nullable()
+        .describe("What they want the product for, in their words."),
+      quantity: z
+        .string()
+        .nullable()
+        .describe("A quantity they mentioned, in their words."),
+    })
+    .nullable()
+    .describe("Null when we called them, or nothing says why they rang."),
   doNotCall: z.object({
     said: z
       .boolean()

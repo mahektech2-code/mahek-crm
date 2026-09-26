@@ -1295,10 +1295,11 @@ export const SETTINGS = [
     type: "integer",
     category: "complaints",
     label: "Maximum note length",
-    description: "Longest note accepted when logging an interaction.",
-    default: 2000,
+    description:
+      "Longest note accepted when logging an interaction. A dictated note is as long as the call was, so this is set well above anything typed.",
+    default: 20000,
     min: 200,
-    max: 10000,
+    max: 100000,
   },
   {
     key: "customers.defaultCreditDays",

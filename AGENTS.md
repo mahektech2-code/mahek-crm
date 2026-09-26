@@ -2858,6 +2858,55 @@ click. Existing open reminders, complaints, opportunities and samples are
 read first, and a match is named, with a move offered in place of a second
 reminder.
 
+**A DICTATION HAS NO LENGTH A PERSON WILL MEET, because it is sent while it is
+spoken.** The recorder cuts itself into pieces at the speaker's own pauses —
+at least 15 seconds of speech, then the first stretch as quiet as the room,
+never later than 27 — and each piece is a fresh MediaRecorder on the same
+stream, so each is a complete file sent to `/api/dictate/piece` the moment it
+is cut. The next piece starts before the last stops, so nothing between them
+is lost. Every piece sits inside Sarvam's 30-second ceiling, so no provider's
+limit reaches the person any more, and the wait after Stop is ONE short piece
+however long they talked. The only ceiling is an hour, which exists so a
+microphone left open on a desk overnight does not stream the office to a
+provider. A piece that fails is retried once and then offered as "Send it
+again" from the audio still held; a refusal no retry will change (no key, no
+credit, switched off) stops the recording at once rather than after five more
+minutes of talking. Each piece is written into English as a CONTINUATION
+(`PIECE_NOTE`), so the pieces join into one note rather than a stack of small
+ones. A call note keeps up to `interactions.maxNotesLength` — 20,000 now, moved
+from 2,000 by `0171` where nobody chose it — and the assistant reads up to
+`MAX_CALL_TEXT`.
+
+**THE MICROPHONE READS THE CALL WHILE IT WRITES THE NOTE, not after.** It
+used to be two trips with a person between them: the modal transcribed and
+wrote the English, the telecaller pressed "Use this", and only then did the
+assistant start. Each piece's answer is a stream — `heard` (the words and the
+provider's rough English) before `written` — and the moment every piece is
+heard the call assistant starts reading from the transcript, while the last
+piece's English is still being written. So the wait is the last piece plus the
+slower of writing and reading, not their sum plus a click. The draft is
+corrected to the English actually used once it exists
+(`noteDraftEnglish`). A reading that fails never costs the note.
+
+**The reading is drawn IN the modal, and one press uses both.** "Use this and
+fill the form" puts the note in the box and fills the form from the first pick
+— only where that pick is READY. Anything the assistant would have asked about
+stays a question: in the modal "Which was it?" is a row of buttons, and tapping
+one IS the import. Do-not-call is shown there and filled by nothing but the
+telecaller's own click on the panel, as before. `DictationCompanion` is how
+`dictate.tsx` carries this without knowing what a call is.
+
+**An edit is read again, and the edit wins.** The reading is of the words that
+were heard; a telecaller who corrects "15 days" to "5 days" has made the one
+change that matters, and filling the form from the old reading would put the
+mistake back. So a pause after typing re-reads the note with `edited: true`,
+which tells the model the corrected English overrides the transcript and keeps
+the transcript out of the rules and the classifier. Until the new answer lands
+the card says so and its buttons are held. Pressing "Use this" on a note the
+reading has not caught up with — an edit, Tighten, or Replace dropping the typed
+half — reads it again first and fills when it lands. Every reading is its own
+`call_ai_drafts` row; only the one applied is linked to the call.
+
 **Examples come from our own book, not from a fine-tune.** Each request shows
 the model the past calls whose notes read most like this one
 (`calls_notes_trgm_idx`, trigram KNN), one per distinct note, and leaves out

@@ -120,6 +120,14 @@ export type FormFill = {
   outcome: string;
   /** Inbound only: why they rang, where the intent says so plainly. */
   callReason?: string;
+  /**
+   * Inbound only: the reason's own boxes (`reasonFieldsFor`), answered from
+   * the words. Without them a reason is a form that refuses to save.
+   */
+  reasonDetail?: Record<string, string>;
+  /** Inbound only: who rang, where the words said so. Never guessed. */
+  callerRole?: string;
+  callerName?: string;
   outcomeDetail: Record<string, string>;
   followUpDate?: string;
   noOrderNextCallDate?: string;
@@ -753,6 +761,48 @@ function paymentNote(amount: number | null | undefined): string {
 
 /* ------------------------------------------------------ primary builders */
 
+/**
+ * Why they rang and that reason's answers. The model's own reading of the
+ * reason wins over the intent's default, because it heard the whole call and
+ * the intent map only knows what the call ENDED as — a customer ringing about
+ * a late delivery who also paid is a delivery call that produced a promise.
+ */
+export function inboundReason(
+  c: { intent: string; evidence?: string | null },
+  r: CallReading | null,
+): Pick<FormFill, "callReason" | "reasonDetail" | "callerRole" | "callerName"> {
+  const caller: Pick<FormFill, "callerRole" | "callerName"> = {
+    ...(r?.inbound?.callerRole ? { callerRole: r.inbound.callerRole } : {}),
+    ...(r?.inbound?.callerName?.trim() ? { callerName: r.inbound.callerName.trim() } : {}),
+  };
+  const reason =
+    r?.inbound?.reason ?? INTENT_CALL_REASON[c.intent as keyof typeof INTENT_CALL_REASON];
+  if (!reason) return caller;
+  const i = r?.inbound ?? null;
+  const product =
+    i?.product ??
+    r?.opportunity?.product ??
+    r?.sample?.product ??
+    r?.order.lines[0]?.product ??
+    null;
+  const answers: Record<string, string | null | undefined> = {
+    product,
+    customerQuery: i?.customerQuery ?? r?.summary ?? c.evidence ?? null,
+    paymentStatus: i?.paymentStatus,
+    issue: i?.deliveryIssue,
+    orderRef: i?.orderRef,
+    problem: i?.problem ?? r?.complaint?.description,
+    application: i?.application ?? r?.sample?.application,
+    approxQuantity: i?.quantity ?? r?.opportunity?.quantity,
+    quantityPotential: i?.quantity ?? r?.opportunity?.quantity,
+    requiredQuantity: i?.quantity,
+  };
+  const reasonDetail: Record<string, string> = {};
+  for (const [k, v] of Object.entries(answers))
+    if (typeof v === "string" && v.trim()) reasonDetail[k] = v.trim();
+  return { ...caller, callReason: reason, reasonDetail };
+}
+
 function buildPrimary(
   c: Candidate,
   input: DecideInput,
@@ -773,9 +823,7 @@ function buildPrimary(
     fill: {
       outcome,
       outcomeDetail: {},
-      ...(INTENT_CALL_REASON[c.intent]
-        ? { callReason: INTENT_CALL_REASON[c.intent] }
-        : {}),
+      ...inboundReason(c, r),
     },
     door: "form",
   };

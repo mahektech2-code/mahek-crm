@@ -50,6 +50,7 @@ import type { ReasonField } from "@/lib/call-reasons";
 import { CardGrid } from "@/components/ui/card-grid";
 import {
   CALLER_ROLES,
+  CALLER_ROLE_LABEL,
   CALL_REASONS,
   CALL_REASON_LABEL,
   EXCLUSIVE_ACTION,
@@ -1272,17 +1273,29 @@ function CallPanelForm({
   async function save(advance: boolean) {
     if (!target) return;
 
+    /*
+     * A refusal here used to be `setErrors` and nothing else. The message
+     * lands under its field — which, with the assistant's card above a long
+     * form and Save in the footer, was usually off the screen. Save simply
+     * "did nothing", and the call was never logged. So every refusal also
+     * says itself where the telecaller is looking.
+     */
+    const refuse = (errs: Record<string, string>) => {
+      setErrors((e) => ({ ...e, ...errs }));
+      const first = Object.values(errs)[0];
+      if (first) push(`Not saved yet: ${first}`, "error");
+    };
+
     // A line somebody put on the order and never counted is a question, not a
     // blank. Dropping it silently is how an order goes out one product short
     // and nobody finds out until the customer rings about it.
     if (needsProducts && unquantified.length) {
-      setErrors((e) => ({
-        ...e,
+      refuse({
         productQuantities:
           unquantified.length === 1
             ? `How many cans of ${unquantified[0].product.name}? Give a quantity, or take it off the order.`
             : `${unquantified.length} products have no quantity. Give each one a number, or take it off the order.`,
-      }));
+      });
       return;
     }
 
@@ -1296,10 +1309,9 @@ function CallPanelForm({
       (f) => f.required && !(reasonDetail[f.key] ?? "").trim(),
     );
     if (missing) {
-      setErrors((e) => ({
-        ...e,
+      refuse({
         [`reasonDetail.${missing.key}`]: `${missing.label} is needed for a ${CALL_REASON_LABEL[callReason]} call.`,
-      }));
+      });
       return;
     }
     const missingOutcome = outcomeFields.find(
@@ -1308,23 +1320,19 @@ function CallPanelForm({
         !(outcomeDetail[f.key] ?? "").trim(),
     );
     if (missingOutcome) {
-      setErrors((e) => ({
-        ...e,
+      refuse({
         [`outcomeDetail.${missingOutcome.key}`]: `${missingOutcome.label} is needed.`,
-      }));
+      });
       return;
     }
     if (needsActionDate && !nextActionDate) {
-      setErrors((e) => ({ ...e, nextActionDate: "Say which day this is for." }));
+      refuse({ nextActionDate: "Say which day this is for." });
       return;
     }
     /* A yes with nothing named is the box left half-filled. Refused here and
        not silently dropped, or the telecaller believes they recorded one. */
     if (offersOpportunity && hasOpportunity && !oppProduct.trim()) {
-      setErrors((e) => ({
-        ...e,
-        "opportunity.product": "Name what they might buy, or answer No.",
-      }));
+      refuse({ "opportunity.product": "Name what they might buy, or answer No." });
       return;
     }
 
@@ -1351,7 +1359,7 @@ function CallPanelForm({
         }
       }
       if (Object.keys(refusals).length) {
-        setErrors((e) => ({ ...e, ...refusals }));
+        refuse(refusals);
         return;
       }
     }
@@ -1377,7 +1385,11 @@ function CallPanelForm({
           interactionType: type!,
           outcome: isOrderReceived ? null : outcome,
           notes,
-          quickNoteIds: picked,
+          /* Only chips the current outcome draws. A chip picked under an
+             earlier outcome is no longer on screen to untick, and sending it
+             was refused on the server — every retry, with nothing visible
+             to fix. */
+          quickNoteIds: picked.filter((id) => chips.some((c) => c.id === id)),
           productQuantities,
           lineDiscounts: Object.keys(discounts).length ? discounts : undefined,
           followUpDate: needsFollowUp ? followUpDate : undefined,
@@ -1545,6 +1557,35 @@ function CallPanelForm({
     if (inbound && fill.callReason && !callReason) {
       setCallReason(fill.callReason);
       filled.push(`why they called: ${CALL_REASON_LABEL[fill.callReason] ?? fill.callReason}`);
+    }
+    if (inbound && fill.callerRole && !callerRole) {
+      setCallerRole(fill.callerRole);
+      filled.push(`who called: ${CALLER_ROLE_LABEL[fill.callerRole] ?? fill.callerRole}`);
+    }
+    if (inbound && fill.callerName && !callerName.trim()) setCallerName(fill.callerName);
+    /* Also where the telecaller had already picked the SAME reason. */
+    if (inbound && fill.callReason && (callReason || fill.callReason) === fill.callReason) {
+      /*
+       * A reason brings its own required boxes, and the assistant used to set
+       * the reason without them — so every inbound call it filled as a
+       * payment, an enquiry or a delivery was refused at Save, silently. The
+       * reading answers them now (`inboundReason`); only boxes this reason
+       * actually has are filled, and never one somebody typed in.
+       */
+      const keys = new Set(reasonFieldsFor(fill.callReason).map((f) => f.key));
+      const answers = Object.entries(fill.reasonDetail ?? {}).filter(
+        ([k, v]) => keys.has(k) && v.trim(),
+      );
+      if (answers.length) {
+        setReasonDetail((d) => {
+          const next = { ...d };
+          for (const [k, v] of answers) if (!(next[k] ?? "").trim()) next[k] = v;
+          return next;
+        });
+        filled.push(
+          `${answers.length} answer${answers.length === 1 ? "" : "s"} about why they called`,
+        );
+      }
     }
 
     const detail = Object.entries(fill.outcomeDetail).filter(([k]) => !(outcomeDetail[k] ?? "").trim());

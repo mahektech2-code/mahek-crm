@@ -1,7 +1,7 @@
 import "server-only";
 import { getConfig } from "@/lib/config/store";
 import { refineText, transcribeSpeech, voiceReadiness } from "@/lib/dictation";
-import type { RefineMode } from "@/lib/dictation";
+import type { OnHeard, RefineMode } from "@/lib/dictation";
 
 /* ---------------------------------------------------------------------------
  * Dictation as a REQUEST, with one copy of the sentences it answers in.
@@ -87,6 +87,10 @@ export type TranscribeRequest = {
    * be wrong.
    */
   seconds: number;
+  /** See `transcribeSpeech` — fired before the written English pass. */
+  onHeard?: OnHeard;
+  /** One piece of a longer dictation, written as a continuation. */
+  piece?: boolean;
 };
 
 export async function transcribeRequest(input: TranscribeRequest): Promise<Answer> {
@@ -122,6 +126,8 @@ export async function transcribeRequest(input: TranscribeRequest): Promise<Answe
     sarvamModel: config["voice.transcriptionModel"],
     openaiTranscriptionModel: config["voice.openaiTranscriptionModel"],
     languageModel: config["voice.languageModel"],
+    onHeard: input.onHeard,
+    piece: input.piece,
   });
 
   if (!outcome.ok) {
