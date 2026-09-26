@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import { db, sql as client } from "./index";
 import {
@@ -95,6 +97,7 @@ import { SETTINGS } from "../lib/config/registry";
 import { storedSettingValue } from "@/lib/config/storage";
 import { eq, inArray } from "drizzle-orm";
 import { seedCatalogue } from "./seed-catalogue";
+import { starterStatements, WHATSAPP_STARTER_MIGRATIONS } from "../lib/whatsapp-starter";
 
 /* ---------------------------------------------------------------------------
  * Seed: around fifty realistic customers with six months of orders, bills and
@@ -1095,6 +1098,15 @@ async function main() {
     updatedAt: at(-14 + i, 12),
   }));
   await db.insert(waTemplates).values(templateRows);
+
+  /* The eight approved templates and their starter rules, which the truncate
+     above removed. Replayed from the migrations that state them — see
+     `lib/whatsapp-starter.ts` for why this is not a second copy. This also
+     archives the ten demo templates, exactly as production has them. */
+  for (const tag of WHATSAPP_STARTER_MIGRATIONS) {
+    const text = readFileSync(join(process.cwd(), "drizzle", `${tag}.sql`), "utf8");
+    for (const stmt of starterStatements(text)) await client.unsafe(stmt);
+  }
 
   // A spread of states, including copies never confirmed — the watch metric.
   const messageRows: Array<typeof waMessages.$inferInsert> = [];
