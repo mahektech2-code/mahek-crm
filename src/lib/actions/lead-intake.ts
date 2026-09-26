@@ -14,6 +14,12 @@ import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { err, fromThrown, ok, type Err, type FieldError, type Result } from "@/lib/result";
 import { salesTypeIsOffered, salesTypeLabel, type LeadSalesType } from "@/lib/lead-labels";
 import {
+  enquiryForLeadConversion,
+  EnquiryLeadConflict,
+  linkEnquiryToNewLead,
+} from "@/lib/services/enquiry-service";
+import { notifyDeskAssigners } from "@/lib/services/lead-desk-assignment-service";
+import {
   DUPLICATE_DISMISSED_ACTION,
   phoneAlreadyOnTheBook,
   phonesOnTheBook,
@@ -125,6 +131,8 @@ const captureSchema = z.object({
   name: z.string().trim().min(2, "The shop needs a name.").max(200),
   companyName: z.string().trim().max(200).optional(),
   contactPerson: z.string().trim().max(120).optional(),
+  /** The customer's own address, where they gave one. Optional: a phone call often has none. */
+  email: z.string().trim().max(200).email("That is not an email address.").optional().or(z.literal("")),
   phone: z
     .string()
     .trim()
@@ -191,6 +199,18 @@ const captureSchema = z.object({
   notes: z.string().trim().max(2000).optional(),
 
   /**
+   * RAISED FROM A WEBSITE ENQUIRY. Set only by the enquiry screen's Create lead,
+   * and it changes three things and nothing else: the source is the enquiry's
+   * own (the client's `source` and `sourceDetail` are ignored, so a stale tab
+   * cannot claim a channel the enquiry did not come from), the enquiry must be
+   * one that may become a lead and must not already have one, and the enquiry
+   * is pointed at the new lead in the SAME transaction. Everything else — the
+   * duplicate guard, the Suspect rung, the audit, the timeline — is this
+   * function's own, which is the point: there is one way to raise a lead.
+   */
+  fromEnquiry: z.object({ enquiryId: z.string().min(1) }).optional(),
+
+  /**
    * How hard the team should push this one — the MANAGER'S judgement, and
    * `setLeadPriority` holds it to `lead.verify`. Accepted here only from
    * somebody who holds that too (checked below, not just by hiding the field),
@@ -223,10 +243,17 @@ export async function captureLead(
   try {
     const parsed = captureSchema.safeParse(input);
     if (!parsed.success) return zodErr(parsed.error);
-    const v = parsed.data;
+    let v = parsed.data;
 
     const ctx = await requireCapability("lead.work");
     const config = await getConfig();
+
+    /* An enquiry's own facts win over what the form sent for them. */
+    if (v.fromEnquiry) {
+      const found = await enquiryForLeadConversion(v.fromEnquiry.enquiryId);
+      if (!found.ok) return found;
+      v = { ...v, source: found.data.leadSource, sourceDetail: found.data.sourceDetail };
+    }
 
     /*
      * THE SOURCE IS ONE OF THE CONFIGURED TEN, AND "OTHER" HAS TO SAY WHAT.
@@ -376,6 +403,7 @@ export async function captureLead(
         name: v.name,
         companyName: v.companyName || null,
         contactPerson: v.contactPerson || null,
+        email: v.email || null,
         phone: v.phone,
         city: v.city,
         address: v.address || null,
@@ -474,8 +502,20 @@ export async function captureLead(
           nextActionOwnerId: v.nextAction?.ownerId ?? null,
           distributorCustomerId: distributorId,
           duplicateAllowed: Boolean(v.allowDuplicate),
+          fromEnquiryId: v.fromEnquiry?.enquiryId ?? null,
         },
       });
+
+      /* Last, inside the same transaction: if the enquiry already has a lead
+         this throws, and the lead above is undone with it. */
+      if (v.fromEnquiry) {
+        await linkEnquiryToNewLead(tx, {
+          enquiryId: v.fromEnquiry.enquiryId,
+          customerId,
+          leadName: v.name,
+          actorId: ctx.user.id,
+        });
+      }
     });
 
     /*
@@ -513,14 +553,31 @@ export async function captureLead(
         .catch(() => {});
     }
 
+    if (v.fromEnquiry) {
+      try {
+        revalidatePath("/enquiries");
+        revalidatePath("/enquiries/list");
+        revalidatePath(`/enquiries/list/${v.fromEnquiry.enquiryId}`);
+      } catch {
+        /* no request context */
+      }
+      /* An unowned lead is on nobody's desk, so whoever assigns is told it is waiting. */
+      if (!v.ownerId) {
+        await notifyDeskAssigners({ customerId, leadName: v.name, byUserId: ctx.user.id }).catch(() => {});
+      }
+    }
+
     refresh(customerId);
     return ok(
       { customerId, stage: foot },
-      v.salesType
+      v.fromEnquiry && !v.ownerId
+        ? "Lead created from the enquiry. It has no owner yet, so it is not on anybody's calling desk until it is assigned."
+        : v.salesType
         ? "Lead raised as a Suspect."
         : "Lead raised. No sales type was chosen, so it climbs the original six rungs until somebody sets one.",
     );
   } catch (e) {
+    if (e instanceof EnquiryLeadConflict) return err(e.message, "conflict");
     return fromThrown(e);
   }
 }

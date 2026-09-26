@@ -1,6 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { getConfig } from "../config/store";
 import {
   calls,
   type OrderLine,
@@ -105,6 +106,7 @@ type RawRow = {
   ownerName: string | null;
   nextOwnerName: string | null;
   managerName: string | null;
+  unowned: boolean;
   requestState: string | null;
   requestedAt: Date | string | null;
   lostFrom: string | null;
@@ -142,7 +144,18 @@ function valuesOf(r: RawRow): DeskValues {
   };
 }
 
-function toRow(r: RawRow): DeskLeadRow {
+/**
+ * A source CODE is drawn as its configured label. `leads.sources` is the one
+ * list of channels, and the code stored on the lead ("website") is what keeps
+ * it countable when somebody rewords one; a lead raised before the list
+ * existed carries a free-text spelling, which is shown as it is.
+ */
+function sourceName(code: string | null, sources: readonly { code: string; label: string }[]): string | null {
+  if (!code) return code;
+  return sources.find((s) => s.code === code)?.label ?? code;
+}
+
+function toRow(r: RawRow, sources: readonly { code: string; label: string }[] = []): DeskLeadRow {
   const values = valuesOf(r);
   const state = isRequestState(r.requestState) ? r.requestState : null;
   const phase = phaseOf(r.stage as LeadStage, values, Number(r.callCount), state);
@@ -152,7 +165,7 @@ function toRow(r: RawRow): DeskLeadRow {
     id: r.id,
     name: r.companyName || r.name,
     city: r.city,
-    source: r.source,
+    source: sourceName(r.source, sources),
     stage: r.stage as LeadStage,
     salesType: r.salesType as LeadSalesType | null,
     priority: r.priority as LeadPriority | null,
@@ -160,7 +173,9 @@ function toRow(r: RawRow): DeskLeadRow {
     nextAction: r.nextAction,
     nextActionDate: r.nextActionDate,
     nextActionKind: nextActionKindOf(r.nextAction),
-    responsible: pending ? (r.managerName ?? r.nextOwnerName) : (r.nextOwnerName ?? r.ownerName),
+    responsible: pending
+      ? (r.managerName ?? r.nextOwnerName)
+      : (r.nextOwnerName ?? r.ownerName ?? (r.unowned ? "Unassigned" : null)),
     callCount: Number(r.callCount),
     callOutcomes: (r.callOutcomes ?? []).filter(isCallOutcome),
     phase,
@@ -172,6 +187,7 @@ function toRow(r: RawRow): DeskLeadRow {
         ? ladderKeyOfLost(r.lostFrom as LeadStage | null, values, Number(r.callCount))
         : ladderKeyOf(phase),
     requestedAt: r.requestedAt ? new Date(r.requestedAt).toISOString() : null,
+    unassigned: Boolean(r.unowned),
   };
 }
 
@@ -192,6 +208,7 @@ const ROW_COLUMNS = sql`
   customers.created_at as "createdAt",
   customers.lead_next_action as "nextAction", customers.lead_next_action_date::text as "nextActionDate",
   ou.name as "ownerName", nu.name as "nextOwnerName", lm.name as "managerName",
+  (customers.owner_id is null) as "unowned",
   customers.prospect_request_state as "requestState",
   customers.prospect_requested_at as "requestedAt",
   (select t.from_stage::text from lead_stage_transitions t
@@ -238,7 +255,8 @@ export async function callingDesk(day: string, view: DeskView): Promise<CallingD
      order by customers.lead_next_action_date asc nulls first, customers.created_at desc
      limit ${DESK_LEAD_CAP}`);
 
-  const all = [...raw].map(toRow);
+  const sources = (await getConfig())["leads.sources"];
+  const all = [...raw].map((r) => toRow(r, sources));
   const summary = deskSummary(all, view, day);
 
   return {
@@ -337,6 +355,8 @@ export type DeskLeadRecord = {
   ladderIndex: number;
   stageDates: Partial<Record<LadderKey, string>>;
   ownerName: string | null;
+  /** Nobody owns it — it is on no telecaller's desk. */
+  unassigned: boolean;
   managerName: string | null;
   values: DeskValues;
   /** Whether the GST number has been checked against the register. */
@@ -828,7 +848,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
     phone: rec.mobile,
     email: extras?.email ?? null,
     address: extras?.address ?? null,
-    source: rec.source,
+    source: sourceName(rec.source, (await getConfig())["leads.sources"]) ?? "",
     createdAt: created.toISOString(),
     enquiry: extras?.enquiry ?? null,
     stage: rec.stage,
@@ -839,6 +859,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
     ladderIndex: key ? ladder.indexOf(key) : -1,
     stageDates,
     ownerName: extras?.ownerName ?? rec.salesmanName,
+    unassigned: !rec.salesmanId,
     managerName: rec.leadManagerName,
     values,
     gstVerified: rec.gstVerified,

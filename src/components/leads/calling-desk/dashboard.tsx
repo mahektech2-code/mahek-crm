@@ -105,6 +105,7 @@ export function Dashboard({
   greeting,
   base,
   intakeHref,
+  canAssign,
 }: {
   /** Every lead in the desk's book, lean. The tiles, the list and both cards are computed from these. */
   all: DeskLeadRow[];
@@ -116,6 +117,8 @@ export function Dashboard({
   /** `/crm/leads/calling-desk`, so no link here need spell it. */
   base: string;
   intakeHref: string;
+  /** Whether this person may hand a lead to somebody, so the banner says how. */
+  canAssign: boolean;
 }) {
   const [view, setView] = React.useState<DeskView>(initialView);
   const desk = React.useMemo(() => deskSummary(all, view, day), [all, view, day]);
@@ -129,6 +132,7 @@ export function Dashboard({
       /* the address bar is a courtesy; the list has already changed */
     }
   };
+  const unowned = all.filter((r) => r.unassigned && r.phase !== "lost").length;
   const pipeline = () => {
     choose("all");
     document.getElementById("lead-list")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -173,6 +177,27 @@ export function Dashboard({
           </Link>
         </div>
       </div>
+
+      {/* Leads nobody owns are on no telecaller's desk. Only somebody whose scope is wider than
+          one book can see them at all, so this is drawn for exactly the people who can act on it. */}
+      {unowned > 0 ? (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-[4px] border border-warn-line bg-warn-soft px-4 py-2.5 text-[13px] text-warn-ink">
+          <span>
+            <b>
+              {unowned} {unowned === 1 ? "lead has" : "leads have"} no owner yet
+            </b>{" "}
+            and {unowned === 1 ? "is" : "are"} on no telecaller&rsquo;s desk.{" "}
+            {canAssign ? "Open one and use Assign." : "Ask whoever manages the desk to assign them."}
+          </span>
+          <button
+            type="button"
+            onClick={() => choose("unassigned")}
+            className="cursor-pointer rounded-[4px] border border-warn-line bg-surface px-2.5 py-1 text-[13px] font-medium text-warn-ink"
+          >
+            Show them
+          </button>
+        </div>
+      ) : null}
 
       {/* --------------------------------------------- first strip of five */}
       <MetricStrip

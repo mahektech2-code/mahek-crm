@@ -1,5 +1,6 @@
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { requireUser } from "@/lib/auth";
+import { canLead } from "@/lib/services/lead-console-service";
 import { nowMs } from "@/lib/format";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
@@ -60,6 +61,7 @@ export async function Body({
       greeting={`Good ${part}, ${first}`}
       base={leadHref(workspace, "leads/calling-desk")}
       intakeHref={leadHref(workspace, "leads/intake")}
+      canAssign={await canLead(user, "lead.verify")}
     />
   );
 }

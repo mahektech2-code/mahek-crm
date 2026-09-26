@@ -41,6 +41,7 @@ import {
 import {
   LogCallDialog,
   LostDialog,
+  AssignDialog,
   MessageDialog,
   NextActionDialog,
   RequestDialog,
@@ -48,7 +49,7 @@ import {
 
 type Coded = { code: string; label: string };
 type Tab = "overview" | "calls" | "comms" | "timeline";
-type DialogState = { kind: "call" | "message" | "next" | "request" | "lost"; preset?: string | null } | null;
+type DialogState = { kind: "call" | "message" | "next" | "request" | "lost" | "assign"; preset?: string | null } | null;
 
 /* ---------------------------------------------------------------------------
  * The Telecaller's lead record — Version 6, drawn from the real lead.
@@ -75,6 +76,8 @@ export function RecordScreen({
   sampleReasons,
   orderBlockers,
   base,
+  canAssign,
+  assignees,
 }: {
   lead: DeskLeadRecord;
   canWork: boolean;
@@ -87,6 +90,10 @@ export function RecordScreen({
   orderBlockers: Coded[];
   /** `/crm/leads/calling-desk`, so the breadcrumb and back links need not spell it. */
   base: string;
+  /** Whether this person may hand the lead to somebody — `lead.verify`, held by managers and administrators. */
+  canAssign: boolean;
+  /** Who it can be handed to: the people who hold the Calling desk. */
+  assignees: { id: string; name: string }[];
 }) {
   const [tab, setTab] = React.useState<Tab>("overview");
   const [dialog, setDialog] = React.useState<DialogState>(null);
@@ -139,6 +146,15 @@ export function RecordScreen({
       </div>
 
       {/* --------------------------------------------------- the banners */}
+      {lead.unassigned && !lead.lost ? (
+        <Callout tone="warn">
+          <div>
+            <b>Nobody owns this lead yet.</b> It is on no telecaller&rsquo;s calling desk until it is assigned
+            {canAssign ? " — use Assign above." : ". Ask whoever manages the desk to assign it."}
+          </div>
+        </Callout>
+      ) : null}
+
       {lead.lost ? (
         <Callout tone="danger">
           <div>
@@ -246,6 +262,11 @@ export function RecordScreen({
             >
               Edit
             </Button>
+            {!lead.lost && canAssign ? (
+              <Button size="sm" variant="secondary" onClick={() => open("assign")}>
+                {lead.ownerName ? "Reassign" : "Assign"}
+              </Button>
+            ) : null}
             {!lead.lost && canClose ? (
               <Button size="sm" variant="secondary" className="text-danger" onClick={() => open("lost")}>
                 Mark Lost
@@ -264,7 +285,7 @@ export function RecordScreen({
                   : "—"
             }
           />
-          <MetaItem label="Owner" value={lead.ownerName} />
+          <MetaItem label="Owner" value={lead.ownerName ?? "Unassigned"} />
           <MetaItem label="Sales manager" value={lead.requestedAt ? lead.managerName : "Assigned when requested"} />
           <MetaItem label="City" value={lead.city} />
           <MetaItem label="Contact" value={lead.contactPerson} />
@@ -473,6 +494,9 @@ export function RecordScreen({
         <RequestDialog lead={lead} prospectReasons={prospectReasons} onClose={() => setDialog(null)} />
       ) : null}
       {dialog?.kind === "lost" ? <LostDialog lead={lead} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === "assign" ? (
+        <AssignDialog lead={lead} assignees={assignees} onClose={() => setDialog(null)} />
+      ) : null}
     </div>
   );
 }

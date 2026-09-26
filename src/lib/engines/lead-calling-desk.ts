@@ -612,7 +612,9 @@ export type DeskView =
   | "payment"
   | "second_order"
   | "customer"
-  | "lost";
+  | "lost"
+  /** Leads with no owner — on nobody's desk, and only ever visible to somebody whose scope is wider than one book. */
+  | "unassigned";
 
 export const DESK_VIEW_LABEL: Record<DeskView, string> = {
   queue: "Today's work queue",
@@ -645,6 +647,7 @@ export const DESK_VIEW_LABEL: Record<DeskView, string> = {
   second_order: "2nd Order",
   customer: "Customers",
   lost: "Lost",
+  unassigned: "Waiting for an owner",
 };
 
 export function isDeskView(v: unknown): v is DeskView {
@@ -660,6 +663,8 @@ export type DeskLeadFacts = {
   nextActionKind: NextActionKind | null;
   /** Whether the desk has ever asked for this one to be a Prospect. */
   requested: boolean;
+  /** No owner: the lead is on no telecaller's desk. Absent means owned. */
+  unassigned?: boolean;
 };
 
 /**
@@ -694,6 +699,8 @@ export function inView(l: DeskLeadFacts, view: DeskView, day: string): boolean {
       return l.phase === "ready" || l.phase === "returned" || (due !== null && due <= day);
     case "all":
       return true;
+    case "unassigned":
+      return l.unassigned === true && l.phase !== "lost";
     case "new":
       return l.phase === "call1" && l.callCount === 0 && isOnlineSource(l.source);
     case "today":

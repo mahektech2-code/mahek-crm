@@ -475,6 +475,7 @@ describe("the dashboard filters in the page", () => {
     required: 5,
     ladderKey: "suspect",
     requestedAt: null,
+    unassigned: false,
     ...over,
   });
   const book: DeskLeadRow[] = [

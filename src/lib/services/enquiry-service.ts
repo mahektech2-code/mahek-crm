@@ -18,7 +18,14 @@ import { listUserApps } from "@/lib/access";
 import type { AppId } from "@/lib/apps";
 import { err, ok, okVoid, type Err, type Result } from "@/lib/result";
 import type { User } from "@/db/schema";
-import { readSubmissionFields, phoneDigits, buildEnquirySearchText } from "@/lib/enquiry-submission";
+import {
+  readSubmissionFields,
+  phoneDigits,
+  buildEnquirySearchText,
+  readLeadPrefill,
+  type LeadPrefill,
+} from "@/lib/enquiry-submission";
+import { leadConvertibility, sourceFormLabel } from "@/lib/enquiry-labels";
 import type {
   EnquiryCursor,
   EnquiryPriority,
@@ -477,6 +484,10 @@ export type EnquiryDetail = {
   customerName: string | null;
   customerPhone: string | null;
   customerCity: string | null;
+  /** `lead` while the linked account has never ordered — the desk's own word for what it is. */
+  customerKind: string | null;
+  /** Who owns the linked lead, so an enquiry turned into a lead says whether anybody has it yet. */
+  customerOwnerName: string | null;
   activity: EnquiryActivityEntry[];
   remindersList: EnquiryReminder[];
   linkedOrders: EnquiryLinkedOrder[];
@@ -503,6 +514,8 @@ export async function getEnquiry(enquiryId: string): Promise<EnquiryDetail | nul
       customerName: customers.name,
       customerPhone: customers.phone,
       customerCity: customers.city,
+      customerKind: customers.kind,
+      customerOwnerName: sql<string | null>`(select name from users where users.id = customers.owner_id)`,
     })
     .from(enquiries)
     .leftJoin(users, eq(users.id, enquiries.assignedToId))
@@ -577,6 +590,8 @@ export async function getEnquiry(enquiryId: string): Promise<EnquiryDetail | nul
     customerName: row.customerName,
     customerPhone: row.customerPhone,
     customerCity: row.customerCity,
+    customerKind: row.customerKind,
+    customerOwnerName: row.customerOwnerName,
     activity: activityRows.map((a) => ({
       id: a.id,
       kind: a.kind,
@@ -1042,4 +1057,114 @@ export async function unlinkOrder(enquiryId: string, orderId: string): Promise<R
   await db.delete(enquiryOrders).where(eq(enquiryOrders.id, link.id));
   await writeActivity(enquiryId, "order_unlinked", user.id, null, { orderId });
   return okVoid("Order unlinked.");
+}
+
+/* ------------------------------------------------- an enquiry becomes a lead */
+
+/**
+ * THE ENQUIRY → LEAD BRIDGE, and it is deliberately not a second way to make a
+ * lead. The lead itself is raised by `captureLead` — the one writer, with its
+ * own duplicate guard, source check and Suspect rung — and this file supplies
+ * only the two things that writer cannot know about an enquiry: whether THIS
+ * one may become a lead and what it already tells us, and the link back, made
+ * inside the SAME transaction as the lead so there is no state in which a lead
+ * exists and its enquiry does not say so.
+ *
+ * Manual by design. Nothing here runs on receipt: a person reads the enquiry,
+ * decides it is worth a call, and asks for the lead.
+ */
+export type EnquiryForLead = {
+  id: string;
+  /** The `leads.sources` code the lead is raised under — the enquiry's own source, which is always the website today. */
+  leadSource: string;
+  /** What the enquiry was — kept on the lead as its source detail. */
+  sourceDetail: string;
+  form: string;
+  formLabel: string;
+  prefill: LeadPrefill;
+  receivedAt: string;
+};
+
+export async function enquiryForLeadConversion(enquiryId: string): Promise<Result<EnquiryForLead>> {
+  const { error } = await requireEnquiriesAccess();
+  if (error) return error;
+
+  const [row] = await db
+    .select({
+      id: enquiries.id,
+      source: enquiries.source,
+      sourceForm: enquiries.sourceForm,
+      category: enquiries.category,
+      rawSubmission: enquiries.rawSubmission,
+      customerId: enquiries.customerId,
+      customerName: customers.name,
+      receivedAt: enquiries.receivedAt,
+    })
+    .from(enquiries)
+    .leftJoin(customers, eq(customers.id, enquiries.customerId))
+    .where(eq(enquiries.id, enquiryId));
+  if (!row) return err("That enquiry no longer exists.", "not_found");
+
+  const may = leadConvertibility(row);
+  if (!may.ok) return err(may.reason, "rule_violation");
+
+  if (row.customerId) {
+    return err(
+      `This enquiry already has ${row.customerName ? `a lead — ${row.customerName}` : "a customer"}. It cannot be turned into a second one.`,
+      "conflict",
+    );
+  }
+
+  const formLabel = sourceFormLabel(row.sourceForm) ?? "Enquiry";
+  return ok({
+    id: row.id,
+    leadSource: ENQUIRY_SOURCE_WEBSITE,
+    sourceDetail: `${formLabel} form on the website`,
+    form: row.sourceForm ?? "",
+    formLabel,
+    prefill: readLeadPrefill(row.rawSubmission),
+    receivedAt: row.receivedAt.toISOString(),
+  });
+}
+
+/** Thrown from inside the lead's transaction, so the lead rolls back with it. */
+export class EnquiryLeadConflict extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EnquiryLeadConflict";
+  }
+}
+
+/**
+ * Point the enquiry at the lead just created, in the caller's transaction.
+ *
+ * The WHERE CLAUSE IS THE GUARD, not a read beforehand — the same rule
+ * `linkCustomer` follows: two people pressing Create lead on one enquiry both
+ * pass the pre-check, and only one UPDATE can match `customer_id is null` once
+ * Postgres has taken the row's lock. The loser matches nothing, throws, and its
+ * whole transaction — its lead included — is undone, so a second lead never
+ * exists for the same enquiry.
+ */
+export async function linkEnquiryToNewLead(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  input: { enquiryId: string; customerId: string; leadName: string; actorId: string },
+): Promise<void> {
+  const [linked] = await tx
+    .update(enquiries)
+    .set({ customerId: input.customerId, updatedAt: new Date(), updatedById: input.actorId })
+    .where(and(eq(enquiries.id, input.enquiryId), isNull(enquiries.customerId)))
+    .returning({ id: enquiries.id });
+  if (!linked) {
+    throw new EnquiryLeadConflict(
+      "This enquiry was just turned into a lead by somebody else, so nothing was created.",
+    );
+  }
+  await tx.insert(enquiryActivity).values({
+    id: id("act"),
+    enquiryId: input.enquiryId,
+    kind: "lead_created",
+    actorUserId: input.actorId,
+    note: `Lead created from this enquiry: ${input.leadName}.`,
+    meta: { customerId: input.customerId },
+  });
 }

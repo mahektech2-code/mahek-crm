@@ -102,3 +102,69 @@ export function otherSubmissionFields(raw: unknown): Array<[string, string]> {
     .filter(([k, v]) => !known.has(k) && v !== null && v !== undefined && v !== "")
     .map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]);
 }
+
+/* ---------------------------------------------------------------------------
+ * WHAT A LEAD IS PREFILLED WITH, read off the enquiry the visitor already
+ * filled in — so the telecaller completes a form rather than retyping one.
+ *
+ * Best effort and tolerant, like everything above: the website's field names
+ * are its own, and a value that is not there is `null` for the dialog to ask
+ * about, never a guess. Nothing here decides anything; it only reads. The
+ * shop's name is the company where there is one and the visitor's own name
+ * where there is not, and the person is kept as the contact either way.
+ * ------------------------------------------------------------------------- */
+const CITY_KEYS = ["city", "town", "location", "district", "city_town", "cityTown"];
+const ADDRESS_KEYS = ["address", "street", "street_address", "streetAddress", "shop_address", "shopAddress"];
+const STATE_KEYS = ["state", "region"];
+const PINCODE_KEYS = ["pincode", "pin_code", "pin", "zip", "postal_code", "postalCode"];
+const PRODUCT_KEYS = ["product", "product_name", "productName", "products", "interested_in", "interestedIn", "product_interest"];
+const QUANTITY_KEYS = ["quantity", "volume", "monthly_requirement", "monthlyRequirement", "requirement_quantity"];
+
+export type LeadPrefill = {
+  name: string | null;
+  companyName: string | null;
+  contactPerson: string | null;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  address: string | null;
+  /** The product and quantity they named, where they named one. */
+  requirement: string | null;
+  /** What they wrote, then everything else the form carried one line each, so nothing they typed is lost. */
+  notes: string | null;
+};
+
+export function readLeadPrefill(raw: unknown): LeadPrefill {
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const f = readSubmissionFields(raw);
+
+  const address = [firstOf(obj, ADDRESS_KEYS), firstOf(obj, STATE_KEYS), firstOf(obj, PINCODE_KEYS)]
+    .filter((v): v is string => !!v)
+    .join(", ");
+  const product = firstOf(obj, PRODUCT_KEYS);
+  const quantity = firstOf(obj, QUANTITY_KEYS);
+  const requirement = [product, quantity ? `Quantity: ${quantity}` : null]
+    .filter((v): v is string => !!v)
+    .join(" — ");
+
+  const consumed = new Set([
+    ...CITY_KEYS, ...ADDRESS_KEYS, ...STATE_KEYS, ...PINCODE_KEYS, ...PRODUCT_KEYS, ...QUANTITY_KEYS,
+  ]);
+  const rest = otherSubmissionFields(raw)
+    .filter(([k]) => !consumed.has(k))
+    .map(([k, v]) => `${k}: ${v}`);
+  /* What they wrote comes first — it is what the desk quotes back on the record. */
+  const notes = [f.message, ...rest].filter((v): v is string => !!v).join("\n");
+
+  return {
+    name: f.company ?? f.name,
+    companyName: f.company,
+    contactPerson: f.name,
+    phone: phoneDigits(f.phone) ?? f.phone,
+    email: f.email,
+    city: firstOf(obj, CITY_KEYS),
+    address: address || null,
+    requirement: requirement || null,
+    notes: notes || null,
+  };
+}

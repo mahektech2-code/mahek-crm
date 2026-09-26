@@ -43,6 +43,24 @@ export type AppModule = {
   exact?: boolean;
   /** One line on what withholding it actually costs somebody. */
   note?: string;
+  /**
+   * NOT PART OF "THE WHOLE APP" WHEN SOMEBODY IS GIVEN IT.
+   *
+   * Every module of an app is ticked by default and a grant with all of them
+   * ticked stores no rows, which is what makes a new screen reach everybody
+   * who holds the whole app. That is the right default for a screen everybody
+   * in the app works, and the wrong one for a desk that belongs to particular
+   * people: the calling desk is worked by the telecaller and overseen by the
+   * administrator, and every other CRM user reaching it by holding the whole
+   * app would be the accident the module exists to prevent.
+   *
+   * It changes the DEFAULT the Access screen starts from and nothing else —
+   * `moduleAllowed`, the guard and the storage are the same rules they always
+   * were, so this adds no second permission mechanism. Somebody holding the
+   * app with no module rows still holds every module, this one included, which
+   * is what a grant from a terminal has always meant.
+   */
+  offByDefault?: boolean;
 };
 
 const crm = (
@@ -240,6 +258,27 @@ export const APP_MODULES: AppModule[] = [
     exact: true,
     note:
       "The book itself — every lead, its rung, what its gate is waiting on, and the record behind each one. Narrowed to this person's own book unless they are a manager.",
+  },
+  /*
+   * THE CALLING DESK IS THE CRM'S ALONE — there is no counterpart under the
+   * Sales Dashboard — and it is a module of its own rather than a tab of All
+   * Leads. A tab cannot be withheld, so the desk was open to everybody who
+   * could open the lead list, which is every CRM user. The Access screen is
+   * where it is granted, to a person, and `offByDefault` keeps a grant of the
+   * whole CRM from carrying it along.
+   *
+   * It is not one of `LEAD_SECTIONS`: those are the workspace both apps mount
+   * from one list, and this is drawn from the CRM's own sidebar.
+   */
+  {
+    key: "crm.lead-calling-desk",
+    app: "crm",
+    label: "Calling desk",
+    group: "Lead Management",
+    href: "/crm/leads/calling-desk",
+    offByDefault: true,
+    note:
+      "The telecaller's desk: online leads qualified by phone in up to three calls, then requested as a Prospect. Off by default — grant it to the people who work the desk. Withholding it removes the screen and the actions behind it; the lead list and every other Lead Management screen are unaffected.",
   },
   {
     key: "crm.lead-funnel",

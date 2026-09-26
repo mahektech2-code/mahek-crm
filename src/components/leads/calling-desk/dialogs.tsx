@@ -32,6 +32,7 @@ import {
   requestProspect,
   setDeskNextAction,
 } from "@/lib/actions/lead-calling-desk";
+import { assignDeskLead } from "@/lib/actions/lead-desk-assignment";
 import type { DeskLeadRecord } from "@/lib/services/lead-calling-desk-service";
 
 type Coded = { code: string; label: string };
@@ -971,6 +972,91 @@ export function LostDialog({ lead, onClose }: { lead: DeskLeadRecord; onClose: (
       <FieldLabel label="Note">
         <Textarea rows={3} placeholder="Optional detail" value={note} onChange={(e) => setNote(e.target.value)} />
       </FieldLabel>
+      {error ? <p className="mt-2 mb-0 text-[13px] text-danger">{error}</p> : null}
+    </Modal>
+  );
+}
+
+/* -------------------------------------------------------------------- Assign */
+
+/**
+ * Hand a lead to a telecaller. Drawn only for somebody who may (`lead.verify`),
+ * and only ever lists people who hold the desk — a lead given to somebody who
+ * cannot open it would be on a desk nobody can see, which is the failure this
+ * exists to prevent. The owner IS the assignment: one write, and the lead is on
+ * that person's desk.
+ */
+export function AssignDialog({
+  lead,
+  assignees,
+  onClose,
+}: {
+  lead: DeskLeadRecord;
+  assignees: { id: string; name: string }[];
+  onClose: () => void;
+}) {
+  const done = useDone();
+  const [ownerId, setOwnerId] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function save() {
+    if (!ownerId) {
+      setError("Pick who it goes to.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    let result;
+    try {
+      result = await assignDeskLead({ customerId: lead.id, ownerId });
+    } finally {
+      setBusy(false);
+    }
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    done(result.message, onClose);
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={460}
+      title={
+        <div>
+          <div>{lead.ownerName ? "Reassign" : "Assign"} lead</div>
+          <div className="mt-0.5 text-[13px] font-normal text-muted">
+            {lead.name} · {lead.ownerName ? `currently ${lead.ownerName}` : "nobody has it yet"}
+          </div>
+        </div>
+      }
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={busy} onClick={() => void save()}>
+            {busy ? "Saving…" : "Assign"}
+          </Button>
+        </>
+      }
+    >
+      <FieldLabel label="Give it to">
+        <Select value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
+          <option value="">Pick a telecaller…</option>
+          {assignees.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </Select>
+      </FieldLabel>
+      <p className="mt-2 mb-0 text-[12.5px] text-muted">
+        Only people who have been given the Calling desk are listed. It lands on their desk and they are told.
+      </p>
       {error ? <p className="mt-2 mb-0 text-[13px] text-danger">{error}</p> : null}
     </Modal>
   );

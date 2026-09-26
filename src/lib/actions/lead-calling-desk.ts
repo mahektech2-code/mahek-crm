@@ -43,6 +43,25 @@ import { ladderFor } from "@/lib/engines/lead-ladder";
 import { leadGateInput, leadManagerCandidatesFor, leadRow } from "@/lib/services/lead-service";
 import { requestOf } from "@/lib/services/lead-prospect-request-service";
 import { advanceLeadStage, setLeadNextAction } from "@/lib/actions/leads";
+import { canOpenModule } from "@/lib/access";
+
+/** The module the desk's screens and writes are granted under — see `lib/modules.ts`. */
+const DESK_MODULE = "crm.lead-calling-desk";
+
+/**
+ * THE DESK'S OWN GRANT, asked by every write it makes.
+ *
+ * `lead.work` is held by every associate, so on its own it would let any CRM
+ * user post to these actions by URL after the route guard had already turned
+ * them away from the screen. The screen guard is a courtesy and this is the
+ * door. It is the module and not a new capability, for the reason the module
+ * exists: who works the desk is decided per person on the Access screen, and a
+ * capability is decided per level. Null means allowed.
+ */
+async function deskRefusal(userId: string): Promise<ReturnType<typeof err> | null> {
+  if (await canOpenModule(userId, DESK_MODULE)) return null;
+  return err("You have not been given the Calling desk. Ask whoever manages access to grant it.", "not_permitted");
+}
 
 /* ---------------------------------------------------------------------------
  * The calling desk's writes: a qualification call, the request for a Prospect,
@@ -232,6 +251,8 @@ export async function logQualificationCall(
     const outcome: CallOutcome = p.outcome;
 
     const ctx = await requireCapability("lead.work");
+    const barred = await deskRefusal(ctx.user.id);
+    if (barred) return barred;
     const found = await reachable(p.customerId);
     if (!found.ok) return found.refusal;
     const lead = found.lead;
@@ -595,6 +616,8 @@ export async function requestProspect(
     const p = parsed.data;
 
     const ctx = await requireCapability("lead.work");
+    const barred = await deskRefusal(ctx.user.id);
+    if (barred) return barred;
     const found = await reachable(p.customerId);
     if (!found.ok) return found.refusal;
     const lead = found.lead;
@@ -825,6 +848,8 @@ export async function logDeskMessage(
     }
 
     const ctx = await requireCapability("lead.work");
+    const barred = await deskRefusal(ctx.user.id);
+    if (barred) return barred;
     const found = await reachable(p.customerId);
     if (!found.ok) return found.refusal;
     const lead = found.lead;
@@ -902,6 +927,8 @@ export async function setDeskNextAction(input: z.input<typeof nextSchema>): Prom
     const p = parsed.data;
 
     const ctx = await requireCapability("lead.work");
+    const barred = await deskRefusal(ctx.user.id);
+    if (barred) return barred;
     const found = await reachable(p.customerId);
     if (!found.ok) return found.refusal;
     if (!isWorkingStage(found.lead.leadStage)) {
@@ -945,7 +972,9 @@ export async function markDeskLost(input: z.input<typeof lostSchema>): Promise<R
     if (!parsed.success) return zodErr(parsed.error);
     const p = parsed.data;
 
-    await requireCapability("lead.work");
+    const ctx = await requireCapability("lead.work");
+    const barred = await deskRefusal(ctx.user.id);
+    if (barred) return barred;
     const found = await reachable(p.customerId);
     if (!found.ok) return found.refusal;
     const req = await requestOf(p.customerId);

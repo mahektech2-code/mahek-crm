@@ -5,6 +5,7 @@ import { addDays, onOrAfterWorkingDay, type BusinessDate } from "@/lib/business-
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { deskLeadRecord } from "@/lib/services/lead-calling-desk-service";
+import { deskHolders } from "@/lib/services/lead-desk-assignment-service";
 import { canLead } from "@/lib/services/lead-console-service";
 import { RecordScreen } from "@/components/leads/calling-desk/record-screen";
 
@@ -34,6 +35,9 @@ export async function Body({
   if (!lead) notFound();
 
   const canWork = await canLead(user, "lead.work");
+  /* Handing a lead out is the manager's judgement, `lead.verify`; the list is only drawn for somebody who may. */
+  const canAssign = await canLead(user, "lead.verify");
+  const assignees = canAssign ? await deskHolders() : [];
 
   return (
     <RecordScreen
@@ -50,6 +54,8 @@ export async function Body({
       sampleReasons={config["leads.sampleReasons"]}
       orderBlockers={config["leads.orderBlockers"]}
       base={leadHref(workspace, "leads/calling-desk")}
+      canAssign={canAssign}
+      assignees={assignees}
     />
   );
 }

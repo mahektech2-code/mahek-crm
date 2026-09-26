@@ -86,6 +86,14 @@ const files = [
   "src/lib/price-sheets.integration.test.ts",
   "src/lib/sample-logistics.test.ts",
   "src/lib/enquiries.test.ts",
+  // A website enquiry becomes a lead by hand, through the one writer, and only
+  // the people granted the calling desk can work it: the four forms that may,
+  // the atomic link, assignment and who sees an unowned lead, and the
+  // migration that keeps the desk from reaching every existing CRM user.
+  "src/lib/lead-from-enquiry.test.ts",
+  // The telecaller's calling desk itself: three calls, Ready for Prospect, and
+  // that asking for a Prospect is not being one.
+  "src/lib/lead-calling-desk.test.ts",
   // The dashboard reads its four figures from `queueProgress`, which must stay
   // exactly equal to what `getQueue` would have said. That equivalence is only
   // checkable against a real book, so it lives here rather than in the pure set.

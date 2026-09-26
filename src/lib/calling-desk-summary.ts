@@ -51,6 +51,8 @@ export type DeskLeadRow = {
   /** The rung it stands on — for a lost lead, the rung it was lost at. */
   ladderKey: LadderKey | null;
   requestedAt: string | null;
+  /** No owner yet — on nobody's calling desk. */
+  unassigned: boolean;
 };
 
 export type LifecycleCell = { key: LadderKey; count: number; waiting: number };
@@ -93,6 +95,7 @@ export const factsOf = (r: DeskLeadRow): DeskLeadFacts => ({
   nextActionDate: r.nextActionDate,
   nextActionKind: r.nextActionKind,
   requested: r.requestedAt !== null,
+  unassigned: r.unassigned,
 });
 
 /** The order V6 sorts a list in: what is ready, then what came back, then soonest due. */
