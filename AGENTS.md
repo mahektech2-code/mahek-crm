@@ -5029,7 +5029,27 @@ front, not a meter running backwards; a distance above
 `mbos.travel.maxLegKilometres` is a typo, not a long day. Checked in
 `lib/travel-leg.ts` on the handset and AGAIN in `handleTravelLeg`, because a
 mileage claim is money and a check that lives only in an interface is not a
-check. A journey called off is CLOSED AT ITS OWN READING so it measures nothing
+check.
+
+**But the server's check UNPAYS a leg; it never refuses one.** A leg arriving
+without its readings, or with an arrival below its departure, is accepted with
+`claim_excluded` set and the reason written into `claim_excluded_reason`. It
+used to be rejected, and a rejected leg blocks everything queued behind it on
+the handset — so on 26 Sep 2026 salesmen on 1.9.0 and 1.10.0 checked in at
+shops and could never check out, because the rule had moved twice in a
+fortnight and an APK cannot be recalled to follow it. The money is protected
+exactly as well by paying nothing on the leg; refusing it also threw away the
+visit, which is work that happened. **Every build in the field is some version
+behind, and the server must go on accepting what each of them sends.**
+
+**And a stored rejection is judged again, not replayed.** `ingestSyncBatch`
+replays an accepted receipt verbatim — that is what makes a retry safe — but a
+receipt that says `rejected` is re-run against today's rules and overwritten
+if the answer changed. Replayed, a refusal was permanent under whatever rule
+stood the day it was given, and the handset's own Retry button, which resends
+the identical payload, could never succeed.
+
+A journey called off is CLOSED AT ITS OWN READING so it measures nothing
 and carries the reason — deleting it would leave the next departure following on
 from a gap, which is the pattern an audit stops at.
 
