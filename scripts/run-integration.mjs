@@ -61,10 +61,14 @@ const files = [
   "src/lib/founder-dashboard.test.ts",
   "src/lib/expense-policy.test.ts",
   "src/lib/travel-on-visit.test.ts",
+  // An expense and every file behind it: several per claim, one that uploaded
+  // before the claim existed, who can open them, and the Decide dialog's read.
+  "src/lib/expense-attachments.test.ts",
   "src/lib/day-evidence.test.ts",
   "src/lib/check-in-gate.test.ts",
   "src/lib/credential-issue.test.ts",
   "src/lib/whatsapp-api.test.ts",
+  "src/lib/whatsapp-automation.test.ts",
   "src/lib/change-password.test.ts",
   "src/lib/either-identifier.test.ts",
   "src/lib/storage-fallback.test.ts",

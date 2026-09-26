@@ -34,6 +34,14 @@ import {
 } from "../whatsapp-delivery";
 import { isApproved, listWatiTemplates, sendWatiTemplate, watiConfig } from "../wati";
 import { whatsappServiceState } from "./whatsapp-switch-service";
+import { factsFor } from "./wati-facts-service";
+import {
+  fillBody,
+  manualText,
+  renderSpec,
+  specKey,
+  type RenderResult,
+} from "../wati-templates";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -281,11 +289,25 @@ export async function prepareMessage(
     .where(eq(waTemplates.id, input.templateId));
   if (!template) return err("That template no longer exists.", "not_found");
 
-  const values = await mergeValuesFor(input.customerId);
+  // A template with a rule set (`wati_spec`) is filled by those rules and
+  // nothing else — on the manual route as much as the API one — so a copy
+  // pasted by hand says exactly what the API would have sent, and is refused
+  // for exactly the same reasons.
+  const spec = specOf(template);
+  let specFilled: string | null = null;
+  if (spec) {
+    const rendered = await renderForCustomer(spec, input.customerId);
+    if (!rendered.ok) {
+      return err(`Not sent to ${customer.name}: ${rendered.reasons.join(" ")}`, "rule_violation");
+    }
+    specFilled = fillBody(template.body, rendered.params);
+  }
+
+  const values = spec ? {} : await mergeValuesFor(input.customerId);
   const sourceBody = input.bodyOverride ?? template.body;
 
   // Validate BEFORE rendering, and name the specific field.
-  const missing = usedFields(template.body).filter((f) => !values[f]);
+  const missing = spec ? [] : usedFields(template.body).filter((f) => !values[f]);
   if (missing.length && !input.bodyOverride) {
     return err(
       `This message cannot be built for ${customer.name}: ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} empty. Fill it on the customer record first.`,
@@ -314,8 +336,24 @@ export async function prepareMessage(
   }
 
   const messageId = id("wam");
-  const body = applyMerge(sourceBody, values);
-  const edited = Boolean(input.bodyOverride && input.bodyOverride !== template.body);
+  const edited = Boolean(
+    input.bodyOverride && input.bodyOverride !== (specFilled ?? template.body),
+  );
+  const route = routeFor(delivery, { destKind, watiTemplateName: template.watiTemplateName, edited });
+
+  let body: string;
+  if (specFilled !== null && !edited) {
+    // The API sends the approved wording with its buttons; a pasted copy has
+    // no buttons, so it gets the wording that asks for a reply instead.
+    if (route.mode === "automatic") body = specFilled;
+    else {
+      const manual = manualText(specFilled);
+      if (!manual.ok) return err(manual.reason, "rule_violation");
+      body = manual.text;
+    }
+  } else {
+    body = spec ? (input.bodyOverride ?? specFilled ?? "") : applyMerge(sourceBody, values);
+  }
 
   await db.insert(waMessages).values({
     id: messageId,
@@ -329,7 +367,7 @@ export async function prepareMessage(
     destKind,
     resolvedDestination,
     body,
-    edited: Boolean(input.bodyOverride && input.bodyOverride !== template.body),
+    edited,
     status: "prepared",
     runId: input.runId ?? null,
     idempotencyKey: input.idempotencyKey,
@@ -342,9 +380,70 @@ export async function prepareMessage(
     body,
     resolvedDestination,
     destKind,
-    ...routeFor(delivery, { destKind, watiTemplateName: template.watiTemplateName, edited }),
+    ...route,
     edited,
   });
+}
+
+/* ---------------------------------------------------------- rule-set rendering */
+
+/** Which rule set fills this template: its own, or the one its Wati link names. */
+export function specOf(template: { watiSpec: string | null; watiTemplateName: string | null }): string | null {
+  return template.watiSpec ?? specKey(template.watiTemplateName);
+}
+
+/** Fresh facts, then the rules. `watiParams` is what Wati's approved copy asks for. */
+async function renderForCustomer(
+  spec: string,
+  customerId: string,
+  watiParams?: readonly string[],
+): Promise<RenderResult> {
+  const facts = await factsFor(customerId);
+  if (!facts) return { ok: false, reasons: ["That customer no longer exists."] };
+  return renderSpec(spec, facts, watiParams);
+}
+
+export type MessagePreview =
+  | { ok: true; body: string; route: "automatic" | "manual"; manualWhy: string | null }
+  | { ok: false; reasons: string[] };
+
+/**
+ * Exactly what this customer would receive from this template right now, on
+ * the route it would take — or every reason it would be refused. Nothing is
+ * written. The send screen, the payment panel and the founder's preview all
+ * read this, so what somebody sees before pressing Send is what goes.
+ */
+export async function previewMessage(
+  customerId: string,
+  templateId: string,
+  destKind: "personal" | "group" = "personal",
+  /** Only for a caller that has already checked the founder's desk. */
+  opts: { skipScope?: boolean } = {},
+): Promise<MessagePreview> {
+  const [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
+  if (!customer) return { ok: false, reasons: ["That customer no longer exists."] };
+  if (!opts.skipScope) await assertCustomerInScope(customer);
+  const [template] = await db.select().from(waTemplates).where(eq(waTemplates.id, templateId));
+  if (!template) return { ok: false, reasons: ["That template no longer exists."] };
+  if (customer.doNotContact) return { ok: false, reasons: [`${customer.name} is marked do not contact.`] };
+
+  const delivery = await deliveryContext();
+  const route = routeFor(delivery, { destKind, watiTemplateName: template.watiTemplateName, edited: false });
+  const spec = specOf(template);
+  if (!spec) {
+    const values = await mergeValuesFor(customerId);
+    const missing = usedFields(template.body).filter((f) => !values[f]);
+    if (missing.length) return { ok: false, reasons: [`${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} empty for this customer.`] };
+    return { ok: true, body: applyMerge(template.body, values), route: route.mode, manualWhy: route.manualWhy };
+  }
+  const rendered = await renderForCustomer(spec, customerId);
+  if (!rendered.ok) return { ok: false, reasons: rendered.reasons };
+  const filled = fillBody(template.body, rendered.params);
+  if (route.mode === "automatic") return { ok: true, body: filled, route: "automatic", manualWhy: null };
+  const manual = manualText(filled);
+  return manual.ok
+    ? { ok: true, body: manual.text, route: "manual", manualWhy: route.manualWhy }
+    : { ok: false, reasons: [manual.reason, route.manualWhy ?? ""].filter(Boolean) };
 }
 
 /**
@@ -555,6 +654,19 @@ export async function cancelMessage(messageId: string): Promise<Result> {
  */
 export async function sendAutomatic(messageId: string): Promise<Result> {
   const ctx = await resolveScope();
+  return sendAutomaticAs(messageId, { id: ctx.user.id, checkScope: true });
+}
+
+/**
+ * The send itself, for whoever is sending: a person (whose book the customer
+ * must be in) or an automation rule (acting for the founder who set it live,
+ * with no request and so no book to check). Every other check is identical.
+ */
+async function sendAutomaticAs(
+  messageId: string,
+  actor: { id: string; checkScope: boolean },
+): Promise<Result> {
+  const ctx = { user: { id: actor.id } };
   const config = await getConfig();
   const delivery = await deliveryContext();
 
@@ -566,7 +678,7 @@ export async function sendAutomatic(messageId: string): Promise<Result> {
 
   const [customer] = await db.select().from(customers).where(eq(customers.id, message.customerId));
   if (!customer) return err("That customer no longer exists.", "not_found");
-  await assertCustomerInScope(customer);
+  if (actor.checkScope) await assertCustomerInScope(customer);
   if (customer.doNotContact) return err(`${customer.name} is marked do not contact.`, "rule_violation");
 
   const [template] = message.templateId
@@ -632,19 +744,33 @@ export async function sendAutomatic(messageId: string): Promise<Result> {
       "rule_violation",
     );
   }
-  const values = await mergeValuesFor(message.customerId);
-  const resolved = resolveWatiParams(wati.params, values, MERGE_FIELDS);
-  if (resolved.unknown.length) {
-    return err(
-      `The Wati template uses ${resolved.unknown.map((n) => `{{${n}}}`).join(", ")}, which MahekOne has no field for. Rename ${resolved.unknown.length === 1 ? "it" : "them"} in Wati to one of: ${MERGE_FIELDS.join(", ")}.`,
-      "validation",
-    );
-  }
-  if (resolved.missing.length) {
-    return err(
-      `This message cannot be built for ${customer.name}: ${resolved.missing.join(", ")} ${resolved.missing.length === 1 ? "is" : "are"} empty.`,
-      "validation",
-    );
+  // The variables are rebuilt HERE, from facts read now — not taken from
+  // whatever was true when the message was prepared. A payment confirmed in
+  // between changes the bill list, and the customer must see today's.
+  let params: Array<{ name: string; value: string }>;
+  let sentBody: string | null = null;
+  const spec = specOf(template!);
+  if (spec) {
+    const rendered = await renderForCustomer(spec, message.customerId, wati.params);
+    if (!rendered.ok) return err(`Not sent: ${rendered.reasons.join(" ")}`, "rule_violation");
+    params = rendered.params;
+    sentBody = fillBody(wati.body || template!.body, params);
+  } else {
+    const values = await mergeValuesFor(message.customerId);
+    const resolved = resolveWatiParams(wati.params, values, MERGE_FIELDS);
+    if (resolved.unknown.length) {
+      return err(
+        `The Wati template uses ${resolved.unknown.map((n) => `{{${n}}}`).join(", ")}, which MahekOne has no field for. Rename ${resolved.unknown.length === 1 ? "it" : "them"} in Wati to one of: ${MERGE_FIELDS.join(", ")}.`,
+        "validation",
+      );
+    }
+    if (resolved.missing.length) {
+      return err(
+        `This message cannot be built for ${customer.name}: ${resolved.missing.join(", ")} ${resolved.missing.length === 1 ? "is" : "are"} empty.`,
+        "validation",
+      );
+    }
+    params = resolved.params;
   }
 
   // CLAIM it before calling out. Two clicks, or a click racing a bulk run,
@@ -661,7 +787,7 @@ export async function sendAutomatic(messageId: string): Promise<Result> {
   const sent = await sendWatiTemplate({
     templateName: watiName,
     phone,
-    params: resolved.params,
+    params,
     localMessageId: messageId,
     broadcastName: `mahekone_${watiName}_${day}`,
   });
@@ -684,6 +810,8 @@ export async function sendAutomatic(messageId: string): Promise<Result> {
       .set({
         status: "sent",
         mode: "automatic",
+        // The log shows what the customer actually received.
+        ...(sentBody ? { body: sentBody } : {}),
         sentAt: now,
         // Last contact reads this column; an API send IS a confirmed send.
         confirmedSentAt: now,
@@ -1279,6 +1407,28 @@ export async function previewPaymentReminder(
     templates.find((t) => t.escalationStage === stage) ?? templates[0];
   if (!template) return null;
 
+  // A rule-set template is previewed by the same rules that will send it. Its
+  // "fields" are the reasons it cannot go, if any — there is nothing for a
+  // telecaller to fill in, and a list of merge fields would suggest otherwise.
+  const standingLeg = customer.whatsappGroupName ? customer.whatsappDest : "personal";
+  const legKind: "personal" | "group" = standingLeg === "both" ? "personal" : standingLeg;
+  if (specOf(template)) {
+    const p = await previewMessage(customerId, template.id, legKind);
+    const route = routeFor(delivery, { destKind: legKind, watiTemplateName: template.watiTemplateName, edited: false });
+    return {
+      templateId: template.id,
+      templateName: template.name,
+      destination:
+        legKind === "group" ? (customer.whatsappGroupName ?? "") : (customer.whatsappPhone ?? customer.phone),
+      destKind: legKind,
+      body: p.ok ? p.body : "",
+      ...route,
+      fields: [],
+      blocked: !p.ok,
+      blockedReason: p.ok ? null : p.reasons.join(" "),
+    };
+  }
+
   const values = await mergeValuesFor(customerId);
   const fields = usedFields(template.body).map((f) => ({
     label: f,
@@ -1310,4 +1460,147 @@ export async function previewPaymentReminder(
       ? `${missing.map((f) => f.label).join(", ")} ${missing.length === 1 ? "is" : "are"} empty for this customer, so the message would read badly. Log a call instead, or fill it on the customer record first.`
       : null,
   };
+}
+
+/* ------------------------------------------------------------ test sends */
+
+/**
+ * The real template, filled from a real customer's facts, sent to a number
+ * that is NOT the customer's — the founder's own phone, to see exactly what a
+ * customer would receive before anything is switched on.
+ *
+ * Deliberately NOT gated by the service switch: the switch is about messages
+ * to customers, and this is how somebody decides whether to flip it. Nothing
+ * is written against the customer — no message row, no contact date — and the
+ * send is audited with the number it went to.
+ */
+export async function sendTestMessage(input: {
+  customerId: string;
+  templateId: string;
+  phone: string;
+  userId: string;
+}): Promise<Result<{ body: string }>> {
+  const phone = waNumber(input.phone);
+  if (!phone) return err("That is not a mobile number WhatsApp can reach.", "validation");
+
+  const [template] = await db.select().from(waTemplates).where(eq(waTemplates.id, input.templateId));
+  if (!template) return err("That template no longer exists.", "not_found");
+  if (!template.watiTemplateName) {
+    return err("Link this template to an approved Wati template first.", "rule_violation");
+  }
+  const listed = await listWatiTemplates({ fresh: true });
+  if (!listed.ok) return err(`Could not reach Wati: ${listed.error}`, "rule_violation");
+  const wati = listed.templates.find((t) => t.name === template.watiTemplateName);
+  if (!wati || !isApproved(wati)) {
+    return err(`"${template.watiTemplateName}" is not approved in Wati yet.`, "rule_violation");
+  }
+
+  const spec = specOf(template);
+  if (!spec) return err("Test sends are for the templates that follow a rule set.", "rule_violation");
+  const rendered = await renderForCustomer(spec, input.customerId, wati.params);
+  if (!rendered.ok) return err(`This customer would not be sent it: ${rendered.reasons.join(" ")}`, "rule_violation");
+
+  const sent = await sendWatiTemplate({
+    templateName: wati.name,
+    phone,
+    params: rendered.params,
+    localMessageId: id("test"),
+    broadcastName: `mahekone_test_${wati.name}`,
+  });
+  await db.insert(auditLog).values({
+    id: id("aud"),
+    actorId: input.userId,
+    action: "whatsapp.test_send",
+    entityType: "wa_template",
+    entityId: template.id,
+    afterState: { customerId: input.customerId, to: phone, ok: sent.ok, error: sent.ok ? null : sent.error } as never,
+  });
+  if (!sent.ok) return err(`Wati did not send it: ${sent.error}`, "rule_violation");
+  return ok({ body: fillBody(wati.body || template.body, rendered.params) }, `Test sent to +${phone}`);
+}
+
+/** Customers by name, for the founder's preview box. */
+export async function findCustomersByName(q: string) {
+  const term = q.trim();
+  if (term.length < 2) return [];
+  return db
+    .select({ id: customers.id, name: customers.name, city: customers.city })
+    .from(customers)
+    .where(sql`${customers.name} ilike ${"%" + term.replace(/[%_]/g, "") + "%"}`)
+    .orderBy(asc(customers.name))
+    .limit(10);
+}
+
+/* --------------------------------------------------------- rule-driven sends */
+
+/**
+ * One message for one automation rule: prepared and, unless `dry`, sent.
+ *
+ * The idempotency key is rule + customer + DAY, so two runs of the scheduler
+ * that overlap — or the same hour run twice — can only ever produce one row,
+ * and a second attempt finds it and stops. Everything about whether the
+ * message is TRUE is still the template's rule set, rendered from fresh facts.
+ * The personal number only: a group cannot be reached through the API.
+ */
+export async function sendForRule(input: {
+  customerId: string;
+  templateId: string;
+  triggerId: string;
+  actorId: string;
+  day: string;
+}): Promise<Result<{ messageId: string }>> {
+  const idempotencyKey = `auto:${input.triggerId}:${input.customerId}:${input.day}`;
+  const [existing] = await db
+    .select({ id: waMessages.id })
+    .from(waMessages)
+    .where(eq(waMessages.idempotencyKey, idempotencyKey));
+  if (existing) return err("Already handled today by this rule.", "conflict");
+
+  const [customer] = await db.select().from(customers).where(eq(customers.id, input.customerId));
+  if (!customer) return err("That customer no longer exists.", "not_found");
+  const [template] = await db.select().from(waTemplates).where(eq(waTemplates.id, input.templateId));
+  if (!template) return err("That template no longer exists.", "not_found");
+  const spec = specOf(template);
+  if (!spec) return err("Only a template with a rule set can be sent automatically.", "rule_violation");
+
+  const rendered = await renderForCustomer(spec, input.customerId);
+  if (!rendered.ok) return err(rendered.reasons.join(" "), "rule_violation");
+  const destination = customer.whatsappPhone ?? customer.phone;
+  if (!destination) return err("No number on record.", "validation");
+
+  const messageId = id("wam");
+  const inserted = await db
+    .insert(waMessages)
+    .values({
+      id: messageId,
+      customerId: input.customerId,
+      templateId: template.id,
+      templateName: template.name,
+      userId: input.actorId,
+      mode: "manual",
+      destKind: "personal",
+      resolvedDestination: destination,
+      body: fillBody(template.body, rendered.params),
+      status: "prepared",
+      triggerId: input.triggerId,
+      idempotencyKey,
+      createdById: input.actorId,
+      updatedById: input.actorId,
+    })
+    .onConflictDoNothing()
+    .returning({ id: waMessages.id });
+  if (!inserted.length) return err("Already handled today by this rule.", "conflict");
+
+  const sent = await sendAutomaticAs(messageId, { id: input.actorId, checkScope: false });
+  if (!sent.ok) {
+    // A refusal before anything left leaves a row nobody will work — mark it
+    // cancelled with the reason, so the log says why and the key still stops
+    // a second attempt today.
+    await db
+      .update(waMessages)
+      .set({ status: "cancelled", failureReason: sent.error, updatedAt: new Date() })
+      .where(and(eq(waMessages.id, messageId), eq(waMessages.status, "prepared")));
+    return sent;
+  }
+  return ok({ messageId }, sent.message);
 }

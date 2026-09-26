@@ -2434,6 +2434,17 @@ export const SETTINGS = [
     min: 0,
     max: 100000000,
   },
+  {
+    key: "mbos.expenses.maxAttachments",
+    type: "integer",
+    category: "mbos-expenses",
+    label: "Files on one expense",
+    description:
+      "How many photographs or PDFs a salesman may attach to one claim — a long bill, a second page, the payment screenshot. The handset stops offering more at this number.",
+    default: 6,
+    min: 1,
+    max: 20,
+  },
   /*
    * `mbos.expenses.categoryCapsPaise` WAS HERE, and it is retired.
    *
@@ -4316,6 +4327,7 @@ export type Config = {
   "mbos.payments.cashDepositSlaHours": number;
   "mbos.payments.managerNotifyThresholdPaise": number;
   "mbos.payments.receiptSeriesPrefix": string;
+  "mbos.expenses.maxAttachments": number;
 
   "mbos.expenses.billPhotoThresholdPaise": number;
   "mbos.expenses.backdatedDaysAllowed": number;

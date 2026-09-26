@@ -78,6 +78,28 @@ export async function captureImage(args: {
   return id;
 }
 
+/**
+ * A document queued as it is — a PDF bill is not an image to be resized, and
+ * re-encoding it would either fail or flatten the text an accountant reads.
+ * The server sniffs the bytes and refuses anything that is not a type it
+ * accepts, so the declared type here is a courtesy, not the check.
+ */
+export async function queueFile(args: {
+  uri: string;
+  mimeType: string;
+  parentType: string;
+  parentId: string;
+  kind: MediaKind;
+}): Promise<string> {
+  const id = newId('media');
+  await run(
+    `INSERT INTO media_queue (id, parentType, parentId, kind, localUri, mimeType, bytes, state, nextAttemptAt, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?)`,
+    [id, args.parentType, args.parentId, args.kind, args.uri, args.mimeType, byteSize(args.uri), Date.now()],
+  );
+  return id;
+}
+
 /** Audio is queued as-is; re-encoding speech to save bytes loses the words. */
 export async function queueAudio(args: { uri: string; parentType: string; parentId: string }): Promise<string> {
   const id = newId('media');

@@ -14,6 +14,7 @@ import {
 } from "@/lib/services/whatsapp-service";
 import { clock, longDate, nowMs } from "@/lib/format";
 import { WhatsappScreen } from "./whatsapp-screen";
+import { specKey } from "@/lib/wati-templates";
 
 export const metadata = { title: "WhatsApp - MahekOne CRM" };
 
@@ -156,6 +157,7 @@ export default async function WhatsappPage({
         appliesTo: t.appliesTo,
         uses: t.usageCount,
         watiTemplateName: t.watiTemplateName,
+        spec: t.watiSpec ?? specKey(t.watiTemplateName),
         archived: !t.active,
         updatedAt: t.updatedAt.toISOString(),
       }))}

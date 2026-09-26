@@ -1146,8 +1146,22 @@
     {
       "idx": 164,
       "version": "7",
-      "when": 1790369546119,
-      "tag": "0166_the_visit_assistant_shares_the_drafts",
+      "when": 1790283118688,
+      "tag": "0165_whatsapp_templates_follow_their_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 165,
+      "version": "7",
+      "when": 1790283178688,
+      "tag": "0166_whatsapp_rules_the_founder_sets",
+      "breakpoints": true
+    },
+    {
+      "idx": 166,
+      "version": "7",
+      "when": 1790283238688,
+      "tag": "0167_the_visit_assistant_shares_the_drafts",
       "breakpoints": true
     }
   ]

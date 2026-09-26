@@ -1602,6 +1602,37 @@ ever wrote one, so stage-1 customers came back due every day.
 `recordReminderAttempt` writes it once a reminder is actually sent, keyed on
 the message.
 
+**EIGHT TEMPLATES, EACH A RULE SET, AND EVERY OLDER ONE ARCHIVED.**
+`lib/wati-templates.ts` holds one spec per approved Wati template (a `_vN`
+suffix is the same message): the Wati variable names it fills, and the checks
+that make its sentences TRUE. `wa_templates.wati_spec` ties a CRM template to
+one, and a spec'd template is rendered by those rules on every route — the
+preview, the manual copy and the API send — so no route can send what another
+would refuse. `0165` inserted the eight and archived every free-text template
+(archived, not deleted: `wa_messages` keeps a key to the template it came from).
+
+**A variable is a true value or the message is refused.** Never defaulted,
+blanked, "N/A", or rounded into a different figure. The bill list and its total
+are built from the SAME rows (stated, unpaid, not disputed; overdue by
+`effectiveDueDate`), one line, oldest first, five listed and "+ N more" with
+the total over all of them; amounts share one precision per message so they
+add up on the customer's screen. A cycle is quoted only when MEASURED
+(`cycle_is_default` false). "Is due around" is refused after the expected date
+and "was expected" before it. A reported or held payment refuses every payment
+template, a pending order or an open Taken Order line refuses every order one,
+and leads and third-party shops never get order templates.
+
+**Facts are read at the moment of sending**, not when the message was
+prepared — a payment confirmed between the two changes the bill list.
+
+**A pasted copy has no buttons.** The approved wording says "tap an option
+below"; `manualText` turns each such sentence into an ask to reply, and refuses
+a body that still mentions tapping, so a new phrasing in Wati fails loudly
+rather than pointing a customer at buttons that are not there.
+
+**Which template goes on which day is NOT here.** That is Mahek's timeline and
+belongs to the scheduler; these rules answer only "is this message true".
+
 **A customer record is a FIXED-LENGTH page, however old the account is.** Every
 panel on it is the same height and scrolls inside itself, and the reads behind
 them are capped — the timeline at ten entries a page (`TIMELINE_PAGE`, one
@@ -4893,6 +4924,33 @@ figure combining them is neither. There is no incentive column, because
 MahekOne sets no monthly target for a field salesman and a figure with nothing
 to be computed from would be an invention on the one screen where a wrong number
 is least forgivable.
+
+**TRAVEL IS ASKED TWICE A DAY, AND NEVER AT A SHOP — a reversal (Sep 2026).**
+The paragraphs below describe how a visit used to ask how he was travelling,
+open a meter camera, and ask for the bus fare on the way out. The field would
+not answer it: eleven shops is eleven questions. Now the vehicle is asked at
+the PUNCH-IN, the meter is read at the PUNCH-OUT where the day started on one,
+and nothing about travel is asked on the way to a shop, at the check-in or at
+the check-out. `TravelGate` asks nothing: `visitLegPlan` (pure, in
+`mbos-app/src/lib/travel-leg.ts`) records the visit's journey silently under
+the day's own mode, so the arrival geofence and the dwell clock still work, or
+records none where he never punched in — never a vehicle nobody named. A visit
+leg never carries a claim: a meter day is priced by its two readings, and every
+other day's fares are claimed in Expenses. The fare sheet at check-out is gone.
+
+**After a punch-out that the meter did not measure, he is asked to raise the
+day's costs.** `promptsForExpenses` decides it; the pop-up's button opens
+Expenses with the claim sheet already up, and "Later" is always an answer — the
+punch-out is done either way. A claim carries up to
+`mbos.expenses.maxAttachments` files — photographs, several from the gallery at
+once, or PDFs checked against `attachments.maxSizeMb` as they are picked — and
+`handleExpense` files EVERY one under the claim, including a file the media
+queue uploaded before the claim existed, parented to the handset's literal
+`pending`. Only the claimant's own uploads are moved. Expense files had no read
+rule and answered 404 to everybody; `canReadExpenseAttachment` reads them as
+his mileage evidence is read — him, or a Sales Dashboard holder with him in
+scope. The Decide dialog on `/sales/expenses` now shows each claim with its
+files; before, a manager decided a day's money from two totals.
 
 **HOW HE GOT TO THE SHOP IS ASKED WHEN HE SETS OFF, and "Start visit" now
 means "I am setting off".** Pressing it opens `TravelGate` — the modes from

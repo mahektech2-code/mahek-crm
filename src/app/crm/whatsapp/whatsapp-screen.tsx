@@ -38,11 +38,13 @@ import {
   sendMessageAutomatic,
   sendRunThroughApi,
   sendWhatsAppNow,
+  previewWhatsAppMessage,
   setCustomerGroup,
   startRun,
 } from "@/lib/actions/crm";
 import { applyMerge, fieldLabel, mergeValues, missingFields, usedFields } from "@/lib/merge";
 import { deliveryRoute } from "@/lib/whatsapp-delivery";
+import type { MessagePreview } from "@/lib/services/whatsapp-service";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { money, phoneDisplay, stamp } from "@/lib/format";
 import { CardGrid } from "@/components/ui/card-grid";
@@ -95,6 +97,13 @@ type Template = {
   uses: number;
   /** The approved Wati template this one is sent as; null = manual only. */
   watiTemplateName: string | null;
+  /**
+   * The rule set that fills this template (`lib/wati-templates.ts`). When set,
+   * the text is rendered on the SERVER — the browser does not hold the bills,
+   * the cycle or the last order, and a preview built from less than the send
+   * uses would be a preview of a different message.
+   */
+  spec: string | null;
   archived: boolean;
   updatedAt: string;
 };
@@ -558,9 +567,27 @@ function SendComposer({
     customer?.groupName ? customer.destKind : "personal",
   );
   const [body, setBody] = React.useState(
-    template ? applyMerge(template.body, values) : "",
+    template && !template.spec ? applyMerge(template.body, values) : "",
   );
   const [edited, setEdited] = React.useState(false);
+  // For a rule-set template: the server's rendering, or its reasons. Null
+  // while it is being asked for.
+  const [specPreview, setSpecPreview] = React.useState<MessagePreview | null>(null);
+  const specLeg: "personal" | "group" = dest === "personal" ? "personal" : "group";
+  React.useEffect(() => {
+    if (!template?.spec || !customer) return;
+    let live = true;
+    previewWhatsAppMessage({ customerId: customer.id, templateId: template.id, destKind: specLeg }).then((r) => {
+      if (!live) return;
+      const preview: MessagePreview = r.ok ? r.data : { ok: false, reasons: [r.error] };
+      setSpecPreview(preview);
+      setBody(preview.ok ? preview.body : "");
+      setEdited(false);
+    });
+    return () => {
+      live = false;
+    };
+  }, [template?.spec, template?.id, customer, specLeg]);
   // One entry per leg. A both-ways customer is two independent pieces of work:
   // the group can be pasted and confirmed while the personal message is still
   // sitting copied, and neither may borrow the other's confirmation.
@@ -571,8 +598,15 @@ function SendComposer({
   const [copyFallback, setCopyFallback] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
-  const missing = template ? missingFields(template.body, values) : [];
-  const used = template ? usedFields(template.body) : [];
+  const specBlocked = Boolean(template?.spec) && !(specPreview && specPreview.ok);
+  const missing = template?.spec
+    ? specPreview && !specPreview.ok
+      ? specPreview.reasons
+      : []
+    : template
+      ? missingFields(template.body, values)
+      : [];
+  const used = template && !template.spec ? usedFields(template.body) : [];
 
   // The same rule the server sends by (`lib/whatsapp-delivery.ts`). `mode`
   // already folds the founder's switch and the key together; the rest is about
@@ -609,6 +643,7 @@ function SendComposer({
   }, [templates]);
 
   async function copy(leg: "personal" | "group") {
+    if (specBlocked) return;
     try {
       await navigator.clipboard.writeText(body);
       setLegState((s) => ({ ...s, [leg]: { ...legOf(leg), copied: true } }));
@@ -766,7 +801,22 @@ function SendComposer({
               This template has no merge fields.
             </div>
           )}
-          {missing.length ? (
+          {template?.spec ? (
+            !specPreview ? (
+              <div className="px-4 py-3 text-[13px] text-muted">Checking this customer&rsquo;s bills and orders…</div>
+            ) : specPreview.ok ? (
+              <div className="px-4 py-3 text-[13px] text-muted">
+                Filled from this customer&rsquo;s own bills and orders, checked just now.
+              </div>
+            ) : (
+              <div className="bg-danger-soft px-4 py-2.5 text-[13px] text-danger">
+                <span className="block font-medium">This message cannot go to this customer:</span>
+                {specPreview.reasons.map((r) => (
+                  <span key={r} className="mt-1 block">{r}</span>
+                ))}
+              </div>
+            )
+          ) : missing.length ? (
             <div className="bg-warn-soft px-4 py-2.5 text-[13px] text-warn-ink">
               {missing.length} field{missing.length === 1 ? "" : "s"} could not be filled
               for this customer - the placeholder stays visible so you can fix it before
@@ -781,7 +831,13 @@ function SendComposer({
             {edited && template ? (
               <button
                 onClick={() => {
-                  setBody(applyMerge(template.body, values));
+                  setBody(
+                    template.spec
+                      ? specPreview && specPreview.ok
+                        ? specPreview.body
+                        : ""
+                      : applyMerge(template.body, values),
+                  );
                   setEdited(false);
                 }}
                 className="cursor-pointer text-[13px] text-brand"
@@ -840,8 +896,14 @@ function SendComposer({
           <Card className="p-5">
             <Button
               variant="primary"
-              disabled={busy || missing.length > 0}
-              title={missing.length ? "Fill the missing fields on the customer record first" : undefined}
+              disabled={busy || missing.length > 0 || specBlocked}
+              title={
+                specBlocked
+                  ? "This message cannot go to this customer — the reasons are listed above"
+                  : missing.length
+                    ? "Fill the missing fields on the customer record first"
+                    : undefined
+              }
               className="w-full"
               onClick={async () => {
                 setBusy(true);
@@ -900,6 +962,7 @@ function SendComposer({
                     <Button
                       variant={isCopied ? "secondary" : "primary"}
                       className="w-full"
+                      disabled={specBlocked}
                       onClick={() => copy(leg)}
                     >
                       {isCopied ? "Copied ✓" : "Copy the message"}
