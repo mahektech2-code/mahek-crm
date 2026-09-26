@@ -40,7 +40,26 @@ import * as Application from 'expo-application';
  * this returns immediately. An update channel pointed at nothing is worse than
  * no update channel — it fails on every launch, in the background, silently.
  */
-export async function fetchUpdateInBackground(): Promise<'none' | 'ready' | 'off' | 'failed'> {
+/**
+ * When this JavaScript started running — the cold start, in effect. Read at
+ * module load, so it answers "how long has this process been alive" rather
+ * than "how long has some screen been open".
+ */
+const LOADED_AT = Date.now();
+
+/**
+ * How long after a cold start an update may still be applied on the spot.
+ *
+ * Inside this window he is looking at the home screen the app has just drawn
+ * and has not typed anything, so reloading onto the new bundle costs him a
+ * blink. Past it he may be half-way through an order, and the update waits for
+ * the next launch exactly as it always did. Without this every fix took TWO
+ * launches to arrive — one to download, one to run — and on Android, where
+ * "opening the app" is usually resuming it, that was days.
+ */
+const APPLY_WINDOW_MS = 10_000;
+
+export async function fetchUpdateInBackground(): Promise<'none' | 'ready' | 'applied' | 'off' | 'failed'> {
   /* False in development, and false in a build made before `eas init`. */
   if (!Updates.isEnabled) return 'off';
 
@@ -49,10 +68,16 @@ export async function fetchUpdateInBackground(): Promise<'none' | 'ready' | 'off
     if (!check.isAvailable) return 'none';
 
     await Updates.fetchUpdateAsync();
-    /* Deliberately NOT `reloadAsync()`. Restarting the app under somebody
-       mid-visit — with a half-filled order form on screen — would lose work to
-       deliver a cosmetic change. It is already downloaded; the next time he
-       opens the app it is what runs. */
+    /* Applied NOW only while the app has barely opened — see APPLY_WINDOW_MS.
+       Any later and it is deliberately not `reloadAsync()`: restarting the app
+       under somebody mid-visit, with a half-filled order form on screen, would
+       lose work to deliver the change. It is already downloaded; the next time
+       he opens the app it is what runs. Every saved record is in SQLite, so a
+       reload inside the window loses nothing. */
+    if (Date.now() - LOADED_AT <= APPLY_WINDOW_MS) {
+      await Updates.reloadAsync();
+      return 'applied';
+    }
     return 'ready';
   } catch {
     /* No signal, the update server down, a bundle that will not verify. The

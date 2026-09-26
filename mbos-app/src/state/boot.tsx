@@ -67,7 +67,8 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
         void registerForPush();
         /* Behind the app, never in front of it: `setReady(true)` has already
            run, so the salesman is looking at his day while this downloads. It
-           applies on the NEXT launch — see `fetchUpdateInBackground`. */
+           applies at once if it lands within seconds of the launch, otherwise
+           on the NEXT launch — see `fetchUpdateInBackground`. */
         void fetchUpdateInBackground();
       }
     })();
@@ -93,8 +94,19 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     if (!session) return;
     const userId = session.user.id;
+    /* Android rarely cold-starts an app somebody uses all day — it resumes it.
+       So a resume after a long absence asks for an update too; what it finds
+       is applied on the next cold start, never under his thumb. */
+    let backgroundedAt: number | null = null;
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void resumeTrailIfDayOpen(userId);
+      if (state === 'background') backgroundedAt = Date.now();
+      if (state === 'active') {
+        void resumeTrailIfDayOpen(userId);
+        if (backgroundedAt != null && Date.now() - backgroundedAt >= 30 * 60_000) {
+          void fetchUpdateInBackground();
+        }
+        backgroundedAt = null;
+      }
     });
     return () => sub.remove();
   }, [session]);
