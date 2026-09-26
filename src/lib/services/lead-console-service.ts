@@ -11,7 +11,7 @@ import {
   type LeadStage,
 } from "../lead-labels";
 import type { LeadPriority } from "../lead-priority";
-import { asDate } from "../business-date";
+import { APP_TIMEZONE, asDate } from "../business-date";
 import { orderCountsSql } from "../order-status";
 import { MBOS_EVENT, sourceIdField } from "../timeline";
 import { leadsVisible, managerScope, onlyMine } from "./sales-service";
@@ -139,6 +139,12 @@ export type VerificationRow = {
   competitor: string | null;
   requiredProductName: string | null;
   potentialPaise: number | null;
+  /**
+   * TRUE where this is the calling desk's REQUEST to be put forward as a
+   * Prospect rather than a Prospect already. It is still a Suspect, and a
+   * verification that succeeds is what promotes it.
+   */
+  requested: boolean;
   /** A follow-up call already recorded — verified false is not a closed lead. */
   attempts: number;
   lastAttemptAt: Date | null;
@@ -173,8 +179,11 @@ export async function verificationQueue(
 
   const where = sql`
      where ${STILL_WORKING}
-       and c.lead_stage = 'prospect'
-       and c.lead_verified_at is null
+       and ((c.lead_stage = 'prospect' and c.lead_verified_at is null)
+         /* A calling-desk REQUEST waits here too: it is still a Suspect, and the
+            manager's verification is what makes it a Prospect. */
+         or (c.prospect_request_state in ('awaiting', 'followup')
+             and c.lead_stage::text in ('new', 'suspect', 'contacted')))
        ${leadsVisible(scope)}
   `;
 
@@ -186,8 +195,15 @@ export async function verificationQueue(
              c.lead_stage::text as stage,
              c.owner_id as "salesmanId", u.name as "salesmanName",
              c.lead_manager_id as "leadManagerId", m.name as "leadManagerName",
-             c.lead_stage_since::text as "prospectSince",
-             coalesce(${day}::date - c.lead_stage_since, 0)::int as "waitingDays",
+             /* What the wait is measured from: the day it reached Prospect, or the
+                day the desk asked where it is a request. */
+             (case when c.prospect_request_state is not null
+                   then (c.prospect_requested_at at time zone ${APP_TIMEZONE})::date
+                   else c.lead_stage_since end)::text as "prospectSince",
+             coalesce(${day}::date - (case when c.prospect_request_state is not null
+                   then (c.prospect_requested_at at time zone ${APP_TIMEZONE})::date
+                   else c.lead_stage_since end), 0)::int as "waitingDays",
+             (c.prospect_request_state is not null) as requested,
              (c.lead_manager_id = ${me}) as mine,
              c.lead_monthly_volume_litres as "monthlyLitres",
              c.lead_competitor as competitor,

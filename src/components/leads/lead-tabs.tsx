@@ -5,7 +5,7 @@ import * as React from "react";
 import { usePathname } from "next/navigation";
 import { NavLink } from "@/components/shell/nav-link";
 import { cx } from "@/components/ui/primitives";
-import { sectionForPath, type LeadSection } from "@/lib/lead-workspace";
+import { sectionForPath, tabsFor, type LeadSection } from "@/lib/lead-workspace";
 
 /* ---------------------------------------------------------------------------
  * The second level of the Lead Management workspace.
@@ -52,15 +52,18 @@ export function LeadTabs({
   const current = section ?? sectionForPath(workspace, pathname);
 
   // A section with one tab is a section with no tabs: drawing a strip of one
-  // is a control that cannot be used, which reads as a broken screen.
-  if (!current || current.tabs.length < 2) return null;
+  // is a control that cannot be used, which reads as a broken screen. Counted
+  // AFTER narrowing to this workspace, so a tab only the other app draws
+  // cannot prop a strip up here.
+  const tabs = current ? tabsFor(current, workspace) : [];
+  if (!current || tabs.length < 2) return null;
 
   return (
     <nav
       aria-label={`${current.label} sections`}
       className="mb-5 flex flex-wrap items-center gap-1 border-b border-divider"
     >
-      {current.tabs.map((tab) => {
+      {tabs.map((tab) => {
         /* The tab knows its path and the workspace turns it into a route, so
          * one strip serves both apps and neither spells the other's segment. */
         const href = leadHref(workspace, tab.path);

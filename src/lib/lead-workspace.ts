@@ -82,6 +82,16 @@ export type LeadTab = {
    * do not separate them.
    */
   hint?: string;
+  /**
+   * The workspaces that draw this tab. Absent means both.
+   *
+   * A tab is CRM-only when the screen behind it is the calling desk's own work
+   * and has no counterpart on the Sales Dashboard — its route exists under one
+   * app and drawing it in the other would be a link to a 404. The module it
+   * belongs to is still the section's, so nothing here can be granted or
+   * withheld separately.
+   */
+  workspaces?: readonly LeadWorkspace[];
 };
 
 export type LeadSection = {
@@ -145,6 +155,21 @@ export const LEAD_SECTIONS: readonly LeadSection[] = [
         path: "leads/dashboard",
         label: "Dashboard",
         hint: "Seven queues across the funnel — what is waiting on somebody, each opening the list behind it.",
+      },
+      /*
+       * THE CALLING DESK, and a TAB rather than an eleventh module, for the
+       * reason the dashboard beside it is one: every lead on it is a lead the
+       * person can already open on the List, so a key of its own would be a
+       * second answer to a question the grant already answers.
+       *
+       * CRM only. It is the desk's phone work — three calls at the leads that
+       * came in online — and the Sales Dashboard's people walk a beat instead.
+       */
+      {
+        path: "leads/calling-desk",
+        label: "Calling desk",
+        workspaces: ["crm"],
+        hint: "Online leads qualified by phone — up to three calls, then ready for Prospect.",
       },
     ],
   },
@@ -406,6 +431,11 @@ export const LEAD_SECTIONS: readonly LeadSection[] = [
     ],
   },
 ];
+
+/** The tabs of a section that a workspace actually draws. */
+export function tabsFor(section: LeadSection, workspace: LeadWorkspace): LeadTab[] {
+  return section.tabs.filter((t) => !t.workspaces || t.workspaces.includes(workspace));
+}
 
 const BY_SLUG = new Map(LEAD_SECTIONS.map((s) => [s.slug, s]));
 
