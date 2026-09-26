@@ -2844,6 +2844,63 @@ relearns the classifier (nightly too), and `npm run jobs -- call-intel-eval
 --limit=80` runs the whole pipeline over logged calls and reports how often
 its outcome matches the one somebody chose.
 
+**THE SALESMAN HAS THE SAME ASSISTANT, AND IT READS A VISIT RATHER THAN A
+CALL.** In the shop he speaks into the visit note's microphone, in any
+language, or types, and presses "Read my note". `/api/mbos/visit-assist` reads
+it (`lib/services/visit-intel-service.ts`) and the card on the visit screen
+(`mbos-app/src/components/visit-assistant.tsx`) shows what it understood: the
+outcome chip, the day to come back, and each follow-on the visit implies. "Fill
+the visit" fills the outcome and the day ONLY where he has not answered them
+himself (`engines/visit-assist.ts`, `fillVisit`). Each follow-on opens its own
+ordinary form with the answers in it: the order screen with the cart filled,
+the receipt with the amount and mode, the complaint and sample sheets drafted,
+the lead's requirement boxes. His Save on each is still the only thing that
+writes. The one row the assistant writes is `call_ai_drafts` with
+`channel = 'visit'`, and `handleVisit` writes what the visit was SAVED as onto
+it in the visit's own transaction. It writes only onto the salesman's own
+visit draft, so a payload naming somebody else's draft id marks nothing.
+
+**A visit is not a call, which is why it has its own reading and its own
+engine.** `visitReadingSchema` asks what a phone call never can. Was money
+HANDED OVER, which is a receipt to write now, or promised, which is a day to
+come back? Filing the second as the first puts cash in a salesman's pocket
+that is not there. Was anybody there at all? A shut shutter files as Shop
+closed and drops whatever a staff member guessed about an order. On a lead,
+what does the shop need? `engines/visit-intel-decide.ts` is pure and applies
+the call assistant's rules unchanged:
+
+- A maybe is not an order.
+- Unsure means ask. Two strong intents on different chips become a question.
+- An amount the model and `parseAmounts` disagree on is named twice.
+- Litres are asked about, never turned into cans.
+- An open complaint in the same category, or an open sample of the same
+  product, is named rather than proposed again.
+
+What it shares with the call assistant is imported, not copied: date cues
+through `datedFrom`, products through `chooseProduct`, and the model ladder
+through `lib/structured-read.ts`. Both assistants now call that one
+OpenAI-then-Sarvam function.
+
+**The Suspect verdict is a SUGGESTION he taps, and only where the cap demands
+it.** §28 is that no lead climbs a rung on its own, so "sounds like a prospect"
+selects the answer on the lead card and moves nothing. The requirement is
+proposed for leads only.
+
+**It has no classifier, deliberately.** The call assistant's third reader is
+trained on thousands of logged call notes. Visit notes were optional and most
+are blank, so a classifier trained on them would vote with confidence it has
+not earned. The drafts table is collecting the labelled pairs one will need.
+
+**It needs signal and says so before it is pressed.** A proposal that arrived
+through the outbox tomorrow would be a suggestion about a visit already saved,
+so unlike the visit it is never queued. `mbos.ai.visitAssistant` rides the
+pull as an ANSWER, the way `mbos.ai.dictation` does. It is worked out from
+`visitIntel.enabled` and whether a model key exists. No key and no model name
+crosses the wire, and the handset defaults to unavailable. The model is
+`visitIntel.model`, and the confidence floor is the call assistant's
+`callIntel.confirmBelowPercent`, because how often a person should be asked is
+one judgement, not two.
+
 **THE SALESMAN GETS THE SAME MICROPHONE, and he needed it more than the
 telecaller did.** A telecaller types slowly with a customer on the line; a
 salesman types on a phone, one-handed, standing in a shop, in a language he

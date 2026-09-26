@@ -1401,7 +1401,24 @@ test("the book-reconcile field is spelled the same on both sides", () => {
  * second, editable copy of a conclusion. `mbos-service.ts` writes it into the
  * payload and the test above pins its spelling.
  */
-const INJECTED = new Set(["mbos.ai.dictation"]);
+/* `mbos.ai.visitAssistant` is the same kind of answer: whether the visit
+   assistant can run, worked out from `visitIntel.enabled` and the model keys.
+   The test below pins its spelling at both ends. */
+const INJECTED = new Set(["mbos.ai.dictation", "mbos.ai.visitAssistant"]);
+
+test("the visit assistant's answer is written under the key the handset reads", () => {
+  /* Joined only by a spelling, and a wrong one fails SILENTLY: `getConfig`
+     falls back to unavailable and no handset ever draws the card. */
+  const server = readFileSync("src/lib/services/mbos-service.ts", "utf8");
+  const handset = readFileSync("mbos-app/src/components/visit-assistant.tsx", "utf8");
+  const defaults = readFileSync("mbos-app/src/data/config.ts", "utf8");
+  assert.ok(server.includes('out["mbos.ai.visitAssistant"]'));
+  assert.ok(handset.includes("'mbos.ai.visitAssistant'"));
+  assert.ok(
+    defaults.includes("'mbos.ai.visitAssistant': { available: false }"),
+    "unavailable until the office says otherwise",
+  );
+});
 
 const OUTSTANDING: Record<string, string> = {};
 

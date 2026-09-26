@@ -159,7 +159,10 @@ export async function refreshToken(): Promise<string | null> {
 
 /* ---------------------------------------------------------------- request */
 
-async function request<T>(path: string, init: RequestInit & { auth?: boolean } = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  init: RequestInit & { auth?: boolean; timeoutMs?: number } = {},
+): Promise<T> {
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     'x-mbos-device': await deviceId(),
@@ -172,13 +175,15 @@ async function request<T>(path: string, init: RequestInit & { auth?: boolean } =
   }
 
   /* A hung socket is worse than a refused one: it holds a queue item in
-     `syncing` until the app is killed. Twenty seconds, then give up. */
+     `syncing` until the app is killed. Twenty seconds, then give up — unless
+     the caller is waiting on a language model, which is slower by nature. */
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
+  const timeout = setTimeout(() => controller.abort(), init.timeoutMs ?? 20_000);
 
   let res: Response;
   try {
-    res = await fetch(`${BASE}${path}`, { ...init, headers, signal: controller.signal });
+    const { timeoutMs: _t, auth: _a, ...rest } = init;
+    res = await fetch(`${BASE}${path}`, { ...rest, headers, signal: controller.signal });
   } catch (e) {
     throw new Error(e instanceof Error && e.name === 'AbortError' ? 'MahekOne did not answer in time' : 'No connection to MahekOne');
   } finally {
@@ -580,6 +585,47 @@ export async function dictateRefine(args: {
     return out;
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'That did not come back.' };
+  }
+}
+
+/* ---------------------------------------------------------- visit assistant */
+
+/**
+ * Read what he said about the visit and propose what it implies.
+ *
+ * NOT QUEUED, for the reason dictation is not: a proposal is only worth
+ * anything while he is still standing in the shop reading it. So it fails
+ * without signal, says so, and the visit is filled by hand exactly as before.
+ *
+ * The analysis is typed on this side in `engines/visit-assist.ts` — the
+ * server's shape, restated, because the two cannot import each other.
+ */
+export async function visitAssist(args: {
+  customerId: string;
+  spoken: string;
+  english: string;
+  typedNote: string;
+  language: string | null;
+  heardBy: 'sarvam' | 'openai' | 'typed' | 'dictated';
+}): Promise<
+  | { ok: true; draftId: string; analysis: import('../engines/visit-assist').VisitAnalysis }
+  | { ok: false; error: string }
+> {
+  try {
+    return await request('/api/mbos/visit-assist', {
+      method: 'POST',
+      body: JSON.stringify(args),
+      /* Two provider calls at the far end, each allowed forty-five seconds. */
+      timeoutMs: 60_000,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error:
+        e instanceof Error && e.message
+          ? e.message
+          : 'The assistant did not answer. Fill the visit as usual.',
+    };
   }
 }
 

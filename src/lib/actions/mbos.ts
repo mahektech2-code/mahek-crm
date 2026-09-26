@@ -7,6 +7,7 @@ import {
   attachmentParentEnum,
   attachments,
   bills,
+  callAiDrafts,
   complaints,
   customerDistributors,
   distributorProfiles,
@@ -838,7 +839,7 @@ type ScopedCustomer = {
  * different sentences, but they are the same ANSWER — neither confirms to a
  * handset that a customer it cannot see is real.
  */
-async function scopedCustomer(
+export async function scopedCustomer(
   principal: MbosPrincipal,
   customerId: unknown,
 ): Promise<{ ok: true; customer: ScopedCustomer } | { ok: false; value: Rejection }> {
@@ -1010,6 +1011,12 @@ const visitSchema = z.object({
   requirement: z.string().max(1000).nullish(),
   monthlyVolumeLitres: z.number().int().nonnegative().nullish(),
   quantityCans: z.number().int().nonnegative().nullish(),
+  /*
+   * THE VISIT ASSISTANT'S READING this visit was filled from, if any. The
+   * handler writes what the visit was SAVED as onto that draft, so the gap
+   * between what was proposed and what was kept can be measured.
+   */
+  aiDraftId: z.string().max(64).nullish(),
 });
 
 /**
@@ -1246,6 +1253,32 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   const checkOutAt = p.checkOutAt ? new Date(p.checkOutAt) : null;
 
   await db.transaction(async (tx) => {
+    /*
+     * What the assistant's proposal became, in the visit's own transaction —
+     * a visit that landed with its draft unmarked would read as a suggestion
+     * nobody took. Narrowed to HIS draft on the visit channel, so a payload
+     * naming somebody else's draft id updates nothing.
+     */
+    if (p.aiDraftId) {
+      await tx
+        .update(callAiDrafts)
+        .set({
+          savedOutcome: p.outcome,
+          savedAt: new Date(),
+          visitId: item.entityId,
+          savedDetail: {
+            nextFollowUpDate: p.nextFollowUpDate ?? null,
+            suspectDecision: p.suspectDecision ?? null,
+          },
+        })
+        .where(
+          and(
+            eq(callAiDrafts.id, p.aiDraftId),
+            eq(callAiDrafts.userId, principal.user.id),
+            eq(callAiDrafts.channel, "visit"),
+          ),
+        );
+    }
     await tx
       .insert(mbosVisits)
       .values({

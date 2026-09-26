@@ -17,6 +17,7 @@ import {
 import { getConfig } from "../config/store";
 import { liveOlaKey } from "./ola-key-service";
 import { dictationAvailability } from "../dictation-requests";
+import { visitAssistAvailability } from "../visit-assist-availability";
 import {
   territoriesFor,
   territoryClause,
@@ -514,6 +515,16 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
           canRefine: dictation.canRefine,
         }
       : { available: false, reason: dictation?.available === false ? dictation.reason : "unknown" };
+
+  /*
+   * WHETHER TO DRAW THE VISIT ASSISTANT, for the same reason as the microphone
+   * above: the answer rides down with the pull rather than being asked for
+   * while a salesman stands in a shop. The ANSWER crosses and nothing behind
+   * it — no model name, no key. Caught for the same reason too: a settings
+   * read failing must cost a button, never the bootstrap.
+   */
+  const visitAssist = await visitAssistAvailability().catch(() => null);
+  out["mbos.ai.visitAssistant"] = { available: visitAssist?.available === true };
 
   return out;
 }

@@ -267,9 +267,12 @@ function ymd(iso: string): [number, number, number] {
  * A date in the past is refused the same way — the customer did not promise
  * to pay last Tuesday, so something was misheard.
  */
-function datedFrom(
+/** All a spoken date needs to be resolved: the business day and the week. */
+export type DateContext = Pick<DecideInput, "today" | "working">;
+
+export function datedFrom(
   cue: DateCueReading | null | undefined,
-  input: DecideInput,
+  input: DateContext,
   questions: string[],
   askWhenMissing: string | null,
 ): DatedField | null {
@@ -354,7 +357,7 @@ function datedFrom(
 }
 
 /** One-tap suggestions where nobody named a day. Offered, never filled. */
-function defaultChoices(input: DecideInput): DatedField["choices"] {
+function defaultChoices(input: DateContext): DatedField["choices"] {
   const out: DatedField["choices"] = [];
   for (const n of [1, 3, 7, 15]) {
     const raw = calendarDaysAhead(input.today, n, input.working);

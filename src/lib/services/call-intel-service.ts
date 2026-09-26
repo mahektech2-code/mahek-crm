@@ -1,7 +1,5 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { createOpenAI } from "@ai-sdk/openai";
-import { generateText, Output } from "ai";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -17,8 +15,7 @@ import {
 import { assertCustomerInScope, resolveScope } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
-import { readSecret } from "@/lib/secrets";
-import { SARVAM_LANGUAGE_MODEL } from "@/lib/voice-readiness";
+import { readStructured } from "@/lib/structured-read";
 import { callReadingSchema, type CallReading } from "@/lib/call-intel-schema";
 import {
   crossValidate,
@@ -541,74 +538,15 @@ async function readWithModel(args: {
   interactionType: string | null;
   model: string;
 }): Promise<{ reading: CallReading | null; model: string | null }> {
-  const system = systemPrompt(args.today);
-  const prompt = userPrompt(args);
-  const [openaiKey, sarvamKey] = await Promise.all([
-    readSecret("openai.apiKey"),
-    readSecret("sarvam.apiKey"),
-  ]);
-
-  if (openaiKey) {
-    try {
-      const client = createOpenAI({ apiKey: openaiKey });
-      const result = await generateText({
-        model: client(args.model),
-        system,
-        prompt,
-        output: Output.object({ schema: callReadingSchema }),
-        providerOptions: { openai: { reasoningEffort: "low" } },
-        /* One retry, not the SDK's two: somebody is waiting mid-call, and a
-           refusal like an empty credit balance will not change on a retry. */
-        maxRetries: 1,
-        abortSignal: AbortSignal.timeout(45_000),
-      });
-      return { reading: result.output, model: `openai:${args.model}` };
-    } catch (e) {
-      console.error(
-        "Call assistant: OpenAI read failed:",
-        e instanceof Error ? e.message : e,
-      );
-    }
-  }
-
-  /*
-   * Sarvam's chat endpoint is OpenAI-shaped but does not promise structured
-   * output, so it is asked for JSON in words and the answer is validated
-   * against the same schema. An answer that does not validate is no answer —
-   * a half-read call filled into a form is worse than the classifier asking.
-   */
-  if (sarvamKey) {
-    try {
-      const client = createOpenAI({
-        apiKey: sarvamKey,
-        baseURL: "https://api.sarvam.ai/v1",
-      });
-      const result = await generateText({
-        model: client.chat(SARVAM_LANGUAGE_MODEL),
-        system: `${system}\n\nAnswer with ONE JSON object and nothing else. Every key of the shape below must be present; use null where nothing was said.\n${SHAPE_HINT}`,
-        prompt,
-        /* One retry, not the SDK's two: somebody is waiting mid-call, and a
-           refusal like an empty credit balance will not change on a retry. */
-        maxRetries: 1,
-        abortSignal: AbortSignal.timeout(45_000),
-      });
-      const json = extractJson(result.text);
-      const parsed = json ? callReadingSchema.safeParse(json) : null;
-      if (parsed?.success)
-        return {
-          reading: parsed.data,
-          model: `sarvam:${SARVAM_LANGUAGE_MODEL}`,
-        };
-      console.error("Call assistant: Sarvam's answer did not fit the reading.");
-    } catch (e) {
-      console.error(
-        "Call assistant: Sarvam read failed:",
-        e instanceof Error ? e.message : e,
-      );
-    }
-  }
-
-  return { reading: null, model: null };
+  const read = await readStructured({
+    label: "Call assistant",
+    system: systemPrompt(args.today),
+    prompt: userPrompt(args),
+    schema: callReadingSchema,
+    shapeHint: SHAPE_HINT,
+    model: args.model,
+  });
+  return { reading: read.output, model: read.model };
 }
 
 /** The keys, for a model that cannot be handed a schema. */
@@ -646,17 +584,6 @@ const SHAPE_HINT = JSON.stringify({
   doNotCall: { said: false, quote: null },
   unclear: [],
 });
-
-function extractJson(text: string): unknown {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return null;
-  }
-}
 
 /* ------------------------------------------------------------- products */
 
