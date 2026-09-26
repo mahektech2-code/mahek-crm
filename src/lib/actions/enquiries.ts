@@ -11,8 +11,14 @@ import {
   linkOrder,
   unlinkOrder,
   findCustomersByPhone,
+  enquiryForLeadConversion,
   type CustomerMatch,
+  type EnquiryForLead,
 } from "@/lib/services/enquiry-service";
+import { requireUser } from "@/lib/auth";
+import { canOpenModule } from "@/lib/access";
+import { canFor } from "@/lib/access-control";
+import { DESK_MODULE, deskHolders, type DeskPerson } from "@/lib/services/lead-desk-assignment-service";
 import { err, fromThrown, type Result } from "@/lib/result";
 import {
   ENQUIRY_PRIORITIES,
@@ -144,6 +150,34 @@ export async function unlinkOrderAction(enquiryId: string, orderId: string): Pro
 export async function findCustomersByPhoneAction(phone: string): Promise<Result<CustomerMatch[]>> {
   try {
     return await findCustomersByPhone(phone);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * What the Create lead dialog opens with: the enquiry's own facts, ready to
+ * prefill, and whether this person may also hand the lead to somebody.
+ *
+ * A READ, and the same checks the write makes — the enquiry has to be one that
+ * may become a lead and must not already have one — so a button is never drawn
+ * for something the write would refuse. The lead itself is raised by
+ * `captureLead`, not here: there is one way to make a lead.
+ */
+export type LeadFromEnquiryContext = {
+  enquiry: EnquiryForLead;
+  /** Whether this person may give the lead an owner as it is created. */
+  canAssign: boolean;
+  assignees: DeskPerson[];
+};
+
+export async function leadFromEnquiryContextAction(enquiryId: string): Promise<Result<LeadFromEnquiryContext>> {
+  try {
+    const found = await enquiryForLeadConversion(enquiryId);
+    if (!found.ok) return found;
+    const user = await requireUser();
+    const canAssign = (await canFor(user, "lead.verify")) && (await canOpenModule(user.id, DESK_MODULE));
+    return { ok: true, data: { enquiry: found.data, canAssign, assignees: canAssign ? await deskHolders() : [] } };
   } catch (e) {
     return fromThrown(e);
   }

@@ -156,6 +156,11 @@ export function VerificationQueueScreen({
                   <Link href={leadHref(workspace, `leads/${r.customerId}`)} className="no-underline">
                     {r.name}
                   </Link>
+                  {r.requested ? (
+                    <span className="ml-1.5" title="The calling desk asked for this to be a Prospect. It is still a Suspect until you verify it.">
+                      <Pill tone="brand">Desk request</Pill>
+                    </span>
+                  ) : null}
                   <span className="block truncate text-[12px] text-muted">
                     {[r.companyName, r.city].filter(Boolean).join(" · ") || r.mobile || "—"}
                   </span>

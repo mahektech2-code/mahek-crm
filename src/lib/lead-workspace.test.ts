@@ -35,6 +35,22 @@ import {
  * joined by a spelling, and getting it wrong fails silently.
  * ------------------------------------------------------------------------- */
 
+/**
+ * LEAD MODULES THAT ARE NOT A SECTION OF THE SHARED WORKSPACE.
+ *
+ * `LEAD_SECTIONS` is the list both apps mount, one sidebar row each, so every
+ * assertion below reads "every module is a section, in both workspaces". The
+ * calling desk is the exception and is named here rather than quietly passing:
+ * it is the CRM's alone (the Sales Dashboard's people walk a beat), it is drawn
+ * from the CRM's own sidebar in `components/shell/nav.ts`, and it is a module
+ * of its own so that it can be GRANTED to particular people — a tab of All
+ * Leads could not be, and the desk was open to every CRM user. The last test in
+ * this file pins the exception itself, so it cannot grow unnoticed.
+ */
+const CRM_ONLY_LEAD_MODULES = ["lead-calling-desk"];
+const isSharedLeadModule = (workspace: string, key: string) =>
+  !(workspace === "crm" && CRM_ONLY_LEAD_MODULES.includes(key.slice(workspace.length + 1)));
+
 describe("the Lead Management nav and the module registry agree", () => {
   it("every section names a real module in every workspace", () => {
     for (const workspace of LEAD_WORKSPACES) {
@@ -61,7 +77,7 @@ describe("the Lead Management nav and the module registry agree", () => {
     // join, and renaming one silently revokes it from everybody.
     for (const workspace of LEAD_WORKSPACES) {
       const leadModules = modulesForApp(workspace).filter(
-        (m) => m.group === "Lead Management",
+        (m) => m.group === "Lead Management" && isSharedLeadModule(workspace, m.key),
       );
 
       for (const m of leadModules) {
@@ -98,7 +114,7 @@ describe("the Lead Management nav and the module registry agree", () => {
   it("both workspaces carry the same Lead Management modules", () => {
     const slugsFor = (workspace: LeadWorkspace) =>
       modulesForApp(workspace)
-        .filter((m) => m.group === "Lead Management")
+        .filter((m) => m.group === "Lead Management" && isSharedLeadModule(workspace, m.key))
         .map((m) => m.key.slice(workspace.length + 1))
         .sort();
     assert.deepEqual(slugsFor("crm"), slugsFor("sales"));
@@ -119,6 +135,29 @@ describe("the Lead Management nav and the module registry agree", () => {
       `Lead Management has ${LEAD_SECTIONS.length} sidebar rows. Ten is the cap — ` +
         `add a tab to an existing section instead, or make the case for widening it.`,
     );
+  });
+
+  it("the CRM-only exception is exactly the calling desk: its own module, off by default, drawn in the CRM sidebar", () => {
+    assert.deepEqual(CRM_ONLY_LEAD_MODULES, ["lead-calling-desk"]);
+    for (const slug of CRM_ONLY_LEAD_MODULES) {
+      const mod = APP_MODULES.find((m) => m.key === `crm.${slug}`);
+      assert.ok(mod, `crm.${slug} is not a module`);
+      assert.equal(mod?.group, "Lead Management");
+      assert.equal(
+        mod?.offByDefault,
+        true,
+        `crm.${slug} is not offByDefault, so a grant of the whole CRM would carry it — which is every CRM user.`,
+      );
+      assert.equal(
+        APP_MODULES.find((m) => m.key === `sales.${slug}`),
+        undefined,
+        `sales.${slug} exists: the exception is the CRM's alone.`,
+      );
+      assert.ok(
+        !LEAD_SECTIONS.some((s) => s.slug === slug),
+        `${slug} is a section as well as an exception — pick one.`,
+      );
+    }
   });
 
   it("a section's own path is its first tab, so the sidebar never redirects", () => {

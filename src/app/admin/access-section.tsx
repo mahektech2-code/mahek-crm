@@ -99,6 +99,9 @@ type Draft = Record<string, string[]>;
 
 const ALL_OF = (app: AppId) => modulesForApp(app).map((m) => m.key);
 
+/** What ticking an app (or starting a new grant) selects: every module except the ones that are handed out deliberately. */
+const DEFAULT_OF = (app: AppId) => modulesForApp(app).filter((m) => !m.offByDefault).map((m) => m.key);
+
 export function AccessSection({
   rows,
   onOpenUser,
@@ -685,7 +688,7 @@ function AccessDialog({
     setPhone(c.phone ?? "");
     // Somebody already holding apps arrives with what they hold, not empty —
     // this dialog sets the whole picture, so it has to start from the picture.
-    setDraft(Object.fromEntries(c.apps.map((a) => [a, ALL_OF(a)])));
+    setDraft(Object.fromEntries(c.apps.map((a) => [a, DEFAULT_OF(a)])));
     setFieldError({});
     setStep("access");
   };
@@ -1311,7 +1314,7 @@ function AppBlock({
           // registry is visible at once, which is what makes this page a
           // decision rather than a scroll.
           title={description}
-          onChange={() => onChange(on ? [] : all)}
+          onChange={() => onChange(on ? [] : DEFAULT_OF(app))}
           label={<span className="text-[13px] font-medium text-ink">{name}</span>}
         />
         {built ? null : (

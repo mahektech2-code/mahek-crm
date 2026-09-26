@@ -240,6 +240,20 @@ export const MBOS_EVENT = {
 
   /** §14 — a file sent or a call placed from the manager's lead page. */
   leadCommunication: "lead_communication",
+  /**
+   * The calling desk asking for a lead to be put forward as a Prospect, and the
+   * sales manager sending it back.
+   *
+   * Their own kinds rather than `leadStage`, because neither is a stage move —
+   * the lead stays a Suspect through both, which is the whole point of the
+   * request. A reader scanning a history for "when did it go to the manager, and
+   * when did it come back" is looking for these two sentences, and a stage move
+   * would have said something that did not happen. The source row is the request
+   * or the return, so the moment goes in the source id: one lead can be sent
+   * back and resubmitted more than once.
+   */
+  prospectRequested: "prospect_requested",
+  prospectReturned: "prospect_returned",
   /** §18 — the eight questions, and the date they produced. */
   firstOrderAsk: "lead_first_order_ask",
 

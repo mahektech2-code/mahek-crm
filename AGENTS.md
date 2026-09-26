@@ -5880,6 +5880,55 @@ narrower than the number beside it says and truncates early. Ten tables were
 over by 20 to 200 pixels. `table-widths.test.ts` reads both spellings, the
 `width` prop and the third argument of the local `head()` helper.
 
+**THE CALLING DESK IS A MODULE, AND IT IS GRANTED — NOT INHERITED.** It was a
+tab of All Leads, and a tab cannot be withheld: every CRM user could open the
+telecaller's desk, which is the one thing that must not be true of it.
+`crm.lead-calling-desk` is a module of its own, guarded on the route and again
+inside every write the desk makes (`lead.work` is held by every associate, so
+on its own it would let anybody post to those actions by URL). Who works the
+desk is decided per person on the Access screen and by nothing in code — no
+name, email or id appears anywhere in it; an administrator holds it the way an
+administrator holds the whole CRM.
+
+**A NEW MODULE REACHES EVERYBODY WHO HOLDS THE WHOLE APP, and that is the
+existing rule this had to work around rather than change.** "No module rows
+means every module" is what makes a fifteenth screen reach the whole-app
+holders, and here it would have handed the desk to every CRM account on deploy.
+`offByDefault` on an `AppModule` changes only what the Access screen STARTS
+from — ticking the CRM leaves it unticked — and `0170` writes explicit rows for
+each existing whole-CRM account, minus the desk, so nobody loses a screen and
+nobody gains this one. A CRM administrator is left whole on purpose: they are
+who decides, and narrowing them would take it from the person who hands it out.
+The migration's module list is a SNAPSHOT: a module added later must reach the
+whole-app holders and must not be granted retroactively by a migration that
+re-reads the registry. `lead-workspace.test.ts` names the desk as the one
+CRM-only exception to "every lead module is a shared section", and pins it.
+
+**A WEBSITE ENQUIRY BECOMES A LEAD BY HAND, THROUGH THE ONE WRITER.** Receiving
+an enquiry never raises a lead: a person reads it and presses Create lead, on
+the four forms that may (QUOTE, PRODUCT_ENQUIRY, QUICK_ENQUIRY, DISTRIBUTOR —
+never CAREER, and website is the only source). It posts to `captureLead` with
+`fromEnquiry`, which changes three things and nothing else: the source is the
+enquiry's own (a client cannot claim another channel), the enquiry must be
+convertible and unlinked, and it is pointed at the new lead in the SAME
+transaction. The WHERE CLAUSE is the guard (`customer_id is null`), the rule
+`linkCustomer` already follows, so two people pressing it at once make one lead
+and the loser is undone with its lead. The sales type is asked in the dialog and
+never guessed, which is what makes the new lead a literal Suspect: with none the
+foot of the legacy ladder is `new`, the same first band, but not the word.
+
+**AN UNOWNED LEAD IS ON NO TELECALLER'S DESK, so it is said out loud.** An
+associate's scope is their own book and `owner_id` is the assignment, so a lead
+nobody owns is invisible to every telecaller. It is not automatic to give it an
+owner — somebody decides — so the person who created it is told it is unowned,
+whoever can assign is notified, the administrator sees it flagged with an
+Unassigned filter, and the enquiry itself says whether anybody has the lead it
+made. `reassignLead` could not do the assigning: it only accepts an owner who
+holds the Salesman App, which puts the lead on a handset, and a telecaller has
+none. `assignDeskLead` writes the same column and only to somebody who holds the
+desk, because a lead given to somebody who cannot open it would vanish into a
+desk nobody can see.
+
 ## Testing
 
 `npm run test` runs the engine tests: pure, fast, no database. They pin the

@@ -7,6 +7,8 @@ import { today } from "@/lib/recompute";
 import { getConfig } from "@/lib/config/store";
 import { canLead, leadRecord, managerCalls } from "@/lib/services/lead-console-service";
 import { VerifyScreen, type Finding } from "@/components/leads/record/verify/verify-screen";
+import { RequestNotice } from "@/components/leads/calling-desk/request-notice";
+import { prospectRequestFor } from "@/lib/services/lead-calling-desk-service";
 
 
 /**
@@ -58,7 +60,11 @@ export async function Body({
    * his own wording on this radio, or the two screens that close a lead would
    * be offering two different vocabularies for one column.
    */
-  const failureReasons = (await getConfig())["leads.verificationFailureReasons"];
+  const config = await getConfig();
+  const failureReasons = config["leads.verificationFailureReasons"];
+  /* A calling-desk request this verification would settle, if there is one. */
+  const request = await prospectRequestFor(id);
+  const canVerify = await canLead(user, "lead.verify");
 
   /*
    * A finding with nothing recorded against it is still LISTED. "He did not
@@ -104,6 +110,16 @@ export async function Body({
     [record.companyName, record.city].filter(Boolean).join(" · ") || record.mobile || "";
 
   return (
+    <>
+      {request && (request.state === "awaiting" || request.state === "followup") ? (
+        <RequestNotice
+          customerId={record.customerId}
+          leadName={record.name}
+          notice={request}
+          reasonLabel={config["leads.prospectReasons"].find((r) => r.code === request.reasonCode)?.label ?? null}
+          canVerify={canVerify}
+        />
+      ) : null}
     <VerifyScreen workspace={workspace}
       /* Keyed on the lead so moving between two of these remounts with a blank
          form rather than having an effect clear it — the React Compiler rules
@@ -118,7 +134,8 @@ export async function Body({
       findings={findings}
       priorCalls={calls}
       failureReasons={failureReasons}
-      canVerify={await canLead(user, "lead.verify")}
+      canVerify={canVerify}
     />
+    </>
   );
 }

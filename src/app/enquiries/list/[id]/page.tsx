@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { canOpenModule } from "@/lib/access";
+import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
 import {
   getEnquiry,
   assignableUsers,
@@ -33,10 +35,11 @@ export default async function EnquiryDetailPage({
   const fields = readSubmissionFields(enquiry.rawSubmission);
   const phone = enquiry.customerPhone ?? fields.phone;
 
-  const [team, duplicates, orderCandidates] = await Promise.all([
+  const [team, duplicates, orderCandidates, deskAccess] = await Promise.all([
     assignableUsers(),
     findPossibleDuplicateEnquiries(id, phone),
     ordersForLinking(id),
+    canOpenModule(user.id, DESK_MODULE),
   ]);
 
   return (
@@ -46,6 +49,7 @@ export default async function EnquiryDetailPage({
       team={team}
       duplicates={duplicates}
       orderCandidates={orderCandidates}
+      deskAccess={deskAccess}
     />
   );
 }

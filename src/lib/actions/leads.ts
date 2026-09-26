@@ -114,6 +114,11 @@ async function reachableLead(
     ownerId: lead.ownerId,
     salesAmId: lead.salesAmId,
     backOfficeAmId: lead.backOfficeAmId,
+    /* The coordinating seat reads too. `scopedToUsers` already lists a lead for
+       whoever holds it, and a read that does not is the row on your screen
+       whose opening throws — which is exactly what the calling desk's requests
+       would do to the sales manager they are addressed to. */
+    leadManagerId: lead.leadManagerId,
   });
   return { ok: true, lead };
 }
@@ -1548,11 +1553,30 @@ export async function recordLeadValidationCall(
 
     refresh(customerId);
 
+    /*
+     * A DESK REQUEST THIS CALL WAS ABOUT IS SETTLED HERE, and only here.
+     *
+     * The calling desk asks for a lead to be put forward as a Prospect and the
+     * lead stays a Suspect until a verification succeeds — so the verdict that
+     * says "verified" is what promotes it, and "follow_up" is what puts it on
+     * hold. A lead with no pending request (every lead the salesman path
+     * raises) is returned untouched by the settle, so this changes nothing for
+     * it. Loaded lazily: that service imports this file for the move it makes, and
+     * a static import back would be a cycle.
+     */
+    const { settleProspectRequest } = await import("../services/lead-prospect-request-service");
+    const settled = await settleProspectRequest(customerId, c.outcome);
+    if (!settled.ok) {
+      return ok(null, `Recorded. ${settled.error}`);
+    }
+
     if (c.outcome !== "not_qualified") {
       return ok(
         null,
         c.outcome === "verified"
-          ? "Verified."
+          ? settled.data.promoted
+            ? "Verified — the lead is now a confirmed Prospect."
+            : "Verified."
           : "Recorded, and the follow-up is on the salesman's list.",
       );
     }

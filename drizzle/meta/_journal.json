@@ -1170,6 +1170,20 @@
       "when": 1790283298688,
       "tag": "0168_sign_in_with_a_whatsapp_code",
       "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "7",
+      "when": 1790283358688,
+      "tag": "0169_a_prospect_request_is_not_a_prospect",
+      "breakpoints": true
+    },
+    {
+      "idx": 169,
+      "version": "7",
+      "when": 1790283418688,
+      "tag": "0170_the_calling_desk_is_granted_not_inherited",
+      "breakpoints": true
     }
   ]
 }

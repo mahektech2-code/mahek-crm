@@ -1953,6 +1953,30 @@ export const customers = pgTable(
      */
     leadHoldResumeDate: date("lead_hold_resume_date"),
     /**
+     * A REQUEST TO BE PUT FORWARD AS A PROSPECT IS NOT A PROSPECT, and this is
+     * where the request lives.
+     *
+     * The calling desk qualifies an online lead by phone and then ASKS for it to
+     * become a Prospect; the sales manager verifies it, and only a successful
+     * verification moves the rung. Between the ask and the answer the lead stays
+     * a Suspect — there is no stage for "requested", and adding one to the enum
+     * would put a rung on every ladder and on every handset that knows none of
+     * it — so the pending question is a fact beside the stage rather than a
+     * value of it.
+     *
+     * NULL is no live request: never asked, or asked and answered. `awaiting` is
+     * with the manager; `followup` is the manager holding it; `returned` is the
+     * manager sending it back to the desk. The who, when, why and words stay
+     * after the answer, so the columns after it are history once this is null.
+     */
+    prospectRequestState: text("prospect_request_state"),
+    prospectRequestedAt: timestamp("prospect_requested_at", { withTimezone: true }),
+    prospectRequestedById: text("prospect_requested_by_id").references(() => users.id),
+    /** A code from `leads.prospectReasons`, never a label. */
+    prospectRequestReason: text("prospect_request_reason"),
+    /** What the customer said, in the desk's words. */
+    prospectRequestNote: text("prospect_request_note"),
+    /**
      * §4.2 — the contact's own address, and it had nowhere to live.
      *
      * `users.email` is a MahekOne account; this is the customer's. Nothing on
@@ -2247,6 +2271,18 @@ export const customers = pgTable(
     index("customers_lead_manager_seat_idx")
       .on(t.leadManagerId)
       .where(sql`lead_manager_id is not null`),
+    /* A pending request to be put forward as a Prospect — see the column. */
+    index("customers_prospect_request_idx")
+      .on(t.prospectRequestState)
+      .where(sql`prospect_request_state is not null`),
+    check(
+      "customers_prospect_request_state_check",
+      sql`prospect_request_state is null or prospect_request_state in ('awaiting', 'followup', 'returned')`,
+    ),
+    check(
+      "customers_prospect_request_has_when",
+      sql`prospect_request_state is null or prospect_requested_at is not null`,
+    ),
     /*
      * Also in 0138 and also inexpressible here, for the reason drizzle/0008 and
      * drizzle/0013 already give -- Drizzle has no way to name an operator
