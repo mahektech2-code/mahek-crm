@@ -27,6 +27,7 @@ import {
   attachments,
   customers,
   mbosDevices,
+  mbosSyncReceipts,
   mbosTravelLegs,
   users,
 } from "@/db/schema";
@@ -270,15 +271,24 @@ describe("A journey opened when he sets off and closed when he arrives", () => {
 
 /* ══════════════════════════════════════════════ the strictness, and its edge */
 
-describe("A visit leg is held to the standard the app was present for", () => {
-  test("a metered visit leg with no reading is refused, however the handset was built", async () => {
-    /* The camera screen refuses this for a person. This is the rule surviving
-       a build that forgot it, or a payload somebody wrote by hand — a mileage
-       claim is money, and a check that lives only in an interface is not a
-       check. */
+/** The leg as stored, for asserting that it was kept and left out of the claim. */
+async function stored(legId: string) {
+  const [row] = await db.select().from(mbosTravelLegs).where(eq(mbosTravelLegs.id, legId));
+  return row;
+}
+
+describe("A visit leg is paid only on the evidence the app was present for — and never refused for the lack of it", () => {
+  test("a metered visit leg with no reading is KEPT and left out of the claim, however the handset was built", async () => {
+    /* It used to be refused, and the visit behind it went with it: a salesman
+       on 1.9.0 checked in at a shop and could never check out. A mileage
+       claim is money, and the money is still protected — the leg pays
+       nothing — but the journey and the visit it led to are work that
+       happened, and no build in the field can be made to send otherwise. */
+    const legId = id("leg");
     const [out] = await ingestSyncBatch(principal, [
       item({
         entityType: "travel_leg",
+        entityId: legId,
         payload: {
           day: "2026-09-10",
           modeKey: "own_bike",
@@ -288,14 +298,18 @@ describe("A visit leg is held to the standard the app was present for", () => {
         },
       }),
     ]);
-    assert.equal(out.status, "rejected", JSON.stringify(out));
-    assert.match(out.status === "rejected" ? out.message : "", /meter|reading/i);
+    assert.equal(out.status, "accepted", JSON.stringify(out));
+    const row = await stored(legId);
+    assert.equal(row.claimExcluded, true, "a journey with no reading behind it pays nothing");
+    assert.match(row.claimExcludedReason ?? "", /meter|reading/i);
   });
 
-  test("a metered visit leg with a reading but no photograph is refused too", async () => {
+  test("a metered visit leg with a reading but no photograph is kept, and not claimed either", async () => {
+    const legId = id("leg");
     const [out] = await ingestSyncBatch(principal, [
       item({
         entityType: "travel_leg",
+        entityId: legId,
         payload: {
           day: "2026-09-10",
           modeKey: "own_bike",
@@ -306,7 +320,8 @@ describe("A visit leg is held to the standard the app was present for", () => {
         },
       }),
     ]);
-    assert.equal(out.status, "rejected", "a figure with no picture behind it cannot be checked");
+    assert.equal(out.status, "accepted", JSON.stringify(out));
+    assert.equal((await stored(legId)).claimExcluded, true, "a figure with no picture behind it cannot be checked");
   });
 
   test("A DAY-LOG LEG IS UNTOUCHED BY ALL OF IT", async () => {
@@ -361,7 +376,7 @@ describe("A visit leg is held to the standard the app was present for", () => {
     assert.equal(out.status, "accepted", JSON.stringify(out));
   });
 
-  test("closing a metered visit leg without the second photograph is refused", async () => {
+  test("closing a metered visit leg without the second photograph closes it, unclaimed", async () => {
     const legId = id("leg");
     await depart(legId);
     const [leg] = await db.select().from(mbosTravelLegs).where(eq(mbosTravelLegs.id, legId));
@@ -384,13 +399,15 @@ describe("A visit leg is held to the standard the app was present for", () => {
         },
       }),
     ]);
-    assert.equal(out.status, "rejected", JSON.stringify(out));
+    assert.equal(out.status, "accepted", JSON.stringify(out));
 
-    const [after] = await db.select().from(mbosTravelLegs).where(eq(mbosTravelLegs.id, legId));
-    assert.equal(after.endedAt, null, "a refused arrival must not half-close the leg");
+    const after = await stored(legId);
+    assert.notEqual(after.endedAt, null, "he arrived, and the record has to say so");
+    assert.equal(after.claimExcluded, true);
+    assert.match(after.claimExcludedReason ?? "", /arrival/i);
   });
 
-  test("an arrival lower than the departure is refused, because meters do not run backwards", async () => {
+  test("an arrival lower than the departure is kept and not claimed, because meters do not run backwards", async () => {
     const legId = id("leg");
     await depart(legId);
     const [leg] = await db.select().from(mbosTravelLegs).where(eq(mbosTravelLegs.id, legId));
@@ -415,8 +432,10 @@ describe("A visit leg is held to the standard the app was present for", () => {
         },
       }),
     ]);
-    assert.equal(out.status, "rejected", JSON.stringify(out));
-    assert.match(out.status === "rejected" ? out.message : "", /backwards|digit/i);
+    assert.equal(out.status, "accepted", JSON.stringify(out));
+    const row = await stored(legId);
+    assert.equal(row.claimExcluded, true);
+    assert.match(row.claimExcludedReason ?? "", /lower|digit/i);
   });
 
   test("a journey called off is closed at its own reading, so it measures nothing", async () => {
@@ -509,9 +528,11 @@ describe("A visit leg is held to the standard the app was present for", () => {
       ]);
 
     /* A punch-out that claims forty kilometres with no picture of the meter
-       is still refused — that reading is the whole of the day's claim. */
+       still pays nothing — that reading is the whole of the day's claim — but
+       the punch-out itself is kept. */
     const [claimed] = await close({ odometerEndKm: 41248 });
-    assert.equal(claimed.status, "rejected", JSON.stringify(claimed));
+    assert.equal(claimed.status, "accepted", JSON.stringify(claimed));
+    assert.equal((await stored(legId)).claimExcluded, true);
 
     const [auto] = await close({ odometerEndKm: 41208 });
     assert.equal(auto.status, "accepted", JSON.stringify(auto));
@@ -536,6 +557,48 @@ describe("A visit leg is held to the standard the app was present for", () => {
       }),
     ]);
     assert.equal(out.status, "accepted", JSON.stringify(out));
+  });
+});
+
+describe("A refusal is judged again when the handset retries it", () => {
+  test("a rejection stored under an older rule does not replay once the rule has moved", async () => {
+    /*
+     * The handset's Retry button resends the SAME payload under the SAME key,
+     * because an old APK cannot be changed to send anything else. Replaying
+     * the stored refusal verbatim made every rejection permanent under the
+     * rule in force the day it was given — the Retry could never succeed, and
+     * neither could the visit queued behind it. Planted here as production
+     * holds it: a leg refused on 26 Sep for want of a meter reading.
+     */
+    const legId = id("leg");
+    const sent = item({
+      entityType: "travel_leg",
+      entityId: legId,
+      payload: { day: "2026-09-10", modeKey: "own_bike", customerId: shop.id, startedAt: Date.now(), origin: "visit" },
+    });
+    await db.insert(mbosSyncReceipts).values({
+      id: id("mbos_receipt"),
+      idempotencyKey: sent.idempotencyKey,
+      userId: principal.user.id,
+      entityType: "travel_leg",
+      entityId: legId,
+      resultJson: { queueId: "old", status: "rejected", code: "validation", message: "needs the reading at the start" },
+    });
+
+    const [out] = await ingestSyncBatch(principal, [sent]);
+    assert.equal(out.status, "accepted", JSON.stringify(out));
+    assert.ok(await stored(legId), "the retried leg is written");
+
+    const [receipt] = await db
+      .select()
+      .from(mbosSyncReceipts)
+      .where(eq(mbosSyncReceipts.idempotencyKey, sent.idempotencyKey));
+    assert.equal((receipt.resultJson as { status: string }).status, "accepted", "the new answer replaces the old refusal");
+
+    /* And from here on it replays like any acceptance: a third send writes
+       nothing new and returns the same answer. */
+    const [again] = await ingestSyncBatch(principal, [{ ...sent, queueId: id("q") }]);
+    assert.equal(again.status, "accepted");
   });
 });
 

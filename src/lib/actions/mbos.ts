@@ -378,7 +378,18 @@ export async function ingestSyncBatch(
       .where(eq(mbosSyncReceipts.idempotencyKey, item.idempotencyKey))
       .limit(1);
 
-    if (replay.length) {
+    /*
+     * A stored REJECTION is not replayed; it is judged again.
+     *
+     * Replaying it verbatim made a refusal permanent under whatever rule was in
+     * force the day it was given — so when a rule was relaxed, the handset's
+     * own Retry button could never succeed, and neither could the visit queued
+     * behind the refused record. An old APK cannot be changed to send anything
+     * different, so the server re-reading the same payload is the only way it
+     * ever gets through. Accepted and conflicted receipts are still replayed
+     * exactly, because those are the ones a retry must not write twice.
+     */
+    if (replay.length && (replay[0].resultJson as SyncResult).status !== "rejected") {
       const stored = replay[0].resultJson as SyncResult;
       // The queueId is the client's handle on this attempt and may differ
       // between the first send and the retry; everything else is verbatim.
@@ -454,10 +465,11 @@ export async function ingestSyncBatch(
       });
     }
 
-    /* 4 — the receipt. Stored for accepted, rejected and conflicted alike:
-     * a replayed rejection has to come back as the same rejection, or the
-     * handset would try the refused order again on the next pass. A `retry`
-     * is deliberately NOT stored — it is the one answer that must not stick. */
+    /* 4 — the receipt. Stored for accepted, rejected and conflicted alike.
+     * A rejection is stored so the record of it exists, but it is judged
+     * again rather than replayed when the same key comes back (see step 1).
+     * A `retry` is deliberately NOT stored — it is the one answer that must
+     * not stick. */
     if (result.status !== "retry") await storeReceipt(principal, item, result);
   }
 
@@ -498,7 +510,13 @@ async function storeReceipt(
       entityId: item.entityId,
       resultJson: result,
     })
-    .onConflictDoNothing({ target: mbosSyncReceipts.idempotencyKey });
+    /* A rejection is the one answer a later pass may overwrite — see the
+       replay above. The first accepted answer still stands for ever. */
+    .onConflictDoUpdate({
+      target: mbosSyncReceipts.idempotencyKey,
+      set: { resultJson: result, createdAt: new Date() },
+      setWhere: sql`${mbosSyncReceipts.resultJson}->>'status' = 'rejected'`,
+    });
 }
 
 function toResult(
@@ -5713,43 +5731,41 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
   const closedAtOwnReading =
     p.endedAt != null && p.odometerStartKm != null && p.odometerEndKm === p.odometerStartKm;
 
+  /*
+   * A MISSING OR IMPOSSIBLE READING UNPAYS THE LEG. IT NEVER REFUSES IT.
+   *
+   * These three checks used to be rejections, and a rejected leg took the
+   * visit behind it down too: the handset blocks everything that depends on a
+   * refused record, so a salesman on an older build checked in at a shop and
+   * could never check out. Every handset in the field is some build behind the
+   * server, an APK cannot be recalled, and the rules here moved twice in a
+   * fortnight — so "the payload the old app sends is now invalid" is the
+   * ordinary case, not an edge. On 26 Sep 2026 it was eight journeys from two
+   * people in one afternoon, on 1.9.0 and 1.10.0.
+   *
+   * What the checks protect is MONEY, and money is protected just as well by
+   * accepting the movement and leaving it out of the claim, with the reason on
+   * the record for whoever reviews the day. The journey happened; the visit it
+   * led to happened; only the kilometres are unevidenced. That is the rule
+   * `engines/geo.ts` states for the whole field product — a reading is
+   * evidence, never a gate.
+   */
+  let unevidenced: string | null = null;
   if ((p.origin === "visit" || p.origin === "session") && mode.requiresOdometer && !excludedVisit) {
     if (p.odometerStartKm == null || !p.odometerPhotoId) {
-      return {
-        kind: "rejected",
-        value: reject(
-          "validation",
-          p.origin === "session"
-            ? "A day on your own vehicle is measured on your own meter, so punching in needs the reading and the photograph showing it. Nothing was recorded — take the photo and punch in again."
-            : "A journey on your own vehicle is measured on your own meter, so it needs the reading at the start and the photograph showing it. Nothing was recorded — take the photo and set off again.",
-        ),
-      };
-    }
-    /* Only once it has ENDED. A leg still on the road has no arrival reading
-       yet and that is its ordinary state, not a fault. */
-    if (p.endedAt != null && !closedAtOwnReading && (p.odometerEndKm == null || !p.odometerEndPhotoId)) {
-      return {
-        kind: "rejected",
-        value: reject(
-          "validation",
-          p.origin === "session"
-            ? "Punching out on your own vehicle needs the meter read and photographed again — that second reading is the whole of the day's distance claim."
-            : "Arriving on your own vehicle needs the meter read and photographed again — that second reading is the whole of the distance claim.",
-        ),
-      };
-    }
-    if (
-      p.odometerEndKm != null &&
-      p.odometerStartKm != null &&
-      p.odometerEndKm < p.odometerStartKm
-    ) {
-      return {
-        kind: "rejected",
-        value: reject(
-          "validation",
-          `${p.odometerEndKm} km is lower than the ${p.odometerStartKm} km you set off on, and a meter does not run backwards. It is usually a digit dropped from the front — check the reading.`,
-        ),
-      };
+      unevidenced =
+        p.origin === "session"
+          ? "Not claimed: the punch-in carried no meter reading and photograph, so the day's distance has nothing to be measured from."
+          : "Not claimed: this journey carried no meter reading and photograph at the start, so its distance cannot be checked.";
+    } else if (p.endedAt != null && !closedAtOwnReading && (p.odometerEndKm == null || !p.odometerEndPhotoId)) {
+      /* Only once it has ENDED. A leg still on the road has no arrival reading
+         yet and that is its ordinary state, not a fault. */
+      unevidenced =
+        p.origin === "session"
+          ? "Not claimed: the punch-out carried no meter reading and photograph, and that second reading is the whole of the day's distance."
+          : "Not claimed: the arrival carried no meter reading and photograph, and that second reading is the whole of the distance.";
+    } else if (p.odometerEndKm != null && p.odometerStartKm != null && p.odometerEndKm < p.odometerStartKm) {
+      unevidenced = `Not claimed: the arrival reading of ${p.odometerEndKm} km is lower than the ${p.odometerStartKm} km it set off on, which is usually a digit dropped from the front.`;
     }
   }
 
@@ -5781,8 +5797,8 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
     /* Movement, recorded, and not a second claim — see the column's own note.
        Defaulted false, so a handset one build behind goes on sending legs that
        are claimed exactly as they always were. */
-    claimExcluded: p.claimExcluded ?? false,
-    claimExcludedReason: p.claimExcludedReason ?? null,
+    claimExcluded: unevidenced != null || (p.claimExcluded ?? false),
+    claimExcludedReason: unevidenced ?? p.claimExcludedReason ?? null,
     updatedAt: new Date(),
     updatedById: principal.user.id,
   };
