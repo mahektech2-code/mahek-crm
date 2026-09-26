@@ -202,6 +202,7 @@ export const NAV: NavGroup[] = [
         exact: true,
         badge: "leadsDueToday",
       },
+      // role-name-ok: a display label for the Calling desk screen, not a role value.
       { href: at("/leads/calling-desk"), label: "Telecaller", icon: "phone" },
       { href: at("/leads/funnel"), label: "Funnel & conversion", icon: "chart" },
       { href: at("/leads/intake"), label: "Intake", icon: "plus" },
