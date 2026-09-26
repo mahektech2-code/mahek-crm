@@ -20,6 +20,14 @@
  * door of its own.
  */
 
+/**
+ * The longest call the assistant reads, in characters. A dictated note is as
+ * long as the call was — twenty minutes of speech is about fifteen thousand
+ * characters — so this is set far past anything a telecaller will say, and
+ * exists only so a runaway paste cannot become a model bill.
+ */
+export const MAX_CALL_TEXT = 60_000;
+
 export const CALL_INTENTS = [
   "order_received",
   "opportunity",

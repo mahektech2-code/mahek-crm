@@ -257,6 +257,7 @@ function reading(over: Partial<CallReading>): CallReading {
     payment: null,
     followUp: null,
     casual: null,
+    inbound: null,
     doNotCall: { said: false, quote: null },
     unclear: [],
     ...over,
@@ -801,4 +802,106 @@ test("a passing remark does not outrank the point of the call", () => {
     }),
   );
   assert.equal(b.primary?.intent, "complaint");
+});
+
+/* ------------------------------------------------ why they rang, answered */
+
+import { inboundReason } from "./call-intel-decide";
+
+test("a delivery call carries the issue the form demands, not just the reason", () => {
+  const out = inboundReason(
+    { intent: "transport_follow_up" },
+    reading({
+      summary: "Material not received yet.",
+      inbound: {
+        reason: "delivery_transport",
+        callerRole: null,
+        callerName: null,
+        product: null,
+        customerQuery: "Where is my material?",
+        paymentStatus: null,
+        deliveryIssue: "not_received",
+        orderRef: "MMI/26-27/1119",
+        problem: null,
+        application: null,
+        quantity: null,
+      },
+    }),
+  );
+  assert.equal(out.callReason, "delivery_transport");
+  assert.equal(out.reasonDetail?.issue, "not_received");
+  assert.equal(out.reasonDetail?.orderRef, "MMI/26-27/1119");
+});
+
+test("a payment call with no inbound reading still answers what they asked", () => {
+  const out = inboundReason(
+    { intent: "payment_promised", evidence: "will pay 50k after 15 days" },
+    reading({ summary: "Promised ₹50,000 in 15 days." }),
+  );
+  assert.equal(out.callReason, "payment_outstanding");
+  assert.equal(out.reasonDetail?.customerQuery, "Promised ₹50,000 in 15 days.");
+});
+
+test("an enquiry names the product from wherever the reading put it", () => {
+  const out = inboundReason(
+    { intent: "sample_required" },
+    reading({
+      sample: { product: "PU sealer", quantityCans: 1, application: "furniture" },
+    }),
+  );
+  assert.equal(out.callReason, "product_enquiry");
+  assert.equal(out.reasonDetail?.product, "PU sealer");
+  assert.equal(out.reasonDetail?.application, "furniture");
+});
+
+test("the model's reason wins over the intent's default", () => {
+  const out = inboundReason(
+    { intent: "payment_promised" },
+    reading({
+      inbound: {
+        reason: "delivery_transport",
+        callerRole: null,
+        callerName: null,
+        product: null,
+        customerQuery: null,
+        paymentStatus: null,
+        deliveryIssue: "delayed",
+        orderRef: null,
+        problem: null,
+        application: null,
+        quantity: null,
+      },
+    }),
+  );
+  assert.equal(out.callReason, "delivery_transport");
+  assert.equal(out.reasonDetail?.issue, "delayed");
+});
+
+test("an intent with no inbound reason sets none", () => {
+  assert.deepEqual(inboundReason({ intent: "no_answer" }, reading({})), {});
+});
+
+test("who rang is carried when it was said, and never invented", () => {
+  const said = inboundReason(
+    { intent: "payment_promised" },
+    reading({
+      inbound: {
+        reason: null,
+        callerRole: "accounts",
+        callerName: "Ramesh",
+        product: null,
+        customerQuery: null,
+        paymentStatus: null,
+        deliveryIssue: null,
+        orderRef: null,
+        problem: null,
+        application: null,
+        quantity: null,
+      },
+    }),
+  );
+  assert.equal(said.callerRole, "accounts");
+  assert.equal(said.callerName, "Ramesh");
+  const unsaid = inboundReason({ intent: "payment_promised" }, reading({}));
+  assert.equal(unsaid.callerRole, undefined);
 });
