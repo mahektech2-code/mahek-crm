@@ -29,7 +29,7 @@ import {
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
-import { runAutomation } from "@/lib/services/whatsapp-automation-service";
+import { ruleAudience, runAutomation } from "@/lib/services/whatsapp-automation-service";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -144,6 +144,31 @@ test("a preview works everything out and sends nothing", async () => {
   assert.equal(s.rules.find((x) => x.ruleId === r1)?.rows[0].outcome, "would_send");
   assert.equal(sends.length, 0);
   assert.equal((await db.select().from(waAutomationRuns)).length, 1, "the preview is in the log");
+});
+
+test("opening a rule shows who it reaches, even an Off rule, and writes and sends nothing", async () => {
+  await serviceOn();
+  const r1 = await rule(await template("payment_followup_1", "payment_followup_1_v2"), { status: "off", fromDay: 30 });
+  setTestUser(founder);
+  const s = await ruleAudience(r1);
+  setTestUser(null);
+  const mine = s.rules.find((x) => x.ruleId === r1);
+  assert.equal(mine?.inRange, 1);
+  assert.equal(mine?.rows[0].outcome, "would_send");
+  assert.equal(s.runId, null);
+  assert.equal(sends.length, 0);
+  assert.equal(
+    (await db.select().from(waAutomationRuns)).length,
+    0,
+    "looking at a rule is not a run — the log stays a record of real checks",
+  );
+});
+
+test("a pass that can send is logged whatever the caller asks", async () => {
+  await serviceOn();
+  await rule(await template("payment_followup_1", "payment_followup_1_v2"));
+  await runAutomation({ source: "schedule", now: at("11:00"), record: false });
+  assert.equal((await db.select().from(waAutomationRuns)).length, 1);
 });
 
 test("at 1 pm or later nothing is even checked", async () => {

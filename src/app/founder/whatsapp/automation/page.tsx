@@ -1,3 +1,4 @@
+import { requireUser } from "@/lib/auth";
 import { listTemplates } from "@/lib/services/whatsapp-service";
 import {
   automationSettings,
@@ -17,6 +18,7 @@ export const metadata = { title: "WhatsApp automation - Founder Dashboard - Mahe
  * when each fires, how often, how many times, and the hours anything may go.
  */
 export default async function Page() {
+  const user = await requireUser();
   const [settings, rules, runs, counts, templates, service] = await Promise.all([
     automationSettings(),
     listRules(),
@@ -30,6 +32,7 @@ export default async function Page() {
     <AutomationControl
       settings={settings}
       serviceOn={service.active}
+      myPhone={user.phone ?? ""}
       rules={rules.map((r) => ({
         id: r.id,
         templateId: r.templateId,

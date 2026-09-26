@@ -16,6 +16,7 @@ import {
 import {
   deleteRule,
   previewAutomation,
+  ruleAudience,
   runAutomation,
   saveAutomationSettings,
   saveRule,
@@ -156,6 +157,15 @@ export async function previewAutomationAction(ruleIds?: string[]): Promise<Resul
     const r = await previewAutomation(ruleIds);
     refreshAutomation();
     return ok(r, `${r.wouldSend} would be sent`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Who one rule reaches today. Logs nothing and sends nothing. */
+export async function ruleAudienceAction(ruleId: string): Promise<Result<RunSummary>> {
+  try {
+    return ok(await ruleAudience(String(ruleId)));
   } catch (e) {
     return fromThrown(e);
   }

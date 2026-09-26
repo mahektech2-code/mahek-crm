@@ -245,6 +245,13 @@ export async function runAutomation(opts: {
   source: "schedule" | "preview";
   ruleIds?: string[];
   now?: Date;
+  /**
+   * False for a look that is not a run: the rule panel asking who a rule
+   * reaches today, every time it is opened. Writing each of those into the
+   * run log would bury the scheduled checks the log exists to show.
+   * Only honoured for a preview — a pass that can SEND is always recorded.
+   */
+  record?: boolean;
 }): Promise<RunSummary> {
   const started = Date.now();
   const now = opts.now ?? new Date();
@@ -411,15 +418,16 @@ export async function runAutomation(opts: {
   }
 
   const list = [...stats.values()];
+  const record = opts.source === "schedule" || opts.record !== false;
   const summary: RunSummary = {
-    runId: newId("war"),
+    runId: record ? newId("war") : null,
     dry: list.every((s) => s.sent === 0),
     note: stopReason ?? liveGate ?? "Completed.",
     sent: list.reduce((a, s) => a + s.sent, 0),
     wouldSend: list.reduce((a, s) => a + s.wouldSend, 0),
     rules: list,
   };
-  await db.insert(waAutomationRuns).values({
+  if (record) await db.insert(waAutomationRuns).values({
     id: summary.runId!,
     startedAt: new Date(started),
     finishedAt: new Date(),
@@ -429,6 +437,16 @@ export async function runAutomation(opts: {
     summary: summary as never,
   });
   return summary;
+}
+
+/**
+ * Who ONE rule reaches today and what each of them would get — for the rule
+ * panel. Never sends, ignores the window like any preview, works on an Off
+ * rule, and writes nothing to the run log.
+ */
+export async function ruleAudience(ruleId: string): Promise<RunSummary> {
+  await requireFounderDesk();
+  return runAutomation({ source: "preview", ruleIds: [ruleId], record: false });
 }
 
 /** The founder's "Preview now" — never sends. */
