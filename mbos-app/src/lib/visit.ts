@@ -59,7 +59,7 @@ export const FOLLOW_ON: Partial<Record<OutcomeKey, { label: string; word: string
 };
 
 export type VisitCheck = {
-  key: 'gps' | 'dwell' | 'photo' | 'followon' | 'outcome';
+  key: 'gps' | 'dwell' | 'photo' | 'followon' | 'outcome' | 'note';
   ok: boolean;
   line: string;
   /** Only shown when the check has failed — the reason the rule exists at all. */
@@ -94,7 +94,43 @@ export type VisitFacts = {
   hasShopPhoto: boolean;
   outcome: OutcomeKey | null;
   followOnCaptured: boolean;
+  /** How much he has written about the visit, trimmed. */
+  noteChars: number;
+  /** `mbos.visits.minimumNoteChars` — the least that counts as saying what happened. */
+  minimumNoteChars: number;
 };
+
+/**
+ * THE QUESTIONS, as against the evidence.
+ *
+ * GPS, time in the shop and the photograph are EVIDENCE: a salesman may be
+ * unable to produce them for reasons that are not his fault, and "save it
+ * unverified with a reason" exists for exactly that. The outcome, its
+ * follow-on and the note are ANSWERS — only he can give them, nothing stops
+ * him giving them, and a visit without them tells the office nothing. So an
+ * unverified save waives the first kind and never the second.
+ */
+export const ANSWER_KEYS: ReadonlyArray<VisitCheck['key']> = ['outcome', 'followon', 'note'];
+
+/** The answers still owed, in the order the check-out sheet asks them. */
+export function unansweredQuestions(checks: VisitCheck[]): VisitCheck[] {
+  return ANSWER_KEYS.map((k) => checks.find((c) => c.key === k)).filter(
+    (c): c is VisitCheck => !!c && !c.ok,
+  );
+}
+
+/**
+ * Whether this outcome needs a written account at all.
+ *
+ * Every visit where somebody was spoken to does — what was discussed, what
+ * they said, what happens next — because that is the whole of what a manager
+ * or the next visitor gets. A shop found shut has nothing to report beyond
+ * the outcome itself, and demanding a sentence there teaches people to type
+ * one to get past the box.
+ */
+export function outcomeNeedsNote(outcome: OutcomeKey | null): boolean {
+  return outcome !== 'closed';
+}
 
 export function visitChecks(f: VisitFacts): VisitCheck[] {
   const fo = f.outcome ? FOLLOW_ON[f.outcome] : undefined;
@@ -153,6 +189,22 @@ export function visitChecks(f: VisitFacts): VisitCheck[] {
       line: f.outcome ? 'Outcome recorded' : 'How it went is not recorded yet',
       why: 'Everything after this visit depends on the outcome.',
     },
+    (() => {
+      const needed = outcomeNeedsNote(f.outcome);
+      const ok = !needed || f.noteChars >= f.minimumNoteChars;
+      return {
+        key: 'note' as const,
+        ok,
+        line: !needed
+          ? 'No note needed for a closed shop'
+          : ok
+            ? 'Visit notes written'
+            : f.noteChars === 0
+              ? 'Nothing written about the visit yet'
+              : `Say a little more about the visit — ${f.minimumNoteChars - f.noteChars} more characters`,
+        why: 'Write the points of the visit: what was discussed, what they said, and what happens next. It is all your manager and the next visit will have.',
+      };
+    })(),
   ];
 }
 

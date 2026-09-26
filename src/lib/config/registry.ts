@@ -3474,6 +3474,17 @@ export const SETTINGS = [
     max: 3600,
   },
   {
+    key: "mbos.visits.minimumNoteChars",
+    type: "integer",
+    category: "mbos-location",
+    label: "Visit notes must be at least",
+    description:
+      "Characters the salesman writes (or speaks) about a visit before he can check out — what was discussed, what they said, what happens next. It is all the manager and the next visitor get. A shop found closed is exempt. Unlike the dwell floor this is never waived by an unverified save: only he can answer it. 0 turns it off.",
+    default: 20,
+    min: 0,
+    max: 500,
+  },
+  {
     key: "mbos.travel.maxLegKilometres",
     type: "integer",
     category: "mbos-location",
@@ -4423,6 +4434,7 @@ export type Config = {
   "mbos.tasks.requireCompletionNote": boolean;
   "mbos.approvals.escalationHours": number;
   "mbos.visits.minimumDwellSeconds": number;
+  "mbos.visits.minimumNoteChars": number;
   "mbos.travel.maxLegKilometres": number;
   "mbos.sync.mediaWifiOnly": boolean;
   "mbos.ai.retainAudioAfterTranscription": boolean;

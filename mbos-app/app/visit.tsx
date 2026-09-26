@@ -29,7 +29,7 @@ import { visitCapLabel, visitCapState, type VisitCapThresholds } from '../src/en
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { hhmm, isoDate, pretty } from '../src/lib/format';
-import { elapsedLabel, FOLLOW_ON, visitChecks, visitVerdict } from '../src/lib/visit';
+import { elapsedLabel, FOLLOW_ON, unansweredQuestions, visitChecks, visitVerdict } from '../src/lib/visit';
 import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, OUTCOMES } from '../src/data/fixtures';
 import { getConfig } from '../src/data/config';
 import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/visits';
@@ -163,7 +163,9 @@ export default function Visit() {
      transaction — a half-saved visit describes something that never happened. */
   const [fix, setFix] = React.useState<Fix | null>(null);
   const [fixReason, setFixReason] = React.useState<string | null>(null);
-  const [voiceNoteId, setVoiceNoteId] = React.useState<string | null>(null);
+  /* In the store, not here: the visit outlives this screen — see `visitLinked`. */
+  const voiceNoteId = useStore((s) => s.visitVoiceNoteId);
+  const setVoiceNoteId = (id: string | null) => set({ visitVoiceNoteId: id });
   /*
    * THE VISIT ASSISTANT'S THREE PIECES OF STATE.
    *
@@ -229,7 +231,9 @@ export default function Visit() {
    */
   const capLabel =
     suspect && capCfg ? visitCapLabel(suspect.stage, suspect.visits + 1, capCfg) : null;
-  const [linked, setLinked] = React.useState<{ complaintId?: string; sampleId?: string }>({});
+  const linked = useStore((s) => s.visitLinked);
+  const setLinked = (f: (l: { complaintId?: string; sampleId?: string }) => { complaintId?: string; sampleId?: string }) =>
+    set({ visitLinked: f(useStore.getState().visitLinked) });
   const [products, setProducts] = React.useState<Product[]>([]);
   /* §10's coded list — why a shop wants a trial. Read from the cached
      configuration like every other `mbos.*` answer, so the sheet has it with
@@ -256,6 +260,11 @@ export default function Visit() {
   /* Thresholds, never constants: the dwell floor and the distance that counts
      as a mismatch are both a manager's to move. */
   const [minDwell, setMinDwell] = React.useState(120);
+  /* `mbos.visits.minimumNoteChars` — how much counts as saying what happened. */
+  const [minNote, setMinNote] = React.useState(20);
+  /* The check-out sheet: opened by "Check out" when something is still owed,
+     so the questions are asked where he pressed rather than in a toast. */
+  const [asking, setAsking] = React.useState(false);
   const [maxLegKm, setMaxLegKm] = React.useState(400);
   const [maxMetres, setMaxMetres] = React.useState(100);
 
@@ -287,32 +296,30 @@ export default function Visit() {
    * It hangs off the navigator's own `beforeRemove` rather than off the back
    * button, because the back button is the one departure that already looks
    * deliberate — the tab bar is the one that does not, and it is the same event.
-   * `leavingRef` is what lets the departures this screen itself makes through:
-   * the action is re-dispatched unchanged, and it carries the set of routes it
-   * has already asked, so it cannot come back round a second time.
    *
    * Only once he has ARRIVED. On the way there the clock has not started and
    * nothing has been typed, and the trip is called off with its own button.
    */
+  /*
+   * …AND NOW THERE IS A WAY BACK, so leaving costs nothing.
+   *
+   * A check-in runs until he checks out, wherever he goes in the app. The
+   * draft — note, photographs, outcome — lives in the store rather than in
+   * this screen, the clock is measured from the check-in instant on disk, and
+   * the "In <shop>" bar every other screen draws brings him straight back
+   * here without `beginVisit`. So a tab tap is just a tab tap. He is told as he
+   * goes that the visit is still open, because the old warning taught him
+   * that leaving lost everything.
+   */
   const navigation = useNavigation();
-  const leavingRef = React.useRef(false);
+  const savedRef = React.useRef(false);
   React.useEffect(() => {
     if (visitStart == null) return;
-    return navigation.addListener('beforeRemove', (e) => {
-      if (leavingRef.current) return;
-      e.preventDefault();
-      askConfirm({
-        title: 'Leave this visit?',
-        body:
-          'Your note, your photographs and the time since you arrived are all lost — none of it has been saved yet, and starting the visit again means a fresh journey and another meter reading.',
-        confirmLabel: 'Leave and lose it',
-        run: () => {
-          leavingRef.current = true;
-          navigation.dispatch(e.data.action);
-        },
-      });
+    return navigation.addListener('beforeRemove', () => {
+      if (savedRef.current) return;
+      notify('Your visit is still running — tap the bar at the bottom to come back and check out.');
     });
-  }, [navigation, visitStart, askConfirm]);
+  }, [navigation, visitStart, notify]);
 
   /* ---- the journey that got him here ----
      Read from SQLite, not the store: the app is routinely killed on the road
@@ -490,9 +497,11 @@ export default function Visit() {
       todayStops(),
       getConfig<number>('mbos.travel.maxLegKilometres', 400),
       sampleReasons(),
-    ]).then(([dwell, metres, skus, stops, maxKm, why]) => {
+      getConfig<number>('mbos.visits.minimumNoteChars', 20),
+    ]).then(([dwell, metres, skus, stops, maxKm, why, noteMin]) => {
       if (!live) return;
       setMinDwell(dwell);
+      setMinNote(noteMin);
       setMaxMetres(metres);
       setMaxLegKm(maxKm);
       setProducts(skus);
@@ -883,7 +892,11 @@ export default function Visit() {
     hasShopPhoto: !!shots.shop,
     outcome,
     followOnCaptured: !!(outcome && visitDone[outcome]),
+    noteChars: note.trim().length,
+    minimumNoteChars: minNote,
   });
+  /* The answers only he can give — never waived, see `ANSWER_KEYS`. */
+  const owed = unansweredQuestions(checks);
   const verdict = visitVerdict(checks, { checkInOverridden: !!overrideReason });
   const followOn = outcome ? FOLLOW_ON[outcome] : undefined;
   const doneLine = outcome ? visitDone[outcome] : undefined;
@@ -932,6 +945,12 @@ export default function Visit() {
 
   async function saveAndGo(spent: string, unverifiedReason: string | null) {
     if (!c || savingRef.current) return;
+    /* The answers are owed on EVERY path out, the unverified save included —
+       see `ANSWER_KEYS`. Asked, not refused: the sheet has the controls. */
+    if (owed.length) {
+      setAsking(true);
+      return;
+    }
 
     /*
      * The one thing that stops a save here, and it stops it to ASK rather than
@@ -1071,9 +1090,9 @@ export default function Visit() {
     setArrival(null);
     void clearArrival();
 
-    /* This screen asks before it lets a visit in progress be left. The visit is
-       saved, so the question no longer applies. */
-    leavingRef.current = true;
+    /* The visit is saved, so the "still running" line on the way out no longer
+       applies. */
+    savedRef.current = true;
     router.replace('/saved');
   }
 
@@ -1435,7 +1454,7 @@ export default function Visit() {
                 a second typed reason for a question already answered at the
                 door. */}
             <Pressable
-              onPress={() => (verdict.complete ? saveWhenDecided() : notify(verdict.firstFailure))}
+              onPress={() => (verdict.complete ? saveWhenDecided() : setAsking(true))}
               accessibilityLabel={verdict.complete ? 'Check out of the shop and save the visit' : verdict.firstFailure}
               style={[
                 { height: 52, paddingHorizontal: 24, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.complete ? C.primary : C.hairline },
@@ -1874,7 +1893,9 @@ export default function Visit() {
         {/* The override is logged, not hidden. Nobody parks outside and fakes it. */}
         <Pressable
           onPress={() =>
-            askConfirm({
+            owed.length
+              ? setAsking(true)
+              : askConfirm({
               title: 'Save anyway?',
               body: verdict.overrideBody,
               reasonLabel: 'Why · required',
@@ -1910,6 +1931,130 @@ export default function Visit() {
         who has a shopkeeper waiting, and a sheet that would not close until it
         was answered would be answered at random.
       */}
+      {/*
+        ---- BEFORE YOU CHECK OUT ----
+
+        "Check out" with something still owed used to raise a toast naming the
+        first missing thing and do nothing else, so a salesman on an older
+        build — where nothing was owed at all — simply walked out, and one on
+        this build learned to hunt up the page for whatever the toast meant.
+        This asks every question in one place, with the controls to answer it
+        right there, and the button at the bottom checks him out the moment
+        the last one is answered. The evidence (GPS, time, photo) is listed but
+        cannot be typed into existence, so it offers the unverified save —
+        which the answers still have to be given for.
+      */}
+      <BottomSheet open={asking} onClose={() => setAsking(false)} scroll>
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
+          <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>Before you check out</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
+            {verdict.complete
+              ? 'Everything is answered.'
+              : `${verdict.failed.length} ${verdict.failed.length === 1 ? 'thing' : 'things'} left for this visit.`}
+          </Text>
+
+          {!checks.find((k) => k.key === 'outcome')?.ok ? (
+            <View style={{ marginTop: 16 }}>
+              <Text style={[type.label, { marginBottom: 8 }]}>How did it go</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {OUTCOMES.map((o) => (
+                  <Pressable
+                    key={o.k}
+                    onPress={() => set({ outcome: o.k })}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: outcome === o.k }}
+                    style={{ width: '48.5%', minHeight: 48, padding: 8, borderRadius: radius.md, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontSize: 14, textAlign: 'center', color: C.ink }}>{o.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {!checks.find((k) => k.key === 'note')?.ok ? (
+            <View style={{ marginTop: 16 }}>
+              <Text style={type.label}>What happened in this visit</Text>
+              <Text style={[type.caption, { marginTop: 2, marginBottom: 8 }]}>
+                The points of the visit — what was discussed, what they said, what happens next. Speak it if that is quicker.
+              </Text>
+              <VoiceField
+                value={note}
+                onChangeText={(v) => set({ note: v })}
+                keepAudio="keep"
+                onRecording={(uri, _seconds, mode) => void keepVoiceNote(uri, mode)}
+                onHeard={setHeard}
+              />
+              <Text style={[type.caption, { marginTop: 6, color: C.danger }]}>
+                {checks.find((k) => k.key === 'note')?.line}
+              </Text>
+            </View>
+          ) : null}
+
+          {followOn && !checks.find((k) => k.key === 'followon')?.ok ? (
+            <View style={{ marginTop: 16 }}>
+              <Text style={type.label}>{followOn.label}</Text>
+              <Text style={[type.caption, { marginTop: 2, marginBottom: 8 }]}>{followOn.line}</Text>
+              <Pressable
+                onPress={() => {
+                  setAsking(false);
+                  if (outcome === 'order') return router.push('/order?from=visit');
+                  if (outcome === 'payment') return router.push('/pay?from=visit');
+                  setDraft({});
+                  setFormErr(null);
+                  setForm(outcome === 'complaint' ? 'complaint' : 'sample');
+                }}
+                style={{ height: 48, borderRadius: radius.lg, borderWidth: 1, borderColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 15, color: C.primary }, weight(600)]}>{followOn.cta}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {checks
+            .filter((k) => !k.ok && (k.key === 'gps' || k.key === 'dwell' || k.key === 'photo'))
+            .map((k) => (
+              <View key={k.key} style={{ marginTop: 14 }}>
+                <Text style={[{ fontSize: 14, color: C.danger }, weight(500)]}>{k.line}</Text>
+                <Text style={[type.caption, { marginTop: 2 }]}>{k.why}</Text>
+              </View>
+            ))}
+
+          <View style={{ marginTop: 20, gap: 10 }}>
+            <Pressable
+              disabled={!verdict.complete || saving}
+              onPress={() => {
+                setAsking(false);
+                saveWhenDecided();
+              }}
+              style={{ height: 52, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.complete ? C.primary : C.hairline }}>
+              <Text style={[{ fontSize: 16, color: verdict.complete ? '#FFFFFF' : C.faint }, weight(600)]}>
+                {verdict.complete ? 'Check out' : owed.length ? 'Answer the questions above' : 'Not everything is met'}
+              </Text>
+            </Pressable>
+            {!verdict.complete && owed.length === 0 ? (
+              <Pressable
+                onPress={() => {
+                  setAsking(false);
+                  askConfirm({
+                    title: 'Save anyway?',
+                    body: verdict.overrideBody,
+                    reasonLabel: 'Why · required',
+                    confirmLabel: 'Save unverified',
+                    run: (reason) => {
+                      set({ overrodeReason: reason });
+                      saveWhenDecided(reason);
+                    },
+                  });
+                }}
+                style={{ minHeight: HIT, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontSize: 14, color: C.muted, textAlign: 'center' }}>
+                  Cannot meet these? Save it unverified — your manager sees the reason.
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      </BottomSheet>
+
       <BottomSheet open={pinAsk} onClose={() => setPinAsk(false)}>
         <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
           <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>

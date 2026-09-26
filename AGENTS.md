@@ -993,6 +993,24 @@ else here asks for `Balanced`, which on Android is roughly a city block, and a
 reading that coarse cannot tell a doorway from the tea shop it is now deciding
 against.
 
+**A CHECK-IN RUNS UNTIL THE CHECK-OUT, wherever he goes in the app.** Leaving
+the visit screen used to warn "Leave and lose it", and the only way back
+started a new visit — so opening a customer's statement mid-visit cost the
+note, the photographs and the clock. The draft lives in the store, the clock
+is measured from `arrival.checkedInAt` on disk, and an "In <shop>" bar on
+every other screen ticks and leads back without `beginVisit`. One visit at a
+time: "Start visit" refuses while one is open.
+
+**Check-out ASKS what is owed, and the answers are never waived.** GPS, dwell
+and the photograph are EVIDENCE — a salesman can be unable to produce them,
+and the unverified save exists for that. The outcome, its follow-on and a
+written note of the visit (`mbos.visits.minimumNoteChars`, a shop found closed
+exempt) are ANSWERS: only he can give them and nothing stops him. So an
+unverified save waives the first kind and never the second, and pressing
+Check out with anything owed opens one sheet with the controls to answer it,
+rather than a toast pointing somewhere up the page. The server does not refuse
+a noteless visit — old APKs still send them, and a refusal would lose the visit.
+
 **A SUSPECT CANNOT BE VISITED FOR EVER, and the cap ASKS rather than refuses.**
 §B of the brief wants a maximum of three visits "enforced", and enforced as a
 block is the one shape this app must not use: `engines/geo.ts` states the

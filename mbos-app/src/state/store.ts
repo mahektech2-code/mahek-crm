@@ -143,6 +143,14 @@ type State = {
   offPlanReasonAt: number | null;
   /** What this visit has already produced, so returning to it shows the work is done. */
   visitDone: Partial<Record<OutcomeKey, string>>;
+  /**
+   * The complaint and sample raised from inside this visit, and the recording
+   * kept for its note. Here rather than in the visit screen's own state
+   * because a visit now runs while he is elsewhere in the app — held by the
+   * screen, they went with it, and the visit saved linked to nothing.
+   */
+  visitLinked: { complaintId?: string; sampleId?: string };
+  visitVoiceNoteId: string | null;
   overrodeReason: string | null;
   form: FormKind;
   formDraft: Record<string, string>;
@@ -368,6 +376,8 @@ export const useStore = create<State & Actions>((set, get) => ({
   offPlanReason: null,
   offPlanReasonAt: null,
   visitDone: {},
+  visitLinked: {},
+  visitVoiceNoteId: null,
   overrodeReason: null,
   form: null,
   formDraft: {},
@@ -446,6 +456,8 @@ export const useStore = create<State & Actions>((set, get) => ({
       visitStart: null,
       visitSpent: null,
       visitDone: {},
+      visitLinked: {},
+      visitVoiceNoteId: null,
       overrodeReason: null,
       sheet: null,
       /* `offPlanReason` is deliberately NOT reset here. It is set on the route
