@@ -6,7 +6,6 @@ import {
   useAudioRecorder,
   type RecordingOptions,
 } from 'expo-audio';
-import * as DocumentPicker from 'expo-document-picker';
 import { captureImage, queueAudio, queueFile, type MediaKind } from '../sync/media';
 
 /**
@@ -105,6 +104,26 @@ export async function pickDocuments(args: {
   maxSizeMb: number;
 }): Promise<{ ok: true; picked: Picked[]; refused: string[] } | { ok: false; reason: string }> {
   if (args.max <= 0) return { ok: false, reason: 'No more files can be attached to this claim.' };
+  /*
+   * LOADED HERE, NOT AT THE TOP OF THE FILE, and that is what lets this
+   * JavaScript run on an older APK.
+   *
+   * `expo-document-picker` is a native module that arrived with 1.12.0. Its
+   * package calls `requireNativeModule` the moment it is imported, which throws
+   * on a build without it — and this file is imported by nearly every screen,
+   * so a top-level import would stop the app opening at all on the 1.9–1.11
+   * phones that receive this code over the air. Loaded on the press, a missing
+   * module costs exactly this one button, and says so.
+   */
+  let DocumentPicker: typeof import('expo-document-picker');
+  try {
+    DocumentPicker = await import('expo-document-picker');
+  } catch {
+    return {
+      ok: false,
+      reason: 'Attaching PDFs needs the latest MBOS app. Take a photo of the bill instead, or ask for the update.',
+    };
+  }
   const result = await DocumentPicker.getDocumentAsync({
     type: ['application/pdf', 'image/jpeg', 'image/png'],
     multiple: true,

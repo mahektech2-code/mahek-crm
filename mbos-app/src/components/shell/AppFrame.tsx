@@ -14,6 +14,7 @@ import { TravelGate } from './TravelGate';
 import { useBoot } from '../../state/boot';
 import { todayRow } from '../../data/attendance';
 import { hhmm, plural } from '../../lib/format';
+import { elapsedLabel } from '../../lib/visit';
 import { gpsVerdict, type GpsHealth } from '../../engines/gps-health';
 import { gpsSignal } from '../../native/where';
 import { hasPermission } from '../../native/location';
@@ -285,6 +286,11 @@ export function AppFrame({
         if (arrival && arrival.checkedInAt == null) {
           return notify(`Check in at ${arrival.customerName} first — you arrived there at ${hhmm(arrival.arrivedAt)}.`);
         }
+        /* And one visit at a time: the one he is in has to be checked out of,
+           with its questions answered, before another can begin. */
+        if (arrival && arrival.checkedInAt != null) {
+          return notify(`Check out of ${arrival.customerName} first — you are still in that visit.`);
+        }
         if (!custId) return notify('Choose the shop first, then start the visit.');
         askTravel({ customerId: custId, customerName: customer?.name ?? 'this shop' });
       },
@@ -355,6 +361,26 @@ export function AppFrame({
         <ArrivedBar
           name={arrival.customerName}
           at={arrival.arrivedAt}
+          onPress={() => {
+            set({ custId: arrival.customerId });
+            router.push('/visit');
+          }}
+        />
+      ) : null}
+
+      {/*
+        AND ONCE HE IS INSIDE, THE VISIT FOLLOWS HIM TOO.
+        A check-in is not a screen. He opens the customer's statement, punches
+        an order, looks up a price — and the visit he is in carries on, clock
+        and all, until he checks out. The clock is measured from the check-in
+        instant ON DISK (`arrival.checkedInAt`), so nothing about where he is in
+        the app, or whether Android reaped it, can stop it. Tapping the bar is
+        the way back to the check-out.
+      */}
+      {arrival && arrival.checkedInAt != null && here !== 'visit' ? (
+        <InVisitBar
+          name={arrival.customerName}
+          since={arrival.checkedInAt}
           onPress={() => {
             set({ custId: arrival.customerId });
             router.push('/visit');
@@ -462,6 +488,44 @@ function ArrivedBar({ name, at, onPress }: { name: string; at: number; onPress: 
         </Text>
       </View>
       <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Check in</Text>
+    </Pressable>
+  );
+}
+
+/**
+ * "In Shah Paints · 12m 30s — Check out." The running visit, on every screen.
+ *
+ * The clock ticks every second while the app is in front and is corrected the
+ * moment it comes back (`useTicker`), because the figure is a subtraction from
+ * the check-in instant rather than a counter — there is nothing to pause.
+ */
+function InVisitBar({ name, since, onPress }: { name: string; since: number; onPress: () => void }) {
+  const now = useTicker(1_000);
+  const spent = elapsedLabel(Math.max(0, Math.floor((now - since) / 1000)));
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`In a visit at ${name} for ${spent}. Go back to it to check out.`}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        minHeight: HIT,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        backgroundColor: pressed ? C.primaryDeep : C.primary,
+      })}>
+      <Icon name="shop" size={18} color="#FFFFFF" strokeWidth={1.8} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>
+          {'In ' + name}
+        </Text>
+        <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
+          {'Checked in ' + hhmm(since) + ' · ' + spent}
+        </Text>
+      </View>
+      <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Check out</Text>
     </Pressable>
   );
 }
