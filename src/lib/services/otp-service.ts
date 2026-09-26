@@ -46,6 +46,10 @@ let availabilityCache: { at: number; value: OtpAvailability } | null = null;
 /** Whether codes can be sent at all. Cached for a minute — every login screen asks. */
 export async function otpAvailability(): Promise<OtpAvailability> {
   if (availabilityCache && Date.now() - availabilityCache.at < 60_000) return availabilityCache.value;
+  // NEVER THROWS. The login page asks this, and the container's health check
+  // IS the login page — a settings read that fails (a database still being
+  // migrated, a Wati outage) must cost the WhatsApp option, never the sign-in
+  // screen. The password form stands on its own.
   const value = await (async (): Promise<OtpAvailability> => {
     const config = await getConfig();
     const name = String(config["auth.otp.whatsappTemplateName"] ?? "").trim();
@@ -59,7 +63,10 @@ export async function otpAvailability(): Promise<OtpAvailability> {
     // An authentication template carries exactly one variable, the code.
     // Whatever Wati calls it ("1", "otp", …) is what the send must name.
     return { available: true, template: name, param: t.params[0] ?? "1" };
-  })();
+  })().catch((e): OtpAvailability => ({
+    available: false,
+    why: `Could not check: ${e instanceof Error ? e.message : "unknown error"}`,
+  }));
   availabilityCache = { at: Date.now(), value };
   return value;
 }
