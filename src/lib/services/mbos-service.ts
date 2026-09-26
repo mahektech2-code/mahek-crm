@@ -458,6 +458,10 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
     if (key.startsWith("mbos.") || key.startsWith("leads.")) out[key] = value;
   }
   out["products.priceSource"] = config["products.priceSource"];
+  /* The upload ceiling, so a PDF too large to accept is refused at the moment
+     it is picked — with the salesman looking — rather than failing in the
+     media queue hours later where nobody will ever see why. */
+  out["attachments.maxSizeMb"] = config["attachments.maxSizeMb"];
 
   /*
    * THE MAP KEY, and it is the one credential that goes down this wire.

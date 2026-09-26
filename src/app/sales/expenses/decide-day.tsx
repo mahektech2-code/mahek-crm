@@ -2,7 +2,12 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
-import { decideExpenseDay, reopenExpenseDay } from "@/lib/actions/expenses";
+import {
+  claimLinesForDayAction,
+  decideExpenseDay,
+  reopenExpenseDay,
+} from "@/lib/actions/expenses";
+import type { ClaimLine } from "@/lib/services/expense-claims-service";
 import { Modal } from "@/components/ui/overlays";
 import { Button } from "@/components/console/parts";
 
@@ -120,6 +125,8 @@ export function DecideDay({
               ) : null}
             </div>
 
+            <DayClaims dayId={dayId} />
+
             <label className="block">
               <span className="mb-1 block text-[13px] font-medium text-ink">Allow</span>
               <input
@@ -216,5 +223,96 @@ export function DecideDay({
         ) : null}
       </Modal>
     </>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * WHAT THE DAY IS MADE OF, and the bills behind it.
+ *
+ * The dialog was two totals and a box: a manager decided a day's money without
+ * one claim or one bill in front of them, though every bill was stored. Read
+ * when the dialog opens, because most days in the list are never opened.
+ * Photographs are drawn as thumbnails that open full size; anything else — a
+ * PDF — is a link. A file swept by retention says so rather than breaking.
+ * ------------------------------------------------------------------------- */
+function DayClaims({ dayId }: { dayId: string }) {
+  const [lines, setLines] = React.useState<ClaimLine[] | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let live = true;
+    void claimLinesForDayAction(dayId).then((r) => {
+      if (!live) return;
+      if (r.ok) setLines(r.data);
+      else setError(r.error);
+    });
+    return () => {
+      live = false;
+    };
+  }, [dayId]);
+
+  if (error) return <p className="mb-3 text-[13px] text-danger">{error}</p>;
+  if (!lines) return <p className="mb-3 text-[13px] text-muted">Loading the claims…</p>;
+  if (!lines.length) {
+    return (
+      <p className="mb-3 text-[13px] text-muted">
+        No claims on this day — only travel measured by the day&apos;s readings.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mb-3 max-h-[320px] overflow-y-auto rounded-[6px] border border-line">
+      {lines.map((l, i) => (
+        <div key={l.id} className={i ? "border-t border-line px-3 py-2.5" : "px-3 py-2.5"}>
+          <div className="flex items-baseline justify-between gap-3 text-[13px]">
+            <span className="font-medium text-ink capitalize">{l.kind.replace(/_/g, " ")}</span>
+            <span className="font-medium text-ink">
+              ₹{Math.round(l.claimedPaise / 100).toLocaleString("en-IN")}
+            </span>
+          </div>
+          {l.remarks || l.vendorName ? (
+            <p className="mt-0.5 text-[12px] text-muted">
+              {[l.vendorName, l.billNumber ? `bill ${l.billNumber}` : null, l.remarks]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          ) : null}
+          {l.files.length ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {l.files.map((f) =>
+                f.gone ? (
+                  <span key={f.id} className="rounded-[4px] border border-line px-2 py-1 text-[12px] text-muted">
+                    File removed
+                  </span>
+                ) : f.contentType.startsWith("image/") ? (
+                  <a key={f.id} href={`/api/attachments/${f.id}`} target="_blank" rel="noreferrer">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- a private,
+                        session-checked file; next/image would proxy it past that check */}
+                    <img
+                      src={`/api/attachments/${f.id}`}
+                      alt={f.filename}
+                      className="h-16 w-16 rounded-[4px] border border-line object-cover"
+                    />
+                  </a>
+                ) : (
+                  <a
+                    key={f.id}
+                    href={`/api/attachments/${f.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-[4px] border border-line px-2 py-1 text-[12px] text-brand"
+                  >
+                    {f.contentType === "application/pdf" ? "PDF" : "File"} · open
+                  </a>
+                ),
+              )}
+            </div>
+          ) : (
+            <p className="mt-1 text-[12px] text-warn-ink">No bill attached</p>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
