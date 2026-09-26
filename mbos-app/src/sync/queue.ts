@@ -408,3 +408,28 @@ export async function recoverInterrupted(now = Date.now()): Promise<number> {
   await run(`UPDATE media_queue SET state = 'queued', nextAttemptAt = ? WHERE state = 'syncing'`, [now]);
   return stuck.length;
 }
+
+/**
+ * Send refused and exhausted records again, without anybody pressing Retry.
+ *
+ * The server's rules move and this build cannot: a record refused under last
+ * week's rule, or given up on after the server failed it five times, would sit
+ * on this phone for ever — and everything queued behind it with it — because
+ * the only way out was a Retry button nobody in the field presses. The server
+ * judges a resent refusal afresh rather than replaying it, so sending it again
+ * is exactly how a relaxed rule reaches a phone that cannot be changed.
+ *
+ * Throttled, because a record that is still wrong is refused again and must
+ * not be resent on every tick. Returns how many went back in the queue.
+ */
+export async function autoRetryStuck(now = Date.now(), everyMs = 3 * 60 * 60 * 1000): Promise<number> {
+  const last = Number((await one<{ value: string }>(`SELECT value FROM kv WHERE key = 'autoRetryAt'`))?.value ?? 0);
+  if (last && now - last < everyMs && now >= last) return 0;
+  await run(`INSERT OR REPLACE INTO kv (key, value) VALUES ('autoRetryAt', ?)`, [String(now)]);
+
+  const stuck = await all<{ id: string }>(
+    `SELECT id FROM sync_queue WHERE state IN ('rejected','failed') ORDER BY createdAt ASC`,
+  );
+  for (const row of stuck) await retryItem(row.id, now);
+  return stuck.length;
+}
