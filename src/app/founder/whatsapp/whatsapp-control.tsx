@@ -25,11 +25,11 @@ import {
   findCustomersAction,
   founderPreviewAction,
   linkWatiTemplateAction,
-  sendTestAction,
   setWhatsappServiceAction,
 } from "@/lib/actions/whatsapp-founder";
 import type { MessagePreview } from "@/lib/services/whatsapp-service";
 import { WhatsappTabs } from "./whatsapp-tabs";
+import { MessagePreviewView } from "./message-preview";
 import {
   SecretCredentialRow,
   type SecretMeta,
@@ -603,7 +603,6 @@ function TryOnCustomer({ templates }: { templates: CrmTemplateRow[] }) {
   const [customer, setCustomer] = React.useState<{ id: string; name: string } | null>(null);
   const [templateId, setTemplateId] = React.useState(templates[0]?.id ?? "");
   const [preview, setPreview] = React.useState<MessagePreview | null>(null);
-  const [phone, setPhone] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
   if (!templates.length) return null;
@@ -694,53 +693,15 @@ function TryOnCustomer({ templates }: { templates: CrmTemplateRow[] }) {
         </div>
 
         <div>
-          {preview ? (
-            preview.ok ? (
-              <>
-                <div className="mb-1 text-[13px] text-muted">
-                  {preview.route === "automatic"
-                    ? "Would go through the API, with its buttons:"
-                    : `Would be copied and pasted — ${preview.manualWhy ?? ""}`}
-                </div>
-                <div className="rounded-[6px] border border-brand-softer bg-brand-soft px-3 py-2.5 text-[14px] leading-[21px] whitespace-pre-wrap text-ink">
-                  {preview.body}
-                </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <Input
-                    value={phone}
-                    placeholder="Your WhatsApp number"
-                    onChange={(e) => setPhone(e.target.value)}
-                  />
-                  <Button
-                    variant="secondary"
-                    disabled={busy || !phone.trim() || !template?.watiTemplateName}
-                    title={template?.watiTemplateName ? undefined : "Link this template to its approved Wati template first"}
-                    onClick={async () => {
-                      if (!customer) return;
-                      setBusy(true);
-                      try {
-                        await run(sendTestAction(customer.id, templateId, phone));
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                  >
-                    Send test to me
-                  </Button>
-                </div>
-                <p className="mt-1.5 text-[12px] text-muted">
-                  Sends this exact message to the number you type — never to the customer.
-                  Works even while sending is switched off.
-                </p>
-              </>
-            ) : (
-              <div className="rounded-[6px] border border-danger-soft bg-danger-soft px-3 py-2.5 text-[13px] text-danger">
-                <span className="block font-medium">{customer?.name} would NOT be sent this:</span>
-                {preview.reasons.map((r) => (
-                  <span key={r} className="mt-1 block">{r}</span>
-                ))}
-              </div>
-            )
+          {preview && customer ? (
+            <MessagePreviewView
+              key={`${customer.id}:${templateId}`}
+              preview={preview}
+              customerId={customer.id}
+              customerName={customer.name}
+              templateId={templateId}
+              linked={Boolean(template?.watiTemplateName)}
+            />
           ) : (
             <p className="text-[13px] text-muted">The message, or the reasons it would be refused, appears here.</p>
           )}

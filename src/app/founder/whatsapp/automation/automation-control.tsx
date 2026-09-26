@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Badge,
@@ -16,7 +17,14 @@ import {
   Tr,
   cx,
 } from "@/components/ui/primitives";
-import { ConfirmDialog, Modal } from "@/components/ui/overlays";
+import {
+  ConfirmDialog,
+  Drawer,
+  DrawerHeader,
+  FilterPills,
+  Modal,
+  RowMenu,
+} from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { stamp } from "@/lib/format";
 import {
@@ -32,14 +40,18 @@ import {
 } from "@/lib/whatsapp-rules";
 import {
   deleteRuleAction,
+  founderPreviewAction,
   previewAutomationAction,
+  ruleAudienceAction,
   runLiveNowAction,
   saveRuleAction,
   saveWindowAction,
   setRuleStatusAction,
 } from "@/lib/actions/whatsapp-founder";
 import type { RunSummary } from "@/lib/services/whatsapp-automation-service";
+import type { MessagePreview } from "@/lib/services/whatsapp-service";
 import { WhatsappTabs } from "../whatsapp-tabs";
+import { MessagePreviewView } from "../message-preview";
 
 /* ---------------------------------------------------------------------------
  * The founder's automation screen.
@@ -87,10 +99,16 @@ export function AutomationControl(props: {
   rules: RuleView[];
   templates: TemplateOption[];
   runs: RunView[];
+  /** The founder's own number, offered for "Send test to me". */
+  myPhone: string;
 }) {
   const router = useRouter();
   const { run } = useToast();
   const [editing, setEditing] = React.useState<RuleView | "new-payment" | "new-order" | null>(null);
+  /* The panel holds a rule by id, so a refresh after a save shows the rule as
+     it now is rather than the copy that was clicked. */
+  const [openId, setOpenId] = React.useState<string | null>(null);
+  const opened = openId ? props.rules.find((r) => r.id === openId) ?? null : null;
   const [goLive, setGoLive] = React.useState<RuleView | null>(null);
   const [removing, setRemoving] = React.useState<RuleView | null>(null);
   const [result, setResult] = React.useState<RunSummary | null>(null);
@@ -152,6 +170,14 @@ export function AutomationControl(props: {
       />
       <WhatsappTabs current="automation" />
 
+      <Readiness
+        linked={props.templates.filter((t) => t.linked).length}
+        templates={props.templates.length}
+        serviceOn={props.serviceOn}
+        live={live}
+        tried={preview > 0 || props.runs.some((r) => r.source === "preview")}
+      />
+
       {!props.serviceOn && live ? (
         <Callout tone="warn">
           <span className="text-[13px] text-ink">
@@ -168,6 +194,7 @@ export function AutomationControl(props: {
         hint="Counted in days OVERDUE — from the due date of the customer's oldest unpaid bill."
         rules={props.rules.filter((r) => r.kind === "payment")}
         onAdd={() => setEditing("new-payment")}
+        onOpen={(r) => setOpenId(r.id)}
         onEdit={setEditing}
         onRemove={setRemoving}
         onStatus={setStatus}
@@ -179,6 +206,7 @@ export function AutomationControl(props: {
         hint="Counted in days from the EXPECTED ORDER DATE — last order plus the customer's measured buying cycle. Negative is before it."
         rules={props.rules.filter((r) => r.kind === "order")}
         onAdd={() => setEditing("new-order")}
+        onOpen={(r) => setOpenId(r.id)}
         onEdit={setEditing}
         onRemove={setRemoving}
         onStatus={setStatus}
@@ -196,9 +224,29 @@ export function AutomationControl(props: {
 
       <RunsCard runs={props.runs} />
 
+      {opened ? (
+        <RulePanel
+          /* Prefixed: the editor below sits beside the panel and is keyed on
+             the same rule id — two siblings with one key made React draw the
+             panel twice the moment Edit was pressed. */
+          key={`panel:${opened.id}`}
+          rule={opened}
+          myPhone={props.myPhone}
+          /* Escape inside the editor closes the editor, not the panel behind
+             it, and the same for the two confirmations it can open: both listen,
+             and this one steps aside while either is up. */
+          onClose={() => {
+            if (!editing && !goLive && !removing) setOpenId(null);
+          }}
+          onEdit={() => setEditing(opened)}
+          onRemove={() => setRemoving(opened)}
+          onStatus={(s) => setStatus(opened, s)}
+        />
+      ) : null}
+
       {editing ? (
         <RuleModal
-          key={typeof editing === "string" ? editing : editing.id}
+          key={`edit:${typeof editing === "string" ? editing : editing.id}`}
           rule={typeof editing === "string" ? null : editing}
           kind={typeof editing === "string" ? (editing === "new-payment" ? "payment" : "order") : editing.kind}
           templates={props.templates}
@@ -234,7 +282,10 @@ export function AutomationControl(props: {
         onConfirm={async () => {
           if (!removing) return;
           const res = await run(deleteRuleAction(removing.id));
-          if (res.ok) router.refresh();
+          if (res.ok) {
+            if (openId === removing.id) setOpenId(null);
+            router.refresh();
+          }
         }}
         onClose={() => setRemoving(null)}
       />
@@ -344,6 +395,7 @@ function RuleGroup(props: {
   hint: string;
   rules: RuleView[];
   onAdd: () => void;
+  onOpen: (r: RuleView) => void;
   onEdit: (r: RuleView) => void;
   onRemove: (r: RuleView) => void;
   onStatus: (r: RuleView, s: RuleStatus) => void;
@@ -377,49 +429,45 @@ function RuleGroup(props: {
             {props.rules.map((r) => (
               <Tr key={r.id}>
                 <Td>
-                  <span className="font-medium text-ink">{r.templateName}</span>
+                  {/* The name OPENS the rule — the panel is where a rule is
+                      understood before it is changed. */}
+                  <button
+                    onClick={() => props.onOpen(r)}
+                    className="cursor-pointer text-left font-medium text-ink hover:text-brand hover:underline"
+                  >
+                    {r.templateName}
+                  </button>
                   {!r.linked ? (
                     <span className="mt-0.5 block text-[12px] text-warn-ink" title="Link it on the Setup tab">
                       Not linked to Wati yet
                     </span>
                   ) : null}
                 </Td>
-                <Td className="max-w-[420px] text-[13px] text-body">{describeRule(r)}</Td>
+                {/* Wraps. Cells here hold their line by default, which ran
+                    this sentence straight over the Priority column. */}
+                <Td className="min-w-[260px] max-w-[420px] text-[13px] whitespace-normal text-body">{describeRule(r)}</Td>
                 <Td align="right">{r.priority}</Td>
                 <Td align="right">{r.sentLast7}</Td>
                 <Td>
-                  <div className="inline-flex overflow-hidden rounded-[4px] border border-line">
-                    {STATUS.map((s) => (
-                      <button
-                        key={s.key}
-                        onClick={() => r.status !== s.key && props.onStatus(r, s.key)}
-                        className={cx(
-                          "h-7 cursor-pointer px-2.5 text-[12px]",
-                          r.status === s.key
-                            ? s.key === "live"
-                              ? "bg-success text-white"
-                              : s.key === "preview"
-                                ? "bg-brand-soft font-medium text-ink"
-                                : "bg-canvas font-medium text-ink"
-                            : "bg-surface text-muted hover:bg-canvas",
-                        )}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
+                  <StatusControl status={r.status} onChange={(s) => props.onStatus(r, s)} />
                 </Td>
                 <Td>
-                  <div className="flex items-center justify-end gap-3 text-[13px] whitespace-nowrap">
-                    <button className="cursor-pointer text-brand disabled:text-muted" disabled={props.busy} onClick={() => props.onPreview(r)}>
-                      Preview
-                    </button>
-                    <button className="cursor-pointer text-brand" onClick={() => props.onEdit(r)}>
-                      Edit
-                    </button>
-                    <button className="cursor-pointer text-danger" onClick={() => props.onRemove(r)}>
-                      Delete
-                    </button>
+                  <div className="flex items-center justify-end gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => props.onOpen(r)}>
+                      Open
+                    </Button>
+                    <RowMenu
+                      items={[
+                        { label: "Edit", onSelect: () => props.onEdit(r) },
+                        {
+                          label: "Preview in the log",
+                          onSelect: () => props.onPreview(r),
+                          disabled: props.busy,
+                          title: "Works this rule out now and adds the result to Recent runs",
+                        },
+                        { label: "Delete", onSelect: () => props.onRemove(r), destructive: true },
+                      ]}
+                    />
                   </div>
                 </Td>
               </Tr>
@@ -427,9 +475,360 @@ function RuleGroup(props: {
           </tbody>
         </table></div>
       ) : (
-        <p className="px-5 py-4 text-[13px] text-muted">No rules yet.</p>
+        <div className="flex items-center justify-between gap-4 px-5 py-4">
+          <p className="text-[13px] text-muted">No rules yet — nothing of this kind is sent automatically.</p>
+          <Button size="sm" onClick={props.onAdd}>Add the first rule</Button>
+        </div>
       )}
     </Card>
+  );
+}
+
+/**
+ * Off / Preview / Live, as one control. Drawn as three real buttons with the
+ * chosen one filled, because as muted words it read as a label rather than a
+ * thing that could be pressed.
+ */
+function StatusControl({
+  status,
+  onChange,
+}: {
+  status: RuleStatus;
+  onChange: (s: RuleStatus) => void;
+}) {
+  return (
+    <div className="inline-flex overflow-hidden rounded-[4px] border border-line-strong" role="radiogroup" aria-label="Rule status">
+      {STATUS.map((s) => {
+        const on = status === s.key;
+        return (
+          <button
+            key={s.key}
+            role="radio"
+            aria-checked={on}
+            onClick={() => !on && onChange(s.key)}
+            title={
+              s.key === "off"
+                ? "Not checked by the schedule at all"
+                : s.key === "preview"
+                  ? "Checked on schedule and logged as 'would send' — nothing goes to customers"
+                  : "Sends to customers on schedule, inside the window"
+            }
+            className={cx(
+              "h-8 cursor-pointer border-l border-line-strong px-3 text-[13px] first:border-l-0",
+              on
+                ? s.key === "live"
+                  ? "bg-success font-medium text-white"
+                  : s.key === "preview"
+                    ? "bg-brand font-medium text-white"
+                    : "bg-ink font-medium text-white"
+                : "bg-surface text-body hover:bg-canvas",
+            )}
+          >
+            {s.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ readiness */
+
+/**
+ * WHAT STANDS BETWEEN THESE RULES AND A CUSTOMER'S PHONE, in order.
+ *
+ * Every rule on this screen can be set, previewed and switched to Live while
+ * nothing at all can reach a customer — the templates unlinked, or sending
+ * switched off on the Setup tab — and the screen used to say so only in a
+ * small warning under each template's name. From the founder's chair that
+ * reads as a screen whose buttons do nothing. So the four steps are said at
+ * the top, each with where it is done, and the strip steps aside once all
+ * four are true.
+ */
+function Readiness({
+  linked,
+  templates,
+  serviceOn,
+  live,
+  tried,
+}: {
+  linked: number;
+  templates: number;
+  serviceOn: boolean;
+  live: number;
+  tried: boolean;
+}) {
+  const steps = [
+    {
+      done: templates > 0 && linked === templates,
+      title: "Link the templates to Wati",
+      detail: `${linked} of ${templates} linked. An unlinked template can be previewed but never sent.`,
+      href: "/founder/whatsapp",
+      cta: "Link on Setup",
+    },
+    {
+      done: serviceOn,
+      title: "Switch WhatsApp sending on",
+      detail: serviceOn ? "On." : "Off — Live rules are worked out and logged, but nothing is sent.",
+      href: "/founder/whatsapp",
+      cta: "Open Setup",
+    },
+    {
+      done: tried,
+      title: "Try a rule in Preview",
+      detail: "Open a rule to see exactly who it reaches today and what each of them would get.",
+    },
+    {
+      done: live > 0,
+      title: "Make a rule Live",
+      detail: live ? `${live} Live.` : "Nothing is sent automatically until a rule is Live.",
+    },
+  ];
+  if (steps.every((s) => s.done)) return null;
+  const next = steps.findIndex((s) => !s.done);
+
+  return (
+    <Card className="mb-4 overflow-hidden">
+      <CardHeader
+        title="Before anything is sent"
+        hint="Automatic messages need all four. Until then these rules can be set up and previewed safely."
+      />
+      <ol className="grid grid-cols-1 md:grid-cols-4">
+        {steps.map((s, i) => (
+          <li
+            key={s.title}
+            className={cx(
+              "flex gap-3 border-t border-divider px-5 py-3.5 md:border-l md:first:border-l-0",
+              i === next ? "bg-brand-soft" : "",
+            )}
+          >
+            <span
+              className={cx(
+                "mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full text-[12px] font-semibold",
+                s.done ? "bg-success text-white" : i === next ? "bg-brand text-white" : "bg-divider text-muted",
+              )}
+            >
+              {s.done ? "✓" : i + 1}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-ink">{s.title}</span>
+              <span className="mt-0.5 block text-[13px] text-muted">{s.detail}</span>
+              {!s.done && s.href ? (
+                <Link href={s.href} className="mt-1.5 inline-block text-[13px] font-medium text-brand">
+                  {s.cta} →
+                </Link>
+              ) : null}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------ the panel */
+
+type AudienceFilter = "would_send" | "refused" | "skipped";
+
+/**
+ * ONE RULE, UNDERSTOOD BEFORE IT IS CHANGED.
+ *
+ * What it says in a sentence, who it reaches TODAY — every customer in its
+ * range and what would happen to each — and, for any of them, the exact
+ * message they would get, with a test send to your own phone. The audience is
+ * worked out fresh on every open and logged nowhere (`ruleAudience`), so
+ * looking is free and the run log stays a record of real checks.
+ */
+function RulePanel({
+  rule,
+  myPhone,
+  onClose,
+  onEdit,
+  onRemove,
+  onStatus,
+}: {
+  rule: RuleView;
+  myPhone: string;
+  onClose: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+  onStatus: (s: RuleStatus) => void;
+}) {
+  const [stats, setStats] = React.useState<RunSummary["rules"][number] | null>(null);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [filter, setFilter] = React.useState<AudienceFilter>("would_send");
+  const [picked, setPicked] = React.useState<{ id: string; name: string } | null>(null);
+  const [preview, setPreview] = React.useState<MessagePreview | null>(null);
+  const [previewing, setPreviewing] = React.useState(false);
+
+  const show = React.useCallback(
+    async (customer: { id: string; name: string }) => {
+      setPicked(customer);
+      setPreview(null);
+      setPreviewing(true);
+      try {
+        const r = await founderPreviewAction(customer.id, rule.templateId);
+        setPreview(r.ok ? r.data : { ok: false, reasons: [r.error] });
+      } finally {
+        setPreviewing(false);
+      }
+    },
+    [rule.templateId],
+  );
+
+  React.useEffect(() => {
+    let live = true;
+    void ruleAudienceAction(rule.id).then((r) => {
+      if (!live) return;
+      if (!r.ok) return setLoadError(r.error);
+      const mine = r.data.rules.find((x) => x.ruleId === rule.id) ?? null;
+      setStats(mine);
+      /* Open on somebody it WOULD send to, so the message is on screen
+         without a click — the question most people open a rule to answer. */
+      const first = mine?.rows.find((x) => x.outcome === "would_send");
+      if (first) void show({ id: first.customerId, name: first.customerName });
+    });
+    return () => {
+      live = false;
+    };
+  }, [rule.id, show]);
+
+  const rows = (stats?.rows ?? []).filter((r) =>
+    filter === "would_send" ? r.outcome === "would_send" || r.outcome === "sent" : r.outcome === filter,
+  );
+  const dayWord = rule.kind === "payment" ? "days overdue" : "day vs expected order";
+
+  return (
+    <Drawer open onClose={onClose} width={720} label={rule.templateName}>
+      <DrawerHeader onClose={onClose}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-lg font-semibold text-ink">{rule.templateName}</span>
+          <Badge tone={rule.kind === "payment" ? "warn" : "brand"}>
+            {rule.kind === "payment" ? "Payment reminder" : "Order follow-up"}
+          </Badge>
+        </div>
+        <p className="mt-1 text-[13px] text-body">{describeRule(rule)}</p>
+      </DrawerHeader>
+
+      <div className="flex-1 overflow-y-auto">
+        {!rule.linked ? (
+          <div className="border-b border-divider px-5 py-3">
+            <Callout tone="warn">
+              <span className="text-[13px] text-ink">
+                Not linked to its approved Wati template, so this rule can be previewed but never sent.{" "}
+                <Link href="/founder/whatsapp" className="font-medium text-brand">Link it on Setup →</Link>
+              </span>
+            </Callout>
+          </div>
+        ) : null}
+
+        <section className="flex flex-wrap items-center gap-3 border-b border-divider px-5 py-4">
+          <StatusControl status={rule.status} onChange={onStatus} />
+          <span className="text-[13px] text-muted">
+            Priority {rule.priority} · {rule.sentLast7} sent in 7 days
+          </span>
+          <span className="flex-1" />
+          <Button size="sm" variant="secondary" onClick={onEdit}>Edit rule</Button>
+          <Button size="sm" variant="danger" onClick={onRemove}>Delete</Button>
+        </section>
+
+        <section className="border-b border-divider px-5 py-4">
+          <h3 className="text-sm font-semibold text-ink">Who it reaches today</h3>
+          {loadError ? (
+            <p className="mt-2 text-[13px] text-danger">{loadError}</p>
+          ) : !stats ? (
+            <p className="mt-2 text-[13px] text-muted">Working it out from today&rsquo;s bills and orders…</p>
+          ) : (
+            <>
+              <p className="mt-1 text-[13px] text-muted">
+                {stats.inRange} customer{stats.inRange === 1 ? "" : "s"} in range today. Worked out now — nothing is sent
+                and nothing is logged.
+              </p>
+              <div className="mt-3">
+                <FilterPills<AudienceFilter>
+                  value={filter}
+                  onChange={setFilter}
+                  options={[
+                    { key: "would_send", label: "Would get it", count: stats.wouldSend + stats.sent },
+                    { key: "refused", label: "Refused", count: stats.refused },
+                    { key: "skipped", label: "Skipped", count: stats.skipped },
+                  ]}
+                />
+              </div>
+              {rows.length ? (
+                <div className="mt-3 max-h-[260px] overflow-y-auto rounded-[4px] border border-line">
+                  <table className="w-full">
+                    <thead>
+                      <tr>
+                        <Th>Customer</Th>
+                        <Th align="right">{dayWord}</Th>
+                        <Th>{filter === "would_send" ? "" : "Why"}</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row, i) => {
+                        const on = picked?.id === row.customerId;
+                        return (
+                          <Tr key={`${row.customerId}:${i}`}>
+                            <Td>
+                              <button
+                                onClick={() => void show({ id: row.customerId, name: row.customerName })}
+                                className={cx(
+                                  "cursor-pointer text-left hover:text-brand hover:underline",
+                                  on ? "font-semibold text-brand" : "font-medium text-ink",
+                                )}
+                              >
+                                {row.customerName}
+                              </button>
+                            </Td>
+                            <Td align="right">{row.day}</Td>
+                            <Td className="text-[13px] whitespace-normal text-muted">
+                              {filter === "would_send" ? (on ? "Showing below" : "See the message") : row.reason}
+                            </Td>
+                          </Tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="mt-3 text-[13px] text-muted">
+                  {filter === "would_send"
+                    ? "Nobody today — widen the day range, or check the Refused and Skipped lists for why."
+                    : "Nobody."}
+                </p>
+              )}
+              {stats.rows.length >= 150 ? (
+                <p className="mt-2 text-[12px] text-muted">Showing the first 150 customers; the counts above are the full figures.</p>
+              ) : null}
+            </>
+          )}
+        </section>
+
+        <section className="px-5 py-4">
+          <h3 className="text-sm font-semibold text-ink">
+            {picked ? `What ${picked.name} would get` : "The message"}
+          </h3>
+          <div className="mt-2">
+            {previewing ? (
+              <p className="text-[13px] text-muted">Filling it in from their bills and orders…</p>
+            ) : preview && picked ? (
+              <MessagePreviewView
+                key={picked.id}
+                preview={preview}
+                customerId={picked.id}
+                customerName={picked.name}
+                templateId={rule.templateId}
+                linked={rule.linked}
+                defaultPhone={myPhone}
+              />
+            ) : (
+              <p className="text-[13px] text-muted">Pick a customer above to see the exact message they would receive.</p>
+            )}
+          </div>
+        </section>
+      </div>
+    </Drawer>
   );
 }
 
