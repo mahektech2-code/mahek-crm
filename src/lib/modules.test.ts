@@ -133,6 +133,8 @@ describe("the registry and the navigation agree", () => {
     const desk = modulesForApp("crm").find((m) => m.key === "crm.lead-calling-desk");
     assert.equal(desk?.href, "/crm/leads/calling-desk");
     assert.ok(crmNavHrefs().includes("/crm/leads/calling-desk"));
+    const item = NAV.flatMap((g) => g.items).find((i) => i.href === "/crm/leads/calling-desk");
+    assert.equal(item?.label, "Telecaller");
   });
 
   it("every Sales Dashboard module is reachable from the sidebar", () => {
