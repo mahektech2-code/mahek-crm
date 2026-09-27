@@ -155,6 +155,19 @@ export async function erpSearch(q: string): Promise<ErpSearchHit[]> {
     )) as unknown as { id: string; name: string; state: string }[];
     rows.forEach((r) => out.push({ kind: "Godown", name: r.name, meta: r.state ?? "", href: `${go("godowns")}?open=${r.id}` }));
   }
+  if (ctx.screens.has("register")) {
+    const rows = (await db.execute(
+      sql`select p.id, p.lot_no as lot, p.pr_number as pr, m.name as item from erp_purchases p join erp_raw_materials m on m.id = p.raw_material_id
+           where lower(p.lot_no) like ${like} or p.pr_number::text = ${term} order by p.purchase_date desc limit 4`,
+    )) as unknown as { id: string; lot: string; pr: number; item: string }[];
+    rows.forEach((r) => out.push({ kind: "Lot", name: r.lot, meta: `PR ${r.pr} · ${r.item}`, href: `${go("register")}?open=${r.id}` }));
+  }
+  if (ctx.screens.has("inward") && /^\d+$/.test(term)) {
+    const rows = (await db.execute(
+      sql`select min(i.id) as id, i.pr_number as pr, count(*)::int as n from erp_inward i where i.pr_number::text = ${term} group by i.pr_number`,
+    )) as unknown as { id: string; pr: number; n: number }[];
+    rows.forEach((r) => out.push({ kind: "PR", name: `PR ${r.pr}`, meta: `${r.n} inward line${r.n > 1 ? "s" : ""}`, href: `${go("inward")}?open=${r.id}` }));
+  }
   return out.slice(0, 10);
 }
 
