@@ -1,7 +1,10 @@
 "use client";
 
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button, cx } from "@/components/ui/primitives";
+import { ConfirmDialog, Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
+import { useToast } from "@/components/ui/toast";
 import type { ActionSpec, BulkSpec, FieldSpec, FormSpec, PromptSpec } from "@/lib/erp/ui";
 import { whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
@@ -13,15 +16,19 @@ import { ErpVoice } from "./voice";
 
 /* ---------------------------------------------------------------------------
  * The ERP's overlays, held once for the whole app: the form drawer, the prompt
- * dialog, the confirm dialog and the toast — the four things the design draws
- * above every screen. Screens ask for them through `useErpUi()`.
+ * dialog and the confirm dialog. Screens ask for them through `useErpUi()`.
+ *
+ * They are the CRM's overlays — `Drawer`, `Modal`, `ConfirmDialog` and the
+ * shared toast — carrying the ERP's form specs. The ERP drew its own of each
+ * once, in its own colours and at its own layer, and a confirmation that looks
+ * different in two apps of one suite reads as two different kinds of question.
  * ------------------------------------------------------------------------- */
 
 type Confirm = { msg: string; fn: () => void };
 type PromptState = { spec: PromptSpec; done: (v: Record<string, string>) => Promise<Result<unknown> | void> };
 
 type Ui = {
-  toast: (t: string) => void;
+  toast: (t: string, tone?: "info" | "error") => void;
   confirm: (msg: string, fn: () => void) => void;
   prompt: (spec: PromptSpec, done: (v: Record<string, string>) => Promise<Result<unknown> | void>) => void;
   openForm: (spec: FormSpec) => void;
@@ -40,18 +47,13 @@ export function useErpUi(): Ui {
 
 export function ErpUiProvider({ children, voice = false }: { children: React.ReactNode; voice?: boolean }) {
   const router = useRouter();
-  const [toastText, setToastText] = useState("");
-  const tRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { push } = useToast();
   const [confirmState, setConfirmState] = useState<Confirm | null>(null);
   const [promptState, setPromptState] = useState<PromptState | null>(null);
   const [form, setForm] = useState<FormSpec | null>(null);
   const [formKey, setFormKey] = useState(0);
 
-  const toast = useCallback((t: string) => {
-    if (tRef.current) clearTimeout(tRef.current);
-    setToastText(t);
-    tRef.current = setTimeout(() => setToastText(""), 3200);
-  }, []);
+  const toast = useCallback((t: string, tone: "info" | "error" = "info") => push(t, tone), [push]);
 
   const confirm = useCallback((msg: string, fn: () => void) => setConfirmState({ msg, fn }), []);
   const prompt = useCallback(
@@ -71,7 +73,7 @@ export function ErpUiProvider({ children, voice = false }: { children: React.Rea
         router.refresh();
         after?.();
       } else {
-        toast(res.error);
+        toast(res.error, "error");
       }
     },
     [router, toast],
@@ -91,7 +93,7 @@ export function ErpUiProvider({ children, voice = false }: { children: React.Rea
       if (a.loadsForm) {
         void erpLoadForm(screen, a.id, recordId).then((res) => {
           if (res.ok) openForm(res.data);
-          else toast(res.error);
+          else toast(res.error, "error");
         });
         return;
       }
@@ -133,78 +135,39 @@ export function ErpUiProvider({ children, voice = false }: { children: React.Rea
 
   return (
     <ErpVoice.Provider value={voice}>
-    <Ctx.Provider value={{ toast, confirm, prompt, openForm, act, bulk }}>
-      {children}
-      {form ? (
-        <FormDrawer
-          key={formKey}
-          spec={form}
-          onClose={() => setForm(null)}
-          onSaved={(msg) => {
-            setForm(null);
-            toast(msg);
-            router.refresh();
+      <Ctx.Provider value={{ toast, confirm, prompt, openForm, act, bulk }}>
+        {children}
+        {form ? (
+          <FormDrawer
+            key={formKey}
+            spec={form}
+            onClose={() => setForm(null)}
+            onSaved={(msg) => {
+              setForm(null);
+              toast(msg);
+              router.refresh();
+            }}
+            confirm={confirm}
+          />
+        ) : null}
+        {promptState ? (
+          <PromptDialog key={promptState.spec.title} state={promptState} onClose={() => setPromptState(null)} />
+        ) : null}
+        <ConfirmDialog
+          open={!!confirmState}
+          title="Please confirm"
+          body={confirmState?.msg ?? ""}
+          confirmLabel="Yes, go ahead"
+          onConfirm={() => {
+            const fn = confirmState?.fn;
+            setConfirmState(null);
+            fn?.();
           }}
-          confirm={confirm}
+          onClose={() => setConfirmState(null)}
         />
-      ) : null}
-      {promptState ? (
-        <PromptDialog
-          key={promptState.spec.title}
-          state={promptState}
-          onClose={() => setPromptState(null)}
-        />
-      ) : null}
-      {confirmState ? (
-        <div
-          onClick={() => setConfirmState(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 32, background: "rgba(22,22,22,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "erp-fade 150ms cubic-bezier(0.2,0,0.2,1)" }}
-        >
-          <div
-            role="alertdialog"
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: "min(420px,100%)", background: "#FFFFFF", borderRadius: 8, boxShadow: "0 8px 24px rgba(22,22,22,0.18)", padding: 20 }}
-          >
-            <div style={{ fontSize: 16, lineHeight: "23px", fontWeight: 600, color: "#161616" }}>{confirmState.msg}</div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
-              <button onClick={() => setConfirmState(null)} style={secondaryBtn(36)}>
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  const fn = confirmState.fn;
-                  setConfirmState(null);
-                  fn();
-                }}
-                style={primaryBtn(36)}
-              >
-                Yes, go ahead
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      {toastText ? (
-        <div
-          role="status"
-          style={{ position: "fixed", right: 20, bottom: 20, zIndex: 40, maxWidth: "calc(100vw - 40px)", display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: "#3D14A8", color: "#FFFFFF", borderRadius: 8, boxShadow: "0 8px 24px rgba(22,22,22,0.18)", fontSize: 14, animation: "erp-fade 150ms cubic-bezier(0.2,0,0.2,1)" }}
-        >
-          <span style={{ width: 18, height: 18, borderRadius: "50%", background: "rgba(198,255,52,0.2)", color: "#C6FF34", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flex: "none" }}>
-            ✓
-          </span>
-          {toastText}
-        </div>
-      ) : null}
-    </Ctx.Provider>
+      </Ctx.Provider>
     </ErpVoice.Provider>
   );
-}
-
-export function primaryBtn(h = 38): React.CSSProperties {
-  return { height: h, padding: "0 16px", border: "none", background: "#6835FB", borderRadius: 4, fontSize: 14, fontWeight: 500, color: "#FFFFFF", cursor: "pointer" };
-}
-export function secondaryBtn(h = 38): React.CSSProperties {
-  return { height: h, padding: "0 16px", border: "1px solid #DDE1E8", background: "#FFFFFF", borderRadius: 4, fontSize: 14, fontWeight: 500, color: "#3D4453", cursor: "pointer" };
 }
 
 /* ------------------------------------------------------------ validation */
@@ -261,47 +224,45 @@ function PromptDialog({ state, onClose }: { state: PromptState; onClose: () => v
     onClose();
   };
   return (
-    <div
-      onClick={onClose}
-      style={{ position: "fixed", inset: 0, zIndex: 30, background: "rgba(22,22,22,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, animation: "erp-fade 150ms cubic-bezier(0.2,0,0.2,1)" }}
-    >
-      <div
-        role="dialog"
-        aria-label={spec.title}
-        onClick={(e) => e.stopPropagation()}
-        style={{ width: "min(480px,100%)", maxHeight: "calc(100vh - 32px)", background: "#FFFFFF", borderRadius: 8, boxShadow: "0 8px 24px rgba(22,22,22,0.18)", display: "flex", flexDirection: "column", overflow: "hidden" }}
-      >
-        <div style={{ padding: "16px 20px 12px 20px", borderBottom: "1px solid #EDEFF3" }}>
-          <div style={{ fontSize: 18, fontWeight: 600, color: "#161616" }}>{spec.title}</div>
-          {spec.sub ? <div style={{ fontSize: 13, color: "#6B7385", marginTop: 2 }}>{spec.sub}</div> : null}
-        </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 20px", display: "grid", gap: 14, alignContent: "start", gridAutoRows: "max-content" }}>
-          {spec.fields
-            .filter((f) => whenHolds(f.when, v))
-            .map((f) => (
-              <Field
-                key={f.k}
-                f={f}
-                value={v[f.k] ?? ""}
-                error={errs[f.k]}
-                options={optsFor(f, v)}
-                onChange={(x) => {
-                  setV((s) => ({ ...s, [f.k]: x }));
-                  setErrs((s) => ({ ...s, [f.k]: "" }));
-                }}
-              />
-            ))}
-        </div>
-        <div style={{ padding: "12px 20px", borderTop: "1px solid #EDEFF3", display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <button onClick={onClose} style={secondaryBtn(36)}>
+    <Modal
+      open
+      onClose={onClose}
+      width={480}
+      title={
+        <>
+          {spec.title}
+          {spec.sub ? <span className="mt-0.5 block text-[13px] font-normal text-muted">{spec.sub}</span> : null}
+        </>
+      }
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
             Cancel
-          </button>
-          <button onClick={submit} disabled={busy} style={{ ...primaryBtn(36), opacity: busy ? 0.7 : 1 }}>
+          </Button>
+          <Button variant="primary" onClick={submit} disabled={busy}>
             {busy ? "Saving…" : spec.submit}
-          </button>
-        </div>
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-3.5">
+        {spec.fields
+          .filter((f) => whenHolds(f.when, v))
+          .map((f) => (
+            <Field
+              key={f.k}
+              f={f}
+              value={v[f.k] ?? ""}
+              error={errs[f.k]}
+              options={optsFor(f, v)}
+              onChange={(x) => {
+                setV((s) => ({ ...s, [f.k]: x }));
+                setErrs((s) => ({ ...s, [f.k]: "" }));
+              }}
+            />
+          ))}
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -375,132 +336,132 @@ function FormDrawer({
     } else void save();
   };
 
+  const summary = runCalc(`${spec.screen}.summary`, { h, l: {}, lines, i: -1, data });
+
   return (
-    <div
-      onClick={onClose}
-      style={{ position: "fixed", inset: 0, zIndex: 22, background: "rgba(22,22,22,0.35)", display: "flex", justifyContent: "flex-end", animation: "erp-fade 150ms cubic-bezier(0.2,0,0.2,1)" }}
-    >
-      <div
-        role="dialog"
-        aria-label={spec.title}
-        onClick={(e) => e.stopPropagation()}
-        style={{ width: "min(680px,100vw)", height: "100%", background: "#FFFFFF", boxShadow: "0 8px 24px rgba(22,22,22,0.12)", display: "flex", flexDirection: "column", animation: "erp-drawer 200ms cubic-bezier(0.2,0,0.2,1)" }}
-      >
-        <div style={{ flex: "none", padding: "16px 20px", borderBottom: "1px solid #EDEFF3", display: "flex", gap: 12 }}>
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontSize: 20, fontWeight: 600, color: "#161616" }}>{spec.title}</span>
-            {spec.sub ? <span style={{ display: "block", fontSize: 13, color: "#6B7385", marginTop: 2 }}>{spec.sub}</span> : null}
-          </span>
-          <button onClick={onClose} title="Close (Esc)" style={{ width: 32, height: 32, border: "none", background: "transparent", color: "#6B7385", cursor: "pointer", fontSize: 18, flex: "none" }}>
-            ✕
-          </button>
-        </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 20px", display: "grid", gap: 14, alignContent: "start", gridAutoRows: "max-content" }}>
-          {spec.evidence ? <Evidence e={spec.evidence} /> : null}
-          <Block title={spec.line ? "Header" : ""}>
-            {spec.header
-              .filter((f) => visible(f))
-              .map((f) => (
-                <Field
-                  key={f.k}
-                  f={f}
-                  value={h[f.k] ?? ""}
-                  error={errs[`h.${f.k}`]}
-                  options={optsFor(f, h)}
-                  derived={f.t === "derived" || f.t === "suggest" ? runCalc(f.calc, { h, l: {}, lines, i: -1, data }) : undefined}
-                  onUseSuggestion={(v) => {
-                    const target = f.k.replace(/^ai/, "").replace(/^./, (c) => c.toLowerCase());
-                    setH((s) => ({ ...s, [target]: v }));
-                  }}
-                  onChange={(v) => {
-                    setH((s) => ({ ...s, [f.k]: v }));
-                    setErrs((s) => ({ ...s, [`h.${f.k}`]: "" }));
-                  }}
-                />
-              ))}
-          </Block>
-          {spec.line
-            ? lines.map((l, i) => (
-                <Block
-                  key={i}
-                  title={`${spec.lineLabel ?? "Line"} ${i + 1} of ${lines.length}`}
-                  onRemove={lines.length > 1 ? () => setLines((s) => s.filter((_, j) => j !== i)) : undefined}
-                >
-                  {spec.line!
-                    .filter((f) => visible(f, l))
-                    .map((f) => (
-                      <Field
-                        key={f.k}
-                        f={f}
-                        value={l[f.k] ?? ""}
-                        error={errs[`l${i}.${f.k}`]}
-                        options={optsFor(f, { ...h, ...l })}
-                        derived={f.t === "derived" ? runCalc(f.calc, { h, l, lines, i, data }) : undefined}
-                        onChange={(v) => {
-                          setLines((s) => s.map((x, j) => (j === i ? { ...x, [f.k]: v } : x)));
-                          setErrs((s) => ({ ...s, [`l${i}.${f.k}`]: "" }));
-                        }}
-                      />
-                    ))}
-                </Block>
-              ))
-            : null}
-          {spec.line ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <button
-                onClick={() => setLines((s) => [...s, blankLine()])}
-                style={{ height: 36, padding: "0 14px", border: "1px dashed #6835FB", background: "#FFFFFF", borderRadius: 4, color: "#5223E0", fontSize: 14, fontWeight: 500, cursor: "pointer" }}
+    <Drawer open onClose={onClose} width={680} label={spec.title}>
+      <DrawerHeader onClose={onClose}>
+        <div className="text-lg leading-6 font-semibold text-ink">{spec.title}</div>
+        {spec.sub ? <div className="mt-0.5 text-[13px] text-muted">{spec.sub}</div> : null}
+      </DrawerHeader>
+      <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-3.5 overflow-y-auto px-5 py-4">
+        {spec.evidence ? <Evidence e={spec.evidence} /> : null}
+        <Block title={spec.line ? "Header" : ""}>
+          {spec.header
+            .filter((f) => visible(f))
+            .map((f) => (
+              <Field
+                key={f.k}
+                f={f}
+                value={h[f.k] ?? ""}
+                error={errs[`h.${f.k}`]}
+                options={optsFor(f, h)}
+                derived={f.t === "derived" || f.t === "suggest" ? runCalc(f.calc, { h, l: {}, lines, i: -1, data }) : undefined}
+                onUseSuggestion={(v) => {
+                  const target = f.k.replace(/^ai/, "").replace(/^./, (c) => c.toLowerCase());
+                  setH((s) => ({ ...s, [target]: v }));
+                }}
+                onChange={(v) => {
+                  setH((s) => ({ ...s, [f.k]: v }));
+                  setErrs((s) => ({ ...s, [`h.${f.k}`]: "" }));
+                }}
+              />
+            ))}
+        </Block>
+        {spec.line
+          ? lines.map((l, i) => (
+              <Block
+                key={i}
+                title={`${spec.lineLabel ?? "Line"} ${i + 1} of ${lines.length}`}
+                onRemove={lines.length > 1 ? () => setLines((s) => s.filter((_, j) => j !== i)) : undefined}
               >
-                + Add more {(spec.lineLabel ?? "line").toLowerCase()}
-              </button>
-              <span style={{ fontSize: 12, color: "#6B7385" }}>
-                Each new line keeps the header: {spec.header.filter((f) => f.t !== "derived").slice(0, 3).map((f) => f.l.toLowerCase()).join(", ")}.
-              </span>
-            </div>
-          ) : null}
-          {runCalc(`${spec.screen}.summary`, { h, l: {}, lines, i: -1, data }) ? (
-            <FormSummary text={runCalc(`${spec.screen}.summary`, { h, l: {}, lines, i: -1, data })} />
-          ) : null}
-          {topError ? (
-            <div style={{ padding: "10px 12px", borderRadius: 6, background: "#FCECEC", color: "#B3261E", fontSize: 14, fontWeight: 500 }}>{topError}</div>
-          ) : null}
-        </div>
-        <div style={{ flex: "none", borderTop: "1px solid #EDEFF3", padding: "12px 20px", display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button onClick={onClose} style={secondaryBtn()}>
-            Cancel
-          </button>
-          <button onClick={submit} disabled={busy} style={{ ...primaryBtn(), padding: "0 18px", opacity: busy ? 0.7 : 1 }}>
-            {busy ? "Saving…" : spec.submit}
-          </button>
-        </div>
+                {spec.line!
+                  .filter((f) => visible(f, l))
+                  .map((f) => (
+                    <Field
+                      key={f.k}
+                      f={f}
+                      value={l[f.k] ?? ""}
+                      error={errs[`l${i}.${f.k}`]}
+                      options={optsFor(f, { ...h, ...l })}
+                      derived={f.t === "derived" ? runCalc(f.calc, { h, l, lines, i, data }) : undefined}
+                      onChange={(v) => {
+                        setLines((s) => s.map((x, j) => (j === i ? { ...x, [f.k]: v } : x)));
+                        setErrs((s) => ({ ...s, [`l${i}.${f.k}`]: "" }));
+                      }}
+                    />
+                  ))}
+              </Block>
+            ))
+          : null}
+        {spec.line ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="secondary" onClick={() => setLines((s) => [...s, blankLine()])} className="border-dashed text-[#5223E0]">
+              + Add more {(spec.lineLabel ?? "line").toLowerCase()}
+            </Button>
+            <span className="text-xs text-muted">
+              Each new line keeps the header:{" "}
+              {spec.header
+                .filter((f) => f.t !== "derived")
+                .slice(0, 3)
+                .map((f) => f.l.toLowerCase())
+                .join(", ")}
+              .
+            </span>
+          </div>
+        ) : null}
+        {summary ? <FormSummary text={summary} /> : null}
+        {topError ? (
+          <div className="rounded-[4px] border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-4 py-2.5 text-sm font-medium text-danger">
+            {topError}
+          </div>
+        ) : null}
       </div>
-    </div>
+      <div className="flex flex-none justify-end gap-2.5 border-t border-divider px-5 py-3">
+        <Button variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button variant="primary" onClick={submit} disabled={busy}>
+          {busy ? "Saving…" : spec.submit}
+        </Button>
+      </div>
+    </Drawer>
   );
 }
 
 /** What an AI reading was read from — the photographs and words — and what the checks found, beside the proposed values. */
 function Evidence({ e }: { e: NonNullable<FormSpec["evidence"]> }) {
-  const tone: Record<string, [string, string]> = { danger: ["#FFF7F6", "#8A1C14"], warn: ["#FDF6E7", "#8A5C05"], success: ["#EEF8F1", "#1B6B3A"], info: ["#EEF4FD", "#1D4F91"], brand: ["#F1ECFF", "#5223E0"], neutral: ["#F4F5F8", "#3D4453"], muted: ["#F4F5F8", "#6B7385"] };
+  const tone: Record<string, string> = {
+    danger: "bg-danger-soft text-danger",
+    warn: "bg-warn-soft text-warn-ink",
+    success: "bg-success-soft text-success",
+    info: "bg-brand-soft text-[#5223E0]",
+    brand: "bg-brand-soft text-[#5223E0]",
+    neutral: "bg-canvas text-body",
+    muted: "bg-canvas text-muted",
+  };
   return (
-    <section style={{ border: "1px solid #DDD2FF", background: "#FBFAFF", borderRadius: 8, padding: 12, display: "grid", gap: 10 }}>
-      <span style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: "#5223E0" }}>Read by AI · check it against the source</span>
+    <section className="grid gap-2.5 rounded-[6px] border border-brand-softer border-l-[3px] border-l-brand bg-brand-soft/40 p-3">
+      <span className="text-xs font-medium tracking-[0.04em] text-[#5223E0] uppercase">Read by AI · check it against the source</span>
       {e.images?.length ? (
-        <div style={{ display: "flex", gap: 8, overflowX: "auto" }}>
+        <div className="flex gap-2 overflow-x-auto">
           {e.images.map((id) => (
-            <a key={id} href={`/api/attachments/${id}`} target="_blank" rel="noreferrer" style={{ flex: "none" }}>
+            <a key={id} href={`/api/attachments/${id}`} target="_blank" rel="noreferrer" className="flex-none">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`/api/attachments/${id}`} alt="Source" style={{ height: 160, maxWidth: 260, objectFit: "contain", borderRadius: 6, background: "#FFFFFF", border: "1px solid #EDEFF3" }} />
+              <img src={`/api/attachments/${id}`} alt="Source" className="h-40 max-w-[260px] rounded-[4px] border border-divider bg-surface object-contain" />
             </a>
           ))}
         </div>
       ) : null}
-      {e.text ? <blockquote style={{ margin: 0, padding: "8px 10px", background: "#FFFFFF", border: "1px solid #EDEFF3", borderRadius: 6, fontSize: 13, color: "#3D4453", whiteSpace: "pre-wrap" }}>{e.text}</blockquote> : null}
+      {e.text ? (
+        <blockquote className="m-0 rounded-[4px] border border-divider bg-surface px-2.5 py-2 text-[13px] whitespace-pre-wrap text-body">{e.text}</blockquote>
+      ) : null}
       {e.flags?.map((f, i) => (
-        <span key={i} style={{ fontSize: 13, padding: "6px 10px", borderRadius: 6, background: tone[f.tone]?.[0], color: tone[f.tone]?.[1] }}>
+        <span key={i} className={cx("rounded-[4px] px-2.5 py-1.5 text-[13px]", tone[f.tone] ?? tone.neutral)}>
           {f.text}
         </span>
       ))}
-      {e.note ? <span style={{ fontSize: 12, color: "#6B7385" }}>{e.note}</span> : null}
+      {e.note ? <span className="text-xs text-muted">{e.note}</span> : null}
     </section>
   );
 }
@@ -510,7 +471,12 @@ function FormSummary({ text }: { text: string }) {
   const warn = text.startsWith("warn:");
   const body = text.replace(/^(ok|warn):/, "");
   return (
-    <div style={{ padding: "10px 12px", borderRadius: 6, background: warn ? "#FDF6E7" : "#E9F5EE", color: warn ? "#8A5C05" : "#1D7A45", fontSize: 14, fontWeight: 500 }}>
+    <div
+      className={cx(
+        "rounded-[4px] border border-l-[3px] px-4 py-2.5 text-sm font-medium",
+        warn ? "border-warn-line border-l-warn bg-warn-soft text-warn-ink" : "border-success-soft border-l-success bg-success-soft text-success",
+      )}
+    >
       {body}
     </div>
   );
@@ -518,20 +484,18 @@ function FormSummary({ text }: { text: string }) {
 
 function Block({ title, onRemove, children }: { title: string; onRemove?: () => void; children: React.ReactNode }) {
   return (
-    <div style={{ border: "1px solid #EDEFF3", borderRadius: 8, minWidth: 0 }}>
+    <div className="min-w-0 rounded-[6px] border border-line">
       {title ? (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#F7F8FA", borderBottom: "1px solid #EDEFF3", borderRadius: "8px 8px 0 0" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#161616" }}>{title}</span>
+        <div className="flex items-center justify-between rounded-t-[6px] border-b border-divider bg-canvas px-3 py-2">
+          <span className="text-[13px] font-semibold text-ink">{title}</span>
           {onRemove ? (
-            <button onClick={onRemove} style={{ height: 26, padding: "0 8px", border: "none", background: "transparent", color: "#B3261E", fontSize: 13, cursor: "pointer" }}>
+            <button onClick={onRemove} className="h-6 cursor-pointer px-2 text-[13px] text-danger hover:underline">
               Remove line
             </button>
           ) : null}
         </div>
       ) : null}
-      <div className="erp-field-grid" style={{ padding: "14px 12px" }}>
-        {children}
-      </div>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3.5 px-3 py-3.5">{children}</div>
     </div>
   );
 }

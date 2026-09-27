@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
-import { erpGroupOf, erpScreenBySlug } from "@/lib/erp/registry";
+import { erpScreenBySlug } from "@/lib/erp/registry";
 import { screenModule } from "@/lib/erp/screens";
 import { ListScreen } from "../_ui/list-screen";
 
@@ -27,7 +27,6 @@ export default async function ErpScreenPage({
   if (!ctx.screens.has(screen.key)) redirect("/erp");
 
   const { spec, rows } = await mod.load(ctx);
-  const group = erpGroupOf(screen.key);
   /* A dashboard tile opens its list pre-filtered: `f` is the ids it counted,
      `fl` what to call them. */
   const filter = sp.f ? { label: sp.fl ?? "Filtered", ids: sp.f.split(",") } : null;
@@ -38,7 +37,6 @@ export default async function ErpScreenPage({
       spec={spec}
       rows={rows}
       label={screen.label}
-      crumb={`ERP · ${group?.label ?? ""}`}
       sub={screen.sub}
       initialOpen={sp.open ?? null}
       filter={filter}

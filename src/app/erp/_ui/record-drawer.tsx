@@ -2,6 +2,8 @@
 
 import type { ListRow, ListSpec } from "@/lib/erp/ui";
 import { cellText } from "@/lib/erp/ui";
+import { Button, cx, SectionLabel } from "@/components/ui/primitives";
+import { Drawer, DrawerHeader } from "@/components/ui/overlays";
 import { FlagBadge, StatusBadge } from "./badge";
 import { Icon } from "./icons";
 import { useErpUi } from "./erp-ui";
@@ -9,7 +11,7 @@ import { renderPanel } from "./panels";
 import "./panels/index";
 
 /* ---------------------------------------------------------------------------
- * A record, opened from its row: the design's right-hand drawer. Every column
+ * A record, opened from its row, in the CRM's right-hand drawer. Every column
  * the person may see, then the record's extra fields, calculated ones marked;
  * the contact shortcuts; anything a screen draws of its own (allocation,
  * evidence); and the actions — available ones as buttons, unavailable ones
@@ -28,137 +30,97 @@ export function RecordDrawer({ screen, kind, row, onClose }: { screen: ListSpec;
   ];
   const acts = row.actions ?? [];
   const blocked = acts.filter((a) => a.why);
+  const hiddenCount = screen.hidden.length + (row.hiddenFields ?? 0);
 
   return (
-    <div
-      onClick={onClose}
-      style={{ position: "fixed", inset: 0, zIndex: 20, background: "rgba(22,22,22,0.35)", display: "flex", justifyContent: "flex-end", animation: "erp-fade 150ms cubic-bezier(0.2,0,0.2,1)" }}
-    >
-      <div
-        role="dialog"
-        aria-label={title}
-        onClick={(e) => e.stopPropagation()}
-        style={{ width: "min(600px,100vw)", height: "100%", background: "#FFFFFF", boxShadow: "0 8px 24px rgba(22,22,22,0.12)", display: "flex", flexDirection: "column", animation: "erp-drawer 200ms cubic-bezier(0.2,0,0.2,1)" }}
-      >
-        <div style={{ flex: "none", padding: "16px 20px", borderBottom: "1px solid #EDEFF3", display: "flex", gap: 12, alignItems: "flex-start" }}>
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: "#6B7385" }}>{kind}</span>
-            <span style={{ display: "block", fontSize: 20, lineHeight: "26px", fontWeight: 600, color: "#161616", marginTop: 2 }}>{title}</span>
-            {row.header ? <span style={{ display: "block", fontSize: 13, color: "#3D4453", marginTop: 3 }}>{row.header}</span> : null}
-            {row.flags.length ? (
-              <span style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 8 }}>
-                {row.flags.map((f) => (
-                  <FlagBadge key={f} flag={f} />
-                ))}
-              </span>
-            ) : null}
-          </span>
-          <button onClick={onClose} title="Close (Esc)" style={{ width: 32, height: 32, border: "none", background: "transparent", color: "#6B7385", cursor: "pointer", fontSize: 18, flex: "none" }}>
-            ✕
-          </button>
-        </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 20px", display: "grid", gap: 16, alignContent: "start", gridAutoRows: "max-content" }}>
-          {row.panel ? renderPanel(row.panel.kind, { data: row.panel.data, row, screen: screen.screen }) : null}
-          {row.contacts?.length ? (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {row.contacts.map((k) => (
-                <a
-                  key={k.href}
-                  href={k.href}
-                  target="_blank"
-                  rel="noopener"
-                  style={{ display: "inline-flex", alignItems: "center", height: 32, padding: "0 12px", border: "1px solid #DDE1E8", borderRadius: 16, fontSize: 13, color: "#5223E0", textDecoration: "none" }}
-                >
-                  {k.l}
-                </a>
-              ))}
-            </div>
-          ) : null}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(170px,1fr))", gap: 8 }}>
-            {fields.map((f, i) => (
-              <div
-                key={`${f.l}:${i}`}
-                style={{
-                  padding: "9px 12px",
-                  borderRadius: 6,
-                  background: f.der ? "#F7F8FA" : "#FFFFFF",
-                  border: `1px ${f.der ? "dashed #DDE1E8" : "solid #EDEFF3"}`,
-                }}
+    <Drawer open onClose={onClose} width={600} label={title}>
+      <DrawerHeader onClose={onClose}>
+        <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">{kind}</div>
+        <div className="mt-0.5 text-lg leading-6 font-semibold text-ink">{title}</div>
+        {row.header ? <div className="mt-0.5 text-[13px] text-body">{row.header}</div> : null}
+        {row.flags.length ? (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {row.flags.map((f) => (
+              <FlagBadge key={f} flag={f} />
+            ))}
+          </div>
+        ) : null}
+      </DrawerHeader>
+      <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-4 overflow-y-auto px-5 py-4">
+        {row.panel ? renderPanel(row.panel.kind, { data: row.panel.data, row, screen: screen.screen }) : null}
+        {row.contacts?.length ? (
+          <div className="flex flex-wrap gap-2">
+            {row.contacts.map((k) => (
+              <a
+                key={k.href}
+                href={k.href}
+                target="_blank"
+                rel="noopener"
+                className="inline-flex h-8 items-center rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-[#5223E0] no-underline hover:bg-canvas"
               >
-                <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: "#6B7385" }}>
-                  {f.l}
-                  {f.der ? (
-                    <span style={{ fontSize: 10, textTransform: "none", letterSpacing: 0, padding: "0 5px", borderRadius: 6, background: "#EDEFF3", color: "#6B7385" }}>Calculated</span>
-                  ) : null}
-                </span>
+                {k.l}
+              </a>
+            ))}
+          </div>
+        ) : null}
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-3.5">
+          {fields.map((f, i) => (
+            <div key={`${f.l}:${i}`} className="min-w-0">
+              <dt className="flex items-center gap-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
+                {f.l}
+                {f.der ? <span className="rounded-[3px] bg-divider px-1.5 text-[11px] tracking-normal normal-case">Calculated</span> : null}
+              </dt>
+              <dd className="mt-0.5">
                 {f.status && f.v !== "—" ? (
-                  <span style={{ display: "block", marginTop: 4 }}>
-                    <StatusBadge value={f.v} />
-                  </span>
+                  <StatusBadge value={f.v} />
                 ) : (
-                  <span style={{ display: "block", fontSize: 14, color: f.v === "—" ? "#C2C8D2" : "#161616", fontWeight: f.v === "—" ? 400 : 500, marginTop: 2, wordBreak: "break-word", fontVariantNumeric: "tabular-nums" }}>
-                    {f.v}
-                  </span>
+                  <span className={cx("block text-sm break-words tabular-nums", f.v === "—" ? "text-line-strong" : "text-ink")}>{f.v}</span>
                 )}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {hiddenCount ? (
+          <div className="flex items-center gap-1.5 text-[13px] text-muted">
+            <Icon n="lock" s={14} />
+            {hiddenCount} field{hiddenCount > 1 ? "s are" : " is"} not shown on your account.
+          </div>
+        ) : null}
+        {blocked.length ? (
+          <div className="rounded-[4px] bg-canvas px-3 py-2.5">
+            <SectionLabel>Not available yet</SectionLabel>
+            {blocked.map((b) => (
+              <div key={b.id} className="py-0.5 text-[13px] text-body">
+                <span className="font-medium text-ink">{b.l}</span> — {b.why}
               </div>
             ))}
           </div>
-          {screen.hidden.length || row.hiddenFields ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#6B7385" }}>
-              <Icon n="lock" s={14} />
-              {(screen.hidden.length + (row.hiddenFields ?? 0))} field{screen.hidden.length + (row.hiddenFields ?? 0) > 1 ? "s are" : " is"} not shown on your account.
-            </div>
-          ) : null}
-          {blocked.length ? (
-            <div style={{ padding: "10px 12px", background: "#F7F8FA", borderRadius: 6 }}>
-              <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: "#6B7385", marginBottom: 4 }}>Not available yet</div>
-              {blocked.map((b) => (
-                <div key={b.id} style={{ fontSize: 13, color: "#3D4453", padding: "2px 0" }}>
-                  <span style={{ fontWeight: 500, color: "#161616" }}>{b.l}</span> — {b.why}
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {!acts.length && screen.readOnly ? (
-            <div style={{ fontSize: 13, color: "#6B7385" }}>Read-only. These entries are written by their source records, never by hand.</div>
-          ) : null}
-          {row.by ? <div style={{ fontSize: 12, color: "#6B7385" }}>{row.by}</div> : null}
-        </div>
-        {acts.length ? (
-          <div style={{ flex: "none", borderTop: "1px solid #EDEFF3", padding: "12px 20px", display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            {acts.map((a) => {
-              const okA = !a.why;
-              const primary = !!a.primary && okA;
-              return (
-                <button
-                  key={a.id}
-                  onClick={() => okA && ui.act(screen.screen, a, row.id, onClose)}
-                  title={a.why || a.l}
-                  disabled={!okA}
-                  style={{
-                    height: 36,
-                    padding: "0 14px",
-                    borderRadius: 4,
-                    fontSize: 14,
-                    fontWeight: 500,
-                    cursor: okA ? "pointer" : "not-allowed",
-                    whiteSpace: "nowrap",
-                    border: `1px solid ${primary ? "#6835FB" : a.ai && okA ? "#6835FB" : "#DDE1E8"}`,
-                    background: primary ? "#6835FB" : "#FFFFFF",
-                    color: okA ? (primary ? "#FFFFFF" : a.ai ? "#5223E0" : "#3D4453") : "#C2C8D2",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
-                >
-                  {a.ai ? <Icon n="spark" /> : null}
-                  {a.l}
-                </button>
-              );
-            })}
-          </div>
         ) : null}
+        {!acts.length && screen.readOnly ? (
+          <div className="text-[13px] text-muted">Read-only. These entries are written by their source records, never by hand.</div>
+        ) : null}
+        {row.by ? <div className="text-xs text-muted">{row.by}</div> : null}
       </div>
-    </div>
+      {acts.length ? (
+        <div className="flex flex-none flex-wrap justify-end gap-2.5 border-t border-divider px-5 py-3">
+          {acts.map((a) => {
+            const okA = !a.why;
+            return (
+              <Button
+                key={a.id}
+                variant={a.primary && okA ? "primary" : "secondary"}
+                onClick={() => okA && ui.act(screen.screen, a, row.id, onClose)}
+                title={a.why || a.l}
+                disabled={!okA}
+                className={cx(a.ai && okA && !a.primary && "border-brand text-[#5223E0]")}
+              >
+                {a.ai ? <Icon n="spark" /> : null}
+                {a.l}
+              </Button>
+            );
+          })}
+        </div>
+      ) : null}
+    </Drawer>
   );
 }

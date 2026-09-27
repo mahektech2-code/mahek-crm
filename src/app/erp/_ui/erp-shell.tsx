@@ -2,244 +2,309 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { AppFrame } from "@/components/shell/app-frame";
+import { AccountMenu } from "@/components/shell/account-menu";
+import { AppSwitcher } from "@/components/shell/app-switcher";
+import { CollapsibleNav, type NavRowGroup, type NavRowItem } from "@/components/shell/collapsible-nav";
+import { FeedbackButton } from "@/components/shell/feedback-button";
+import { Icon as ShellIcon } from "@/components/shell/icons";
+import { NotificationBell } from "@/components/shell/notification-bell";
+import { cx } from "@/components/ui/primitives";
+import { Modal } from "@/components/ui/overlays";
+import { ToastProvider, useToast } from "@/components/ui/toast";
 import { erpAsk, erpSearch, erpSetWorkingGodown, type ErpSearchHit } from "@/lib/actions/erp";
+import type { Notification } from "@/db/schema";
+import type { AppDefinition } from "@/lib/apps";
 import { GodownPicker } from "./godown-picker";
 import { Icon } from "./icons";
-import { ErpUiProvider, useErpUi } from "./erp-ui";
+import { ErpUiProvider } from "./erp-ui";
 
 /* ---------------------------------------------------------------------------
- * The ERP shell, from the design: a 56px header (wordmark, the way back to the
- * launcher, global search, the working-location picker, the person) and a
- * grouped sidebar that becomes a drawer under 1024px. Only screens the person
- * holds are drawn; the server decided which those are.
+ * The ERP's shell, and it is the CRM's shell.
+ *
+ * It was drawn from the ERP's own design with its own header, its own
+ * sidebar, its own toast and its own search — a second answer to every
+ * question the CRM's shell already answers, in the same suite, a click apart.
+ * Somebody moving between the two apps learned two layouts. So this is the
+ * CRM's pattern with the ERP's content: the same frame, the same header row
+ * (switcher, collapse, wordmark, search, then Feedback, shortcuts, the bell and
+ * the account), the same `CollapsibleNav` in the same 216px column and the
+ * same account menu on its floor. What is the ERP's own is the working
+ * location, which sits where the CRM's Viewing switch sits and is drawn the
+ * same way, because it answers the same kind of question — whose figures am
+ * I looking at.
  * ------------------------------------------------------------------------- */
 
 export type NavScreen = { key: string; label: string; href: string; count?: number };
 export type NavGroup = { id: string; label: string; icon: string; single: boolean; screens: NavScreen[] };
 
+/** Every sub-item carries its own icon, as the CRM's do. */
+const SCREEN_ICON: Record<string, string> = {
+  dashboard: "dashboard",
+  alerts: "bell",
+  rawMaterials: "flask",
+  suppliers: "people",
+  products: "can",
+  customers: "person",
+  godowns: "home",
+  priceLists: "rupee",
+  employees: "people",
+  powers: "lock",
+  refLists: "clipboard",
+  requisitions: "clipboard",
+  inward: "truck",
+  testing: "beaker",
+  register: "book",
+  barcode: "scan",
+  rmStock: "flask",
+  rmLog: "history",
+  sfgBatches: "beaker",
+  sfgStock: "can",
+  sfgLog: "history",
+  fgFill: "can",
+  fgStock: "box",
+  fgLog: "history",
+  packBatches: "box",
+  packStock: "box",
+  packLog: "history",
+  transfers: "swap",
+  rmLevels: "chart",
+  fgLevels: "chart",
+  reorderRm: "refresh",
+  reorderFg: "refresh",
+  orderInbox: "mail",
+  orders: "clipboard",
+  pendingOrders: "clock",
+  readyOrders: "check",
+  batchCodes: "scan",
+  labels: "doc",
+  orderDetails: "receipt",
+  transport: "truck",
+  pendingLr: "clock",
+  trackLr: "pin",
+  paidFreight: "rupee",
+  requests: "chat",
+  issueCn: "receipt",
+  complaints: "warning",
+  pendingCn: "clock",
+  followup: "phone",
+  pivot: "chart",
+  credits: "wallet",
+  expenses: "rupee",
+  myCustomers: "people",
+  videos: "play",
+  settings: "settings",
+};
+
+/** The registry's group icons, in the shell set's names where it has one. */
+const GROUP_ICON: Record<string, string> = { home: "dashboard", gear: "settings", file: "doc" };
+
+/* The CRM's icon set first — so a shared idea (people, clock, rupee) is the
+   same glyph in both apps — and the ERP's own for what the CRM never needed:
+   flasks, cans, lorries. */
+const SHELL_ICONS = new Set([
+  "dashboard", "phone", "bell", "history", "rupee", "wallet", "doc", "eye", "person", "people", "warning",
+  "chart", "target", "clipboard", "chat", "book", "search", "chevron", "chevronLeft", "close", "plus", "copy",
+  "check", "alert", "menu", "grid", "settings", "signOut", "mail", "lock", "arrowRight", "tick", "clock",
+]);
+
+function renderIcon(name: string, size: number) {
+  return SHELL_ICONS.has(name) ? <ShellIcon name={name} size={size} className="flex-none" /> : <Icon n={name} s={size} />;
+}
+
+const PINNED_GROUPS = new Set(["dashboard", "alerts"]);
+
+const SHORTCUTS = [
+  { what: "Focus search", key: "/" },
+  { what: "Ask the ERP — end the search with a question mark", key: "?  Enter" },
+  { what: "Close a drawer or dialog", key: "Esc" },
+  { what: "Show this list", key: "?" },
+];
+
 export function ErpShell({
   nav,
   user,
+  hat,
   godowns,
   working,
-  accountMenu,
-  switcher,
+  notifications,
+  apps,
   voice = false,
   ask = false,
   children,
 }: {
   nav: NavGroup[];
-  user: { name: string; title: string; initials: string };
+  user: { name: string; email: string | null; phone: string | null; initials: string; role: string };
+  hat: { label: string; sentence: string };
   godowns: { id: string; name: string }[];
   working: { id: string; name: string } | null;
-  accountMenu?: React.ReactNode;
-  switcher?: React.ReactNode;
+  notifications: Notification[];
+  /* The apps to switch between. Data, not a rendered switcher: an element
+     built on the server and dropped into this header tripped React's key
+     check on every render, which the CRM avoids by building its own. */
+  apps: AppDefinition[];
   voice?: boolean;
   ask?: boolean;
   children: React.ReactNode;
 }) {
-  return (
-    <ErpUiProvider voice={voice}>
-      <ShellInner nav={nav} user={user} godowns={godowns} working={working} accountMenu={accountMenu} switcher={switcher} ask={ask}>
-        {children}
-      </ShellInner>
-    </ErpUiProvider>
-  );
-}
+  const [collapsed, setCollapsed] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-function useWidth(): number {
-  const [w, setW] = useState(1440);
   useEffect(() => {
-    const on = () => setW(window.innerWidth);
-    on();
-    window.addEventListener("resize", on);
-    return () => window.removeEventListener("resize", on);
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const typing = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
+      if (e.key === "?" && !typing) {
+        e.preventDefault();
+        setShortcutsOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, []);
-  return w;
-}
 
-function ShellInner({
-  nav,
-  user,
-  godowns,
-  working,
-  accountMenu,
-  switcher,
-  ask = false,
-  children,
-}: {
-  nav: NavGroup[];
-  user: { name: string; title: string; initials: string };
-  godowns: { id: string; name: string }[];
-  working: { id: string; name: string } | null;
-  accountMenu?: React.ReactNode;
-  switcher?: React.ReactNode;
-  ask?: boolean;
-  children: React.ReactNode;
-}) {
-  const vw = useWidth();
-  const narrow = vw < 1024;
-  const phone = vw < 640;
-  const path = usePathname();
-  const ui = useErpUi();
-  const router = useRouter();
-  const [navOpen, setNavOpen] = useState(false);
-  const current = nav.find((g) => g.screens.some((s) => (s.href === "/erp" ? path === "/erp" : path === s.href || path.startsWith(s.href + "/"))));
-  const [openMods, setOpenMods] = useState<Record<string, boolean>>(() => (current ? { [current.id]: true } : {}));
-
-  const header = (
-    <header style={{ height: 56, flex: "none", position: "relative", zIndex: 7, background: "#FFFFFF", borderBottom: "1px solid #DDE1E8", display: "flex", alignItems: "center", gap: 12, padding: "0 16px" }}>
-      {narrow ? (
-        <button onClick={() => setNavOpen((o) => !o)} title="Menu" style={{ width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid #DDE1E8", background: "#FFFFFF", borderRadius: 4, color: "#3D4453", cursor: "pointer", flex: "none" }}>
-          <Icon n="menu" s={18} />
-        </button>
-      ) : null}
-      <Link href="/erp" title="ERP dashboard" style={{ display: "flex", alignItems: "center", gap: 8, flex: "none", textDecoration: "none" }}>
-        <span style={{ width: 16, height: 16, background: "#6835FB", borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-          <span style={{ width: 6, height: 6, background: "#C6FF34", borderRadius: 1, display: "block" }} />
-        </span>
-        <span style={{ fontSize: 15, fontWeight: 600, color: "#161616", whiteSpace: "nowrap" }}>
-          MAHEK <span style={{ color: "#6835FB" }}>ERP</span>
-        </span>
-      </Link>
-      {switcher ?? (
-        <Link href="/apps" title="Other MahekOne apps" style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid #EDEFF3", borderRadius: 4, color: "#6B7385", flex: "none" }}>
-          <Icon n="grid" />
-        </Link>
-      )}
-      {!phone ? <GlobalSearch ask={ask} /> : null}
-      <span style={{ flex: 1 }} />
-      {godowns.length ? (
-        <GodownPicker
-          value={working?.id ?? ""}
-          label={working?.name ?? "Choose a working location"}
-          tint
-          items={godowns.map((g) => ({ v: g.id, l: g.name }))}
-          placeholder={`Search ${godowns.length} godowns you are assigned to`}
-          onPick={(id) => {
-            if (!id) return;
-            void erpSetWorkingGodown(id).then((res) => {
-              ui.toast(res.ok ? res.message ?? "Working location changed" : res.error);
-              if (res.ok) router.refresh();
-            });
-          }}
-        />
-      ) : (
-        <span title="Ask an ERP administrator to assign you to a godown" style={{ fontSize: 13, color: "#8A5C05", whiteSpace: "nowrap" }}>
-          No godown assigned
-        </span>
-      )}
-      {/* The shared account menu is the person: name, level, password and sign-out. */}
-      {accountMenu ?? (
-        <span style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
-          <span style={{ width: 30, height: 30, borderRadius: 4, background: "#F1ECFF", color: "#5223E0", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>{user.initials}</span>
-          {!phone ? (
-            <span style={{ lineHeight: "14px" }}>
-              <span style={{ display: "block", fontSize: 13, fontWeight: 500, color: "#161616", whiteSpace: "nowrap" }}>{user.name}</span>
-              <span style={{ display: "block", fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: "#6B7385", whiteSpace: "nowrap" }}>{user.title}</span>
-            </span>
-          ) : null}
-        </span>
-      )}
-    </header>
-  );
-
-  const itemStyle = (on: boolean, indent: boolean): React.CSSProperties => ({
-    position: "relative",
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    width: "100%",
-    height: 34,
-    padding: indent ? "0 10px 0 38px" : "0 10px",
-    border: "none",
-    borderRadius: 6,
-    background: on ? "#F1ECFF" : "transparent",
-    boxShadow: on ? "inset 3px 0 0 #6835FB" : "none",
-    color: on ? "#5223E0" : "#3D4453",
-    fontSize: indent ? 13 : 14,
-    fontWeight: on ? 500 : 400,
-    cursor: "pointer",
-    textAlign: "left",
-    textDecoration: "none",
+  const toRow = (s: NavScreen, fallback: string): NavRowItem => ({
+    href: s.href,
+    label: s.label,
+    icon: SCREEN_ICON[s.key] ?? fallback,
+    exact: s.href === "/erp",
   });
-  const isOn = (href: string) => (href === "/erp" ? path === "/erp" : path === href || path.startsWith(href + "/"));
+  const pinned: NavRowItem[] = nav.filter((g) => PINNED_GROUPS.has(g.id)).flatMap((g) => g.screens.map((s) => toRow(s, g.icon)));
+  const groups: NavRowGroup[] = nav
+    .filter((g) => !PINNED_GROUPS.has(g.id))
+    .map((g) => {
+      const icon = GROUP_ICON[g.icon] ?? g.icon;
+      return { label: g.label, icon, items: g.screens.map((s) => toRow(s, icon)) };
+    });
+  const counts = new Map(nav.flatMap((g) => g.screens.map((s) => [s.href, s.count ?? 0] as const)));
 
-  const sidebar = (
-    <>
-      {narrow && navOpen ? <div onClick={() => setNavOpen(false)} style={{ position: "fixed", inset: "56px 0 0 0", zIndex: 5, background: "rgba(22,22,22,0.35)" }} /> : null}
-      <aside
-        style={
-          narrow
-            ? { position: "fixed", left: 0, top: 56, bottom: 0, zIndex: 6, width: 260, background: "#FFFFFF", borderRight: "1px solid #DDE1E8", display: "flex", flexDirection: "column", transform: navOpen ? "translateX(0)" : "translateX(-100%)", transition: "transform 200ms cubic-bezier(0.2,0,0.2,1)", boxShadow: navOpen ? "0 8px 24px rgba(22,22,22,0.12)" : "none" }
-            : { width: 240, flex: "none", background: "#FFFFFF", borderRight: "1px solid #DDE1E8", display: "flex", flexDirection: "column", minHeight: 0 }
-        }
-      >
-        <nav style={{ flex: 1, overflowY: "auto", padding: "10px 8px 16px 8px", display: "flex", flexDirection: "column", gap: 1 }}>
-          {nav.map((g) => {
-            const open = !!openMods[g.id] || current?.id === g.id;
-            const n = g.screens.reduce((t, s) => t + (s.count ?? 0), 0);
-            if (g.single) {
-              const s = g.screens[0];
-              return (
-                <Link key={g.id} href={s.href} onClick={() => setNavOpen(false)} style={itemStyle(isOn(s.href), false)}>
-                  <span style={{ display: "flex", color: "#6B7385" }}>
-                    <Icon n={g.icon} />
-                  </span>
-                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.label}</span>
-                  {n > 0 ? <Count n={n} /> : null}
-                </Link>
-              );
-            }
-            return (
-              <div key={g.id}>
-                <button onClick={() => setOpenMods((m) => ({ ...m, [g.id]: !open }))} style={itemStyle(false, false)}>
-                  <span style={{ display: "flex", color: "#6B7385" }}>
-                    <Icon n={g.icon} />
-                  </span>
-                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.label}</span>
-                  {n > 0 && !open ? <Count n={n} /> : null}
-                  <span style={{ display: "flex", color: "#C2C8D2" }}>
-                    <Icon n={open ? "down" : "chev"} s={14} />
-                  </span>
+  return (
+    <ToastProvider>
+      <ErpUiProvider voice={voice}>
+        <AppFrame
+          header={
+            <header className="z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
+              <div className="flex w-[216px] flex-none items-center gap-2">
+                {apps.length > 1 ? <AppSwitcher apps={apps} current="erp" /> : null}
+                <button
+                  onClick={() => setCollapsed((c) => !c)}
+                  title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                  aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
+                >
+                  <ShellIcon name="menu" size={18} />
                 </button>
-                {open ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 1, margin: "1px 0 4px 0" }}>
-                    {g.screens.map((s) => (
-                      <Link key={s.key} href={s.href} onClick={() => setNavOpen(false)} style={itemStyle(isOn(s.href), true)}>
-                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</span>
-                        {s.count ? <Count n={s.count} /> : null}
-                      </Link>
-                    ))}
-                  </div>
-                ) : null}
+                <Link href="/erp" className="flex items-center gap-2 no-underline hover:no-underline">
+                  <span className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] bg-brand">
+                    <span className="block h-1.5 w-1.5 rounded-[1px] bg-brand-lime" />
+                  </span>
+                  <span className="text-[15px] font-semibold tracking-[-0.01em] text-ink">MAHEK ERP</span>
+                </Link>
               </div>
-            );
-          })}
-        </nav>
-      </aside>
-    </>
-  );
 
-  return (
-    <AppFrame header={header} sidebar={sidebar} floor={false} bleed>
-      {children}
-    </AppFrame>
+              <ErpSearch ask={ask} />
+
+              <div className="flex-1" />
+
+              <div className="flex items-center gap-2">
+                <WorkingAt godowns={godowns} working={working} />
+                <FeedbackButton />
+                <button
+                  onClick={() => setShortcutsOpen(true)}
+                  title="Keyboard shortcuts"
+                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-[13px] font-medium text-muted hover:bg-canvas hover:text-body"
+                >
+                  ?
+                </button>
+                <NotificationBell notifications={notifications} />
+                <span className="mx-1 h-6 w-px bg-divider" />
+                <AccountMenu user={user} hat={hat} variant="header" />
+              </div>
+            </header>
+          }
+          sidebar={
+            <aside
+              className={cx(
+                "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150",
+                collapsed ? "w-14" : "w-[216px]",
+              )}
+            >
+              <CollapsibleNav
+                storageKey="erp.nav.open"
+                ariaLabel="ERP sections"
+                pinned={pinned}
+                groups={groups}
+                countFor={(item) => counts.get(item.href) ?? 0}
+                railed={collapsed}
+                renderIcon={renderIcon}
+                /* Alerts are the one queue that is red whatever it counts: an
+                   open alert is something the ERP could not explain. */
+                badgeToneFor={(item) => (item.href === "/erp/alerts" ? "danger" : "warn")}
+              />
+              <div className="flex flex-none items-center border-t border-divider px-2 py-2">
+                <AccountMenu user={user} hat={hat} variant="sidebar" collapsed={collapsed} />
+              </div>
+            </aside>
+          }
+        >
+          {children}
+        </AppFrame>
+
+        <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" width={460}>
+          <div className="flex flex-col">
+            {SHORTCUTS.map((s) => (
+              <div key={s.what} className="flex items-center justify-between border-b border-divider py-2.5 last:border-0">
+                <span className="text-sm text-body">{s.what}</span>
+                <kbd className="rounded-[4px] border border-line bg-canvas px-2 py-0.5 font-mono text-xs text-body">{s.key}</kbd>
+              </div>
+            ))}
+          </div>
+        </Modal>
+      </ErpUiProvider>
+    </ToastProvider>
   );
 }
 
-function Count({ n }: { n: number }) {
+/** Where this person is working — the CRM's Viewing switch, holding a godown. */
+function WorkingAt({ godowns, working }: { godowns: { id: string; name: string }[]; working: { id: string; name: string } | null }) {
+  const router = useRouter();
+  const { push } = useToast();
+  if (!godowns.length) {
+    return (
+      <span
+        title="Ask an ERP administrator to assign you to a godown"
+        className="flex h-7.5 items-center rounded-[4px] border border-dashed border-warn-line px-2 text-[13px] whitespace-nowrap text-warn-ink"
+      >
+        No godown assigned
+      </span>
+    );
+  }
   return (
-    <span style={{ minWidth: 20, height: 18, padding: "0 6px", borderRadius: 9, background: "#FDF6E7", color: "#8A5C05", fontSize: 11, fontWeight: 600, lineHeight: "18px", textAlign: "center" }}>
-      {n > 999 ? "999+" : n}
-    </span>
+    <div className="flex h-7.5 items-center gap-1.5 rounded-[4px] border border-dashed border-line-strong pr-1 pl-2">
+      <span className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">Working at</span>
+      <GodownPicker
+        look="chip"
+        value={working?.id ?? ""}
+        label={working?.name ?? "Choose one"}
+        items={godowns.map((g) => ({ v: g.id, l: g.name }))}
+        placeholder={`Search ${godowns.length} godowns you are assigned to`}
+        onPick={(id) => {
+          if (!id) return;
+          void erpSetWorkingGodown(id).then((res) => {
+            if (res.ok) {
+              push(res.message ?? "Working location changed");
+              router.refresh();
+            } else push(res.error, "error");
+          });
+        }}
+      />
+    </div>
   );
 }
 
-/** Header search. `/` focuses it, as in the design. */
-function GlobalSearch({ ask }: { ask: boolean }) {
+/** Header search, drawn as the CRM's. `/` focuses it; a question ending in ? is asked of the ERP. */
+function ErpSearch({ ask }: { ask: boolean }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<ErpSearchHit[]>([]);
@@ -256,6 +321,11 @@ function GlobalSearch({ ask }: { ask: boolean }) {
     });
   };
   const ref = useRef<HTMLInputElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const clear = () => {
+    setQ("");
+    setAnswer(null);
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = (e.target as HTMLElement | null)?.tagName ?? "";
@@ -263,10 +333,17 @@ function GlobalSearch({ ask }: { ask: boolean }) {
         e.preventDefault();
         ref.current?.focus();
       }
-      if (e.key === "Escape") setQ("");
+      if (e.key === "Escape") clear();
+    };
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) clear();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+    };
   }, []);
   useEffect(() => {
     const term = q.trim();
@@ -280,11 +357,13 @@ function GlobalSearch({ ask }: { ask: boolean }) {
     return () => clearTimeout(t);
   }, [q]);
   const openRes = q.trim().length >= 2 && asked === q.trim();
+  const go = (href: string) => {
+    clear();
+    router.push(href);
+  };
   return (
-    <span style={{ position: "relative", flex: "1 1 360px", minWidth: 160, maxWidth: 440 }}>
-      <span style={{ position: "absolute", left: 10, top: 9, color: "#6B7385", display: "flex" }}>
-        <Icon n="search" />
-      </span>
+    <div ref={wrapRef} className="relative w-[400px] min-w-0">
+      <ShellIcon name="search" size={16} className="pointer-events-none absolute top-[9px] left-2.5 text-muted" />
       <input
         ref={ref}
         value={q}
@@ -295,65 +374,62 @@ function GlobalSearch({ ask }: { ask: boolean }) {
         onKeyDown={(e) => {
           if (e.key === "Enter" && ask && q.trim().endsWith("?")) runAsk();
         }}
-        placeholder={ask ? "Search, or ask a question ending in ?   /" : "Search customers, orders, lots, PRs, bills, LRs   /"}
-        style={{ width: "100%", height: 34, padding: "0 12px 0 32px", border: "1px solid #DDE1E8", borderRadius: 4, background: "#F7F8FA", fontSize: 14, color: "#161616" }}
+        placeholder={ask ? "Search, or ask a question ending in ?" : "Search customers, orders, lots, PRs, bills, LRs…"}
+        className="h-8.5 w-full rounded-[4px] border border-line bg-canvas pr-3 pl-8 text-sm text-ink outline-none focus:border-brand focus:bg-surface"
       />
       {openRes || answer || thinking ? (
-        <div style={{ position: "absolute", top: 40, left: 0, right: 0, background: "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: 6, boxShadow: "0 8px 24px rgba(22,22,22,0.12)", overflow: "hidden", zIndex: 10, animation: "erp-fade 120ms cubic-bezier(0.2,0,0.2,1)" }}>
+        <div className="animate-fade-in absolute top-10 left-0 z-40 w-full overflow-hidden rounded-[6px] border border-line bg-surface py-1.5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
           {ask ? (
             answer ? (
-              <div role="status" style={{ padding: "12px", background: "#FBFAFF", borderBottom: "1px solid #EDEFF3" }}>
-                <div style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: "#5223E0" }}>Ask the ERP · {answer.q}</div>
-                <div style={{ fontSize: 14, color: "#161616", marginTop: 4, lineHeight: "20px" }}>{answer.text}</div>
+              <div role="status" className="border-b border-divider bg-brand-soft/40 px-3 py-2.5">
+                <div className="text-[11px] font-medium tracking-[0.04em] text-[#5223E0] uppercase">Ask the ERP · {answer.q}</div>
+                <div className="mt-1 text-sm leading-5 text-ink">{answer.text}</div>
                 {answer.records.map((r) => (
-                  <button
-                    key={r.href + r.label}
-                    onClick={() => {
-                      setQ("");
-                      setAnswer(null);
-                      router.push(r.href);
-                    }}
-                    style={{ display: "block", width: "100%", textAlign: "left", padding: "4px 0", border: "none", background: "transparent", color: "#5223E0", fontSize: 13, cursor: "pointer" }}
-                  >
+                  <button key={r.href + r.label} onClick={() => go(r.href)} className="block w-full cursor-pointer py-1 text-left text-[13px] text-brand hover:underline">
                     {r.label} →
                   </button>
                 ))}
-                {answer.readAt ? <div style={{ fontSize: 11, color: "#6B7385", marginTop: 4 }}>Read from the ERP at {new Date(answer.readAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} · answers only, it cannot change anything</div> : null}
+                {answer.readAt ? (
+                  <div className="mt-1 text-[11px] text-muted">
+                    Read from the ERP at {new Date(answer.readAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} · answers only, it cannot change anything
+                  </div>
+                ) : null}
               </div>
             ) : (
               <button
                 onClick={runAsk}
                 disabled={thinking || q.trim().length < 3}
-                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", border: "none", background: "#FBFAFF", cursor: "pointer", textAlign: "left", color: "#5223E0" }}
+                className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-[7px] text-left text-sm text-[#5223E0] hover:bg-canvas disabled:cursor-default"
               >
                 <Icon n="spark" />
-                <span style={{ fontSize: 14 }}>{thinking ? "Reading the ERP…" : `Ask the ERP: “${q.trim()}”`}</span>
+                {thinking ? "Reading the ERP…" : `Ask the ERP: “${q.trim()}”`}
               </button>
             )
           ) : null}
-          {openRes && !answer ? hits.map((r) => (
-            <button
-              key={`${r.kind}:${r.href}`}
-              onClick={() => {
-                setQ("");
-                router.push(r.href);
-              }}
-              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px", border: "none", borderTop: "1px solid #F7F8FA", background: "#FFFFFF", cursor: "pointer", textAlign: "left" }}
-            >
-              <span style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: "#6B7385", width: 84, flex: "none" }}>{r.kind}</span>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: "#161616" }}>{r.name}</span>
-                <span style={{ display: "block", fontSize: 12, color: "#6B7385" }}>{r.meta}</span>
-              </span>
-            </button>
-          )) : null}
+          {openRes && !answer && hits.length ? (
+            <div className={cx(ask && "mt-1.5 border-t border-divider")}>
+              {hits.map((r) => (
+                <button
+                  key={`${r.kind}:${r.href}`}
+                  onClick={() => go(r.href)}
+                  className="flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-[7px] text-left hover:bg-canvas"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-ink">{r.name}</span>
+                    <span className="block truncate text-[13px] text-muted">{r.meta}</span>
+                  </span>
+                  <span className="flex-none text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{r.kind}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
           {openRes && !answer && !hits.length ? (
-            <div style={{ padding: "14px 12px", fontSize: 13, color: "#6B7385" }}>
+            <div className="px-3 py-5 text-center text-sm text-muted">
               Nothing you can open matches “{q}”. Try a customer, order no, lot, PR, bill or LR{ask ? ", or ask it as a question" : ""}.
             </div>
           ) : null}
         </div>
       ) : null}
-    </span>
+    </div>
   );
 }

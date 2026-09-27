@@ -18,7 +18,7 @@ export function WorkingLocation({ godowns, working }: { godowns: { id: string; n
       onPick={(id) => {
         if (!id) return;
         void erpSetWorkingGodown(id).then((res) => {
-          ui.toast(res.ok ? res.message ?? "Working location changed" : res.error);
+          ui.toast(res.ok ? res.message ?? "Working location changed" : res.error, res.ok ? "info" : "error");
           if (res.ok) router.refresh();
         });
       }}
