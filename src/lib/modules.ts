@@ -420,7 +420,7 @@ export const APP_MODULES: AppModule[] = [
     "price-lists",
     "Price lists",
     "Accounts",
-    "Mahek's price lists end to end — create, duplicate, import PDFs in bulk, review what they read, publish, export, and say who each applies to. THE DESK THAT ISSUES THESE LISTS IS THIS ONE: `pricelist.manage` is the Price Desk's (Accounts and the Founder Dashboard), and the CRM and Sales Dashboard doors are read-only.",
+    "Mahek's price lists end to end — create, duplicate, import PDFs in bulk, review what they read, publish, export, and say who each applies to. THE DESK THAT ISSUES THESE LISTS IS THIS ONE: `pricelist.manage` is the Price Desk's (Accounts and the Founder Command Centre), and the CRM and Sales Dashboard doors are read-only.",
   ),
   accounts("record", "Record a payment", "Money"),
   accounts(

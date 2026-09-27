@@ -20,6 +20,8 @@ import {
 } from "./actions";
 import { C, DesignStyles, EASE, Hov, Icon, PILL, Pulse, upper } from "./ui";
 import { addDays } from "@/lib/format";
+import { AppSwitcher } from "@/components/shell/app-switcher";
+import type { AppDefinition } from "@/lib/apps";
 
 /** 1 = Monday … 7 = Sunday, for a YYYY-MM-DD calendar date (Sakamoto). */
 function isoWeekdayOf(iso: string): number {
@@ -145,13 +147,15 @@ type Props = {
   section: SectionKey;
   shell: ShellData;
   canAct: boolean;
+  /** Every web app this person opens, for the switcher every MahekOne header carries. Null with one app. */
+  switcherApps: AppDefinition[] | null;
   company: CompanyPayload | null;
   payload: SectionPayload | null;
   quickItems: [string, string][];
   askSuggestions: string[];
 };
 
-export function CommandCentre({ section, shell, canAct, company, payload, quickItems, askSuggestions }: Props) {
+export function CommandCentre({ section, shell, canAct, switcherApps, company, payload, quickItems, askSuggestions }: Props) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const period = shell.period;
@@ -353,6 +357,11 @@ export function CommandCentre({ section, shell, canAct, company, payload, quickI
         <header
           style={{ height: 56, flex: "none", position: "relative", zIndex: 3, background: C.white, borderBottom: `1px solid ${C.line}`, display: "flex", alignItems: "center", gap: 16, padding: "0 24px" }}
         >
+          {switcherApps ? (
+            <span style={{ display: "flex", alignItems: "center", flex: "none", marginRight: -4 }}>
+              <AppSwitcher apps={switcherApps} current="founder" />
+            </span>
+          ) : null}
           <span style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
             <span style={{ width: 16, height: 16, background: C.brand, borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
               <span style={{ width: 6, height: 6, background: C.lime, borderRadius: 1, display: "block" }} />

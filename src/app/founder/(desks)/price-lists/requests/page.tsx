@@ -14,7 +14,7 @@ import { PageHeader } from "@/components/ui/primitives";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { RequestsPanel } from "@/components/pricing/requests-panel";
 
-export const metadata = { title: "Special price requests — Founder Dashboard — MahekOne" };
+export const metadata = { title: "Special price requests — Founder Command Centre — MahekOne" };
 
 export default async function Page() {
   const user = await requireUser();

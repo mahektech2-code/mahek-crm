@@ -206,7 +206,7 @@ test("with the switch never touched, nothing is sent and Wati is never called", 
   const r = await send();
   assert.equal(r.ok, false);
   if (r.ok) return;
-  assert.match(r.error, /Founder Dashboard/);
+  assert.match(r.error, /Founder Command Centre/);
   assert.equal(sends.length, 0);
 
   const [c] = await db.select().from(customers).where(eq(customers.id, shop.id));

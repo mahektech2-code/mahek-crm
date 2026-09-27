@@ -5,7 +5,7 @@ import { today } from "@/lib/recompute";
 import { priceListDetail, pricingOptions } from "@/lib/services/price-list-service";
 import { PriceListDetailScreen } from "@/components/pricing/price-list-detail";
 
-export const metadata = { title: "Price list — Founder Dashboard — MahekOne" };
+export const metadata = { title: "Price list — Founder Command Centre — MahekOne" };
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

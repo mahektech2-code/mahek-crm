@@ -6,7 +6,7 @@ import { cx } from "@/components/ui/primitives";
 import { AppFrame } from "@/components/shell/app-frame";
 
 /* ---------------------------------------------------------------------------
- * The Founder Dashboard shell — a top bar, exactly like Reports and for the
+ * The Founder Command Centre shell — a top bar, exactly like Reports and for the
  * same reason: this is five screens read a few times a week, not a place
  * somebody works all day, so a sidebar would take width off tables that are
  * already wide for four links.

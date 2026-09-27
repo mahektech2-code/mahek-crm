@@ -14,7 +14,7 @@ import { today } from "@/lib/recompute";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { DocumentReviewScreen } from "@/components/pricing/document-review-screen";
 
-export const metadata = { title: "Review a price list — Founder Dashboard — MahekOne" };
+export const metadata = { title: "Review a price list — Founder Command Centre — MahekOne" };
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
