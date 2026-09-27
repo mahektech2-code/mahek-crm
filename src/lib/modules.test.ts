@@ -9,7 +9,14 @@ import {
 } from "./modules";
 import { grantableApps } from "./modules";
 import { NAV, PINNED, navHrefs as crmNavHrefs } from "@/components/shell/nav";
-import { NOT_IN_SIDEBAR, SALES_NAV, SALES_PINNED, navHrefs } from "@/app/sales/nav";
+import {
+  NOT_IN_SIDEBAR,
+  SALES_MANAGER_HREF,
+  SALES_NAV,
+  SALES_PINNED,
+  navHrefs,
+  salesNavAllowed,
+} from "@/app/sales/nav";
 
 /* ---------------------------------------------------------------------------
  * The module registry, which is what an access grant points at.
@@ -105,8 +112,29 @@ describe("the registry and the navigation agree", () => {
   it("every Sales Dashboard sidebar link is a module that can be withheld", () => {
     const hrefs = new Set(modulesForApp("sales").map((m) => m.href));
     for (const href of navHrefs()) {
+      // The Sales Manager workspace is the ONE link that is not a module's own
+      // href: it rides on `sales.leads`, which is what its route guard asks.
+      if (href === SALES_MANAGER_HREF) continue;
       assert.ok(hrefs.has(href), `${href} is in the sidebar and has no module`);
     }
+  });
+
+  it("the Sales Manager link is offered to exactly the people who hold sales.leads", () => {
+    const leads = { key: "sales.leads", href: "/sales/leads" };
+    const other = { key: "sales.funnel", href: "/sales/leads/funnel" };
+    assert.ok(salesNavAllowed([leads, other]).includes(SALES_MANAGER_HREF));
+    assert.equal(salesNavAllowed([other]).includes(SALES_MANAGER_HREF), false, "narrowed away from All Leads, so no link");
+    assert.equal(salesNavAllowed([]).includes(SALES_MANAGER_HREF), false);
+    // It adds a link and takes nothing away.
+    assert.deepEqual(salesNavAllowed([leads, other]).slice(0, 2), ["/sales/leads", "/sales/leads/funnel"]);
+  });
+
+  it("the Calling desk link is already in the CRM sidebar, on its own module", () => {
+    const desk = modulesForApp("crm").find((m) => m.key === "crm.lead-calling-desk");
+    assert.equal(desk?.href, "/crm/leads/calling-desk");
+    assert.ok(crmNavHrefs().includes("/crm/leads/calling-desk"));
+    const item = NAV.flatMap((g) => g.items).find((i) => i.href === "/crm/leads/calling-desk");
+    assert.equal(item?.label, "Telecaller");
   });
 
   it("every Sales Dashboard module is reachable from the sidebar", () => {
