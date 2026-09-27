@@ -50,17 +50,6 @@ export type NavGroup = {
 export const NOT_IN_SIDEBAR = ["/sales/approvals"];
 
 /**
- * ABOVE THE GROUPS, AND NEVER INSIDE ONE.
- *
- * Today is the console's home — the screen the wordmark links to and the one
- * somebody returns to between every other thing they do. Left inside Overview
- * it sits behind a shut group on every screen that is not Overview's, which is
- * most of them, and a home you have to open a drawer to reach is not a home.
- *
- * Exactly one item, on purpose: everything pinned here is a row the sidebar can
- * never collapse, so a second one spends what the grouping was bought for.
- */
-/**
  * WHERE THE SALES MANAGER WORKSPACE IS. It is not a module of its own: its
  * route guard asks for `sales.leads`, so the link is offered to exactly the
  * people who hold that module, by `salesNavAllowed` below. A separate module
@@ -75,6 +64,17 @@ export function salesNavAllowed(modules: readonly { key: string; href: string }[
   return modules.some((m) => m.key === "sales.leads") ? [...hrefs, SALES_MANAGER_HREF] : hrefs;
 }
 
+/**
+ * ABOVE THE GROUPS, AND NEVER INSIDE ONE.
+ *
+ * Today is the console's home — the screen the wordmark links to and the one
+ * somebody returns to between every other thing they do. Left inside Overview
+ * it sits behind a shut group on every screen that is not Overview's, which is
+ * most of them, and a home you have to open a drawer to reach is not a home.
+ *
+ * Exactly one item, on purpose: everything pinned here is a row the sidebar can
+ * never collapse, so a second one spends what the grouping was bought for.
+ */
 export const SALES_PINNED: NavItem[] = [
   { href: "/sales", label: "Today", icon: "home", exact: true },
 ];
