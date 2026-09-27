@@ -20,7 +20,8 @@ import {
 } from "./actions";
 import { C, DesignStyles, EASE, Hov, Icon, PILL, Pulse, upper } from "./ui";
 import { addDays } from "@/lib/format";
-import { AppSwitcher } from "@/components/shell/app-switcher";
+import { AppFrame } from "@/components/shell/app-frame";
+import { ASK_BUTTON, crumbFor, DeskTabs, FounderHeader, FounderSidebar, QUICK_BUTTON, SEARCH_BOX, TITLES, TitleBlock, WHATSAPP_TABS } from "./chrome";
 import type { AppDefinition } from "@/lib/apps";
 
 /** 1 = Monday … 7 = Sunday, for a YYYY-MM-DD calendar date (Sakamoto). */
@@ -69,49 +70,6 @@ import type {
  * that runs the owning app's own function.
  * ------------------------------------------------------------------------- */
 
-const NAV: { label: string; items: [SectionKey, string, string][] }[] = [
-  { label: "Today", items: [["company", "Company", "home"], ["inbox", "Needs you", "bell"]] },
-  {
-    label: "Sell",
-    items: [
-      ["sales", "Sales & order book", "chart"],
-      ["team", "Targets & performance", "people"],
-      ["customers", "Customers", "store"],
-      ["leads", "Leads, samples & distributors", "funnel"],
-      ["enquiries", "Website enquiries", "globe"],
-    ],
-  },
-  {
-    label: "Operate",
-    items: [
-      ["calling", "Calling operations", "call"],
-      ["field", "Field force", "pin"],
-      ["service", "Service", "chat"],
-      ["money", "Money", "money"],
-    ],
-  },
-  { label: "Founder desks", items: [["prices", "Price lists", "tag"], ["whatsapp", "WhatsApp", "msg"]] },
-  { label: "Organisation", items: [["people", "People & organisation", "id"], ["system", "Data operations & health", "pulse"]] },
-];
-
-const TITLES: Record<SectionKey, [string, string]> = {
-  company: ["Company", "The headline for the period, a pulse across every section, and what needs you"],
-  inbox: ["Needs you", "Every decision waiting on you, every alarm, and what you handed on"],
-  sales: ["Sales & order book", "Every order from every source, and deciding them"],
-  team: ["Targets & performance", "Setting and revising targets; everyone scored, ranked and explained"],
-  customers: ["Customers", "Every customer and lead, the full record, and every change to an account"],
-  leads: ["Leads, samples & distributors", "The three ladders, gates, samples and distributor appointments"],
-  enquiries: ["Website enquiries", "The enquiries desk end to end"],
-  calling: ["Calling operations", "The telecallers’ day: queues, calls, reminders, EOD and the call assistant"],
-  field: ["Field force", "Where they are, attendance, visits, travel, expenses, leave and devices"],
-  service: ["Service", "Complaints end to end"],
-  money: ["Money", "Bills, receipts, outstanding, collections and credit notes — the whole accounts desk"],
-  prices: ["Price lists", "The price-list desk end to end"],
-  whatsapp: ["WhatsApp", "The switch, templates, automation, sends, replies and the tracker"],
-  people: ["People & organisation", "Headcount, the employee master, reporting lines and the business calendar"],
-  system: ["Data operations & health", "Every sync, import, repair and recompute, and how fresh the data is"],
-};
-
 const PERIOD_SECTIONS: SectionKey[] = ["company", "sales", "money", "customers", "leads", "service", "field", "whatsapp", "calling", "enquiries"];
 
 const KIND: Record<string, [string, string]> = {
@@ -153,9 +111,11 @@ type Props = {
   payload: SectionPayload | null;
   quickItems: [string, string][];
   askSuggestions: string[];
+  /** Arriving from a desk: its search text, or the header control it pressed. */
+  initial?: { q?: string; open?: "quick" | "ask" };
 };
 
-export function CommandCentre({ section, shell, canAct, switcherApps, company, payload, quickItems, askSuggestions }: Props) {
+export function CommandCentre({ section, shell, canAct, switcherApps, company, payload, quickItems, askSuggestions, initial }: Props) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const period = shell.period;
@@ -193,12 +153,12 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
   const [rec, setRec] = React.useState<{ loading: boolean; data: RecordView | null; error?: string; ref: { section: SectionKey; table: string; id: string; subject: string } } | null>(null);
   const [confirm, setConfirm] = React.useState<{ title: string; body: string; label: string; danger: boolean; run: () => void } | null>(null);
   const [form, setForm] = React.useState<FormState | null>(null);
-  const [askOpen, setAskOpen] = React.useState(false);
+  const [askOpen, setAskOpen] = React.useState(initial?.open === "ask");
   const [askQ, setAskQ] = React.useState("");
   const [askThread, setAskThread] = React.useState<{ me: boolean; text: string; go?: SectionKey; goLabel?: string }[]>([]);
   const [asking, setAsking] = React.useState(false);
   const [viewAs, setViewAs] = React.useState<{ name: string; loading: boolean; data: ViewAs | null; error?: string } | null>(null);
-  const [qa, setQa] = React.useState(false);
+  const [qa, setQa] = React.useState(initial?.open === "quick");
   const [done, setDone] = React.useState<Record<string, string>>({});
   const [inboxTab, setInboxTab] = React.useState("all");
 
@@ -293,7 +253,7 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
   );
 
   /* ---------------------------------------------------------- global search */
-  const [gq, setGq] = React.useState("");
+  const [gq, setGq] = React.useState(initial?.q ?? "");
   const [gResults, setGResults] = React.useState<SearchHit[]>([]);
   React.useEffect(() => {
     const q = gq.trim();
@@ -346,604 +306,514 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
   const urgent = live.filter((i) => i.sev === "Urgent");
 
   const T = TITLES[section];
-  const crumb = section === "company" ? "Command Centre" : `Command Centre · ${NAV.find((g) => g.items.some((i) => i[0] === section))?.label ?? ""}`;
+  const crumb = crumbFor(section);
   const periodView = period.views.find((v) => v.key === period.key) ?? period.views[2]!;
 
   return (
     <div className="fcc-root" style={{ position: "fixed", inset: 0, overflowX: "auto", overflowY: "hidden", zIndex: 1 }}>
       <DesignStyles />
-      <div style={{ height: "100vh", minWidth: 1100, display: "flex", flexDirection: "column", overflow: "hidden", background: C.canvas }}>
-        {/* ------------------------------------------------------------ header */}
-        <header
-          style={{ height: 56, flex: "none", position: "relative", zIndex: 3, background: C.white, borderBottom: `1px solid ${C.line}`, display: "flex", alignItems: "center", gap: 16, padding: "0 24px" }}
-        >
-          {switcherApps ? (
-            <span style={{ display: "flex", alignItems: "center", flex: "none", marginRight: -4 }}>
-              <AppSwitcher apps={switcherApps} current="founder" />
-            </span>
-          ) : null}
-          <span style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
-            <span style={{ width: 16, height: 16, background: C.brand, borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-              <span style={{ width: 6, height: 6, background: C.lime, borderRadius: 1, display: "block" }} />
-            </span>
-            <span style={{ fontSize: 15, fontWeight: 600, color: C.ink, whiteSpace: "nowrap" }}>
-              MAHEK <span style={{ color: C.brand }}>COMMAND CENTRE</span>
-            </span>
-          </span>
-          <span style={{ width: 1, height: 22, background: C.soft, flex: "none" }} />
-          <span style={{ position: "relative", flex: "1 1 320px", minWidth: 160, maxWidth: 400 }}>
-            <span style={{ position: "absolute", left: 10, top: 9, color: C.muted, display: "flex" }}>
-              <Icon name="search" />
-            </span>
-            <Hov
-              as="input"
-              value={gq}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGq(e.target.value)}
-              placeholder="Search customers, staff, price lists, orders, bills"
-              style={{ width: "100%", height: 34, padding: "0 12px 0 32px", border: `1px solid ${C.line}`, borderRadius: 4, background: C.canvas, fontSize: 14, color: C.ink }}
-              focus={{ background: C.white, borderColor: C.brand }}
-            />
-            {gq.trim().length >= 2 && gResults.length > 0 ? (
-              <div
-                style={{ position: "absolute", top: 40, left: 0, right: 0, background: C.white, border: `1px solid ${C.line}`, borderRadius: 6, boxShadow: "0 8px 24px rgba(22,22,22,0.12)", overflow: "hidden", animation: `fd-fade 120ms ${EASE}` }}
-              >
-                {gResults.map((r) => (
-                  <Hov
-                    key={`${r.kind}:${r.ref.id}`}
-                    onClick={() => {
-                      setGq("");
-                      setGResults([]);
-                      void openRecord(r.ref.section, r.ref.table, r.ref.id, r.name);
-                    }}
-                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px", border: "none", borderTop: `1px solid ${C.canvas}`, background: C.white, cursor: "pointer", textAlign: "left" }}
-                    hover={{ background: C.canvas }}
+      <AppFrame
+        bleed
+        fade={false}
+        header={
+          <FounderHeader
+            switcherApps={switcherApps}
+            user={shell.user}
+            liveCount={live.length}
+            onBell={() => go("inbox")}
+            search={
+              <span style={{ position: "relative", flex: "1 1 320px", minWidth: 160, maxWidth: 400 }}>
+                <span style={{ position: "absolute", left: 10, top: 9, color: C.muted, display: "flex" }}>
+                  <Icon name="search" />
+                </span>
+                <Hov
+                  as="input"
+                  value={gq}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGq(e.target.value)}
+                  placeholder="Search customers, staff, price lists, orders, bills"
+                  style={SEARCH_BOX}
+                  focus={{ background: C.white, borderColor: C.brand }}
+                />
+                {gq.trim().length >= 2 && gResults.length > 0 ? (
+                  <div
+                    style={{ position: "absolute", top: 40, left: 0, right: 0, background: C.white, border: `1px solid ${C.line}`, borderRadius: 6, boxShadow: "0 8px 24px rgba(22,22,22,0.12)", overflow: "hidden", animation: `fd-fade 120ms ${EASE}` }}
                   >
-                    <span style={{ ...upper, width: 72, flex: "none" }}>{r.kind}</span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: C.ink }}>{r.name}</span>
-                      <span style={{ display: "block", fontSize: 12, color: C.muted }}>{r.meta}</span>
-                    </span>
-                  </Hov>
-                ))}
-              </div>
-            ) : gq.trim().length >= 2 && gResults.length === 0 ? null : null}
-          </span>
-          <span style={{ flex: 1 }} />
-          <span style={{ position: "relative", flex: "none" }}>
-            <Hov
-              onClick={() => setQa((v) => !v)}
-              style={{ height: 32, padding: "0 12px", display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${C.brand}`, background: C.brand, borderRadius: 4, fontSize: 13, fontWeight: 500, color: C.white, cursor: "pointer" }}
-              hover={{ background: C.brandDark }}
-            >
-              ＋ Quick action
-            </Hov>
-            {qa ? (
-              <div
-                style={{ position: "absolute", top: 40, right: 0, width: 280, background: C.white, border: `1px solid ${C.line}`, borderRadius: 6, boxShadow: "0 8px 24px rgba(22,22,22,0.12)", padding: "6px 0", animation: `fd-fade 120ms ${EASE}` }}
-              >
-                <div style={{ ...upper, padding: "6px 14px" }}>Start from anywhere</div>
-                {quickItems.map((q, i) => (
-                  <Hov
-                    key={q[0]}
-                    onClick={() => void runQuick(i)}
-                    style={{ display: "block", width: "100%", padding: "9px 14px", border: "none", background: C.white, cursor: "pointer", textAlign: "left" }}
-                    hover={{ background: C.canvas }}
-                  >
-                    <span style={{ display: "block", fontSize: 14, color: C.ink }}>{q[0]}</span>
-                    <span style={{ display: "block", fontSize: 12, color: C.muted }}>{q[1]}</span>
-                  </Hov>
-                ))}
-              </div>
-            ) : null}
-          </span>
-          <Hov
-            onClick={() => setAskOpen(true)}
-            style={{ height: 32, padding: "0 12px", display: "inline-flex", alignItems: "center", gap: 7, border: `1px solid ${C.brandTint2}`, background: C.brandTint, borderRadius: 4, fontSize: 13, fontWeight: 500, color: C.brandDark, cursor: "pointer", flex: "none" }}
-            hover={{ background: C.brandTint2 }}
-          >
-            <Icon name="spark" size={15} />
-            Ask the company
-          </Hov>
-          <Hov
-            onClick={() => go("inbox")}
-            title="Needs you"
-            style={{ position: "relative", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, color: C.muted, cursor: "pointer", flex: "none" }}
-            hover={{ background: C.canvas, color: C.body }}
-          >
-            <Icon name="bell" />
-            {live.length > 0 ? (
-              <span style={{ position: "absolute", top: -5, right: -5, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 8, background: C.bad, color: C.white, fontSize: 11, fontWeight: 500, lineHeight: "16px", textAlign: "center" }}>
-                {live.length}
+                    {gResults.map((r) => (
+                      <Hov
+                        key={`${r.kind}:${r.ref.id}`}
+                        onClick={() => {
+                          setGq("");
+                          setGResults([]);
+                          void openRecord(r.ref.section, r.ref.table, r.ref.id, r.name);
+                        }}
+                        style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px", border: "none", borderTop: `1px solid ${C.canvas}`, background: C.white, cursor: "pointer", textAlign: "left" }}
+                        hover={{ background: C.canvas }}
+                      >
+                        <span style={{ ...upper, width: 72, flex: "none" }}>{r.kind}</span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: C.ink }}>{r.name}</span>
+                          <span style={{ display: "block", fontSize: 12, color: C.muted }}>{r.meta}</span>
+                        </span>
+                      </Hov>
+                    ))}
+                  </div>
+                ) : gq.trim().length >= 2 && gResults.length === 0 ? null : null}
               </span>
-            ) : null}
-          </Hov>
-          <span style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
-            <span style={{ width: 28, height: 28, borderRadius: 4, background: C.brandTint, color: C.brandDark, fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {shell.user.initials}
-            </span>
-            <span style={{ lineHeight: "14px" }}>
-              <span style={{ display: "block", fontSize: 13, fontWeight: 500, color: C.ink, whiteSpace: "nowrap" }}>{shell.user.name}</span>
-              <span style={{ ...upper, display: "block", whiteSpace: "nowrap" }}>{shell.user.hatLabel}</span>
-            </span>
-          </span>
-        </header>
-
-        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-          {/* ------------------------------------------------------------ nav */}
-          <aside style={{ width: 232, flex: "none", background: C.white, borderRight: `1px solid ${C.line}`, display: "flex", flexDirection: "column", minHeight: 0 }}>
-            <nav style={{ flex: 1, overflowY: "auto", padding: "8px 6px 16px 6px" }}>
-              {NAV.map((g) => {
-                const items = g.items.filter(([k]) => shell.allowed.includes(k));
-                if (!items.length) return null;
-                return (
-                  <div key={g.label}>
-                    <div style={{ ...upper, padding: "14px 12px 6px 12px" }}>{g.label}</div>
-                    {items.map(([k, label, ic]) => {
-                      const on = section === k;
-                      const c = shell.navCounts[k] ?? 0;
-                      return (
-                        <Hov
-                          key={k}
-                          onClick={() => go(k)}
-                          title={label}
-                          style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, width: "100%", height: 36, padding: "0 10px", border: "none", borderRadius: 6, background: "transparent", cursor: "pointer", fontSize: 14, textAlign: "left", color: on ? C.brandDark : C.body, fontWeight: on ? 500 : 400, marginBottom: 1 }}
-                          hover={on ? undefined : { background: C.canvas }}
-                        >
-                          <span style={on ? { position: "absolute", inset: 0, background: C.brandTint, borderRadius: 6, borderLeft: `3px solid ${C.brand}`, display: "block" } : { display: "none" }} />
-                          <span style={{ position: "relative", zIndex: 1, display: "flex", flex: "none" }}>
-                            <Icon name={ic} />
-                          </span>
-                          <span style={{ position: "relative", zIndex: 1, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
-                          {c > 0 ? (
-                            <span
-                              style={{ position: "relative", zIndex: 1, minWidth: 20, height: 18, padding: "0 6px", borderRadius: 9, fontSize: 11, fontWeight: 600, lineHeight: "18px", textAlign: "center", flex: "none", background: k === "inbox" ? C.bad : C.warnTint, color: k === "inbox" ? C.white : C.warnInk }}
-                            >
-                              {c}
-                            </span>
-                          ) : null}
-                        </Hov>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-            </nav>
-            <div style={{ flex: "none", borderTop: `1px solid ${C.soft}`, padding: "10px 12px" }}>
-              <div style={upper}>Data freshness</div>
-              <button
-                onClick={() => (shell.allowed.includes("system") ? go("system") : undefined)}
-                style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, border: "none", background: "transparent", padding: 0, cursor: "pointer", textAlign: "left" }}
-              >
-                <span
-                  style={{ width: 7, height: 7, borderRadius: "50%", background: shell.freshness.tone === "good" ? C.good : shell.freshness.tone === "bad" ? C.bad : C.warn, display: "block", flex: "none", animation: shell.freshness.tone === "good" ? undefined : "fd-pulse 2s ease-in-out infinite" }}
-                />
-                <span style={{ fontSize: 13, color: C.ink }}>{shell.freshness.line}</span>
-              </button>
-            </div>
-          </aside>
-
-          {/* ------------------------------------------------------------ main */}
-          <main style={{ flex: 1, minWidth: 0, overflowY: "auto", position: "relative" }}>
-            <div style={{ position: "sticky", top: 0, zIndex: 2, background: C.canvas, borderBottom: `1px solid ${C.soft}`, padding: "16px 28px 14px 28px" }}>
-              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted }}>{crumb}</div>
-                  <div style={{ fontSize: 26, lineHeight: "32px", fontWeight: 600, color: C.ink, marginTop: 2 }}>{T[0]}</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
-                    <span style={{ fontSize: 14, color: C.muted }}>{T[1]}</span>
-                    <span
-                      style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 22, padding: "0 8px", borderRadius: 11, background: C.white, border: `1px solid ${C.soft}`, fontSize: 12, color: C.body, whiteSpace: "nowrap" }}
+            }
+            actions={
+              <>
+                <span style={{ position: "relative", flex: "none" }}>
+                  <Hov
+                    onClick={() => setQa((v) => !v)}
+                    style={QUICK_BUTTON}
+                    hover={{ background: C.brandDark }}
+                  >
+                    ＋ Quick action
+                  </Hov>
+                  {qa ? (
+                    <div
+                      style={{ position: "absolute", top: 40, right: 0, width: 280, background: C.white, border: `1px solid ${C.line}`, borderRadius: 6, boxShadow: "0 8px 24px rgba(22,22,22,0.12)", padding: "6px 0", animation: `fd-fade 120ms ${EASE}` }}
                     >
-                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.good, display: "block" }} />
-                      Company-wide · every customer
-                    </span>
-                  </div>
-                </div>
-                {PERIOD_SECTIONS.includes(section) ? (
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-                    <div style={{ display: "flex", gap: 2, padding: 3, background: C.white, border: `1px solid ${C.line}`, borderRadius: 6 }}>
-                      {period.views.map((p) => {
-                        const on = p.key === period.key;
-                        return (
-                          <button
-                            key={p.key}
-                            onClick={() => {
-                              if (p.key === "custom") {
-                                openForm(
-                                  {
-                                    title: "Custom range",
-                                    sub: "Any start and end date · compared with the equal span before it",
-                                    submit: "Apply",
-                                    fields: [
-                                      { k: "from", label: "From", type: "date", req: true },
-                                      { k: "to", label: "To", type: "date", req: true },
-                                    ],
-                                    init: { from: `${period.today.slice(0, 7)}-01`, to: period.today },
-                                  },
-                                  async (v) => {
-                                    const fe: Record<string, string> = {};
-                                    if (!v.from) fe.from = "From is needed";
-                                    if (!v.to) fe.to = "To is needed";
-                                    if (v.from && v.to && v.to < v.from) fe.to = "The end is before the start";
-                                    if (Object.keys(fe).length) return { ok: false, error: "", fieldErrors: fe };
-                                    startTransition(() => router.push(href(section, { key: "custom", from: v.from, to: v.to })));
-                                    return { ok: true };
-                                  },
-                                );
-                              } else {
-                                startTransition(() => router.push(href(section, { key: p.key })));
-                              }
-                            }}
-                            style={{ height: 28, padding: "0 10px", border: "none", borderRadius: 4, background: on ? C.brand : "transparent", color: on ? C.white : C.body, fontSize: 13, fontWeight: on ? 500 : 400, cursor: "pointer", whiteSpace: "nowrap" }}
-                          >
-                            {p.label}
-                          </button>
-                        );
-                      })}
+                      <div style={{ ...upper, padding: "6px 14px" }}>Start from anywhere</div>
+                      {quickItems.map((q, i) => (
+                        <Hov
+                          key={q[0]}
+                          onClick={() => void runQuick(i)}
+                          style={{ display: "block", width: "100%", padding: "9px 14px", border: "none", background: C.white, cursor: "pointer", textAlign: "left" }}
+                          hover={{ background: C.canvas }}
+                        >
+                          <span style={{ display: "block", fontSize: 14, color: C.ink }}>{q[0]}</span>
+                          <span style={{ display: "block", fontSize: 12, color: C.muted }}>{q[1]}</span>
+                        </Hov>
+                      ))}
                     </div>
-                    <div style={{ fontSize: 13, color: C.body }}>{periodView.dates}</div>
-                  </div>
-                ) : null}
+                  ) : null}
+                </span>
+                <Hov
+                  onClick={() => setAskOpen(true)}
+                  style={ASK_BUTTON}
+                  hover={{ background: C.brandTint2 }}
+                >
+                  <Icon name="spark" size={15} />
+                  Ask the company
+                </Hov>
+              </>
+            }
+          />
+        }
+        sidebar={
+            <FounderSidebar active={section} allowed={shell.allowed} navCounts={shell.navCounts} freshness={shell.freshness} onGo={go} />
+        }
+      >
+        <TitleBlock
+          crumb={crumb}
+          title={T[0]}
+          subtitle={T[1]}
+          below={section === "whatsapp" ? <DeskTabs tabs={WHATSAPP_TABS} pathname="/founder" /> : undefined}
+          right={
+            PERIOD_SECTIONS.includes(section) ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                <div style={{ display: "flex", gap: 2, padding: 3, background: C.white, border: `1px solid ${C.line}`, borderRadius: 6 }}>
+                  {period.views.map((p) => {
+                    const on = p.key === period.key;
+                    return (
+                      <button
+                        key={p.key}
+                        onClick={() => {
+                          if (p.key === "custom") {
+                            openForm(
+                              {
+                                title: "Custom range",
+                                sub: "Any start and end date · compared with the equal span before it",
+                                submit: "Apply",
+                                fields: [
+                                  { k: "from", label: "From", type: "date", req: true },
+                                  { k: "to", label: "To", type: "date", req: true },
+                                ],
+                                init: { from: `${period.today.slice(0, 7)}-01`, to: period.today },
+                              },
+                              async (v) => {
+                                const fe: Record<string, string> = {};
+                                if (!v.from) fe.from = "From is needed";
+                                if (!v.to) fe.to = "To is needed";
+                                if (v.from && v.to && v.to < v.from) fe.to = "The end is before the start";
+                                if (Object.keys(fe).length) return { ok: false, error: "", fieldErrors: fe };
+                                startTransition(() => router.push(href(section, { key: "custom", from: v.from, to: v.to })));
+                                return { ok: true };
+                              },
+                            );
+                          } else {
+                            startTransition(() => router.push(href(section, { key: p.key })));
+                          }
+                        }}
+                        style={{ height: 28, padding: "0 10px", border: "none", borderRadius: 4, background: on ? C.brand : "transparent", color: on ? C.white : C.body, fontSize: 13, fontWeight: on ? 500 : 400, cursor: "pointer", whiteSpace: "nowrap" }}
+                      >
+                        {p.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 13, color: C.body }}>{periodView.dates}</div>
               </div>
-            </div>
+            ) : null
+          }
+        />
 
-            <div style={{ padding: "20px 28px 48px 28px", animation: `fd-fade 160ms ${EASE}`, opacity: pending ? 0.55 : 1, transition: `opacity 120ms ${EASE}` }}>
-              {section === "company" && company ? (
-                <CompanyView
-                  company={company}
-                  live={live}
-                  urgent={urgent.length}
-                  canSeeInbox={shell.allowed.includes("inbox")}
-                  goInbox={() => go("inbox")}
-                  goTeam={() => go("team")}
-                  openFigure={(k) => void openFigure("company", k)}
-                />
-              ) : null}
-
-              {section === "inbox" ? (
-                <InboxView
-                  items={inbox}
-                  tab={inboxTab}
-                  setTab={setInboxTab}
-                  go={go}
-                  handOn={(i) => {
-                    if (i.handed) {
-                      void clearMarkAction(i.id, "take-back").then((r) => {
-                        notify(r.ok ? r.message ?? "Taken back" : r.error);
-                        router.refresh();
-                      });
-                      return;
-                    }
-                    openForm(
-                      {
-                        title: "Hand this on",
-                        sub: i.title,
-                        submit: "Hand on",
-                        fields: [
-                          { k: "to", label: "Hand to", type: "person", search: "staff", req: true, ph: "Search staff by name" },
-                          { k: "note", label: "Note for them", type: "area", ph: "Please confirm against Friday’s statement" },
-                        ],
-                      },
-                      async (v) => {
-                        const r = await handOnAction(i.id, v.to ?? "", v.note ?? "");
-                        if (r.ok) {
-                          notify(r.message ?? "Handed on");
-                          router.refresh();
-                        }
-                        return r;
-                      },
-                    );
-                  }}
-                  snooze={(i) => {
-                    if (i.snoozed) {
-                      void clearMarkAction(i.id, "wake").then((r) => {
-                        notify(r.ok ? r.message ?? "Woken" : r.error);
-                        router.refresh();
-                      });
-                      return;
-                    }
-                    const t = period.today;
-                    // Date arithmetic on the business date's own calendar
-                    // string — `addDays` names no clock, so no zone can move it.
-                    const add = (n: number) => addDays(t, n);
-                    const dow = isoWeekdayOf(t);
-                    const nextMonday = add(8 - dow);
-                    const firstNext = firstOfNextMonth(t);
-                    openForm(
-                      {
-                        title: "Snooze this",
-                        sub: i.title,
-                        submit: "Snooze",
-                        consequence: "Only you stop seeing it. It returns by itself on the day you pick, and it leaves for good if its condition clears.",
-                        fields: [
-                          {
-                            k: "until",
-                            label: "Until",
-                            type: "select",
-                            req: true,
-                            // The design's four choices, each a real date — and a
-                            // day offered twice (tomorrow IS next Monday on a
-                            // Sunday) is offered once, under its first name.
-                            options: [
-                              { v: add(1), l: "Tomorrow" },
-                              { v: add(3), l: "In 3 days" },
-                              { v: nextMonday, l: "Next Monday" },
-                              { v: firstNext, l: `1 ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(firstNext.slice(5, 7)) - 1]}` },
-                            ].filter((o, idx, all) => all.findIndex((x) => x.v === o.v) === idx),
-                          },
-                          { k: "why", label: "Why", type: "text", req: true, ph: "Waiting on Friday’s statement" },
-                        ],
-                        init: { until: add(1) },
-                      },
-                      async (v) => {
-                        const r = await snoozeAction(i.id, v.until ?? "", v.why ?? "");
-                        if (r.ok) {
-                          notify(r.message ?? "Snoozed");
-                          router.refresh();
-                        }
-                        return r;
-                      },
-                    );
-                  }}
-                />
-              ) : null}
-
-              {payload && section !== "company" && section !== "inbox" ? (
-                <SectionView
-                  section={section}
-                  payload={payload}
-                  periodIn={periodIn}
-                  done={done}
-                  openFigure={(k) => void openFigure(section, k)}
-                  openRecord={(t, id, subject) => void openRecord(section, t, id, subject)}
-                  runAct={(t, a, id, subject) => runAct(section, t, a, id, subject)}
-                  onCallout={(c) => {
-                    if (c.go) go(c.go);
-                    else if (c.href) router.push(c.href);
-                    else if (c.figure) void openFigure(section, c.figure);
-                  }}
-                />
-              ) : null}
-            </div>
-          </main>
-        </div>
-
-        {/* ------------------------------------------------------------ drawer */}
-        {drawer ? (
-          <Overlay onClose={() => setDrawer(null)} width={560}>
-            <FigureDrawerView
-              d={drawer}
-              close={() => setDrawer(null)}
-              goSection={(s) => {
-                setDrawer(null);
-                go(s);
-              }}
-              notify={notify}
+        <div style={{ padding: "20px 28px 48px 28px", animation: `fd-fade 160ms ${EASE}`, opacity: pending ? 0.55 : 1, transition: `opacity 120ms ${EASE}` }}>
+          {section === "company" && company ? (
+            <CompanyView
+              company={company}
+              live={live}
+              urgent={urgent.length}
+              canSeeInbox={shell.allowed.includes("inbox")}
+              goInbox={() => go("inbox")}
+              goTeam={() => go("team")}
+              openFigure={(k) => void openFigure("company", k)}
             />
-          </Overlay>
-        ) : null}
+          ) : null}
 
-        {/* ------------------------------------------------------------ record */}
-        {rec ? (
-          <Overlay onClose={() => setRec(null)} width={600}>
-            <RecordDrawer
-              rec={rec}
-              close={() => setRec(null)}
-              addNote={() => {
-                const target = rec.data?.noteTarget;
-                if (!target) return;
+          {section === "inbox" ? (
+            <InboxView
+              items={inbox}
+              tab={inboxTab}
+              setTab={setInboxTab}
+              go={go}
+              handOn={(i) => {
+                if (i.handed) {
+                  void clearMarkAction(i.id, "take-back").then((r) => {
+                    notify(r.ok ? r.message ?? "Taken back" : r.error);
+                    router.refresh();
+                  });
+                  return;
+                }
                 openForm(
-                  { title: "Add a note", sub: rec.data!.title, submit: "Add note", fields: [{ k: "n", label: "Note", type: "area", req: true, ph: "Spoke to the owner — cheque on Friday" }] },
+                  {
+                    title: "Hand this on",
+                    sub: i.title,
+                    submit: "Hand on",
+                    fields: [
+                      { k: "to", label: "Hand to", type: "person", search: "staff", req: true, ph: "Search staff by name" },
+                      { k: "note", label: "Note for them", type: "area", ph: "Please confirm against Friday’s statement" },
+                    ],
+                  },
                   async (v) => {
-                    const r = await addNoteAction(target.kind, target.id, v.n ?? "");
+                    const r = await handOnAction(i.id, v.to ?? "", v.note ?? "");
                     if (r.ok) {
-                      notify(`Note added to ${rec.data!.title}`);
-                      void openRecord(rec.ref.section, rec.ref.table, rec.ref.id, rec.ref.subject);
+                      notify(r.message ?? "Handed on");
+                      router.refresh();
                     }
                     return r;
                   },
                 );
               }}
-              runAct={(a) => {
-                const ref = rec.ref;
-                setRec(null);
-                runAct(ref.section, ref.table, a, ref.id, rec.data?.title ?? ref.subject);
+              snooze={(i) => {
+                if (i.snoozed) {
+                  void clearMarkAction(i.id, "wake").then((r) => {
+                    notify(r.ok ? r.message ?? "Woken" : r.error);
+                    router.refresh();
+                  });
+                  return;
+                }
+                const t = period.today;
+                // Date arithmetic on the business date's own calendar
+                // string — `addDays` names no clock, so no zone can move it.
+                const add = (n: number) => addDays(t, n);
+                const dow = isoWeekdayOf(t);
+                const nextMonday = add(8 - dow);
+                const firstNext = firstOfNextMonth(t);
+                openForm(
+                  {
+                    title: "Snooze this",
+                    sub: i.title,
+                    submit: "Snooze",
+                    consequence: "Only you stop seeing it. It returns by itself on the day you pick, and it leaves for good if its condition clears.",
+                    fields: [
+                      {
+                        k: "until",
+                        label: "Until",
+                        type: "select",
+                        req: true,
+                        // The design's four choices, each a real date — and a
+                        // day offered twice (tomorrow IS next Monday on a
+                        // Sunday) is offered once, under its first name.
+                        options: [
+                          { v: add(1), l: "Tomorrow" },
+                          { v: add(3), l: "In 3 days" },
+                          { v: nextMonday, l: "Next Monday" },
+                          { v: firstNext, l: `1 ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(firstNext.slice(5, 7)) - 1]}` },
+                        ].filter((o, idx, all) => all.findIndex((x) => x.v === o.v) === idx),
+                      },
+                      { k: "why", label: "Why", type: "text", req: true, ph: "Waiting on Friday’s statement" },
+                    ],
+                    init: { until: add(1) },
+                  },
+                  async (v) => {
+                    const r = await snoozeAction(i.id, v.until ?? "", v.why ?? "");
+                    if (r.ok) {
+                      notify(r.message ?? "Snoozed");
+                      router.refresh();
+                    }
+                    return r;
+                  },
+                );
               }}
-              open={(url) => router.push(url)}
             />
-          </Overlay>
-        ) : null}
+          ) : null}
 
-        {/* ----------------------------------------------------------- confirm */}
-        {confirm ? (
-          <div
-            onClick={() => setConfirm(null)}
-            style={{ position: "fixed", inset: 0, zIndex: 30, background: "rgba(22,22,22,0.45)", display: "flex", alignItems: "center", justifyContent: "center", animation: `fd-fade 150ms ${EASE}` }}
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{ width: 480, maxWidth: "calc(100vw - 48px)", background: C.white, borderRadius: 8, boxShadow: "0 8px 24px rgba(22,22,22,0.18)", overflow: "hidden" }}
-            >
-              <div style={{ padding: "20px 22px" }}>
-                <div style={{ fontSize: 18, fontWeight: 600, color: C.ink }}>{confirm.title}</div>
-                <div style={{ fontSize: 14, lineHeight: "21px", color: C.body, marginTop: 8 }}>{confirm.body}</div>
-                <div style={{ fontSize: 12, color: C.muted, marginTop: 10 }}>Recorded as you, under the Founder hat, with the state before and after.</div>
-              </div>
-              <div style={{ padding: "12px 22px", borderTop: `1px solid ${C.soft}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                <button
-                  onClick={() => setConfirm(null)}
-                  style={{ height: 36, padding: "0 16px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, fontSize: 14, fontWeight: 500, color: C.body, cursor: "pointer" }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={confirm.run}
-                  style={{ height: 36, padding: "0 16px", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, color: C.white, cursor: "pointer", background: confirm.danger ? C.bad : C.brand }}
-                >
-                  {confirm.label}
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
+          {payload && section !== "company" && section !== "inbox" ? (
+            <SectionView
+              section={section}
+              payload={payload}
+              periodIn={periodIn}
+              done={done}
+              openFigure={(k) => void openFigure(section, k)}
+              openRecord={(t, id, subject) => void openRecord(section, t, id, subject)}
+              runAct={(t, a, id, subject) => runAct(section, t, a, id, subject)}
+              onCallout={(c) => {
+                if (c.go) go(c.go);
+                else if (c.href) router.push(c.href);
+                else if (c.figure) void openFigure(section, c.figure);
+              }}
+            />
+          ) : null}
+        </div>
+      </AppFrame>
 
-        {/* -------------------------------------------------------------- form */}
-        {form ? <FormModal form={form} setForm={setForm} /> : null}
+      {/* ------------------------------------------------------------ drawer */}
+      {drawer ? (
+        <Overlay onClose={() => setDrawer(null)} width={560}>
+          <FigureDrawerView
+            d={drawer}
+            close={() => setDrawer(null)}
+            goSection={(s) => {
+              setDrawer(null);
+              go(s);
+            }}
+            notify={notify}
+          />
+        </Overlay>
+      ) : null}
 
-        {/* --------------------------------------------------------------- ask */}
-        {askOpen ? (
-          <Overlay onClose={() => setAskOpen(false)} width={520}>
-            <div style={{ flex: "none", padding: "18px 22px", borderBottom: `1px solid ${C.soft}`, display: "flex", alignItems: "flex-start", gap: 12 }}>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontSize: 20, fontWeight: 600, color: C.ink }}>Ask the company</span>
-                <span style={{ display: "block", fontSize: 13, color: C.muted, marginTop: 2 }}>
-                  Answers are read from the figures on this dashboard, company-wide, for {periodView.dates.split(",")[0]}.
-                </span>
-              </span>
-              <CloseX onClick={() => setAskOpen(false)} />
-            </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
-              {askThread.length === 0 ? (
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, marginBottom: 8 }}>Try asking</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {askSuggestions.map((q) => (
-                      <Hov
-                        key={q}
-                        onClick={() => void doAsk(q)}
-                        style={{ padding: "10px 12px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 6, fontSize: 14, color: C.ink, cursor: "pointer", textAlign: "left" }}
-                        hover={{ borderColor: C.brand, background: C.canvas }}
-                      >
-                        {q}
-                      </Hov>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-              {askThread.map((m, i) => (
-                <div
-                  key={i}
-                  style={
-                    m.me
-                      ? { alignSelf: "flex-end", maxWidth: "85%", padding: "10px 12px", borderRadius: "10px 10px 2px 10px", background: C.brand, color: C.white }
-                      : { alignSelf: "flex-start", maxWidth: "90%", padding: "10px 12px", borderRadius: "10px 10px 10px 2px", background: C.canvas, border: `1px solid ${C.soft}`, color: C.ink }
+      {/* ------------------------------------------------------------ record */}
+      {rec ? (
+        <Overlay onClose={() => setRec(null)} width={600}>
+          <RecordDrawer
+            rec={rec}
+            close={() => setRec(null)}
+            addNote={() => {
+              const target = rec.data?.noteTarget;
+              if (!target) return;
+              openForm(
+                { title: "Add a note", sub: rec.data!.title, submit: "Add note", fields: [{ k: "n", label: "Note", type: "area", req: true, ph: "Spoke to the owner — cheque on Friday" }] },
+                async (v) => {
+                  const r = await addNoteAction(target.kind, target.id, v.n ?? "");
+                  if (r.ok) {
+                    notify(`Note added to ${rec.data!.title}`);
+                    void openRecord(rec.ref.section, rec.ref.table, rec.ref.id, rec.ref.subject);
                   }
-                >
-                  <span style={{ display: "block", fontSize: 14, lineHeight: "21px" }}>{m.text}</span>
-                  {m.go ? (
-                    <button
-                      onClick={() => {
-                        setAskOpen(false);
-                        go(m.go!);
-                      }}
-                      style={{ marginTop: 8, border: "none", background: "none", color: C.brand, fontSize: 13, fontWeight: 500, cursor: "pointer", padding: 0 }}
-                    >
-                      {m.goLabel} →
-                    </button>
-                  ) : null}
-                </div>
-              ))}
-              {asking ? (
-                <div style={{ alignSelf: "flex-start", width: "60%" }}>
-                  <Pulse />
-                </div>
-              ) : null}
-            </div>
-            <div style={{ flex: "none", padding: "12px 22px", borderTop: `1px solid ${C.soft}`, display: "flex", gap: 8 }}>
-              <Hov
-                as="input"
-                value={askQ}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAskQ(e.target.value)}
-                onKeyDown={(e: React.KeyboardEvent) => {
-                  if (e.key === "Enter" && askQ.trim().length >= 3) void doAsk(askQ.trim());
-                }}
-                placeholder={askSuggestions[0]}
-                style={{ flex: 1, minWidth: 0, height: 38, padding: "0 12px", border: `1px solid ${C.line}`, borderRadius: 4, fontSize: 14 }}
-                focus={{ borderColor: C.brand }}
-              />
-              <button
-                onClick={() => askQ.trim().length >= 3 && void doAsk(askQ.trim())}
-                style={{ height: 38, padding: "0 16px", border: "none", background: C.brand, borderRadius: 4, fontSize: 14, fontWeight: 500, color: C.white, cursor: "pointer" }}
-              >
-                Ask
-              </button>
-            </div>
-          </Overlay>
-        ) : null}
+                  return r;
+                },
+              );
+            }}
+            runAct={(a) => {
+              const ref = rec.ref;
+              setRec(null);
+              runAct(ref.section, ref.table, a, ref.id, rec.data?.title ?? ref.subject);
+            }}
+            open={(url) => router.push(url)}
+          />
+        </Overlay>
+      ) : null}
 
-        {/* ----------------------------------------------------------- view as */}
-        {viewAs ? (
-          <Overlay onClose={() => setViewAs(null)} width={640}>
-            <div style={{ flex: "none", padding: "12px 22px", background: C.brandDeep, color: C.white, display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.lime, display: "block", flex: "none" }} />
-              <span style={{ flex: 1, fontSize: 13 }}>Viewing as {viewAs.name} · read-only · anything you do is done as you</span>
-              <button
-                onClick={() => setViewAs(null)}
-                style={{ height: 28, padding: "0 10px", border: "1px solid rgba(255,255,255,0.3)", background: "transparent", borderRadius: 4, color: C.white, fontSize: 13, cursor: "pointer" }}
-              >
-                Stop viewing
-              </button>
-            </div>
-            <div style={{ flex: "none", padding: "16px 22px", borderBottom: `1px solid ${C.soft}` }}>
-              <div style={{ fontSize: 20, fontWeight: 600, color: C.ink }}>{viewAs.data?.name ?? viewAs.name}</div>
-              <div style={{ fontSize: 14, color: C.muted, marginTop: 2 }}>{viewAs.loading ? "Reading their day…" : viewAs.error ?? viewAs.data?.role}</div>
-              <div style={{ display: "flex", gap: 20, marginTop: 12 }}>
-                {(viewAs.data?.stats ?? []).map((x) => (
-                  <span key={x.l} style={{ display: "block" }}>
-                    <span style={{ ...upper, display: "block" }}>{x.l}</span>
-                    <span style={{ display: "block", fontSize: 18, fontWeight: 600, color: C.ink }}>{x.v}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: "16px 22px" }}>
-              {viewAs.loading ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  <Pulse />
-                  <Pulse w="70%" />
-                  <Pulse w="85%" />
-                </div>
-              ) : viewAs.data ? (
-                <>
-                  {viewAs.data.held ? (
-                    <div style={{ padding: "10px 12px", background: C.warnTint, border: `1px solid ${C.warnLine}`, borderRadius: 6, fontSize: 13, color: C.warnInk, marginBottom: 14 }}>{viewAs.data.held}</div>
-                  ) : null}
-                  <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, marginBottom: 8 }}>{viewAs.data.listLabel}</div>
-                  <div style={{ border: `1px solid ${C.soft}`, borderRadius: 6, overflow: "hidden" }}>
-                    {viewAs.data.rows.length === 0 ? (
-                      <div style={{ padding: "18px 14px", fontSize: 14, color: C.muted }}>Nothing on their list today.</div>
-                    ) : (
-                      viewAs.data.rows.map((r) => (
-                        <div key={r.n} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderTop: `1px solid ${C.canvas}` }}>
-                          <span style={{ width: 22, fontSize: 13, fontWeight: 600, color: C.muted, flex: "none" }}>{r.n}</span>
-                          <span style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: C.ink }}>{r.name}</span>
-                            <span style={{ display: "block", fontSize: 12, color: C.muted }}>{r.why}</span>
-                          </span>
-                          <span
-                            style={{ fontSize: 12, fontWeight: 500, padding: "2px 8px", borderRadius: 10, display: r.tag ? "inline-block" : "none", background: r.tagTone === "now" ? C.brandTint : C.goodTint, color: r.tagTone === "now" ? C.brandDark : C.good }}
-                          >
-                            {r.tag}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </>
-              ) : null}
-            </div>
-          </Overlay>
-        ) : null}
-
-        {toast ? (
+      {/* ----------------------------------------------------------- confirm */}
+      {confirm ? (
+        <div
+          onClick={() => setConfirm(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 30, background: "rgba(22,22,22,0.45)", display: "flex", alignItems: "center", justifyContent: "center", animation: `fd-fade 150ms ${EASE}` }}
+        >
           <div
-            style={{ position: "fixed", right: 24, bottom: 24, zIndex: 40, display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: C.brandDeep, color: C.white, borderRadius: 8, boxShadow: "0 8px 24px rgba(22,22,22,0.18)", fontSize: 14, animation: `fd-fade 150ms ${EASE}` }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 480, maxWidth: "calc(100vw - 48px)", background: C.white, borderRadius: 8, boxShadow: "0 8px 24px rgba(22,22,22,0.18)", overflow: "hidden" }}
           >
-            <span style={{ width: 18, height: 18, borderRadius: "50%", background: "rgba(198,255,52,0.2)", color: C.lime, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flex: "none" }}>✓</span>
-            {toast}
+            <div style={{ padding: "20px 22px" }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: C.ink }}>{confirm.title}</div>
+              <div style={{ fontSize: 14, lineHeight: "21px", color: C.body, marginTop: 8 }}>{confirm.body}</div>
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 10 }}>Recorded as you, under the Founder hat, with the state before and after.</div>
+            </div>
+            <div style={{ padding: "12px 22px", borderTop: `1px solid ${C.soft}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button
+                onClick={() => setConfirm(null)}
+                style={{ height: 36, padding: "0 16px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 4, fontSize: 14, fontWeight: 500, color: C.body, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirm.run}
+                style={{ height: 36, padding: "0 16px", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, color: C.white, cursor: "pointer", background: confirm.danger ? C.bad : C.brand }}
+              >
+                {confirm.label}
+              </button>
+            </div>
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
+
+      {/* -------------------------------------------------------------- form */}
+      {form ? <FormModal form={form} setForm={setForm} /> : null}
+
+      {/* --------------------------------------------------------------- ask */}
+      {askOpen ? (
+        <Overlay onClose={() => setAskOpen(false)} width={520}>
+          <div style={{ flex: "none", padding: "18px 22px", borderBottom: `1px solid ${C.soft}`, display: "flex", alignItems: "flex-start", gap: 12 }}>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 20, fontWeight: 600, color: C.ink }}>Ask the company</span>
+              <span style={{ display: "block", fontSize: 13, color: C.muted, marginTop: 2 }}>
+                Answers are read from the figures on this dashboard, company-wide, for {periodView.dates.split(",")[0]}.
+              </span>
+            </span>
+            <CloseX onClick={() => setAskOpen(false)} />
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+            {askThread.length === 0 ? (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, marginBottom: 8 }}>Try asking</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {askSuggestions.map((q) => (
+                    <Hov
+                      key={q}
+                      onClick={() => void doAsk(q)}
+                      style={{ padding: "10px 12px", border: `1px solid ${C.line}`, background: C.white, borderRadius: 6, fontSize: 14, color: C.ink, cursor: "pointer", textAlign: "left" }}
+                      hover={{ borderColor: C.brand, background: C.canvas }}
+                    >
+                      {q}
+                    </Hov>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {askThread.map((m, i) => (
+              <div
+                key={i}
+                style={
+                  m.me
+                    ? { alignSelf: "flex-end", maxWidth: "85%", padding: "10px 12px", borderRadius: "10px 10px 2px 10px", background: C.brand, color: C.white }
+                    : { alignSelf: "flex-start", maxWidth: "90%", padding: "10px 12px", borderRadius: "10px 10px 10px 2px", background: C.canvas, border: `1px solid ${C.soft}`, color: C.ink }
+                }
+              >
+                <span style={{ display: "block", fontSize: 14, lineHeight: "21px" }}>{m.text}</span>
+                {m.go ? (
+                  <button
+                    onClick={() => {
+                      setAskOpen(false);
+                      go(m.go!);
+                    }}
+                    style={{ marginTop: 8, border: "none", background: "none", color: C.brand, fontSize: 13, fontWeight: 500, cursor: "pointer", padding: 0 }}
+                  >
+                    {m.goLabel} →
+                  </button>
+                ) : null}
+              </div>
+            ))}
+            {asking ? (
+              <div style={{ alignSelf: "flex-start", width: "60%" }}>
+                <Pulse />
+              </div>
+            ) : null}
+          </div>
+          <div style={{ flex: "none", padding: "12px 22px", borderTop: `1px solid ${C.soft}`, display: "flex", gap: 8 }}>
+            <Hov
+              as="input"
+              value={askQ}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAskQ(e.target.value)}
+              onKeyDown={(e: React.KeyboardEvent) => {
+                if (e.key === "Enter" && askQ.trim().length >= 3) void doAsk(askQ.trim());
+              }}
+              placeholder={askSuggestions[0]}
+              style={{ flex: 1, minWidth: 0, height: 38, padding: "0 12px", border: `1px solid ${C.line}`, borderRadius: 4, fontSize: 14 }}
+              focus={{ borderColor: C.brand }}
+            />
+            <button
+              onClick={() => askQ.trim().length >= 3 && void doAsk(askQ.trim())}
+              style={{ height: 38, padding: "0 16px", border: "none", background: C.brand, borderRadius: 4, fontSize: 14, fontWeight: 500, color: C.white, cursor: "pointer" }}
+            >
+              Ask
+            </button>
+          </div>
+        </Overlay>
+      ) : null}
+
+      {/* ----------------------------------------------------------- view as */}
+      {viewAs ? (
+        <Overlay onClose={() => setViewAs(null)} width={640}>
+          <div style={{ flex: "none", padding: "12px 22px", background: C.brandDeep, color: C.white, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.lime, display: "block", flex: "none" }} />
+            <span style={{ flex: 1, fontSize: 13 }}>Viewing as {viewAs.name} · read-only · anything you do is done as you</span>
+            <button
+              onClick={() => setViewAs(null)}
+              style={{ height: 28, padding: "0 10px", border: "1px solid rgba(255,255,255,0.3)", background: "transparent", borderRadius: 4, color: C.white, fontSize: 13, cursor: "pointer" }}
+            >
+              Stop viewing
+            </button>
+          </div>
+          <div style={{ flex: "none", padding: "16px 22px", borderBottom: `1px solid ${C.soft}` }}>
+            <div style={{ fontSize: 20, fontWeight: 600, color: C.ink }}>{viewAs.data?.name ?? viewAs.name}</div>
+            <div style={{ fontSize: 14, color: C.muted, marginTop: 2 }}>{viewAs.loading ? "Reading their day…" : viewAs.error ?? viewAs.data?.role}</div>
+            <div style={{ display: "flex", gap: 20, marginTop: 12 }}>
+              {(viewAs.data?.stats ?? []).map((x) => (
+                <span key={x.l} style={{ display: "block" }}>
+                  <span style={{ ...upper, display: "block" }}>{x.l}</span>
+                  <span style={{ display: "block", fontSize: 18, fontWeight: 600, color: C.ink }}>{x.v}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "16px 22px" }}>
+            {viewAs.loading ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <Pulse />
+                <Pulse w="70%" />
+                <Pulse w="85%" />
+              </div>
+            ) : viewAs.data ? (
+              <>
+                {viewAs.data.held ? (
+                  <div style={{ padding: "10px 12px", background: C.warnTint, border: `1px solid ${C.warnLine}`, borderRadius: 6, fontSize: 13, color: C.warnInk, marginBottom: 14 }}>{viewAs.data.held}</div>
+                ) : null}
+                <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, marginBottom: 8 }}>{viewAs.data.listLabel}</div>
+                <div style={{ border: `1px solid ${C.soft}`, borderRadius: 6, overflow: "hidden" }}>
+                  {viewAs.data.rows.length === 0 ? (
+                    <div style={{ padding: "18px 14px", fontSize: 14, color: C.muted }}>Nothing on their list today.</div>
+                  ) : (
+                    viewAs.data.rows.map((r) => (
+                      <div key={r.n} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderTop: `1px solid ${C.canvas}` }}>
+                        <span style={{ width: 22, fontSize: 13, fontWeight: 600, color: C.muted, flex: "none" }}>{r.n}</span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: C.ink }}>{r.name}</span>
+                          <span style={{ display: "block", fontSize: 12, color: C.muted }}>{r.why}</span>
+                        </span>
+                        <span
+                          style={{ fontSize: 12, fontWeight: 500, padding: "2px 8px", borderRadius: 10, display: r.tag ? "inline-block" : "none", background: r.tagTone === "now" ? C.brandTint : C.goodTint, color: r.tagTone === "now" ? C.brandDark : C.good }}
+                        >
+                          {r.tag}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            ) : null}
+          </div>
+        </Overlay>
+      ) : null}
+
+      {toast ? (
+        <div
+          style={{ position: "fixed", right: 24, bottom: 24, zIndex: 40, display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: C.brandDeep, color: C.white, borderRadius: 8, boxShadow: "0 8px 24px rgba(22,22,22,0.18)", fontSize: 14, animation: `fd-fade 150ms ${EASE}` }}
+        >
+          <span style={{ width: 18, height: 18, borderRadius: "50%", background: "rgba(198,255,52,0.2)", color: C.lime, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flex: "none" }}>✓</span>
+          {toast}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,31 +1,21 @@
-import { requireUser } from "@/lib/auth";
-import { listUserApps, listUserModules } from "@/lib/access";
-import { webApps } from "@/lib/apps";
-import { AppSwitcher } from "@/components/shell/app-switcher";
-import { FeedbackButton } from "@/components/shell/feedback-button";
-import { initialsOf } from "@/lib/format";
-import { hatForHeader } from "@/lib/hat-for-header";
-import { FounderShell } from "./founder-shell";
+import { redirect } from "next/navigation";
+import { founderAccess } from "@/lib/command-centre/access";
+import { shellChrome } from "@/lib/command-centre/shell";
+import { DeskFrame } from "./desk-shell";
 
 /**
- * The founder's two working DESKS — price lists and WhatsApp — in the shell
- * they were built in. The gate itself is the parent layout's.
+ * The founder's two working DESKS — price lists and WhatsApp — drawn inside the
+ * Command Centre's own header and sidebar, read from the same `shellChrome` the
+ * page reads, so a count on the sidebar is the same count on both. The gate
+ * itself is the parent layout's; each desk checks its own module below.
  */
 export default async function FounderDesksLayout({ children }: { children: React.ReactNode }) {
-  const user = await requireUser();
-  const [apps, modules, hat] = await Promise.all([
-    listUserApps(user.id),
-    listUserModules(user.id, "founder"),
-    hatForHeader(user, "founder"),
-  ]);
+  const access = await founderAccess();
+  if (!access.allowed.length) redirect("/apps");
+  const chrome = await shellChrome(access);
   return (
-    <FounderShell
-      user={{ name: user.name, role: hat.label, roleSentence: hat.sentence, initials: initialsOf(user.name) }}
-      allowed={modules.map((m) => m.href)}
-      switcher={apps.length > 1 ? <AppSwitcher apps={webApps(apps)} current="founder" /> : null}
-      feedback={<FeedbackButton />}
-    >
+    <DeskFrame chrome={chrome} allowed={access.allowed}>
       {children}
-    </FounderShell>
+    </DeskFrame>
   );
 }

@@ -3,14 +3,10 @@ import { founderAccess } from "@/lib/command-centre/access";
 import { readPeriodState } from "@/lib/command-centre/period";
 import { providerFor } from "@/lib/command-centre/registry";
 import { companyPayload, SECTION_TITLE } from "@/lib/command-centre/company";
-import { inboxFor } from "@/lib/command-centre/inbox";
+import { shellChrome } from "@/lib/command-centre/shell";
 import { QUICK_ITEMS } from "@/lib/command-centre/quick";
 import { ASK_SUGGESTIONS } from "@/lib/command-centre/ask";
-import { initials } from "@/lib/command-centre/format";
-import { hatForHeader } from "@/lib/hat-for-header";
-import { listUserApps } from "@/lib/access";
-import { webApps } from "@/lib/apps";
-import { isSectionKey, type CompanyPayload, type NavCounts, type SectionKey, type SectionPayload, type Tone } from "@/lib/command-centre/types";
+import { isSectionKey, type CompanyPayload, type SectionKey, type SectionPayload } from "@/lib/command-centre/types";
 import { CommandCentre } from "./command-centre";
 
 export async function generateMetadata({ searchParams }: { searchParams: Promise<{ s?: string }> }) {
@@ -23,11 +19,15 @@ export async function generateMetadata({ searchParams }: { searchParams: Promise
  * The Founder Command Centre — one page, fifteen sections, addressed
  * `/founder?s=<section>&p=<period>`. Everything on it is read on the server
  * from the owning apps' services; the client only draws it and calls back.
+ *
+ * `q` and `open` are how a founder DESK hands over what somebody did in the
+ * shared header there — typed a search, pressed Quick action or Ask — since
+ * those open overlays that live on this page.
  */
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ s?: string; p?: string; from?: string; to?: string }>;
+  searchParams: Promise<{ s?: string; p?: string; from?: string; to?: string; q?: string; open?: string }>;
 }) {
   const params = await searchParams;
   const access = await founderAccess();
@@ -40,42 +40,35 @@ export default async function Page({
   const period = await readPeriodState(params.p, { from: params.from, to: params.to });
   const ctx = { period, userId: access.user.id };
 
-  const [apps, inbox, hat, freshness, company, payload] = await Promise.all([
-    listUserApps(access.user.id),
-    access.allowed.includes("inbox") ? inboxFor(access.user.id) : Promise.resolve([]),
-    hatForHeader(access.user, "founder"),
-    import("@/lib/command-centre/freshness")
-      .then((m) => m.freshnessSummary())
-      .catch(() => ({ tone: "muted" as Tone, line: "Freshness could not be read", staleCount: 0 })),
+  const [chrome, company, payload] = await Promise.all([
+    shellChrome(access),
     section === "company" ? companyPayload(period) : Promise.resolve(null as CompanyPayload | null),
     section !== "company" && section !== "inbox"
       ? providerFor(section).then((p) => p.section(ctx))
       : Promise.resolve(null as SectionPayload | null),
   ]);
 
-  const live = inbox.filter((i) => !i.handed && !i.snoozed);
-  const navCounts: NavCounts = { inbox: live.length };
-  for (const i of live) if (i.go !== "company" && i.go !== "inbox") navCounts[i.go] = (navCounts[i.go] ?? 0) + 1;
-  if ("staleCount" in freshness && freshness.staleCount) navCounts.system = Math.max(navCounts.system ?? 0, freshness.staleCount);
+  const open = params.open === "quick" || params.open === "ask" ? params.open : undefined;
 
   return (
     <CommandCentre
       key={`${section}|${period.key}|${period.from}|${period.to}`}
       section={section}
       shell={{
-        user: { name: access.user.name, initials: initials(access.user.name), hatLabel: `${hat.label} · Founder` },
+        user: chrome.user,
         period,
-        navCounts,
-        freshness: { tone: freshness.tone, line: freshness.line },
-        inbox,
+        navCounts: chrome.navCounts,
+        freshness: chrome.freshness,
+        inbox: chrome.inbox,
         allowed: access.allowed,
       }}
       canAct={access.level !== "associate"}
-      switcherApps={apps.length > 1 ? webApps(apps) : null}
+      switcherApps={chrome.switcherApps}
       company={company}
       payload={payload}
       quickItems={QUICK_ITEMS}
       askSuggestions={ASK_SUGGESTIONS}
+      initial={params.q || open ? { q: params.q?.slice(0, 80), open } : undefined}
     />
   );
 }

@@ -10,7 +10,6 @@ import {
   Card,
   CardHeader,
   Input,
-  PageHeader,
   Select,
   Td,
   Th,
@@ -50,7 +49,6 @@ import {
 } from "@/lib/actions/whatsapp-founder";
 import type { RunSummary } from "@/lib/services/whatsapp-automation-service";
 import type { MessagePreview } from "@/lib/services/whatsapp-service";
-import { WhatsappTabs } from "../whatsapp-tabs";
 import { MessagePreviewView } from "../message-preview";
 
 /* ---------------------------------------------------------------------------
@@ -137,11 +135,10 @@ export function AutomationControl(props: {
   }
 
   return (
-    <div className="p-6">
-      <PageHeader
-        title="WhatsApp"
-        subtitle="Rules that send the approved templates on their own — when each one fires, how often, and the hours anything may go out."
-        actions={
+    <div>
+      {/* The page's title and tabs are the Command Centre frame's; what stays here is what only this page does. */}
+      <div className="mb-4 flex justify-end">
+        {
           <div className="flex items-center gap-2">
             <Button variant="secondary" disabled={busy} onClick={() => doPreview()}>
               {busy ? "Working…" : "Preview now"}
@@ -167,8 +164,7 @@ export function AutomationControl(props: {
             </Button>
           </div>
         }
-      />
-      <WhatsappTabs current="automation" />
+      </div>
 
       <Readiness
         linked={props.templates.filter((t) => t.linked).length}
