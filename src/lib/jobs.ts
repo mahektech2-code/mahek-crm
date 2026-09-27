@@ -130,6 +130,8 @@ export type JobName =
   | "taken-order-reparse"
   /** The ERP customer profile from the Sales Party sheet — fills blanks only. */
   | "erp-seed-profiles"
+  | "erp-alerts"
+  | "erp-digest"
   | "party-sync"
   | "project-sheet"
   | "revert-sheet-paid"
@@ -183,6 +185,16 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   /* The field app's nightly tidy-up rides the same schedule as the CRM's.
      One cron, one place to look when something did not run. */
   results.push(await run("mbos-nightly", mbosNightly, triggeredById));
+
+  /* The ERP's alert pass, and the owner's paragraph built from it (AI-4). */
+  results.push(await run("erp-alerts", erpAlertsStep, triggeredById));
+  results.push(
+    await run("erp-digest", async () => {
+      const { writeErpDigest } = await import("./erp/digest");
+      const r = await writeErpDigest();
+      return { recordsAffected: 1, detail: `${r.day} · written by ${r.servedBy}` };
+    }, triggeredById),
+  );
 
   /* This month's expense figures, frozen.
      Requirement 72's trend reads the snapshot rather than the ledger, so that
@@ -527,8 +539,17 @@ export async function resettleQueues(
 
 /* ----------------------------------------------------------------- hourly */
 
+/** AI-4: the ERP's unusual-activity checks. Raises what is new, resolves what has cleared. */
+async function erpAlertsStep() {
+  const { runErpAlerts } = await import("./erp/alerts");
+  const r = await runErpAlerts();
+  return { recordsAffected: r.raised + r.resolved, detail: r.skipped ? `skipped: ${r.skipped}` : `${r.raised} raised · ${r.resolved} resolved · ${r.open} open` };
+}
+
 export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   const results: JobResult[] = [];
+
+  results.push(await run("erp-alerts", erpAlertsStep, triggeredById));
 
   results.push(await run("mbos-hourly", mbosHourly, triggeredById));
 
@@ -868,6 +889,20 @@ export async function runJob(
       return [await runTakenOrderSync(job, triggeredById)];
     case "party-sync":
       return [await runPartySync(triggeredById)];
+    case "erp-alerts":
+      return [await run("erp-alerts", erpAlertsStep, triggeredById)];
+    case "erp-digest":
+      return [
+        await run(
+          "erp-digest",
+          async () => {
+            const { writeErpDigest } = await import("./erp/digest");
+            const r = await writeErpDigest();
+            return { recordsAffected: 1, detail: `${r.day} · written by ${r.servedBy}` };
+          },
+          triggeredById,
+        ),
+      ];
     case "erp-seed-profiles":
       return [
         await run(

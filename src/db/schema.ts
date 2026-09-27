@@ -11088,6 +11088,78 @@ export const erpVideos = pgTable("erp_videos", {
   createdById: text("created_by_id").references(() => users.id),
 });
 
+/* ---- ERP phase 6: alerts and the AI features' records (AI PRD §5, §10) ---- */
+
+export const erpAlerts = pgTable(
+  "erp_alerts",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    /** The condition's identity within its kind, e.g. the purchase id. */
+    subject: text("subject").notNull(),
+    screen: text("screen").notNull(),
+    recordIds: text("record_ids").array().notNull().default([]),
+    /** The ERP power needed to see it, where it shows money or cost. */
+    power: text("power"),
+    values: jsonb("values").$type<Record<string, unknown>>().notNull().default({}),
+    explanation: text("explanation").notNull(),
+    /** Open | Acknowledged | Resolved. */
+    status: text("status").notNull().default("Open"),
+    note: text("note"),
+    raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    acknowledgedById: text("acknowledged_by_id").references(() => users.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedById: text("resolved_by_id").references(() => users.id),
+    resolveReason: text("resolve_reason"),
+  },
+  (t) => [index("erp_alerts_status_idx").on(t.status, t.raisedAt)],
+);
+
+export const erpAiSuggestions = pgTable(
+  "erp_ai_suggestions",
+  {
+    id: text("id").primaryKey(),
+    feature: text("feature").notNull(),
+    recordType: text("record_type"),
+    recordId: text("record_id"),
+    inputRef: text("input_ref"),
+    proposed: jsonb("proposed").$type<Record<string, unknown>>().notNull().default({}),
+    confidence: jsonb("confidence").$type<Record<string, string>>().notNull().default({}),
+    /** pending | accepted | edited | rejected. */
+    outcome: text("outcome").notNull().default("pending"),
+    final: jsonb("final").$type<Record<string, unknown>>(),
+    servedBy: text("served_by"),
+    userId: text("user_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+  },
+  (t) => [index("erp_ai_suggestions_feature_idx").on(t.feature, t.createdAt)],
+);
+
+export const erpOrderInbox = pgTable("erp_order_inbox", {
+  id: text("id").primaryKey(),
+  /** paste | voice | whatsapp. */
+  source: text("source").notNull().default("paste"),
+  sender: text("sender"),
+  customerId: text("customer_id").references(() => customers.id),
+  text: text("text").notNull(),
+  draft: jsonb("draft").$type<Record<string, unknown>>(),
+  /** New | Converted | Not an order | Duplicate. */
+  status: text("status").notNull().default("New"),
+  orderNo: integer("order_no"),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decidedById: text("decided_by_id").references(() => users.id),
+});
+
+export const erpDigests = pgTable("erp_digests", {
+  day: date("day").primaryKey(),
+  text: text("text").notNull(),
+  servedBy: text("served_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type ErpPurchase = typeof erpPurchases.$inferSelect;
 export type ErpInward = typeof erpInward.$inferSelect;
 export type ErpTest = typeof erpTests.$inferSelect;

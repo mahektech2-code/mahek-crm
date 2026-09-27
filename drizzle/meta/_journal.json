@@ -1247,6 +1247,13 @@
       "when": 1790370298688,
       "tag": "0179_erp_logistics_requests_followup_expenses",
       "breakpoints": true
+    },
+    {
+      "idx": 179,
+      "version": "7",
+      "when": 1790370358688,
+      "tag": "0180_erp_alerts_and_ai",
+      "breakpoints": true
     }
   ]
 }

@@ -44,6 +44,10 @@ npm run jobs -- taken-order-sync           # pull the Taken Order tab, then
                            # rebuild who is held back from order chasing
 npm run jobs -- erp-seed-profiles          # ERP customer profiles from the Sales
                            # Party sheet — fills blanks only, re-runnable
+npm run jobs -- erp-alerts                 # the ERP's unusual-activity checks —
+                           # they also run hourly
+npm run jobs -- erp-digest                 # yesterday's owner summary — it also
+                           # runs nightly
 npm run jobs -- taken-order-reparse        # re-read what is stored — the one
                            # to run when the RULE changed, not the sheet
 npm run jobs -- project-sheet --owner=vikram@mahek.in --bills
@@ -1367,6 +1371,32 @@ read; employees are HRMS's, read. "Deactive" is the customer's own
 `status = deactivated`, so the CRM and the ERP cannot disagree about whether a
 customer is closed. "Item Lost Record" is a reserved godown, so a write-off is
 a movement into a real location rather than stock that simply vanished.
+
+**Stock is read off ledgers, one inflow ledger per stage** (`erp_rm_entries`,
+`erp_sfg_entries`, `erp_fg_entries`, `erp_pack_entries`), each entry written by
+exactly one source document and following it through every edit. Outflows are
+NEVER entries: `lib/erp/stock.ts` reads them from the documents that consume
+stock (transfers out, SFG use, filling, packing lines, lot allocations to
+orders), so deleting a consuming document gives the stock back on its own.
+Every consuming save takes `lockLot` — an advisory lock on (stage, lot,
+godown) — and reads the lot's stock INSIDE the same transaction before
+refusing in the source's words. Reading it with the pool, outside the
+transaction, is how two saves both spend the last litre.
+
+**Automations run in the save that qualifies them** (spec §18): a rated
+purchase posts to RM stock, a complete packing batch posts its one entry, a
+line entering order details gets its follow-up record, a bill's first verified
+line opens its transport record (a unique index is the "once"). Routing that
+needs a decision stays a button, as in the source.
+
+**The AI features draft and a person decides** (`docs/erp/04`). Everything a
+rule can do is ordinary code: the alert rules (`engines/alerts.ts`, run hourly
+and nightly by `runErpAlerts`, deduplicated by a partial unique index and
+resolved AUTOMATICALLY when their condition clears), the batch trace
+(`lib/erp/trace.ts`), complaint clusters and suggested levels. Every AI switch
+and threshold is `erp.ai.*` configuration. A money or cost alert carries its
+power and is shown only to its holders — an AI surface never shows what the
+normal screen would not.
 
 **The ERP drops the desktop floor** (`AppFrame floor={false}`) — it is used on
 a tablet at the godown gate — and every other app keeps it.

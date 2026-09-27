@@ -155,3 +155,30 @@ export function rmRequired(available: number | null, max: number): number | null
 export function fgReorderPercent(available: number, min: number): number | null {
   return min > 0 ? Math.round((available / min) * 1000) / 10 : null;
 }
+
+/* ============================================================ suggestions */
+
+export type LevelSuggestion = { min: number; max: number; perDay: number; recentPerDay: number; basis: string; swing: string | null };
+
+/**
+ * AI-7's suggested level, DETERMINISTIC: average daily use over the look-back,
+ * times the cover days, rounded up to whole units. Where the last 30 days run
+ * at under half or over one and a half times the look-back rate it says so,
+ * because a level set from a slack quarter runs out in a busy month.
+ */
+export function suggestLevel(p: { used: number; lookbackDays: number; recentUsed: number; recentDays: number; minCover: number; maxCover: number; unit: string }): LevelSuggestion | null {
+  if (p.used <= 0 || p.lookbackDays <= 0) return null;
+  const perDay = p.used / p.lookbackDays;
+  const recentPerDay = p.recentDays > 0 ? p.recentUsed / p.recentDays : perDay;
+  const round = (v: number) => Math.round(v * 10) / 10;
+  const ratio = perDay > 0 ? recentPerDay / perDay : 1;
+  const swing = ratio > 1.5 ? `The last ${p.recentDays} days ran at ${round(recentPerDay)} ${p.unit}/day, well above the ${p.lookbackDays}-day average.` : ratio < 0.5 ? `The last ${p.recentDays} days ran at ${round(recentPerDay)} ${p.unit}/day, well below the ${p.lookbackDays}-day average.` : null;
+  return {
+    min: Math.ceil(perDay * p.minCover),
+    max: Math.ceil(perDay * p.maxCover),
+    perDay: round(perDay),
+    recentPerDay: round(recentPerDay),
+    basis: `Used ${round(perDay)} ${p.unit}/day over ${p.lookbackDays} days; ${p.minCover}–${p.maxCover} days' cover.`,
+    swing,
+  };
+}

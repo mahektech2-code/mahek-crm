@@ -24,6 +24,8 @@ import { fgReorderPercent, rmReorderPercent, rmRequired } from "../engines/produ
 import { fgLevelAvailable, fgLots, lockLot, packLots, rmLevelAvailable, rmLots, sfgLots, type Ex } from "../stock";
 import { godownIdByName, godownOptions, inTx, materials, pair, refuse, today, type Tx } from "./common";
 import { requisitionForm } from "./purchase";
+import { levelSuggestions } from "../suggest";
+import type { LevelSuggestion } from "../engines/production";
 
 /* ---------------------------------------------------------------------------
  * Item transfer (spec §10.1) and re-order levels (§10.2–§10.3).
@@ -246,20 +248,22 @@ async function rmLevelForm(ctx: ErpContext, id?: string): Promise<FormSpec | nul
   };
 }
 
-type RmLevelRow = { id: string; godown: string; godownId: string; type: string; item: string; itemId: string; min: number; max: number; status: string; available: number | null; required: number | null; pct: number | null; by: string | null; updatedAt: Date };
+type RmLevelRow = { id: string; godown: string; godownId: string; type: string; item: string; itemId: string; min: number; max: number; status: string; available: number | null; required: number | null; pct: number | null; by: string | null; updatedAt: Date; suggestion: LevelSuggestion | null };
 
 async function rmLevelRows(): Promise<RmLevelRow[]> {
-  const [rows, avail] = await Promise.all([
+  const [rows, avail, suggest] = await Promise.all([
     db
-      .select({ l: erpRmLevels, item: erpRawMaterials.name, godown: erpGodowns.name, by: users.name })
+      .select({ l: erpRmLevels, item: erpRawMaterials.name, unit: erpRawMaterials.unit, godown: erpGodowns.name, by: users.name })
       .from(erpRmLevels)
       .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpRmLevels.rawMaterialId))
       .innerJoin(erpGodowns, eq(erpGodowns.id, erpRmLevels.godownId))
       .leftJoin(users, eq(users.id, erpRmLevels.updatedById)),
     rmLevelAvailable(),
+    levelSuggestions(),
   ]);
   return rows.map((x) => {
     const available = avail(x.l.materialType, x.l.rawMaterialId, x.l.godownId);
+    const suggestion = suggest.rm(x.l.materialType, x.l.rawMaterialId, x.l.godownId, x.unit === "Unit" ? "pcs" : "L");
     return {
       id: x.l.id,
       godown: x.godown,
@@ -275,6 +279,7 @@ async function rmLevelRows(): Promise<RmLevelRow[]> {
       pct: rmReorderPercent(available, x.l.minQty, x.l.maxQty),
       by: x.by,
       updatedAt: x.l.updatedAt,
+      suggestion,
     };
   });
 }
@@ -327,6 +332,7 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
         { k: "pct", l: "Re-order %", t: "n" },
         { k: "min", l: "Min", t: "n" },
         ...(reorder ? [] : ([{ k: "max", l: "Max", t: "n" }, { k: "status", l: "Status", t: "s" }] as ColSpec[])),
+        ...(reorder ? [] : ([{ k: "sMin", l: "Suggested min", t: "n" }, { k: "sMax", l: "Suggested max", t: "n" }] as ColSpec[])),
         { k: "godown", l: "Godown", t: "t" },
         { k: "type", l: "Material type", t: "s" },
         { k: "f", l: "Flags", t: "f" },
@@ -340,6 +346,7 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
           godownKey: "godown",
           sortDefault: ["pct", 1],
           readOnly: reorder,
+          bulk: reorder ? undefined : [{ id: "apply", l: "Apply suggestions", confirm: "Set every selected level to its suggested minimum and maximum?" }],
           newForm: reorder ? undefined : ((await rmLevelForm(ctx)) ?? undefined),
           newLabel: "New level",
           noDataLine: reorder ? "Nothing to re-order. Every followed item is at or above its level." : "No levels set yet.",
@@ -350,6 +357,8 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
             const actions: ActionSpec[] = [];
             if (reorder || (r.required ?? 0) > 0)
               actions.push({ id: "raise", l: "Raise requisition", primary: true, loadsForm: true });
+            if (!reorder && r.suggestion && (r.suggestion.min !== r.min || r.suggestion.max !== r.max))
+              actions.push({ id: "apply", l: "Apply suggestion", confirm: `Set ${r.item} at ${r.godown} to min ${r.suggestion.min}, max ${r.suggestion.max}? ${r.suggestion.basis}` });
             if (!reorder) {
               actions.push({ id: "edit", l: "Edit", loadsForm: true });
               actions.push({ id: "copy", l: "Add More", loadsForm: true });
@@ -357,7 +366,8 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
             }
             return {
               id: r.id,
-              v: { item: r.item, required: r.required, available: r.available, pct: r.pct, min: r.min, max: r.max, status: r.status, godown: r.godown, type: r.type },
+              v: { item: r.item, required: r.required, available: r.available, pct: r.pct, min: r.min, max: r.max, status: r.status, godown: r.godown, type: r.type, sMin: r.suggestion?.min ?? null, sMax: r.suggestion?.max ?? null },
+              fields: r.suggestion ? [{ l: "Suggestion basis", v: r.suggestion.basis, der: true }, ...(r.suggestion.swing ? [{ l: "Recent use", v: r.suggestion.swing, der: true }] : [])] : [{ l: "Suggestion", v: "No use recorded at this godown in the look-back yet.", der: true }],
               flags: (r.required ?? 0) > 0 && r.status === "Follow" ? ["below"] : [],
               title: r.item,
               header: `${r.godown} · ${r.type}${r.required ? ` · buy ${nf(r.required)} to reach the maximum` : ""}`,
@@ -386,9 +396,11 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
         : {}),
     },
     forms: key === "rmLevels" ? { new: (ctx, h) => saveRmLevel(ctx, h), edit: (ctx, h, _l, id) => saveRmLevel(ctx, h, id) } : undefined,
+    bulk: key === "rmLevels" ? { apply: (ctx, ids) => applyRm(ctx, ids) } : undefined,
     actions:
       key === "rmLevels"
         ? {
+            apply: (ctx, id) => applyRm(ctx, [id]),
             async delete(ctx, id) {
               const [before] = await db.select().from(erpRmLevels).where(eq(erpRmLevels.id, id));
               if (!before) return err("That level no longer exists.", "not_found");
@@ -399,6 +411,23 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
           }
         : undefined,
   };
+}
+
+/** AI-7: sets levels to their suggestion. Nothing moves without this press. */
+async function applyRm(ctx: ErpContext, ids: string[]): Promise<Result<unknown>> {
+  const rows = (await rmLevelRows()).filter((r) => ids.includes(r.id) && r.suggestion);
+  if (!rows.length) return err("No suggestion to apply: no use was recorded for these items.", "rule_violation");
+  for (const r of rows) await db.update(erpRmLevels).set({ minQty: r.suggestion!.min, maxQty: r.suggestion!.max, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpRmLevels.id, r.id));
+  await erpAudit(ctx, "erp.rmLevel.applySuggestion", "erp_rm_level", rows.map((r) => r.id).join(","), null, Object.fromEntries(rows.map((r) => [r.id, r.suggestion])));
+  return okVoid(`${rows.length} level${rows.length === 1 ? "" : "s"} set to the suggestion`);
+}
+
+async function applyFg(ctx: ErpContext, ids: string[]): Promise<Result<unknown>> {
+  const rows = (await fgLevelRows()).filter((r) => ids.includes(r.id) && r.suggestion);
+  if (!rows.length) return err("No suggestion to apply: nothing was dispatched for these SKUs.", "rule_violation");
+  for (const r of rows) await db.update(erpFgLevels).set({ minQty: r.suggestion!.min, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpFgLevels.id, r.id));
+  await erpAudit(ctx, "erp.fgLevel.applySuggestion", "erp_fg_level", rows.map((r) => r.id).join(","), null, Object.fromEntries(rows.map((r) => [r.id, r.suggestion])));
+  return okVoid(`${rows.length} level${rows.length === 1 ? "" : "s"} set to the suggestion`);
 }
 
 /* ---- finished goods ---- */
@@ -436,10 +465,10 @@ async function fgLevelForm(ctx: ErpContext, id?: string): Promise<FormSpec | nul
   };
 }
 
-type FgLevelRow = { id: string; godown: string; sku: string; kind: string; min: number; status: string; available: number; pct: number | null; by: string | null; updatedAt: Date };
+type FgLevelRow = { id: string; godown: string; sku: string; kind: string; min: number; status: string; available: number; pct: number | null; by: string | null; updatedAt: Date; suggestion: LevelSuggestion | null };
 
 async function fgLevelRows(): Promise<FgLevelRow[]> {
-  const [rows, avail] = await Promise.all([
+  const [rows, avail, suggest] = await Promise.all([
     db
       .select({ l: erpFgLevels, sku: products.name, godown: erpGodowns.name, empty: erpProductPacking.emptyBoxesRequired, by: users.name })
       .from(erpFgLevels)
@@ -448,9 +477,11 @@ async function fgLevelRows(): Promise<FgLevelRow[]> {
       .leftJoin(erpProductPacking, eq(erpProductPacking.productId, erpFgLevels.productId))
       .leftJoin(users, eq(users.id, erpFgLevels.updatedById)),
     fgLevelAvailable(),
+    levelSuggestions(),
   ]);
   return rows.map((x) => {
     const boxed = (x.empty ?? 0) > 0;
+    const suggestion = suggest.fg(x.l.productId, x.l.godownId, boxed);
     const available = avail(x.l.productId, boxed, x.l.godownId);
     return {
       id: x.l.id,
@@ -463,6 +494,7 @@ async function fgLevelRows(): Promise<FgLevelRow[]> {
       pct: fgReorderPercent(available, x.l.minQty),
       by: x.by,
       updatedAt: x.l.updatedAt,
+      suggestion,
     };
   });
 }
@@ -517,6 +549,7 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
             { k: "godown", l: "Godown", t: "t" },
             { k: "pct", l: "Re-order %", t: "n" },
             { k: "status", l: "Status", t: "s" },
+            { k: "sMin", l: "Suggested min", t: "n" },
             { k: "kind", l: "Type", t: "s" },
             { k: "f", l: "Flags", t: "f" },
           ];
@@ -529,19 +562,22 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
           godownKey: "godown",
           sortDefault: reorder ? ["pct", -1] : ["sku", 1],
           readOnly: reorder,
+          bulk: reorder ? undefined : [{ id: "apply", l: "Apply suggestions", confirm: "Set every selected minimum to its suggestion?" }],
           newForm: reorder ? undefined : ((await fgLevelForm(ctx)) ?? undefined),
           newLabel: "New level",
           noDataLine: reorder ? "Nothing to re-order. Every followed SKU is at or above its minimum." : "No levels set yet.",
         },
         rows: rows.map((r): ListRow => ({
           id: r.id,
-          v: { sku: r.sku, min: r.min, available: r.available, godown: r.godown, pct: r.pct, status: r.status, kind: r.kind },
+          v: { sku: r.sku, min: r.min, available: r.available, godown: r.godown, pct: r.pct, status: r.status, kind: r.kind, sMin: r.suggestion?.min ?? null },
+          fields: r.suggestion ? [{ l: "Suggestion basis", v: r.suggestion.basis, der: true }, ...(r.suggestion.swing ? [{ l: "Recent use", v: r.suggestion.swing, der: true }] : [])] : [{ l: "Suggestion", v: "Nothing dispatched from this godown in the look-back yet.", der: true }],
           flags: r.status === "Follow" && r.min > r.available ? ["below"] : [],
           title: r.sku,
           header: `${r.godown} · ${nf(r.available)} of ${nf(r.min)} ${r.kind === "FG Packing Inventory" ? "boxes" : "cans"}`,
           actions: reorder
             ? []
             : [
+                ...(r.suggestion && r.suggestion.min !== r.min ? [{ id: "apply", l: "Apply suggestion", confirm: `Set the minimum for ${r.sku} at ${r.godown} to ${r.suggestion.min}? ${r.suggestion.basis}` }] : []),
                 { id: "edit", l: "Edit", loadsForm: true },
                 { id: "copy", l: "Add More", loadsForm: true },
                 { id: "delete", l: "Delete", confirm: `Remove the level for ${r.sku} at ${r.godown}?` },
@@ -562,9 +598,11 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
           }
         : undefined,
     forms: key === "fgLevels" ? { new: (ctx, h) => saveFgLevel(ctx, h), edit: (ctx, h, _l, id) => saveFgLevel(ctx, h, id) } : undefined,
+    bulk: key === "fgLevels" ? { apply: (ctx, ids) => applyFg(ctx, ids) } : undefined,
     actions:
       key === "fgLevels"
         ? {
+            apply: (ctx, id) => applyFg(ctx, [id]),
             async delete(ctx, id) {
               const [before] = await db.select().from(erpFgLevels).where(eq(erpFgLevels.id, id));
               if (!before) return err("That level no longer exists.", "not_found");

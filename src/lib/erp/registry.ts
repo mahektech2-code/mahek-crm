@@ -58,7 +58,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Alerts",
     icon: "bell",
     screens: [
-      s("alerts", "alerts", "Alerts", "Unusual activity the ERP noticed overnight and through the day. Each alert names the records and the figures behind it."),
+      s("alerts", "alerts", "Alerts", "Unusual activity the ERP noticed overnight and through the day. Each alert names the records and the figures behind it.", true),
     ],
   },
   {

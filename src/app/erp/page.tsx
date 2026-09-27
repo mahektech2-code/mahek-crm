@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { erpContext } from "@/lib/erp/access";
-import { dashboardSections } from "@/lib/erp/dashboard";
+import { dashboardSections, latestDigest } from "@/lib/erp/dashboard";
 import { TONES } from "@/lib/erp/ui";
 import { PageBody, PageHead } from "./_ui/page-head";
 import { Icon } from "./_ui/icons";
@@ -12,7 +12,7 @@ import { Icon } from "./_ui/icons";
 export default async function ErpDashboard() {
   const ctx = await erpContext();
   const where = ctx.workingGodown?.name ?? null;
-  const sections = await dashboardSections(ctx, where);
+  const [sections, digest] = await Promise.all([dashboardSections(ctx, where), latestDigest()]);
   const first = ctx.user.name.split(" ")[0];
   const hour = Number(new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false }));
   const hello = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -32,6 +32,15 @@ export default async function ErpDashboard() {
             {moneyOff ? " · money figures are not on your account" : ""}
           </div>
         </div>
+        {digest ? (
+          <div style={{ padding: "12px 16px", background: "#F7F5FF", border: "1px solid #DDD2FF", borderRadius: 8, fontSize: 14, color: "#161616", marginBottom: 16, lineHeight: "21px" }}>
+            <span style={{ display: "block", fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: "#5223E0", marginBottom: 4 }}>
+              Yesterday · {digest.day}
+              {digest.servedBy && digest.servedBy !== "rules" ? " · summarised by AI from the figures below" : ""}
+            </span>
+            {digest.text}
+          </div>
+        ) : null}
         {sections.length <= 2 ? (
           <div style={{ padding: "12px 16px", background: "#FFFFFF", border: "1px solid #EDEFF3", borderRadius: 8, fontSize: 14, color: "#3D4453", marginBottom: 16 }}>
             {sections.length === 0

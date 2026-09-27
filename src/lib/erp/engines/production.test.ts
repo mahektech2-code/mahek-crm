@@ -81,3 +81,12 @@ test("levels: re-order % from the midpoint, required to reach the maximum", () =
   assert.equal(rmRequired(null, 200), null);
   assert.equal(fgReorderPercent(30, 60), 50);
 });
+
+test("a suggested level is cover days of average use, and says when recent use has swung", async () => {
+  const { suggestLevel } = await import("./production");
+  const s = suggestLevel({ used: 900, lookbackDays: 90, recentUsed: 600, recentDays: 30, minCover: 7, maxCover: 21, unit: "L" })!;
+  assert.equal(s.min, 70);
+  assert.equal(s.max, 210);
+  assert.match(s.swing ?? "", /well above/);
+  assert.equal(suggestLevel({ used: 0, lookbackDays: 90, recentUsed: 0, recentDays: 30, minCover: 7, maxCover: 21, unit: "L" }), null);
+});

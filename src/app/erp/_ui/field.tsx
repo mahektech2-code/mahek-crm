@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useContext, useState } from "react";
 import type { FieldSpec } from "@/lib/erp/ui";
+import { DictateButton, joinDictation } from "@/components/ui/dictate";
 import { Icon } from "./icons";
+import { ErpVoice } from "./voice";
 
 /* ---------------------------------------------------------------------------
  * One form field, drawn as the design draws every field in every form and
@@ -112,6 +114,7 @@ function Control({
   onMic?: () => void;
   onUseSuggestion?: (v: string) => void;
 }) {
+  const voice = useContext(ErpVoice);
   if (f.t === "derived") {
     return (
       <span
@@ -199,7 +202,25 @@ function Control({
           onChange={(e) => onChange(e.target.value)}
           style={{ ...base(error), height: 72, padding: "8px 10px", resize: "vertical" }}
         />
-        {onMic && f.mic ? (
+        {f.mic && voice && !f.readOnly ? (
+          /* AI-3: the CRM's own dictation — same providers, same modal, and it
+             draws nothing when dictation is off or has no key. The words are
+             shown before anything reaches the box, and Add is the default. */
+          <DictateButton
+            hasExistingText={value.trim().length > 0}
+            onImport={(text, replace) => onChange(replace ? text : joinDictation(value, text))}
+            renderTrigger={(open) => (
+              <button
+                type="button"
+                onClick={open}
+                title="Speak instead of typing. Say it in any language."
+                style={{ position: "absolute", right: 6, bottom: 8, width: 30, height: 30, border: "1px solid #DDD2FF", background: "#F1ECFF", borderRadius: 15, color: "#5223E0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <Icon n="mic" />
+              </button>
+            )}
+          />
+        ) : onMic && f.mic ? (
           <button
             type="button"
             onClick={onMic}
