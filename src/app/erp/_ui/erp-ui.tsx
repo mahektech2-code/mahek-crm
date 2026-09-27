@@ -9,6 +9,7 @@ import "@/lib/erp/calcs";
 import { erpLoadForm, erpRunAction, erpRunBulk, erpSubmitForm } from "@/lib/actions/erp";
 import type { Result } from "@/lib/result";
 import { Field } from "./field";
+import { ErpVoice } from "./voice";
 
 /* ---------------------------------------------------------------------------
  * The ERP's overlays, held once for the whole app: the form drawer, the prompt
@@ -37,7 +38,7 @@ export function useErpUi(): Ui {
   return u;
 }
 
-export function ErpUiProvider({ children }: { children: React.ReactNode }) {
+export function ErpUiProvider({ children, voice = false }: { children: React.ReactNode; voice?: boolean }) {
   const router = useRouter();
   const [toastText, setToastText] = useState("");
   const tRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -131,6 +132,7 @@ export function ErpUiProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
+    <ErpVoice.Provider value={voice}>
     <Ctx.Provider value={{ toast, confirm, prompt, openForm, act, bulk }}>
       {children}
       {form ? (
@@ -194,6 +196,7 @@ export function ErpUiProvider({ children }: { children: React.ReactNode }) {
         </div>
       ) : null}
     </Ctx.Provider>
+    </ErpVoice.Provider>
   );
 }
 

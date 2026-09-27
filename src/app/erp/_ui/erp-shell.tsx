@@ -26,6 +26,7 @@ export function ErpShell({
   working,
   accountMenu,
   switcher,
+  voice = false,
   children,
 }: {
   nav: NavGroup[];
@@ -34,10 +35,11 @@ export function ErpShell({
   working: { id: string; name: string } | null;
   accountMenu?: React.ReactNode;
   switcher?: React.ReactNode;
+  voice?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <ErpUiProvider>
+    <ErpUiProvider voice={voice}>
       <ShellInner nav={nav} user={user} godowns={godowns} working={working} accountMenu={accountMenu} switcher={switcher}>
         {children}
       </ShellInner>

@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, employees, erpCredits, erpExpenses, erpFollowups, erpGodowns, erpOrderDetails, erpRequests, erpTransports, erpVideos, users } from "@/db/schema";
 import { calendarDate } from "@/lib/business-date";
+import { getConfig } from "@/lib/config/store";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { bindErpFiles } from "../attachments";
@@ -10,11 +11,12 @@ import { erpAudit, erpId, int, multi, paise, rupeesField, stampLine, text, visib
 import type { ActionSpec, BulkSpec, CellValue, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { fd, inr } from "../ui";
 import { callingDate, cashBalances, cashKey, followFigures } from "../engines/followup";
-import { monthId } from "../engines/sales";
+import { addDaysIso, monthId } from "../engines/sales";
 import { refValues } from "../refs";
 import { godownIdByName, godownOptions, has, today, type Col } from "./common";
 import { customerForm, loadCustomers, phoneContacts, saveCustomerDetails } from "./masters";
 import { detailRows, orderLines } from "./sales";
+import { traceBill, type Trace } from "../trace";
 
 /* ---------------------------------------------------------------------------
  * Logistics, customer requests and credit notes, order follow-up, petty cash,
@@ -249,7 +251,7 @@ async function requestRows(where?: ReturnType<typeof eq>): Promise<RequestRow[]>
   return (where ? q.where(where) : q).orderBy(desc(erpRequests.raisedAt));
 }
 
-function requestRow(ctx: ErpContext, x: RequestRow): ListRow {
+function requestRow(ctx: ErpContext, x: RequestRow, panel?: ListRow["panel"]): ListRow {
   const r = x.r;
   const decider = ctx.powers.has("decideRequests");
   const why = decider ? "" : "Only an admin or the office decides a request";
@@ -327,9 +329,45 @@ function requestRow(ctx: ErpContext, x: RequestRow): ListRow {
       { l: "Month", v: calendarDate(r.raisedAt).slice(0, 7), der: true },
     ],
     contacts: phoneContacts(x.phone),
+    panel,
     actions,
     by: stampLine(x.by, r.raisedAt),
   };
+}
+
+/**
+ * AI-6 for the decider: each request's trace, the other requests sharing its
+ * lots inside the window (a possible batch problem at the threshold), who made
+ * what was traced, and the customer's earlier requests. All deterministic.
+ */
+async function requestAssist(rows: RequestRow[]): Promise<Map<string, ListRow["panel"]>> {
+  const out = new Map<string, ListRow["panel"]>();
+  const c = await getConfig();
+  if (!c["erp.ai.complaints.enabled"]) return out;
+  const threshold = c["erp.ai.complaints.clusterThreshold"];
+  const since = Date.now() - c["erp.ai.complaints.clusterDays"] * 86400000;
+  const traces = new Map<string, Trace>();
+  for (const x of rows) if (x.r.billNo) traces.set(x.r.id, await traceBill(x.r.customerId, x.r.billNo, x.r.goods));
+  for (const x of rows) {
+    const t = traces.get(x.r.id);
+    const mine = new Set((t?.lots ?? []).filter((l) => !l.startsWith("pack:")));
+    const sharing = rows.filter((o) => {
+      if (o.r.id === x.r.id || o.r.status === "Rejected" || o.r.raisedAt.getTime() < since) return false;
+      return (traces.get(o.r.id)?.lots ?? []).some((l) => mine.has(l));
+    });
+    const previous = rows.filter((o) => o.r.customerId === x.r.customerId && o.r.raisedAt < x.r.raisedAt).slice(0, 5);
+    out.set(x.r.id, {
+      kind: "trace",
+      data: {
+        steps: t?.steps ?? [],
+        missing: t ? t.missing : ["This request names no bill, so there is nothing to trace."],
+        cluster: sharing.length + 1 >= threshold ? { count: sharing.length + 1, parties: [...new Set(sharing.map((o) => o.party))], lots: [...mine].filter((l) => sharing.some((o) => traces.get(o.r.id)?.lots.includes(l))) } : null,
+        people: t?.people ?? [],
+        previous: previous.map((o) => ({ date: calendarDate(o.r.raisedAt), type: o.r.complaintType, status: o.r.status, cn: o.r.cnAmountPaise })),
+      },
+    });
+  }
+  return out;
 }
 
 function requestList(scope: RequestScope): ScreenModule {
@@ -364,7 +402,10 @@ function requestList(scope: RequestScope): ScreenModule {
           newLabel: "Raise request",
           noDataLine: scope === "issueCn" ? "No credit-note requests." : scope === "complaints" ? "No complaints." : "No customer requests yet.",
         },
-        rows: rows.map((x) => requestRow(ctx, x)),
+        rows: await (async () => {
+          const assist = await requestAssist(rows);
+          return rows.map((x) => requestRow(ctx, x, assist.get(x.r.id)));
+        })(),
       };
     },
     forms: {
@@ -546,10 +587,21 @@ async function followRows() {
     .sort((a, b) => (a.l.o.orderDate < b.l.o.orderDate ? 1 : -1));
 }
 
+/**
+ * AI-7: the CRM's own prediction for a party — its measured buying cycle from
+ * the last order it knows of — shown beside the follow-up's arithmetic, and
+ * labelled as the date the telecallers are working from. It is not a second
+ * model.
+ */
+async function crmPredictions(): Promise<Map<string, { next: string | null; confidence: number | null; isDefault: boolean }>> {
+  const rows = (await db.execute(sql`select id, last_order_date::text as last, cycle_days as cycle, cycle_confidence as confidence, cycle_is_default as "isDefault" from customers where last_order_date is not null`)) as unknown as { id: string; last: string; cycle: number; confidence: number | null; isDefault: boolean }[];
+  return new Map(rows.map((r) => [r.id, { next: addDaysIso(r.last, Number(r.cycle)), confidence: r.confidence == null ? null : Number(r.confidence), isDefault: Boolean(r.isDefault) }]));
+}
+
 const followup: ScreenModule = {
   key: "followup",
   async load() {
-    const rows = await followRows();
+    const [rows, crm] = await Promise.all([followRows(), crmPredictions()]);
     const cols: ColSpec[] = [
       { k: "date", l: "Order date", t: "d" },
       { k: "dayCount", l: "Day count", t: "n" },
@@ -595,6 +647,15 @@ const followup: ScreenModule = {
           flags: calling && calling <= now ? ["today"] : [],
           title: `${l.delivery.name} · ${product}`,
           header: calling ? `Call on ${fd(calling)}` : "Not enough orders to predict the next one yet",
+          fields: (() => {
+            const p = crm.get(l.delivery.id);
+            if (!p) return [{ l: "CRM prediction", v: "The CRM has no order for this party yet.", der: true }];
+            const conf = p.isDefault ? "a default cycle, not yet measured" : p.confidence == null ? "measured" : `${p.confidence}% confident`;
+            const differs = p.next && fig.nextOrder && p.next !== fig.nextOrder;
+            return [
+              { l: "CRM predicted next order", v: `${p.next ? fd(p.next) : "—"} (${conf})${differs ? " — the date the telecallers are working from" : ""}`, der: true },
+            ];
+          })(),
           contacts: phoneContacts(l.delivery.phone),
           actions: [
             {

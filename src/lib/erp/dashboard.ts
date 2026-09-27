@@ -1,23 +1,30 @@
 import "server-only";
+import { eq, or, sql } from "drizzle-orm";
+import { db } from "@/db";
+import { customers } from "@/db/schema";
+import { calendarDate } from "@/lib/business-date";
 import type { ErpContext } from "./access";
+import { visibleAlerts } from "./alerts";
+import { incompletePackIds } from "./counts";
+import { ALERT_LABEL, type AlertKind } from "./engines/alerts";
+import { callingDate, followFigures } from "./engines/followup";
+import { addDaysIso, monthId, targetReached } from "./engines/sales";
 import { erpHref, erpScreen } from "./registry";
-import { loadCustomers, partyStatus } from "./screens/masters";
-import { billsAwaitingIds, incompletePackIds, inwardAwaitingIds, logisticsCounts, rateMissingIds, salesCounts, testsAwaitingIds, unverifiedIds } from "./counts";
-import { pendingCnRows } from "./screens/logistics";
-import { detailRows } from "./screens/sales";
 import { today } from "./screens/common";
+import { pendingCnRows } from "./screens/logistics";
+import { loadCustomers, partyStatus } from "./screens/masters";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
+import { detailRows, orderLines, ORDER_STATUSES } from "./screens/sales";
 import { fgLots, packLots, rmLots, sfgLots } from "./stock";
-import { nf } from "./ui";
 import type { Tone } from "./ui";
+import { nf } from "./ui";
 
 /* ---------------------------------------------------------------------------
  * The ERP dashboard (PRD §6, spec §13.6): what needs attention now, from data
  * the modules already hold. Every tile names the rows it counted, so opening
- * it lands on exactly those rows, and a tile for a screen the person does not
- * hold — or a money figure without its power — is never built at all.
- *
- * Each phase adds the sections for the screens it builds.
+ * it lands on exactly those rows; a tile for a screen the person does not
+ * hold — or a money figure without its power — is never built at all. "G"
+ * tiles follow the working location; the rest are company-wide.
  * ------------------------------------------------------------------------- */
 
 export type Tile = {
@@ -38,127 +45,352 @@ export function tileHref(screen: string, ids: string[] | null, label: string): s
   return `${base}?f=${encodeURIComponent(ids.join(","))}&fl=${encodeURIComponent(label)}`;
 }
 
+type Row = Record<string, unknown>;
+const q = async (s: ReturnType<typeof sql>) => (await db.execute(s)) as unknown as Row[];
+const rupees = (p: number) => `₹${nf(Math.round(p / 100))}`;
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const asDate = (v: unknown) => (v instanceof Date ? v : new Date(String(v)));
+
+/** Loads each shared reading once, however many tiles read it. */
+function memo<T>(fn: () => Promise<T>): () => Promise<T> {
+  let p: Promise<T> | null = null;
+  return () => (p ??= fn());
+}
+
 export async function dashboardSections(ctx: ErpContext, godownName: string | null): Promise<Section[]> {
+  const has = (k: string) => ctx.screens.has(k);
+  const pw = (p: string) => (ctx.powers as ReadonlySet<string>).has(p);
+  const inG = (g: unknown) => !godownName || g === godownName;
+  const day = today();
+  const month = day.slice(0, 7);
   const out: Section[] = [];
+  const push = (t: string, tiles: Tile[]) => {
+    if (tiles.length) out.push({ t, tiles });
+  };
+  const lines = memo(orderLines);
+  const details = memo(detailRows);
 
-  const sales: Tile[] = [];
-  if (ctx.screens.has("pendingOrders") || ctx.screens.has("readyOrders") || ctx.screens.has("orders")) {
-    const c = await salesCounts();
-    const here = <T extends { godown: string }>(xs: T[]) => xs.filter((l) => !godownName || l.godown === godownName);
-    const pending = here(c.pending);
-    const toAllocate = here(c.toAllocate);
-    const partyWait = here(c.pendingParty);
-    if (ctx.screens.has("pendingOrders"))
-      sales.push({ l: "Pending order lines", v: String(pending.length), sub: "not yet in order details", href: tileHref("pendingOrders", null, "") });
-    if (ctx.screens.has("readyOrders"))
-      sales.push({ l: "Ready, lots to allocate", v: String(toAllocate.length), sub: "allocate before marking Done", tone: toAllocate.length ? "warn" : undefined, href: tileHref("readyOrders", toAllocate.map((l) => l.o.id), "To allocate") });
-    if (ctx.screens.has("orders") && partyWait.length)
-      sales.push({ l: "Orders from pending parties", v: String(partyWait.length), sub: "the party needs activating or the order approving", tone: "warn", href: tileHref("orders", partyWait.map((l) => l.o.id), "Pending party") });
+  /* ============================================================ alerts */
+  if (has("alerts")) {
+    const alerts = await visibleAlerts(ctx.screens, ctx.powers, "open");
+    const by = new Map<string, string[]>();
+    alerts.forEach((a) => by.set(a.kind, [...(by.get(a.kind) ?? []), a.id]));
+    push(
+      "Alerts",
+      alerts.length
+        ? [...by.entries()]
+            .sort((a, b) => b[1].length - a[1].length)
+            .map(([kind, ids]) => ({ l: ALERT_LABEL[kind as AlertKind] ?? kind, v: String(ids.length), tone: "danger" as Tone, href: tileHref("alerts", ids, ALERT_LABEL[kind as AlertKind] ?? kind) }))
+        : [{ l: "Open alerts", v: "0", sub: "nothing unusual found", href: tileHref("alerts", null, "") }],
+    );
   }
-  if (ctx.screens.has("orderDetails")) {
-    const ids = await unverifiedIds();
-    sales.push({ l: "Awaiting dispatch verification", v: String(ids.length), sub: "enter the dispatch date once it has left", tone: ids.length ? "warn" : undefined, href: tileHref("orderDetails", ids, "Not verified") });
-    if (ctx.powers.has("viewSalesAmounts")) {
-      const month = today().slice(0, 7);
-      const { rows } = await detailRows();
-      const sold = rows.filter((r) => r.d.verification === "Verified" && (r.d.dispatchDate ?? "").startsWith(month) && (!godownName || r.l.godown === godownName));
-      const total = sold.reduce((a, r) => a + (r.amount ?? 0) - (r.discounted ?? 0), 0);
-      sales.push({ l: "Dispatched this month", v: `₹${nf(Math.round(total / 100))}`, sub: `${sold.length} line${sold.length === 1 ? "" : "s"}, before GST`, href: tileHref("orderDetails", sold.map((r) => r.l.o.id), "Dispatched this month") });
-    }
-  }
-  if (sales.length) out.push({ t: "Sales", tiles: sales });
 
-  const logistics: Tile[] = [];
-  if (["pendingLr", "requests", "expenses", "pendingCn"].some((k) => ctx.screens.has(k))) {
-    const c = await logisticsCounts();
-    if (ctx.screens.has("pendingLr"))
-      logistics.push({ l: "Bills without an LR", v: String(c.pendingLr.length), sub: "enter the lorry receipt number", tone: c.pendingLr.length ? "warn" : undefined, href: tileHref("pendingLr", null, "") });
-    if (ctx.screens.has("requests"))
-      logistics.push({ l: "Customer requests to decide", v: String(c.requested.length), sub: ctx.powers.has("decideRequests") ? "you decide these" : "the office decides", tone: c.requested.length ? "warn" : undefined, href: tileHref("requests", c.requested, "Requested") });
-    if (ctx.screens.has("pendingCn")) {
-      const cn = await pendingCnRows();
-      if (cn.length) logistics.push({ l: "Credit notes not on their line", v: String(cn.length), sub: "run the credit-note updater", tone: "warn", href: tileHref("pendingCn", null, "") });
-    }
-    if (ctx.screens.has("expenses"))
-      logistics.push({ l: "Expenses to verify", v: String(c.pendingExpenses.length), href: tileHref("expenses", c.pendingExpenses, "Pending") });
-  }
-  if (logistics.length) out.push({ t: "Logistics and requests", tiles: logistics });
-
+  /* ========================================================== purchase */
   const purchase: Tile[] = [];
-  if (ctx.screens.has("inward")) {
-    const ids = await inwardAwaitingIds();
-    purchase.push({ l: "Inward awaiting routing", v: String(ids.length), sub: "send to testing or the register", tone: ids.length ? "warn" : undefined, href: tileHref("inward", ids, "Awaiting routing") });
-  }
-  if (ctx.screens.has("testing")) {
-    const ids = await testsAwaitingIds();
-    purchase.push({ l: "Tests to decide", v: String(ids.length), sub: ctx.powers.has("verifyTest") ? "you verify these" : "the verifier decides", tone: ids.length ? "warn" : undefined, href: tileHref("testing", ids, "Not decided") });
-  }
-  if (ctx.screens.has("register") && ctx.powers.has("viewPurchaseMoney")) {
-    const noRate = await rateMissingIds();
-    purchase.push({ l: "Purchases without a rate", v: String(noRate.length), sub: "not in stock until rated", tone: noRate.length ? "danger" : undefined, href: tileHref("register", noRate, "Rate missing") });
-    const bills = await billsAwaitingIds();
-    purchase.push({ l: "Bills not received", v: String(bills.length), href: tileHref("register", bills, "Bill not received") });
-  }
-  if (purchase.length) out.push({ t: "Purchase", tiles: purchase });
-
-  if (ctx.screens.has("rmStock")) {
-    const lots = (await rmLots()).filter((l) => l.stock > 0 && (!godownName || l.godown === godownName));
-    const litres = lots.filter((l) => l.unit === "Ltr").reduce((a, l) => a + l.stock, 0);
-    const tiles: Tile[] = [
-      { l: godownName ? `Raw-material lots · ${godownName}` : "Raw-material lots", v: String(lots.length), sub: `${nf(litres)} Ltr in stock`, href: tileHref("rmStock", null, "") },
-    ];
-    if (ctx.powers.has("viewCost")) {
-      const value = lots.reduce((a, l) => a + (l.ratePaise == null ? 0 : l.ratePaise * l.stock), 0);
-      tiles.push({ l: "Raw-material value", v: `₹${nf(Math.round(value / 100))}`, sub: "at purchase rate", href: tileHref("rmStock", null, "") });
+  if (has("requisitions")) {
+    const reqs = (await q(sql`select r.id, r.status, r.priority, g.name as godown from erp_requisitions r join erp_godowns g on g.id = r.godown_id where r.status <> 'Received'`)).filter((r) => inG(r.godown));
+    for (const st of ["Pending", "Order Placed", "Booked"]) {
+      const ids = reqs.filter((r) => r.status === st).map((r) => String(r.id));
+      if (ids.length || st === "Pending") purchase.push({ l: `Requisitions · ${st}`, v: String(ids.length), href: tileHref("requisitions", ids, st) });
     }
-    out.push({ t: "Raw-material stock", tiles });
+    const urgent = reqs.filter((r) => r.priority === "Urgent").map((r) => String(r.id));
+    purchase.push({ l: "Urgent open requisitions", v: String(urgent.length), tone: urgent.length ? "danger" : undefined, href: tileHref("requisitions", urgent, "Urgent") });
   }
+  if (has("inward")) {
+    const ids = (
+      await q(sql`
+        select i.id, g.name as godown from erp_inward i join erp_godowns g on g.id = i.godown_id
+         where (i.testing_required and not exists (select 1 from erp_tests t where t.inward_id = i.id))
+            or (not i.testing_required and not exists (select 1 from erp_purchases p where p.inward_id = i.id))`)
+    )
+      .filter((r) => inG(r.godown))
+      .map((r) => String(r.id));
+    purchase.push({ l: "Inward awaiting routing", v: String(ids.length), sub: "no test, or no register row, yet", tone: ids.length ? "warn" : undefined, href: tileHref("inward", ids, "Awaiting routing") });
+  }
+  if (has("testing")) {
+    const ids = (await q(sql`select t.id, g.name as godown from erp_tests t join erp_godowns g on g.id = t.godown_id where t.status <> 'Verified'`)).filter((r) => inG(r.godown)).map((r) => String(r.id));
+    purchase.push({ l: "Tests awaiting verification", v: String(ids.length), sub: pw("verifyTest") ? "you verify these" : "the verifier decides", tone: ids.length ? "warn" : undefined, href: tileHref("testing", ids, "Not verified") });
+  }
+  if (has("register")) {
+    const rows = await q(sql`
+      select p.id, p.status, p.bill_received as bill, p.rate_paise::float8 as rate, p.quantity::float8 as qty, p.gst_bp as gst,
+             p.feed_adjusted_amount_paise::float8 as feed, p.purchase_date::text as date, g.name as godown
+        from erp_purchases p join erp_godowns g on g.id = p.godown_id`);
+    const noRate = rows.filter((r) => inG(r.godown) && !(Number(r.rate) > 0)).map((r) => String(r.id));
+    purchase.push({ l: "Purchases with missing rate", v: String(noRate.length), sub: "not in stock until rated", tone: noRate.length ? "danger" : undefined, href: tileHref("register", noRate, "Rate missing") });
+    if (pw("viewPurchaseMoney")) {
+      const billless = rows.filter((r) => r.bill !== "Received").map((r) => String(r.id));
+      purchase.push({ l: "Bills not received", v: String(billless.length), href: tileHref("register", billless, "Bill not received") });
+      for (const st of ["Pending", "Invoice Received", "Purchase Matched", "Purchase Verified"]) {
+        const ids = rows.filter((r) => r.status === st).map((r) => String(r.id));
+        if (ids.length) purchase.push({ l: `Purchases · ${st}`, v: String(ids.length), href: tileHref("register", ids, st) });
+      }
+      const thisMonth = rows.filter((r) => String(r.date).startsWith(month) && Number(r.rate) > 0);
+      const value = thisMonth.reduce((a, r) => {
+        const sub = Number(r.qty) * Number(r.rate);
+        return a + Math.round(sub + (sub * Number(r.gst)) / 10000 - Number(r.feed ?? 0));
+      }, 0);
+      purchase.push({ l: "Purchase value this month", v: rupees(value), sub: `${plural(thisMonth.length, "purchase")}, with GST`, href: tileHref("register", thisMonth.map((r) => String(r.id)), "This month") });
+    }
+  }
+  push("Purchase", purchase);
 
+  /* ============================================================= stock */
   const stock: Tile[] = [];
-  const here = <T extends { godown: string; stock: number }>(xs: T[]) => xs.filter((l) => l.stock > 0 && (!godownName || l.godown === godownName));
-  if (ctx.screens.has("sfgStock")) {
-    const lots = here(await sfgLots());
-    stock.push({ l: "SFG in stock", v: `${nf(lots.reduce((a, l) => a + l.stock, 0))} Ltr`, sub: `${lots.length} lot${lots.length === 1 ? "" : "s"}`, href: tileHref("sfgStock", null, "") });
+  const stages: { key: string; label: string; unit: string; load: () => Promise<{ godown: string; stock: number; value: number | null }[]> }[] = [
+    { key: "rmStock", label: "Raw material", unit: "", load: async () => (await rmLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.ratePaise == null ? null : l.ratePaise * l.stock })) },
+    { key: "sfgStock", label: "SFG", unit: "Ltr", load: async () => (await sfgLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.ratePaise == null ? null : l.ratePaise * l.stock })) },
+    { key: "fgStock", label: "Loose FG", unit: "cans", load: async () => (await fgLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.perCanPaise == null ? null : l.perCanPaise * l.stock })) },
+    { key: "packStock", label: "Boxed", unit: "boxes", load: async () => (await packLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.perBoxPaise == null ? null : l.perBoxPaise * l.stock })) },
+  ];
+  for (const st of stages) {
+    if (!has(st.key)) continue;
+    const lots = (await st.load()).filter((l) => l.stock > 0 && inG(l.godown));
+    const total = lots.reduce((a, l) => a + l.stock, 0);
+    stock.push({ l: `${st.label} lots`, v: String(lots.length), sub: st.unit ? `${nf(total)} ${st.unit}` : `${nf(total)} in stock`, href: tileHref(st.key, null, "") });
+    if (pw("viewCost")) {
+      const value = lots.reduce((a, l) => a + (l.value ?? 0), 0);
+      const unpriced = lots.filter((l) => l.value == null).length;
+      stock.push({ l: `${st.label} stock value`, v: rupees(value), sub: unpriced ? `${plural(unpriced, "lot")} without a cost` : "at cost", href: tileHref(st.key, null, "") });
+    }
   }
-  if (ctx.screens.has("fgStock")) {
-    const lots = here(await fgLots());
-    stock.push({ l: "Loose FG in stock", v: `${nf(lots.reduce((a, l) => a + l.stock, 0))} cans`, sub: `${lots.length} lot${lots.length === 1 ? "" : "s"}`, href: tileHref("fgStock", null, "") });
+  if (["rmLog", "sfgLog", "fgLog", "packLog"].some(has)) {
+    const [{ n }] = await q(sql`
+      select (
+        (select count(*) from erp_rm_entries e where e.source_type = 'purchase' and not exists (select 1 from erp_purchases p where p.id = e.source_id)) +
+        (select count(*) from erp_sfg_entries e where e.source_type = 'sfg' and not exists (select 1 from erp_sfg_lines l where l.id = e.source_id)) +
+        (select count(*) from erp_fg_entries e where e.source_type = 'fill' and not exists (select 1 from erp_fg_fills f where f.id = e.source_id)) +
+        (select count(*) from erp_pack_entries e where e.source_type = 'batch' and not exists (select 1 from erp_pack_lines l where l.batch_no = e.source_id))
+      )::int as n`);
+    if (Number(n)) stock.push({ l: "Orphaned inventory entries", v: String(n), sub: "their source document was deleted", tone: "danger", href: tileHref(has("rmLog") ? "rmLog" : "sfgLog", null, "") });
   }
-  if (ctx.screens.has("packStock")) {
-    const lots = here(await packLots());
-    stock.push({ l: "Boxed stock", v: `${nf(lots.reduce((a, l) => a + l.stock, 0))} boxes`, sub: `${lots.length} batch${lots.length === 1 ? "" : "es"}`, href: tileHref("packStock", null, "") });
-  }
-  if (ctx.screens.has("packBatches")) {
+  push("Stock", stock);
+
+  /* ======================================================== production */
+  const prod: Tile[] = [];
+  if (has("packBatches")) {
     const ids = await incompletePackIds();
-    stock.push({ l: "Packing batches incomplete", v: String(ids.length), sub: "boxes not in stock until the cans match", tone: ids.length ? "warn" : undefined, href: tileHref("packBatches", ids, "Incomplete") });
+    const mine = ids.length ? (await q(sql`select l.id, g.name as godown from erp_pack_lines l join erp_godowns g on g.id = l.godown_id where l.id in ${ids}`)).filter((r) => inG(r.godown)).map((r) => String(r.id)) : [];
+    prod.push({ l: "Incomplete packing batches", v: String(mine.length), sub: "boxes not in stock until the cans match", tone: mine.length ? "warn" : undefined, href: tileHref("packBatches", mine, "Incomplete") });
   }
-  if (stock.length) out.push({ t: "Production", tiles: stock });
-
-  const reorder: Tile[] = [];
-  if (ctx.screens.has("reorderRm")) {
-    const rows = (await rmReorderRows()).filter((r) => !godownName || r.godown === godownName);
-    reorder.push({ l: "Raw items to re-order", v: String(rows.length), sub: "followed items below their level", tone: rows.length ? "danger" : undefined, href: tileHref("reorderRm", null, "") });
-  }
-  if (ctx.screens.has("reorderFg")) {
-    const rows = (await fgReorderRows()).filter((r) => !godownName || r.godown === godownName);
-    reorder.push({ l: "Finished goods to re-order", v: String(rows.length), sub: "followed SKUs below their minimum", tone: rows.length ? "danger" : undefined, href: tileHref("reorderFg", null, "") });
-  }
-  if (reorder.length) out.push({ t: "Re-order", tiles: reorder });
-
-  if (ctx.screens.has("customers")) {
-    const tiles: Tile[] = [];
-    if (ctx.powers.has("customerStatus")) {
-      const pending = (await loadCustomers()).filter((c) => partyStatus(c) === "Pending");
-      tiles.push({
-        l: "Pending activation",
-        v: String(pending.length),
-        sub: "an admin activates them",
-        tone: pending.length ? "warn" : undefined,
-        href: tileHref("customers", pending.map((c) => c.id), "Pending"),
+  if (has("sfgBatches") || has("fgFill") || has("packBatches")) {
+    const g = godownName;
+    for (const [label, since] of [
+      ["today", day],
+      ["this month", `${month}-01`],
+    ] as const) {
+      const [p] = await q(sql`
+        select
+          (select count(distinct sfg_no) from erp_sfg_lines l join erp_godowns w on w.id = l.godown_id where l.batch_date >= ${since} and (${g}::text is null or w.name = ${g}))::int as sfg,
+          (select coalesce(sum(total_use - litres_adjusted), 0) from erp_sfg_lines l join erp_godowns w on w.id = l.godown_id where l.batch_date >= ${since} and (${g}::text is null or w.name = ${g}))::float8 as litres,
+          (select count(*) from erp_fg_fills f join erp_godowns w on w.id = f.godown_id where f.fill_date >= ${since} and (${g}::text is null or w.name = ${g}))::int as fills,
+          (select coalesce(sum(cans - can_adjusted), 0) from erp_fg_fills f join erp_godowns w on w.id = f.godown_id where f.fill_date >= ${since} and (${g}::text is null or w.name = ${g}))::float8 as cans,
+          (select count(*) from erp_pack_entries e join erp_godowns w on w.id = e.godown_id where e.source_type = 'batch' and e.entry_date >= ${since} and (${g}::text is null or w.name = ${g}))::int as packs,
+          (select coalesce(sum(boxes), 0) from erp_pack_entries e join erp_godowns w on w.id = e.godown_id where e.source_type = 'batch' and e.entry_date >= ${since} and (${g}::text is null or w.name = ${g}))::float8 as boxes`);
+      prod.push({
+        l: `Production ${label}`,
+        v: `${nf(Number(p.litres))} Ltr`,
+        sub: `${plural(Number(p.sfg), "SFG batch", "SFG batches")} · ${plural(Number(p.fills), "filling")}, ${nf(Number(p.cans))} cans · ${plural(Number(p.packs), "packing batch", "packing batches")}, ${nf(Number(p.boxes))} boxes`,
+        href: tileHref(has("sfgBatches") ? "sfgBatches" : has("fgFill") ? "fgFill" : "packBatches", null, ""),
       });
     }
-    if (tiles.length) out.push({ t: "Customers", tiles });
+  }
+  if (has("transfers")) {
+    const rows = await q(sql`
+      select t.id, t.item_type as type, f.name as "from", w.name as "to", w.reserved, t.transfer_date::text as date
+        from erp_transfers t join erp_godowns f on f.id = t.from_godown_id join erp_godowns w on w.id = t.to_godown_id`);
+    const todays = rows.filter((r) => r.date === day && (inG(r.from) || inG(r.to))).map((r) => String(r.id));
+    prod.push({ l: "Transfers today", v: String(todays.length), href: tileHref("transfers", todays, "Today") });
+    if (pw("lostStock")) {
+      const lost = rows.filter((r) => r.reserved && String(r.date).startsWith(month));
+      const byType = new Map<string, number>();
+      lost.forEach((r) => byType.set(String(r.type), (byType.get(String(r.type)) ?? 0) + 1));
+      prod.push({ l: "Written off this month", v: String(lost.length), sub: [...byType.entries()].map(([t, n]) => `${n} ${t}`).join(" · ") || "nothing written off", tone: lost.length ? "danger" : undefined, href: tileHref("transfers", lost.map((r) => String(r.id)), "Lost this month") });
+    }
+  }
+  if (has("reorderRm")) {
+    const rows = (await rmReorderRows()).filter((r) => inG(r.godown));
+    prod.push({ l: "Raw items to re-order", v: String(rows.length), sub: "followed items below their level", tone: rows.length ? "danger" : undefined, href: tileHref("reorderRm", null, "") });
+  }
+  if (has("reorderFg")) {
+    const rows = (await fgReorderRows()).filter((r) => inG(r.godown));
+    prod.push({ l: "Finished goods below minimum", v: String(rows.length), tone: rows.length ? "danger" : undefined, href: tileHref("reorderFg", null, "") });
+  }
+  push("Production and re-order", prod);
+
+  /* ============================================================= sales */
+  const sales: Tile[] = [];
+  if (["orders", "pendingOrders", "readyOrders", "labels"].some(has)) {
+    const ls = await lines();
+    const open = ls.filter((l) => !l.inDetails && inG(l.godown));
+    if (has("orders"))
+      for (const st of ORDER_STATUSES) {
+        const ids = open.filter((l) => l.o.status === st).map((l) => l.o.id);
+        if (ids.length) sales.push({ l: `Orders · ${st}`, v: String(ids.length), href: tileHref("orders", ids, st) });
+      }
+    const ready = open.filter((l) => l.o.status === "Ready" && l.o.entryStatus !== "Done");
+    const short = ready.filter((l) => l.allocation === "Add More Quantity").map((l) => l.o.id);
+    const awaitingDone = ready.filter((l) => l.allocation === "Done").map((l) => l.o.id);
+    const screen = has("readyOrders") ? "readyOrders" : "orders";
+    sales.push({ l: "Allocation short", v: String(short.length), sub: "Ready, lots still to allocate", tone: short.length ? "warn" : undefined, href: tileHref(screen, short, "Allocation short") });
+    sales.push({ l: "Awaiting Done", v: String(awaitingDone.length), sub: "Ready and allocated", href: tileHref(screen, awaitingDone, "Awaiting Done") });
+    const missing = ls.filter((l) => l.o.status !== "Cancel" && (!l.o.tallyBillNo || l.o.ratePaise == null)).map((l) => l.o.id);
+    sales.push({ l: "Missing bill no / rate", v: String(missing.length), tone: missing.length ? "warn" : undefined, href: tileHref("orders", missing, "Bill or rate missing") });
+    if (pw("approveParty")) {
+      const pend = ls.filter((l) => l.o.partyStatus === "Pending").map((l) => l.o.id);
+      sales.push({ l: "Pending-customer orders", v: String(pend.length), sub: "approve, or activate the party", tone: pend.length ? "warn" : undefined, href: tileHref("orders", pend, "Pending party") });
+    }
+    if (has("labels")) {
+      const labels = ls.filter((l) => (l.o.status === "Ready" || l.o.status === "Under Process") && l.o.entryStatus !== "Done" && inG(l.godown));
+      sales.push({ l: "Labels to print", v: nf(labels.reduce((a, l) => a + l.labels, 0)), sub: plural(labels.length, "line"), href: tileHref("labels", null, "") });
+    }
+  }
+  if (has("orderDetails")) {
+    const { rows } = await details();
+    const mine = rows.filter((r) => inG(r.l.godown));
+    const unverified = mine.filter((r) => !r.d.verification || r.d.verification === "Pending").map((r) => r.l.o.id);
+    sales.push({ l: "Awaiting dispatch verification", v: String(unverified.length), sub: "enter the dispatch date once it has left", tone: unverified.length ? "warn" : undefined, href: tileHref("orderDetails", unverified, "Not verified") });
+    const dispatched = mine.filter((r) => r.d.verification === "Verified");
+    const todayIds = dispatched.filter((r) => r.d.dispatchDate === day).map((r) => r.l.o.id);
+    const monthRows = dispatched.filter((r) => (r.d.dispatchDate ?? "").startsWith(month));
+    sales.push({ l: "Dispatched today", v: String(todayIds.length), href: tileHref("orderDetails", todayIds, "Dispatched today") });
+    sales.push({ l: "Dispatched this month", v: String(monthRows.length), href: tileHref("orderDetails", monthRows.map((r) => r.l.o.id), "Dispatched this month") });
+    if (pw("viewSalesAmounts")) {
+      const amount = monthRows.reduce((a, r) => a + (r.amount ?? 0), 0);
+      const final = monthRows.reduce((a, r) => a + (r.final ?? 0), 0);
+      sales.push({ l: "Sales value this month", v: rupees(amount), sub: `${rupees(final)} with GST and freight`, href: tileHref("orderDetails", monthRows.map((r) => r.l.o.id), "Sales this month") });
+    }
+    if (pw("viewCost")) {
+      const known = monthRows.filter((r) => r.margin != null);
+      const m = known.reduce((a, r) => a + (r.margin ?? 0), 0);
+      sales.push({ l: "Margin this month", v: rupees(m), sub: known.length < monthRows.length ? `${plural(monthRows.length - known.length, "line")} without a cost` : "after lot costing and credit notes", tone: m < 0 ? "danger" : undefined, href: tileHref("orderDetails", monthRows.map((r) => r.l.o.id), "Margin this month") });
+    }
+  }
+  push("Sales", sales);
+
+  /* ========================================================= logistics */
+  const logistics: Tile[] = [];
+  if (has("paidFreight")) {
+    const { rows } = await details();
+    const n = rows.filter((r) => r.l.billing.freightTerm === "Paid" && r.d.extraExpensesPaise == null).length;
+    logistics.push({ l: "Paid freight without extra expense", v: String(n), href: tileHref("paidFreight", null, "") });
+  }
+  if (["pendingLr", "trackLr", "transport"].some(has)) {
+    const rows = await q(sql`select id, lr_no as lr, track_status as track, material_stage as stage, reminder_date::text as reminder from erp_transports`);
+    if (has("pendingLr")) {
+      const n = rows.filter((r) => !r.lr).length;
+      logistics.push({ l: "Pending LR", v: String(n), tone: n ? "warn" : undefined, href: tileHref("pendingLr", null, "") });
+    }
+    if (has("trackLr")) {
+      const by = new Map<string, string[]>();
+      rows.filter((r) => r.lr && r.track === "Track").forEach((r) => by.set(String(r.stage), [...(by.get(String(r.stage)) ?? []), String(r.id)]));
+      for (const [stage, ids] of by) logistics.push({ l: `Tracking · ${stage}`, v: String(ids.length), href: tileHref("trackLr", ids, stage) });
+    }
+    if (has("transport")) {
+      const due = rows.filter((r) => r.reminder && String(r.reminder) <= day && r.stage !== "Close - Received to Party").map((r) => String(r.id));
+      logistics.push({ l: "Reminder calls due", v: String(due.length), tone: due.length ? "warn" : undefined, href: tileHref("transport", due, "Reminder due") });
+    }
+  }
+  push("Logistics", logistics);
+
+  /* ========================================================== requests */
+  const req: Tile[] = [];
+  if (["requests", "issueCn", "pendingCn"].some(has)) {
+    const rows = await q(sql`select id, status, cn_required as cn, cn_number as number, raised_at as raised, resolved_at as resolved from erp_requests`);
+    if (has("requests"))
+      for (const st of ["Requested", "Accepted", "Rejected"]) {
+        const ids = rows.filter((r) => r.status === st).map((r) => String(r.id));
+        req.push({ l: `Requests · ${st}`, v: String(ids.length), tone: st === "Requested" && ids.length ? "warn" : undefined, href: tileHref("requests", ids, st) });
+      }
+    if (has("issueCn")) {
+      const ids = rows.filter((r) => r.status === "Accepted" && r.cn && !r.number).map((r) => String(r.id));
+      req.push({ l: "Credit notes to issue", v: String(ids.length), tone: ids.length ? "warn" : undefined, href: tileHref("issueCn", ids, "To issue") });
+    }
+    if (has("pendingCn")) {
+      const n = (await pendingCnRows()).length;
+      req.push({ l: "Credit notes pending sync", v: String(n), tone: n ? "warn" : undefined, href: tileHref("pendingCn", null, "") });
+    }
+    if (has("requests")) {
+      const resolved = rows.filter((r) => r.resolved && calendarDate(asDate(r.resolved)).startsWith(month));
+      const hours = resolved.map((r) => (asDate(r.resolved).getTime() - asDate(r.raised).getTime()) / 3600000);
+      const avg = hours.length ? hours.reduce((a, h) => a + h, 0) / hours.length : null;
+      req.push({ l: "Average response time", v: avg == null ? "—" : avg < 48 ? `${Math.round(avg)} h` : `${Math.round(avg / 24)} days`, sub: `${plural(resolved.length, "request")} resolved this month`, href: tileHref("requests", resolved.map((r) => String(r.id)), "Resolved this month") });
+    }
+  }
+  push("Requests and credit notes", req);
+
+  /* ========================================================= follow-up */
+  if (has("followup")) {
+    const [ls, fus] = await Promise.all([lines(), q(sql`select order_id as id, reminder_days_party as days from erp_followups`)]);
+    const figs = followFigures(ls.filter((l) => l.o.status !== "Cancel").map((l) => ({ id: l.o.id, party: l.delivery.id, product: l.sku.fgId ?? l.sku.name, date: l.o.orderDate })));
+    const byId = new Map(ls.map((l) => [l.o.id, l]));
+    /* The latest follow-up record per party only. */
+    const latest = new Map<string, { id: string; date: string; calling: string | null }>();
+    for (const f of fus) {
+      const l = byId.get(String(f.id));
+      const fig = figs.get(String(f.id));
+      if (!l || !fig) continue;
+      const cur = latest.get(l.delivery.id);
+      if (!cur || l.o.orderDate > cur.date) latest.set(l.delivery.id, { id: l.o.id, date: l.o.orderDate, calling: callingDate(fig.nextOrder, f.days == null ? null : Number(f.days)) });
+    }
+    const vals = [...latest.values()].filter((x): x is { id: string; date: string; calling: string } => !!x.calling);
+    const week = addDaysIso(day, 7);
+    const dueToday = vals.filter((x) => x.calling === day).map((x) => x.id);
+    const overdue = vals.filter((x) => x.calling < day).map((x) => x.id);
+    const next = vals.filter((x) => x.calling > day && x.calling <= week).map((x) => x.id);
+    push("Order follow-up", [
+      { l: "Calls due today", v: String(dueToday.length), tone: dueToday.length ? "warn" : undefined, href: tileHref("followup", dueToday, "Due today") },
+      { l: "Calls overdue", v: String(overdue.length), tone: overdue.length ? "danger" : undefined, href: tileHref("followup", overdue, "Overdue") },
+      { l: "Calls in the next 7 days", v: String(next.length), href: tileHref("followup", next, "Next 7 days") },
+    ]);
   }
 
+  /* ======================================================== petty cash */
+  if (has("expenses") || has("credits")) {
+    const [credits, expenses] = await Promise.all([
+      q(sql`select c.employee_name as who, g.name as godown, c.mode, c.amount_paise::float8 as amount from erp_credits c join erp_godowns g on g.id = c.godown_id`),
+      q(sql`select e.id, e.expense_by as who, g.name as godown, e.mode, e.amount_paise::float8 as amount, e.status from erp_expenses e join erp_godowns g on g.id = e.godown_id`),
+    ]);
+    /* Everyone's with the Expenses screen; otherwise the person's own (spec §13.6). */
+    const everyone = has("expenses");
+    const mine = (who: unknown) => everyone || String(who).trim().toLowerCase() === ctx.user.name.trim().toLowerCase();
+    const place = new Map<string, number>();
+    for (const c of credits) if (mine(c.who) && inG(c.godown)) place.set(`${c.godown} · ${c.mode}`, (place.get(`${c.godown} · ${c.mode}`) ?? 0) + Number(c.amount));
+    for (const e of expenses) if (mine(e.who) && inG(e.godown)) place.set(`${e.godown} · ${e.mode}`, (place.get(`${e.godown} · ${e.mode}`) ?? 0) - Number(e.amount));
+    const tiles: Tile[] = [...place.entries()].map(([k, v]) => ({ l: `Petty cash · ${k}`, v: rupees(v), sub: everyone ? "everyone's balance" : "your balance", tone: v < 0 ? "danger" : undefined, href: tileHref(has("expenses") ? "expenses" : "credits", null, "") }));
+    if (has("expenses")) {
+      const pend = expenses.filter((e) => e.status === "Pending").map((e) => String(e.id));
+      tiles.push({ l: "Expenses pending verification", v: String(pend.length), href: tileHref("expenses", pend, "Pending") });
+    }
+    push("Petty cash", tiles);
+  }
+
+  /* ========================================================= customers */
+  const cust: Tile[] = [];
+  if (has("customers") && pw("customerStatus")) {
+    const pending = (await loadCustomers()).filter((c) => partyStatus(c) === "Pending");
+    cust.push({ l: "Customers pending activation", v: String(pending.length), sub: "an admin activates them", tone: pending.length ? "warn" : undefined, href: tileHref("customers", pending.map((c) => c.id), "Pending") });
+  }
+  if (has("myCustomers")) {
+    const mine = await loadCustomers(or(eq(customers.salesAmId, ctx.user.id), sql`lower(${customers.salesPersonName}) = lower(${ctx.user.name})`));
+    const { rows } = await details();
+    const mid = monthId(day);
+    const withTarget = mine.filter((c) => (c.p?.monthlyTargetPaise ?? 0) > 0);
+    const reached = withTarget.filter((c) =>
+      targetReached(
+        rows.filter((r) => r.l.o.billingCustomerId === c.id && r.monthId === mid).reduce((a, r) => a + (r.amount ?? 0), 0),
+        c.p?.monthlyTargetPaise ?? null,
+      ),
+    );
+    cust.push({ l: "My customers at target", v: `${reached.length} of ${withTarget.length}`, sub: `this month · ${plural(mine.length, "customer")} tagged to you`, href: tileHref("myCustomers", null, "") });
+  }
+  push("Customers", cust);
+
   return out;
+}
+
+/** The owner's paragraph for yesterday, if the nightly pass has written it. */
+export async function latestDigest(): Promise<{ day: string; text: string; servedBy: string | null } | null> {
+  const rows = await q(sql`select day::text as day, text, served_by as "servedBy" from erp_digests order by day desc limit 1`);
+  return rows[0] ? { day: String(rows[0].day), text: String(rows[0].text), servedBy: (rows[0].servedBy as string) ?? null } : null;
 }

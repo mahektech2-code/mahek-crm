@@ -84,7 +84,13 @@ export type SettingCategory =
    * The test for which belongs here: would changing it restate what an old
    * claim was worth? If yes it is policy; if no it is a setting.
    */
-  | "expenses";
+  | "expenses"
+  /**
+   * The ERP's AI features (AI-1 to AI-8): one switch per feature, and the
+   * thresholds the deterministic alert rules and suggestions read. AI drafts
+   * and a person decides, so none of these changes a record on its own.
+   */
+  | "erp-ai";
 
 export type SettingDefinition = {
   key: string;
@@ -3516,6 +3522,262 @@ export const SETTINGS = [
       "On, voice notes are kept on the handset once transcribed. Off, they are deleted — but only ever after the transcript is confirmed stored, never merely because the upload finished.",
     default: false,
   },
+  {
+    key: "erp.ai.voice.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · voice notes",
+    description:
+      "Puts the dictation microphone on every ERP remark, note and description box. It is the CRM's dictation, with the same providers; off, or with no provider key, the microphone is simply not drawn.",
+    default: true,
+  },
+  {
+    key: "erp.ai.alerts.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · unusual-activity alerts",
+    description:
+      "Runs the alert rules hourly and nightly. The rules are ordinary code; off, nothing new is raised and the Alerts screen keeps what it already holds.",
+    default: true,
+  },
+  {
+    key: "erp.ai.alerts.rateJumpPct",
+    type: "integer",
+    category: "erp-ai",
+    label: "Purchase rate jump (%)",
+    description:
+      "A purchase whose litre rate differs from the median of this supplier's recent rates for the item by more than this raises an alert.",
+    default: 20,
+    min: 1,
+    max: 500,
+  },
+  {
+    key: "erp.ai.alerts.rateLookback",
+    type: "integer",
+    category: "erp-ai",
+    label: "Purchases the rate is compared with",
+    description:
+      "How many of the supplier's previous purchases of the item make up the median a new rate is compared against.",
+    default: 5,
+    min: 2,
+    max: 50,
+  },
+  {
+    key: "erp.ai.alerts.rateMissingDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Rate missing for (days)",
+    description:
+      "A register row still without a rate this many days after its purchase date raises an alert — it is not in stock until it has one.",
+    default: 3,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.alerts.sfgLossPct",
+    type: "integer",
+    category: "erp-ai",
+    label: "High SFG loss (%)",
+    description:
+      "An SFG batch line whose litres adjusted exceed this share of what it consumed raises an alert.",
+    default: 5,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "erp.ai.alerts.fillLossPct",
+    type: "integer",
+    category: "erp-ai",
+    label: "High filling loss (%)",
+    description:
+      "A filling whose cans adjusted exceed this share of the cans filled raises an alert.",
+    default: 3,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "erp.ai.alerts.writeOffCount",
+    type: "integer",
+    category: "erp-ai",
+    label: "Repeated write-offs",
+    description:
+      "This many transfers to Item Lost Record by one person, or from one godown, within the window below raises an alert.",
+    default: 3,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "erp.ai.alerts.writeOffDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Write-off window (days)",
+    description:
+      "The window the write-off count above is counted in.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "erp.ai.alerts.marginPct",
+    type: "integer",
+    category: "erp-ai",
+    label: "Thin margin (%)",
+    description:
+      "A dispatched line whose margin is below this share of its amount, or negative, raises an alert.",
+    default: 5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.ai.alerts.fulfilDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Slow fulfilment (days)",
+    description:
+      "A line dispatched more than this many days after it was ordered raises an alert.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.alerts.readyUnbilledHours",
+    type: "integer",
+    category: "erp-ai",
+    label: "Ready but not billed (hours)",
+    description:
+      "A line Ready and fully allocated with no Tally bill number after this many hours raises an alert.",
+    default: 24,
+    min: 1,
+    max: 720,
+  },
+  {
+    key: "erp.ai.alerts.stuckTestHours",
+    type: "integer",
+    category: "erp-ai",
+    label: "Test unverified (hours)",
+    description:
+      "A purchase test still undecided after this many hours raises an alert.",
+    default: 48,
+    min: 1,
+    max: 720,
+  },
+  {
+    key: "erp.ai.alerts.stuckLrDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "LR missing (days)",
+    description:
+      "A dispatched bill still without an LR number this many days after dispatch raises an alert.",
+    default: 3,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.alerts.stuckCnDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Credit note not issued (days)",
+    description:
+      "An accepted credit-note request not issued after this many days raises an alert.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.alerts.stuckPackDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Packing batch incomplete (days)",
+    description:
+      "A packing batch whose cans still do not match its boxes after this many days raises an alert.",
+    default: 3,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.alerts.duplicateExpenseDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Duplicate expense window (days)",
+    description:
+      "The same person, amount and particular twice within this many days raises an alert.",
+    default: 3,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.complaints.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · complaint assistant",
+    description:
+      "Shows the batch trace and the possible-batch-problem notice on a customer request.",
+    default: true,
+  },
+  {
+    key: "erp.ai.complaints.clusterThreshold",
+    type: "integer",
+    category: "erp-ai",
+    label: "Complaints that make a batch problem",
+    description:
+      "This many requests touching the same lots within the window below show a possible batch problem.",
+    default: 3,
+    min: 2,
+    max: 50,
+  },
+  {
+    key: "erp.ai.complaints.clusterDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Batch-problem window (days)",
+    description:
+      "The window the complaint cluster above is counted in.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "erp.ai.reorder.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · suggested re-order levels",
+    description:
+      "Shows suggested minimum and maximum levels from recent use. Nothing changes until somebody applies one.",
+    default: true,
+  },
+  {
+    key: "erp.ai.reorder.lookbackDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Use measured over (days)",
+    description:
+      "How far back average daily use is measured for a suggested level.",
+    default: 90,
+    min: 7,
+    max: 730,
+  },
+  {
+    key: "erp.ai.reorder.minCoverDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Minimum cover (days)",
+    description:
+      "The suggested minimum is this many days of average use.",
+    default: 7,
+    min: 1,
+    max: 180,
+  },
+  {
+    key: "erp.ai.reorder.maxCoverDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Maximum cover (days)",
+    description:
+      "The suggested maximum is this many days of average use.",
+    default: 21,
+    min: 1,
+    max: 365,
+  },
 ] as const satisfies readonly SettingDefinition[];
 
 export type SettingKey = (typeof SETTINGS)[number]["key"];
@@ -3635,6 +3897,11 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
  */
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
+
+  /* A suggested minimum at or above the suggested maximum is a level nobody can hold. */
+  if (config["erp.ai.reorder.minCoverDays"] >= config["erp.ai.reorder.maxCoverDays"]) {
+    problems.push("The ERP's minimum cover days must be below its maximum cover days.");
+  }
 
   /*
    * A push slower than the full team read is a push that never arrives first.
@@ -4261,6 +4528,30 @@ export type Config = {
   "whatsapp.unconfirmedExpiryHours": number;
   "whatsapp.autoConfirmAfterHours": number;
 
+  "erp.ai.voice.enabled": boolean;
+  "erp.ai.alerts.enabled": boolean;
+  "erp.ai.alerts.rateJumpPct": number;
+  "erp.ai.alerts.rateLookback": number;
+  "erp.ai.alerts.rateMissingDays": number;
+  "erp.ai.alerts.sfgLossPct": number;
+  "erp.ai.alerts.fillLossPct": number;
+  "erp.ai.alerts.writeOffCount": number;
+  "erp.ai.alerts.writeOffDays": number;
+  "erp.ai.alerts.marginPct": number;
+  "erp.ai.alerts.fulfilDays": number;
+  "erp.ai.alerts.readyUnbilledHours": number;
+  "erp.ai.alerts.stuckTestHours": number;
+  "erp.ai.alerts.stuckLrDays": number;
+  "erp.ai.alerts.stuckCnDays": number;
+  "erp.ai.alerts.stuckPackDays": number;
+  "erp.ai.alerts.duplicateExpenseDays": number;
+  "erp.ai.complaints.enabled": boolean;
+  "erp.ai.complaints.clusterThreshold": number;
+  "erp.ai.complaints.clusterDays": number;
+  "erp.ai.reorder.enabled": boolean;
+  "erp.ai.reorder.lookbackDays": number;
+  "erp.ai.reorder.minCoverDays": number;
+  "erp.ai.reorder.maxCoverDays": number;
   "voice.enabled": boolean;
   "voice.maxSeconds": number;
   "voice.maxSizeMb": number;
