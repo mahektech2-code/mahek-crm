@@ -1,9 +1,8 @@
 import Link from "next/link";
-import { Card, CardHeader, MetricStrip, PageHeader, Td, Th, Tr } from "@/components/ui/primitives";
+import { Card, CardHeader, MetricStrip, Td, Th, Tr } from "@/components/ui/primitives";
 import { DeliveryStatus } from "@/components/whatsapp/delivery-status";
 import { stamp } from "@/lib/format";
 import { trackerPage } from "@/lib/services/whatsapp-tracker-service";
-import { WhatsappTabs } from "../whatsapp-tabs";
 
 export const metadata = { title: "WhatsApp messages - Founder Command Centre - MahekOne" };
 
@@ -41,12 +40,7 @@ export default async function Page({
   const pct = (n: number, of: number) => (of ? `${Math.round((n / of) * 100)}%` : "—");
 
   return (
-    <div className="p-6">
-      <PageHeader
-        title="WhatsApp"
-        subtitle="Every message, and how far it got — sent, delivered, read and replied. Receipts come from WhatsApp itself for messages sent through the API; a message pasted by hand only has the person's confirmation."
-      />
-      <WhatsappTabs current="messages" />
+    <div>
 
       <form className="mb-4 flex flex-wrap items-end gap-3" method="get">
         <Filter label="Period">

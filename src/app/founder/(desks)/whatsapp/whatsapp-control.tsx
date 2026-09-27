@@ -10,7 +10,6 @@ import {
   Input,
   Callout,
   MetricStrip,
-  PageHeader,
   Select,
   Td,
   Textarea,
@@ -28,7 +27,6 @@ import {
   setWhatsappServiceAction,
 } from "@/lib/actions/whatsapp-founder";
 import type { MessagePreview } from "@/lib/services/whatsapp-service";
-import { WhatsappTabs } from "./whatsapp-tabs";
 import { MessagePreviewView } from "./message-preview";
 import {
   SecretCredentialRow,
@@ -148,12 +146,7 @@ export function WhatsappControl(props: {
   const sent = (c.sent ?? 0) + (c.delivered ?? 0) + (c.read ?? 0);
 
   return (
-    <div className="p-6">
-      <PageHeader
-        title="WhatsApp"
-        subtitle="Whether messages go to customers through the WhatsApp API at all is decided here, and only here. Off, every screen copies and pastes exactly as before."
-      />
-      <WhatsappTabs current="setup" />
+    <div>
 
       {/* ------------------------------------------------------- the switch */}
       <Card className="mb-4 overflow-hidden">
