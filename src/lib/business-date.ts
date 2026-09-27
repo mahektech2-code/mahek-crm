@@ -558,7 +558,7 @@ export const REPORT_PERIOD_LABELS: Record<ReportPeriod, string> = {
   "last-month": "Last month",
   quarter: "This quarter",
   "last-quarter": "Last quarter",
-  ytd: "Year to date",
+  ytd: "FY to date",
   custom: "Custom range",
 };
 
@@ -607,8 +607,15 @@ export function reportRange(
         to: addDays(start, -1),
       };
     }
-    case "ytd":
-      return { from: `${day.slice(0, 4)}-01-01`, to: day };
+    case "ytd": {
+      // THE FINANCIAL YEAR, April to March — the only "year" at Mahek (PRD
+      // decision Q10). The bill numbers carry it (MMI/26-27/1119) and accounts
+      // close on it, so a year to date from 1 January answered a question
+      // nobody here asks and mixed two financial years into one figure.
+      const y = Number(day.slice(0, 4));
+      const fyStart = Number(day.slice(5, 7)) >= 4 ? y : y - 1;
+      return { from: `${fyStart}-04-01`, to: day };
+    }
     case "custom":
       // A half-given custom range is the day itself rather than an error: the
       // screen is a set of URL parameters and somebody will arrive with one of

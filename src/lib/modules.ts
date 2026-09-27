@@ -133,6 +133,22 @@ const founder = (
   note,
 });
 
+/** A Command Centre section, addressed `/founder?s=<section>`. */
+const cc = (
+  slug: string,
+  section: string,
+  label: string,
+  group: string,
+  note?: string,
+): AppModule => ({
+  key: `founder.${slug}`,
+  app: "founder",
+  label,
+  group,
+  href: `/founder?s=${section}`,
+  note,
+});
+
 const enquiries = (
   slug: string,
   label: string,
@@ -726,43 +742,38 @@ export const APP_MODULES: AppModule[] = [
    * true without a second app. The overview is its own module too, so the
    * headline can be given without the four screens behind it.
    */
-  { key: "founder.overview", app: "founder", label: "Overview", group: "Company", href: "/founder", exact: true },
-  founder(
-    "team",
-    "Team performance",
-    "Company",
-    "Everybody scored — telecallers and the field team together, ranked. Withholding it leaves the overview's headline with nowhere to click.",
-  ),
-  founder(
-    "money",
-    "Money",
-    "Company",
-    "What is outstanding, what is waiting on a decision, and what has been collected.",
-  ),
-  founder(
-    "people",
-    "People",
-    "Company",
-    "Headcount, by office and department. Not attendance — see HRMS's own note on that.",
-  ),
-  founder(
-    "crm",
-    "CRM",
-    "Company",
-    "The order book's own five, with links into the Reports app for the full breakdown.",
-  ),
+  /*
+   * THE FOUNDER COMMAND CENTRE. One module per section (PRD §5.5). The seven
+   * keys that existed before it are KEPT — a module key is stored in grants and
+   * renaming one silently revokes it — even where the section behind it grew:
+   * `founder.crm` opens Sales & order book. Sections are addressed `?s=` on
+   * `/founder`; Price lists and WhatsApp keep their own desk pages as well.
+   */
+  { key: "founder.overview", app: "founder", label: "Company", group: "Today", href: "/founder", exact: true },
+  cc("inbox", "inbox", "Needs you", "Today", "Every decision waiting on the founder, every alarm, and what was handed on."),
+  cc("crm", "sales", "Sales & order book", "Sell", "Every order from every source, and deciding them."),
+  cc("team", "team", "Targets & performance", "Sell", "Setting and revising targets; everyone scored, ranked and explained."),
+  cc("customers", "customers", "Customers", "Sell", "Every customer and lead, the full record, and every change to an account."),
+  cc("leads", "leads", "Leads, samples & distributors", "Sell", "The three ladders, gates, samples and distributor appointments."),
+  cc("enquiries", "enquiries", "Website enquiries", "Sell", "The enquiries desk end to end."),
+  cc("calling", "calling", "Calling operations", "Operate", "The telecallers' day: queues, calls, reminders, EOD and the call assistant."),
+  cc("field", "field", "Field force", "Operate", "Where they are, attendance, visits, travel, expenses, leave and devices."),
+  cc("service", "service", "Service", "Operate", "Complaints end to end."),
+  cc("money", "money", "Money", "Operate", "Bills, receipts, outstanding, collections and credit notes — the whole accounts desk."),
   founder(
     "price-lists",
     "Price lists",
-    "Company",
+    "Founder desks",
     "Mahek's price lists — create, duplicate, import, publish and export them. The founder's desk is one of the two that may change a price; the CRM and the Sales Dashboard only read them.",
   ),
   founder(
     "whatsapp",
     "WhatsApp",
-    "Company",
+    "Founder desks",
     "The switch that decides whether WhatsApp messages go to customers through the API at all, which approved Wati template each message is sent as, and what has gone out. Nothing is sent through the API unless it is switched on here.",
   ),
+  cc("people", "people", "People & organisation", "Organisation", "Headcount, the employee master, reporting lines and the business calendar."),
+  cc("system", "system", "Data operations & health", "Organisation", "Every sync, import, repair and recompute, and how fresh the data is."),
 
   /* -------------------------------------------------- the Website Enquiries app */
   /*

@@ -4153,6 +4153,33 @@ export const notifications = pgTable(
   (t) => [index("notifications_user_idx").on(t.userId, t.read)],
 );
 
+/* ------------------------------------------------- founder inbox marks */
+
+/**
+ * The human half of the Founder Command Centre's "Needs you" inbox. Items
+ * themselves are derived from live rules and never stored; a hand-off and a
+ * snooze are decisions somebody made, and a rebuild must not forget them.
+ * One row per viewer per item — see drizzle/0172.
+ */
+export const founderInboxMarks = pgTable(
+  "founder_inbox_marks",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    itemKey: text("item_key").notNull(),
+    /** `handed` or `snoozed`. */
+    kind: text("kind").notNull(),
+    toUserId: text("to_user_id").references(() => users.id, { onDelete: "set null" }),
+    note: text("note"),
+    untilDate: date("until_date"),
+    why: text("why"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("founder_inbox_marks_user_item_key").on(t.userId, t.itemKey)],
+);
+
 /* ------------------------------------------------------------------ feedback */
 
 /**

@@ -248,6 +248,17 @@ export async function scopeForUser(
     return { user, role, scope: { kind: "all", userIds: null } };
   }
 
+  /*
+   * THE FOUNDER COMMAND CENTRE IS COMPANY-WIDE, at every level (PRD §5.3,
+   * decision Q1). A delegate is narrowed by the MODULES they hold, never by
+   * whose book they sit in, and no preference cookie from the CRM reaches in
+   * here — an admin who ticked "My book" there must not read the company's
+   * figures as their own book here.
+   */
+  if (hat?.app === "founder") {
+    return { user, role, scope: { kind: "all", userIds: null } };
+  }
+
   if (role === "associate") {
     return {
       user,
@@ -1290,7 +1301,17 @@ export async function requireCapability(
 ): Promise<RequestScope & { authorisedBy: Role; authorisedIn: AppId | null }> {
   const ctx = await resolveScope();
   const hats = await hatsFor(ctx.user);
-  const granting = grantingHat(hats, capability);
+  /*
+   * THE REQUEST'S OWN APP IS ASKED FIRST (PRD §5.2, P16). An approval taken in
+   * the Founder Command Centre must be recorded as the founder's, even when
+   * the same person also holds Accounts — the narrowest-hat rule below would
+   * otherwise write "Accounts manager" and hide who actually decided.
+   */
+  const inForce = await requestHat(ctx.user);
+  const granting =
+    inForce && hats.some((h) => h.app === inForce.app) && can(inForce, capability)
+      ? inForce
+      : grantingHat(hats, capability);
   if (granting) {
     /*
      * TWO HALVES, and they are returned separately rather than as the hat

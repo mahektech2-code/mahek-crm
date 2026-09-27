@@ -92,6 +92,16 @@ const nextConfig: NextConfig = {
        *
        * Permanent, because the old path is not coming back.
        */
+      /*
+       * The Founder Dashboard's four read-only tabs became sections of the
+       * Founder Command Centre, addressed `/founder?s=<section>`. Their old
+       * paths keep working for every bookmark that still names them.
+       */
+      { source: "/founder/team", destination: "/founder?s=team", permanent: true },
+      { source: "/founder/money", destination: "/founder?s=money", permanent: true },
+      { source: "/founder/people", destination: "/founder?s=people", permanent: true },
+      { source: "/founder/crm", destination: "/founder?s=sales", permanent: true },
+
       { source: "/orders", destination: "/accounts", permanent: true },
       { source: "/orders/:path*", destination: "/accounts/:path*", permanent: true },
 
