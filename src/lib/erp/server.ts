@@ -21,7 +21,7 @@ export type ScreenLoad = {
 /** Acting on one record: a button in its drawer, perhaps after a prompt. */
 export type ActionHandler = (ctx: ErpContext, id: string, values: Values) => Promise<Result<unknown>>;
 /** Acting on many selected records at once. */
-export type BulkHandler = (ctx: ErpContext, ids: string[]) => Promise<Result<unknown>>;
+export type BulkHandler = (ctx: ErpContext, ids: string[], values: Values) => Promise<Result<unknown>>;
 /** Saving a form: a header and, for a multi-line document, its lines. */
 export type FormHandler = (
   ctx: ErpContext,

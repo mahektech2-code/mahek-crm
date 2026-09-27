@@ -132,6 +132,34 @@ function Control({
       </span>
     );
   }
+  if (f.t === "scan") {
+    /* A USB or Bluetooth scanner types the label and presses Enter, so this is
+       a plain input — never a list that has to be opened first. */
+    const listId = `scan-${f.k}`;
+    return (
+      <span style={{ position: "relative", display: "block" }}>
+        <input
+          value={value}
+          list={listId}
+          autoComplete="off"
+          placeholder="Scan or type the lot label"
+          onChange={(e) => onChange(e.target.value.trim())}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.preventDefault();
+          }}
+          style={{ ...base(error), padding: "0 30px 0 10px", fontFamily: "IBM Plex Mono, monospace" }}
+        />
+        <span style={{ position: "absolute", right: 10, top: 11, color: "#6B7385", display: "flex", pointerEvents: "none" }}>
+          <Icon n="scan" />
+        </span>
+        <datalist id={listId}>
+          {opts.map((o) => (
+            <option key={o} value={o} />
+          ))}
+        </datalist>
+      </span>
+    );
+  }
   if (f.t === "suggest") {
     const has = !!derived;
     return (
