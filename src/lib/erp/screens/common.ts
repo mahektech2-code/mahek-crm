@@ -6,6 +6,7 @@ import type { ErpContext } from "../access";
 import type { ErpPower } from "../powers";
 import type { ColSpec } from "../ui";
 import { err, type Result } from "@/lib/result";
+import { calendarDate } from "@/lib/business-date";
 
 /* Pieces every operations screen reads the same way. */
 
@@ -38,7 +39,8 @@ export async function materials() {
   return db.select().from(erpRawMaterials).where(eq(erpRawMaterials.active, true)).orderBy(asc(erpRawMaterials.name));
 }
 
-export const today = () => new Date().toISOString().slice(0, 10);
+/** Today in the business's zone — never a UTC slice, which is yesterday until 05:30 IST. */
+export const today = (): string => calendarDate(new Date());
 
 /** A key for options that depend on two fields at once (`optsBy.by` as a list). */
 export const pair = (...parts: string[]) => parts.join("|");
