@@ -3,6 +3,7 @@ import {
   text,
   integer,
   bigint,
+  numeric,
   boolean,
   doublePrecision,
   timestamp,
@@ -641,6 +642,8 @@ export const appIdEnum = pgEnum("app_id", [
   "founder",
   /** Website Enquiries — its own app, granted separately from CRM/Accounts/HRMS. */
   "enquiries",
+  /** The factory, the godowns and fulfilment: purchase to dispatch. */
+  "erp",
 ]);
 
 /* --------------------------------------------------------- §2 configuration */
@@ -10137,3 +10140,238 @@ export type PriceListScope = typeof priceListScopes.$inferSelect;
 export type PriceListDiscountTerm = typeof priceListDiscountTerms.$inferSelect;
 export type PriceListParseRow = typeof priceListParseRows.$inferSelect;
 export type PriceRequest = typeof priceRequests.$inferSelect;
+
+
+/* ===========================================================================
+ * ERP — the operations app (purchase → stock → production → dispatch).
+ *
+ * Scope and every rule below come from docs/erp/02-ERP-FUNCTIONAL-SPEC.md,
+ * which is itself a line-by-line rebuild of the client's AppSheet "Mahek Plus".
+ * Where the ERP already has a MahekOne record for the same real thing — a
+ * customer, a product, an employee, a price list — it extends that record
+ * rather than keeping a second copy (PRD §8), so the tables here are only the
+ * things MahekOne never held.
+ * ======================================================================== */
+
+/**
+ * A godown. `reserved` marks the one pseudo-godown, "Item Lost Record", that
+ * stock is written off INTO: it is a real location in every ledger so a loss
+ * is recorded rather than simply absent, and only the lost-stock power may
+ * pick it (spec §10.1).
+ */
+export const erpGodowns = pgTable(
+  "erp_godowns",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    city: text("city"),
+    state: text("state"),
+    region: text("region"),
+    address: text("address"),
+    phone: text("phone"),
+    gstin: text("gstin"),
+    email: text("email"),
+    /** `active` | `inactive`. */
+    status: text("status").notNull().default("active"),
+    remark: text("remark"),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    reserved: boolean("reserved").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("erp_godowns_name_key").on(t.name),
+    check("erp_godowns_status_check", sql`${t.status} in ('active', 'inactive')`),
+  ],
+);
+
+/** Who is assigned to a godown — the list a working location is chosen from. */
+export const erpGodownStaff = pgTable(
+  "erp_godown_staff",
+  {
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.godownId, t.userId] })],
+);
+
+/** A person's ERP preferences. Only the working location today (spec §2.2). */
+export const erpUserSettings = pgTable("erp_user_settings", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  workingGodownId: text("working_godown_id").references(() => erpGodowns.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * THE ERP'S SPECIAL POWERS, granted to a person rather than to a level.
+ *
+ * The source ties them to the AppSheet admin role and to three email
+ * addresses — the CEO verifies a test, the office sees purchase money. They
+ * are facts about particular people, which a hat (app, level) cannot say
+ * without making every ERP manager the CEO. An ERP administrator holds every
+ * power without a row. See `lib/erp/powers.ts`.
+ */
+export const erpUserPowers = pgTable(
+  "erp_user_powers",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    power: text("power").notNull(),
+    grantedById: text("granted_by_id").references(() => users.id),
+    grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.power] })],
+);
+
+/**
+ * The editable value lists every ERP form picks from (spec §3): material
+ * types, areas, transporters, complaint types and the rest. A list is keyed
+ * by `list_key`; a retired value is deactivated, never deleted, because
+ * records already carry it.
+ */
+export const erpRefValues = pgTable(
+  "erp_ref_values",
+  {
+    id: text("id").primaryKey(),
+    listKey: text("list_key").notNull(),
+    value: text("value").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [uniqueIndex("erp_ref_values_list_value_key").on(t.listKey, t.value)],
+);
+
+/**
+ * Everything the business buys: chemicals, cans, drums, boxes, stationery.
+ * A chemical carries a density (kg → litre) and the tests every lot must pass;
+ * both are required for chemicals and meaningless otherwise (spec §4.1).
+ */
+export const erpRawMaterials = pgTable(
+  "erp_raw_materials",
+  {
+    id: text("id").primaryKey(),
+    serialNo: integer("serial_no").notNull(),
+    name: text("name").notNull(),
+    code: text("code"),
+    /** `Kg` | `Litre` | `Unit`. */
+    unit: text("unit").notNull(),
+    materialType: text("material_type").notNull(),
+    density: numeric("density", { precision: 8, scale: 3, mode: "number" }),
+    testingList: text("testing_list").array().notNull().default(sql`'{}'::text[]`),
+    pricePaise: bigint("price_paise", { mode: "number" }),
+    remark: text("remark"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("erp_raw_materials_name_key").on(t.name),
+    uniqueIndex("erp_raw_materials_serial_key").on(t.serialNo),
+    check("erp_raw_materials_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Unit')`),
+  ],
+);
+
+/**
+ * A supplier ("Purchase Party"). NOT a `customers` row: a supplier in the
+ * customer table would land on the Call Log. `party_code` is part of every
+ * raw-material lot number bought from them, so it is required to be stable.
+ */
+export const erpSuppliers = pgTable(
+  "erp_suppliers",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    partyCode: text("party_code"),
+    area: text("area"),
+    location: text("location"),
+    state: text("state"),
+    creditDays: integer("credit_days"),
+    mobile: text("mobile"),
+    whatsapp: text("whatsapp"),
+    broker: text("broker"),
+    grade: text("grade"),
+    email: text("email"),
+    gstin: text("gstin"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [uniqueIndex("erp_suppliers_name_key").on(t.name)],
+);
+
+/**
+ * The packing half of a SKU that the catalogue never held (spec §4.3): which
+ * can or drum it is filled into, how many empty boxes a box of it takes, the
+ * box type and the box's rate. Cans per box, litres per can and weight are
+ * already on `products` and are read from there.
+ *
+ * A LOOSE SKU is one with cans_per_box = 1 AND empty_boxes_required = 0 — it
+ * is sold as cans from finished-goods stock; every other SKU is sold in boxes
+ * from packing stock (spec §1.2).
+ */
+export const erpProductPacking = pgTable("erp_product_packing", {
+  productId: text("product_id")
+    .primaryKey()
+    .references(() => products.id, { onDelete: "cascade" }),
+  canUseMaterialId: text("can_use_material_id").references(() => erpRawMaterials.id),
+  emptyBoxesRequired: integer("empty_boxes_required").notNull().default(0),
+  /** One of the box types in spec §3, or null for a loose can. */
+  boxType: text("box_type"),
+  boxRatePaise: bigint("box_rate_paise", { mode: "number" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id"),
+});
+
+/**
+ * The Sales Party fields a MahekOne customer does not carry (spec §4.4).
+ *
+ * One row per customer, seeded from `sheet_party_rows` by name and edited in
+ * the ERP from then on. `pending_activation` is the source's "Pending" party
+ * status — a party an admin has not yet verified, whose orders wait for
+ * "Approved By Admin". Deactivation is NOT here: it is the customer's own
+ * `status = deactivated`, the one value MahekOne never derives, so the CRM and
+ * the ERP cannot disagree about whether a customer is closed.
+ */
+export const erpCustomerProfiles = pgTable("erp_customer_profiles", {
+  customerId: text("customer_id")
+    .primaryKey()
+    .references(() => customers.id, { onDelete: "cascade" }),
+  state: text("state"),
+  transporter: text("transporter"),
+  weightType: text("weight_type"),
+  segment: text("segment"),
+  counterTypes: text("counter_types").array().notNull().default(sql`'{}'::text[]`),
+  grade: text("grade"),
+  standingInstructions: text("standing_instructions"),
+  allocateEmail: text("allocate_email"),
+  monthlyTargetPaise: bigint("monthly_target_paise", { mode: "number" }),
+  pendingActivation: boolean("pending_activation").notNull().default(false),
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
+  activatedById: text("activated_by_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id"),
+});
+
+export type ErpGodown = typeof erpGodowns.$inferSelect;
+export type ErpRawMaterial = typeof erpRawMaterials.$inferSelect;
+export type ErpSupplier = typeof erpSuppliers.$inferSelect;
+export type ErpRefValue = typeof erpRefValues.$inferSelect;

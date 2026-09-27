@@ -50,6 +50,7 @@ const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["/admin", "admin"],
   ["/founder", "founder"],
   ["/enquiries", "enquiries"],
+  ["/erp", "erp"],
 ];
 
 export function appFor(pathname: string): string | null {

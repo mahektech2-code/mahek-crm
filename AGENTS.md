@@ -42,6 +42,8 @@ npm run jobs -- nightly    # run a scheduled task by hand
 npm run jobs -- sheet-payments             # pull the Payment Status tab
 npm run jobs -- taken-order-sync           # pull the Taken Order tab, then
                            # rebuild who is held back from order chasing
+npm run jobs -- erp-seed-profiles          # ERP customer profiles from the Sales
+                           # Party sheet — fills blanks only, re-runnable
 npm run jobs -- taken-order-reparse        # re-read what is stored — the one
                            # to run when the RULE changed, not the sheet
 npm run jobs -- project-sheet --owner=vikram@mahek.in --bills
@@ -1312,6 +1314,62 @@ changing a password takes a code instead of the current password.
 
 **`otp_channel` was declared in schema.ts and never created by a migration**;
 `0168` creates it, guarded.
+
+## The ERP (operations app)
+
+**The ERP is the client's AppSheet "Mahek Plus" rebuilt as a MahekOne app**
+(`erp`, at `/erp`): purchase, testing, stock, production, transfers, orders,
+dispatch, transport, credit notes, follow-up and petty cash. `docs/erp/` is
+the whole of its scope — 01 the PRD, 02 the functional spec (every field,
+formula and action of the source, with the anomalies and the decisions taken
+on them in §14), 03/05 the design briefs, 04 the eight AI features. Nothing
+outside those documents is in scope.
+
+**One registry, three readers.** `lib/erp/registry.ts` lists every screen by
+group. A screen becomes a module (`erp.<key>`) in `lib/modules.ts` only once it
+is `built`, and the sidebar, the module guard and the Access screen all read
+it. Each screen is its own module because the source granted screens one at a
+time. The dashboard and Settings are always open.
+
+**Its decisions are POWERS granted to people, not capabilities of a level.**
+The source tied "verify a test", "see purchase money" and the rest to three
+email addresses and an admin role; a hat (app, level) cannot say "the CEO"
+without making every ERP manager the CEO. `lib/erp/powers.ts` names them,
+`erp_user_powers` grants them, an ERP administrator holds all of them without a
+row, and the ERP powers screen is where an administrator hands them out. A
+column a power reveals is removed on the SERVER (`visibleCols` /
+`withoutHidden`) — the value never reaches the browser — and every write that
+needs one re-checks it in the handler.
+
+**Every write goes through four server actions** (`lib/actions/erp.ts`): run
+an action, run a bulk action, submit a form, load a form. Each re-checks that
+the person holds the SCREEN before the screen module's own handler checks any
+power, because a server action is a URL and a hidden button is not a
+permission. Screen modules live in `lib/erp/screens/`; a module is a loader
+(rows, the columns a person's powers reveal, and each record's actions with
+the reason one is not yet available) plus its handlers.
+
+**The generic screens are ports of the design**, in `app/erp/_ui/`: the list
+(search, godown filter, grouping with aggregates, chips, bulk bar, pager), the
+record drawer, the form drawer (header plus lines for a multi-line document),
+prompts, confirms and the toast. Rules are the server's; the client only
+filters, sorts and pages what it was sent.
+
+**The working location is chosen from the godowns a person is assigned to**
+(`erp_godown_staff`), never typed; an administrator is assigned everywhere.
+Nobody assigned means no working location, said in words in the header, not a
+guessed default.
+
+**The ERP extends MahekOne's records rather than copying them** (PRD §8): a
+Sales Party IS a `customers` row plus `erp_customer_profiles`; a product IS a
+`products` row plus `erp_product_packing`; price lists are the Price Desk's,
+read; employees are HRMS's, read. "Deactive" is the customer's own
+`status = deactivated`, so the CRM and the ERP cannot disagree about whether a
+customer is closed. "Item Lost Record" is a reserved godown, so a write-off is
+a movement into a real location rather than stock that simply vanished.
+
+**The ERP drops the desktop floor** (`AppFrame floor={false}`) — it is used on
+a tablet at the godown gate — and every other app keeps it.
 
 ## Layout
 

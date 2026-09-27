@@ -1,4 +1,5 @@
 import { APPS, type AppId } from "./apps";
+import { ERP_GROUPS, erpHref } from "./erp/registry";
 
 /* ---------------------------------------------------------------------------
  * What a person can open INSIDE an app.
@@ -789,6 +790,27 @@ export const APP_MODULES: AppModule[] = [
     "Enquiries",
     "Website Enquiries",
     "The worklist itself — every enquiry, who it is assigned to, and what it is waiting on.",
+  ),
+  /*
+   * THE ERP: one module per BUILT screen, read off its own registry so the
+   * sidebar, this guard and the access screen cannot disagree. Each screen is
+   * separately grantable because the source's permission list named screens.
+   * The dashboard is the app root and matched exactly, or it would swallow
+   * every /erp/* path.
+   */
+  ...ERP_GROUPS.flatMap((g) =>
+    g.screens
+      .filter((sc) => sc.built)
+      .map(
+        (sc): AppModule => ({
+          key: `erp.${sc.key}`,
+          app: "erp",
+          label: sc.label,
+          group: `ERP · ${g.label}`,
+          href: erpHref(sc),
+          exact: sc.slug === "",
+        }),
+      ),
   ),
 ];
 

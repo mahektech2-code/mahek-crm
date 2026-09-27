@@ -41,6 +41,8 @@ const files = [
      place to start reading than one sentence naming the table. */
   "src/lib/mbos-columns.test.ts",
   "src/lib/journeys.test.ts",
+  // The ERP: access, powers, working location and the masters.
+  "src/lib/erp/erp-foundation.test.ts",
   // The call assistant: learning from logged calls, reading with no model,
   // and the save writing back what the call was really logged as.
   "src/lib/call-intel.test.ts",
