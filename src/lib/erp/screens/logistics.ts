@@ -44,6 +44,9 @@ function transportList(scope: TransportScope): ScreenModule {
         detailRows(),
       ]);
       const shown = rows.filter((r) => (scope === "pendingLr" ? !r.t.lrNo : scope === "trackLr" ? !!r.t.lrNo && r.t.trackStatus === "Track" : true));
+      const { featureState, pendingFor } = await import("../ai");
+      const pendingLr = await pendingFor("photos");
+      const photosOn = (await featureState("photos", true)).on;
       const all: Col[] = [
         { k: "orderNo", l: "Order no", t: "mono" },
         { k: "billDate", l: "Bill date", t: "d" },
@@ -102,6 +105,14 @@ function transportList(scope: TransportScope): ScreenModule {
             title: `${r.party} · bill ${t.billNo ?? t.orderNo}`,
             header: `${t.transporter ?? "No transporter"} · ${t.materialStage}`,
             actions: [
+              ...(pendingLr.has(t.id)
+                ? [
+                    { id: "aiLr", l: "Review LR reading", ai: true, primary: true, loadsForm: true } as ActionSpec,
+                    { id: "aiLrReject", l: "Reject LR reading", confirm: "Reject the AI reading of this LR? Nothing changes." } as ActionSpec,
+                  ]
+                : photosOn && !t.lrNo
+                  ? [{ id: "aiLrRead", l: "Read LR photo", ai: true, prompt: { title: "Photograph the lorry receipt", sub: "The LR number is read and checked against this bill; you confirm it before it is saved.", submit: "Read the LR", fields: [{ k: "photo", l: "LR photo", t: "photo" as const, req: true }] } } as ActionSpec]
+                  : []),
               {
                 id: "update",
                 l: t.lrNo ? "Update consignment" : "Enter LR",
@@ -126,7 +137,15 @@ function transportList(scope: TransportScope): ScreenModule {
         }),
       };
     },
+    formLoaders: {
+      aiLr: async (_ctx, id) => (await import("../ai-photos")).lrReviewForm(scope, id),
+    },
+    forms: {
+      aiLr: async (ctx, h, _l, suggestionId) => (suggestionId ? (await import("../ai-photos")).applyLr(ctx, suggestionId, h) : err("No reading named.", "not_found")),
+    },
     actions: {
+      aiLrRead: async (ctx, id, v) => (await import("../ai-photos")).readLr(ctx, id, text(v.photo)),
+      aiLrReject: async (ctx, id) => (await import("../ai-photos")).rejectPhotoReading(ctx, id),
       async update(ctx, id, values) {
         const track = text(values.track);
         const stage = text(values.stage);
@@ -251,7 +270,7 @@ async function requestRows(where?: ReturnType<typeof eq>): Promise<RequestRow[]>
   return (where ? q.where(where) : q).orderBy(desc(erpRequests.raisedAt));
 }
 
-function requestRow(ctx: ErpContext, x: RequestRow, panel?: ListRow["panel"]): ListRow {
+function requestRow(ctx: ErpContext, x: RequestRow, panel?: ListRow["panel"], ai?: { on: boolean; pending: boolean; summary?: string }): ListRow {
   const r = x.r;
   const decider = ctx.powers.has("decideRequests");
   const why = decider ? "" : "Only an admin or the office decides a request";
@@ -294,6 +313,10 @@ function requestRow(ctx: ErpContext, x: RequestRow, panel?: ListRow["panel"]): L
         init: { remark: r.remark ?? "", responsible: r.responsible ?? "" },
       },
     });
+  if (ai?.pending) {
+    actions.unshift({ id: "aiComplaint", l: "Review the suggestion", ai: true, primary: true, loadsForm: true });
+    actions.push({ id: "aiComplaintReject", l: "Reject the suggestion", confirm: "Reject the suggested type and summary?" });
+  } else if (ai?.on && r.description) actions.push({ id: "aiComplaintRead", l: "Suggest type and summary", ai: true });
   actions.push({ id: "more", l: "Add More Credit", loadsForm: true });
   actions.push({ id: "customer", l: "View customer", href: `/erp/customers?open=${r.customerId}` });
   if (r.cnFileId) actions.push({ id: "file", l: "Open credit note", href: `/api/attachments/${r.cnFileId}` });
@@ -318,6 +341,7 @@ function requestRow(ctx: ErpContext, x: RequestRow, panel?: ListRow["panel"]): L
     title: x.party,
     header: `${r.complaintType ?? "Request"} · raised ${fd(calendarDate(r.raisedAt))}`,
     fields: [
+      ...(ai?.summary ? [{ l: "Summary (confirmed)", v: ai.summary }] : []),
       { l: "Area", v: x.area ?? "—", der: true },
       { l: "Bill date", v: r.billDate ? fd(r.billDate) : "—" },
       { l: "Credit note amount (with GST)", v: r.cnAmountPaise == null ? "—" : inr(Math.round(r.cnAmountPaise * 1.18)), der: true },
@@ -404,14 +428,21 @@ function requestList(scope: RequestScope): ScreenModule {
         },
         rows: await (async () => {
           const assist = await requestAssist(rows);
-          return rows.map((x) => requestRow(ctx, x, assist.get(x.r.id)));
+          const ai = await import("../ai");
+          const cmp = await import("../ai-complaints");
+          const on = (await ai.featureState("complaints")).on;
+          const pend = await ai.pendingFor("complaints");
+          const summaries = await cmp.confirmedSummaries(rows.map((x) => x.r.id));
+          return rows.map((x) => requestRow(ctx, x, assist.get(x.r.id), { on, pending: pend.has(x.r.id), summary: summaries.get(x.r.id) }));
         })(),
       };
     },
     forms: {
       new: (ctx, h) => saveRequest(ctx, h),
+      aiComplaint: async (ctx, h, _l, id) => (id ? (await import("../ai-complaints")).applyComplaint(ctx, id, h) : err("No suggestion named.", "not_found")),
     },
     formLoaders: {
+      aiComplaint: async (_ctx, id) => (await import("../ai-complaints")).complaintReviewForm(scope, id),
       async more(ctx, id) {
         const [x] = await requestRows(eq(erpRequests.id, id));
         if (!x) return null;
@@ -420,6 +451,8 @@ function requestList(scope: RequestScope): ScreenModule {
       },
     },
     actions: {
+      aiComplaintRead: async (ctx, id) => (await import("../ai-complaints")).suggestComplaint(ctx, id),
+      aiComplaintReject: async (ctx, id) => (await import("../ai-complaints")).rejectComplaint(ctx, id),
       accept: (ctx, id) => decide(ctx, [id], "Accepted"),
       reject: (ctx, id) => decide(ctx, [id], "Rejected"),
       async issue(ctx, id, v) {

@@ -215,7 +215,7 @@ function lineFlags(l: OrderLine): string[] {
 
 /* ============================================================== forms */
 
-async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date: string; godown: string; billing: string; delivery: string; transporter: string }): Promise<FormSpec> {
+export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date: string; godown: string; billing: string; delivery: string; transporter: string }): Promise<FormSpec> {
   const [gds, parties, skus, prices] = await Promise.all([godownOptions(ctx, { lost: false }), loadCustomers(), skuCatalogue(), priceBook()]);
   const active = parties.filter((p) => partyStatus(p) !== "Deactive");
   const names = active.map((p) => p.name);
@@ -711,6 +711,9 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
       });
   });
   await erpAudit(ctx, "erp.order.create", "erp_order", String(no), null, { lines: parsed.length, billing: billing.name });
+  /* AI-2: an order accepted from a drafted message closes that message, linked to the order. */
+  const inboxId = text(h.inboxId);
+  if (inboxId) await (await import("../ai-orders")).markConverted(ctx, inboxId, no);
   const noRate = parsed.filter((p) => p.rate == null).length;
   return okVoid(`Order ${no} saved · ${plural(parsed.length)}${noRate ? ` · ${noRate} without a rate: none on ${billing.priceTag ? `price list "${billing.priceTag}"` : "the party, which has no price list"}` : ""}`);
 }

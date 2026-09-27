@@ -58,7 +58,7 @@ export function Field({
   onUseSuggestion?: (v: string) => void;
 }) {
   const opts = options ?? f.opts ?? [];
-  const tag = f.t === "derived" ? "Calculated" : f.t === "suggest" ? "AI suggestion" : !f.req ? "Optional" : "";
+  const tag = f.conf ? (f.conf === "high" ? "AI · read" : f.conf === "check" ? "AI · check this" : "AI · not found") : f.t === "derived" ? "Calculated" : f.t === "suggest" ? "AI suggestion" : !f.req ? "Optional" : "";
   /* A control with several buttons inside cannot sit in a <label>: every
      button would take the whole label as its name, and a click on the label
      text would press the first one. Those fields are a named group instead. */
@@ -75,8 +75,8 @@ export function Field({
               fontWeight: 500,
               padding: "1px 6px",
               borderRadius: 8,
-              background: f.t === "derived" ? "#EDEFF3" : f.t === "suggest" ? "#F1ECFF" : "transparent",
-              color: f.t === "suggest" ? "#5223E0" : "#6B7385",
+              background: f.conf === "check" || f.conf === "not found" ? "#FDF6E7" : f.conf || f.t === "suggest" ? "#F1ECFF" : f.t === "derived" ? "#EDEFF3" : "transparent",
+              color: f.conf === "check" || f.conf === "not found" ? "#8A5C05" : f.conf || f.t === "suggest" ? "#5223E0" : "#6B7385",
               textTransform: "none",
               letterSpacing: 0,
             }}

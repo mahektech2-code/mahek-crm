@@ -1398,6 +1398,17 @@ and threshold is `erp.ai.*` configuration. A money or cost alert carries its
 power and is shown only to its holders — an AI surface never shows what the
 normal screen would not.
 
+**A reading is a pending suggestion until a person saves its review.** Bills,
+LRs, test photos, order messages and complaint descriptions are read by a model
+into `erp_ai_suggestions` (`lib/erp/ai.ts`: switch, key and monthly cap first);
+the matching and flagging after the read is rules (`engines/match.ts`); the
+review is the ordinary form, prefilled, with the source beside it, and saving
+goes through the ordinary save — so every base rule still applies — and logs
+accepted or edited. Each feature splits `read…` (the model) from `record…`
+(the rules) so the rules are tested without a model. Ask the ERP answers only
+through its tools, and each tool calls the SCREEN'S OWN LOADER as the person
+asking, so an answer can never hold a row or column their screen would not.
+
 **The ERP drops the desktop floor** (`AppFrame floor={false}`) — it is used on
 a tablet at the godown gate — and every other app keeps it.
 

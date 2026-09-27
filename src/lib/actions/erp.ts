@@ -171,3 +171,11 @@ export async function erpSearch(q: string): Promise<ErpSearchHit[]> {
   return out.slice(0, 10);
 }
 
+
+/** AI-5: a question answered from the screens this person can open. Answering only. */
+export async function erpAsk(question: string): Promise<{ ok: true; answer: import("@/lib/erp/ai-ask").AskAnswer } | { ok: false; error: string }> {
+  const ctx = await erpContext();
+  if (!ctx.level) return { ok: false, error: "The ERP is not on your account." };
+  const { askErp } = await import("@/lib/erp/ai-ask");
+  return askErp(ctx, question);
+}

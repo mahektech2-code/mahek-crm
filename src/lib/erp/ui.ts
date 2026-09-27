@@ -77,6 +77,8 @@ export type FieldSpec = {
   mic?: boolean;
   /** Field may not be edited (shown for context). */
   readOnly?: boolean;
+  /** How sure an AI reading is of this value: high, check, or not found. */
+  conf?: "high" | "check" | "not found";
 };
 
 export type FormSpec = {
@@ -99,6 +101,10 @@ export type FormSpec = {
   recordId?: string;
   /** Asks "are you sure" with this text (placeholders `{field}` filled). */
   confirm?: string;
+  /** Lines to start with (an AI draft, a copied document). */
+  initLines?: Record<string, string>[];
+  /** What an AI reading was read from, shown beside the proposed values. */
+  evidence?: { images?: string[]; text?: string; flags?: { tone: Tone; text: string }[]; note?: string };
 };
 
 /* ---------------------------------------------------------------- actions */

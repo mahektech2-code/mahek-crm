@@ -3778,6 +3778,148 @@ export const SETTINGS = [
     min: 1,
     max: 365,
   },
+  {
+    key: "erp.ai.bills.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · supplier bill reading",
+    description:
+      "Reads a photographed or scanned supplier bill and proposes the register's bill number, rate, GST and quantity. A person reviews every value before it is saved.",
+    default: true,
+  },
+  {
+    key: "erp.ai.bills.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Bill readings a month",
+    description:
+      "Past this many readings in a calendar month the feature goes quiet and says so.",
+    default: 500,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.ai.bill.qtyTolerancePct",
+    type: "integer",
+    category: "erp-ai",
+    label: "Bill quantity tolerance (%)",
+    description:
+      "A bill quantity further than this from the inward quantity is flagged on the review.",
+    default: 2,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.ai.bill.rateDeviationPct",
+    type: "integer",
+    category: "erp-ai",
+    label: "Bill rate deviation (%)",
+    description:
+      "A bill rate further than this from the supplier's last rate for the item is flagged on the review.",
+    default: 10,
+    min: 0,
+    max: 500,
+  },
+  {
+    key: "erp.ai.orders.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · orders from messages",
+    description:
+      "Turns a pasted or spoken customer message into draft order lines. Nothing becomes an order until a person accepts the draft.",
+    default: true,
+  },
+  {
+    key: "erp.ai.orders.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Order readings a month",
+    description:
+      "Past this many readings in a calendar month the feature goes quiet and says so.",
+    default: 2000,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.ai.ask.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · ask the ERP",
+    description:
+      "Answers questions from the ERP's own screens and services, scoped to what the person can open. It cannot change anything.",
+    default: true,
+  },
+  {
+    key: "erp.ai.ask.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Questions a month",
+    description:
+      "Past this many questions in a calendar month the feature goes quiet and says so.",
+    default: 3000,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.ai.photos.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · reading LR and test photos",
+    description:
+      "Reads LR numbers and test readings from photographs, as suggestions a person confirms.",
+    default: true,
+  },
+  {
+    key: "erp.ai.photos.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Photo readings a month",
+    description:
+      "Past this many readings in a calendar month the feature goes quiet and says so.",
+    default: 1000,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.ai.qc.densityTolerancePct",
+    type: "integer",
+    category: "erp-ai",
+    label: "Density tolerance (%)",
+    description:
+      "A density read from a photo further than this from the raw material's master density is flagged.",
+    default: 3,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.ai.complaints.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Complaint suggestions a month",
+    description:
+      "Past this many suggestions in a calendar month the feature goes quiet and says so.",
+    default: 1000,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.ai.visionModel",
+    type: "text",
+    category: "erp-ai",
+    label: "ERP · vision model",
+    description:
+      "An OpenAI model that reads images: supplier bills, LRs and test photos.",
+    default: "gpt-4o",
+  },
+  {
+    key: "erp.ai.textModel",
+    type: "text",
+    category: "erp-ai",
+    label: "ERP · reading model",
+    description:
+      "An OpenAI text model that reads order messages and complaint descriptions, and answers questions.",
+    default: "gpt-5-mini",
+  },
 ] as const satisfies readonly SettingDefinition[];
 
 export type SettingKey = (typeof SETTINGS)[number]["key"];
@@ -4552,6 +4694,20 @@ export type Config = {
   "erp.ai.reorder.lookbackDays": number;
   "erp.ai.reorder.minCoverDays": number;
   "erp.ai.reorder.maxCoverDays": number;
+  "erp.ai.bills.enabled": boolean;
+  "erp.ai.bills.monthlyCap": number;
+  "erp.ai.bill.qtyTolerancePct": number;
+  "erp.ai.bill.rateDeviationPct": number;
+  "erp.ai.orders.enabled": boolean;
+  "erp.ai.orders.monthlyCap": number;
+  "erp.ai.ask.enabled": boolean;
+  "erp.ai.ask.monthlyCap": number;
+  "erp.ai.photos.enabled": boolean;
+  "erp.ai.photos.monthlyCap": number;
+  "erp.ai.qc.densityTolerancePct": number;
+  "erp.ai.complaints.monthlyCap": number;
+  "erp.ai.visionModel": string;
+  "erp.ai.textModel": string;
   "voice.enabled": boolean;
   "voice.maxSeconds": number;
   "voice.maxSizeMb": number;

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { AppFrame } from "@/components/shell/app-frame";
-import { erpSearch, erpSetWorkingGodown, type ErpSearchHit } from "@/lib/actions/erp";
+import { erpAsk, erpSearch, erpSetWorkingGodown, type ErpSearchHit } from "@/lib/actions/erp";
 import { GodownPicker } from "./godown-picker";
 import { Icon } from "./icons";
 import { ErpUiProvider, useErpUi } from "./erp-ui";
@@ -27,6 +27,7 @@ export function ErpShell({
   accountMenu,
   switcher,
   voice = false,
+  ask = false,
   children,
 }: {
   nav: NavGroup[];
@@ -36,11 +37,12 @@ export function ErpShell({
   accountMenu?: React.ReactNode;
   switcher?: React.ReactNode;
   voice?: boolean;
+  ask?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <ErpUiProvider voice={voice}>
-      <ShellInner nav={nav} user={user} godowns={godowns} working={working} accountMenu={accountMenu} switcher={switcher}>
+      <ShellInner nav={nav} user={user} godowns={godowns} working={working} accountMenu={accountMenu} switcher={switcher} ask={ask}>
         {children}
       </ShellInner>
     </ErpUiProvider>
@@ -65,6 +67,7 @@ function ShellInner({
   working,
   accountMenu,
   switcher,
+  ask = false,
   children,
 }: {
   nav: NavGroup[];
@@ -73,6 +76,7 @@ function ShellInner({
   working: { id: string; name: string } | null;
   accountMenu?: React.ReactNode;
   switcher?: React.ReactNode;
+  ask?: boolean;
   children: React.ReactNode;
 }) {
   const vw = useWidth();
@@ -105,7 +109,7 @@ function ShellInner({
           <Icon n="grid" />
         </Link>
       )}
-      {!phone ? <GlobalSearch /> : null}
+      {!phone ? <GlobalSearch ask={ask} /> : null}
       <span style={{ flex: 1 }} />
       {godowns.length ? (
         <GodownPicker
@@ -235,11 +239,22 @@ function Count({ n }: { n: number }) {
 }
 
 /** Header search. `/` focuses it, as in the design. */
-function GlobalSearch() {
+function GlobalSearch({ ask }: { ask: boolean }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<ErpSearchHit[]>([]);
   const [asked, setAsked] = useState("");
+  const [answer, setAnswer] = useState<{ q: string; text: string; records: { label: string; href: string }[]; readAt: string } | null>(null);
+  const [thinking, setThinking] = useState(false);
+  const runAsk = () => {
+    const question = q.trim();
+    if (question.length < 3 || thinking) return;
+    setThinking(true);
+    void erpAsk(question).then((r) => {
+      setThinking(false);
+      setAnswer(r.ok ? { q: question, text: r.answer.answer, records: r.answer.records, readAt: r.answer.readAt } : { q: question, text: r.error, records: [], readAt: "" });
+    });
+  };
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -273,13 +288,50 @@ function GlobalSearch() {
       <input
         ref={ref}
         value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Search customers, orders, lots, PRs, bills, LRs   /"
+        onChange={(e) => {
+          setQ(e.target.value);
+          setAnswer(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && ask && q.trim().endsWith("?")) runAsk();
+        }}
+        placeholder={ask ? "Search, or ask a question ending in ?   /" : "Search customers, orders, lots, PRs, bills, LRs   /"}
         style={{ width: "100%", height: 34, padding: "0 12px 0 32px", border: "1px solid #DDE1E8", borderRadius: 4, background: "#F7F8FA", fontSize: 14, color: "#161616" }}
       />
-      {openRes ? (
+      {openRes || answer || thinking ? (
         <div style={{ position: "absolute", top: 40, left: 0, right: 0, background: "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: 6, boxShadow: "0 8px 24px rgba(22,22,22,0.12)", overflow: "hidden", zIndex: 10, animation: "erp-fade 120ms cubic-bezier(0.2,0,0.2,1)" }}>
-          {hits.map((r) => (
+          {ask ? (
+            answer ? (
+              <div role="status" style={{ padding: "12px", background: "#FBFAFF", borderBottom: "1px solid #EDEFF3" }}>
+                <div style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: "#5223E0" }}>Ask the ERP · {answer.q}</div>
+                <div style={{ fontSize: 14, color: "#161616", marginTop: 4, lineHeight: "20px" }}>{answer.text}</div>
+                {answer.records.map((r) => (
+                  <button
+                    key={r.href + r.label}
+                    onClick={() => {
+                      setQ("");
+                      setAnswer(null);
+                      router.push(r.href);
+                    }}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "4px 0", border: "none", background: "transparent", color: "#5223E0", fontSize: 13, cursor: "pointer" }}
+                  >
+                    {r.label} →
+                  </button>
+                ))}
+                {answer.readAt ? <div style={{ fontSize: 11, color: "#6B7385", marginTop: 4 }}>Read from the ERP at {new Date(answer.readAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} · answers only, it cannot change anything</div> : null}
+              </div>
+            ) : (
+              <button
+                onClick={runAsk}
+                disabled={thinking || q.trim().length < 3}
+                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", border: "none", background: "#FBFAFF", cursor: "pointer", textAlign: "left", color: "#5223E0" }}
+              >
+                <Icon n="spark" />
+                <span style={{ fontSize: 14 }}>{thinking ? "Reading the ERP…" : `Ask the ERP: “${q.trim()}”`}</span>
+              </button>
+            )
+          ) : null}
+          {openRes && !answer ? hits.map((r) => (
             <button
               key={`${r.kind}:${r.href}`}
               onClick={() => {
@@ -294,10 +346,10 @@ function GlobalSearch() {
                 <span style={{ display: "block", fontSize: 12, color: "#6B7385" }}>{r.meta}</span>
               </span>
             </button>
-          ))}
-          {!hits.length ? (
+          )) : null}
+          {openRes && !answer && !hits.length ? (
             <div style={{ padding: "14px 12px", fontSize: 13, color: "#6B7385" }}>
-              Nothing you can open matches “{q}”. Try a customer, order no, lot, PR, bill or LR.
+              Nothing you can open matches “{q}”. Try a customer, order no, lot, PR, bill or LR{ask ? ", or ask it as a question" : ""}.
             </div>
           ) : null}
         </div>

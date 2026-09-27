@@ -74,6 +74,11 @@ function itemsByType(mats: { name: string; materialType: string }[], types: stri
 
 /* =============================================================== postings */
 
+/** The register's posting, for the bill-reading review (AI-1) to save through. */
+export async function syncPurchaseEntryPublic(tx: Tx, purchaseId: string) {
+  return syncPurchaseEntry(tx, purchaseId);
+}
+
 /**
  * Posts (or re-syncs) a purchase's entry in the raw-material log: one entry
  * per purchase, quantity = its available litres, at its godown under its lot.
@@ -756,6 +761,9 @@ const testing: ScreenModule = {
     );
     const newForm = await testForm(ctx);
     const verifier = ctx.powers.has("verifyTest");
+    const ai = await import("../ai");
+    const pendingPhotos = await ai.pendingFor("photos");
+    const photosOn = (await ai.featureState("photos", true)).on;
     const why = verifier ? "" : "Only the verifier decides a purchase test";
     const cols: ColSpec[] = [
       { k: "status", l: "Verification", t: "s" },
@@ -804,6 +812,11 @@ const testing: ScreenModule = {
               : `Mark ${x.item} (PR ${x.t.prNumber}) Not Verified?`,
           });
         if (x.t.status !== "Verified") actions.push({ id: "edit", l: "Record evidence", loadsForm: true });
+        if (x.t.status !== "Verified" && pendingPhotos.has(x.t.id)) {
+          actions.unshift({ id: "aiTest", l: "Review photo readings", ai: true, primary: true, loadsForm: true });
+          actions.push({ id: "aiTestReject", l: "Reject photo readings", confirm: "Reject the AI readings? Nothing changes." });
+        } else if (x.t.status !== "Verified" && photosOn && (x.t.densityPhotoId || x.t.phPhotoId))
+          actions.push({ id: "aiTestRead", l: "Read test photos", ai: true });
         actions.push({ id: "addLot", l: "ADD More Lot", loadsForm: true });
         return {
           id: x.t.id,
@@ -852,6 +865,10 @@ const testing: ScreenModule = {
   },
   formLoaders: {
     edit: (ctx, id) => testForm(ctx, id),
+    aiTest: async (ctx, id) => {
+      const base = await testForm(ctx, id);
+      return base ? (await import("../ai-photos")).testReviewForm(base, id) : null;
+    },
     /* ADD More Lot: a new test for the same inward line's PR and item. */
     addLot: async (ctx, id) => {
       const [t] = await db.select({ inward: erpTests.inwardId }).from(erpTests).where(eq(erpTests.id, id));
@@ -881,8 +898,22 @@ const testing: ScreenModule = {
       if (t.status === "Verified") return err("A verified test is closed. Mark it Not Verified first to change its evidence.", "rule_violation");
       return saveTest(ctx, h, { existing: t });
     },
+    /* AI-8: the same save as recording evidence by hand, then the reading is logged as accepted or edited. */
+    async aiTest(ctx, h, _l, suggestionId) {
+      const { erpAiSuggestions } = await import("@/db/schema");
+      const [s] = suggestionId ? await db.select().from(erpAiSuggestions).where(eq(erpAiSuggestions.id, suggestionId)) : [];
+      if (!s?.recordId) return err("That reading has already been decided.", "conflict");
+      const [t] = await db.select().from(erpTests).where(eq(erpTests.id, s.recordId));
+      if (!t) return err("That test no longer exists.", "not_found");
+      if (t.status === "Verified") return err("A verified test is closed.", "rule_violation");
+      const res = await saveTest(ctx, h, { existing: t });
+      if (res.ok) await (await import("../ai-photos")).decideTestReading(s.id, h);
+      return res;
+    },
   },
   actions: {
+    aiTestRead: async (ctx, id) => (await import("../ai-photos")).readTestPhotos(ctx, id),
+    aiTestReject: async (ctx, id) => (await import("../ai-photos")).rejectPhotoReading(ctx, id),
     async verify(ctx, id) {
       if (!ctx.powers.has("verifyTest")) return err("Only the verifier decides a purchase test.", "not_permitted");
       const [t] = await db.select().from(erpTests).where(eq(erpTests.id, id));
@@ -1128,6 +1159,9 @@ const register: ScreenModule = {
     const newForm = await purchaseForm(ctx);
     const money = ctx.powers.has("viewPurchaseMoney");
     const verifier = ctx.powers.has("verifyPurchase");
+    const { featureState, pendingFor } = await import("../ai");
+    const aiBills = (await featureState("bills", true)).on || (await pendingFor("bills")).size > 0;
+    const pendingBills = await pendingFor("bills");
     const reopen = ctx.powers.has("reopenPurchase");
     const all: Col[] = [
       { k: "date", l: "Date", t: "d" },
@@ -1197,6 +1231,26 @@ const register: ScreenModule = {
           if (p.status === "Purchase Verified" || p.status === "")
             actions.push({ id: "reopen", l: "Do Pending", why: reopen ? "" : "Only an admin sets a verified purchase back to Pending" });
         }
+        if (money && aiBills) {
+          if (pendingBills.has(p.id)) {
+            actions.unshift({ id: "aiBill", l: "Review bill reading", ai: true, primary: true, loadsForm: true });
+            actions.push({ id: "aiBillReject", l: "Reject bill reading", confirm: "Reject the AI reading of this bill? Nothing on the register changes." });
+          } else
+            actions.push({
+              id: "aiBillRead",
+              l: "Read supplier bill",
+              ai: true,
+              prompt: {
+                title: "Read the supplier bill",
+                sub: `PR ${p.prNumber} · ${r.supplier}. The bill is read and matched to this PR's rows; you review every value before anything is saved.`,
+                submit: "Read the bill",
+                fields: [
+                  { k: "photo", l: "Bill photo or PDF", t: "photo", req: true },
+                  { k: "photo2", l: "Second page", t: "photo" },
+                ],
+              },
+            });
+        }
         actions.push({ id: "edit", l: "Edit", loadsForm: true });
         actions.push({ id: "addMore", l: "Add More", loadsForm: true });
         const moneyFields = money
@@ -1261,6 +1315,7 @@ const register: ScreenModule = {
   },
   formLoaders: {
     edit: (ctx, id) => purchaseForm(ctx, id),
+    aiBill: async (_ctx, id) => (await import("../ai-bills")).billReviewForm(id),
     addMore: async (ctx, id) => {
       const f = await purchaseForm(ctx, id);
       if (!f) return null;
@@ -1279,8 +1334,19 @@ const register: ScreenModule = {
     async edit(ctx, h, _l, id) {
       return savePurchase(ctx, h, id);
     },
+    async aiBill(ctx, h, lines, suggestionId) {
+      if (!suggestionId) return err("No reading named.", "not_found");
+      return (await import("../ai-bills")).applyBill(ctx, suggestionId, h, lines);
+    },
   },
   actions: {
+    async aiBillRead(ctx, id, values) {
+      const files = [text(values.photo), text(values.photo2)].filter((x): x is string => !!x);
+      return (await import("../ai-bills")).readBill(ctx, id, files);
+    },
+    async aiBillReject(ctx, id) {
+      return (await import("../ai-bills")).rejectBill(ctx, id);
+    },
     async rate(ctx, id, values) {
       if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
       const rate = paise(values.rate);

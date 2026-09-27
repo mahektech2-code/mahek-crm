@@ -150,7 +150,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Sales orders",
     icon: "receipt",
     screens: [
-      s("orderInbox", "order-inbox", "Order inbox", "WhatsApp messages the ERP read as possible orders. Nothing becomes an order until someone accepts the draft."),
+      s("orderInbox", "order-inbox", "Order inbox", "WhatsApp messages the ERP read as possible orders. Nothing becomes an order until someone accepts the draft.", true),
       s("orders", "orders", "Taken orders", "Every sales-order line, grouped by order number.", true),
       s("pendingOrders", "pending-orders", "Pending orders", "Open order lines that have not reached order details.", true),
       s("readyOrders", "ready-orders", "Under process and ready", "The godown's working list. Mark many lines Ready at once.", true),
