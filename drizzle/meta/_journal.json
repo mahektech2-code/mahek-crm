@@ -1226,6 +1226,13 @@
       "when": 1790370118688,
       "tag": "0176_erp_purchase_and_raw_stock",
       "breakpoints": true
+    },
+    {
+      "idx": 176,
+      "version": "7",
+      "when": 1790370178688,
+      "tag": "0177_erp_production_transfers_levels",
+      "breakpoints": true
     }
   ]
 }

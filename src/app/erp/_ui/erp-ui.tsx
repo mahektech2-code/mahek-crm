@@ -211,7 +211,10 @@ function checkField(f: FieldSpec, v: string): string {
 }
 
 function optsFor(f: FieldSpec, values: Record<string, string>): string[] | undefined {
-  if (f.optsBy) return f.optsBy.map[values[f.optsBy.by] ?? ""] ?? [];
+  if (f.optsBy) {
+    const by = Array.isArray(f.optsBy.by) ? f.optsBy.by : [f.optsBy.by];
+    return f.optsBy.map[by.map((k) => values[k] ?? "").join("|")] ?? [];
+  }
   return f.opts;
 }
 

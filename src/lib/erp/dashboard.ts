@@ -2,8 +2,9 @@ import "server-only";
 import type { ErpContext } from "./access";
 import { erpHref, erpScreen } from "./registry";
 import { loadCustomers, partyStatus } from "./screens/masters";
-import { billsAwaitingIds, inwardAwaitingIds, rateMissingIds, testsAwaitingIds } from "./counts";
-import { rmLots } from "./stock";
+import { billsAwaitingIds, incompletePackIds, inwardAwaitingIds, rateMissingIds, testsAwaitingIds } from "./counts";
+import { fgReorderRows, rmReorderRows } from "./screens/movement";
+import { fgLots, packLots, rmLots, sfgLots } from "./stock";
 import { nf } from "./ui";
 import type { Tone } from "./ui";
 
@@ -66,6 +67,37 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     }
     out.push({ t: "Raw-material stock", tiles });
   }
+
+  const stock: Tile[] = [];
+  const here = <T extends { godown: string; stock: number }>(xs: T[]) => xs.filter((l) => l.stock > 0 && (!godownName || l.godown === godownName));
+  if (ctx.screens.has("sfgStock")) {
+    const lots = here(await sfgLots());
+    stock.push({ l: "SFG in stock", v: `${nf(lots.reduce((a, l) => a + l.stock, 0))} Ltr`, sub: `${lots.length} lot${lots.length === 1 ? "" : "s"}`, href: tileHref("sfgStock", null, "") });
+  }
+  if (ctx.screens.has("fgStock")) {
+    const lots = here(await fgLots());
+    stock.push({ l: "Loose FG in stock", v: `${nf(lots.reduce((a, l) => a + l.stock, 0))} cans`, sub: `${lots.length} lot${lots.length === 1 ? "" : "s"}`, href: tileHref("fgStock", null, "") });
+  }
+  if (ctx.screens.has("packStock")) {
+    const lots = here(await packLots());
+    stock.push({ l: "Boxed stock", v: `${nf(lots.reduce((a, l) => a + l.stock, 0))} boxes`, sub: `${lots.length} batch${lots.length === 1 ? "" : "es"}`, href: tileHref("packStock", null, "") });
+  }
+  if (ctx.screens.has("packBatches")) {
+    const ids = await incompletePackIds();
+    stock.push({ l: "Packing batches incomplete", v: String(ids.length), sub: "boxes not in stock until the cans match", tone: ids.length ? "warn" : undefined, href: tileHref("packBatches", ids, "Incomplete") });
+  }
+  if (stock.length) out.push({ t: "Production", tiles: stock });
+
+  const reorder: Tile[] = [];
+  if (ctx.screens.has("reorderRm")) {
+    const rows = (await rmReorderRows()).filter((r) => !godownName || r.godown === godownName);
+    reorder.push({ l: "Raw items to re-order", v: String(rows.length), sub: "followed items below their level", tone: rows.length ? "danger" : undefined, href: tileHref("reorderRm", null, "") });
+  }
+  if (ctx.screens.has("reorderFg")) {
+    const rows = (await fgReorderRows()).filter((r) => !godownName || r.godown === godownName);
+    reorder.push({ l: "Finished goods to re-order", v: String(rows.length), sub: "followed SKUs below their minimum", tone: rows.length ? "danger" : undefined, href: tileHref("reorderFg", null, "") });
+  }
+  if (reorder.length) out.push({ t: "Re-order", tiles: reorder });
 
   if (ctx.screens.has("customers")) {
     const tiles: Tile[] = [];

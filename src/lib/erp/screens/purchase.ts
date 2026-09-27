@@ -3,11 +3,14 @@ import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   erpGodowns,
+  erpFgLevels,
   erpInward,
+  erpProductPacking,
   erpPurchases,
   erpRawMaterials,
   erpRequisitions,
   erpRmEntries,
+  erpRmLevels,
   erpSuppliers,
   erpTests,
   products,
@@ -15,7 +18,6 @@ import {
 } from "@/db/schema";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
-import type { ErpPower } from "../powers";
 import { refValues } from "../refs";
 import {
   erpAudit,
@@ -41,8 +43,9 @@ import {
   settableStatuses,
   shortLabel,
 } from "../engines/purchase";
-import { rmItemStockAt, rmLots } from "../stock";
+import { fgLevelAvailable, rmLevelAvailable, rmLots } from "../stock";
 import { bindErpFiles } from "../attachments";
+import { godownIdByName, godownOptions, has, materials, type Col, type Tx } from "./common";
 
 /* ---------------------------------------------------------------------------
  * Purchase (spec §5): requisitions, goods inward, testing, the purchase
@@ -50,10 +53,7 @@ import { bindErpFiles } from "../attachments";
  * stock (§6.2).
  * ------------------------------------------------------------------------- */
 
-type Col = ColSpec & { pw?: ErpPower };
-const has = (ctx: ErpContext) => (p: string) => ctx.powers.has(p as ErpPower);
 
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 const REQ_TYPES = ["Chemical", "Can", "Box", "Stationary", "Finish Good"];
 const INWARD_TYPES = ["Chemical", "Can", "Box"];
@@ -64,26 +64,6 @@ function reqUnit(type: string): string {
   if (type === "Chemical") return "Liter";
   if (type === "Finish Good") return "Box";
   return "Pcs";
-}
-
-/** Godowns a form may offer: active, and Item Lost Record only with the power. */
-async function godownOptions(ctx: ErpContext): Promise<{ id: string; name: string }[]> {
-  const rows = await db
-    .select({ id: erpGodowns.id, name: erpGodowns.name, reserved: erpGodowns.reserved })
-    .from(erpGodowns)
-    .where(eq(erpGodowns.status, "active"))
-    .orderBy(asc(erpGodowns.name));
-  return rows.filter((g) => !g.reserved || ctx.powers.has("lostStock"));
-}
-
-async function godownIdByName(name: string | null): Promise<string | null> {
-  if (!name) return null;
-  const [g] = await db.select({ id: erpGodowns.id }).from(erpGodowns).where(eq(erpGodowns.name, name));
-  return g?.id ?? null;
-}
-
-async function materials() {
-  return db.select().from(erpRawMaterials).where(eq(erpRawMaterials.active, true)).orderBy(asc(erpRawMaterials.name));
 }
 
 function itemsByType(mats: { name: string; materialType: string }[], types: string[]): Record<string, string[]> {
@@ -211,10 +191,10 @@ async function createPurchase(
 
 /* ========================================================= requisitions */
 
-async function requisitionForm(ctx: ErpContext, init?: Record<string, string>): Promise<FormSpec> {
+export async function requisitionForm(ctx: ErpContext, init?: Record<string, string>): Promise<FormSpec> {
   const [mats, gds, skus] = await Promise.all([
     materials(),
-    godownOptions(ctx),
+    godownOptions(ctx, { lost: false }),
     db.select({ name: products.name }).from(products).where(eq(products.active, true)).orderBy(asc(products.name)),
   ]);
   const map = itemsByType(mats, REQ_TYPES);
@@ -255,7 +235,7 @@ const requisitions: ScreenModule = {
       .leftJoin(products, eq(products.id, erpRequisitions.productId))
       .leftJoin(users, eq(users.id, erpRequisitions.createdById))
       .orderBy(desc(erpRequisitions.reqDate), desc(erpRequisitions.createdAt));
-    const levels = await levelsPresent();
+    const present = await presentQuantities();
     const form = await requisitionForm(ctx);
     const cols: ColSpec[] = [
       { k: "date", l: "Date", t: "d" },
@@ -271,7 +251,6 @@ const requisitions: ScreenModule = {
     ];
     const out: ListRow[] = [];
     for (const x of rows) {
-      const present = await presentQuantity(x.r, levels);
       out.push({
         id: x.r.id,
         v: {
@@ -279,7 +258,7 @@ const requisitions: ScreenModule = {
           godown: x.godown,
           type: x.r.materialType,
           item: x.item,
-          present,
+          present: present(x.r),
           unit: x.r.unit,
           required: x.r.requiredQty,
           priority: x.r.priority,
@@ -378,25 +357,32 @@ const requisitions: ScreenModule = {
   },
 };
 
-/** Whether the re-order levels table exists yet (phase 3) — present quantity reads it. */
-async function levelsPresent(): Promise<boolean> {
-  const r = (await db.execute(sql`select to_regclass('public.erp_rm_levels') is not null as ok`)) as unknown as { ok: boolean }[];
-  return !!r[0]?.ok;
-}
-
 /**
- * A requisition's present quantity (spec §5.2): the godown's stock of the item,
- * read only where a re-order level is set there — the source reads it off the
- * levels, so a godown with no level says so rather than a figure (§14 A-04).
+ * A requisition's present quantity (spec §5.2): what the godown's re-order
+ * level counts as available for the item — the same figure the levels screen
+ * shows. Blank where no level is set there (§14 A-04), said in words.
  */
-async function presentQuantity(r: typeof erpRequisitions.$inferSelect, levels: boolean): Promise<string | number> {
-  if (!r.rawMaterialId) return "—";
-  if (!levels) return "no level set";
-  const rows = (await db.execute(
-    sql`select 1 from erp_rm_levels where raw_material_id = ${r.rawMaterialId} and godown_id = ${r.godownId} limit 1`,
-  )) as unknown as unknown[];
-  if (!rows.length) return "no level set";
-  return rmItemStockAt(r.rawMaterialId, r.godownId);
+async function presentQuantities() {
+  const [rmLevels, fgLevels, rmAvail, fgAvail, packing] = await Promise.all([
+    db.select().from(erpRmLevels),
+    db.select().from(erpFgLevels),
+    rmLevelAvailable(),
+    fgLevelAvailable(),
+    db.select({ id: erpProductPacking.productId, empty: erpProductPacking.emptyBoxesRequired }).from(erpProductPacking),
+  ]);
+  const rm = new Map(rmLevels.map((l) => [`${l.rawMaterialId}|${l.godownId}`, l.materialType]));
+  const fg = new Set(fgLevels.map((l) => `${l.productId}|${l.godownId}`));
+  const boxed = new Map(packing.map((p) => [p.id, (p.empty ?? 0) > 0]));
+  return (r: typeof erpRequisitions.$inferSelect): string | number => {
+    if (r.productId) {
+      if (!fg.has(`${r.productId}|${r.godownId}`)) return "no level set";
+      return fgAvail(r.productId, boxed.get(r.productId) ?? false, r.godownId);
+    }
+    if (!r.rawMaterialId) return "—";
+    const type = rm.get(`${r.rawMaterialId}|${r.godownId}`);
+    if (!type) return "no level set";
+    return rmAvail(type, r.rawMaterialId, r.godownId);
+  };
 }
 
 /* ============================================================== inward */
@@ -404,7 +390,7 @@ async function presentQuantity(r: typeof erpRequisitions.$inferSelect, levels: b
 async function inwardForm(ctx: ErpContext, init?: Record<string, string>): Promise<FormSpec> {
   const [mats, gds, sups] = await Promise.all([
     materials(),
-    godownOptions(ctx),
+    godownOptions(ctx, { lost: false }),
     db.select({ name: erpSuppliers.name }).from(erpSuppliers).where(eq(erpSuppliers.active, true)).orderBy(asc(erpSuppliers.name)),
   ]);
   const unitOf: Record<string, string> = {};
@@ -651,7 +637,7 @@ const PHOTO_COL: Record<string, keyof typeof erpTests.$inferInsert> = {
 
 async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | null> {
   const testers = await db.select({ name: users.name }).from(users).where(eq(users.active, true)).orderBy(asc(users.name));
-  const gds = await godownOptions(ctx);
+  const gds = await godownOptions(ctx, { lost: false });
   const evidence = (on: string) =>
     TEST_FIELDS.map(({ test, field }) => ({ ...field, when: { k: on, map: "testsOf", has: test } }) as FieldSpec);
 
@@ -1047,7 +1033,7 @@ async function registerRows(): Promise<RegRow[]> {
 async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | null> {
   const [mats, gds, sups] = await Promise.all([
     materials(),
-    godownOptions(ctx),
+    godownOptions(ctx, { lost: false }),
     db.select().from(erpSuppliers).where(eq(erpSuppliers.active, true)).orderBy(asc(erpSuppliers.name)),
   ]);
   const money = ctx.powers.has("viewPurchaseMoney");
