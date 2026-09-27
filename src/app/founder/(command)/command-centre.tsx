@@ -855,6 +855,47 @@ function barsOf(bars: Bar[], gap = 2, radius = 2) {
   ));
 }
 
+/*
+ * The drawer's twelve bars, with their legend on them: the value above each
+ * bar and the month under it. Every bar's tip is written "label · value" by
+ * the providers, so the legend is read off the tip rather than a second field
+ * that could disagree with it.
+ */
+function legendOf(tip: string, i: number): { label: string; value: string } {
+  const [rawLabel = "", rawValue = ""] = tip.split(" · ");
+  const year = rawLabel.match(/\b(\d{4})\b/)?.[1];
+  let label = rawLabel.replace(/\s*\b\d{4}\b/, "").replace(/ cohort$/, "").trim();
+  // The year is said where it starts — on the first bar and on January.
+  if (year && (i === 0 || label.startsWith("Jan"))) label = `${label} ’${year.slice(2)}`;
+  const value = rawValue.split(" at ")[0]!.replace(/ now$/, "").replace(/^(none worked|no leads|no comparison)$/i, "—").trim();
+  // Money is said short on a bar — "1.34Cr", not "₹1.34 Cr" — or twelve of
+  // them run into each other; the figure above the chart already says rupees.
+  const short = value.startsWith("₹") ? value.slice(1).replace(/\s+(Cr|L|K)$/, "$1") : value;
+  return { label, value: short || "—" };
+}
+
+function LabelledBars({ bars }: { bars: Bar[] }) {
+  const max = Math.max(1, ...bars.map((b) => b.h));
+  return (
+    <div style={{ display: "flex", gap: 4 }}>
+      {bars.map((b, i) => {
+        const { label, value } = legendOf(b.tip, i);
+        return (
+          <div key={i} title={b.tip} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <div style={{ height: 96, width: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center" }}>
+              <span style={{ fontSize: 10, lineHeight: "14px", marginBottom: 3, whiteSpace: "nowrap", color: b.current ? C.brandDark : C.muted, fontWeight: b.current ? 600 : 400 }}>{value}</span>
+              <span
+                style={{ width: "100%", height: `${Math.max(b.h > 0 ? 4 : 0, Math.round((b.h / max) * 76))}px`, borderRadius: 3, display: "block", background: b.current ? C.brand : C.brandTint2 }}
+              />
+            </div>
+            <span style={{ fontSize: 11, lineHeight: "14px", marginTop: 5, whiteSpace: "nowrap", color: b.current ? C.ink : C.muted, fontWeight: b.current ? 500 : 400 }}>{label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* --------------------------------------------------------------- company */
 
 function CompanyView({
@@ -1482,7 +1523,7 @@ function FigureDrawerView({
             <div style={{ fontSize: 14, lineHeight: "21px", color: C.body }}>{f.def}</div>
             <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, margin: "20px 0 8px 0" }}>{f.barsLabel}</div>
             {f.bars.length ? (
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 80 }}>{barsOf(f.bars, 4, 3)}</div>
+              <LabelledBars bars={f.bars} />
             ) : null}
             <div style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: C.muted, margin: "20px 0 8px 0" }}>{f.rowsLabel}</div>
             {f.rows.length === 0 ? (
