@@ -872,7 +872,7 @@ export async function sendRunViaApi(
 ): Promise<Result<{ sent: number; left: number; problems: string[] }>> {
   await requireCapability("whatsapp.bulk");
   const delivery = await deliveryContext();
-  if (!delivery.serviceOn) return err("WhatsApp sending is switched off on the Founder Dashboard.", "rule_violation");
+  if (!delivery.serviceOn) return err("WhatsApp sending is switched off in the Founder Command Centre.", "rule_violation");
   if (!delivery.hasToken) return err("No Wati key is configured.", "rule_violation");
 
   const waiting = await db

@@ -1580,7 +1580,7 @@ export const SETTINGS = [
     category: "whatsapp",
     label: "Mode (retired)",
     description:
-      "No longer read. Sending through the WhatsApp API is switched on and off by the founder, on the Founder Dashboard's WhatsApp screen — a setting anybody holding the Settings screen could flip was the wrong home for that decision. Kept so a stored value still resolves.",
+      "No longer read. Sending through the WhatsApp API is switched on and off by the founder, on the Founder Command Centre's WhatsApp desk — a setting anybody holding the Settings screen could flip was the wrong home for that decision. Kept so a stored value still resolves.",
     default: "manual",
     options: ["manual", "automatic"],
   },

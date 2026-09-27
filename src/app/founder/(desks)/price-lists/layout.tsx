@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { requireModule } from "@/lib/access";
 
 /**
- * The route guard for Price lists on the Founder Dashboard.
+ * The route guard for Price lists on the Founder Command Centre.
  *
  * The fourth door onto the same feature, and the second that may WRITE: Mahek
  * named the founder's desk beside the accounts team as who adds, changes and

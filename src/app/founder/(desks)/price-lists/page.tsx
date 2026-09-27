@@ -4,7 +4,7 @@ import { today } from "@/lib/recompute";
 import { listPriceLists, pricingCounts, pricingOptions } from "@/lib/services/price-list-service";
 import { PriceListsScreen } from "@/components/pricing/price-lists-screen";
 
-export const metadata = { title: "Price lists — Founder Dashboard — MahekOne" };
+export const metadata = { title: "Price lists — Founder Command Centre — MahekOne" };
 
 /**
  * Every price list, read once.

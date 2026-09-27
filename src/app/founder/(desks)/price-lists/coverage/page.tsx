@@ -14,7 +14,7 @@ import { PageHeader } from "@/components/ui/primitives";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { CoveragePanel } from "@/components/pricing/coverage-panel";
 
-export const metadata = { title: "Coverage — Founder Dashboard — MahekOne" };
+export const metadata = { title: "Coverage — Founder Command Centre — MahekOne" };
 
 export default async function Page() {
   const user = await requireUser();

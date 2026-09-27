@@ -18,7 +18,7 @@ import { PageHeader } from "@/components/ui/primitives";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { DocumentsPanel } from "@/components/pricing/documents-panel";
 
-export const metadata = { title: "Price list documents — Founder Dashboard — MahekOne" };
+export const metadata = { title: "Price list documents — Founder Command Centre — MahekOne" };
 
 export default async function Page({
   searchParams,
