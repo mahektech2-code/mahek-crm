@@ -156,10 +156,10 @@ export const APPS: AppDefinition[] = [
      * the CRM's order-book economics, and this is meant as the founder's own
      * front door onto the whole company, granted separately from it.
      */
-    name: "Founder Dashboard",
-    initials: "FD",
+    name: "Founder Command Centre",
+    initials: "FC",
     description:
-      "Company revenue, the whole team scored, money owed and the roster — one screen.",
+      "Every record and every decision in the company, in one place — and what needs you today.",
     href: "/founder",
     tone: "neutral",
     built: true,

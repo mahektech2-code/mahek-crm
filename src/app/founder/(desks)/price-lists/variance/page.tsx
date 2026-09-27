@@ -14,7 +14,7 @@ import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { VariancePanel } from "@/components/pricing/variance-panel";
 import { lastTwelveMonths, monthOf } from "@/components/pricing/months";
 
-export const metadata = { title: "Billed against the list — Founder Dashboard — MahekOne" };
+export const metadata = { title: "Billed against the list — Founder Command Centre — MahekOne" };
 
 export default async function Page({
   searchParams,

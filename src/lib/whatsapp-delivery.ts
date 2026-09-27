@@ -32,7 +32,7 @@ export type DeliveryRoute =
 
 export function deliveryRoute(input: DeliveryInput): DeliveryRoute {
   if (!input.serviceOn) {
-    return { via: "manual", why: "WhatsApp sending is switched off on the Founder Dashboard." };
+    return { via: "manual", why: "WhatsApp sending is switched off in the Founder Command Centre." };
   }
   if (!input.hasToken) {
     return { via: "manual", why: "No Wati key is configured, so nothing can go through the API." };

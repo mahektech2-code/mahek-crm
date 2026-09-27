@@ -11,7 +11,7 @@ import { whatsappServiceState } from "@/lib/services/whatsapp-switch-service";
 import { specFor, specKey } from "@/lib/wati-templates";
 import { AutomationControl } from "./automation-control";
 
-export const metadata = { title: "WhatsApp automation - Founder Dashboard - MahekOne" };
+export const metadata = { title: "WhatsApp automation - Founder Command Centre - MahekOne" };
 
 /**
  * The founder's rules for sending the eight WhatsApp templates on their own:

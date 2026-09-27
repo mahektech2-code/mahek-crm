@@ -29,7 +29,7 @@ describe("which way a message leaves", () => {
   test("the founder's switch off beats everything else", () => {
     const r = deliveryRoute({ ...READY, serviceOn: false });
     assert.equal(r.via, "manual");
-    assert.match((r as { why: string }).why, /Founder Dashboard/);
+    assert.match((r as { why: string }).why, /Founder Command Centre/);
   });
 
   test("no key, a group, no linked template or an edit: manual, each with its reason", () => {

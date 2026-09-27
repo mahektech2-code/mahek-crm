@@ -8,6 +8,8 @@ import { QUICK_ITEMS } from "@/lib/command-centre/quick";
 import { ASK_SUGGESTIONS } from "@/lib/command-centre/ask";
 import { initials } from "@/lib/command-centre/format";
 import { hatForHeader } from "@/lib/hat-for-header";
+import { listUserApps } from "@/lib/access";
+import { webApps } from "@/lib/apps";
 import { isSectionKey, type CompanyPayload, type NavCounts, type SectionKey, type SectionPayload, type Tone } from "@/lib/command-centre/types";
 import { CommandCentre } from "./command-centre";
 
@@ -38,7 +40,8 @@ export default async function Page({
   const period = await readPeriodState(params.p, { from: params.from, to: params.to });
   const ctx = { period, userId: access.user.id };
 
-  const [inbox, hat, freshness, company, payload] = await Promise.all([
+  const [apps, inbox, hat, freshness, company, payload] = await Promise.all([
+    listUserApps(access.user.id),
     access.allowed.includes("inbox") ? inboxFor(access.user.id) : Promise.resolve([]),
     hatForHeader(access.user, "founder"),
     import("@/lib/command-centre/freshness")
@@ -68,6 +71,7 @@ export default async function Page({
         allowed: access.allowed,
       }}
       canAct={access.level !== "associate"}
+      switcherApps={apps.length > 1 ? webApps(apps) : null}
       company={company}
       payload={payload}
       quickItems={QUICK_ITEMS}

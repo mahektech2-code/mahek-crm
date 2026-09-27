@@ -5,7 +5,7 @@ import { stamp } from "@/lib/format";
 import { trackerPage } from "@/lib/services/whatsapp-tracker-service";
 import { WhatsappTabs } from "../whatsapp-tabs";
 
-export const metadata = { title: "WhatsApp messages - Founder Dashboard - MahekOne" };
+export const metadata = { title: "WhatsApp messages - Founder Command Centre - MahekOne" };
 
 const STATUSES: Array<[string, string]> = [
   ["", "Any status"],
