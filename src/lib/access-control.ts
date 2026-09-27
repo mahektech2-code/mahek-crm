@@ -1197,6 +1197,11 @@ const MATRIX: Record<AppId, AppMatrix> = {
   hrms: { associate: [], manager: [] },
   people: { associate: [], manager: [] },
   enquiries: { associate: [], manager: [] },
+  /* The ERP's decisions are POWERS granted to named people (`lib/erp/powers.ts`),
+     not capabilities of a level — the CEO who verifies a test is one person,
+     not every ERP manager. Holding the app and its modules is what opens the
+     screens; the powers are checked by `lib/erp/access.ts`. */
+  erp: { associate: [], manager: [] },
   /* The console. Its own screens are gated by holding the app; `config.write`
      is what separates reading the settings from changing them. */
   admin: { associate: [], manager: ["config.write"] },

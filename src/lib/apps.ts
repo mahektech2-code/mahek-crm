@@ -17,6 +17,7 @@ export const APP_IDS = [
   "admin",
   "founder",
   "enquiries",
+  "erp",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -179,6 +180,24 @@ export const APPS: AppDefinition[] = [
     description:
       "Enquiries from the website and beyond, from first contact through to delivery.",
     href: "/enquiries",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "erp",
+    /*
+     * The factory and the godowns: purchase, testing, stock, batching,
+     * filling, packing, transfers, orders, dispatch and transport — the
+     * client's AppSheet "Mahek Plus", rebuilt (docs/erp/). One app narrowed by
+     * module rather than five: "where is this lot" is one question whoever
+     * asks it, and each screen is its own module because the source granted
+     * screens one at a time.
+     */
+    name: "ERP",
+    initials: "ERP",
+    description:
+      "Purchase, quality tests, stock, production, orders, dispatch and transport — from the godown to the lorry.",
+    href: "/erp",
     tone: "neutral",
     built: true,
   },

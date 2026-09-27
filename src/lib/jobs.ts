@@ -128,6 +128,8 @@ export type JobName =
   | "sheet-payments"
   | "taken-order-sync"
   | "taken-order-reparse"
+  /** The ERP customer profile from the Sales Party sheet — fills blanks only. */
+  | "erp-seed-profiles"
   | "party-sync"
   | "project-sheet"
   | "revert-sheet-paid"
@@ -866,6 +868,21 @@ export async function runJob(
       return [await runTakenOrderSync(job, triggeredById)];
     case "party-sync":
       return [await runPartySync(triggeredById)];
+    case "erp-seed-profiles":
+      return [
+        await run(
+          "erp-seed-profiles",
+          async () => {
+            const { seedErpCustomerProfiles } = await import("./erp/profile-seed");
+            const r = await seedErpCustomerProfiles();
+            return {
+              recordsAffected: r.created + r.filled,
+              detail: `${r.matched} sheet parties matched · ${r.created} profiles created · ${r.filled} filled · ${r.refAdded} reference values added`,
+            };
+          },
+          triggeredById,
+        ),
+      ];
     case "project-sheet":
       return [await runProjection(triggeredById, options)];
     case "revert-sheet-paid":

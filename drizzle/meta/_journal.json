@@ -1198,6 +1198,20 @@
       "when": 1790369878688,
       "tag": "0172_the_founder_inbox_remembers_hand_offs",
       "breakpoints": true
+    },
+    {
+      "idx": 172,
+      "version": "7",
+      "when": 1790369938688,
+      "tag": "0173_the_erp_is_an_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "7",
+      "when": 1790369998688,
+      "tag": "0174_erp_masters_and_godowns",
+      "breakpoints": true
     }
   ]
 }
