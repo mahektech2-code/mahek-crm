@@ -43,6 +43,10 @@ import {
 } from "../engines/purchase";
 import { rmItemStockAt, rmLots } from "../stock";
 import { bindErpFiles } from "../attachments";
+import { calendarDate } from "@/lib/business-date";
+
+/** Today in the business's zone — never a UTC slice, which is yesterday until 05:30 IST. */
+const today = (): string => calendarDate(new Date());
 
 /* ---------------------------------------------------------------------------
  * Purchase (spec §5): requisitions, goods inward, testing, the purchase
@@ -225,7 +229,7 @@ async function requisitionForm(ctx: ErpContext, init?: Record<string, string>): 
     title: "New purchase requisition",
     sub: "Tell purchase what your godown needs.",
     submit: "Raise requisition",
-    init: { date: new Date().toISOString().slice(0, 10), godown: ctx.workingGodown?.name ?? "", priority: "Medium", ...init },
+    init: { date: today(), godown: ctx.workingGodown?.name ?? "", priority: "Medium", ...init },
     header: [
       { k: "date", l: "Date", t: "date", req: true },
       { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name) },
@@ -349,7 +353,7 @@ const requisitions: ScreenModule = {
       const id = erpId("req");
       await db.insert(erpRequisitions).values({
         id,
-        reqDate: text(h.date) ?? new Date().toISOString().slice(0, 10),
+        reqDate: text(h.date) ?? today(),
         godownId,
         materialType: type,
         rawMaterialId,
@@ -421,7 +425,7 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>): Promi
     submit: "Save inward",
     lineLabel: "Item",
     init: {
-      date: new Date().toISOString().slice(0, 10),
+      date: today(),
       godown: ctx.workingGodown?.name ?? "",
       ...init,
     },
@@ -550,7 +554,7 @@ const inward: ScreenModule = {
           await tx.insert(erpInward).values({
             id: erpId("pin"),
             prNumber: pr,
-            receivedDate: text(h.date) ?? new Date().toISOString().slice(0, 10),
+            receivedDate: text(h.date) ?? today(),
             supplierId: sup.id,
             godownId,
             materialType: m.materialType,
@@ -723,7 +727,7 @@ async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | nu
     sub: "Only the evidence the item's tests need is asked for.",
     submit: "Save test",
     data: { testsOf, lineId },
-    init: { tester: ctx.user.name, date: new Date().toISOString().slice(0, 10), godown: ctx.workingGodown?.name ?? "" },
+    init: { tester: ctx.user.name, date: today(), godown: ctx.workingGodown?.name ?? "" },
     header: [
       { k: "line", l: "Inward line", t: "select", req: true, opts: Object.keys(testsOf), hint: lines.length ? undefined : "No inward line is waiting for a test. Send one to testing from Purchase inward." },
       { k: "tests", l: "Tests required", t: "derived", calc: "testing.tests" },
@@ -977,7 +981,7 @@ async function saveTest(
     phValue: tests.includes("PH") ? num(h.phValue) : null,
     ...photoIds,
     testerId: tester?.id ?? ctx.user.id,
-    testingDate: text(h.date) ?? new Date().toISOString().slice(0, 10),
+    testingDate: text(h.date) ?? today(),
     remark: text(h.remark),
     updatedAt: new Date(),
     updatedById: ctx.user.id,
@@ -1059,7 +1063,7 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
     itemCode[m.name] = m.code ?? "";
     densityOf[m.name] = m.density;
   });
-  let init: Record<string, string> = { date: new Date().toISOString().slice(0, 10), godown: ctx.workingGodown?.name ?? "", gst: "18", company: "Mahek Marketing India" };
+  let init: Record<string, string> = { date: today(), godown: ctx.workingGodown?.name ?? "", gst: "18", company: "Mahek Marketing India" };
   let editing: RegRow | undefined;
   if (id) {
     editing = (await registerRows()).find((r) => r.p.id === id);
@@ -1381,7 +1385,7 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
   const density = num(h.density);
   if (unit === "Kg" && (density == null || density <= 0)) return fieldErr("density", "A kilogram purchase needs a density to be turned into litres");
   const common = {
-    purchaseDate: text(h.date) ?? new Date().toISOString().slice(0, 10),
+    purchaseDate: text(h.date) ?? today(),
     poNumber: text(h.po),
     quantity: qty,
     unit,
