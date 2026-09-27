@@ -103,9 +103,9 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Semi-finished",
     icon: "beaker",
     screens: [
-      s("sfgBatches", "sfg-batches", "SFG batches", "Liquid made from raw-material lots. One line per lot consumed."),
-      s("sfgStock", "sfg-stock", "Available SFG stock", "Semi-finished lots with litres remaining."),
-      s("sfgLog", "sfg-log", "SFG log", "Every semi-finished entry, newest first."),
+      s("sfgBatches", "sfg-batches", "SFG batches", "Liquid made from raw-material lots. One line per lot consumed.", true),
+      s("sfgStock", "sfg-stock", "Available SFG stock", "Semi-finished lots with litres remaining.", true),
+      s("sfgLog", "sfg-log", "SFG log", "Every semi-finished entry, newest first.", true),
     ],
   },
   {
@@ -113,9 +113,9 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Finished goods",
     icon: "can",
     screens: [
-      s("fgFill", "fg-fill", "FG filling", "SFG filled into cans or drums."),
-      s("fgStock", "fg-stock", "Available FG stock", "Loose finished goods, lot by lot."),
-      s("fgLog", "fg-log", "FG log", "Every finished-goods entry, newest first."),
+      s("fgFill", "fg-fill", "FG filling", "SFG filled into cans or drums.", true),
+      s("fgStock", "fg-stock", "Available FG stock", "Loose finished goods, lot by lot.", true),
+      s("fgLog", "fg-log", "FG log", "Every finished-goods entry, newest first.", true),
     ],
   },
   {
@@ -123,26 +123,26 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "FG packing",
     icon: "box",
     screens: [
-      s("packBatches", "pack-batches", "Packing batches", "Loose cans packed into boxes. A batch posts only when the cans used match the boxes."),
-      s("packStock", "pack-stock", "Available packing stock", "Boxed stock, grouped by SKU."),
-      s("packLog", "pack-log", "Packing log", "Every packing entry, newest first."),
+      s("packBatches", "pack-batches", "Packing batches", "Loose cans packed into boxes. A batch posts only when the cans used match the boxes.", true),
+      s("packStock", "pack-stock", "Available packing stock", "Boxed stock, grouped by SKU.", true),
+      s("packLog", "pack-log", "Packing log", "Every packing entry, newest first.", true),
     ],
   },
   {
     id: "transfer",
     label: "Item transfer",
     icon: "swap",
-    screens: [s("transfers", "transfers", "Item transfers", "Stock moved between godowns, including write-offs to Item Lost Record.")],
+    screens: [s("transfers", "transfers", "Item transfers", "Stock moved between godowns, including write-offs to Item Lost Record.", true)],
   },
   {
     id: "reorder",
     label: "Re-order",
     icon: "refresh",
     screens: [
-      s("rmLevels", "rm-levels", "Raw-material levels", "Minimum and maximum per godown. Sorted by how close each item is to its minimum."),
-      s("fgLevels", "fg-levels", "Finished-goods levels", "Minimum per SKU. Loose SKUs read FG stock, boxed SKUs read packing stock."),
-      s("reorderRm", "reorder-rm", "Re-order raw items", "Followed items below their minimum. Raise a requisition from any row."),
-      s("reorderFg", "reorder-fg", "Re-order finished goods", "Followed SKUs below their minimum."),
+      s("rmLevels", "rm-levels", "Raw-material levels", "Minimum and maximum per godown. Sorted by how close each item is to its minimum.", true),
+      s("fgLevels", "fg-levels", "Finished-goods levels", "Minimum per SKU. Loose SKUs read FG stock, boxed SKUs read packing stock.", true),
+      s("reorderRm", "reorder-rm", "Re-order raw items", "Followed items below their minimum. Raise a requisition from any row.", true),
+      s("reorderFg", "reorder-fg", "Re-order finished goods", "Followed SKUs below their minimum.", true),
     ],
   },
   {

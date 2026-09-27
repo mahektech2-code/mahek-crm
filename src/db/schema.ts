@@ -10634,6 +10634,248 @@ export const erpRmEntries = pgTable(
   ],
 );
 
+/* ---- ERP phase 3: production, transfers and re-order levels (spec §7–§10) ---- */
+
+const erpQty = (name: string) => numeric(name, { precision: 14, scale: 3, mode: "number" });
+
+export const erpTransfers = pgTable(
+  "erp_transfers",
+  {
+    id: text("id").primaryKey(),
+    transferDate: date("transfer_date").notNull(),
+    /** Purchase | Semi Finished | Finish Goods | FG Packing. */
+    itemType: text("item_type").notNull(),
+    fromGodownId: text("from_godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    toGodownId: text("to_godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** A raw material, a formulation, a finished good or an SKU, by item type. */
+    itemId: text("item_id").notNull(),
+    itemName: text("item_name").notNull(),
+    lotNo: text("lot_no").notNull(),
+    quantity: erpQty("quantity").notNull(),
+    remark: text("remark"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [index("erp_transfers_out_idx").on(t.itemType, t.lotNo, t.fromGodownId)],
+);
+
+export const erpSfgLines = pgTable(
+  "erp_sfg_lines",
+  {
+    id: text("id").primaryKey(),
+    sfgNo: integer("sfg_no").notNull(),
+    batchDate: date("batch_date").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    batches: numeric("batches", { precision: 10, scale: 2, mode: "number" }).notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    rmLotNo: text("rm_lot_no").notNull(),
+    qtyPerBatch: erpQty("qty_per_batch").notNull(),
+    /** batches × qty per batch, written with the line and never on its own. */
+    totalUse: erpQty("total_use").notNull(),
+    litresAdjusted: erpQty("litres_adjusted").notNull().default(0),
+    lotCode: text("lot_code").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [index("erp_sfg_lines_rm_idx").on(t.rmLotNo, t.godownId), index("erp_sfg_lines_no_idx").on(t.sfgNo)],
+);
+
+export const erpSfgEntries = pgTable(
+  "erp_sfg_entries",
+  {
+    id: text("id").primaryKey(),
+    /** sfg | transfer. */
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    entryDate: date("entry_date").notNull(),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    lotCode: text("lot_code").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    quantity: erpQty("quantity").notNull(),
+    batches: numeric("batches", { precision: 10, scale: 2, mode: "number" }),
+    remark: text("remark"),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_sfg_entries_source_key").on(t.sourceType, t.sourceId),
+    index("erp_sfg_entries_lot_idx").on(t.lotCode, t.godownId),
+  ],
+);
+
+export const erpFgFills = pgTable(
+  "erp_fg_fills",
+  {
+    id: text("id").primaryKey(),
+    fgNum: integer("fg_num").notNull(),
+    fillDate: date("fill_date").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    sfgLotCode: text("sfg_lot_code").notNull(),
+    finishedGoodId: text("finished_good_id")
+      .notNull()
+      .references(() => finishedGoods.id),
+    /** Litres per can or drum. */
+    canSize: numeric("can_size", { precision: 8, scale: 3, mode: "number" }).notNull(),
+    canUseId: text("can_use_id").references(() => erpRawMaterials.id),
+    /** Can | Drum | Naket. */
+    packingType: text("packing_type").notNull(),
+    cans: integer("cans").notNull(),
+    canAdjusted: integer("can_adjusted").notNull().default(0),
+    lotCode: text("lot_code").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [index("erp_fg_fills_sfg_idx").on(t.sfgLotCode, t.godownId)],
+);
+
+export const erpFgEntries = pgTable(
+  "erp_fg_entries",
+  {
+    id: text("id").primaryKey(),
+    /** fill | transfer. */
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    entryDate: date("entry_date").notNull(),
+    finishedGoodId: text("finished_good_id")
+      .notNull()
+      .references(() => finishedGoods.id),
+    lotCode: text("lot_code").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Cans. */
+    quantity: erpQty("quantity").notNull(),
+    canUseId: text("can_use_id").references(() => erpRawMaterials.id),
+    packingType: text("packing_type"),
+    /** The loose SKU these cans sell as (spec §8.2 "Description Of Goods"). */
+    skuId: text("sku_id").references(() => products.id),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_fg_entries_source_key").on(t.sourceType, t.sourceId),
+    index("erp_fg_entries_lot_idx").on(t.lotCode, t.godownId),
+  ],
+);
+
+export const erpPackLines = pgTable(
+  "erp_pack_lines",
+  {
+    id: text("id").primaryKey(),
+    batchSerial: integer("batch_serial").notNull(),
+    batchNo: text("batch_no").notNull(),
+    packDate: date("pack_date").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    finishedGoodId: text("finished_good_id")
+      .notNull()
+      .references(() => finishedGoods.id),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    /** Boxes in the WHOLE batch, carried on every line (spec §9.1). */
+    boxes: integer("boxes").notNull(),
+    fgLotCode: text("fg_lot_code").notNull(),
+    /** Cans taken from this line's FG lot. */
+    cans: integer("cans").notNull(),
+    remarks: text("remarks"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [index("erp_pack_lines_batch_idx").on(t.batchNo), index("erp_pack_lines_fg_idx").on(t.fgLotCode, t.godownId)],
+);
+
+/** One entry per COMPLETE batch (spec §14 A-15), never one per line. */
+export const erpPackEntries = pgTable(
+  "erp_pack_entries",
+  {
+    id: text("id").primaryKey(),
+    /** batch | transfer. */
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    entryDate: date("entry_date").notNull(),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    batchNo: text("batch_no").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    boxes: erpQty("boxes").notNull(),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_pack_entries_source_key").on(t.sourceType, t.sourceId),
+    index("erp_pack_entries_batch_idx").on(t.batchNo, t.godownId),
+  ],
+);
+
+export const erpRmLevels = pgTable(
+  "erp_rm_levels",
+  {
+    id: text("id").primaryKey(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    materialType: text("material_type").notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    minQty: erpQty("min_qty").notNull(),
+    maxQty: erpQty("max_qty").notNull(),
+    /** Follow | UnFollow. */
+    status: text("status").notNull().default("Follow"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_rm_levels_key").on(t.godownId, t.rawMaterialId)],
+);
+
+export const erpFgLevels = pgTable(
+  "erp_fg_levels",
+  {
+    id: text("id").primaryKey(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    productId: text("product_id")
+      .notNull()
+      .references(() => products.id),
+    minQty: erpQty("min_qty").notNull(),
+    status: text("status").notNull().default("Follow"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_fg_levels_key").on(t.godownId, t.productId)],
+);
+
 export type ErpPurchase = typeof erpPurchases.$inferSelect;
 export type ErpInward = typeof erpInward.$inferSelect;
 export type ErpTest = typeof erpTests.$inferSelect;

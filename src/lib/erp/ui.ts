@@ -60,8 +60,8 @@ export type FieldSpec = {
   req?: boolean;
   /** Fixed options. */
   opts?: string[];
-  /** Options that depend on another field's value: `{ by: "type", map: { Chemical: [...] } }`. */
-  optsBy?: { by: string; map: Record<string, string[]> };
+  /** Options that depend on other fields' values: `{ by: "type", map: { Chemical: [...] } }`; a list of fields keys the map by their values joined with "|". */
+  optsBy?: { by: string | string[]; map: Record<string, string[]> };
   hint?: string;
   /** Default value on open. */
   def?: string;
@@ -241,6 +241,7 @@ export const FLAG: Record<string, [string, Tone]> = {
   cnSync: ["CN out of sync", "warn"],
   below: ["Below level", "danger"],
   noLevel: ["No level set", "neutral"],
+  notPosted: ["Not posted to inventory", "warn"],
 };
 
 /* -------------------------------------------------------------- formatting */
