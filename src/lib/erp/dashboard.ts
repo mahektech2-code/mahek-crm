@@ -2,7 +2,9 @@ import "server-only";
 import type { ErpContext } from "./access";
 import { erpHref, erpScreen } from "./registry";
 import { loadCustomers, partyStatus } from "./screens/masters";
-import { billsAwaitingIds, incompletePackIds, inwardAwaitingIds, rateMissingIds, testsAwaitingIds } from "./counts";
+import { billsAwaitingIds, incompletePackIds, inwardAwaitingIds, rateMissingIds, salesCounts, testsAwaitingIds, unverifiedIds } from "./counts";
+import { detailRows } from "./screens/sales";
+import { today } from "./screens/common";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { fgLots, packLots, rmLots, sfgLots } from "./stock";
 import { nf } from "./ui";
@@ -37,6 +39,33 @@ export function tileHref(screen: string, ids: string[] | null, label: string): s
 
 export async function dashboardSections(ctx: ErpContext, godownName: string | null): Promise<Section[]> {
   const out: Section[] = [];
+
+  const sales: Tile[] = [];
+  if (ctx.screens.has("pendingOrders") || ctx.screens.has("readyOrders") || ctx.screens.has("orders")) {
+    const c = await salesCounts();
+    const here = <T extends { godown: string }>(xs: T[]) => xs.filter((l) => !godownName || l.godown === godownName);
+    const pending = here(c.pending);
+    const toAllocate = here(c.toAllocate);
+    const partyWait = here(c.pendingParty);
+    if (ctx.screens.has("pendingOrders"))
+      sales.push({ l: "Pending order lines", v: String(pending.length), sub: "not yet in order details", href: tileHref("pendingOrders", null, "") });
+    if (ctx.screens.has("readyOrders"))
+      sales.push({ l: "Ready, lots to allocate", v: String(toAllocate.length), sub: "allocate before marking Done", tone: toAllocate.length ? "warn" : undefined, href: tileHref("readyOrders", toAllocate.map((l) => l.o.id), "To allocate") });
+    if (ctx.screens.has("orders") && partyWait.length)
+      sales.push({ l: "Orders from pending parties", v: String(partyWait.length), sub: "the party needs activating or the order approving", tone: "warn", href: tileHref("orders", partyWait.map((l) => l.o.id), "Pending party") });
+  }
+  if (ctx.screens.has("orderDetails")) {
+    const ids = await unverifiedIds();
+    sales.push({ l: "Awaiting dispatch verification", v: String(ids.length), sub: "enter the dispatch date once it has left", tone: ids.length ? "warn" : undefined, href: tileHref("orderDetails", ids, "Not verified") });
+    if (ctx.powers.has("viewSalesAmounts")) {
+      const month = today().slice(0, 7);
+      const { rows } = await detailRows();
+      const sold = rows.filter((r) => r.d.verification === "Verified" && (r.d.dispatchDate ?? "").startsWith(month) && (!godownName || r.l.godown === godownName));
+      const total = sold.reduce((a, r) => a + (r.amount ?? 0) - (r.discounted ?? 0), 0);
+      sales.push({ l: "Dispatched this month", v: `₹${nf(Math.round(total / 100))}`, sub: `${sold.length} line${sold.length === 1 ? "" : "s"}, before GST`, href: tileHref("orderDetails", sold.map((r) => r.l.o.id), "Dispatched this month") });
+    }
+  }
+  if (sales.length) out.push({ t: "Sales", tiles: sales });
 
   const purchase: Tile[] = [];
   if (ctx.screens.has("inward")) {

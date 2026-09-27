@@ -15,8 +15,8 @@ import { fillFigures, packCosting, boxFigures, sfgRate } from "./engines/product
  *
  *   RM   ← transfers out · SFG consumption
  *   SFG  ← transfers out · FG filling
- *   FG   ← transfers out · packing lines · (phase 4) lot allocations
- *   Pack ← transfers out · (phase 4) lot allocations
+ *   FG   ← transfers out · packing lines · lot allocations to orders
+ *   Pack ← transfers out · lot allocations to orders
  * ------------------------------------------------------------------------- */
 
 type Row = Record<string, unknown>;
@@ -300,6 +300,8 @@ export async function fgLots(ex: Ex = db): Promise<FgLot[]> {
           select item_id as fg, lot_no as lot_code, from_godown_id as godown_id, quantity as qty from erp_transfers where item_type = 'Finish Goods'
           union all
           select finished_good_id, fg_lot_code, godown_id, cans from erp_pack_lines
+          union all
+          select finished_good_id, lot_code, godown_id, quantity from erp_batch_codes where lot_from = 'fg'
         ) o group by 1, 2, 3
       ),
       latest as (
@@ -398,8 +400,11 @@ export async function packLots(ex: Ex = db): Promise<PackLot[]> {
         select sku_id, batch_no, godown_id, sum(boxes)::float8 as qty from erp_pack_entries group by 1, 2, 3
       ),
       outflow as (
-        select lot_no as batch_no, from_godown_id as godown_id, sum(quantity)::float8 as qty
-          from erp_transfers where item_type = 'FG Packing' group by 1, 2
+        select batch_no, godown_id, sum(qty)::float8 as qty from (
+          select lot_no as batch_no, from_godown_id as godown_id, quantity as qty from erp_transfers where item_type = 'FG Packing'
+          union all
+          select lot_code, godown_id, quantity from erp_batch_codes where lot_from = 'pack'
+        ) o group by 1, 2
       ),
       latest as (
         select distinct on (batch_no, godown_id) batch_no, godown_id, id, entry_date, posted_at
@@ -445,7 +450,7 @@ export async function packLots(ex: Ex = db): Promise<PackLot[]> {
  * drums company-wide. Other types read lot stock (spec §14 A-16).
  */
 export async function rmLevelAvailable(): Promise<(materialType: string, rawMaterialId: string, godownId: string) => number> {
-  const [lots, cans, boxes, drums] = await Promise.all([
+  const [lots, cans, boxes, drums, drumsSold] = await Promise.all([
     rmLots(),
     rows<{ item: string; godown: string; n: number }>(
       sql`select can_use_id as item, godown_id as godown, sum(cans)::float8 as n from erp_fg_fills where packing_type = 'Can' and can_use_id is not null group by 1, 2`,
@@ -458,14 +463,20 @@ export async function rmLevelAvailable(): Promise<(materialType: string, rawMate
        group by 1, 2
     `),
     rows<{ n: number }>(sql`select coalesce(sum(drums), 0)::float8 as n from erp_purchases`),
+    rows<{ n: number }>(sql`
+      select coalesce(sum(o.qty_cans), 0)::float8 as n
+        from erp_order_details d join erp_orders o on o.id = d.order_id
+        join erp_product_packing pk on pk.product_id = o.sku_id
+       where pk.box_type = 'Empty Drum'
+    `),
   ]);
   const stock = new Map<string, number>();
   for (const l of lots) stock.set(`${l.rawMaterialId}|${l.godownId}`, (stock.get(`${l.rawMaterialId}|${l.godownId}`) ?? 0) + l.stock);
   const used = (list: { item: string; godown: string; n: number }[]) => new Map(list.map((x) => [`${x.item}|${x.godown}`, Number(x.n)]));
   const canUse = used(cans);
   const boxUse = used(boxes);
-  /* Drums sold arrive with order details in phase 4; until then none are out. */
-  const drumsIn = Number(drums[0]?.n ?? 0);
+  /* Drums are company-wide in the source: every drum bought less every drum sold (A-16). */
+  const drumsIn = Number(drums[0]?.n ?? 0) - Number(drumsSold[0]?.n ?? 0);
   return (type, item, godown) => {
     const k = `${item}|${godown}`;
     const s = stock.get(k) ?? 0;

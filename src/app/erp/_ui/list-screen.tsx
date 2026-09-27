@@ -266,7 +266,7 @@ export function ListScreen({
           {spec.bulk.map((b) => (
             <button
               key={b.id}
-              onClick={() => ui.bulk(spec.screen, b.id, b.l, chosen, b.confirm, () => setSel({}))}
+              onClick={() => ui.bulk(spec.screen, b, chosen, () => setSel({}))}
               style={{ height: 30, padding: "0 12px", border: "1px solid rgba(255,255,255,0.35)", background: "rgba(255,255,255,0.08)", borderRadius: 4, color: "#FFFFFF", fontSize: 13, fontWeight: 500, cursor: "pointer" }}
             >
               {b.l}

@@ -10876,6 +10876,92 @@ export const erpFgLevels = pgTable(
   (t) => [uniqueIndex("erp_fg_levels_key").on(t.godownId, t.productId)],
 );
 
+/* ---- ERP phase 4: sales orders, lot allocations and order details (spec §11) ---- */
+
+export const erpOrders = pgTable(
+  "erp_orders",
+  {
+    id: text("id").primaryKey(),
+    orderNo: integer("order_no").notNull(),
+    orderDate: date("order_date").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    billingCustomerId: text("billing_customer_id")
+      .notNull()
+      .references(() => customers.id),
+    deliveryCustomerId: text("delivery_customer_id")
+      .notNull()
+      .references(() => customers.id),
+    transporter: text("transporter"),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    qtyCans: integer("qty_cans").notNull(),
+    /** Under Process | Ready | Today | Delay | Cancel | Tomorrow | Hold From Office. */
+    status: text("status").notNull().default("Under Process"),
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    /** 1000 = 10%. */
+    discountBp: integer("discount_bp"),
+    tallyBillNo: text("tally_bill_no"),
+    transportCostPaise: bigint("transport_cost_paise", { mode: "number" }).notNull().default(0),
+    remark: text("remark"),
+    /** Done | Not Done. */
+    entryStatus: text("entry_status").notNull().default("Not Done"),
+    /** "Pending" when the billing party was pending on entry; "Approved By Admin" once approved. */
+    partyStatus: text("party_status"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [index("erp_orders_no_idx").on(t.orderNo), index("erp_orders_billing_idx").on(t.billingCustomerId)],
+);
+
+/** A lot allocated to an order line: it takes the stock the moment it is written (spec §11.4). */
+export const erpBatchCodes = pgTable(
+  "erp_batch_codes",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => erpOrders.id),
+    /** fg (cans from an FG lot) | pack (boxes from a packing batch). */
+    lotFrom: text("lot_from").notNull(),
+    lotCode: text("lot_code").notNull(),
+    finishedGoodId: text("finished_good_id").references(() => finishedGoods.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    quantity: erpQty("quantity").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [index("erp_batch_codes_order_idx").on(t.orderId), index("erp_batch_codes_lot_idx").on(t.lotFrom, t.lotCode, t.godownId)],
+);
+
+/** One per order line, created only by "Add To Order Details"; everything else is read live from the line. */
+export const erpOrderDetails = pgTable("erp_order_details", {
+  orderId: text("order_id")
+    .primaryKey()
+    .references(() => erpOrders.id),
+  gstBp: integer("gst_bp").notNull().default(1800),
+  extraExpensesPaise: bigint("extra_expenses_paise", { mode: "number" }),
+  creditNotePaise: bigint("credit_note_paise", { mode: "number" }),
+  /** Pending | Dispatched. */
+  dispatchStatus: text("dispatch_status").notNull().default("Pending"),
+  dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+  dispatchDate: date("dispatch_date"),
+  /** Verified | Not Verify | Pending, or null (not yet looked at). */
+  verification: text("verification"),
+  withoutGstPaise: bigint("without_gst_paise", { mode: "number" }),
+  transportFollowUp: text("transport_follow_up"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id"),
+});
+
 export type ErpPurchase = typeof erpPurchases.$inferSelect;
 export type ErpInward = typeof erpInward.$inferSelect;
 export type ErpTest = typeof erpTests.$inferSelect;

@@ -42,7 +42,9 @@ export type Contact = { l: string; href: string };
 
 export type FieldType =
   | "text" | "num" | "date" | "select" | "area" | "derived" | "photo" | "video"
-  | "multi" | "suggest";
+  | "multi" | "suggest"
+  /** Free text that a barcode scanner types into, offering its options as it goes. */
+  | "scan";
 
 /** A condition on another field of the same form: shown only while it holds. */
 export type When =
@@ -134,7 +136,7 @@ export type ActionSpec = {
   href?: string;
 };
 
-export type BulkSpec = { id: string; l: string; confirm?: string };
+export type BulkSpec = { id: string; l: string; confirm?: string; /** Values to collect once for the whole selection. */ prompt?: PromptSpec };
 
 /* -------------------------------------------------------------------- rows */
 

@@ -593,7 +593,7 @@ const productsScreen: ScreenModule = {
 
 /* =========================================================== customers */
 
-type CustomerRow = {
+export type CustomerRow = {
   id: string;
   name: string;
   city: string | null;

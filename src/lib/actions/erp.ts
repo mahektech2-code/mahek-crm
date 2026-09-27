@@ -48,13 +48,13 @@ export async function erpRunAction(
   }
 }
 
-export async function erpRunBulk(screen: string, action: string, ids: string[]): Promise<Result<unknown>> {
+export async function erpRunBulk(screen: string, action: string, ids: string[], values: Record<string, string> = {}): Promise<Result<unknown>> {
   try {
     const ctx = await requireErpWrite(screen);
     const handler = screenModule(screen)?.bulk?.[action];
     if (!handler) return err("That action is not available.", "not_found");
     if (!ids.length) return err("Nothing selected.");
-    const res = await handler(ctx, ids);
+    const res = await handler(ctx, ids, values);
     if (res.ok) revalidate(screen);
     return res;
   } catch (e) {

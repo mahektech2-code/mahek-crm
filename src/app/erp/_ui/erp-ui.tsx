@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ActionSpec, FieldSpec, FormSpec, PromptSpec } from "@/lib/erp/ui";
+import type { ActionSpec, BulkSpec, FieldSpec, FormSpec, PromptSpec } from "@/lib/erp/ui";
 import { whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
@@ -26,7 +26,7 @@ type Ui = {
   openForm: (spec: FormSpec) => void;
   /** Runs a record action: confirm → prompt/form → server → toast → refresh. */
   act: (screen: string, a: ActionSpec, recordId: string, after?: () => void) => void;
-  bulk: (screen: string, id: string, label: string, ids: string[], confirm?: string, after?: () => void) => void;
+  bulk: (screen: string, b: BulkSpec, ids: string[], after?: () => void) => void;
 };
 
 const Ctx = createContext<Ui | null>(null);
@@ -112,13 +112,22 @@ export function ErpUiProvider({ children }: { children: React.ReactNode }) {
   );
 
   const bulk = useCallback(
-    (screen: string, id: string, label: string, ids: string[], confirmText?: string, after?: () => void) => {
-      const go = () => void erpRunBulk(screen, id, ids).then((res) => finish(res, after));
-      if (confirmText) confirm(confirmText, go);
+    (screen: string, b: BulkSpec, ids: string[], after?: () => void) => {
+      const go = () => {
+        if (b.prompt) {
+          prompt(b.prompt, async (v) => {
+            const res = await erpRunBulk(screen, b.id, ids, v);
+            if (res.ok) finish(res, after);
+            return res;
+          });
+          return;
+        }
+        void erpRunBulk(screen, b.id, ids).then((res) => finish(res, after));
+      };
+      if (b.confirm) confirm(b.confirm, go);
       else go();
-      void label;
     },
-    [confirm, finish],
+    [confirm, finish, prompt],
   );
 
   return (
