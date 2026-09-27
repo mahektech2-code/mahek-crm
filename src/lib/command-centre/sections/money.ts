@@ -1,6 +1,7 @@
 import "server-only";
 import { inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { moneyArrivingSql } from "@/lib/money-arriving";
 import { customers } from "@/db/schema";
 import { ASSIGNED_TO_SQL } from "@/lib/access-control";
 import { rejectReceiptAction, confirmReceiptAction } from "@/lib/actions/payments";
@@ -220,9 +221,7 @@ async function unstatedTotals() {
 }
 
 /** Confirmed money in a window. Adjustments and credit notes are not money arriving. */
-const MONEY_IN = sql`payment_receipts.status = 'confirmed'
-  and payment_receipts.mode not in ('Adjustment', 'Credit note')
-  and payment_receipts.idempotency_key not like 'creditnote:%'`;
+const MONEY_IN = moneyArrivingSql("payment_receipts");
 
 async function collected(from: string, to: string) {
   const [r] = await db.execute<{ amt: string; n: number }>(sql`

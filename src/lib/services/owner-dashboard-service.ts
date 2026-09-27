@@ -234,12 +234,38 @@ export async function leadsCreatedIn(
    * and dropping it would remove exactly the conversions the cohort exists to
    * measure.
    */
+  /*
+   * A SHOP IMPORTED IN BULK IS NOT A NEW LEAD.
+   *
+   * The EMP 2.0 shop master arrived on 7 September 2026 as 3,256 lead rows in
+   * seven minutes, and the Sales Party sheet's non-buying parties as 518 more
+   * on 9 August — and every one of them counted as a lead "created" that
+   * month. New leads read 3,273 for a September in which people raised 16, and
+   * cohort conversion read 0% over a denominator that was almost entirely a
+   * spreadsheet. The KPI asks whether the company is GENERATING opportunities;
+   * a book loaded from a file is not that.
+   *
+   * What marks an import is the shape of the write rather than a column
+   * nothing else sets: rows written by NO person, twenty or more in the same
+   * minute. A telecaller, the handset and the website each create leads one at
+   * a time; only a projection writes hundreds at once. The rows stay leads and
+   * stay on every list — they are only kept out of the "created in this
+   * period" count and the cohort that follows it.
+   */
   const rows = await db.execute<Record<string, unknown>>(sql`
     with first_order as (
       select o.customer_id, min(o.ordered_at) as first_at
         from orders o
        where ${orderCountsSql("o")}
        group by o.customer_id
+    ),
+    bulk_minute as (
+      select date_trunc('minute', b.created_at) as m
+        from customers b
+       where b.created_by_id is null
+         and b.created_at >= ${w.start} and b.created_at <= ${w.end}
+       group by 1
+      having count(*) >= 20
     )
     select c.id as lead_id,
            case when c.lead_stage is not null then 'field' else 'crm' end as origin,
@@ -258,6 +284,8 @@ export async function leadsCreatedIn(
       left join first_order f on f.customer_id = c.id
      where (c.kind = 'lead' or c.lead_stage is not null)
        and c.created_at >= ${w.start} and c.created_at <= ${w.end}
+       and not (c.created_by_id is null
+                and date_trunc('minute', c.created_at) in (select m from bulk_minute))
        and ${where}
   `);
 

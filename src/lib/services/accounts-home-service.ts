@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
+import { moneyArrivingSql } from "@/lib/money-arriving";
 import { APP_TIMEZONE, dayBoundaryWindow } from "../business-date";
 import { billCreditDaysSql } from "../bill-terms";
 import { getConfig } from "../config/store";
@@ -154,23 +155,23 @@ export async function accountsHome(): Promise<AccountsHome> {
       -- Confirmed money only. The date is the day the money is SAID to have
       -- arrived, not the day somebody typed it, because that is the date on
       -- the bank statement it will be reconciled against.
-      -- The Adjustment mode is excluded on purpose. A credit note is recorded
+      -- Adjustments and credit notes are excluded on purpose (money-arriving.ts). A credit note is recorded
       -- as a receipt so it settles bills through the same rebuild as any other
       -- money, but no cash arrived, and a figure headed "money in" that counts
       -- paperwork is a figure somebody will reconcile against the bank and
       -- find short.
       (select coalesce(sum(amount), 0)::bigint from payment_receipts
-        where status = 'confirmed' and mode <> 'Adjustment'
+        where ${moneyArrivingSql("payment_receipts")}
           and received_at = ${day}::date) as today_amount,
       (select count(*)::int from payment_receipts
-        where status = 'confirmed' and mode <> 'Adjustment'
+        where ${moneyArrivingSql("payment_receipts")}
           and received_at = ${day}::date) as today_count,
       (select coalesce(sum(amount), 0)::bigint from payment_receipts
-        where status = 'confirmed' and mode <> 'Adjustment'
+        where ${moneyArrivingSql("payment_receipts")}
           and received_at >= date_trunc('month', ${day}::date)
           and received_at <= ${day}::date) as month_amount,
       (select count(*)::int from payment_receipts
-        where status = 'confirmed' and mode <> 'Adjustment'
+        where ${moneyArrivingSql("payment_receipts")}
           and received_at >= date_trunc('month', ${day}::date)
           and received_at <= ${day}::date) as month_count,
 

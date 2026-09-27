@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { addMonths, endOfMonth as endOfMonthKey, type BusinessDate, type DateRange } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { orderCountsSql } from "@/lib/order-status";
+import { moneyArrivingSql } from "@/lib/money-arriving";
 import { creditedToSql } from "@/lib/sales-attribution";
 import { conversionFor } from "@/lib/engines/owner-kpis";
 import { rankPerformance } from "@/lib/engines/performance";
@@ -78,9 +79,7 @@ async function monthlySales(months: string[]) {
     db.execute<{ month: string; value: string }>(sql`
       select to_char(r.received_at, 'YYYY-MM') as month, coalesce(sum(r.amount), 0) as value
         from payment_receipts r
-       where r.status = 'confirmed'
-         and r.mode <> 'Adjustment'
-         and (r.idempotency_key is null or r.idempotency_key not like 'creditnote:%')
+       where ${moneyArrivingSql("r")}
          and r.received_at >= ${sql.raw(`'${from}'::date`)}
        group by 1
     `),
@@ -113,9 +112,7 @@ async function collectedIn(range: DateRange): Promise<number> {
   const rows = await db.execute<{ v: string }>(sql`
     select coalesce(sum(r.amount), 0) as v
       from payment_receipts r
-     where r.status = 'confirmed'
-       and r.mode <> 'Adjustment'
-       and (r.idempotency_key is null or r.idempotency_key not like 'creditnote:%')
+     where ${moneyArrivingSql("r")}
        and r.received_at >= ${sql.raw(`'${range.from}'::date`)}
        and r.received_at <= ${sql.raw(`'${range.to}'::date`)}
   `);
@@ -346,7 +343,7 @@ export async function companyPayload(p: PeriodState): Promise<CompanyPayload> {
 
   /* ---- as of now ---- */
   const aging = r.home.aging;
-  const overdue = aging.buckets.filter((x) => x.from > 0).reduce((s, x) => s + x.amount, 0);
+  const overdue = aging.buckets.filter((x) => x.from >= 0).reduce((s, x) => s + x.amount, 0);
   const ret = o.retention;
   const prevRet = o.previousRetention;
   const active = ret.total;
@@ -614,8 +611,7 @@ async function recordsBehind(p: PeriodState, key: string): Promise<{ label: stri
     const rows = await db.execute<{ name: string; at: string; mode: string; v: string }>(sql`
       select c.name, to_char(r.received_at, 'YYYY-MM-DD') as at, r.mode, r.amount::text as v
         from payment_receipts r join customers c on c.id = r.customer_id
-       where r.status = 'confirmed' and r.mode <> 'Adjustment'
-         and (r.idempotency_key is null or r.idempotency_key not like 'creditnote:%')
+       where ${moneyArrivingSql("r")}
          and r.received_at >= ${sql.raw(`'${p.from}'::date`)} and r.received_at <= ${sql.raw(`'${p.to}'::date`)}
        order by r.amount desc limit 8
     `);
