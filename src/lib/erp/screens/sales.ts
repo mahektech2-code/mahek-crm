@@ -6,9 +6,11 @@ import { db } from "@/db";
 import {
   customers,
   erpBatchCodes,
+  erpFollowups,
   erpGodowns,
   erpOrderDetails,
   erpOrders,
+  erpTransports,
   priceListDiscountTerms,
   priceListRates,
   priceLists,
@@ -583,10 +585,18 @@ async function doToDetails(ctx: ErpContext, ids: string[]) {
     const why = ls.length === 1 ? detailsBlockers(ls[0]).join(", ") : "each line needs to be Ready and Done, with a Tally bill no., a rate and its lots allocated";
     return err(`Not yet: ${why}.`, "rule_violation");
   }
-  await db
-    .insert(erpOrderDetails)
-    .values(ok.map((l) => ({ orderId: l.o.id, createdById: ctx.user.id, updatedById: ctx.user.id })))
-    .onConflictDoNothing();
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(erpOrderDetails)
+      .values(ok.map((l) => ({ orderId: l.o.id, createdById: ctx.user.id, updatedById: ctx.user.id })))
+      .onConflictDoNothing();
+    /* §18: every detail line gets its follow-up record, once (PRD Q5 — on
+       entering order details, until the client says otherwise). */
+    await tx
+      .insert(erpFollowups)
+      .values(ok.map((l) => ({ orderId: l.o.id, updatedById: ctx.user.id })))
+      .onConflictDoNothing();
+  });
   await erpAudit(ctx, "erp.order.toDetails", "erp_order", ok.map((l) => l.o.id).join(","));
   return okVoid(ok.length < ls.length ? `${plural(ok.length)} added to order details · ${ls.length - ok.length} not ready yet` : `${plural(ok.length)} added to order details`);
 }
@@ -1130,10 +1140,30 @@ async function verify(ctx: ErpContext, ids: string[], values: Record<string, str
   if (!ok.length) return err("Nothing to verify: a line needs its lots allocated in full and must not be verified already.", "rule_violation");
   const earlier = ok.find((l) => date < l.o.orderDate);
   if (earlier) return fieldErr("date", `Order ${earlier.o.orderNo} was taken on ${fd(earlier.o.orderDate)}; it cannot leave before that`);
-  await db
-    .update(erpOrderDetails)
-    .set({ verification: "Verified", dispatchStatus: "Dispatched", dispatchedAt: new Date(), dispatchDate: date, updatedAt: new Date(), updatedById: ctx.user.id })
-    .where(inArray(erpOrderDetails.orderId, ok.map((l) => l.o.id)));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(erpOrderDetails)
+      .set({ verification: "Verified", dispatchStatus: "Dispatched", dispatchedAt: new Date(), dispatchDate: date, updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(inArray(erpOrderDetails.orderId, ok.map((l) => l.o.id)));
+    /* §18: a bill's first verified line opens its transport follow-up, once per
+       order number — the unique index is what makes "once" hold. */
+    for (const l of ok)
+      await tx
+        .insert(erpTransports)
+        .values({
+          id: l.o.id,
+          orderNo: l.o.orderNo,
+          billDate: date,
+          billingCustomerId: l.o.billingCustomerId,
+          billNo: l.o.tallyBillNo,
+          transporter: l.o.transporter ?? l.delivery.p?.transporter ?? null,
+          area: l.delivery.area,
+          paymentType: l.billing.freightTerm,
+          extraExpensePaise: d.get(l.o.id)?.extraExpensesPaise ?? null,
+          updatedById: ctx.user.id,
+        })
+        .onConflictDoNothing();
+  });
   await erpAudit(ctx, "erp.detail.verify", "erp_order_detail", ok.map((l) => l.o.id).join(","), null, { dispatchDate: date });
   return okVoid(ok.length < ids.length ? `${plural(ok.length)} verified · ${ids.length - ok.length} not ready to verify` : `${plural(ok.length)} verified and dispatched`);
 }

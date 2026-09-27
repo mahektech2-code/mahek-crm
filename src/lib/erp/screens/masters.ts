@@ -62,7 +62,7 @@ type Col = ColSpec & { pw?: ErpPower };
 
 const has = (ctx: ErpContext) => (p: string) => ctx.powers.has(p as ErpPower);
 
-function phoneContacts(phone: string | null | undefined, email?: string | null) {
+export function phoneContacts(phone: string | null | undefined, email?: string | null) {
   const out: { l: string; href: string }[] = [];
   const digits = (phone ?? "").replace(/\D/g, "");
   if (digits.length >= 10) {

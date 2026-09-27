@@ -2,7 +2,8 @@ import "server-only";
 import type { ErpContext } from "./access";
 import { erpHref, erpScreen } from "./registry";
 import { loadCustomers, partyStatus } from "./screens/masters";
-import { billsAwaitingIds, incompletePackIds, inwardAwaitingIds, rateMissingIds, salesCounts, testsAwaitingIds, unverifiedIds } from "./counts";
+import { billsAwaitingIds, incompletePackIds, inwardAwaitingIds, logisticsCounts, rateMissingIds, salesCounts, testsAwaitingIds, unverifiedIds } from "./counts";
+import { pendingCnRows } from "./screens/logistics";
 import { detailRows } from "./screens/sales";
 import { today } from "./screens/common";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
@@ -66,6 +67,22 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     }
   }
   if (sales.length) out.push({ t: "Sales", tiles: sales });
+
+  const logistics: Tile[] = [];
+  if (["pendingLr", "requests", "expenses", "pendingCn"].some((k) => ctx.screens.has(k))) {
+    const c = await logisticsCounts();
+    if (ctx.screens.has("pendingLr"))
+      logistics.push({ l: "Bills without an LR", v: String(c.pendingLr.length), sub: "enter the lorry receipt number", tone: c.pendingLr.length ? "warn" : undefined, href: tileHref("pendingLr", null, "") });
+    if (ctx.screens.has("requests"))
+      logistics.push({ l: "Customer requests to decide", v: String(c.requested.length), sub: ctx.powers.has("decideRequests") ? "you decide these" : "the office decides", tone: c.requested.length ? "warn" : undefined, href: tileHref("requests", c.requested, "Requested") });
+    if (ctx.screens.has("pendingCn")) {
+      const cn = await pendingCnRows();
+      if (cn.length) logistics.push({ l: "Credit notes not on their line", v: String(cn.length), sub: "run the credit-note updater", tone: "warn", href: tileHref("pendingCn", null, "") });
+    }
+    if (ctx.screens.has("expenses"))
+      logistics.push({ l: "Expenses to verify", v: String(c.pendingExpenses.length), href: tileHref("expenses", c.pendingExpenses, "Pending") });
+  }
+  if (logistics.length) out.push({ t: "Logistics and requests", tiles: logistics });
 
   const purchase: Tile[] = [];
   if (ctx.screens.has("inward")) {

@@ -1240,6 +1240,13 @@
       "when": 1790370238688,
       "tag": "0178_erp_sales_orders",
       "breakpoints": true
+    },
+    {
+      "idx": 178,
+      "version": "7",
+      "when": 1790370298688,
+      "tag": "0179_erp_logistics_requests_followup_expenses",
+      "breakpoints": true
     }
   ]
 }

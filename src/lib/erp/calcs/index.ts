@@ -2,3 +2,4 @@
 import "./purchase";
 import "./production";
 import "./sales";
+import "./logistics";
