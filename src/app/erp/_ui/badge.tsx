@@ -1,25 +1,30 @@
-import { FLAG, ST_TONE, TONES, type Tone } from "@/lib/erp/ui";
+import { Badge as CrmBadge, type Tone as CrmTone } from "@/components/ui/primitives";
+import { FLAG, ST_TONE, type Tone } from "@/lib/erp/ui";
+
+/*
+ * The ERP's statuses and flags, drawn as the CRM's own badge.
+ *
+ * The ERP names seven tones and the CRM draws six: `info` is the one it lacks,
+ * and it lands on brand — "Under process", "In transit", "Order placed" are
+ * all work moving, which is what the brand tint already says on the CRM's
+ * screens.
+ */
+const TO_CRM: Record<Tone, CrmTone> = {
+  success: "success",
+  danger: "danger",
+  warn: "warn",
+  info: "brand",
+  brand: "brand",
+  neutral: "neutral",
+  muted: "muted",
+};
+
+export function crmTone(t: Tone | undefined): CrmTone {
+  return TO_CRM[t ?? "neutral"];
+}
 
 export function Badge({ label, tone }: { label: string; tone?: Tone }) {
-  const t = TONES[tone ?? "neutral"];
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        height: 22,
-        padding: "0 8px",
-        borderRadius: 11,
-        background: t[0],
-        color: t[1],
-        fontSize: 12,
-        fontWeight: 500,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </span>
-  );
+  return <CrmBadge tone={crmTone(tone)}>{label}</CrmBadge>;
 }
 
 /** A status value, in the tone that value is always drawn in. */
@@ -45,24 +50,5 @@ export function rowTone(flags: string[]): Tone | null {
 
 /** An "AI-n" chip, the way the design marks anything the AI produced. */
 export function AiChip({ label }: { label: string }) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        height: 20,
-        padding: "0 8px",
-        borderRadius: 10,
-        background: "#F1ECFF",
-        color: "#5223E0",
-        fontSize: 11,
-        fontWeight: 600,
-        letterSpacing: "0.02em",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </span>
-  );
+  return <CrmBadge tone="brand">{label}</CrmBadge>;
 }

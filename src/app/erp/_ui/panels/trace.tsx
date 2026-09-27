@@ -2,6 +2,7 @@
 
 import { erpHref, erpScreen } from "@/lib/erp/registry";
 import { inr } from "@/lib/erp/ui";
+import { SectionLabel } from "@/components/ui/primitives";
 import { registerPanel, type PanelProps } from "../panels";
 
 /* ---------------------------------------------------------------------------
@@ -19,8 +20,6 @@ type Assist = {
   previous: { date: string; type: string | null; status: string; cn: number | null }[];
 };
 
-const H = { fontSize: 12, fontWeight: 500, textTransform: "uppercase" as const, letterSpacing: "0.04em", color: "#6B7385" };
-
 function href(s: Step): string | null {
   const screen = erpScreen(s.screen);
   if (!screen || !s.ids.length) return null;
@@ -30,28 +29,28 @@ function href(s: Step): string | null {
 function TracePanel({ data }: PanelProps) {
   const a = data as Assist;
   return (
-    <section style={{ display: "grid", gap: 12 }}>
+    <section className="grid gap-3">
       {a.cluster ? (
-        <div role="alert" style={{ border: "1px solid #F5C2C0", background: "#FFF7F6", borderRadius: 8, padding: "10px 12px", fontSize: 13, color: "#8A1C14" }}>
+        <div role="alert" className="rounded-[4px] border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-3 py-2.5 text-[13px] text-danger">
           <strong>Possible batch problem.</strong> {a.cluster.count} requests in the window share{" "}
           {a.cluster.lots.map((l) => l.replace(/^(fg|sfg|rm):/, "")).join(", ") || "a lot"}
           {a.cluster.parties.length ? ` — also from ${a.cluster.parties.join(", ")}` : ""}.
         </div>
       ) : null}
-      <div style={{ border: "1px solid #EDEFF3", borderRadius: 8, padding: 14 }}>
-        <span style={H}>Batch trace</span>
+      <div className="rounded-[6px] border border-line p-3.5">
+        <SectionLabel>Batch trace</SectionLabel>
         {a.steps.length ? (
-          <ol style={{ listStyle: "none", margin: "10px 0 0", padding: 0, display: "grid", gap: 8 }}>
+          <ol className="mt-2.5 grid list-none gap-2 p-0">
             {a.steps.map((s, i) => {
               const link = href(s);
               return (
-                <li key={`${s.stage}-${i}`} style={{ display: "grid", gridTemplateColumns: "20px 1fr", gap: 8 }}>
-                  <span style={{ width: 20, height: 20, borderRadius: 10, background: "#F1ECFF", color: "#5223E0", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#161616" }}>
-                      {s.stage} · {link ? <a href={link} style={{ color: "#5223E0" }}>{s.label}</a> : s.label}
+                <li key={`${s.stage}-${i}`} className="grid grid-cols-[20px_1fr] gap-2">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-soft text-[11px] font-semibold text-[#5223E0]">{i + 1}</span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-semibold text-ink">
+                      {s.stage} · {link ? <a href={link} className="text-brand">{s.label}</a> : s.label}
                     </span>
-                    <span style={{ display: "block", fontSize: 12, color: "#3D4453", marginTop: 2, overflowWrap: "anywhere" }}>{s.detail}</span>
+                    <span className="mt-0.5 block text-xs [overflow-wrap:anywhere] text-body">{s.detail}</span>
                   </span>
                 </li>
               );
@@ -59,21 +58,21 @@ function TracePanel({ data }: PanelProps) {
           </ol>
         ) : null}
         {a.missing.map((m) => (
-          <p key={m} style={{ margin: "8px 0 0", fontSize: 12, color: "#8A5C05" }}>
+          <p key={m} className="mt-2 text-xs text-warn-ink">
             {m}
           </p>
         ))}
       </div>
       {a.people.length ? (
-        <div style={{ fontSize: 13, color: "#3D4453" }}>
-          <span style={H}>Handled the traced steps</span>
-          <div style={{ marginTop: 4 }}>{a.people.join(", ")} — a suggestion for the responsible employee, not an assignment.</div>
+        <div className="text-[13px] text-body">
+          <SectionLabel>Handled the traced steps</SectionLabel>
+          <div className="mt-1">{a.people.join(", ")} — a suggestion for the responsible employee, not an assignment.</div>
         </div>
       ) : null}
       {a.previous.length ? (
-        <div style={{ fontSize: 13, color: "#3D4453" }}>
-          <span style={H}>This customer&apos;s earlier requests</span>
-          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+        <div className="text-[13px] text-body">
+          <SectionLabel>This customer&apos;s earlier requests</SectionLabel>
+          <ul className="mt-1 list-disc pl-[18px]">
             {a.previous.map((p, i) => (
               <li key={i}>
                 {p.date} · {p.type ?? "Request"} · {p.status}

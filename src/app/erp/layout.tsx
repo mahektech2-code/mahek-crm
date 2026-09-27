@@ -2,13 +2,12 @@ import { listUserApps } from "@/lib/access";
 import { webApps } from "@/lib/apps";
 import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
-import { AppSwitcher } from "@/components/shell/app-switcher";
-import { AccountMenu } from "@/components/shell/account-menu";
 import { requireErpApp } from "@/lib/erp/access";
 import { ERP_GROUPS, erpHref } from "@/lib/erp/registry";
 import { erpNavCounts } from "@/lib/erp/counts";
 import { getConfig } from "@/lib/config/store";
 import { featureState } from "@/lib/erp/ai";
+import { listNotifications } from "@/lib/queries";
 import { ErpShell, type NavGroup } from "./_ui/erp-shell";
 
 /**
@@ -21,7 +20,14 @@ import { ErpShell, type NavGroup } from "./_ui/erp-shell";
  */
 export default async function ErpLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireErpApp();
-  const [apps, hat, counts, config, askState] = await Promise.all([listUserApps(ctx.user.id), hatForHeader(ctx.user, "erp"), erpNavCounts(ctx), getConfig(), featureState("ask", true)]);
+  const [apps, hat, counts, config, askState, notifications] = await Promise.all([
+    listUserApps(ctx.user.id),
+    hatForHeader(ctx.user, "erp"),
+    erpNavCounts(ctx),
+    getConfig(),
+    featureState("ask", true),
+    listNotifications(ctx.user.id),
+  ]);
 
   const nav: NavGroup[] = ERP_GROUPS.map((g) => {
     const screens = g.screens
@@ -39,19 +45,14 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
   return (
     <ErpShell
       nav={nav}
-      user={{ name: ctx.user.name, title: hat.label, initials: initialsOf(ctx.user.name) }}
+      user={{ name: ctx.user.name, email: ctx.user.email, phone: ctx.user.phone, initials: initialsOf(ctx.user.name), role: ctx.user.role }}
+      hat={hat}
       godowns={ctx.assignedGodowns.map((g) => ({ id: g.id, name: g.name }))}
       working={ctx.workingGodown ? { id: ctx.workingGodown.id, name: ctx.workingGodown.name } : null}
+      notifications={notifications}
       voice={config["erp.ai.voice.enabled"]}
       ask={askState.on}
-      switcher={apps.length > 1 ? <AppSwitcher apps={webApps(apps)} current="erp" /> : undefined}
-      accountMenu={
-        <AccountMenu
-          user={{ name: ctx.user.name, email: ctx.user.email, phone: ctx.user.phone, initials: initialsOf(ctx.user.name), role: ctx.user.role }}
-          hat={hat}
-          variant="header"
-        />
-      }
+      apps={webApps(apps)}
     >
       {children}
     </ErpShell>

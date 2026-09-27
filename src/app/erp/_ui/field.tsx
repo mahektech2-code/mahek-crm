@@ -2,39 +2,22 @@
 
 import { useContext, useState } from "react";
 import type { FieldSpec } from "@/lib/erp/ui";
+import { cx } from "@/components/ui/primitives";
 import { DictateButton, joinDictation } from "@/components/ui/dictate";
 import { Icon } from "./icons";
 import { ErpVoice } from "./voice";
 
 /* ---------------------------------------------------------------------------
- * One form field, drawn as the design draws every field in every form and
- * prompt: an uppercase label with its tag (Calculated / AI suggestion /
- * Optional), the control, then the error under it or else the hint.
+ * One form field, drawn as the CRM draws every field: an uppercase label (with
+ * the ERP's tag — Calculated / AI suggestion / Optional — beside it), the
+ * control at the CRM's height and border, then the error under it or else the
+ * hint.
  * ------------------------------------------------------------------------- */
 
-const LABEL: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  fontSize: 12,
-  fontWeight: 500,
-  textTransform: "uppercase",
-  letterSpacing: "0.04em",
-  color: "#6B7385",
-  marginBottom: 5,
-};
+const CONTROL = "w-full rounded-[4px] border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
 
-function base(err: boolean): React.CSSProperties {
-  return {
-    width: "100%",
-    height: 38,
-    padding: "0 10px",
-    border: `1px solid ${err ? "#B3261E" : "#C2C8D2"}`,
-    borderRadius: 4,
-    fontSize: 14,
-    background: "#FFFFFF",
-    color: "#161616",
-  };
+function control(err: boolean, extra?: string) {
+  return cx(CONTROL, "h-8.5", err ? "border-danger" : "border-line", extra);
 }
 
 export function Field({
@@ -59,37 +42,30 @@ export function Field({
 }) {
   const opts = options ?? f.opts ?? [];
   const tag = f.conf ? (f.conf === "high" ? "AI · read" : f.conf === "check" ? "AI · check this" : "AI · not found") : f.t === "derived" ? "Calculated" : f.t === "suggest" ? "AI suggestion" : !f.req ? "Optional" : "";
+  const tagTone =
+    f.conf === "check" || f.conf === "not found"
+      ? "bg-warn-soft text-warn-ink"
+      : f.conf || f.t === "suggest"
+        ? "bg-brand-soft text-[#5223E0]"
+        : f.t === "derived"
+          ? "bg-divider text-muted"
+          : "text-muted";
   /* A control with several buttons inside cannot sit in a <label>: every
      button would take the whole label as its name, and a click on the label
      text would press the first one. Those fields are a named group instead. */
   const grouped = f.t === "multi" || f.t === "photo" || f.t === "video" || f.t === "suggest";
   const Wrap = grouped ? "div" : "label";
   return (
-    <Wrap style={{ display: "block", minWidth: 0 }} {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
-      <span style={LABEL}>
+    <Wrap className="block min-w-0" {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
+      <span className="mb-1 flex items-center gap-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
         {f.l}
-        {tag ? (
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 500,
-              padding: "1px 6px",
-              borderRadius: 8,
-              background: f.conf === "check" || f.conf === "not found" ? "#FDF6E7" : f.conf || f.t === "suggest" ? "#F1ECFF" : f.t === "derived" ? "#EDEFF3" : "transparent",
-              color: f.conf === "check" || f.conf === "not found" ? "#8A5C05" : f.conf || f.t === "suggest" ? "#5223E0" : "#6B7385",
-              textTransform: "none",
-              letterSpacing: 0,
-            }}
-          >
-            {tag}
-          </span>
-        ) : null}
+        {tag ? <span className={cx("rounded-[3px] px-1.5 text-[11px] font-medium tracking-normal normal-case", tagTone)}>{tag}</span> : null}
       </span>
       <Control f={f} value={value} error={!!error} opts={opts} derived={derived} onChange={onChange} onMic={onMic} onUseSuggestion={onUseSuggestion} />
       {error ? (
-        <span style={{ display: "block", fontSize: 13, fontWeight: 500, color: "#B3261E", marginTop: 4 }}>{error}</span>
+        <span className="mt-1 block text-[13px] text-danger">{error}</span>
       ) : f.hint ? (
-        <span style={{ display: "block", fontSize: 12, color: "#6B7385", marginTop: 4 }}>{f.hint}</span>
+        <span className="mt-1 block text-[13px] text-muted">{f.hint}</span>
       ) : null}
     </Wrap>
   );
@@ -118,18 +94,11 @@ function Control({
   if (f.t === "derived") {
     return (
       <span
-        style={{
-          minHeight: 38,
-          display: "flex",
-          alignItems: "center",
-          padding: "0 10px",
-          borderRadius: 4,
-          background: "#F7F8FA",
-          border: `1px dashed ${error ? "#B3261E" : "#DDE1E8"}`,
-          fontSize: 14,
-          color: derived ? "#161616" : "#C2C8D2",
-          fontVariantNumeric: "tabular-nums",
-        }}
+        className={cx(
+          "flex min-h-8.5 items-center rounded-[4px] border border-dashed bg-canvas px-2.5 text-sm tabular-nums",
+          error ? "border-danger" : "border-line",
+          derived ? "text-ink" : "text-line-strong",
+        )}
       >
         {derived || "—"}
       </span>
@@ -140,7 +109,7 @@ function Control({
        a plain input — never a list that has to be opened first. */
     const listId = `scan-${f.k}`;
     return (
-      <span style={{ position: "relative", display: "block" }}>
+      <span className="relative block">
         <input
           value={value}
           list={listId}
@@ -150,9 +119,9 @@ function Control({
           onKeyDown={(e) => {
             if (e.key === "Enter") e.preventDefault();
           }}
-          style={{ ...base(error), padding: "0 30px 0 10px", fontFamily: "IBM Plex Mono, monospace" }}
+          className={control(error, "pr-8 font-mono")}
         />
-        <span style={{ position: "absolute", right: 10, top: 11, color: "#6B7385", display: "flex", pointerEvents: "none" }}>
+        <span className="pointer-events-none absolute top-2 right-2.5 flex text-muted">
           <Icon n="scan" />
         </span>
         <datalist id={listId}>
@@ -166,26 +135,13 @@ function Control({
   if (f.t === "suggest") {
     const has = !!derived;
     return (
-      <span
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          minHeight: 38,
-          padding: "6px 8px 6px 10px",
-          borderRadius: 4,
-          border: "1px dashed #B9A5FF",
-          background: "#F7F4FF",
-          fontSize: 14,
-          color: has ? "#3D14A8" : "#6B7385",
-        }}
-      >
-        <span style={{ flex: 1, minWidth: 0 }}>{has ? derived : "Keep typing the description for a suggestion"}</span>
+      <span className={cx("flex min-h-8.5 items-center gap-2 rounded-[4px] border border-dashed border-brand-softer bg-brand-soft/50 py-1 pr-1 pl-2.5 text-sm", has ? "text-[#3D14A8]" : "text-muted")}>
+        <span className="min-w-0 flex-1">{has ? derived : "Keep typing the description for a suggestion"}</span>
         {has ? (
           <button
             type="button"
             onClick={() => onUseSuggestion?.(derived!)}
-            style={{ height: 28, padding: "0 10px", border: "1px solid #6835FB", background: "#FFFFFF", borderRadius: 4, color: "#5223E0", fontSize: 13, fontWeight: 500, cursor: "pointer", flex: "none" }}
+            className="h-7 flex-none cursor-pointer rounded-[4px] border border-brand bg-surface px-2.5 text-[13px] font-medium text-[#5223E0] hover:bg-brand-soft"
           >
             Use it
           </button>
@@ -195,37 +151,29 @@ function Control({
   }
   if (f.t === "area") {
     return (
-      <span style={{ position: "relative", display: "block" }}>
+      <span className="relative block">
         <textarea
           value={value}
           readOnly={f.readOnly}
           onChange={(e) => onChange(e.target.value)}
-          style={{ ...base(error), height: 72, padding: "8px 10px", resize: "vertical" }}
+          className={cx(CONTROL, "h-[72px] resize-y py-2 pr-9 leading-[21px]", error ? "border-danger" : "border-line")}
         />
         {f.mic && voice && !f.readOnly ? (
-          /* AI-3: the CRM's own dictation — same providers, same modal, and it
-             draws nothing when dictation is off or has no key. The words are
-             shown before anything reaches the box, and Add is the default. */
+          /* AI-3: the CRM's own dictation — same providers, same modal, same
+             tinted microphone, and it draws nothing when dictation is off or
+             has no key. The words are shown before anything reaches the box,
+             and Add is the default. */
           <DictateButton
             hasExistingText={value.trim().length > 0}
             onImport={(text, replace) => onChange(replace ? text : joinDictation(value, text))}
-            renderTrigger={(open) => (
-              <button
-                type="button"
-                onClick={open}
-                title="Speak instead of typing. Say it in any language."
-                style={{ position: "absolute", right: 6, bottom: 8, width: 30, height: 30, border: "1px solid #DDD2FF", background: "#F1ECFF", borderRadius: 15, color: "#5223E0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-              >
-                <Icon n="mic" />
-              </button>
-            )}
+            className="absolute right-2 bottom-3"
           />
         ) : onMic && f.mic ? (
           <button
             type="button"
             onClick={onMic}
             title="Dictate — speak in any language"
-            style={{ position: "absolute", right: 6, bottom: 8, width: 30, height: 30, border: "1px solid #DDD2FF", background: "#F1ECFF", borderRadius: 15, color: "#5223E0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            className="absolute right-2 bottom-3 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-brand-softer bg-brand-soft text-[#5223E0]"
           >
             <Icon n="mic" />
           </button>
@@ -236,7 +184,7 @@ function Control({
   if (f.t === "select") {
     if (opts.length > 12) return <Combo value={value} opts={opts} error={error} onChange={onChange} />;
     return (
-      <select value={value} disabled={f.readOnly} onChange={(e) => onChange(e.target.value)} style={base(error)}>
+      <select value={value} disabled={f.readOnly} onChange={(e) => onChange(e.target.value)} className={control(error, "cursor-pointer")}>
         <option value="">{opts.length ? "Choose…" : "Nothing available"}</option>
         {opts.map((o) => (
           <option key={o} value={o}>
@@ -253,19 +201,8 @@ function Control({
       onChange(next.join("|"));
     };
     return (
-      <span
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 6,
-          padding: 6,
-          border: `1px solid ${error ? "#B3261E" : "#C2C8D2"}`,
-          borderRadius: 4,
-          minHeight: 38,
-          background: "#FFFFFF",
-        }}
-      >
-        {opts.length === 0 ? <span style={{ fontSize: 13, color: "#6B7385", padding: "4px" }}>Nothing available</span> : null}
+      <span className={cx("flex min-h-8.5 flex-wrap gap-1.5 rounded-[4px] border bg-surface p-1.5", error ? "border-danger" : "border-line")}>
+        {opts.length === 0 ? <span className="p-1 text-[13px] text-muted">Nothing available</span> : null}
         {opts.map((o) => {
           const on = chosen.includes(o);
           return (
@@ -273,17 +210,10 @@ function Control({
               type="button"
               key={o}
               onClick={() => toggle(o)}
-              style={{
-                height: 28,
-                padding: "0 10px",
-                borderRadius: 14,
-                border: `1px solid ${on ? "#6835FB" : "#DDE1E8"}`,
-                background: on ? "#F1ECFF" : "#FFFFFF",
-                color: on ? "#5223E0" : "#3D4453",
-                fontSize: 13,
-                fontWeight: on ? 500 : 400,
-                cursor: "pointer",
-              }}
+              className={cx(
+                "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                on ? "border-brand bg-brand-soft font-medium text-[#5223E0]" : "border-line bg-surface text-body hover:bg-canvas",
+              )}
             >
               {on ? "✓ " : ""}
               {o}
@@ -305,19 +235,19 @@ function Control({
       max={f.max}
       step={f.t === "num" ? "any" : undefined}
       onChange={(e) => onChange(e.target.value)}
-      style={base(error)}
+      className={control(error, f.readOnly ? "bg-canvas text-muted" : undefined)}
     />
   );
 }
 
-/** A select with more than twelve options becomes a search box, as in the design. */
+/** A select with more than twelve options becomes a search box. */
 function Combo({ value, opts, error, onChange }: { value: string; opts: string[]; error: boolean; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const ql = q.trim().toLowerCase();
   const m = ql ? opts.filter((x) => x.toLowerCase().includes(ql)) : opts;
   return (
-    <span style={{ position: "relative", display: "block" }}>
+    <span className="relative block">
       <input
         value={open ? q : value}
         placeholder={value || `Search ${opts.length.toLocaleString("en-IN")} options`}
@@ -330,28 +260,13 @@ function Combo({ value, opts, error, onChange }: { value: string; opts: string[]
           setQ(e.target.value);
         }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
-        style={{ ...base(error), padding: "0 30px 0 10px" }}
+        className={control(error, "pr-8")}
       />
-      <span style={{ position: "absolute", right: 10, top: 11, color: "#6B7385", display: "flex", pointerEvents: "none" }}>
+      <span className="pointer-events-none absolute top-2 right-2.5 flex text-muted">
         <Icon n="search" />
       </span>
       {open ? (
-        <span
-          style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: 42,
-            zIndex: 12,
-            display: "block",
-            background: "#FFFFFF",
-            border: "1px solid #DDE1E8",
-            borderRadius: 6,
-            boxShadow: "0 8px 24px rgba(22,22,22,0.12)",
-            maxHeight: 300,
-            overflowY: "auto",
-          }}
-        >
+        <span className="absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
           {m.slice(0, 8).map((x) => (
             <button
               type="button"
@@ -362,30 +277,15 @@ function Combo({ value, opts, error, onChange }: { value: string; opts: string[]
                 setOpen(false);
                 setQ("");
               }}
-              style={{
-                display: "block",
-                width: "100%",
-                minHeight: 34,
-                padding: "7px 12px",
-                border: "none",
-                background: x === value ? "#F1ECFF" : "#FFFFFF",
-                color: "#161616",
-                fontSize: 14,
-                cursor: "pointer",
-                textAlign: "left",
-              }}
+              className={cx("block min-h-8.5 w-full cursor-pointer px-3 py-[7px] text-left text-sm text-ink", x === value ? "bg-brand-soft" : "hover:bg-canvas")}
             >
               {x}
             </button>
           ))}
           {m.length > 8 ? (
-            <span style={{ display: "block", padding: "8px 12px", borderTop: "1px solid #EDEFF3", fontSize: 12, color: "#6B7385" }}>
-              {(m.length - 8).toLocaleString("en-IN")} more — keep typing
-            </span>
+            <span className="block border-t border-divider px-3 py-2 text-xs text-muted">{(m.length - 8).toLocaleString("en-IN")} more — keep typing</span>
           ) : null}
-          {m.length === 0 ? (
-            <span style={{ display: "block", padding: "10px 12px", fontSize: 13, color: "#6B7385" }}>Nothing matches “{q}”</span>
-          ) : null}
+          {m.length === 0 ? <span className="block px-3 py-2.5 text-[13px] text-muted">Nothing matches “{q}”</span> : null}
         </span>
       ) : null}
     </span>
@@ -432,23 +332,12 @@ function PhotoPicker({
   };
   const done = !!value;
   return (
-    <span style={{ display: "block" }}>
+    <span className="block">
       <span
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          width: "100%",
-          height: 44,
-          padding: "0 12px",
-          border: `1px ${done ? "solid #1D7A45" : `dashed ${error ? "#B3261E" : "#C2C8D2"}`}`,
-          borderRadius: 4,
-          background: done ? "#E9F5EE" : "#FFFFFF",
-          color: done ? "#1D7A45" : "#3D4453",
-          fontSize: 14,
-          cursor: "pointer",
-          position: "relative",
-        }}
+        className={cx(
+          "relative flex h-10 w-full cursor-pointer items-center gap-2 rounded-[4px] border px-3 text-sm",
+          done ? "border-success bg-success-soft text-success" : cx("border-dashed bg-surface text-body hover:bg-canvas", error ? "border-danger" : "border-line-strong"),
+        )}
       >
         {busy ? "Uploading…" : done ? `✓ ${name || "Attached"}` : kind === "video" ? "Record or upload a video" : "Take or upload a photo"}
         <input
@@ -456,7 +345,7 @@ function PhotoPicker({
           accept={kind === "video" ? "video/*" : "image/*,application/pdf"}
           capture={kind === "photo" ? "environment" : undefined}
           onChange={(e) => pick(e.target.files?.[0])}
-          style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+          className="absolute inset-0 cursor-pointer opacity-0"
         />
         {done ? (
           <button
@@ -466,13 +355,13 @@ function PhotoPicker({
               onChange("");
               setName("");
             }}
-            style={{ marginLeft: "auto", position: "relative", zIndex: 1, border: "none", background: "transparent", color: "#1D7A45", cursor: "pointer", fontSize: 13 }}
+            className="relative z-1 ml-auto cursor-pointer text-[13px] text-success hover:underline"
           >
             Remove
           </button>
         ) : null}
       </span>
-      {upErr ? <span style={{ display: "block", fontSize: 13, color: "#B3261E", marginTop: 4 }}>{upErr}</span> : null}
+      {upErr ? <span className="mt-1 block text-[13px] text-danger">{upErr}</span> : null}
     </span>
   );
 }

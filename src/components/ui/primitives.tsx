@@ -367,7 +367,10 @@ export function SortableTh({
         type="button"
         onClick={onSort}
         className={cx(
-          "inline-flex cursor-pointer items-center gap-1 hover:text-body",
+          /* A <button> does not inherit text-transform — the preflight resets
+             it — so without saying it again here a sortable heading read
+             "Customer" beside a plain one reading "CONTACT PERSON". */
+          "inline-flex cursor-pointer items-center gap-1 tracking-[0.04em] uppercase hover:text-body",
           align === "right" ? "flex-row-reverse" : undefined,
           active ? "text-body" : undefined,
         )}
