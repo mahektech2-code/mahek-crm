@@ -319,7 +319,10 @@ function FormDrawer({
   confirm: (msg: string, fn: () => void) => void;
 }) {
   const [h, setH] = useState<Record<string, string>>(() => {
-    const init: Record<string, string> = {};
+    /* Every init key travels, not only the drawn ones: "ADD More" carries the
+       document's number (prFixed, sfgFixed, orderFixed…) as a value the form
+       never draws, and dropping it would start a new document instead. */
+    const init: Record<string, string> = { ...(spec.init ?? {}) };
     spec.header.forEach((f) => (init[f.k] = spec.init?.[f.k] ?? f.def ?? ""));
     return init;
   });
@@ -328,7 +331,9 @@ function FormDrawer({
     (spec.line ?? []).forEach((f) => (l[f.k] = f.def ?? ""));
     return l;
   };
-  const [lines, setLines] = useState<Record<string, string>[]>(() => (spec.line ? [blankLine()] : []));
+  const [lines, setLines] = useState<Record<string, string>[]>(() =>
+    spec.line ? (spec.initLines?.length ? spec.initLines.map((l) => ({ ...blankLine(), ...l })) : [blankLine()]) : [],
+  );
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [topError, setTopError] = useState("");
@@ -391,6 +396,7 @@ function FormDrawer({
           </button>
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 20px", display: "grid", gap: 14, alignContent: "start", gridAutoRows: "max-content" }}>
+          {spec.evidence ? <Evidence e={spec.evidence} /> : null}
           <Block title={spec.line ? "Header" : ""}>
             {spec.header
               .filter((f) => visible(f))
@@ -469,6 +475,33 @@ function FormDrawer({
         </div>
       </div>
     </div>
+  );
+}
+
+/** What an AI reading was read from — the photographs and words — and what the checks found, beside the proposed values. */
+function Evidence({ e }: { e: NonNullable<FormSpec["evidence"]> }) {
+  const tone: Record<string, [string, string]> = { danger: ["#FFF7F6", "#8A1C14"], warn: ["#FDF6E7", "#8A5C05"], success: ["#EEF8F1", "#1B6B3A"], info: ["#EEF4FD", "#1D4F91"], brand: ["#F1ECFF", "#5223E0"], neutral: ["#F4F5F8", "#3D4453"], muted: ["#F4F5F8", "#6B7385"] };
+  return (
+    <section style={{ border: "1px solid #DDD2FF", background: "#FBFAFF", borderRadius: 8, padding: 12, display: "grid", gap: 10 }}>
+      <span style={{ fontSize: 12, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em", color: "#5223E0" }}>Read by AI · check it against the source</span>
+      {e.images?.length ? (
+        <div style={{ display: "flex", gap: 8, overflowX: "auto" }}>
+          {e.images.map((id) => (
+            <a key={id} href={`/api/attachments/${id}`} target="_blank" rel="noreferrer" style={{ flex: "none" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={`/api/attachments/${id}`} alt="Source" style={{ height: 160, maxWidth: 260, objectFit: "contain", borderRadius: 6, background: "#FFFFFF", border: "1px solid #EDEFF3" }} />
+            </a>
+          ))}
+        </div>
+      ) : null}
+      {e.text ? <blockquote style={{ margin: 0, padding: "8px 10px", background: "#FFFFFF", border: "1px solid #EDEFF3", borderRadius: 6, fontSize: 13, color: "#3D4453", whiteSpace: "pre-wrap" }}>{e.text}</blockquote> : null}
+      {e.flags?.map((f, i) => (
+        <span key={i} style={{ fontSize: 13, padding: "6px 10px", borderRadius: 6, background: tone[f.tone]?.[0], color: tone[f.tone]?.[1] }}>
+          {f.text}
+        </span>
+      ))}
+      {e.note ? <span style={{ fontSize: 12, color: "#6B7385" }}>{e.note}</span> : null}
+    </section>
   );
 }
 

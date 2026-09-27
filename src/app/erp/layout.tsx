@@ -8,6 +8,7 @@ import { requireErpApp } from "@/lib/erp/access";
 import { ERP_GROUPS, erpHref } from "@/lib/erp/registry";
 import { erpNavCounts } from "@/lib/erp/counts";
 import { getConfig } from "@/lib/config/store";
+import { featureState } from "@/lib/erp/ai";
 import { ErpShell, type NavGroup } from "./_ui/erp-shell";
 
 /**
@@ -20,7 +21,7 @@ import { ErpShell, type NavGroup } from "./_ui/erp-shell";
  */
 export default async function ErpLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireErpApp();
-  const [apps, hat, counts, config] = await Promise.all([listUserApps(ctx.user.id), hatForHeader(ctx.user, "erp"), erpNavCounts(ctx), getConfig()]);
+  const [apps, hat, counts, config, askState] = await Promise.all([listUserApps(ctx.user.id), hatForHeader(ctx.user, "erp"), erpNavCounts(ctx), getConfig(), featureState("ask", true)]);
 
   const nav: NavGroup[] = ERP_GROUPS.map((g) => {
     const screens = g.screens
@@ -42,6 +43,7 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
       godowns={ctx.assignedGodowns.map((g) => ({ id: g.id, name: g.name }))}
       working={ctx.workingGodown ? { id: ctx.workingGodown.id, name: ctx.workingGodown.name } : null}
       voice={config["erp.ai.voice.enabled"]}
+      ask={askState.on}
       switcher={apps.length > 1 ? <AppSwitcher apps={webApps(apps)} current="erp" /> : undefined}
       accountMenu={
         <AccountMenu

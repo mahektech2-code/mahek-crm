@@ -48,6 +48,7 @@ const files = [
   "src/lib/erp/erp-sales.test.ts",
   "src/lib/erp/erp-logistics.test.ts",
   "src/lib/erp/erp-ai.test.ts",
+  "src/lib/erp/erp-ai-reading.test.ts",
   // The call assistant: learning from logged calls, reading with no model,
   // and the save writing back what the call was really logged as.
   "src/lib/call-intel.test.ts",
