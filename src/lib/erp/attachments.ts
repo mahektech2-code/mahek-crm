@@ -18,7 +18,7 @@ export type ErpParent = "erp_test" | "erp_purchase" | "erp_request" | "erp_trans
 const SCREENS: Record<ErpParent, string[]> = {
   erp_test: ["testing"],
   erp_purchase: ["register"],
-  erp_request: ["requests", "issueCn", "complaints"],
+  erp_request: ["requests", "issueCn", "complaints", "myCustomers"],
   erp_transport: ["transport", "pendingLr", "trackLr"],
   erp_video: ["videos"],
 };

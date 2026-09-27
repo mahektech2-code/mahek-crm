@@ -10962,6 +10962,132 @@ export const erpOrderDetails = pgTable("erp_order_details", {
   updatedById: text("updated_by_id"),
 });
 
+/* ---- ERP phase 5: logistics, requests, follow-up, petty cash, videos (spec §12–§13) ---- */
+
+/** One per bill (order number), written when its first detail line is dispatch-verified. */
+export const erpTransports = pgTable(
+  "erp_transports",
+  {
+    id: text("id").primaryKey(),
+    orderNo: integer("order_no").notNull(),
+    billDate: date("bill_date"),
+    billingCustomerId: text("billing_customer_id")
+      .notNull()
+      .references(() => customers.id),
+    billNo: text("bill_no"),
+    lrNo: text("lr_no"),
+    transporter: text("transporter"),
+    area: text("area"),
+    note: text("note"),
+    paymentType: text("payment_type"),
+    extraExpensePaise: bigint("extra_expense_paise", { mode: "number" }),
+    /** Track | Don't Track. */
+    trackStatus: text("track_status").notNull().default("Don't Track"),
+    materialStage: text("material_stage").notNull().default("Dispatch from Bhiwandi"),
+    reminderDate: date("reminder_date"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_transports_order_key").on(t.orderNo)],
+);
+
+export const erpRequests = pgTable(
+  "erp_requests",
+  {
+    id: text("id").primaryKey(),
+    raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
+    salesmanName: text("salesman_name"),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    mobile: text("mobile"),
+    complaintType: text("complaint_type"),
+    description: text("description"),
+    photoId: text("photo_id"),
+    cnRequired: boolean("cn_required").notNull().default(false),
+    billNo: text("bill_no"),
+    billDate: date("bill_date"),
+    goods: text("goods"),
+    /** Requested | Accepted | Rejected. */
+    status: text("status").notNull().default("Requested"),
+    cnAmountPaise: bigint("cn_amount_paise", { mode: "number" }),
+    cnDate: date("cn_date"),
+    cnNumber: text("cn_number"),
+    remark: text("remark"),
+    cnFileId: text("cn_file_id"),
+    responsible: text("responsible"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvedById: text("approved_by_id").references(() => users.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("erp_requests_customer_idx").on(t.customerId)],
+);
+
+/** One per order-details line; everything else it shows is derived from the orders. */
+export const erpFollowups = pgTable("erp_followups", {
+  orderId: text("order_id")
+    .primaryKey()
+    .references(() => erpOrders.id),
+  reminderDaysParty: integer("reminder_days_party"),
+  reminderDaysProduct: integer("reminder_days_product"),
+  remark: text("remark"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id").references(() => users.id),
+});
+
+export const erpCredits = pgTable("erp_credits", {
+  id: text("id").primaryKey(),
+  creditDate: date("credit_date").notNull(),
+  godownId: text("godown_id")
+    .notNull()
+    .references(() => erpGodowns.id),
+  employeeName: text("employee_name").notNull(),
+  /** Bank Cash | Cash | Other. */
+  mode: text("mode").notNull(),
+  amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id").references(() => users.id),
+});
+
+export const erpExpenses = pgTable("erp_expenses", {
+  id: text("id").primaryKey(),
+  expenseDate: date("expense_date").notNull(),
+  godownId: text("godown_id")
+    .notNull()
+    .references(() => erpGodowns.id),
+  expenseBy: text("expense_by").notNull(),
+  category: text("category"),
+  mode: text("mode").notNull(),
+  particular: text("particular"),
+  amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+  note: text("note"),
+  /** Verify | Pending. */
+  status: text("status").notNull().default("Pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id").references(() => users.id),
+  updatedById: text("updated_by_id"),
+});
+
+export const erpVideos = pgTable("erp_videos", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  /** youtube | file. */
+  source: text("source").notNull(),
+  fileId: text("file_id"),
+  youtubeUrl: text("youtube_url"),
+  tags: text("tags").array().notNull().default([]),
+  description: text("description"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id").references(() => users.id),
+});
+
 export type ErpPurchase = typeof erpPurchases.$inferSelect;
 export type ErpInward = typeof erpInward.$inferSelect;
 export type ErpTest = typeof erpTests.$inferSelect;

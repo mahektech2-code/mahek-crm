@@ -5,6 +5,7 @@ import { erpInward, erpPurchases, erpTests } from "@/db/schema";
 import type { ErpContext } from "./access";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, orderLines } from "./screens/sales";
+import { pendingCnRows } from "./screens/logistics";
 
 /* ---------------------------------------------------------------------------
  * The sidebar's badges: work waiting on a screen (untested inward lines,
@@ -71,6 +72,16 @@ export async function unverifiedIds(): Promise<string[]> {
   return (await detailRows()).rows.filter((r) => !r.d.verification || r.d.verification === "Pending").map((r) => r.l.o.id);
 }
 
+/** Bills without an LR, requests awaiting a decision, expenses awaiting verification. */
+export async function logisticsCounts() {
+  const [lr, req, exp] = await Promise.all([
+    db.execute(sql`select id from erp_transports where lr_no is null or lr_no = ''`) as unknown as Promise<{ id: string }[]>,
+    db.execute(sql`select id from erp_requests where status = 'Requested'`) as unknown as Promise<{ id: string }[]>,
+    db.execute(sql`select id from erp_expenses where status = 'Pending'`) as unknown as Promise<{ id: string }[]>,
+  ]);
+  return { pendingLr: lr.map((r) => r.id), requested: req.map((r) => r.id), pendingExpenses: exp.map((r) => r.id) };
+}
+
 export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   const jobs: Promise<void>[] = [];
@@ -89,6 +100,15 @@ export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, numb
       }),
     );
   if (ctx.screens.has("orderDetails")) jobs.push(unverifiedIds().then((x) => void (out.orderDetails = x.length)));
+  if (["pendingLr", "requests", "expenses"].some((k) => ctx.screens.has(k)))
+    jobs.push(
+      logisticsCounts().then((c) => {
+        if (ctx.screens.has("pendingLr")) out.pendingLr = c.pendingLr.length;
+        if (ctx.screens.has("requests")) out.requests = c.requested.length;
+        if (ctx.screens.has("expenses")) out.expenses = c.pendingExpenses.length;
+      }),
+    );
+  if (ctx.screens.has("pendingCn")) jobs.push(pendingCnRows().then((x) => void (out.pendingCn = x.length)));
   await Promise.all(jobs);
   return out;
 }

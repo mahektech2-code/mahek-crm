@@ -169,10 +169,10 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Logistics",
     icon: "truck",
     screens: [
-      s("transport", "transport", "All transport", "Every dispatched bill, its LR and where the consignment is."),
-      s("pendingLr", "pending-lr", "Pending LR", "Dispatched bills without an LR number yet."),
-      s("trackLr", "track-lr", "Track LR", "Consignments still on the road. Update the stage and the next reminder call."),
-      s("paidFreight", "paid-freight", "Transportation paid", "Paid-freight lines still without their extra expense, grouped by transporter."),
+      s("transport", "transport", "All transport", "Every dispatched bill, its LR and where the consignment is.", true),
+      s("pendingLr", "pending-lr", "Pending LR", "Dispatched bills without an LR number yet.", true),
+      s("trackLr", "track-lr", "Track LR", "Consignments still on the road. Update the stage and the next reminder call.", true),
+      s("paidFreight", "paid-freight", "Transportation paid", "Paid-freight lines still without their extra expense, grouped by transporter.", true),
     ],
   },
   {
@@ -180,10 +180,10 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Requests & credit notes",
     icon: "chat",
     screens: [
-      s("requests", "requests", "Customer requests", "Complaints and credit-note requests raised by sales, grouped by status."),
-      s("issueCn", "issue-cn", "Issue credit note", "Accepted requests that need a credit note issued."),
-      s("complaints", "complaints", "Customer complaints", "Requests without a credit note, grouped by complaint type."),
-      s("pendingCn", "pending-cn", "Pending CN", "Order lines whose credit-note amount has not reached the margin yet."),
+      s("requests", "requests", "Customer requests", "Complaints and credit-note requests raised by sales, grouped by status.", true),
+      s("issueCn", "issue-cn", "Issue credit note", "Accepted requests that need a credit note issued.", true),
+      s("complaints", "complaints", "Customer complaints", "Requests without a credit note, grouped by complaint type.", true),
+      s("pendingCn", "pending-cn", "Pending CN", "Order lines whose credit-note amount has not reached the margin yet.", true),
     ],
   },
   {
@@ -191,8 +191,8 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Order follow-up",
     icon: "phone",
     screens: [
-      s("followup", "followup", "Order follow-up", "When each customer is likely to order again, and when to call them."),
-      s("pivot", "pivot", "Party order pivot", "Per party: last order and the gap since."),
+      s("followup", "followup", "Order follow-up", "When each customer is likely to order again, and when to call them.", true),
+      s("pivot", "pivot", "Party order pivot", "Per party: last order and the gap since.", true),
     ],
   },
   {
@@ -200,21 +200,21 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Expenses",
     icon: "wallet",
     screens: [
-      s("credits", "credits", "Petty-cash credits", "Funds given to employees, per godown and mode."),
-      s("expenses", "expenses", "Expenses", "Petty-cash spending, verified by the manager."),
+      s("credits", "credits", "Petty-cash credits", "Funds given to employees, per godown and mode.", true),
+      s("expenses", "expenses", "Expenses", "Petty-cash spending, verified by the manager.", true),
     ],
   },
   {
     id: "mycust",
     label: "My customers",
     icon: "people",
-    screens: [s("myCustomers", "my-customers", "My customers", "Your own customers and what they have raised.")],
+    screens: [s("myCustomers", "my-customers", "My customers", "Your own customers and what they have raised.", true)],
   },
   {
     id: "help",
     label: "Help videos",
     icon: "play",
-    screens: [s("videos", "videos", "Help videos", "Short walkthroughs, newest first. Search by title or tag.")],
+    screens: [s("videos", "videos", "Help videos", "Short walkthroughs, newest first. Search by title or tag.", true)],
   },
   {
     id: "settings",
