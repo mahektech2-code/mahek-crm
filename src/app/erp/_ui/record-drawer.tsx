@@ -6,6 +6,7 @@ import { FlagBadge, StatusBadge } from "./badge";
 import { Icon } from "./icons";
 import { useErpUi } from "./erp-ui";
 import { renderPanel } from "./panels";
+import "./panels/index";
 
 /* ---------------------------------------------------------------------------
  * A record, opened from its row: the design's right-hand drawer. Every column

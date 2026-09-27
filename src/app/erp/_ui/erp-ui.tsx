@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { ActionSpec, FieldSpec, FormSpec, PromptSpec } from "@/lib/erp/ui";
 import { whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
+import "@/lib/erp/calcs";
 import { erpLoadForm, erpRunAction, erpRunBulk, erpSubmitForm } from "@/lib/actions/erp";
 import type { Result } from "@/lib/result";
 import { Field } from "./field";
@@ -318,7 +319,7 @@ function FormDrawer({
   const [topError, setTopError] = useState("");
   const data = spec.data ?? {};
 
-  const visible = (f: FieldSpec, l: Record<string, string> = {}) => whenHolds(f.when, { ...h, ...l });
+  const visible = (f: FieldSpec, l: Record<string, string> = {}) => whenHolds(f.when, { ...h, ...l }, data);
 
   const submit = () => {
     const e: Record<string, string> = {};

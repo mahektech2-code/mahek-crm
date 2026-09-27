@@ -369,7 +369,7 @@ function PhotoPicker({
     try {
       const body = new FormData();
       body.set("file", file);
-      body.set("parentType", "erp_pending");
+      body.set("kind", kind);
       const res = await fetch("/api/erp/attachments", { method: "POST", body });
       const j = (await res.json()) as { id?: string; error?: string };
       if (!res.ok || !j.id) throw new Error(j.error || "Upload failed");

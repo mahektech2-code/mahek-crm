@@ -106,6 +106,16 @@ export async function createAttachment(input: {
   bytes: Uint8Array;
   /** What the browser claimed. Recorded nowhere; used only to explain a refusal. */
   declaredType?: string;
+  /**
+   * A caller's own accepted list, checked against the SNIFFED type exactly as
+   * the configured one is. The ERP's test video is the reason: an MP4 is
+   * recognised by its `ftyp` box, which the sniffer names `audio/mp4`, and the
+   * suite-wide list is images and PDFs. Passing it widens this one upload and
+   * nothing else.
+   */
+  accepted?: string[];
+  /** Store an MP4-family container as `video/mp4` rather than `audio/mp4`. */
+  asVideo?: boolean;
 }): Promise<Result<{ id: string }>> {
   const ctx = await resolveScope();
   const config = await getConfig();
@@ -120,9 +130,11 @@ export async function createAttachment(input: {
     );
   }
 
-  const actual = sniffContentType(input.bytes);
-  const accepted = config["attachments.acceptedTypes"];
-  if (!actual || !accepted.includes(actual)) {
+  const sniffed = sniffContentType(input.bytes);
+  const accepted = input.accepted ?? config["attachments.acceptedTypes"];
+  const actual =
+    input.asVideo && sniffed === "audio/mp4" ? "video/mp4" : input.asVideo && sniffed === "audio/webm" ? "video/webm" : sniffed;
+  if (!actual || !(accepted.includes(actual) || (sniffed != null && accepted.includes(sniffed)))) {
     // Named precisely, because "invalid file" tells somebody nothing about
     // what to do next — and a renamed file is the interesting case.
     return err(
@@ -313,6 +325,14 @@ export async function canRead(attachmentId: string): Promise<boolean> {
    * price lists may open the file the list was read from, and nobody else.
    * Asked through the capability rather than the app, so the same rule answers
    * under /crm, /sales and the API. */
+  /* ERP files belong to an ERP screen, never to a customer's scope: whoever may
+     open the screen may open its files, and nobody else. */
+  if (row.parentType.startsWith("erp_")) {
+    const ctx = await resolveScope();
+    const { canReadErpAttachment } = await import("@/lib/erp/attachments");
+    return canReadErpAttachment(ctx.user.id, row.parentType, row.parentId);
+  }
+
   if (row.parentType === "price_list_document") {
     const ctx = await resolveScope();
     return canFor(ctx.user, "pricelist.read");

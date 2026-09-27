@@ -1,13 +1,14 @@
 import "server-only";
 import type { ScreenModule } from "../server";
 import { MASTER_SCREENS } from "./masters";
+import { PURCHASE_SCREENS } from "./purchase";
 
 /* ---------------------------------------------------------------------------
  * Every built ERP screen's server module, by screen key. A key with no module
  * here is a screen the registry lists but that is not built yet.
  * ------------------------------------------------------------------------- */
 
-const ALL: ScreenModule[] = [...MASTER_SCREENS];
+const ALL: ScreenModule[] = [...MASTER_SCREENS, ...PURCHASE_SCREENS];
 
 const BY_KEY = new Map(ALL.map((m) => [m.key, m]));
 

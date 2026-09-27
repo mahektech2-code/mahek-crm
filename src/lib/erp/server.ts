@@ -1,5 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog } from "@/db/schema";
 import type { Result } from "@/lib/result";
@@ -40,6 +41,19 @@ export type ScreenModule = {
   /** Forms built for one record on demand — keyed by the action id that opens them. */
   formLoaders?: Record<string, (ctx: ErpContext, id: string) => Promise<FormSpec | null>>;
 };
+
+/**
+ * The next number in an ERP series (spec §1.3), under a row lock, inside the
+ * caller's transaction — so two people saving at once get two numbers.
+ */
+export async function nextNumber(
+  tx: { execute: (q: ReturnType<typeof sql>) => Promise<unknown> },
+  key: "pr" | "sfg" | "fg" | "packBatch" | "order",
+): Promise<number> {
+  const rows = (await tx.execute(sql`update erp_series set last = last + 1 where key = ${key} returning last`)) as unknown as { last: number }[];
+  if (!rows[0]) throw new Error(`No ERP series "${key}"`);
+  return Number(rows[0].last);
+}
 
 /** `erpgd_3f9c…` — a readable prefix and enough randomness to never collide. */
 export function erpId(prefix: string): string {

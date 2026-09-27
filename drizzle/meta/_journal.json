@@ -1212,6 +1212,20 @@
       "when": 1790369998688,
       "tag": "0174_erp_masters_and_godowns",
       "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1790370058688,
+      "tag": "0175_erp_attachment_parents",
+      "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "7",
+      "when": 1790370118688,
+      "tag": "0176_erp_purchase_and_raw_stock",
+      "breakpoints": true
     }
   ]
 }

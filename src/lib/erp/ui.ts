@@ -49,7 +49,9 @@ export type When =
   | { k: string; eq: string }
   | { k: string; in: string[] }
   | { k: string; notEmpty: true }
-  | { k: string; includes: string };
+  | { k: string; includes: string }
+  /** The value of `k`, looked up in the form's `data[map]`, is a list containing `has`. */
+  | { k: string; map: string; has: string };
 
 export type FieldSpec = {
   k: string;
@@ -284,9 +286,17 @@ export function cellText(col: ColSpec, v: CellValue | undefined): string {
   return v == null || v === "" ? "—" : String(v);
 }
 
-export function whenHolds(when: When | undefined, values: Record<string, string>): boolean {
+export function whenHolds(
+  when: When | undefined,
+  values: Record<string, string>,
+  data: Record<string, unknown> = {},
+): boolean {
   if (!when) return true;
   const v = values[when.k] ?? "";
+  if ("map" in when) {
+    const m = (data[when.map] ?? {}) as Record<string, string[]>;
+    return (m[v] ?? []).includes(when.has);
+  }
   if ("eq" in when) return v === when.eq;
   if ("in" in when) return when.in.includes(v);
   if ("includes" in when) return v.split("|").includes(when.includes);

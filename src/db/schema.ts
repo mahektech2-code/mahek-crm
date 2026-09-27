@@ -614,6 +614,18 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
    * lists at all, asked in `canRead` under its own branch.
    */
   "price_list_document",
+  /* ERP parents (docs/erp). Each is read under the ERP screen it belongs to —
+     see `canReadErpAttachment` — never under a customer's scope. */
+  /** Evidence on a purchase test: the pH, colour, paint and density photos and the video. */
+  "erp_test",
+  /** A supplier bill photographed onto a purchase (AI-1). */
+  "erp_purchase",
+  /** A complaint photograph, or the issued credit-note file. */
+  "erp_request",
+  /** The lorry receipt, photographed (AI-8). */
+  "erp_transport",
+  /** An uploaded help video. */
+  "erp_video",
 ]);
 
 /**
@@ -10375,3 +10387,253 @@ export type ErpGodown = typeof erpGodowns.$inferSelect;
 export type ErpRawMaterial = typeof erpRawMaterials.$inferSelect;
 export type ErpSupplier = typeof erpSuppliers.$inferSelect;
 export type ErpRefValue = typeof erpRefValues.$inferSelect;
+
+
+/* ---------------------------------------------------------------- ERP phase 2 */
+
+/**
+ * The ERP's sequential numbers: PR number, SFG No, FG Num, packing batch
+ * serial, order number (spec §1.3). One row per series, allocated under a row
+ * lock inside the document's own transaction — the source's "max + 1" read
+ * twice at once is how two deliveries end up with one PR number.
+ */
+export const erpSeries = pgTable("erp_series", {
+  key: text("key").primaryKey(),
+  last: integer("last").notNull().default(0),
+});
+
+/** A godown's need, raised to purchase (spec §5.2, source "Purchase Order"). */
+export const erpRequisitions = pgTable(
+  "erp_requisitions",
+  {
+    id: text("id").primaryKey(),
+    reqDate: date("req_date").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Chemical | Can | Box | Stationary | Finish Good. */
+    materialType: text("material_type").notNull(),
+    rawMaterialId: text("raw_material_id").references(() => erpRawMaterials.id),
+    productId: text("product_id").references(() => products.id),
+    unit: text("unit").notNull(),
+    requiredQty: numeric("required_qty", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    /** Urgent | Medium | For Stock. */
+    priority: text("priority").notNull(),
+    /** Pending | Order Placed | Booked | Received (spec §14 A-27 adds Pending). */
+    status: text("status").notNull().default("Pending"),
+    remarks: text("remarks"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    index("erp_requisitions_status_idx").on(t.status, t.reqDate),
+    check("erp_requisitions_priority_check", sql`${t.priority} in ('Urgent', 'Medium', 'For Stock')`),
+    check("erp_requisitions_status_check", sql`${t.status} in ('Pending', 'Order Placed', 'Booked', 'Received')`),
+    check("erp_requisitions_item_check", sql`num_nonnulls(${t.rawMaterialId}, ${t.productId}) = 1`),
+  ],
+);
+
+/**
+ * Goods at the gate against a PR (spec §5.3). Each line is sent ONCE, either
+ * to testing or straight to the purchase register — `routed` says which, and
+ * it is set in the same transaction as the row it creates, so a line can never
+ * be sent twice by two people pressing at once.
+ */
+export const erpInward = pgTable(
+  "erp_inward",
+  {
+    id: text("id").primaryKey(),
+    prNumber: integer("pr_number").notNull(),
+    receivedDate: date("received_date").notNull(),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Chemical | Can | Box. */
+    materialType: text("material_type").notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    drums: integer("drums"),
+    weightWithDrum: numeric("weight_with_drum", { precision: 14, scale: 3, mode: "number" }),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    unit: text("unit").notNull(),
+    remark: text("remark"),
+    /** Decided at save from the item's testing list; kept because the list can change later. */
+    testingRequired: boolean("testing_required").notNull(),
+    /** null | Testing | Purchase. */
+    routed: text("routed"),
+    routedAt: timestamp("routed_at", { withTimezone: true }),
+    routedById: text("routed_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    index("erp_inward_pr_idx").on(t.prNumber),
+    check("erp_inward_routed_check", sql`${t.routed} is null or ${t.routed} in ('Testing', 'Purchase')`),
+  ],
+);
+
+/**
+ * A purchase quality test (spec §5.4). The evidence columns hold attachment
+ * ids (bound to this row as parent `erp_test`). Only the verifier decides it,
+ * and verifying creates the purchase register row in the same transaction.
+ */
+export const erpTests = pgTable(
+  "erp_tests",
+  {
+    id: text("id").primaryKey(),
+    inwardId: text("inward_id").references(() => erpInward.id),
+    prNumber: integer("pr_number").notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    unit: text("unit"),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }),
+    drums: integer("drums"),
+    weightWithDrum: numeric("weight_with_drum", { precision: 14, scale: 3, mode: "number" }),
+    /** The item's testing list when the test was recorded. */
+    tests: text("tests").array().notNull().default(sql`'{}'::text[]`),
+    phPhotoId: text("ph_photo_id"),
+    /** AI-8's reading of the pH photo, confirmed by a person. */
+    phValue: numeric("ph_value", { precision: 6, scale: 2, mode: "number" }),
+    /** Good | Moderate | Bad. */
+    smell: text("smell"),
+    colorPhotoId: text("color_photo_id"),
+    oilPhotoId: text("oil_photo_id"),
+    fastPhotoId: text("fast_photo_id"),
+    ncPhotoId: text("nc_photo_id"),
+    primerPhotoId: text("primer_photo_id"),
+    density: numeric("density", { precision: 8, scale: 3, mode: "number" }),
+    densityPhotoId: text("density_photo_id"),
+    thermocolPhotoId: text("thermocol_photo_id"),
+    videoId: text("video_id"),
+    testerId: text("tester_id").references(() => users.id),
+    testingDate: date("testing_date").notNull(),
+    /** Verified | Not Verified. */
+    status: text("status").notNull().default("Not Verified"),
+    remark: text("remark"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    index("erp_tests_status_idx").on(t.status, t.testingDate),
+    check("erp_tests_status_check", sql`${t.status} in ('Verified', 'Not Verified')`),
+  ],
+);
+
+/**
+ * The purchase register (spec §5.5). One row per purchased lot. Litres,
+ * amounts and the lot number are derived by `engines/purchase.ts`; the
+ * available litres are CACHED here because the raw-material ledger posts them,
+ * and they are rewritten on every save of the row, never by hand.
+ */
+export const erpPurchases = pgTable(
+  "erp_purchases",
+  {
+    id: text("id").primaryKey(),
+    prNumber: integer("pr_number").notNull(),
+    purchaseDate: date("purchase_date").notNull(),
+    poNumber: text("po_number"),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    /** Party code & item code & PR number — the identity of this lot everywhere. */
+    lotNo: text("lot_no").notNull(),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    /** Kg | Litre | Pcs. */
+    unit: text("unit").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    density: numeric("density", { precision: 8, scale: 3, mode: "number" }),
+    drums: integer("drums"),
+    weightWithDrum: numeric("weight_with_drum", { precision: 14, scale: 3, mode: "number" }),
+    feedAdjustedLitre: numeric("feed_adjusted_litre", { precision: 14, scale: 3, mode: "number" }).notNull().default(0),
+    feedAdjustedAmountPaise: bigint("feed_adjusted_amount_paise", { mode: "number" }).notNull().default(0),
+    /** 1800 = 18%. */
+    gstBp: integer("gst_bp").notNull().default(1800),
+    /** Cache: what the ledger posts. Rewritten on every save. */
+    availableLitres: numeric("available_litres", { precision: 14, scale: 3, mode: "number" }).notNull().default(0),
+    /** Mahek Marketing India | MYLAC. */
+    company: text("company").notNull().default("Mahek Marketing India"),
+    /** Pending | Invoice Received | Purchase Matched | Purchase Verified. */
+    status: text("status").notNull().default("Pending"),
+    /** null | Received | Bill Not Received. */
+    billReceived: text("bill_received"),
+    billNumber: text("bill_number"),
+    notes: text("notes"),
+    remark: text("remark"),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    testId: text("test_id").references(() => erpTests.id),
+    inwardId: text("inward_id").references(() => erpInward.id),
+    /** inward | test | manual. */
+    source: text("source").notNull(),
+    /** AI-1: the values were read off a supplier bill and accepted by a person. */
+    aiFilled: boolean("ai_filled").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("erp_purchases_lot_key").on(t.lotNo),
+    index("erp_purchases_pr_idx").on(t.prNumber),
+    uniqueIndex("erp_purchases_test_key").on(t.testId),
+    uniqueIndex("erp_purchases_inward_key").on(t.inwardId),
+    check("erp_purchases_status_check", sql`${t.status} in ('Pending', 'Invoice Received', 'Purchase Matched', 'Purchase Verified')`),
+    check("erp_purchases_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Pcs')`),
+  ],
+);
+
+/**
+ * The raw-material inventory LOG (spec §6): one inflow entry per source
+ * document — a purchase that has a rate, or a transfer into a godown. Outflows
+ * are never entries; they are read from the documents that consume stock.
+ * `source_id` is deliberately NOT a foreign key: an entry whose source was
+ * deleted stays, and is flagged "Source deleted" rather than vanishing.
+ */
+export const erpRmEntries = pgTable(
+  "erp_rm_entries",
+  {
+    id: text("id").primaryKey(),
+    /** purchase | transfer. */
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    entryDate: date("entry_date").notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    lotNo: text("lot_no").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_rm_entries_source_key").on(t.sourceType, t.sourceId),
+    index("erp_rm_entries_lot_idx").on(t.lotNo, t.godownId),
+  ],
+);
+
+export type ErpPurchase = typeof erpPurchases.$inferSelect;
+export type ErpInward = typeof erpInward.$inferSelect;
+export type ErpTest = typeof erpTests.$inferSelect;
