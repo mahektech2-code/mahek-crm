@@ -18,12 +18,13 @@ import { AppFrame } from "@/components/shell/app-frame";
 
 type Tab = { href: string; label: string; exact?: boolean };
 
+/*
+ * The two founder DESKS keep their own working pages — the price-list editor
+ * and the WhatsApp switch and automation — and every other founder screen is
+ * the Command Centre at `/founder`, one tab back.
+ */
 const TABS: Tab[] = [
-  { href: "/founder", label: "Company", exact: true },
-  { href: "/founder/team", label: "Team performance" },
-  { href: "/founder/money", label: "Money" },
-  { href: "/founder/people", label: "People" },
-  { href: "/founder/crm", label: "CRM" },
+  { href: "/founder", label: "Command Centre", exact: true },
   { href: "/founder/price-lists", label: "Price lists" },
   { href: "/founder/whatsapp", label: "WhatsApp" },
 ];
@@ -52,7 +53,7 @@ export function FounderShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const visible = TABS.filter((t) => allowed.includes(t.href));
+  const visible = TABS.filter((t) => t.exact || allowed.includes(t.href));
 
   return (
     // Founder floored at nothing and scrolled the body — it predates nobody
@@ -65,7 +66,7 @@ export function FounderShell({
             <div className="flex min-w-0 items-center gap-3">
               {switcher}
               <span className="flex items-baseline gap-3">
-                <span className="text-[15px] font-semibold text-ink">Founder Dashboard</span>
+                <span className="text-[15px] font-semibold text-ink">Founder Command Centre</span>
                 <span className="text-[13px] text-muted">
                   Every app, one reading of the company
                 </span>

@@ -213,6 +213,57 @@ function addTo(
   bucket.set(key, current);
 }
 
+
+/**
+ * One order's lines, normalised — the ONE reading of what an order contained.
+ *
+ * Sheet and handset orders carry `line_items` (JSON, the product by id or by
+ * the words somebody typed); a CRM order carries none and its quantities live
+ * in `interaction_product_lines`, against the call. Read here once so the
+ * score's litres and the Command Centre's volume can never count one order
+ * two ways.
+ */
+export function orderLinesOf(
+  row: { line_items: unknown; call_id: string | null },
+  crmByCall: Map<string, { product_id: string; quantity: number }[]>,
+): { productId: string | null; product: string; quantity: number; amount: number }[] {
+  const jsonLines = Array.isArray(row.line_items)
+    ? (row.line_items as Record<string, unknown>[])
+    : [];
+  const fallback = jsonLines.length === 0 && row.call_id
+    ? (crmByCall.get(row.call_id) ?? []).map((l) => ({
+        productId: l.product_id,
+        quantity: l.quantity,
+        amount: 0,
+      }))
+    : [];
+
+  const lines = jsonLines.length
+    ? jsonLines.map((l) => ({
+        productId: typeof l.productId === "string" ? l.productId : null,
+        product: typeof l.product === "string" ? l.product : "",
+        quantity: Number(l.quantity ?? 0),
+        /*
+         * The line net of tax, for the same reason the order's is — the mix
+         * is a division of revenue, so a numerator in one unit over a
+         * denominator in another would be a share of nothing. Falling back to
+         * the billed amount keeps a line written before `netAmount` existed,
+         * or by anything other than the sheet, inside the denominator: a
+         * share computed over a subset of the lines is wrong in a way no
+         * screen could show.
+         */
+        amount: Number(l.netAmount ?? l.amount ?? 0),
+      }))
+    : fallback.map((l) => ({
+        productId: l.productId,
+        product: "",
+        quantity: l.quantity,
+        amount: 0,
+      }));
+
+  return lines;
+}
+
 /**
  * Every figure the score is read from, for one month, for everybody.
  *
@@ -318,39 +369,7 @@ export async function actualsForPeriod(
      */
     actuals.revenuePaise += Number(row.net_amount_paise ?? row.total_amount ?? 0);
 
-    const jsonLines = Array.isArray(row.line_items)
-      ? (row.line_items as Record<string, unknown>[])
-      : [];
-    const fallback = jsonLines.length === 0 && row.call_id
-      ? (crmByCall.get(row.call_id) ?? []).map((l) => ({
-          productId: l.product_id,
-          quantity: l.quantity,
-          amount: 0,
-        }))
-      : [];
-
-    const lines = jsonLines.length
-      ? jsonLines.map((l) => ({
-          productId: typeof l.productId === "string" ? l.productId : null,
-          product: typeof l.product === "string" ? l.product : "",
-          quantity: Number(l.quantity ?? 0),
-          /*
-           * The line net of tax, for the same reason the order's is — the mix
-           * is a division of revenue, so a numerator in one unit over a
-           * denominator in another would be a share of nothing. Falling back to
-           * the billed amount keeps a line written before `netAmount` existed,
-           * or by anything other than the sheet, inside the denominator: a
-           * share computed over a subset of the lines is wrong in a way no
-           * screen could show.
-           */
-          amount: Number(l.netAmount ?? l.amount ?? 0),
-        }))
-      : fallback.map((l) => ({
-          productId: l.productId,
-          product: "",
-          quantity: l.quantity,
-          amount: 0,
-        }));
+    const lines = orderLinesOf(row, crmByCall);
 
     for (const line of lines) {
       // An MBOS line carries the product id outright; a sheet line carries only
@@ -990,3 +1009,62 @@ export async function recomputeSalesPerformance(
 }
 
 export { salesPerformance, APP_TIMEZONE };
+
+/**
+ * Litres sold over ANY window, company-wide — the Command Centre's Volume.
+ *
+ * The same orders (`orderCountsSql`), the same lines (`orderLinesOf`) and the
+ * same catalogue match the score's litres are read from, so the two can never
+ * disagree about one order. Value on a line whose product nobody can identify
+ * is returned beside the litres rather than guessed into them.
+ */
+export async function volumeForRange(
+  from: string,
+  to: string,
+): Promise<{ millilitres: number; unmatchedPaise: number; byMonth: Record<string, number> }> {
+  const catalogue = await loadCatalogue();
+  const windowStart = sql.raw(`'${from} 00:00:00+05:30'::timestamptz`);
+  const windowEnd = sql.raw(`'${to} 23:59:59.999+05:30'::timestamptz`);
+  const rows = await db.execute<{ line_items: unknown; call_id: string | null; month: string }>(sql`
+    select o.line_items, o.call_id,
+           to_char(o.ordered_at at time zone 'Asia/Kolkata', 'YYYY-MM') as month
+      from orders o
+     where ${orderCountsSql("o")}
+       and o.ordered_at >= ${windowStart}
+       and o.ordered_at <= ${windowEnd}
+  `);
+  const callIds = rows.filter((r) => r.call_id && !Array.isArray(r.line_items)).map((r) => r.call_id as string);
+  const crmLines = callIds.length
+    ? await db.execute<{ interaction_id: string; product_id: string; quantity: number }>(sql`
+        select ipl.interaction_id, ipl.product_id, ipl.quantity
+          from interaction_product_lines ipl
+         where ipl.interaction_id in ${sql`(${sql.join(callIds.map((i) => sql`${i}`), sql`, `)})`}
+      `)
+    : [];
+  const crmByCall = new Map<string, { product_id: string; quantity: number }[]>();
+  for (const l of crmLines) {
+    const list = crmByCall.get(l.interaction_id) ?? [];
+    list.push(l);
+    crmByCall.set(l.interaction_id, list);
+  }
+  let millilitres = 0;
+  let unmatchedPaise = 0;
+  const byMonth: Record<string, number> = {};
+  for (const row of rows) {
+    for (const line of orderLinesOf(row, crmByCall)) {
+      const facts =
+        (line.productId ? catalogue.byId.get(line.productId) : undefined) ??
+        (line.product ? catalogue.byName.get(matchKey(line.product)) : undefined);
+      if (!facts) {
+        unmatchedPaise += Math.max(0, line.amount);
+        continue;
+      }
+      if (facts.millilitresPerCan) {
+        const ml = Math.round(Number(line.quantity) * facts.millilitresPerCan);
+        millilitres += ml;
+        byMonth[row.month] = (byMonth[row.month] ?? 0) + ml;
+      }
+    }
+  }
+  return { millilitres, unmatchedPaise, byMonth };
+}
