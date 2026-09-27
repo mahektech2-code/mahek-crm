@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
+import { moneyArrivingSql } from "@/lib/money-arriving";
 import { addMonths, endOfMonth } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { orderCountsSql } from "@/lib/order-status";
@@ -160,10 +161,10 @@ async function readTeam(ctx: Ctx) {
     db.execute<{ collected: string; receipts: number; new_customers: number }>(sql`
       select
         (select coalesce(sum(r.amount), 0) from payment_receipts r
-          where r.status = 'confirmed' and r.mode <> 'Adjustment'
+          where ${moneyArrivingSql("r")}
             and r.received_at >= ${w.fromDate} and r.received_at <= ${w.toDate}) as collected,
         (select count(*)::int from payment_receipts r
-          where r.status = 'confirmed' and r.mode <> 'Adjustment'
+          where ${moneyArrivingSql("r")}
             and r.received_at >= ${w.fromDate} and r.received_at <= ${w.toDate}) as receipts,
         (select count(*)::int from (
            select o.customer_id, min(o.ordered_at) as first_at
@@ -529,7 +530,7 @@ async function monthlySeries(key: string, months: string[], upTo: string): Promi
     rows = await db.execute<{ month: string; v: string }>(sql`
       select to_char(r.received_at, 'YYYY-MM') as month, coalesce(sum(r.amount), 0) as v
         from payment_receipts r
-       where r.status = 'confirmed' and r.mode <> 'Adjustment'
+       where ${moneyArrivingSql("r")}
          and r.received_at >= ${fromDate} and r.received_at <= ${toDate}
        group by 1
     `);
@@ -664,7 +665,7 @@ async function figureFor(ctx: Ctx, metric: string): Promise<FigureDrawer> {
     const top = await db.execute<{ name: string; mode: string; on: string; amount: string }>(sql`
       select c.name, r.mode, to_char(r.received_at, 'YYYY-MM-DD') as on, r.amount
         from payment_receipts r join customers c on c.id = r.customer_id
-       where r.status = 'confirmed' and r.mode <> 'Adjustment'
+       where ${moneyArrivingSql("r")}
          and r.received_at >= ${w.fromDate} and r.received_at <= ${w.toDate}
        order by r.amount desc
        limit 8

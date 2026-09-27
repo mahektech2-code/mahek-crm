@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
+import { moneyArrivingSql } from "@/lib/money-arriving";
 import { type BusinessDate } from "@/lib/business-date";
 import { readingsForPeriod } from "@/lib/services/performance-service";
 import { ownerDashboard } from "@/lib/services/owner-dashboard-service";
@@ -120,8 +121,7 @@ export async function ask(p: PeriodState, userId: string, question: string): Pro
 async function collected(from: string, to: string) {
   const r = await db.execute<{ v: string }>(sql`
     select coalesce(sum(amount), 0)::text as v from payment_receipts
-     where status = 'confirmed' and mode <> 'Adjustment'
-       and (idempotency_key is null or idempotency_key not like 'creditnote:%')
+     where ${moneyArrivingSql("payment_receipts")}
        and received_at >= ${sql.raw(`'${from}'::date`)} and received_at <= ${sql.raw(`'${to}'::date`)}
   `);
   return Number(r[0]?.v ?? 0);

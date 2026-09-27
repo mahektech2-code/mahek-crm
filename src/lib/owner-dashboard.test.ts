@@ -211,6 +211,32 @@ describe("new leads", () => {
     assert.equal((await leadsCreatedIn(thisMonth(), {})).length, 0);
   });
 
+  test("a shop master imported in bulk is not a month of new leads", async () => {
+    // The EMP 2.0 import wrote 3,256 lead rows in seven minutes on prod, and
+    // New leads read 3,273 for a month in which people raised 16. Twenty rows
+    // written by nobody in one minute is a projection, not somebody's work.
+    const at = new Date();
+    for (let i = 0; i < 25; i++) {
+      await makeCustomer({ kind: "lead", leadSource: "Mahek EMP 2.0", createdById: null, createdAt: at });
+    }
+    // One raised by a person, in the same minute: counted.
+    await makeCustomer({ kind: "lead", leadSource: "cold_call", createdById: rahul.id, createdAt: at });
+    // One from the handset — no creator, but on its own: counted.
+    const lone = new Date(at.getTime() - 3 * 60_000);
+    await makeCustomer({ kind: "lead", leadSource: "whatsapp", createdById: null, createdAt: lone });
+
+    const leads = await leadsCreatedIn(thisMonth(), {});
+    assert.equal(leads.length, 2, "the import is on the book, and not in the count");
+  });
+
+  test("a person raising many leads at once is still raising them", async () => {
+    const at = new Date();
+    for (let i = 0; i < 22; i++) {
+      await makeCustomer({ kind: "lead", createdById: rahul.id, createdAt: at });
+    }
+    assert.equal((await leadsCreatedIn(thisMonth(), {})).length, 22);
+  });
+
   test("a lead created before the window is not this window's", async () => {
     const old = await makeCustomer({ kind: "lead" });
     await db.execute(
