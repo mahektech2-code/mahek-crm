@@ -6,7 +6,6 @@ import { getConfig } from "@/lib/config/store";
 import { readSecret } from "@/lib/secrets";
 import type { ErpContext } from "./access";
 import { featureState, logSuggestion } from "./ai";
-import { addDaysIso } from "./engines/sales";
 import { erpLink, erpListLabel, erpScreen } from "./registry";
 import { screenModule } from "./screens";
 import { today } from "./screens/common";
@@ -92,19 +91,6 @@ export function askTools(ctx: ErpContext, records: AskRecord[]) {
       description: "Items to re-order: followed raw materials below their level (rm) or finished goods below their minimum (fg).",
       inputSchema: z.object({ kind: z.enum(["rm", "fg"]) }),
       execute: async ({ kind }) => fromScreen(ctx, kind === "rm" ? "reorderRm" : "reorderFg", () => true, "all", records),
-    }),
-    followups: tool({
-      description: "Customers to call about their next order: due today, overdue, or in the next seven days.",
-      inputSchema: z.object({ window: z.enum(["today", "overdue", "week"]) }),
-      execute: async ({ window }) => {
-        const d = today();
-        const week = addDaysIso(d, 7);
-        return fromScreen(ctx, "followup", (r) => {
-          const c = r.v.calling as string | null;
-          if (!c) return false;
-          return window === "today" ? c === d : window === "overdue" ? c < d : c > d && c <= week;
-        }, window, records);
-      },
     }),
     transport: tool({
       description: "Dispatched bills in transport follow-up, by material stage or words to match (LR, transporter, customer).",

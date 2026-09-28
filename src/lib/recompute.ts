@@ -129,7 +129,11 @@ const placedDateSql = (alias: string) => sql`
        from orders o
       where (o.customer_id = ${sql.raw(alias)}.id
              or o.delivery_customer_id = ${sql.raw(alias)}.id)
-        and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')),
+        -- Goods on the road or delivered were still ORDERED on that date. Leaving
+        -- in_transit and delivered out made an order stop counting the moment
+        -- somebody recorded that it had moved, and the customer's last order
+        -- date stepped backwards.
+        and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched', 'in_transit', 'delivered')),
     (select max(t.order_date)::text
        from sheet_taken_order_rows t
       where t.matched_customer_id = ${sql.raw(alias)}.id
@@ -693,6 +697,12 @@ export type OrderSystemHolds = {
  * reason it should not be written anywhere else.
  */
 export async function recomputeOrderSystemHolds(): Promise<OrderSystemHolds> {
+  /* With the ERP taking the orders, the Taken Order tab is no longer where an
+     order lands first; the ERP's own open lines are. Same flag, one owner. */
+  if ((await getConfig())["erp.orders.live"]) {
+    const { recomputeErpOrderHolds } = await import("@/lib/erp/book");
+    return recomputeErpOrderHolds();
+  }
   // Never synced, or synced and the table is empty. Either way the sheet has
   // told us nothing, and "nothing" must not be read as "every order in the
   // company is dispatched" — which is what releasing the whole book on an

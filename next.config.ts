@@ -124,6 +124,17 @@ const nextConfig: NextConfig = {
       { source: "/erp/credits", destination: "/erp/expenses?view=credits", permanent: true },
       { source: "/erp/powers", destination: "/admin/people", permanent: true },
       { source: "/erp/employees", destination: "/hrms/employees", permanent: true },
+      /* The sales-order lists and Order details are tabs of one Orders screen;
+         order follow-up is the CRM's buying cycle now, so its old screens land
+         on the ERP's home rather than on a 404. */
+      { source: "/erp/pending-orders", destination: "/erp/orders", permanent: true },
+      { source: "/erp/ready-orders", destination: "/erp/orders?view=readyOrders", permanent: true },
+      { source: "/erp/order-details", destination: "/erp/orders?view=orderDetails", permanent: true },
+      { source: "/erp/batch-codes", destination: "/erp/orders?view=batchCodes", permanent: true },
+      { source: "/erp/labels", destination: "/erp/orders?view=labels", permanent: true },
+      { source: "/erp/order-inbox", destination: "/erp/orders?view=orderInbox", permanent: true },
+      { source: "/erp/followup", destination: "/erp", permanent: true },
+      { source: "/erp/pivot", destination: "/erp", permanent: true },
 
       { source: "/orders", destination: "/accounts", permanent: true },
       { source: "/orders/:path*", destination: "/accounts/:path*", permanent: true },

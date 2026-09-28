@@ -6,7 +6,6 @@ import { db } from "@/db";
 import {
   customers,
   erpBatchCodes,
-  erpFollowups,
   erpGodowns,
   erpOrderDetails,
   erpOrders,
@@ -40,6 +39,8 @@ import {
   type OrderType,
 } from "../engines/sales";
 import { fgLots, lockLot, packLots } from "../stock";
+import { erpOrdersLive, orderNosOf, syncBookOrders } from "../book";
+import { erpLink } from "../registry";
 import { godownIdByName, godownOptions, has, inTx, refuse, today, type Col } from "./common";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
 
@@ -53,7 +54,19 @@ import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
  * deleting it gives the stock back.
  * ------------------------------------------------------------------------- */
 
-export const ORDER_STATUSES = ["Under Process", "Ready", "Today", "Delay", "Cancel", "Tomorrow", "Hold From Office"];
+export const ORDER_STATUSES = ["Under Process", "Ready", "Hold From Office", "Cancel"];
+
+/** Where a line stands against the day it is planned to leave: said from the date, never typed. */
+export type Due = "today" | "tomorrow" | "late" | null;
+
+export function dueOf(dispatchOn: string | null, dispatched: boolean, status: string, now: string): Due {
+  if (!dispatchOn || dispatched || status === "Cancel") return null;
+  if (dispatchOn < now) return "late";
+  if (dispatchOn === now) return "today";
+  return dispatchOn === addDaysIso(now, 1) ? "tomorrow" : null;
+}
+
+const DUE_WORD: Record<NonNullable<Due>, string> = { today: "Dispatch today", tomorrow: "Dispatch tomorrow", late: "Dispatch late" };
 
 /* ============================================================ the lines */
 
@@ -130,6 +143,9 @@ export type OrderLine = {
   allocations: number;
   allocation: Allocation;
   inDetails: boolean;
+  /** Dispatch-verified: the goods have left. */
+  dispatched: boolean;
+  due: Due;
   si: string;
   liveRatePaise: number | null;
   by: string | null;
@@ -148,10 +164,12 @@ export async function orderLines(): Promise<OrderLine[]> {
     skuCatalogue(),
     priceBook(),
     db.execute(sql`select order_id as id, sum(quantity)::float8 as qty, count(*)::int as n from erp_batch_codes group by order_id`) as unknown as Promise<{ id: string; qty: number; n: number }[]>,
-    db.select({ id: erpOrderDetails.orderId }).from(erpOrderDetails),
+    db.select({ id: erpOrderDetails.orderId, verification: erpOrderDetails.verification }).from(erpOrderDetails),
   ]);
+  const now = today();
   const allocBy = new Map(alloc.map((a) => [a.id, a]));
   const inDetails = new Set(details.map((d) => d.id));
+  const verified = new Set(details.filter((d) => d.verification === "Verified").map((d) => d.id));
   const out: OrderLine[] = [];
   for (const r of rows) {
     const billing = parties.get(r.o.billingCustomerId);
@@ -178,6 +196,8 @@ export async function orderLines(): Promise<OrderLine[]> {
       allocations: a ? Number(a.n) : 0,
       allocation: allocationState(allocationTarget(boxed, boxes, r.o.qtyCans), allocated),
       inDetails: inDetails.has(r.o.id),
+      dispatched: verified.has(r.o.id),
+      due: dueOf(r.o.dispatchOn, verified.has(r.o.id), r.o.status, now),
       si: standingInstructions({ instructions: delivery.p?.standingInstructions ?? null, deliveryType: delivery.deliveryType, paymentType: delivery.freightTerm, weightType: delivery.p?.weightType ?? null }),
       liveRatePaise: prices(billing.priceTag, sku).ratePaise,
       by: r.by,
@@ -191,15 +211,21 @@ async function loadCustomersAll(): Promise<Map<string, CustomerRow>> {
   return new Map((await loadCustomers()).map((c) => [c.id, c]));
 }
 
-/** Why a line cannot go to order details, in the order the office has to fix them. */
-function detailsBlockers(l: OrderLine): string[] {
+/**
+ * Why a line cannot be BILLED yet, in the order the office has to fix them.
+ *
+ * Billing is one step now. Mahek Plus asked for "Done" (the office has entered
+ * the bill) and then "Add To Order Details" (copy the row to the next sheet),
+ * and the second existed only because AppSheet kept billing in another sheet.
+ */
+export function billBlockers(l: OrderLine): string[] {
   const miss: string[] = [];
-  if (l.inDetails) return ["already in order details"];
+  if (l.inDetails) return ["already billed"];
+  if (l.o.partyStatus === "Pending") miss.push("approval for this Pending customer");
   if (l.o.status !== "Ready") miss.push("status Ready");
+  if (l.allocation !== "Done") miss.push("lots allocated in full");
   if (!l.o.tallyBillNo) miss.push("a Tally bill no.");
   if (l.o.ratePaise == null) miss.push("a rate");
-  if (l.o.entryStatus !== "Done") miss.push("entry Done");
-  if (l.allocation !== "Done") miss.push("lots allocated in full");
   return miss;
 }
 
@@ -210,6 +236,7 @@ function lineFlags(l: OrderLine): string[] {
   if (!l.o.tallyBillNo || l.o.ratePaise == null) f.push("billMissing");
   if (l.o.partyStatus === "Pending") f.push("pendingParty");
   if (l.inDetails) f.push("detailed");
+  if (l.due) f.push(l.due === "today" ? "dueToday" : l.due === "tomorrow" ? "dueTomorrow" : "late");
   return f;
 }
 
@@ -264,6 +291,7 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
       { k: "area", l: "Area", t: "derived", calc: "order.area" },
       { k: "si", l: "Standing instructions", t: "derived", calc: "order.si" },
       { k: "transporter", l: "Transporter", t: "text", hint: "Blank uses the delivery party's transporter." },
+      { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "The day it should leave. The lists say today, tomorrow or late from it." },
     ],
     line: [
       { k: "sku", l: "Description of goods", t: "select", req: true, opts: skuList.map((s) => s.name) },
@@ -291,7 +319,8 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
     sub: locked ? "Lots are allocated to this line, so its SKU is fixed." : undefined,
     submit: "Save line",
     init: {
-      status: l.o.status,
+      status: ORDER_STATUSES.includes(l.o.status) ? l.o.status : "Under Process",
+      dispatchOn: l.o.dispatchOn ?? "",
       delivery: l.delivery.name,
       transporter: l.o.transporter ?? "",
       qty: String(l.o.qtyCans),
@@ -303,6 +332,7 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
     },
     header: [
       { k: "status", l: "Status", t: "select", req: true, opts: ORDER_STATUSES },
+      { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "Blank: not planned yet." },
       { k: "delivery", l: "Delivery party", t: "select", req: true, opts: names, readOnly: l.inDetails },
       { k: "transporter", l: "Transporter", t: "text" },
       { k: "qty", l: "Order qty (cans)", t: "num", req: true, min: 1, readOnly: l.inDetails },
@@ -401,17 +431,17 @@ function orderList(scope: Scope): ScreenModule {
             { k: "f", l: "Flags", t: "f" },
           ];
       const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
-      const approver = ctx.powers.has("approveParty");
+      /* A Pending customer's order is approved in the ERP only while the ERP
+         is not live; once it is, the Accounts queue decides it. */
+      const approver = ctx.powers.has("approveParty") && !(await erpOrdersLive());
       const bulk: BulkSpec[] = labels
         ? []
         : [
             { id: "ready", l: "Ready" },
             { id: "underProcess", l: "Under Process" },
-            { id: "done", l: "Done" },
-            { id: "notDone", l: "Not Done" },
+            { id: "bill", l: "Bill it" },
+            { id: "unbill", l: "Undo billing" },
             ...(approver ? [{ id: "approve", l: "Approved By Admin" }] : []),
-            { id: "renumber", l: "Generate New Order Number", confirm: "Give every selected line one new order number, as one order?" },
-            { id: "toDetails", l: "Add To Order Details" },
           ];
       const byNo = new Map<number, string[]>();
       shown.forEach((l) => byNo.set(l.o.orderNo, [...(byNo.get(l.o.orderNo) ?? []), l.o.id]));
@@ -428,7 +458,7 @@ function orderList(scope: Scope): ScreenModule {
           download: labels,
           sortDefault: labels ? ["sku", 1] : undefined,
           bulk: bulk.length ? bulk : undefined,
-          newForm: scope === "orders" ? await orderForm(ctx) : undefined,
+          newForm: labels ? undefined : await orderForm(ctx),
           newLabel: "New order",
           noDataLine:
             scope === "orders"
@@ -438,7 +468,7 @@ function orderList(scope: Scope): ScreenModule {
                 : "Nothing under process or ready.",
         },
         rows: shown.map((l): ListRow => {
-          const blockers = detailsBlockers(l);
+          const blockers = billBlockers(l);
           const actions: ActionSpec[] = labels
             ? []
             : [
@@ -450,23 +480,18 @@ function orderList(scope: Scope): ScreenModule {
                   loadsForm: true,
                   why: l.o.status !== "Ready" ? "Lots are allocated once the line is Ready" : l.allocation !== "Add More Quantity" ? (l.allocation === "Done" ? "Fully allocated" : "Over-allocated: remove a batch code first") : !l.boxesValid ? "The box quantity is not whole" : "",
                 },
-                {
-                  id: "done",
-                  l: "Done",
-                  why: l.o.entryStatus === "Done" ? "Already Done" : l.o.status !== "Ready" ? "Set it Ready first" : l.allocation !== "Done" ? `Allocation: ${l.allocation}` : "",
-                },
-                ...(l.o.entryStatus === "Done" ? [{ id: "notDone", l: "Not Done" } as ActionSpec] : []),
-                ...(approver && l.o.partyStatus !== "Approved By Admin" ? [{ id: "approve", l: "Approved By Admin" } as ActionSpec] : []),
-                { id: "toDetails", l: "Add To Order Details", primary: !blockers.length, why: blockers.length ? `Needs ${blockers.join(", ")}` : "" },
+                ...(l.inDetails
+                  ? [{ id: "unbill", l: "Undo billing", why: l.dispatched ? "It has been dispatch-verified" : "", confirm: `Take order ${l.o.orderNo} · ${l.sku.name} back out of billing?` } as ActionSpec]
+                  : [{ id: "bill", l: "Bill it", primary: !blockers.length, why: blockers.length ? `Needs ${blockers.join(", ")}` : "" } as ActionSpec]),
+                ...(approver && l.o.partyStatus === "Pending" ? [{ id: "approve", l: "Approved By Admin" } as ActionSpec] : []),
                 { id: "edit", l: "Edit", loadsForm: true },
                 { id: "more", l: "ADD More", loadsForm: true },
-                { id: "renumber", l: "Generate New Order Number", confirm: `Move this line to a new order number?` },
-                { id: "select", l: "Select Order Number", href: `?f=${encodeURIComponent((byNo.get(l.o.orderNo) ?? []).join(","))}&fl=${encodeURIComponent(`Order ${l.o.orderNo}`)}` },
+                { id: "select", l: "Select Order Number", href: erpLink(scope, { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
                 { id: "customer", l: "View customer", href: `/erp/customers?open=${l.billing.id}` },
                 {
                   id: "delete",
                   l: "Delete",
-                  why: l.inDetails ? "In order details" : l.allocations ? "Release its batch codes first" : "",
+                  why: l.inDetails ? "It is billed" : l.allocations ? "Release its batch codes first" : "",
                   confirm: `Delete this line of order ${l.o.orderNo}?`,
                 },
               ];
@@ -500,9 +525,10 @@ function orderList(scope: Scope): ScreenModule {
             ),
             flags: lineFlags(l),
             title: l.delivery.name,
-            header: l.si.replace(/( - )+$/, "") || `${l.sku.name} · ${nf(l.o.qtyCans)} cans`,
+            header: [l.due ? DUE_WORD[l.due] : "", l.si.replace(/( - )+$/, "") || `${l.sku.name} · ${nf(l.o.qtyCans)} cans`].filter(Boolean).join(" · "),
             fields: [
               { l: "Order id", v: l.o.id },
+              { l: "Dispatch on", v: l.o.dispatchOn ? fd(l.o.dispatchOn) : "Not planned" },
               { l: "Standing instructions", v: l.si || "—", der: true },
               { l: "Area", v: l.delivery.area ?? "—", der: true },
               { l: "Type", v: l.type, der: true },
@@ -535,6 +561,7 @@ async function setMany(ctx: ErpContext, ids: string[], values: Partial<typeof er
   if (!ids.length) return err("Nothing selected.");
   await db.update(erpOrders).set({ ...values, updatedAt: new Date(), updatedById: ctx.user.id }).where(inArray(erpOrders.id, ids));
   await erpAudit(ctx, action, "erp_order", ids.join(","), null, values);
+  await syncBookOrders(await orderNosOf(ids));
   return okVoid(msg(ids.length));
 }
 
@@ -549,56 +576,57 @@ async function doUnder(ctx: ErpContext, ids: string[]) {
   if (!ok.length) return err("Only a Ready line goes back to Under Process.", "rule_violation");
   return setMany(ctx, ok, { status: "Under Process" }, "erp.order.underProcess", (n) => `${plural(n)} Under Process`);
 }
-async function doDone(ctx: ErpContext, ids: string[]) {
-  const ls = await lines(ids);
-  const ok = ls.filter((l) => l.o.entryStatus !== "Done" && l.o.status === "Ready" && l.allocation === "Done").map((l) => l.o.id);
-  if (!ok.length) return err("A line is Done once it is Ready and its lots are allocated in full.", "rule_violation");
-  const res = await setMany(ctx, ok, { entryStatus: "Done" }, "erp.order.done", (n) => `${plural(n)} Done`);
-  return res.ok && ok.length < ids.length ? okVoid(`${plural(ok.length)} Done · ${ids.length - ok.length} not ready or not fully allocated`) : res;
-}
-async function doNotDone(ctx: ErpContext, ids: string[]) {
-  const ls = await lines(ids);
-  const blocked = ls.filter((l) => l.inDetails);
-  if (blocked.length === ls.length) return err("These lines are in order details.", "rule_violation");
-  return setMany(ctx, ls.filter((l) => !l.inDetails).map((l) => l.o.id), { entryStatus: "Not Done" }, "erp.order.notDone", (n) => `${plural(n)} Not Done`);
-}
+/**
+ * "Approved By Admin", the ERP's own check on a Pending customer — used only
+ * while the ERP is not where orders are taken. With `erp.orders.live` on, the
+ * order is in the Accounts approval queue instead and the answer arrives
+ * through `afterBookDecision`; a second door here would be two approvals.
+ */
 async function doApprove(ctx: ErpContext, ids: string[]) {
+  if (await erpOrdersLive()) return err("Accounts approve a new customer's order now, from their approval queue.", "rule_violation");
   if (!ctx.powers.has("approveParty")) return err("Only an admin or the office approves a pending party's order.", "not_permitted");
   return setMany(ctx, ids, { partyStatus: "Approved By Admin" }, "erp.order.approveParty", (n) => `${plural(n)} approved`);
 }
-/** A-17: the whole selection becomes ONE new order. */
-async function doRenumber(ctx: ErpContext, ids: string[]) {
+
+/**
+ * BILL IT: the office has entered the bill, so the line is billed and is on the
+ * billing-and-dispatch list, in one transaction. Mahek Plus split this into
+ * "Done" and "Add To Order Details" because billing lived in another sheet.
+ */
+async function doBill(ctx: ErpContext, ids: string[]) {
   const ls = await lines(ids);
-  if (ls.some((l) => l.inDetails)) return err("A line already in order details keeps its order number.", "rule_violation");
-  let no = 0;
-  await db.transaction(async (tx) => {
-    no = await nextNumber(tx, "order");
-    await tx.update(erpOrders).set({ orderNo: no, updatedAt: new Date(), updatedById: ctx.user.id }).where(inArray(erpOrders.id, ids));
-  });
-  await erpAudit(ctx, "erp.order.renumber", "erp_order", ids.join(","), null, { orderNo: no });
-  return okVoid(`${plural(ids.length)} moved to order ${no}`);
-}
-async function doToDetails(ctx: ErpContext, ids: string[]) {
-  const ls = await lines(ids);
-  const ok = ls.filter((l) => !detailsBlockers(l).length);
+  const ok = ls.filter((l) => !billBlockers(l).length);
   if (!ok.length) {
-    const why = ls.length === 1 ? detailsBlockers(ls[0]).join(", ") : "each line needs to be Ready and Done, with a Tally bill no., a rate and its lots allocated";
+    const why = ls.length === 1 ? billBlockers(ls[0]).join(", ") : "each line needs to be Ready with its lots allocated in full, a Tally bill no. and a rate";
     return err(`Not yet: ${why}.`, "rule_violation");
   }
   await db.transaction(async (tx) => {
     await tx
+      .update(erpOrders)
+      .set({ entryStatus: "Done", updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(inArray(erpOrders.id, ok.map((l) => l.o.id)));
+    await tx
       .insert(erpOrderDetails)
       .values(ok.map((l) => ({ orderId: l.o.id, createdById: ctx.user.id, updatedById: ctx.user.id })))
       .onConflictDoNothing();
-    /* §18: every detail line gets its follow-up record, once (PRD Q5 — on
-       entering order details, until the client says otherwise). */
-    await tx
-      .insert(erpFollowups)
-      .values(ok.map((l) => ({ orderId: l.o.id, updatedById: ctx.user.id })))
-      .onConflictDoNothing();
   });
-  await erpAudit(ctx, "erp.order.toDetails", "erp_order", ok.map((l) => l.o.id).join(","));
-  return okVoid(ok.length < ls.length ? `${plural(ok.length)} added to order details · ${ls.length - ok.length} not ready yet` : `${plural(ok.length)} added to order details`);
+  await erpAudit(ctx, "erp.order.bill", "erp_order", ok.map((l) => l.o.id).join(","));
+  await syncBookOrders([...new Set(ok.map((l) => l.o.orderNo))]);
+  return okVoid(ok.length < ls.length ? `${plural(ok.length)} billed · ${ls.length - ok.length} not ready yet` : `${plural(ok.length)} billed`);
+}
+
+/** Taking a line back out of billing, until it has been dispatch-verified. */
+async function doUnbill(ctx: ErpContext, ids: string[]) {
+  const ls = (await lines(ids)).filter((l) => l.inDetails && !l.dispatched);
+  if (!ls.length) return err("Only a billed line that has not been dispatch-verified goes back.", "rule_violation");
+  const back = ls.map((l) => l.o.id);
+  await db.transaction(async (tx) => {
+    await tx.delete(erpOrderDetails).where(inArray(erpOrderDetails.orderId, back));
+    await tx.update(erpOrders).set({ entryStatus: "Not Done", updatedAt: new Date(), updatedById: ctx.user.id }).where(inArray(erpOrders.id, back));
+  });
+  await erpAudit(ctx, "erp.order.unbill", "erp_order", back.join(","));
+  await syncBookOrders([...new Set(ls.map((l) => l.o.orderNo))]);
+  return okVoid(`${plural(back.length)} back out of billing`);
 }
 
 function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "forms" | "formLoaders"> {
@@ -606,27 +634,24 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
     bulk: {
       ready: (ctx, ids) => doReady(ctx, ids),
       underProcess: (ctx, ids) => doUnder(ctx, ids),
-      done: (ctx, ids) => doDone(ctx, ids),
-      notDone: (ctx, ids) => doNotDone(ctx, ids),
+      bill: (ctx, ids) => doBill(ctx, ids),
+      unbill: (ctx, ids) => doUnbill(ctx, ids),
       approve: (ctx, ids) => doApprove(ctx, ids),
-      renumber: (ctx, ids) => doRenumber(ctx, ids),
-      toDetails: (ctx, ids) => doToDetails(ctx, ids),
     },
     actions: {
       ready: (ctx, id) => doReady(ctx, [id]),
       underProcess: (ctx, id) => doUnder(ctx, [id]),
-      done: (ctx, id) => doDone(ctx, [id]),
-      notDone: (ctx, id) => doNotDone(ctx, [id]),
+      bill: (ctx, id) => doBill(ctx, [id]),
+      unbill: (ctx, id) => doUnbill(ctx, [id]),
       approve: (ctx, id) => doApprove(ctx, [id]),
-      renumber: (ctx, id) => doRenumber(ctx, [id]),
-      toDetails: (ctx, id) => doToDetails(ctx, [id]),
       async delete(ctx, id) {
         const [l] = await lines([id]);
         if (!l) return err("That line no longer exists.", "not_found");
-        if (l.inDetails) return err("A line in order details is not deleted.", "rule_violation");
+        if (l.inDetails) return err("A billed line is not deleted; undo its billing first.", "rule_violation");
         if (l.allocations) return err("Release its batch codes first; they hold stock.", "rule_violation");
         await db.delete(erpOrders).where(eq(erpOrders.id, id));
         await erpAudit(ctx, "erp.order.delete", "erp_order", id, l.o, null);
+        await syncBookOrders([l.o.orderNo]);
         return okVoid("Line deleted");
       },
     },
@@ -706,11 +731,13 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
         discountBp: p.discount,
         remark: p.remark,
         partyStatus: partyStatus(billing) === "Pending" ? "Pending" : null,
+        dispatchOn: text(h.dispatchOn),
         createdById: ctx.user.id,
         updatedById: ctx.user.id,
       });
   });
   await erpAudit(ctx, "erp.order.create", "erp_order", String(no), null, { lines: parsed.length, billing: billing.name });
+  await syncBookOrders([no]);
   /* AI-2: an order accepted from a drafted message closes that message, linked to the order. */
   const inboxId = text(h.inboxId);
   if (inboxId) await (await import("../ai-orders")).markConverted(ctx, inboxId, no);
@@ -731,6 +758,7 @@ async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string)
   const delivery = (await partyByName(text(h.delivery))) ?? l.delivery;
   const values: Partial<typeof erpOrders.$inferInsert> = {
     status,
+    dispatchOn: text(h.dispatchOn),
     qtyCans: qty,
     deliveryCustomerId: l.inDetails ? l.o.deliveryCustomerId : delivery.id,
     transporter: text(h.transporter),
@@ -748,6 +776,7 @@ async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string)
   if (qty !== l.o.qtyCans && l.o.entryStatus === "Done") values.entryStatus = "Not Done";
   await db.update(erpOrders).set({ ...values, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpOrders.id, id));
   await erpAudit(ctx, "erp.order.edit", "erp_order", id, l.o, values);
+  await syncBookOrders([l.o.orderNo]);
   return okVoid("Line saved");
 }
 
@@ -884,11 +913,10 @@ const batchCodes: ScreenModule = {
       if (!b) return err("That allocation no longer exists.", "not_found");
       const [d] = await db.select({ v: erpOrderDetails.verification }).from(erpOrderDetails).where(eq(erpOrderDetails.orderId, b.orderId));
       if (d?.v === "Verified") return err("The order has been dispatch-verified.", "rule_violation");
-      await db.transaction(async (tx) => {
-        await tx.delete(erpBatchCodes).where(eq(erpBatchCodes.id, id));
-        /* A Done line no longer allocated in full is not Done. */
-        await tx.update(erpOrders).set({ entryStatus: "Not Done", updatedAt: new Date(), updatedById: ctx.user.id }).where(and(eq(erpOrders.id, b.orderId), eq(erpOrders.entryStatus, "Done")));
-      });
+      /* A billed line was billed on these lots. Taking one away would leave a
+         bill for goods no longer set aside, so billing is undone first. */
+      if (d) return err("The line is billed. Undo its billing first.", "rule_violation");
+      await db.delete(erpBatchCodes).where(eq(erpBatchCodes.id, id));
       await erpAudit(ctx, "erp.batchCode.release", "erp_batch_code", id, b, null);
       return okVoid(`${nf(b.quantity)} back in ${b.lotCode}`);
     },
@@ -961,7 +989,13 @@ async function allocationCosts(): Promise<Map<string, (number | null)[]>> {
 const orderDetails: ScreenModule = {
   key: "orderDetails",
   async load(ctx) {
-    const { rows, billTotal, monthly } = await detailRows();
+    const [{ rows, billTotal, monthly }, targetRows] = await Promise.all([
+      detailRows(),
+      db.execute(sql`select customer_id as c, year as y, month as m, target_amount as t from monthly_targets`) as unknown as Promise<{ c: string; y: number; m: number; t: number }[]>,
+    ]);
+    /* The customer's target for the month a line was dispatched in — the CRM's
+       Monthly Targets, the one customer target in MahekOne. */
+    const targets = new Map(targetRows.map((x) => [`${x.c}|${monthId(`${x.y}-${String(x.m).padStart(2, "0")}-01`)}`, Number(x.t)]));
     const byNo = new Map<number, string[]>();
     rows.forEach((r) => byNo.set(r.l.o.orderNo, [...(byNo.get(r.l.o.orderNo) ?? []), r.l.o.id]));
     const all: Col[] = [
@@ -1015,7 +1049,7 @@ const orderDetails: ScreenModule = {
           const l = r.l;
           const d = r.d;
           const monthSale = r.monthId ? (monthly.get(`${r.monthId}|${l.o.billingCustomerId}`) ?? 0) : 0;
-          const target = l.delivery.p?.monthlyTargetPaise ?? null;
+          const target = r.monthId ? (targets.get(`${l.o.billingCustomerId}|${r.monthId}`) ?? null) : null;
           const flags: string[] = [];
           if (!d.verification || d.verification === "Pending") flags.push("notVerified");
           if (r.monthId && targetReached(monthSale, target)) flags.push("targetReached");
@@ -1036,8 +1070,8 @@ const orderDetails: ScreenModule = {
               prompt: { title: "Enter Extra Expenses", submit: "Save", fields: [{ k: "amount", l: "Extra expenses (₹)", t: "num", req: true, min: 0 }] },
             },
             { id: "gst", l: "Change GST", why: d.verification === "Verified" ? "The line has been dispatch-verified" : "", prompt: { title: "GST", submit: "Save", fields: [{ k: "gst", l: "GST", t: "select", req: true, opts: ["18%", "0%"] }], init: { gst: d.gstBp ? "18%" : "0%" } } },
-            { id: "select", l: "Select Order Number", href: `?f=${encodeURIComponent((byNo.get(l.o.orderNo) ?? []).join(","))}&fl=${encodeURIComponent(`Order ${l.o.orderNo}`)}` },
-            { id: "view", l: "View order", href: `/erp/orders?open=${l.o.id}` },
+            { id: "select", l: "Select Order Number", href: erpLink("orderDetails", { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
+            { id: "view", l: "View order", href: erpLink("orders", { open: l.o.id }) },
           ];
           const credit = l.billing.creditDays ?? null;
           return {
@@ -1114,6 +1148,7 @@ const orderDetails: ScreenModule = {
       if (!ctx.administrator) return err("Only an administrator marks a line Not Verify.", "not_permitted");
       await db.update(erpOrderDetails).set({ verification: "Not Verify", updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpOrderDetails.orderId, id));
       await erpAudit(ctx, "erp.detail.notVerify", "erp_order_detail", id);
+      await syncBookOrders(await orderNosOf([id]));
       return okVoid("Marked Not Verify");
     },
     async gst(ctx, id, values) {
@@ -1124,6 +1159,7 @@ const orderDetails: ScreenModule = {
       if (d.verification === "Verified") return err("The line has been dispatch-verified.", "rule_violation");
       await db.update(erpOrderDetails).set({ gstBp: gst, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpOrderDetails.orderId, id));
       await erpAudit(ctx, "erp.detail.gst", "erp_order_detail", id, { gstBp: d.gstBp }, { gstBp: gst });
+      await syncBookOrders(await orderNosOf([id]));
       return okVoid(`GST ${values.gst} · billed by ${gst ? "Mahek Marketing India" : "Mylac"}`);
     },
   },
@@ -1168,6 +1204,7 @@ async function verify(ctx: ErpContext, ids: string[], values: Record<string, str
         .onConflictDoNothing();
   });
   await erpAudit(ctx, "erp.detail.verify", "erp_order_detail", ok.map((l) => l.o.id).join(","), null, { dispatchDate: date });
+  await syncBookOrders([...new Set(ok.map((l) => l.o.orderNo))]);
   return okVoid(ok.length < ids.length ? `${plural(ok.length)} verified · ${ids.length - ok.length} not ready to verify` : `${plural(ok.length)} verified and dispatched`);
 }
 

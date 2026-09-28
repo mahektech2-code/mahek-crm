@@ -117,9 +117,8 @@ before(async () => {
     orderIds.push(o.id);
     await ok(mod("orders").actions!.ready(a, o.id, {}));
     await ok(mod("orders").forms!.allocate(a, { lot: "FG1BH", qty: String(qty) }, [], o.id));
-    await ok(mod("orders").actions!.done(a, o.id, {}));
     await ok(mod("orders").forms!.edit(a, { status: "Ready", delivery: "Shree Paints", qty: String(qty), rate: "300", bill: `MMI/${qty}`, transport: "0" }, [], o.id));
-    await ok(mod("orders").actions!.toDetails(a, o.id, {}));
+    await ok(mod("orders").actions!.bill(a, o.id, {}));
     await ok(mod("orderDetails").actions!.verify(a, o.id, { date: ago(8 - i) }));
   }
 });
@@ -147,7 +146,7 @@ describe("alerts (AI-4)", () => {
   test("an alert resolves itself once its condition clears", async () => {
     const a = await as(admin);
     const lr = (await db.select().from(erpAlerts).where(eq(erpAlerts.kind, "lrMissing")))[0];
-    await ok(mod("pendingLr").actions!.update(a, lr.subject, { lr: "LR-1", track: "Don't Track", stage: "In Transit" }));
+    await ok(mod("pendingLr").actions!.update(a, lr.subject, { lr: "LR-1", stage: "In Transit" }));
     const [p] = await db.select().from(erpPurchases).where(eq(erpPurchases.lotNo, "ASTOL3"));
     await ok(mod("register").actions!.rate(a, p.id, { rate: "101" }));
     const r = await runErpAlerts();
@@ -194,7 +193,8 @@ describe("the dashboard", () => {
     const a = await as(admin);
     const all = (await dashboardSections(a, null)).flatMap((s) => s.tiles);
     const labels = all.map((t) => t.l);
-    for (const l of ["Sales value this month", "Margin this month", "Purchase value this month", "Dispatched this month", "Calls due today", "Pending LR"]) assert.ok(labels.includes(l), `admin sees ${l}`);
+    for (const l of ["Sales value this month", "Margin this month", "Purchase value this month", "Dispatched this month", "Pending LR"]) assert.ok(labels.includes(l), `admin sees ${l}`);
+    assert.ok(!labels.includes("Calls due today"), "order follow-up is the CRM's, not a second prediction here");
     assert.ok(all.every((t) => t.href.startsWith("/erp")));
     const c = await as(clerk);
     const clerkLabels = (await dashboardSections(c, null)).flatMap((s) => s.tiles).map((t) => t.l);
