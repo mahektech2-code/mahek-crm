@@ -95,6 +95,7 @@ export async function factsFor(customerId: string): Promise<CustomerFacts | null
       thirdParty: c.thirdParty,
       deactivated: c.status === "deactivated",
       doNotContact: c.doNotContact,
+      whatsappDnd: c.whatsappDnd,
     },
     openBills: billRows.map(({ bill: b, creditDays }) => ({
       billNo: b.billNo,

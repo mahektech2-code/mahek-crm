@@ -25,6 +25,7 @@ import {
   type RunSummary,
 } from "@/lib/services/whatsapp-automation-service";
 import type { RuleStatus, WindowSettings } from "@/lib/whatsapp-rules";
+import { dndHistory, setWhatsappDnd } from "@/lib/services/whatsapp-dnd-service";
 
 /* ---------------------------------------------------------------------------
  * The Founder Dashboard's WhatsApp screen — its two writes.
@@ -181,6 +182,31 @@ export async function runLiveNowAction(): Promise<Result<RunSummary>> {
     const r = await runAutomation({ source: "schedule" });
     refreshAutomation();
     return ok(r, r.runId ? `${r.sent} sent · ${r.wouldSend} previewed` : r.note);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ------------------------------------------------------ WhatsApp DND */
+
+/** Put customers on WhatsApp DND or take them off, with the remark. */
+export async function setWhatsappDndAction(customerIds: string[], dnd: boolean, reason: string): Promise<Result> {
+  try {
+    const r = await setWhatsappDnd({ customerIds, dnd, reason });
+    revalidatePath("/founder/whatsapp/contacts");
+    refresh();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function dndHistoryAction(
+  customerId: string,
+): Promise<Result<{ dnd: boolean; reason: string; byName: string; at: string }[]>> {
+  try {
+    const rows = await dndHistory(customerId);
+    return ok(rows.map((r) => ({ dnd: r.dnd, reason: r.reason, byName: r.changedByName, at: r.at.toISOString() })));
   } catch (e) {
     return fromThrown(e);
   }
