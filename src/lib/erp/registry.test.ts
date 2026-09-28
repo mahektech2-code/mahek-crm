@@ -53,4 +53,5 @@ test("a tab is never a module, and every link to one lands on its screen's tab",
   assert.equal(erpLink("reorderRm"), "/erp/rm-levels");
   assert.equal(erpLink("customers", { open: "c1" }), "/erp/customers?open=c1");
   assert.equal(erpLink("gone"), "/erp");
+  for (const sc of ERP_SCREENS) assert.equal(new Set(erpKeysOf(sc)).size, erpKeysOf(sc).length, `${sc.key}'s keys are listed once, or its badge counts twice`);
 });
