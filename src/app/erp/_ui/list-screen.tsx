@@ -82,6 +82,10 @@ export function ListScreen({
   const [size, setSize] = useState(25);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [openId, setOpenId] = useState<string | null>(initialOpen ?? null);
+  /* Clearing a filter or closing a record returns to the same TAB: the tab is
+     in the query, and a bare path would open the screen's first one. */
+  const tabKey = params.get("view");
+  const home = tabKey ? `${path}?view=${encodeURIComponent(tabKey)}` : path;
 
   const cols = spec.cols;
   const colOf = (k: string): ColSpec => cols.find((c) => c.k === k) ?? { k, l: k, t: "t" };
@@ -171,14 +175,14 @@ export function ListScreen({
   const open = rows.find((r) => r.id === openId) ?? null;
   const closeRec = () => {
     setOpenId(null);
-    if (params.get("open")) router.replace(path);
+    if (params.get("open")) router.replace(home);
   };
   const clearAll = () => {
     setQ("");
     setChip("");
     setGf("");
     setPage(1);
-    if (filter) router.replace(path);
+    if (filter) router.replace(home);
   };
   const noMatchBits = [q ? `“${q}”` : "", chip, filter ? filter.label.toLowerCase() : "", gf].filter(Boolean).join(" · ");
   const pickChip = (v: string) => {
@@ -329,7 +333,7 @@ export function ListScreen({
           {filter ? (
             <span className="inline-flex h-8 items-center gap-1.5 rounded-[4px] border border-brand bg-brand-soft pr-1 pl-2.5 text-[13px] font-medium text-[#5223E0]">
               From dashboard · {filter.label}
-              <button onClick={() => router.replace(path)} aria-label="Remove filter" className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[3px] hover:bg-brand-softer">
+              <button onClick={() => router.replace(home)} aria-label="Remove filter" className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[3px] hover:bg-brand-softer">
                 <ShellIcon name="close" size={14} />
               </button>
             </span>
