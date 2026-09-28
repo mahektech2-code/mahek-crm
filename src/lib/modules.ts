@@ -62,6 +62,35 @@ export type AppModule = {
    * is what a grant from a terminal has always meant.
    */
   offByDefault?: boolean;
+  /**
+   * NEVER IMPLIED — not by a whole-app grant, not by holding the app as an
+   * administrator. `offByDefault` answers "does a blanket grant reach this",
+   * and its own doc above says the honest thing about it: a whole-app grant
+   * with no module rows still holds every module, this one included, and an
+   * administrator holds every `offByDefault` module regardless of rows. Both
+   * are exactly right for a desk like Calling desk, which an administrator
+   * hands out and must therefore be able to see and use without asking anybody.
+   *
+   * Sales Manager is a different shape: it is a SEAT, not a desk somebody
+   * oversees, and it must be answerable on its own — "does this person carry
+   * the Sales Manager view" — without that answer moving the day somebody's
+   * account is made an administrator, or the day a whole-app grant with no
+   * rows is issued from a terminal that has never heard of modules. A module
+   * marked `explicitOnly` is granted if and only if its own key is one of the
+   * rows stored for that person, full stop: no "zero rows means everything",
+   * no administrator bypass. `moduleAllowed` checks this FIRST, ahead of
+   * either of those rules, and every other reader of it — `listUserModules`,
+   * the Access screen's own `buildGrants`, the route guard — inherits it for
+   * free because none of them re-derive the rule, they ask this function.
+   *
+   * Always paired with `offByDefault: true` here: `moduleAllowed` does not
+   * need that flag once `explicitOnly` is set, but `DEFAULT_OF` on the Access
+   * screen — what "grant the whole app" writes when the app's own box is
+   * first ticked — reads `offByDefault` alone, and a module missing it would
+   * be swept into that bulk grant the same way this whole feature exists to
+   * prevent.
+   */
+  explicitOnly?: boolean;
 };
 
 const crm = (
@@ -566,13 +595,19 @@ export const APP_MODULES: AppModule[] = [
    * why is there no "Sales Manager" box to tick. `crm.lead-calling-desk` is
    * the model this follows.
    *
-   * `offByDefault` for the same reason Calling desk is: without it, everybody
-   * already holding the whole Sales Dashboard would gain this the moment it
-   * shipped, which is the blanket grant a NEW module must never make on
-   * deploy day. Off by default, an administrator on this app still holds it —
-   * `moduleAllowed` reaches every `offByDefault` module for that hat — and
-   * everybody else is granted it the same way Poonam is granted Calling desk:
-   * a tick, per person, on purpose.
+   * `offByDefault` alone was tried first and is not enough, which is the whole
+   * reason `explicitOnly` exists: without it, an administrator on this app
+   * holds every `offByDefault` module regardless of rows, and a whole-app
+   * grant with no module rows at all — the shape `npm run app:grant` and the
+   * provisioning endpoint both write, knowing nothing of modules — holds every
+   * module whatsoever, `offByDefault` or not. Production carried exactly this
+   * account: an admin-level Sales Dashboard grant with zero module rows, which
+   * `offByDefault` on its own would have opened this workspace to regardless.
+   * `explicitOnly` closes both doors — see its doc on `AppModule` — so this is
+   * the one module on this app answerable to nothing but its own row: an
+   * administrator sees an unticked "Sales Manager" box exactly like anybody
+   * else, and ticks it the same way Poonam is granted Calling desk, a person
+   * at a time, on purpose.
    */
   {
     key: "sales.lead-pipeline",
@@ -581,8 +616,9 @@ export const APP_MODULES: AppModule[] = [
     group: "Lead Management",
     href: "/sales-lead-pipeline",
     offByDefault: true,
+    explicitOnly: true,
     note:
-      "The Sales Manager's own workspace: dashboard, funnel and record in one flow, working the same book All Leads does. Off by default — grant it to whoever should carry the Sales Manager view. Withholding it leaves All Leads and every other Lead Management screen untouched.",
+      "The Sales Manager's own workspace: dashboard, funnel and record in one flow, working the same book All Leads does. Granted one person at a time — holding the whole Sales Dashboard, even as an administrator, does not carry this on its own. Withholding it leaves All Leads and every other Lead Management screen untouched.",
   },
   {
     key: "sales.lead-funnel",
@@ -930,6 +966,10 @@ export function moduleAllowed(
   administrator = false,
 ): boolean {
   const forApp = granted.filter((g) => getModule(g)?.app === app);
+  /* Checked first, and returns on its own: an explicitOnly module answers to
+     nothing but its own row, not to "no rows means everything" and not to the
+     administrator bypass either. */
+  if (getModule(key)?.explicitOnly) return forApp.includes(key);
   if (administrator && getModule(key)?.offByDefault) return true;
   return forApp.length === 0 || forApp.includes(key);
 }

@@ -53,6 +53,51 @@ describe("what a module grant means", () => {
     assert.equal(moduleAllowed("crm.leads", rows, "crm", true), false);
     assert.equal(moduleAllowed("crm.customers", rows, "crm", true), true);
   });
+
+  /*
+   * A whole-app grant with no module rows — the shape `npm run app:grant` and
+   * the provisioning endpoint both write, knowing nothing of modules — reaches
+   * every module, `offByDefault` included; an administrator reaches every
+   * `offByDefault` module regardless of rows. Both are correct for a desk an
+   * administrator hands out. Neither is correct for a SEAT nobody should carry
+   * without somebody deciding so, which is what `explicitOnly` answers.
+   * Production carried exactly the case row (A) below: an admin-level Sales
+   * Dashboard grant with zero module rows.
+   */
+  it("an explicitOnly module answers to its own row alone — not a whole-app grant, not an administrator hat", () => {
+    const marked = modulesForApp("sales").filter((m) => m.explicitOnly).map((m) => m.key);
+    assert.deepEqual(marked, ["sales.lead-pipeline"], "the one module this bypass must not reach");
+
+    // A. admin + whole Sales app, no explicit row -> denied
+    assert.equal(moduleAllowed("sales.lead-pipeline", [], "sales", true), false);
+    // B. admin + the module named explicitly -> allowed
+    assert.equal(moduleAllowed("sales.lead-pipeline", ["sales.lead-pipeline"], "sales", true), true);
+    // C. non-admin + whole Sales app, no explicit row -> denied
+    assert.equal(moduleAllowed("sales.lead-pipeline", [], "sales", false), false);
+    // D. non-admin + the module named explicitly -> allowed
+    assert.equal(moduleAllowed("sales.lead-pipeline", ["sales.lead-pipeline"], "sales", false), true);
+
+    // E. sales.leads is untouched: a whole-app grant still opens it, admin or not.
+    assert.equal(moduleAllowed("sales.leads", [], "sales", true), true);
+    assert.equal(moduleAllowed("sales.leads", [], "sales", false), true);
+
+    // F. crm.lead-calling-desk keeps its OLD, unchanged behaviour: this change
+    // touches nothing about it. `offByDefault` alone still means "no rows
+    // means every module", exactly as its own doc comment says, for admin and
+    // non-admin alike — the "zero rows" fallback below does not read the
+    // administrator flag at all. What keeps existing non-admin whole-CRM
+    // accounts off the desk in PRODUCTION is `0170_the_calling_desk_is_
+    // granted_not_inherited.sql`, which backfilled their zero-row state into
+    // an explicit list that omits it — not this function distinguishing them.
+    // A brand new whole-CRM grant made today, with truly zero rows, opens the
+    // desk exactly like every other module: this is the very gap `explicitOnly`
+    // exists to close, unconditionally, with no backfill ever required.
+    assert.equal(moduleAllowed("crm.lead-calling-desk", [], "crm", true), true);
+    assert.equal(moduleAllowed("crm.lead-calling-desk", [], "crm", false), true);
+    // Narrowed rows that simply omit it behave as everyone already expects.
+    assert.equal(moduleAllowed("crm.lead-calling-desk", ["crm.dashboard"], "crm", false), false);
+    assert.equal(moduleAllowed("crm.lead-calling-desk", ["crm.dashboard"], "crm", true), true);
+  });
 });
 
 describe("resolving a path to a module", () => {

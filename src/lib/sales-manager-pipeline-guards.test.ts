@@ -82,6 +82,7 @@ test("the route is guarded like the module it is: the Sales grant first, then it
   assert.ok(mod, "the module the layout names exists");
   assert.equal(mod.app, "sales");
   assert.equal(mod.offByDefault, true, "must not reach every whole-app holder on deploy day");
+  assert.equal(mod.explicitOnly, true, "must not reach an administrator on a whole-app grant either");
 });
 
 test("every screen reads the database on each request, and none of them is cached past a save", () => {
