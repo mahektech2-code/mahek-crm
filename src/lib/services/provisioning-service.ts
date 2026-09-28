@@ -4,6 +4,7 @@ import { and, eq, inArray, or } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, auditLog, users } from "@/db/schema";
 import { APP_IDS, type AppId } from "@/lib/apps";
+import { grantAppWithDefaultModules } from "@/lib/services/app-provisioning";
 
 /* ---------------------------------------------------------------------------
  * Provisioning a deployed MahekOne.
@@ -140,9 +141,9 @@ export async function provisionUser(input: ProvisionInput): Promise<ProvisionRes
     const remove = beforeApps.filter((a) => !wanted.includes(a as AppId));
 
     if (add.length) {
-      await db.insert(appAccess).values(
-        add.map((app) => ({ id: newId("acc"), userId: user.id, app, grantedById: null })),
-      );
+      for (const app of add) {
+        await grantAppWithDefaultModules(db, { userId: user.id, app, grantedById: null });
+      }
     }
     if (remove.length) {
       await db
