@@ -46,10 +46,21 @@ import {
  * of its own so that it can be GRANTED to particular people — a tab of All
  * Leads could not be, and the desk was open to every CRM user. The last test in
  * this file pins the exception itself, so it cannot grow unnoticed.
+ *
+ * Sales Manager is the mirror exception on the OTHER side: it is the Sales
+ * Dashboard's alone (the CRM's people work the phones, not the funnel from a
+ * manager's chair), drawn from `app/sales/nav.ts`, and — like the desk — a
+ * module of its own so it can be granted or withheld from particular people
+ * rather than riding on the whole app.
  */
 const CRM_ONLY_LEAD_MODULES = ["lead-calling-desk"];
-const isSharedLeadModule = (workspace: string, key: string) =>
-  !(workspace === "crm" && CRM_ONLY_LEAD_MODULES.includes(key.slice(workspace.length + 1)));
+const SALES_ONLY_LEAD_MODULES = ["lead-pipeline"];
+const isSharedLeadModule = (workspace: string, key: string) => {
+  const slug = key.slice(workspace.length + 1);
+  if (workspace === "crm") return !CRM_ONLY_LEAD_MODULES.includes(slug);
+  if (workspace === "sales") return !SALES_ONLY_LEAD_MODULES.includes(slug);
+  return true;
+};
 
 describe("the Lead Management nav and the module registry agree", () => {
   it("every section names a real module in every workspace", () => {
@@ -152,6 +163,34 @@ describe("the Lead Management nav and the module registry agree", () => {
         APP_MODULES.find((m) => m.key === `sales.${slug}`),
         undefined,
         `sales.${slug} exists: the exception is the CRM's alone.`,
+      );
+      assert.ok(
+        !LEAD_SECTIONS.some((s) => s.slug === slug),
+        `${slug} is a section as well as an exception — pick one.`,
+      );
+    }
+  });
+
+  it("the Sales-only exception is exactly the Sales Manager workspace: its own module, off by default, explicit-only", () => {
+    assert.deepEqual(SALES_ONLY_LEAD_MODULES, ["lead-pipeline"]);
+    for (const slug of SALES_ONLY_LEAD_MODULES) {
+      const mod = APP_MODULES.find((m) => m.key === `sales.${slug}`);
+      assert.ok(mod, `sales.${slug} is not a module`);
+      assert.equal(mod?.group, "Lead Management");
+      assert.equal(
+        mod?.offByDefault,
+        true,
+        `sales.${slug} is not offByDefault, so a grant of the whole Sales Dashboard would carry it.`,
+      );
+      assert.equal(
+        mod?.explicitOnly,
+        true,
+        `sales.${slug} is not explicitOnly, so an administrator or a whole-app grant would carry it regardless.`,
+      );
+      assert.equal(
+        APP_MODULES.find((m) => m.key === `crm.${slug}`),
+        undefined,
+        `crm.${slug} exists: the exception is the Sales Dashboard's alone.`,
       );
       assert.ok(
         !LEAD_SECTIONS.some((s) => s.slug === slug),
