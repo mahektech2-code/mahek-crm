@@ -553,6 +553,37 @@ export const APP_MODULES: AppModule[] = [
     note:
       "The book itself — every lead, its rung, what its gate is waiting on, and the record behind each one. Without it there is no funnel to work.",
   },
+  /**
+   * The Sales Manager workspace, `/sales-lead-pipeline` — its own module and
+   * its own lock, deliberately separate from `sales.leads` above it.
+   *
+   * It used to ride on `sales.leads`: the two screens read the same book, so
+   * sharing the key seemed harmless, and the Access screen never grew a
+   * checkbox for it as a result. That made it ungrantable and unrevokable on
+   * its own — an admin wanting to hand somebody the Sales Manager workspace
+   * without also handing them the plain All Leads screen (or the reverse) had
+   * no way to say so, and the screen answered a question nobody could ask it:
+   * why is there no "Sales Manager" box to tick. `crm.lead-calling-desk` is
+   * the model this follows.
+   *
+   * `offByDefault` for the same reason Calling desk is: without it, everybody
+   * already holding the whole Sales Dashboard would gain this the moment it
+   * shipped, which is the blanket grant a NEW module must never make on
+   * deploy day. Off by default, an administrator on this app still holds it —
+   * `moduleAllowed` reaches every `offByDefault` module for that hat — and
+   * everybody else is granted it the same way Poonam is granted Calling desk:
+   * a tick, per person, on purpose.
+   */
+  {
+    key: "sales.lead-pipeline",
+    app: "sales",
+    label: "Sales Manager",
+    group: "Lead Management",
+    href: "/sales-lead-pipeline",
+    offByDefault: true,
+    note:
+      "The Sales Manager's own workspace: dashboard, funnel and record in one flow, working the same book All Leads does. Off by default — grant it to whoever should carry the Sales Manager view. Withholding it leaves All Leads and every other Lead Management screen untouched.",
+  },
   {
     key: "sales.lead-funnel",
     app: "sales",

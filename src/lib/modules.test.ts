@@ -9,14 +9,7 @@ import {
 } from "./modules";
 import { grantableApps } from "./modules";
 import { NAV, PINNED, navHrefs as crmNavHrefs } from "@/components/shell/nav";
-import {
-  NOT_IN_SIDEBAR,
-  SALES_MANAGER_HREF,
-  SALES_NAV,
-  SALES_PINNED,
-  navHrefs,
-  salesNavAllowed,
-} from "@/app/sales/nav";
+import { NOT_IN_SIDEBAR, SALES_NAV, SALES_PINNED, navHrefs } from "@/app/sales/nav";
 
 /* ---------------------------------------------------------------------------
  * The module registry, which is what an access grant points at.
@@ -112,21 +105,21 @@ describe("the registry and the navigation agree", () => {
   it("every Sales Dashboard sidebar link is a module that can be withheld", () => {
     const hrefs = new Set(modulesForApp("sales").map((m) => m.href));
     for (const href of navHrefs()) {
-      // The Sales Manager workspace is the ONE link that is not a module's own
-      // href: it rides on `sales.leads`, which is what its route guard asks.
-      if (href === SALES_MANAGER_HREF) continue;
       assert.ok(hrefs.has(href), `${href} is in the sidebar and has no module`);
     }
   });
 
-  it("the Sales Manager link is offered to exactly the people who hold sales.leads", () => {
-    const leads = { key: "sales.leads", href: "/sales/leads" };
-    const other = { key: "sales.funnel", href: "/sales/leads/funnel" };
-    assert.ok(salesNavAllowed([leads, other]).includes(SALES_MANAGER_HREF));
-    assert.equal(salesNavAllowed([other]).includes(SALES_MANAGER_HREF), false, "narrowed away from All Leads, so no link");
-    assert.equal(salesNavAllowed([]).includes(SALES_MANAGER_HREF), false);
-    // It adds a link and takes nothing away.
-    assert.deepEqual(salesNavAllowed([leads, other]).slice(0, 2), ["/sales/leads", "/sales/leads/funnel"]);
+  it("the Sales Manager link is its own module, separate from All Leads", () => {
+    const pipeline = modulesForApp("sales").find((m) => m.key === "sales.lead-pipeline");
+    assert.equal(pipeline?.href, "/sales-lead-pipeline");
+    assert.equal(pipeline?.offByDefault, true);
+    assert.ok(navHrefs().includes("/sales-lead-pipeline"));
+    const item = SALES_NAV.flatMap((g) => g.items).find((i) => i.href === "/sales-lead-pipeline");
+    assert.equal(item?.label, "Sales Manager");
+    // Holding sales.leads alone does not carry sales.lead-pipeline, or the
+    // whole point of separating them is lost.
+    assert.equal(moduleAllowed("sales.lead-pipeline", ["sales.leads"], "sales"), false);
+    assert.equal(moduleAllowed("sales.lead-pipeline", ["sales.leads", "sales.lead-pipeline"], "sales"), true);
   });
 
   it("the Calling desk link is already in the CRM sidebar, on its own module", () => {

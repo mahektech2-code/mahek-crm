@@ -6,14 +6,18 @@ import { ToastProvider } from "@/components/ui/toast";
 /**
  * Sales Manager — Lead Pipeline.
  *
- * THIS IS THE SALES DASHBOARD'S `sales.leads` MODULE drawn on its own route, and
- * it is guarded the way that module is: the `sales` GRANT first, then the
- * module. `requireModule` on its own answers "may this person open this module"
- * and deliberately knows nothing about whether the app was granted (no module
- * rows means every module), so a layout that called only it would open the
- * screens for somebody who was never given the Sales Dashboard at all. That is
- * the failure `canOpenModule` exists to name, and it is asked here in the same
- * order `/sales/layout.tsx` asks it.
+ * ITS OWN MODULE, `sales.lead-pipeline`, guarded the way every module here is:
+ * the `sales` GRANT first, then the module. `requireModule` on its own answers
+ * "may this person open this module" and deliberately knows nothing about
+ * whether the app was granted (no module rows means every module), so a layout
+ * that called only it would open the screens for somebody who was never given
+ * the Sales Dashboard at all. That is the failure `canOpenModule` exists to
+ * name, and it is asked here in the same order `/sales/layout.tsx` asks it.
+ *
+ * It used to ride on `sales.leads` — the two screens read the same book, so
+ * sharing a key seemed harmless, and it meant this workspace could not be
+ * granted or withheld on its own from the Access screen. `sales.leads` still
+ * guards `/sales/leads` exactly as before; this route answers to nothing else.
  *
  * Nothing here adds a permission. What a person may SEE is `managerScope` +
  * `leadsVisible` inside the reads; what they may DO is `requireCapability`
@@ -29,7 +33,7 @@ export default async function SalesLeadPipelineLayout({ children }: { children: 
 
   const apps = await listUserApps(user.id);
   if (!apps.includes("sales")) redirect("/apps");
-  await requireModule(user.id, "sales.leads");
+  await requireModule(user.id, "sales.lead-pipeline");
 
   return (
     <ToastProvider>

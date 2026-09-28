@@ -68,18 +68,20 @@ test("business data is never held in browser storage, and no client file imports
   assert.equal(/useState<Lead\[\]>|setLeads|useState\(\(\) => seed/.test(provider), false);
 });
 
-test("the route is guarded like the module it is: the Sales grant first, then sales.leads", () => {
+test("the route is guarded like the module it is: the Sales grant first, then its own module", () => {
   const layout = text("src/app/sales-lead-pipeline/layout.tsx");
   assert.match(layout, /requireUser\(\)/);
   assert.match(layout, /listUserApps\(user\.id\)/);
   assert.match(layout, /apps\.includes\("sales"\)/);
   assert.match(layout, /redirect\("\/apps"\)/);
-  assert.match(layout, /requireModule\(user\.id, "sales\.leads"\)/);
+  assert.match(layout, /requireModule\(user\.id, "sales\.lead-pipeline"\)/);
+  assert.equal(/requireModule\(user\.id, "sales\.leads"\)/.test(layout), false, "no longer shares the All Leads module");
   assert.ok(layout.indexOf("apps.includes") < layout.indexOf("requireModule("), "the grant is asked before the module");
 
-  const mod = getModule("sales.leads");
+  const mod = getModule("sales.lead-pipeline");
   assert.ok(mod, "the module the layout names exists");
   assert.equal(mod.app, "sales");
+  assert.equal(mod.offByDefault, true, "must not reach every whole-app holder on deploy day");
 });
 
 test("every screen reads the database on each request, and none of them is cached past a save", () => {

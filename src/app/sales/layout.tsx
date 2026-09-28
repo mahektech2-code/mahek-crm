@@ -12,7 +12,6 @@ import { today } from "@/lib/recompute";
 import { consoleCounts } from "@/lib/services/sales-service";
 import { leadSidebarCounts } from "@/lib/services/lead-sidebar-service";
 import { SalesShell } from "./sales-shell";
-import { salesNavAllowed } from "./nav";
 
 /**
  * The Manager Console's own shell.
@@ -108,7 +107,7 @@ export default async function SalesLayout({
           "/sales/leads/actions": leads.overdue,
         }}
         alertCount={counts.alerts}
-        allowed={salesNavAllowed(modules)}
+        allowed={modules.map((m) => m.href)}
         switcher={
           apps.length > 1 ? (
             <AppSwitcher apps={webApps(apps)} current="sales" />

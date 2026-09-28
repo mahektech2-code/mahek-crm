@@ -978,6 +978,30 @@ describe("A — authorisation is the existing model, asked in the existing order
     assert.equal(await canOpenModule(narrowed.id, "sales.leads"), false);
   });
 
+  test("sales.leads and sales.lead-pipeline are two separate locks: holding one is not holding the other", async () => {
+    /* All Leads only, explicitly — never Sales Manager. This is the exact
+       shape the whole reason for a standalone module exists to prove: sharing
+       a key meant this workspace could not be withheld on its own. */
+    const allLeadsOnly = await makeUser("All Leads Only", "manager", [{ app: "sales", role: "manager" }]);
+    await db
+      .insert(appModuleAccess)
+      .values({ id: id("ama"), userId: allLeadsOnly.id, app: "sales", module: "sales.leads" });
+    assert.equal(await canOpenModule(allLeadsOnly.id, "sales.leads"), true);
+    assert.equal(
+      await canOpenModule(allLeadsOnly.id, "sales.lead-pipeline"),
+      false,
+      "holding All Leads must not open the Sales Manager workspace",
+    );
+
+    /* And the reverse: Sales Manager only, never All Leads. */
+    const pipelineOnly = await makeUser("Pipeline Only", "manager", [{ app: "sales", role: "manager" }]);
+    await db
+      .insert(appModuleAccess)
+      .values({ id: id("ama"), userId: pipelineOnly.id, app: "sales", module: "sales.lead-pipeline" });
+    assert.equal(await canOpenModule(pipelineOnly.id, "sales.lead-pipeline"), true);
+    assert.equal(await canOpenModule(pipelineOnly.id, "sales.leads"), false);
+  });
+
   test("a telecaller cannot verify, and a salesman cannot approve a sample", async () => {
     const lead = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
     setTestUser(telecaller);
