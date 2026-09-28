@@ -47,13 +47,19 @@ import {
  * Leads could not be, and the desk was open to every CRM user. The last test in
  * this file pins the exception itself, so it cannot grow unnoticed.
  *
- * Sales Manager is the mirror exception on the OTHER side: it is the Sales
- * Dashboard's alone (the CRM's people work the phones, not the funnel from a
- * manager's chair), drawn from `app/sales/nav.ts`, and — like the desk — a
- * module of its own so it can be granted or withheld from particular people
- * rather than riding on the whole app.
+ * Sales Manager is the mirror exception on the OTHER side: `sales.lead-pipeline`
+ * is the Sales Dashboard's alone (the CRM's people work the phones, not the
+ * funnel from a manager's chair), drawn from `app/sales/nav.ts`, and — like
+ * the desk — a module of its own so it can be granted or withheld from
+ * particular people rather than riding on the whole app.
+ *
+ * `crm.sales-manager` is a THIRD exception, and a different shape from either:
+ * it names the same job title as the Sales Dashboard's seat but is its own
+ * module, its own route and its own grant, in the CRM. Nothing reads it
+ * against `sales.lead-pipeline` and nothing should — a person can hold one,
+ * both, or neither.
  */
-const CRM_ONLY_LEAD_MODULES = ["lead-calling-desk"];
+const CRM_ONLY_LEAD_MODULES = ["lead-calling-desk", "sales-manager"];
 const SALES_ONLY_LEAD_MODULES = ["lead-pipeline"];
 const isSharedLeadModule = (workspace: string, key: string) => {
   const slug = key.slice(workspace.length + 1);
@@ -148,8 +154,8 @@ describe("the Lead Management nav and the module registry agree", () => {
     );
   });
 
-  it("the CRM-only exception is exactly the calling desk: its own module, off by default, drawn in the CRM sidebar", () => {
-    assert.deepEqual(CRM_ONLY_LEAD_MODULES, ["lead-calling-desk"]);
+  it("the CRM-only exceptions are exactly the calling desk and Sales Manager: their own modules, off by default, drawn in the CRM sidebar", () => {
+    assert.deepEqual(CRM_ONLY_LEAD_MODULES, ["lead-calling-desk", "sales-manager"]);
     for (const slug of CRM_ONLY_LEAD_MODULES) {
       const mod = APP_MODULES.find((m) => m.key === `crm.${slug}`);
       assert.ok(mod, `crm.${slug} is not a module`);
@@ -169,6 +175,18 @@ describe("the Lead Management nav and the module registry agree", () => {
         `${slug} is a section as well as an exception — pick one.`,
       );
     }
+  });
+
+  it("crm.sales-manager and sales.lead-pipeline are two independent modules sharing a job title, not one permission", () => {
+    const crmSeat = APP_MODULES.find((m) => m.key === "crm.sales-manager");
+    const salesSeat = APP_MODULES.find((m) => m.key === "sales.lead-pipeline");
+    assert.ok(crmSeat && salesSeat, "both Sales Manager modules must exist");
+    assert.equal(crmSeat?.label, "Sales Manager");
+    assert.equal(salesSeat?.label, "Sales Manager");
+    assert.notEqual(crmSeat?.key, salesSeat?.key);
+    assert.notEqual(crmSeat?.href, salesSeat?.href);
+    assert.equal(crmSeat?.app, "crm");
+    assert.equal(salesSeat?.app, "sales");
   });
 
   it("the Sales-only exception is exactly the Sales Manager workspace: its own module, off by default, explicit-only", () => {

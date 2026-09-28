@@ -396,6 +396,27 @@ export const APP_MODULES: AppModule[] = [
     href: "/crm/leads/oversight",
     note: "Every gate somebody passed and what was missing when they did, the funnel's own audit trail, and the thresholds in force. Reading who overrode what is a different job from working the book.",
   },
+  /**
+   * The CRM's OWN Sales Manager seat — a module of its own, named the same as
+   * `sales.lead-pipeline` on the Sales Dashboard on purpose: both answer to
+   * the same job title, held by different people through different apps. This
+   * one carries no Sales Dashboard screen and no read of `sales.lead-pipeline`
+   * — a CRM grant here says nothing about that one, and the reverse.
+   *
+   * `offByDefault` for the reason `crm.lead-calling-desk` is: a manager-tier
+   * seat is granted a person at a time, not handed to every CRM user the
+   * moment the whole app is.
+   */
+  {
+    key: "crm.sales-manager",
+    app: "crm",
+    label: "Sales Manager",
+    group: "Lead Management",
+    href: "/crm/leads/sales-manager",
+    offByDefault: true,
+    note:
+      "The CRM's own Sales Manager seat. Off by default — grant it to whoever should carry it here, independent of any Sales Dashboard access.",
+  },
   crm("targets", "Monthly Targets", "Targets & reporting", "Whose numbers are whose. Usually a manager's screen."),
   /*
    * A person's OWN score, and not a manager's screen.

@@ -494,7 +494,14 @@ describe("D — the desk is granted, not inherited", () => {
     const mod = modulesForApp("crm").find((m) => m.key === DESK_MODULE);
     assert.equal(mod?.offByDefault, true);
     assert.equal(modulesForApp("sales").some((m) => m.key.endsWith("calling-desk")), false);
-    assert.equal(modulesForApp("crm").filter((m) => m.offByDefault).length, 1, "the flag is for this one module and no other");
+    // The desk and the CRM's own Sales Manager seat (crm.sales-manager) are
+    // the two — named, not just counted, so a third addition here fails loud
+    // rather than quietly passing a bumped number.
+    assert.deepEqual(
+      modulesForApp("crm").filter((m) => m.offByDefault).map((m) => m.key).sort(),
+      ["crm.lead-calling-desk", "crm.sales-manager"],
+      "the flag is for exactly these two modules",
+    );
   });
 
   describe("the migration that keeps existing CRM users from receiving it", () => {
@@ -505,7 +512,11 @@ describe("D — the desk is granted, not inherited", () => {
     test("a whole-CRM account keeps every screen it had, minus the desk, and the administrator is left whole", async () => {
       const wholeAssociate = await makeUser("Whole App Associate", "associate", ["crm"]);
       const wholeManager = await makeUser("Whole App Manager", "manager", ["crm"]);
-      const before = modulesForApp("crm").map((m) => m.key);
+      /* The migration's own list, not the live registry: its header says this
+         is a frozen snapshot on purpose, and a module added to the registry
+         afterwards (crm.sales-manager) must not be expected here — that is
+         exactly the case this migration deliberately does not cover. */
+      const before = [...text.matchAll(/\('(crm\.[a-z-]+)'\)/g)].map((m) => m[1]).concat(DESK_MODULE);
       assert.equal(await canOpenModule(wholeAssociate.id, DESK_MODULE), true, "before: the whole app includes the new module");
 
       await run();
