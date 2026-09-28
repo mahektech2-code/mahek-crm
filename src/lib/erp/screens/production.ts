@@ -1,4 +1,6 @@
 import "server-only";
+import { getConfig } from "@/lib/config/store";
+import { recipeMap } from "./recipes";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -91,7 +93,7 @@ async function syncSfgEntry(tx: Ex, line: SfgRow) {
   else await t.insert(erpSfgEntries).values({ id: erpId("sfe"), sourceType: "sfg", sourceId: line.id, ...values });
 }
 
-async function sfgForm(ctx: ErpContext, fixed?: { sfgNo: number; date: string; godown: string; product: string; batches: string }): Promise<FormSpec> {
+export async function sfgForm(ctx: ErpContext, fixed?: { sfgNo: number; date: string; godown: string; product: string; batches: string }): Promise<FormSpec> {
   const [gds, forms, lots] = await Promise.all([
     godownOptions(ctx, { lost: false }),
     db.select({ name: productFormulations.name }).from(productFormulations).where(eq(productFormulations.active, true)).orderBy(asc(productFormulations.name)),
@@ -184,6 +186,21 @@ const sfgBatches: ScreenModule = {
       rmLots(),
     ]);
     const rmRate = new Map(rm.map((l) => [l.lotNo, l.ratePaise]));
+    /*
+     * ABOVE THE RECIPE: what a batch used of each raw material, across its
+     * lots, against the product's recipe times its batches. A flag for
+     * somebody to look at, never a refusal — a batch can need more.
+     */
+    const [recipes, config] = await Promise.all([recipeMap(), getConfig()]);
+    const tolerance = config["erp.production.recipeTolerancePercent"] / 100;
+    const usedBy = new Map<string, number>();
+    rows.forEach((x) => usedBy.set(`${x.l.sfgNo}|${x.l.rawMaterialId}`, (usedBy.get(`${x.l.sfgNo}|${x.l.rawMaterialId}`) ?? 0) + Number(x.l.totalUse)));
+    const recipeFor = (x: (typeof rows)[number]) => recipes.get(`${x.l.formulationId}|${x.l.rawMaterialId}`) ?? null;
+    const overRecipe = (x: (typeof rows)[number]) => {
+      const per = recipeFor(x);
+      if (per == null) return false;
+      return (usedBy.get(`${x.l.sfgNo}|${x.l.rawMaterialId}`) ?? 0) > per * Number(x.l.batches) * (1 + tolerance) + 1e-9;
+    };
     const posted = new Set(
       (await db.select({ id: erpSfgEntries.sourceId }).from(erpSfgEntries).where(eq(erpSfgEntries.sourceType, "sfg"))).map((x) => x.id),
     );
@@ -251,10 +268,15 @@ const sfgBatches: ScreenModule = {
             },
             hiddenKeys,
           ),
-          flags: posted.has(x.l.id) ? [] : ["notPosted"],
+          flags: [...(posted.has(x.l.id) ? [] : ["notPosted"]), ...(overRecipe(x) ? ["overRecipe"] : [])],
           title: `${x.product} · SFG ${x.l.sfgNo}`,
           header: `${x.item} lot ${x.l.rmLotNo} · ${nf(x.l.totalUse)} Ltr used · ${nf(sfgYield(x.l.totalUse, x.l.litresAdjusted))} Ltr made`,
-          fields: [{ l: "Available SFG (litres)", v: nf(sfgYield(x.l.totalUse, x.l.litresAdjusted)), der: true }],
+          fields: [
+            { l: "Available SFG (litres)", v: nf(sfgYield(x.l.totalUse, x.l.litresAdjusted)), der: true },
+            ...(recipeFor(x) != null
+              ? [{ l: "Recipe", v: `${nf(recipeFor(x)! * Number(x.l.batches))} for ${nf(Number(x.l.batches))} batch${Number(x.l.batches) === 1 ? "" : "es"} · this batch used ${nf(usedBy.get(`${x.l.sfgNo}|${x.l.rawMaterialId}`) ?? 0)}`, der: true }]
+              : []),
+          ],
           actions,
           by: stampLine(x.by, x.l.createdAt),
         };
@@ -747,6 +769,12 @@ async function saveFill(ctx: ErpContext, h: Record<string, string>): Promise<Res
 
 type SkuInfo = { id: string; name: string; fg: string; fgName: string; cpb: number; empty: number; boxType: string | null; boxRate: number | null };
 
+/** Whether the raw-material master names this box type — only then is its stock counted and checked. */
+async function boxItemExists(ex: Tx, boxType: string): Promise<boolean> {
+  const rows = (await ex.execute(sql`select 1 from erp_raw_materials where lower(name) = lower(${boxType}) limit 1`)) as unknown as unknown[];
+  return rows.length > 0;
+}
+
 async function boxedSkus(): Promise<SkuInfo[]> {
   return (await db.execute(sql`
     select p.id, p.name, fg.id as fg, fg.name as "fgName", p.cans_per_box as cpb, pk.empty_boxes_required as empty,
@@ -975,6 +1003,21 @@ async function savePack(ctx: ErpContext, h: Record<string, string>): Promise<Res
     if (cans > st.remaining) return refuse(fieldErr("cans", `You Cant Select More Than ${st.remaining} Can`));
     const avail = await fgLotStock(sku.fg, lot, godownId, tx);
     if (cans > avail + 1e-9) return refuse(fieldErr("cans", "Low Stock"));
+    /*
+     * THE EMPTY BOXES HAVE TO BE THERE (spec §14 A-30). A batch uses its boxes
+     * once, on its first line, and they come out of the box item's stock at the
+     * godown; Mahek Plus never checked, so a batch could be packed into boxes
+     * nobody had bought. A box type the raw-material master does not name is
+     * not counted anywhere, so it is not refused here either.
+     */
+    if (!lines.length && sku.boxType && Number(sku.empty) > 0) {
+      const need = boxes * Number(sku.empty);
+      const boxLots = (await rmLots(tx)).filter((l) => l.item.toLowerCase() === sku.boxType!.toLowerCase() && l.godownId === godownId);
+      if (boxLots.length || (await boxItemExists(tx, sku.boxType))) {
+        const have = boxLots.reduce((n, l) => n + l.stock, 0);
+        if (need > have + 1e-9) return refuse(fieldErr("boxes", `Low Box Quantity · ${nf(need)} ${sku.boxType} needed, ${nf(Math.max(have, 0))} at ${gname}`));
+      }
+    }
     await tx.insert(erpPackLines).values({
       id: erpId("fgp"),
       batchSerial: serial,

@@ -252,6 +252,7 @@ export const FLAG: Record<string, [string, Tone]> = {
   below: ["Below level", "danger"],
   noLevel: ["No level set", "neutral"],
   notPosted: ["Not posted to inventory", "warn"],
+  overRecipe: ["Above the recipe", "warn"],
   dueToday: ["Dispatch today", "brand"],
   dueTomorrow: ["Dispatch tomorrow", "neutral"],
   late: ["Dispatch late", "danger"],

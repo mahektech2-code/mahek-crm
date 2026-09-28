@@ -13,7 +13,8 @@ import { fillFigures, packCosting, boxFigures, sfgRate } from "./engines/product
  * stage's entries (its own documents, and transfers in). Outflows are read
  * from the documents that consume stock, never written as entries:
  *
- *   RM   ← transfers out · SFG consumption
+ *   RM   ← transfers out · SFG consumption · cans filled and empty boxes
+ *          packed, taken from the item's lots at the godown oldest first
  *   SFG  ← transfers out · FG filling
  *   FG   ← transfers out · packing lines · lot allocations to orders
  *   Pack ← transfers out · lot allocations to orders
@@ -70,7 +71,7 @@ export async function rmLots(ex: Ex = db): Promise<RmLot[]> {
   const out = await rows<Row>(
     sql`
     with inflow as (
-      select raw_material_id, lot_no, godown_id, sum(quantity)::float8 as qty
+      select raw_material_id, lot_no, godown_id, sum(quantity)::float8 as qty, min(entry_date)::text as first
         from erp_rm_entries group by 1, 2, 3
     ),
     outflow as (
@@ -90,7 +91,7 @@ export async function rmLots(ex: Ex = db): Promise<RmLot[]> {
     select i.raw_material_id as "rawMaterialId", m.name as item, m.material_type as "materialType", m.unit as "rmUnit",
            i.lot_no as "lotNo", i.godown_id as "godownId", g.name as godown,
            (i.qty - coalesce(o.qty, 0))::float8 as stock,
-           l.id as "latestEntryId", l.entry_date::text as "latestDate",
+           l.id as "latestEntryId", l.entry_date::text as "latestDate", i.first as "firstDate",
            case when r.rate_paise is null then null
                 when r.unit = 'Kg' then round(r.rate_paise * coalesce(r.density, 0))::float8
                 else r.rate_paise::float8 end as "ratePaise"
@@ -104,7 +105,7 @@ export async function rmLots(ex: Ex = db): Promise<RmLot[]> {
   `,
     ex,
   );
-  return out.map((r) => ({
+  const lots = out.map((r) => ({
     rawMaterialId: String(r.rawMaterialId),
     item: String(r.item),
     materialType: String(r.materialType),
@@ -115,8 +116,74 @@ export async function rmLots(ex: Ex = db): Promise<RmLot[]> {
     stock: r3(num(r.stock)),
     latestEntryId: String(r.latestEntryId),
     latestDate: String(r.latestDate),
+    firstDate: String(r.firstDate ?? r.latestDate),
     ratePaise: r.ratePaise == null ? null : Number(r.ratePaise),
   }));
+  /*
+   * CANS AND BOXES ARE USED UP (spec §14 A-30). Filling takes empty cans and
+   * packing takes empty boxes, and Mahek Plus subtracted them only on the
+   * re-order screen — the lot stock went on counting every can ever bought,
+   * so the Stock screen said there were cans on the shelf that had long been
+   * filled. Neither document names a lot, so what they used is taken from the
+   * item's lots at that godown OLDEST FIRST, the order a storekeeper uses
+   * them. Anything used beyond the lots is left on the newest lot as a
+   * negative, rather than hidden: a shortfall is a fact to see.
+   */
+  const used = await packingUse(ex);
+  const byItem = new Map<string, typeof lots>();
+  for (const l of lots) byItem.set(`${l.rawMaterialId}|${l.godownId}`, [...(byItem.get(`${l.rawMaterialId}|${l.godownId}`) ?? []), l]);
+  for (const [k, n] of used) {
+    const list = (byItem.get(k) ?? []).sort((a, b) => a.firstDate.localeCompare(b.firstDate) || a.lotNo.localeCompare(b.lotNo));
+    if (!list.length) continue;
+    let left = n;
+    for (const l of list) {
+      const take = Math.min(Math.max(l.stock, 0), left);
+      l.stock = r3(l.stock - take);
+      left -= take;
+    }
+    if (left > 0) list[list.length - 1].stock = r3(list[list.length - 1].stock - left);
+  }
+  return lots.map((l) => ({
+    rawMaterialId: l.rawMaterialId,
+    item: l.item,
+    materialType: l.materialType,
+    unit: l.unit,
+    lotNo: l.lotNo,
+    godownId: l.godownId,
+    godown: l.godown,
+    stock: l.stock,
+    latestEntryId: l.latestEntryId,
+    latestDate: l.latestDate,
+    ratePaise: l.ratePaise,
+  }));
+}
+
+/**
+ * Empty cans filled and empty boxes packed, per raw material and godown. A
+ * can is a filling record's own packing item; a box is the boxed SKU's box
+ * type, named in the raw-material master, once per packing BATCH (every line
+ * of a batch carries the whole batch's boxes).
+ */
+async function packingUse(ex: Ex = db): Promise<Map<string, number>> {
+  const [cans, boxes] = await Promise.all([
+    rows<{ item: string; godown: string; n: number }>(
+      sql`select can_use_id as item, godown_id as godown, sum(cans)::float8 as n from erp_fg_fills where packing_type = 'Can' and can_use_id is not null group by 1, 2`,
+      ex,
+    ),
+    rows<{ item: string; godown: string; n: number }>(
+      sql`
+      select m.id as item, l.godown_id as godown, sum(l.boxes * coalesce(pk.empty_boxes_required, 0))::float8 as n
+        from (select distinct on (batch_no) batch_no, sku_id, boxes, godown_id from erp_pack_lines order by batch_no, created_at) l
+        join erp_product_packing pk on pk.product_id = l.sku_id
+        join erp_raw_materials m on lower(m.name) = lower(pk.box_type)
+       group by 1, 2
+    `,
+      ex,
+    ),
+  ]);
+  const out = new Map<string, number>();
+  for (const x of [...cans, ...boxes]) out.set(`${x.item}|${x.godown}`, (out.get(`${x.item}|${x.godown}`) ?? 0) + Number(x.n));
+  return out;
 }
 
 /** One lot's current stock at one godown — the figure every consuming form validates against. */
@@ -446,22 +513,15 @@ export async function packLots(ex: Ex = db): Promise<PackLot[]> {
 
 /**
  * What a raw-material level counts as available (spec §10.2), by material type:
- * lot stock at the godown, less cans already filled or boxes already packed;
- * drums company-wide. Other types read lot stock (spec §14 A-16).
+ * lot stock at the godown — already net of cans filled and boxes packed —
+ * and drums company-wide (spec §14 A-16).
  */
 export async function rmLevelAvailable(): Promise<(materialType: string, rawMaterialId: string, godownId: string) => number> {
-  const [lots, cans, boxes, drums, drumsSold] = await Promise.all([
+  /* Lot stock is already net of the cans filled and boxes packed (see rmLots),
+     so a level reads it as it stands — subtracting them here as well would
+     count every can twice. */
+  const [lots, drums, drumsSold] = await Promise.all([
     rmLots(),
-    rows<{ item: string; godown: string; n: number }>(
-      sql`select can_use_id as item, godown_id as godown, sum(cans)::float8 as n from erp_fg_fills where packing_type = 'Can' and can_use_id is not null group by 1, 2`,
-    ),
-    rows<{ item: string; godown: string; n: number }>(sql`
-      select m.id as item, l.godown_id as godown, sum(l.boxes * coalesce(pk.empty_boxes_required, 0))::float8 as n
-        from (select distinct on (batch_no) batch_no, sku_id, boxes, godown_id from erp_pack_lines order by batch_no, created_at) l
-        join erp_product_packing pk on pk.product_id = l.sku_id
-        join erp_raw_materials m on lower(m.name) = lower(pk.box_type)
-       group by 1, 2
-    `),
     rows<{ n: number }>(sql`select coalesce(sum(drums), 0)::float8 as n from erp_purchases`),
     rows<{ n: number }>(sql`
       select coalesce(sum(o.qty_cans), 0)::float8 as n
@@ -472,16 +532,11 @@ export async function rmLevelAvailable(): Promise<(materialType: string, rawMate
   ]);
   const stock = new Map<string, number>();
   for (const l of lots) stock.set(`${l.rawMaterialId}|${l.godownId}`, (stock.get(`${l.rawMaterialId}|${l.godownId}`) ?? 0) + l.stock);
-  const used = (list: { item: string; godown: string; n: number }[]) => new Map(list.map((x) => [`${x.item}|${x.godown}`, Number(x.n)]));
-  const canUse = used(cans);
-  const boxUse = used(boxes);
   /* Drums are company-wide in the source: every drum bought less every drum sold (A-16). */
   const drumsIn = Number(drums[0]?.n ?? 0) - Number(drumsSold[0]?.n ?? 0);
   return (type, item, godown) => {
     const k = `${item}|${godown}`;
     const s = stock.get(k) ?? 0;
-    if (type === "Can") return r3(s - (canUse.get(k) ?? 0));
-    if (type === "Box") return r3(s - (boxUse.get(k) ?? 0));
     if (type === "Drum") return r3(drumsIn);
     return r3(s);
   };

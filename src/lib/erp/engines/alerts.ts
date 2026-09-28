@@ -329,7 +329,7 @@ export function belowLevel(rows: { id: string; screen: "reorderRm" | "reorderFg"
     subject: `${r.screen}:${r.id}`,
     screen: r.screen,
     recordIds: [r.id],
-    values: { available: r.available, min: r.min },
+    values: { available: r.available, min: r.min, item: r.item, godown: r.godown },
     explanation: `${r.item} at ${r.godown}: ${r.available} available against a minimum of ${r.min}.`,
   }));
 }

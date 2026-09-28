@@ -1345,6 +1345,10 @@ export const getCustomer = cache(async function getCustomer(
       // §Q. Read here so the record page can name it. No fallback, because
       // this seat has no name column to fall back to — see the SQL above.
       relationshipOwnerName: RELATIONSHIP_OWNER_NAME_SQL,
+      // The customer's grade (A+ to C). It lives on the ERP's side of the
+      // record — the Sales Party field Mahek Plus kept — and is read from
+      // there rather than copied, so the CRM and the ERP show one grade.
+      grade: sql<string | null>`(select p.grade from erp_customer_profiles p where p.customer_id = customers.id)`,
       // The same subquery `listCustomers` reads — the last call that produced
       // a next step, and nothing else, or the record page and the customers
       // list would disagree about the same customer's next call.
@@ -1375,6 +1379,7 @@ export const getCustomer = cache(async function getCustomer(
     salesManagerName: rows[0].salesManagerName,
     backOfficeAmName: rows[0].backOfficeAmName,
     relationshipOwnerName: rows[0].relationshipOwnerName,
+    grade: rows[0].grade ?? null,
     nextStep: rows[0].nextStep ?? null,
   };
 });

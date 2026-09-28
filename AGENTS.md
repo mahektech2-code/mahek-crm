@@ -1458,6 +1458,22 @@ order line's margin reads the issued credit note where it is
 ERP's complaints screen (`canRead` falls back to it). 0184 carried every ERP
 request across under the same id; `erp_requests` is retired, not dropped.
 
+**What filling and packing use comes out of stock** (spec §14 A-30). Mahek
+Plus subtracted empty cans and boxes only on the re-order screen, so the lot
+stock counted every can ever bought. `rmLots` now takes the cans a filling
+record used and the empty boxes a packing batch used from the item's lots at
+that godown, OLDEST FIRST (neither document names a lot), leaving any excess on
+the newest lot as a visible negative. `rmLevelAvailable` reads that stock as it
+stands — subtracting again would count every can twice — and a packing batch is
+refused on its first line when its empty boxes are not at the godown.
+
+**A recipe is expected, never a gate.** `erp_recipes` holds what one batch of an
+SFG product takes. "Start a batch" opens the SFG form with the recipe's lines,
+and a batch line that used more than `erp.production.recipeTolerancePercent`
+above it is flagged on the batches list; nothing is refused. A new below-level
+alert tells whoever works at that godown and can raise requisitions, once, as it
+is raised.
+
 **The AI features draft and a person decides** (`docs/erp/04`). Everything a
 rule can do is ordinary code: the alert rules (`engines/alerts.ts`, run hourly
 and nightly by `runErpAlerts`, deduplicated by a partial unique index and
