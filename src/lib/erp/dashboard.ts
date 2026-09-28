@@ -226,10 +226,15 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       }
     const ready = open.filter((l) => l.o.status === "Ready" && l.o.entryStatus !== "Done");
     const short = ready.filter((l) => l.allocation === "Add More Quantity").map((l) => l.o.id);
-    const awaitingDone = ready.filter((l) => l.allocation === "Done").map((l) => l.o.id);
+    const toBill = ready.filter((l) => l.allocation === "Done").map((l) => l.o.id);
+    /* The planned dispatch date, said as today and late — never a status. */
+    const dueToday = open.filter((l) => l.due === "today").map((l) => l.o.id);
+    const late = open.filter((l) => l.due === "late").map((l) => l.o.id);
     const screen = has("readyOrders") ? "readyOrders" : "orders";
     sales.push({ l: "Allocation short", v: String(short.length), sub: "Ready, lots still to allocate", tone: short.length ? "warn" : undefined, href: tileHref(screen, short, "Allocation short") });
-    sales.push({ l: "Awaiting Done", v: String(awaitingDone.length), sub: "Ready and allocated", href: tileHref(screen, awaitingDone, "Awaiting Done") });
+    sales.push({ l: "Ready to bill", v: String(toBill.length), sub: "Ready and allocated — Bill it once the bill no. and rate are in", href: tileHref(screen, toBill, "Ready to bill") });
+    sales.push({ l: "Dispatch today", v: String(dueToday.length), sub: "planned for today", href: tileHref("orders", dueToday, "Dispatch today") });
+    sales.push({ l: "Dispatch late", v: String(late.length), sub: "planned for a day already past", tone: late.length ? "danger" : undefined, href: tileHref("orders", late, "Dispatch late") });
     const missing = ls.filter((l) => l.o.status !== "Cancel" && (!l.o.tallyBillNo || l.o.ratePaise == null)).map((l) => l.o.id);
     sales.push({ l: "Missing bill no / rate", v: String(missing.length), tone: missing.length ? "warn" : undefined, href: tileHref("orders", missing, "Bill or rate missing") });
     if (pw("approveParty")) {
