@@ -60,6 +60,8 @@ export type CustomerFacts = {
     thirdParty: boolean;
     deactivated: boolean;
     doNotContact: boolean;
+    /** On WhatsApp DND — no message at all, while calls go on. */
+    whatsappDnd?: boolean;
   };
   /** Unpaid bills whose payment position is STATED. An unstated bill is never here. */
   openBills: BillFact[];
@@ -144,6 +146,7 @@ function commonRefusals(f: CustomerFacts): string[] {
   const r: string[] = [];
   if (!f.customer.name.trim()) r.push("The customer has no name on record.");
   if (f.customer.doNotContact) r.push("The customer is marked do not contact.");
+  if (f.customer.whatsappDnd) r.push("The customer is on WhatsApp DND.");
   if (f.customer.deactivated) r.push("The account is deactivated.");
   return r;
 }

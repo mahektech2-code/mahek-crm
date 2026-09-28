@@ -2061,6 +2061,19 @@ export const customers = pgTable(
     /* flags */
     doNotContact: boolean("do_not_contact").notNull().default(false),
 
+    /*
+     * WhatsApp DND — no WhatsApp message goes to this customer, by any path,
+     * automatic or by hand. Deliberately NOT `do_not_contact`: that one takes
+     * the customer off the calling list as well, and a shop that asked us to
+     * stop messaging it has not asked us to stop ringing. Set and cleared on
+     * the Founder desk's Contacts tab, always with a remark; the history is
+     * `whatsapp_dnd_events`, and these four columns are its newest row.
+     */
+    whatsappDnd: boolean("whatsapp_dnd").notNull().default(false),
+    whatsappDndReason: text("whatsapp_dnd_reason"),
+    whatsappDndAt: timestamp("whatsapp_dnd_at", { withTimezone: true }),
+    whatsappDndByName: text("whatsapp_dnd_by_name"),
+
     /* ------------------------------------------------------------------
      * MBOS — field sales.
      *
@@ -3999,6 +4012,28 @@ export const whatsappServiceEvents = pgTable(
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("whatsapp_service_events_at_idx").on(t.at.desc())],
+);
+
+/**
+ * Every time a customer was put on WhatsApp DND or taken off it, with the
+ * remark. Append-only: the customer row carries only the current answer, and
+ * "who stopped messages to this shop, and why" is asked months later.
+ */
+export const whatsappDndEvents = pgTable(
+  "whatsapp_dnd_events",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    dnd: boolean("dnd").notNull(),
+    reason: text("reason").notNull(),
+    changedById: text("changed_by_id").references(() => users.id),
+    /** Stored beside the id so the history still reads after somebody leaves. */
+    changedByName: text("changed_by_name").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("whatsapp_dnd_events_customer_idx").on(t.customerId, t.at.desc())],
 );
 
 /* -------------------------------------------------------- §3.11 monthly target */

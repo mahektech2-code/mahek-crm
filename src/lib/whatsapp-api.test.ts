@@ -32,11 +32,13 @@ import {
   waMessages,
   waReplies,
   waTemplates,
+  whatsappDndEvents,
   whatsappServiceEvents,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { setWhatsappService } from "@/lib/services/whatsapp-switch-service";
+import { setWhatsappDnd } from "@/lib/services/whatsapp-dnd-service";
 import { applyWatiEvent, prepareMessage, sendNow } from "@/lib/services/whatsapp-service";
 import { parseWatiEvent } from "@/lib/whatsapp-delivery";
 
@@ -509,4 +511,53 @@ test("an administrator who also holds the Founder Dashboard can switch it — wh
   const r = await setWhatsappService({ active: true });
   assert.equal(r.ok, true, r.ok ? "" : r.error);
   assert.equal((await db.select().from(whatsappServiceEvents)).length, 1);
+});
+
+/* ------------------------------------------------------------ WhatsApp DND */
+
+test("a customer on WhatsApp DND is refused with the remark, and Wati is never called", async () => {
+  await switchOn();
+  setTestUser(founder);
+  const noRemark = await setWhatsappDnd({ customerIds: [shop.id], dnd: true, reason: " " });
+  assert.equal(noRemark.ok, false, "a remark is required");
+  const r = await setWhatsappDnd({ customerIds: [shop.id], dnd: true, reason: "Owner asked for no reminders" });
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  setTestUser(caller);
+
+  const sent = await send();
+  assert.equal(sent.ok, false);
+  if (!sent.ok) assert.match(sent.error, /WhatsApp DND — Owner asked for no reminders/);
+  assert.equal(sends.length, 0);
+
+  // Not by hand either: the copy-and-paste route prepares through the same door.
+  const copy = await prepareMessage({ customerId: shop.id, templateId, idempotencyKey: randomUUID() });
+  assert.equal(copy.ok, false);
+
+  const [c] = await db.select().from(customers).where(eq(customers.id, shop.id));
+  assert.equal(c.whatsappDnd, true);
+  assert.equal(c.doNotContact, false, "DND stops messages, never calls");
+  const events = await db.select().from(whatsappDndEvents);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].changedByName, "Founder");
+});
+
+test("taken off DND, the next message goes again, and a repeat click writes no second row", async () => {
+  await switchOn();
+  setTestUser(founder);
+  await setWhatsappDnd({ customerIds: [shop.id], dnd: true, reason: "Asked to stop" });
+  await setWhatsappDnd({ customerIds: [shop.id], dnd: true, reason: "Asked to stop" });
+  const off = await setWhatsappDnd({ customerIds: [shop.id], dnd: false, reason: "Asked to receive them again" });
+  assert.equal(off.ok, true);
+  setTestUser(caller);
+
+  const sent = await send();
+  assert.equal(sent.ok, true, sent.ok ? "" : sent.error);
+  assert.equal(sends.length, 1);
+  assert.equal((await db.select().from(whatsappDndEvents)).length, 2, "on once, off once");
+});
+
+test("a telecaller cannot put anybody on DND", async () => {
+  setTestUser(caller);
+  await assert.rejects(() => setWhatsappDnd({ customerIds: [shop.id], dnd: true, reason: "no" }));
+  assert.equal((await db.select().from(whatsappDndEvents)).length, 0);
 });

@@ -266,6 +266,8 @@ export function RecordScreen({
     /** A shop we deliver to, billed by its distributor. */
     thirdParty: boolean;
     doNotContact: boolean;
+    whatsappDnd: boolean;
+    whatsappDndReason: string | null;
     customerSince: string | null;
     deactivationRequested: boolean;
     deactivationReason: string | null;
@@ -1181,6 +1183,9 @@ export function RecordScreen({
                 />
               ) : null}
               {customer.doNotContact ? <Fact label="Standing" value="Do not contact" /> : null}
+              {customer.whatsappDnd ? (
+                <Fact label="WhatsApp" value={`DND${customer.whatsappDndReason ? ` — ${customer.whatsappDndReason}` : ""}`} />
+              ) : null}
               {/* Who it was before, and why it moved. The question people ask
                   after a resignation is not who owns this now — the line above
                   answers that — it is what happened to it. */}

@@ -286,6 +286,8 @@ export default async function CustomerRecordPage({
         dealerCode: customer.dealerCode,
         thirdParty: customer.thirdParty,
         doNotContact: customer.doNotContact,
+        whatsappDnd: customer.whatsappDnd,
+        whatsappDndReason: customer.whatsappDndReason,
         customerSince: customer.customerSince,
         deactivationRequested: customer.deactivationRequested,
         reactivationRequested: customer.reactivationRequested,

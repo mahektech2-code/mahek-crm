@@ -290,7 +290,9 @@ export async function runAutomation(opts: {
   if (kinds.has("payment")) {
     const rows = await db.execute<{ id: string }>(sql`
       select distinct b.customer_id as id from bills b
+        join customers c on c.id = b.customer_id
        where b.amount > b.paid_amount and b.payment_position = 'stated'
+         and not c.whatsapp_dnd
     `);
     rows.forEach((r) => ids.add(r.id));
   }
@@ -299,6 +301,7 @@ export async function runAutomation(opts: {
       select c.id from customers c
        where c.kind = 'customer' and not c.third_party and not c.cycle_is_default
          and c.last_order_date is not null and c.status <> 'deactivated' and not c.do_not_contact
+         and not c.whatsapp_dnd
     `);
     rows.forEach((r) => ids.add(r.id));
   }
