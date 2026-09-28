@@ -133,6 +133,11 @@ const nextConfig: NextConfig = {
       { source: "/erp/batch-codes", destination: "/erp/orders?view=batchCodes", permanent: true },
       { source: "/erp/labels", destination: "/erp/orders?view=labels", permanent: true },
       { source: "/erp/order-inbox", destination: "/erp/orders?view=orderInbox", permanent: true },
+      /* Complaints and credit notes are one screen on the CRM's complaints;
+         Pending CN is gone (the margin reads the credit note where it is). */
+      { source: "/erp/issue-cn", destination: "/erp/requests?view=issueCn", permanent: true },
+      { source: "/erp/complaints", destination: "/erp/requests?view=complaints", permanent: true },
+      { source: "/erp/pending-cn", destination: "/erp/requests?view=issueCn", permanent: true },
       { source: "/erp/followup", destination: "/erp", permanent: true },
       { source: "/erp/pivot", destination: "/erp", permanent: true },
 

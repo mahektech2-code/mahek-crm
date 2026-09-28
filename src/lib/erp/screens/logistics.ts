@@ -1,9 +1,10 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, employees, erpCredits, erpExpenses, erpGodowns, erpOrderDetails, erpRequests, erpTransports, erpVideos, users } from "@/db/schema";
+import { complaints, customers, employees, erpCredits, erpExpenses, erpGodowns, erpOrderDetails, erpTransports, erpVideos, users } from "@/db/schema";
+import { categoryLabel } from "@/lib/complaint-labels";
+import { complaintRows, requestStatus } from "./complaints";
 import { calendarDate } from "@/lib/business-date";
-import { getConfig } from "@/lib/config/store";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { bindErpFiles } from "../attachments";
@@ -17,7 +18,6 @@ import { godownIdByName, godownOptions, has, today, type Col } from "./common";
 import { customerForm, loadCustomers, phoneContacts, saveCustomerDetails } from "./masters";
 import { detailRows } from "./sales";
 import { syncBookOrders } from "../book";
-import { traceBill, type Trace } from "../trace";
 
 /* ---------------------------------------------------------------------------
  * Logistics, customer requests and credit notes, order follow-up, petty cash,
@@ -229,396 +229,9 @@ async function setExtra(ctx: ErpContext, ids: string[], values: Record<string, s
   return okVoid(`Extra expenses on ${res.length} line${res.length === 1 ? "" : "s"}`);
 }
 
-/* ============================================================= requests */
-
-type RequestScope = "requests" | "issueCn" | "complaints";
-
+/** Active employees from HRMS: who can be given petty cash or spend it. */
 async function activeEmployees(): Promise<{ name: string; position: string | null }[]> {
   return db.select({ name: employees.name, position: employees.position }).from(employees).where(eq(employees.status, "active")).orderBy(asc(employees.name));
-}
-
-async function requestForm(ctx: ErpContext, init?: Record<string, string>): Promise<FormSpec> {
-  const [parties, staff, types, details] = await Promise.all([loadCustomers(), activeEmployees(), refValues("complaintType"), detailRows()]);
-  const names = parties.map((p) => p.name);
-  const mobile: Record<string, string> = {};
-  parties.forEach((p) => (mobile[p.name] = p.phone ?? ""));
-  const bills: Record<string, string[]> = {};
-  const billDate: Record<string, string> = {};
-  const goods: Record<string, string[]> = {};
-  for (const r of details.rows) {
-    const bill = r.l.o.tallyBillNo;
-    if (!bill) continue;
-    const party = r.l.billing.name;
-    if (!(bills[party] ??= []).includes(bill)) bills[party].push(bill);
-    if (r.d.dispatchDate) billDate[`${party}|${bill}`] = r.d.dispatchDate;
-    if (!(goods[`${party}|${bill}`] ??= []).includes(r.l.sku.name)) goods[`${party}|${bill}`].push(r.l.sku.name);
-  }
-  const me = staff.find((s) => s.name.toLowerCase() === ctx.user.name.toLowerCase() && /sales/i.test(s.position ?? ""));
-  const salesmen = staff.filter((s) => /sales|office/i.test(s.position ?? "")).map((s) => s.name);
-  return {
-    screen: "requests",
-    id: "new",
-    title: "Raise a customer request",
-    sub: "A complaint, or a credit note the customer is asking for. The office decides.",
-    submit: "Raise request",
-    init: { salesman: me?.name ?? "", cn: "No", ...init },
-    data: { mobile, billDate },
-    header: [
-      { k: "salesman", l: "Name of salesman", t: "select", opts: salesmen.length ? salesmen : staff.map((s) => s.name) },
-      { k: "customer", l: "Customer", t: "select", req: true, opts: names },
-      { k: "mobile", l: "Mobile number", t: "derived", calc: "request.mobile" },
-      { k: "type", l: "Complaint type", t: "select", req: true, opts: types },
-      { k: "description", l: "Complaint description", t: "area", req: true, mic: true },
-      { k: "photo", l: "Complaint picture", t: "photo" },
-      { k: "cn", l: "Credit note required", t: "select", req: true, opts: ["Yes", "No"] },
-      { k: "bill", l: "Bill number", t: "select", req: true, optsBy: { by: "customer", map: bills }, when: { k: "cn", eq: "Yes" } },
-      { k: "billDate", l: "Bill date", t: "derived", calc: "request.billDate", when: { k: "cn", eq: "Yes" } },
-      { k: "goods", l: "Description of goods", t: "select", req: true, optsBy: { by: ["customer", "bill"], map: goods }, when: { k: "cn", eq: "Yes" } },
-    ],
-  };
-}
-
-type RequestRow = { r: typeof erpRequests.$inferSelect; party: string; area: string | null; phone: string | null; by: string | null };
-
-async function requestRows(where?: ReturnType<typeof eq>): Promise<RequestRow[]> {
-  const q = db
-    .select({ r: erpRequests, party: customers.name, area: customers.area, phone: customers.phone, by: users.name })
-    .from(erpRequests)
-    .innerJoin(customers, eq(customers.id, erpRequests.customerId))
-    .leftJoin(users, eq(users.id, erpRequests.createdById));
-  return (where ? q.where(where) : q).orderBy(desc(erpRequests.raisedAt));
-}
-
-function requestRow(ctx: ErpContext, x: RequestRow, panel?: ListRow["panel"], ai?: { on: boolean; pending: boolean; summary?: string }): ListRow {
-  const r = x.r;
-  const decider = ctx.powers.has("decideRequests");
-  const why = decider ? "" : "Only an admin or the office decides a request";
-  const actions: ActionSpec[] = [];
-  if (r.status !== "Accepted") actions.push({ id: "accept", l: "Accepted", primary: r.status === "Requested", why });
-  if (r.status !== "Rejected") actions.push({ id: "reject", l: "Rejected", why, confirm: `Reject the request from ${x.party}?` });
-  if (r.status === "Accepted" && r.cnRequired)
-    actions.push({
-      id: "issue",
-      l: "Issue Credit Note",
-      primary: true,
-      why,
-      prompt: {
-        title: "Issue the credit note",
-        sub: `${x.party} · bill ${r.billNo ?? "—"} · ${r.goods ?? ""}`,
-        submit: "Issue",
-        fields: [
-          { k: "amount", l: "Credit note amount (₹, before GST)", t: "num", req: true, min: 0.01 },
-          { k: "date", l: "Credit note date", t: "date", req: true },
-          { k: "number", l: "Credit note number", t: "text", req: true },
-          { k: "remark", l: "Remark", t: "area" },
-          { k: "file", l: "Credit note file", t: "photo" },
-        ],
-        init: { amount: rupeesField(r.cnAmountPaise), date: r.cnDate ?? today(), number: r.cnNumber ?? "", remark: r.remark ?? "" },
-      },
-    });
-  if (r.status === "Accepted" && !r.cnRequired)
-    actions.push({
-      id: "resolve",
-      l: "Resolve Complaint",
-      primary: true,
-      why,
-      prompt: {
-        title: "Resolve the complaint",
-        submit: "Resolve",
-        fields: [
-          { k: "remark", l: "Remark", t: "area", req: true, mic: true },
-          { k: "responsible", l: "Responsible employee", t: "text", req: true },
-        ],
-        init: { remark: r.remark ?? "", responsible: r.responsible ?? "" },
-      },
-    });
-  if (ai?.pending) {
-    actions.unshift({ id: "aiComplaint", l: "Review the suggestion", ai: true, primary: true, loadsForm: true });
-    actions.push({ id: "aiComplaintReject", l: "Reject the suggestion", confirm: "Reject the suggested type and summary?" });
-  } else if (ai?.on && r.description) actions.push({ id: "aiComplaintRead", l: "Suggest type and summary", ai: true });
-  actions.push({ id: "more", l: "Add More Credit", loadsForm: true });
-  actions.push({ id: "customer", l: "View customer", href: `/erp/customers?open=${r.customerId}` });
-  if (r.cnFileId) actions.push({ id: "file", l: "Open credit note", href: `/api/attachments/${r.cnFileId}` });
-  if (r.photoId) actions.push({ id: "photo", l: "Open picture", href: `/api/attachments/${r.photoId}` });
-  const response = r.resolvedAt ? Math.round((r.resolvedAt.getTime() - r.raisedAt.getTime()) / 3600000) : null;
-  return {
-    id: r.id,
-    v: {
-      raised: calendarDate(r.raisedAt),
-      status: r.status,
-      salesman: r.salesmanName,
-      party: x.party,
-      mobile: r.mobile,
-      type: r.complaintType,
-      cn: r.cnRequired ? "Yes" : "No",
-      bill: r.billNo,
-      goods: r.goods,
-      amount: r.cnAmountPaise,
-      description: r.description,
-    },
-    flags: [r.status === "Accepted" ? "accepted" : r.status === "Rejected" ? "rejected" : "requested"],
-    title: x.party,
-    header: `${r.complaintType ?? "Request"} · raised ${fd(calendarDate(r.raisedAt))}`,
-    fields: [
-      ...(ai?.summary ? [{ l: "Summary (confirmed)", v: ai.summary }] : []),
-      { l: "Area", v: x.area ?? "—", der: true },
-      { l: "Bill date", v: r.billDate ? fd(r.billDate) : "—" },
-      { l: "Credit note amount (with GST)", v: r.cnAmountPaise == null ? "—" : inr(Math.round(r.cnAmountPaise * 1.18)), der: true },
-      { l: "Credit note date", v: r.cnDate ? fd(r.cnDate) : "—" },
-      { l: "Credit note number", v: r.cnNumber ?? "—" },
-      { l: "Remark", v: r.remark ?? "—" },
-      { l: "Responsible employee", v: r.responsible ?? "—" },
-      { l: "Response time", v: response == null ? "—" : response < 48 ? `${response} h` : `${Math.round(response / 24)} days`, der: true },
-      { l: "Month", v: calendarDate(r.raisedAt).slice(0, 7), der: true },
-    ],
-    contacts: phoneContacts(x.phone),
-    panel,
-    actions,
-    by: stampLine(x.by, r.raisedAt),
-  };
-}
-
-/**
- * AI-6 for the decider: each request's trace, the other requests sharing its
- * lots inside the window (a possible batch problem at the threshold), who made
- * what was traced, and the customer's earlier requests. All deterministic.
- */
-async function requestAssist(rows: RequestRow[]): Promise<Map<string, ListRow["panel"]>> {
-  const out = new Map<string, ListRow["panel"]>();
-  const c = await getConfig();
-  if (!c["erp.ai.complaints.enabled"]) return out;
-  const threshold = c["erp.ai.complaints.clusterThreshold"];
-  const since = Date.now() - c["erp.ai.complaints.clusterDays"] * 86400000;
-  const traces = new Map<string, Trace>();
-  for (const x of rows) if (x.r.billNo) traces.set(x.r.id, await traceBill(x.r.customerId, x.r.billNo, x.r.goods));
-  for (const x of rows) {
-    const t = traces.get(x.r.id);
-    const mine = new Set((t?.lots ?? []).filter((l) => !l.startsWith("pack:")));
-    const sharing = rows.filter((o) => {
-      if (o.r.id === x.r.id || o.r.status === "Rejected" || o.r.raisedAt.getTime() < since) return false;
-      return (traces.get(o.r.id)?.lots ?? []).some((l) => mine.has(l));
-    });
-    const previous = rows.filter((o) => o.r.customerId === x.r.customerId && o.r.raisedAt < x.r.raisedAt).slice(0, 5);
-    out.set(x.r.id, {
-      kind: "trace",
-      data: {
-        steps: t?.steps ?? [],
-        missing: t ? t.missing : ["This request names no bill, so there is nothing to trace."],
-        cluster: sharing.length + 1 >= threshold ? { count: sharing.length + 1, parties: [...new Set(sharing.map((o) => o.party))], lots: [...mine].filter((l) => sharing.some((o) => traces.get(o.r.id)?.lots.includes(l))) } : null,
-        people: t?.people ?? [],
-        previous: previous.map((o) => ({ date: calendarDate(o.r.raisedAt), type: o.r.complaintType, status: o.r.status, cn: o.r.cnAmountPaise })),
-      },
-    });
-  }
-  return out;
-}
-
-function requestList(scope: RequestScope): ScreenModule {
-  return {
-    key: scope,
-    async load(ctx) {
-      const rows = await requestRows(scope === "issueCn" ? eq(erpRequests.cnRequired, true) : scope === "complaints" ? eq(erpRequests.cnRequired, false) : undefined);
-      const cols: ColSpec[] = [
-        { k: "raised", l: "Raised", t: "d" },
-        { k: "status", l: "Status", t: "s" },
-        { k: "salesman", l: "Salesman", t: "t" },
-        { k: "party", l: "Customer", t: "b" },
-        { k: "mobile", l: "Mobile", t: "ph" },
-        { k: "type", l: "Complaint type", t: "s" },
-        { k: "cn", l: "CN", t: "s" },
-        { k: "bill", l: "Bill no", t: "mono" },
-        { k: "goods", l: "Goods", t: "t" },
-        { k: "amount", l: "CN amount", t: "m" },
-        { k: "description", l: "Description", t: "t", w: 260 },
-        { k: "f", l: "Flags", t: "f" },
-      ];
-      const decider = ctx.powers.has("decideRequests");
-      return {
-        spec: {
-          screen: scope,
-          cols,
-          hidden: [],
-          groups: scope === "requests" ? ["status"] : scope === "complaints" ? ["type"] : undefined,
-          chips: "status",
-          bulk: decider ? [{ id: "accept", l: "Accepted" }, { id: "reject", l: "Rejected", confirm: "Reject every selected request?" }] : undefined,
-          newForm: scope === "requests" ? await requestForm(ctx) : undefined,
-          newLabel: "Raise request",
-          noDataLine: scope === "issueCn" ? "No credit-note requests." : scope === "complaints" ? "No complaints." : "No customer requests yet.",
-        },
-        rows: await (async () => {
-          const assist = await requestAssist(rows);
-          const ai = await import("../ai");
-          const cmp = await import("../ai-complaints");
-          const on = (await ai.featureState("complaints")).on;
-          const pend = await ai.pendingFor("complaints");
-          const summaries = await cmp.confirmedSummaries(rows.map((x) => x.r.id));
-          return rows.map((x) => requestRow(ctx, x, assist.get(x.r.id), { on, pending: pend.has(x.r.id), summary: summaries.get(x.r.id) }));
-        })(),
-      };
-    },
-    forms: {
-      new: (ctx, h) => saveRequest(ctx, h),
-      aiComplaint: async (ctx, h, _l, id) => (id ? (await import("../ai-complaints")).applyComplaint(ctx, id, h) : err("No suggestion named.", "not_found")),
-    },
-    formLoaders: {
-      aiComplaint: async (_ctx, id) => (await import("../ai-complaints")).complaintReviewForm(scope, id),
-      async more(ctx, id) {
-        const [x] = await requestRows(eq(erpRequests.id, id));
-        if (!x) return null;
-        const f = await requestForm(ctx, { salesman: x.r.salesmanName ?? "", customer: x.party, type: x.r.complaintType ?? "", description: x.r.description ?? "", cn: x.r.cnRequired ? "Yes" : "No", bill: x.r.billNo ?? "" });
-        return { ...f, title: "Raise another request for this bill" };
-      },
-    },
-    actions: {
-      aiComplaintRead: async (ctx, id) => (await import("../ai-complaints")).suggestComplaint(ctx, id),
-      aiComplaintReject: async (ctx, id) => (await import("../ai-complaints")).rejectComplaint(ctx, id),
-      accept: (ctx, id) => decide(ctx, [id], "Accepted"),
-      reject: (ctx, id) => decide(ctx, [id], "Rejected"),
-      async issue(ctx, id, v) {
-        if (!ctx.powers.has("decideRequests")) return err("Only an admin or the office issues a credit note.", "not_permitted");
-        const [r] = await db.select().from(erpRequests).where(eq(erpRequests.id, id));
-        if (!r) return err("That request no longer exists.", "not_found");
-        if (r.status !== "Accepted" || !r.cnRequired) return err("A credit note is issued on an accepted credit-note request.", "rule_violation");
-        const amount = paise(v.amount);
-        if (amount == null || amount <= 0) return fieldErr("amount", "Credit note amount is required");
-        const number = text(v.number);
-        if (!number) return fieldErr("number", "Credit note number is required");
-        const date = text(v.date) ?? today();
-        await db.transaction(async (tx) => {
-          await tx
-            .update(erpRequests)
-            .set({ cnAmountPaise: amount, cnDate: date, cnNumber: number, remark: text(v.remark), cnFileId: text(v.file), resolvedAt: new Date(), updatedAt: new Date() })
-            .where(eq(erpRequests.id, id));
-          await bindErpFiles(tx as unknown as typeof db, [text(v.file)], "erp_request", id, ctx.user.id);
-        });
-        await erpAudit(ctx, "erp.request.issueCn", "erp_request", id, { cnAmountPaise: r.cnAmountPaise }, { cnAmountPaise: amount, number });
-        return okVoid(`Credit note ${number} issued · ${inr(amount)} before GST. Update the order line from Pending CN.`);
-      },
-      async resolve(ctx, id, v) {
-        if (!ctx.powers.has("decideRequests")) return err("Only an admin or the office resolves a complaint.", "not_permitted");
-        const remark = text(v.remark);
-        const responsible = text(v.responsible);
-        if (!remark) return fieldErr("remark", "Remark is required");
-        if (!responsible) return fieldErr("responsible", "Responsible employee is required");
-        const [r] = await db.select().from(erpRequests).where(eq(erpRequests.id, id));
-        if (!r) return err("That request no longer exists.", "not_found");
-        if (r.status !== "Accepted" || r.cnRequired) return err("A complaint is resolved once it is accepted.", "rule_violation");
-        await db.update(erpRequests).set({ remark, responsible, resolvedAt: new Date(), updatedAt: new Date() }).where(eq(erpRequests.id, id));
-        await erpAudit(ctx, "erp.request.resolve", "erp_request", id, null, { remark, responsible });
-        return okVoid("Complaint resolved");
-      },
-    },
-    bulk: {
-      accept: (ctx, ids) => decide(ctx, ids, "Accepted"),
-      reject: (ctx, ids) => decide(ctx, ids, "Rejected"),
-    },
-  };
-}
-
-async function decide(ctx: ErpContext, ids: string[], status: "Accepted" | "Rejected"): Promise<Result<unknown>> {
-  if (!ctx.powers.has("decideRequests")) return err("Only an admin or the office decides a request.", "not_permitted");
-  const res = await db
-    .update(erpRequests)
-    .set({ status, approvedAt: new Date(), approvedById: ctx.user.id, updatedAt: new Date() })
-    .where(and(inArray(erpRequests.id, ids), sql`${erpRequests.status} <> ${status}`))
-    .returning({ id: erpRequests.id });
-  if (!res.length) return err(`Already ${status}.`, "conflict");
-  await erpAudit(ctx, `erp.request.${status.toLowerCase()}`, "erp_request", res.map((r) => r.id).join(","));
-  return okVoid(`${res.length} request${res.length === 1 ? "" : "s"} ${status}`);
-}
-
-async function saveRequest(ctx: ErpContext, h: Record<string, string>): Promise<Result<unknown>> {
-  const [c] = await loadCustomers(eq(customers.name, text(h.customer) ?? ""));
-  if (!c) return fieldErr("customer", "Customer is required");
-  const type = text(h.type);
-  if (!type) return fieldErr("type", "Complaint type is required");
-  const description = text(h.description);
-  if (!description) return fieldErr("description", "Complaint description is required");
-  const cn = h.cn === "Yes";
-  const bill = cn ? text(h.bill) : null;
-  const goods = cn ? text(h.goods) : null;
-  if (cn && !bill) return fieldErr("bill", "Name the bill the credit note is against");
-  let billDate: string | null = null;
-  if (bill) {
-    const { rows } = await detailRows();
-    const on = rows.filter((r) => r.l.o.billingCustomerId === c.id && r.l.o.tallyBillNo === bill);
-    if (!on.length) return fieldErr("bill", "That is not one of this customer's bills");
-    if (!goods) return fieldErr("goods", "Name the goods the credit note is for");
-    if (goods && !on.some((r) => r.l.sku.name === goods)) return fieldErr("goods", "That SKU is not on this bill");
-    billDate = on.find((r) => r.d.dispatchDate)?.d.dispatchDate ?? null;
-  }
-  const id = erpId("req");
-  await db.transaction(async (tx) => {
-    await tx.insert(erpRequests).values({
-      id,
-      salesmanName: text(h.salesman),
-      customerId: c.id,
-      mobile: c.phone,
-      complaintType: type,
-      description,
-      photoId: text(h.photo),
-      cnRequired: cn,
-      billNo: bill,
-      billDate,
-      goods,
-      createdById: ctx.user.id,
-    });
-    await bindErpFiles(tx as unknown as typeof db, [text(h.photo)], "erp_request", id, ctx.user.id);
-  });
-  await erpAudit(ctx, "erp.request.create", "erp_request", id, null, { customer: c.name, type, cn });
-  return okVoid(`Request raised for ${c.name} · waiting for the office`);
-}
-
-/* ============================================================ pending CN */
-
-/** Detail lines whose credit note differs from the accepted request's for the same customer, bill and SKU. */
-export async function pendingCnRows() {
-  const [{ rows }, reqs] = await Promise.all([
-    detailRows(),
-    db.select().from(erpRequests).where(and(eq(erpRequests.status, "Accepted"), eq(erpRequests.cnRequired, true))),
-  ]);
-  const cnFor = new Map<string, number>();
-  for (const r of reqs) if (r.billNo && r.goods && r.cnAmountPaise != null) cnFor.set(`${r.customerId}|${r.billNo}|${r.goods}`, (cnFor.get(`${r.customerId}|${r.billNo}|${r.goods}`) ?? 0) + r.cnAmountPaise);
-  return rows
-    .map((r) => ({ r, cn: cnFor.get(`${r.l.o.billingCustomerId}|${r.l.o.tallyBillNo}|${r.l.sku.name}`) }))
-    .filter((x) => x.cn != null && x.cn !== (x.r.d.creditNotePaise ?? null));
-}
-
-const pendingCn: ScreenModule = {
-  key: "pendingCn",
-  async load(ctx) {
-    const rows = await pendingCnRows();
-    const all: Col[] = [
-      { k: "party", l: "Billing party", t: "b" },
-      { k: "bill", l: "Bill no", t: "mono" },
-      { k: "sku", l: "Description of goods", t: "t", w: 240 },
-      { k: "line", l: "On the line", t: "m", pw: "viewSalesAmounts" },
-      { k: "request", l: "Accepted CN", t: "m", pw: "viewSalesAmounts" },
-      { k: "orderNo", l: "Order no", t: "mono" },
-    ];
-    const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
-    return {
-      spec: { screen: "pendingCn", cols, hidden, bulk: [{ id: "update", l: "Credit Note Updater" }], noDataLine: "Every accepted credit note is on its order line." },
-      rows: rows.map(({ r, cn }) => ({
-        id: r.l.o.id,
-        v: withoutHidden({ party: r.l.billing.name, bill: r.l.o.tallyBillNo, sku: r.l.sku.name, line: r.d.creditNotePaise, request: cn ?? null, orderNo: String(r.l.o.orderNo) }, hiddenKeys),
-        flags: ["cnSync"],
-        title: `${r.l.billing.name} · ${r.l.o.tallyBillNo}`,
-        actions: [{ id: "update", l: "Credit Note Updater", primary: true }],
-      })),
-    };
-  },
-  actions: { update: (ctx, id) => updateCn(ctx, [id]) },
-  bulk: { update: (ctx, ids) => updateCn(ctx, ids) },
-};
-
-async function updateCn(ctx: ErpContext, ids: string[]): Promise<Result<unknown>> {
-  const want = new Set(ids);
-  const rows = (await pendingCnRows()).filter((x) => want.has(x.r.l.o.id));
-  if (!rows.length) return err("These lines already carry their credit note.", "conflict");
-  for (const x of rows) await db.update(erpOrderDetails).set({ creditNotePaise: x.cn ?? null, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpOrderDetails.orderId, x.r.l.o.id));
-  await erpAudit(ctx, "erp.detail.creditNote", "erp_order_detail", rows.map((x) => x.r.l.o.id).join(","));
-  return okVoid(`Credit note copied onto ${rows.length} line${rows.length === 1 ? "" : "s"}`);
 }
 
 /* ============================================================ petty cash */
@@ -834,9 +447,10 @@ const myCustomers: ScreenModule = {
   async load(ctx) {
     const mine = await loadCustomers(or(eq(customers.salesAmId, ctx.user.id), sql`lower(${customers.salesPersonName}) = lower(${ctx.user.name})`));
     const ids = mine.map((c) => c.id);
-    const reqs = ids.length ? await requestRows(sql`${erpRequests.customerId} in ${ids}` as unknown as ReturnType<typeof eq>) : [];
+    /* Their complaints are the CRM's complaints: one record, whichever app raised it. */
+    const reqs = ids.length ? await complaintRows(inArray(complaints.customerId, ids)) : [];
     const reqBy = new Map<string, number>();
-    reqs.forEach((r) => reqBy.set(r.r.customerId, (reqBy.get(r.r.customerId) ?? 0) + (r.r.status === "Requested" ? 1 : 0)));
+    reqs.forEach((r) => reqBy.set(r.c.customerId, (reqBy.get(r.c.customerId) ?? 0) + (requestStatus(r.c) === "Requested" ? 1 : 0)));
     const cols: ColSpec[] = [
       { k: "name", l: "Sales party", t: "b" },
       { k: "grade", l: "Grade", t: "s" },
@@ -870,9 +484,9 @@ const myCustomers: ScreenModule = {
         header: `${c.city ?? ""}${c.area ? ` · ${c.area}` : ""}`,
         contacts: phoneContacts(c.phone, c.email),
         fields: reqs
-          .filter((r) => r.r.customerId === c.id)
+          .filter((r) => r.c.customerId === c.id)
           .slice(0, 6)
-          .map((r) => ({ l: `Request · ${fd(calendarDate(r.r.raisedAt))}`, v: `${r.r.complaintType ?? "Request"} — ${r.r.status}${r.r.cnAmountPaise ? ` · CN ${inr(r.r.cnAmountPaise)}` : ""}` })),
+          .map((r) => ({ l: `Complaint · ${fd(calendarDate(r.c.createdAt))}`, v: `${categoryLabel(r.c.category)} — ${requestStatus(r.c)}${r.c.cnAmount ? ` · CN ${inr(r.c.cnAmount)}` : ""}` })),
         actions: [{ id: "edit", l: "Edit", primary: true, loadsForm: true }],
       })),
     };
@@ -980,10 +594,6 @@ export const LOGISTICS_SCREENS: ScreenModule[] = [
   transportList("pendingLr"),
   transportList("trackLr"),
   paidFreight,
-  requestList("requests"),
-  requestList("issueCn"),
-  requestList("complaints"),
-  pendingCn,
   credits,
   expenses,
   myCustomers,

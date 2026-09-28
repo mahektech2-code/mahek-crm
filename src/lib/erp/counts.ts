@@ -5,7 +5,6 @@ import { erpInward, erpPurchases, erpTests } from "@/db/schema";
 import type { ErpContext } from "./access";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, orderLines } from "./screens/sales";
-import { pendingCnRows } from "./screens/logistics";
 
 /* ---------------------------------------------------------------------------
  * The sidebar's badges: work waiting on a screen (untested inward lines,
@@ -76,7 +75,7 @@ export async function unverifiedIds(): Promise<string[]> {
 export async function logisticsCounts() {
   const [lr, req, exp] = await Promise.all([
     db.execute(sql`select id from erp_transports where lr_no is null or lr_no = ''`) as unknown as Promise<{ id: string }[]>,
-    db.execute(sql`select id from erp_requests where status = 'Requested'`) as unknown as Promise<{ id: string }[]>,
+    db.execute(sql`select id from complaints where status = 'open'`) as unknown as Promise<{ id: string }[]>,
     db.execute(sql`select id from erp_expenses where status = 'Pending'`) as unknown as Promise<{ id: string }[]>,
   ]);
   return { pendingLr: lr.map((r) => r.id), requested: req.map((r) => r.id), pendingExpenses: exp.map((r) => r.id) };
@@ -108,7 +107,6 @@ export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, numb
         if (ctx.screens.has("expenses")) out.expenses = c.pendingExpenses.length;
       }),
     );
-  if (ctx.screens.has("pendingCn")) jobs.push(pendingCnRows().then((x) => void (out.pendingCn = x.length)));
   await Promise.all(jobs);
   return out;
 }

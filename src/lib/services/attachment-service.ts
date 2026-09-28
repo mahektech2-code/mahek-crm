@@ -444,6 +444,16 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     await assertCustomerInScope(customer);
     return true;
   } catch {
+    /* A complaint is also the ERP's "customer request". Whoever may open the
+       ERP's complaints screen decides complaints and may open their
+       photographs and credit notes, whether or not that customer is in a CRM
+       book of theirs — the rule the request's files were read under before
+       they became the complaint's (0184). */
+    if (row.parentType === "complaint") {
+      const ctx = await resolveScope();
+      const { canReadErpAttachment } = await import("@/lib/erp/attachments");
+      return canReadErpAttachment(ctx.user.id, "complaint", row.parentId);
+    }
     return false;
   }
 }

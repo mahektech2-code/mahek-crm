@@ -1436,6 +1436,22 @@ are tabs of one Orders screen, order follow-up is the CRM's buying cycle rather
 than a second prediction, and a customer's monthly target is the CRM's Monthly
 Targets row, never a column of the ERP's own.
 
+**A COMPLAINT IS A COMPLAINT, whichever app raised it.** The ERP's "customer
+requests" were a second table with the CRM complaint's own fields, so a
+salesman's complaint raised in the ERP never reached the telecaller on the
+customer's next call, and credit notes were recorded in two places. The ERP's
+Complaints & credit notes screen reads and writes `complaints`: raising goes
+through `createComplaint` (`lib/services/complaint-create.ts`, which the CRM's
+`logComplaint` also calls, so both get the SLA and the opening history line);
+accepting and rejecting are the complaint's own status, decided by the ERP's
+"decide requests" power; issuing a credit note is the Accounts service
+(`issueCreditNote`), so it comes off the bill in the ledger and needs
+`creditnote.issue`. "Pending CN" and its Credit Note Updater are gone — an
+order line's margin reads the issued credit note where it is
+(`issuedCreditNotes`). An ERP-only user opens a complaint's files through the
+ERP's complaints screen (`canRead` falls back to it). 0184 carried every ERP
+request across under the same id; `erp_requests` is retired, not dropped.
+
 **The AI features draft and a person decides** (`docs/erp/04`). Everything a
 rule can do is ordinary code: the alert rules (`engines/alerts.ts`, run hourly
 and nightly by `runErpAlerts`, deduplicated by a partial unique index and

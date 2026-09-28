@@ -159,6 +159,9 @@ describe("alerts (AI-4)", () => {
 
 describe("batch trace and complaint clusters (AI-6)", () => {
   test("a request's trace runs from the bill back to the supplier, and three on one lot flag a batch problem", async () => {
+    /* The bills a credit note names are MahekOne's own; with the ERP not yet
+       taking the orders, they are the ones the sheet wrote for these orders. */
+    for (const qty of [10, 11, 12]) await db.execute(sql`insert into bills (id, customer_id, bill_no, bill_date, amount, payment_position) values (${`bil_mmi${qty}`}, 'cus_shree', ${`MMI/${qty}`}, '2026-09-01', 100000, 'stated')`);
     const c = await as(clerk);
     for (const qty of [10, 11, 12]) await ok(mod("requests").forms!.new(c, { customer: "Shree Paints", type: "Leakage", description: "Leaking", cn: "Yes", bill: `MMI/${qty}`, goods: SKU }, []));
     const a = await as(admin);

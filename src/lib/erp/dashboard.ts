@@ -10,7 +10,7 @@ import { ALERT_LABEL, type AlertKind } from "./engines/alerts";
 import { monthId, targetReached } from "./engines/sales";
 import { erpLink } from "./registry";
 import { today } from "./screens/common";
-import { pendingCnRows } from "./screens/logistics";
+import { requestStatus } from "./screens/complaints";
 import { loadCustomers, partyStatus } from "./screens/masters";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, orderLines, ORDER_STATUSES } from "./screens/sales";
@@ -291,20 +291,17 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
 
   /* ========================================================== requests */
   const req: Tile[] = [];
-  if (["requests", "issueCn", "pendingCn"].some(has)) {
-    const rows = await q(sql`select id, status, cn_required as cn, cn_number as number, raised_at as raised, resolved_at as resolved from erp_requests`);
+  if (["requests", "issueCn"].some(has)) {
+    /* The CRM's complaints — one record, whichever app raised it. */
+    const rows = (await q(sql`select id, status, cn_status as "cnStatus", request_cn as cn, created_at as raised, resolved_at as resolved from complaints`)).map((r) => ({ id: r.id, cn: r.cn, raised: r.raised, resolved: r.resolved, word: requestStatus({ status: String(r.status), cnStatus: (r.cnStatus as string | null) ?? null }) }));
     if (has("requests"))
-      for (const st of ["Requested", "Accepted", "Rejected"]) {
-        const ids = rows.filter((r) => r.status === st).map((r) => String(r.id));
-        req.push({ l: `Requests · ${st}`, v: String(ids.length), tone: st === "Requested" && ids.length ? "warn" : undefined, href: tileHref("requests", ids, st) });
+      for (const st of ["Requested", "Accepted", "Rejected"] as const) {
+        const ids = rows.filter((r) => r.word === st).map((r) => String(r.id));
+        req.push({ l: `Complaints · ${st}`, v: String(ids.length), tone: st === "Requested" && ids.length ? "warn" : undefined, href: tileHref("requests", ids, st) });
       }
     if (has("issueCn")) {
-      const ids = rows.filter((r) => r.status === "Accepted" && r.cn && !r.number).map((r) => String(r.id));
+      const ids = rows.filter((r) => r.word === "Accepted" && r.cn).map((r) => String(r.id));
       req.push({ l: "Credit notes to issue", v: String(ids.length), tone: ids.length ? "warn" : undefined, href: tileHref("issueCn", ids, "To issue") });
-    }
-    if (has("pendingCn")) {
-      const n = (await pendingCnRows()).length;
-      req.push({ l: "Credit notes pending sync", v: String(n), tone: n ? "warn" : undefined, href: tileHref("pendingCn", null, "") });
     }
     if (has("requests")) {
       const resolved = rows.filter((r) => r.resolved && calendarDate(asDate(r.resolved)).startsWith(month));
