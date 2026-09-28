@@ -218,6 +218,7 @@ export const ST_TONE: Record<string, Tone> = {
   Resolved: "success", New: "brand", Converted: "success", "Not an order": "muted", Duplicate: "warn",
   High: "success", Low: "warn", "Invoice Received": "info", "Purchase Matched": "brand",
   "Purchase Verified": "success", Dispatched: "success", Transfer: "neutral", Declined: "danger",
+  Arrived: "neutral", Tested: "info", "Bill received": "info", Matched: "brand",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */

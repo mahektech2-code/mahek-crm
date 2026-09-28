@@ -107,10 +107,12 @@ export const ERP_GROUPS: ErpGroup[] = [
     icon: "cart",
     screens: [
       s("requisitions", "requisitions", "Purchase requisitions", "What the godowns need bought. Status changes directly on the record.", true),
-      s("inward", "inward", "Purchase inward", "Goods arriving against a PR. Each line goes once to testing or straight to the purchase register.", true),
+      s("register", "register", "Purchases", "Goods arriving and the lots they become. A line that needs testing goes to the tester as it is saved; the rest are in the register at once, and post to stock when a rate is entered.", true, [
+        v("inward", "Arrivals"),
+        v("register", "Register"),
+        v("barcode", "Drum labels"),
+      ]),
       s("testing", "testing", "Purchase testing", "Evidence for the tests each chemical requires. Only the verifier can verify.", true),
-      s("register", "register", "Purchase register", "Every verified or direct purchase with its rate, GST and bill. Stock posts only once a rate is entered.", true),
-      s("barcode", "barcode", "Purchase barcode", "Chemical lots at your working godown, ready for drum labels.", true),
     ],
   },
   {

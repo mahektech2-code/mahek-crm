@@ -268,6 +268,6 @@ describe("Ask the ERP's tools (AI-5)", () => {
     assert.ok(res.rows.length >= 2);
     assert.ok(res.rows.every((r) => !("rate" in r) && !("final" in r)));
     assert.ok(res.hiddenFromThisPerson.includes("Rate"));
-    assert.ok(records[0].href.startsWith("/erp/register?f="));
+    assert.ok(records[0].href.startsWith("/erp/register?view=register&f="), records[0].href);
   });
 });
