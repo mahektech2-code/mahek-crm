@@ -41,14 +41,20 @@ describe("what a module grant means", () => {
     assert.equal(moduleAllowed("accounts.bills", granted, "accounts"), false);
   });
 
-  it("an administrator holds the offByDefault module whatever the rows say, and nothing else beyond them", () => {
+  it("an administrator holds every offByDefault module whatever the rows say, and nothing else beyond them", () => {
     const rows = ["crm.dashboard", "crm.customers"];
     const off = modulesForApp("crm").filter((m) => m.offByDefault).map((m) => m.key);
-    assert.deepEqual(off, ["crm.lead-calling-desk"], "the desk is the only module the bypass can reach");
+    assert.deepEqual(
+      off,
+      ["crm.lead-calling-desk", "crm.sales-manager"],
+      "the desk and the CRM's Sales Manager seat are the only modules the bypass can reach",
+    );
 
-    assert.equal(moduleAllowed("crm.lead-calling-desk", rows, "crm", true), true);
-    assert.equal(moduleAllowed("crm.lead-calling-desk", rows, "crm", false), false);
-    assert.equal(moduleAllowed("crm.lead-calling-desk", rows, "crm"), false, "not an administrator by default");
+    for (const key of off) {
+      assert.equal(moduleAllowed(key, rows, "crm", true), true);
+      assert.equal(moduleAllowed(key, rows, "crm", false), false);
+      assert.equal(moduleAllowed(key, rows, "crm"), false, "not an administrator by default");
+    }
     // An administrator narrowed on purpose stays narrowed everywhere else.
     assert.equal(moduleAllowed("crm.leads", rows, "crm", true), false);
     assert.equal(moduleAllowed("crm.customers", rows, "crm", true), true);
