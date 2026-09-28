@@ -2,8 +2,9 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, auditLog, sheetPartyRows, users } from "@/db/schema";
+import { auditLog, sheetPartyRows, users } from "@/db/schema";
 import { hashPassword } from "@/lib/auth";
+import { grantAppWithDefaultModules } from "@/lib/services/app-provisioning";
 
 /* ---------------------------------------------------------------------------
  * The back office team, from the customer master.
@@ -149,9 +150,9 @@ export async function provisionBackOffice(options: {
       initials: initialsOf(name),
       active: true,
     });
-    await db.insert(appAccess).values(
-      apps.map((app) => ({ id: newId("acc"), userId: id, app, grantedById: null })),
-    );
+    for (const app of apps) {
+      await grantAppWithDefaultModules(db, { userId: id, app, grantedById: null });
+    }
     await db.insert(auditLog).values({
       id: newId("aud"),
       actorId: null,

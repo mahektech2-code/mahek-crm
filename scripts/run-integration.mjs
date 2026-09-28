@@ -102,6 +102,11 @@ const files = [
   // The telecaller's calling desk itself: three calls, Ready for Prospect, and
   // that asking for a Prospect is not being one.
   "src/lib/lead-calling-desk.test.ts",
+  // A fresh CRM/Sales grant made through the CLI, the provisioning endpoint
+  // or the back-office bulk provision must not carry an offByDefault module
+  // (the calling desk, the Sales Manager seat) along for free — and an
+  // administrator's automatic reach into the desk must survive that fix.
+  "src/lib/services/app-provisioning.test.ts",
   // The Sales Manager lead pipeline: reads counted in SQL, every mutation
   // persisted, the distributor track, and authorisation — including the one
   // place read scope and write scope disagree, pinned rather than fixed.

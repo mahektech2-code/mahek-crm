@@ -14,11 +14,11 @@
  *
  * Idempotent. Granting an app somebody already has changes nothing.
  */
-import { randomUUID } from "node:crypto";
 import { and, eq, or } from "drizzle-orm";
 import { db } from "../src/db";
 import { appAccess, users } from "../src/db/schema";
 import { APP_IDS, type AppId } from "../src/lib/apps";
+import { grantAppWithDefaultModules } from "../src/lib/services/app-provisioning";
 
 async function main() {
   const [app, who] = process.argv.slice(2);
@@ -53,12 +53,7 @@ async function main() {
     return;
   }
 
-  await db.insert(appAccess).values({
-    id: `acc_${randomUUID().slice(0, 12)}`,
-    userId: user.id,
-    app: app as AppId,
-    grantedById: null,
-  });
+  await grantAppWithDefaultModules(db, { userId: user.id, app: app as AppId, grantedById: null });
   console.log(`${user.name} can now open ${app}.`);
 }
 
