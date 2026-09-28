@@ -102,6 +102,29 @@ const nextConfig: NextConfig = {
       { source: "/founder/people", destination: "/founder?s=people", permanent: true },
       { source: "/founder/crm", destination: "/founder?s=sales", permanent: true },
 
+      /*
+       * The ERP's lists that were each their own screen in Mahek Plus are tabs
+       * of one screen now — the four stock stages and their logs, the re-order
+       * lists, Pending LR and Track LR, the petty-cash credits. A bookmark to
+       * the old screen lands on its tab.
+       */
+      { source: "/erp/rm-stock", destination: "/erp/stock", permanent: true },
+      { source: "/erp/rm-log", destination: "/erp/stock?view=rmLog", permanent: true },
+      { source: "/erp/sfg-stock", destination: "/erp/stock?view=sfgStock", permanent: true },
+      { source: "/erp/sfg-log", destination: "/erp/stock?view=sfgLog", permanent: true },
+      { source: "/erp/fg-stock", destination: "/erp/stock?view=fgStock", permanent: true },
+      { source: "/erp/fg-log", destination: "/erp/stock?view=fgLog", permanent: true },
+      { source: "/erp/pack-stock", destination: "/erp/stock?view=packStock", permanent: true },
+      { source: "/erp/pack-log", destination: "/erp/stock?view=packLog", permanent: true },
+      { source: "/erp/reorder-rm", destination: "/erp/rm-levels", permanent: true },
+      { source: "/erp/reorder-fg", destination: "/erp/fg-levels", permanent: true },
+      { source: "/erp/pending-lr", destination: "/erp/transport", permanent: true },
+      { source: "/erp/track-lr", destination: "/erp/transport?view=trackLr", permanent: true },
+      { source: "/erp/paid-freight", destination: "/erp/transport?view=paidFreight", permanent: true },
+      { source: "/erp/credits", destination: "/erp/expenses?view=credits", permanent: true },
+      { source: "/erp/powers", destination: "/admin/people", permanent: true },
+      { source: "/erp/employees", destination: "/hrms/employees", permanent: true },
+
       { source: "/orders", destination: "/accounts", permanent: true },
       { source: "/orders/:path*", destination: "/accounts/:path*", permanent: true },
 

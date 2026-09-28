@@ -21,6 +21,7 @@ import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { grantableApps, moduleGroupsForApp, modulesForApp } from "@/lib/modules";
 import type { AppId } from "@/lib/apps";
+import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
 import {
   candidatesForGrant,
   employeesToLink,
@@ -659,6 +660,11 @@ function AccessDialog({
   }, [person]);
 
   const [draft, setDraft] = React.useState<Draft>(before);
+  /* THE ERP'S POWERS, beside the ERP grant: who verifies tests, who sees
+     purchase money. Sent only while the ERP is ticked — unticking it takes the
+     powers with it, the same as its screens. */
+  const powersBefore = React.useMemo(() => person?.erpPowers ?? [], [person]);
+  const [powers, setPowers] = React.useState<string[]>(powersBefore);
   /*
    * WHICH HAT EACH APP IS HELD UNDER, beside the screens it opens.
    *
@@ -714,6 +720,7 @@ function AccessDialog({
         // dialog opened and saved without touching this changes nothing.
         role: roleDraft[app] ?? (person?.role as RoleId) ?? role,
       })),
+      erpPowers: draft.erp ? powers : [],
       account: chosen.userId
         ? undefined
         : { email: email.trim() || null, phone: phone.trim() || null, role },
@@ -743,7 +750,10 @@ function AccessDialog({
     });
   };
 
-  const changes = describeChanges(before, draft);
+  const powersAfter = draft.erp ? powers : [];
+  const powersChanged = powersAfter.length !== powersBefore.length || powersAfter.some((p) => !powersBefore.includes(p));
+  const moduleChanges = describeChanges(before, draft);
+  const changes = { ...moduleChanges, any: moduleChanges.any || powersChanged };
 
   return (
     <Modal
@@ -814,6 +824,8 @@ function AccessDialog({
           onRoleDraft={setRoleDraft}
           accountRole={(person?.role as RoleId) ?? role}
           fieldError={fieldError}
+          powers={powers}
+          onPowers={setPowers}
         />
       ) : step === "review" ? (
         <ReviewStep
@@ -826,6 +838,7 @@ function AccessDialog({
           draft={draft}
           roleDraft={roleDraft}
           accountRole={(person?.role as RoleId) ?? role}
+          powerChange={powersChanged ? { before: powersBefore, after: powersAfter } : null}
         />
       ) : (
         <CredentialStep
@@ -1147,6 +1160,8 @@ function AccessStep({
   onRoleDraft,
   accountRole,
   fieldError,
+  powers,
+  onPowers,
 }: {
   needsAccount: boolean;
   name: string;
@@ -1164,6 +1179,9 @@ function AccessStep({
   /** What a newly ticked app is held under until somebody says otherwise. */
   accountRole: RoleId;
   fieldError: Record<string, string>;
+  /** The ERP's special powers, drawn under the ERP app while it is ticked. */
+  powers: string[];
+  onPowers: (next: string[]) => void;
 }) {
   const setApp = (app: AppId, modules: string[]) => {
     const next = { ...draft };
@@ -1258,6 +1276,7 @@ function AccessStep({
             role={roleDraft[app.id] ?? accountRole}
             onRole={(next) => onRoleDraft({ ...roleDraft, [app.id]: next })}
             onChange={(modules) => setApp(app.id, modules)}
+            powers={app.id === "erp" ? { held: powers, onChange: onPowers, error: fieldError.erpPowers } : undefined}
           />
         ))}
       </div>
@@ -1283,6 +1302,7 @@ function AppBlock({
   role,
   onRole,
   onChange,
+  powers,
 }: {
   app: AppId;
   name: string;
@@ -1293,6 +1313,8 @@ function AppBlock({
   role: RoleId;
   onRole: (next: RoleId) => void;
   onChange: (modules: string[]) => void;
+  /** The ERP's special powers, for the ERP app alone. */
+  powers?: { held: string[]; onChange: (next: string[]) => void; error?: string };
 }) {
   const all = ALL_OF(app);
   const groups = moduleGroupsForApp(app);
@@ -1416,6 +1438,34 @@ function AppBlock({
           ))}
         </div>
       ) : null}
+
+      {/* THE POWERS, under the screens they act on. An ERP administrator holds
+          every one without a tick, so the boxes would be a question with no
+          effect; the line says so instead. */}
+      {on && powers ? (
+        <div className="flex items-start gap-2 border-t border-divider bg-surface px-2.5 py-1.5">
+          <span className="w-[132px] flex-none pt-[3px] text-[10px] leading-[14px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+            Powers
+          </span>
+          {role === "admin" ? (
+            <span className="text-[13px] text-muted">An ERP administrator holds every power.</span>
+          ) : (
+            <span className="grid min-w-0 flex-1 grid-cols-3 gap-x-3">
+              {ERP_POWERS.map((p) => (
+                <Checkbox
+                  key={p}
+                  checked={powers.held.includes(p)}
+                  title={ERP_POWER_LABEL[p].source}
+                  onChange={() => powers.onChange(powers.held.includes(p) ? powers.held.filter((x) => x !== p) : [...powers.held, p])}
+                  className="min-w-0 py-[1px]"
+                  label={<span className="truncate text-[13px] text-body">{ERP_POWER_LABEL[p].label}</span>}
+                />
+              ))}
+            </span>
+          )}
+        </div>
+      ) : null}
+      {on && powers?.error ? <p className="border-t border-divider px-2.5 py-1.5 text-[13px] text-danger">{powers.error}</p> : null}
     </div>
   );
 }
@@ -1477,6 +1527,7 @@ function ReviewStep({
   draft,
   roleDraft,
   accountRole,
+  powerChange,
 }: {
   name: string;
   creating: boolean;
@@ -1488,6 +1539,8 @@ function ReviewStep({
   /** The hat each granted app will be held under, after this save. */
   roleDraft: Record<string, RoleId>;
   accountRole: RoleId;
+  /** The ERP powers before and after, where they change. */
+  powerChange: { before: string[]; after: string[] } | null;
 }) {
   const appName = (id: AppId) => APPS.find((a) => a.id === id)?.name ?? id;
   /* "Manager in Accounts", because a level on its own no longer names a hat
@@ -1572,6 +1625,19 @@ function ReviewStep({
       what: appName(a),
       detail: `${scope(a)} — the rest disappear from their navigation.`,
     })),
+    ...(powerChange
+      ? [
+          {
+            key: "powers",
+            tone: (powerChange.after.length < powerChange.before.length ? "warn" : "success") as "warn" | "success",
+            tag: "Powers",
+            what: "ERP",
+            detail: powerChange.after.length
+              ? `${powerChange.after.map((p) => ERP_POWER_LABEL[p as keyof typeof ERP_POWER_LABEL]?.label ?? p).join(", ")}.`
+              : "no ERP powers.",
+          },
+        ]
+      : []),
     ...changes.revoked.map((a) => ({
       key: `r:${a}`,
       tone: "danger" as const,

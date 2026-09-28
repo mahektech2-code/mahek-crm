@@ -6,7 +6,7 @@ import { erpUserSettings } from "@/db/schema";
 import { err, fromThrown, okVoid, ok, type Result } from "@/lib/result";
 import { ErpNotPermitted, erpContext, requireErpWrite } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
-import { erpScreen, ERP_SCREENS, erpHref } from "@/lib/erp/registry";
+import { erpScreen, erpHref, erpLink } from "@/lib/erp/registry";
 import type { FormSpec } from "@/lib/erp/ui";
 import { erpAudit } from "@/lib/erp/server";
 
@@ -127,46 +127,43 @@ export async function erpSearch(q: string): Promise<ErpSearchHit[]> {
   const like = `%${term.toLowerCase()}%`;
   const out: ErpSearchHit[] = [];
   const { sql } = await import("drizzle-orm");
-  const go = (key: string) => {
-    const s = ERP_SCREENS.find((x) => x.key === key);
-    return s ? erpHref(s) : "/erp";
-  };
+  const go = (key: string, open: string) => erpLink(key, { open });
   if (ctx.screens.has("customers")) {
     const rows = (await db.execute(
       sql`select id, name, city from customers where lower(name) like ${like} order by name limit 4`,
     )) as unknown as { id: string; name: string; city: string }[];
-    rows.forEach((r) => out.push({ kind: "Customer", name: r.name, meta: r.city ?? "", href: `${go("customers")}?open=${r.id}` }));
+    rows.forEach((r) => out.push({ kind: "Customer", name: r.name, meta: r.city ?? "", href: go("customers", r.id) }));
   }
   if (ctx.screens.has("suppliers")) {
     const rows = (await db.execute(
       sql`select id, name, state from erp_suppliers where lower(name) like ${like} order by name limit 3`,
     )) as unknown as { id: string; name: string; state: string }[];
-    rows.forEach((r) => out.push({ kind: "Supplier", name: r.name, meta: r.state ?? "", href: `${go("suppliers")}?open=${r.id}` }));
+    rows.forEach((r) => out.push({ kind: "Supplier", name: r.name, meta: r.state ?? "", href: go("suppliers", r.id) }));
   }
   if (ctx.screens.has("rawMaterials")) {
     const rows = (await db.execute(
       sql`select id, name, material_type as t from erp_raw_materials where lower(name) like ${like} or lower(coalesce(code, '')) like ${like} order by name limit 3`,
     )) as unknown as { id: string; name: string; t: string }[];
-    rows.forEach((r) => out.push({ kind: "Raw material", name: r.name, meta: r.t, href: `${go("rawMaterials")}?open=${r.id}` }));
+    rows.forEach((r) => out.push({ kind: "Raw material", name: r.name, meta: r.t, href: go("rawMaterials", r.id) }));
   }
   if (ctx.screens.has("godowns")) {
     const rows = (await db.execute(
       sql`select id, name, state from erp_godowns where lower(name) like ${like} order by name limit 3`,
     )) as unknown as { id: string; name: string; state: string }[];
-    rows.forEach((r) => out.push({ kind: "Godown", name: r.name, meta: r.state ?? "", href: `${go("godowns")}?open=${r.id}` }));
+    rows.forEach((r) => out.push({ kind: "Godown", name: r.name, meta: r.state ?? "", href: go("godowns", r.id) }));
   }
   if (ctx.screens.has("register")) {
     const rows = (await db.execute(
       sql`select p.id, p.lot_no as lot, p.pr_number as pr, m.name as item from erp_purchases p join erp_raw_materials m on m.id = p.raw_material_id
            where lower(p.lot_no) like ${like} or p.pr_number::text = ${term} order by p.purchase_date desc limit 4`,
     )) as unknown as { id: string; lot: string; pr: number; item: string }[];
-    rows.forEach((r) => out.push({ kind: "Lot", name: r.lot, meta: `PR ${r.pr} · ${r.item}`, href: `${go("register")}?open=${r.id}` }));
+    rows.forEach((r) => out.push({ kind: "Lot", name: r.lot, meta: `PR ${r.pr} · ${r.item}`, href: go("register", r.id) }));
   }
   if (ctx.screens.has("inward") && /^\d+$/.test(term)) {
     const rows = (await db.execute(
       sql`select min(i.id) as id, i.pr_number as pr, count(*)::int as n from erp_inward i where i.pr_number::text = ${term} group by i.pr_number`,
     )) as unknown as { id: string; pr: number; n: number }[];
-    rows.forEach((r) => out.push({ kind: "PR", name: `PR ${r.pr}`, meta: `${r.n} inward line${r.n > 1 ? "s" : ""}`, href: `${go("inward")}?open=${r.id}` }));
+    rows.forEach((r) => out.push({ kind: "PR", name: `PR ${r.pr}`, meta: `${r.n} inward line${r.n > 1 ? "s" : ""}`, href: go("inward", r.id) }));
   }
   return out.slice(0, 10);
 }

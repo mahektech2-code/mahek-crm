@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText, FLAG, inr, nf, ST_TONE } from "@/lib/erp/ui";
@@ -29,6 +30,9 @@ import { RecordDrawer } from "./record-drawer";
 /** More status values than this and they are a dropdown, not a row of tabs. */
 const MAX_TABS = 7;
 
+/** A tab of a screen with several lists (`views` in the registry): a link, because each tab is its own server read. */
+export type ListTab = { key: string; label: string; href: string; active: boolean };
+
 /** The coloured edge a flagged row carries, in the CRM's tokens. */
 const EDGE: Partial<Record<Tone, string>> = {
   danger: "shadow-[inset_3px_0_0_var(--color-danger)]",
@@ -46,6 +50,8 @@ export function ListScreen({
   initialOpen,
   godowns,
   filter,
+  tabs,
+  toggle,
 }: {
   spec: ListSpec;
   rows: ListRow[];
@@ -58,6 +64,10 @@ export function ListScreen({
   godowns: PickItem[];
   /** A dashboard pre-filter: the ids it counted, and what to call it. */
   filter?: { label: string; ids: string[] } | null;
+  /** The screen's tabs, when it has several lists. */
+  tabs?: ListTab[];
+  /** The current tab's second list (every entry behind the available stock), and the way back. */
+  toggle?: { label: string; href: string } | null;
 }) {
   const ui = useErpUi();
   const router = useRouter();
@@ -219,6 +229,30 @@ export function ListScreen({
           </>
         }
       />
+
+      {tabs && tabs.length > 1 ? (
+        <nav aria-label={`${label} lists`} className="mb-4 flex flex-wrap items-center border-b border-line">
+          {tabs.map((t) => (
+            <Link
+              key={t.key}
+              href={t.href}
+              aria-current={t.active ? "page" : undefined}
+              className={cx(
+                "-mb-px border-b-2 px-4 py-2.5 text-sm whitespace-nowrap",
+                t.active ? "border-brand font-medium text-ink" : "border-transparent text-muted hover:text-body",
+              )}
+            >
+              {t.label}
+            </Link>
+          ))}
+          <span className="flex-1" />
+          {toggle ? (
+            <Link href={toggle.href} className="px-2 py-2.5 text-[13px] font-medium text-[#5223E0] hover:underline">
+              {toggle.label}
+            </Link>
+          ) : null}
+        </nav>
+      ) : null}
 
       {metrics ? <MetricStrip metrics={metrics} /> : null}
 

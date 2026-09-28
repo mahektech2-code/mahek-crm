@@ -3,7 +3,7 @@ import { webApps } from "@/lib/apps";
 import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { requireErpApp } from "@/lib/erp/access";
-import { ERP_GROUPS, erpHref } from "@/lib/erp/registry";
+import { ERP_GROUPS, erpHref, erpKeysOf } from "@/lib/erp/registry";
 import { erpNavCounts } from "@/lib/erp/counts";
 import { getConfig } from "@/lib/config/store";
 import { featureState } from "@/lib/erp/ai";
@@ -32,7 +32,14 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
   const nav: NavGroup[] = ERP_GROUPS.map((g) => {
     const screens = g.screens
       .filter((s) => s.built && ctx.screens.has(s.key))
-      .map((s) => ({ key: s.key, label: s.label, href: erpHref(s), count: counts[s.key] ?? 0 }));
+      .map((s) => ({
+        key: s.key,
+        label: s.label,
+        href: erpHref(s),
+        /* A screen with tabs carries the work waiting on any of them: the
+           Transport screen's badge is its Pending LR count. */
+        count: erpKeysOf(s).reduce((n, k) => n + (counts[k] ?? 0), 0),
+      }));
     return {
       id: g.id,
       label: g.label,

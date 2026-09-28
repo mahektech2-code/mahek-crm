@@ -75,8 +75,8 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
     source: "Accept or reject complaints and credit-note requests (admin and the CEO in the source).",
   },
   employeeAdmin: {
-    label: "Manage the employee directory and ERP powers",
-    source: "The Employees screen and the Permissions action (admin in the source).",
+    label: "Administer the ERP: godowns and ERP powers",
+    source: "Registering godowns and their staff, and giving ERP powers on the Access dialog (admin in the source, who also kept the employee directory).",
   },
 };
 
