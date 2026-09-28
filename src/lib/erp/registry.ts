@@ -179,13 +179,14 @@ export const ERP_GROUPS: ErpGroup[] = [
   },
   {
     id: "requests",
-    label: "Requests & credit notes",
+    label: "Complaints & credit notes",
     icon: "chat",
     screens: [
-      s("requests", "requests", "Customer requests", "Complaints and credit-note requests raised by sales, grouped by status.", true),
-      s("issueCn", "issue-cn", "Issue credit note", "Accepted requests that need a credit note issued.", true),
-      s("complaints", "complaints", "Customer complaints", "Requests without a credit note, grouped by complaint type.", true),
-      s("pendingCn", "pending-cn", "Pending CN", "Order lines whose credit-note amount has not reached the margin yet.", true),
+      s("requests", "requests", "Complaints & credit notes", "The customer's complaints and the credit notes they ask for — the same records the CRM keeps, whichever app raised them.", true, [
+        v("requests", "All"),
+        v("issueCn", "Credit notes"),
+        v("complaints", "Without a credit note"),
+      ]),
     ],
   },
   {
@@ -274,7 +275,9 @@ export function erpListLabel(key: string): string {
 
 /** Every module key a screen's holder may use: its own and its tabs'. */
 export function erpKeysOf(screen: ErpScreen): string[] {
-  return [screen.key, ...(screen.views ?? []).flatMap((x) => [x.key, ...(x.alt ? [x.alt.key] : [])])];
+  /* A screen's own key is usually one of its tabs too (Transport's "All
+     bills" is `transport`); listed twice, a badge would count it twice. */
+  return [...new Set([screen.key, ...(screen.views ?? []).flatMap((x) => [x.key, ...(x.alt ? [x.alt.key] : [])])])];
 }
 
 export function erpGroupOf(key: string): ErpGroup | undefined {
