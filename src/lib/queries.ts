@@ -1236,6 +1236,7 @@ export async function listCustomersPage(
 export async function listCustomers(): Promise<CustomerRow[]> {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
+  const scoped = scopedToUsers(ids);
 
   const rows = await db
     .select({
@@ -1297,7 +1298,7 @@ export async function listCustomers(): Promise<CustomerRow[]> {
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
-    .where(scopedToUsers(ids))
+    .where(scoped ? and(scoped, NOT_A_LEAD_SQL) : NOT_A_LEAD_SQL)
     .orderBy(asc(customers.name));
 
   return rows.map((r) => ({
@@ -2084,6 +2085,7 @@ export async function globalSearch(q: string) {
               : undefined,
           ),
           scopedToUsers(ids),
+          NOT_A_LEAD_SQL,
         ),
       )
       .limit(8),

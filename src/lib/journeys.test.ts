@@ -122,6 +122,7 @@ import {
 } from "@/lib/services/receipt-service";
 import { globalSearch ,
   listAmFilterOptions,
+  listCustomers,
   listCustomersPage,
   listInteractions,
 } from "@/lib/queries";
@@ -10759,5 +10760,60 @@ describe("screen 5 — raising a lead, its \"Under\" and its priority", () => {
       .from(customers)
       .where(eq(customers.id, asManager.data.customerId));
     assert.equal(row.leadPriority, "high");
+  });
+
+  /**
+   * `listCustomers()` and `globalSearch()` read `customers` directly and, until
+   * now, carried no `NOT_A_LEAD_SQL` — unlike `listCustomersPage()`, three lines
+   * away in the same file, which has always had it. A lead raised at this
+   * screen surfaced in the WhatsApp and Reminders pickers (`listCustomers`) and
+   * in the header search box (`globalSearch`) indistinguishable from a real
+   * customer, although the Customers list itself was always correct.
+   */
+  test("a raised lead is excluded from listCustomers() and globalSearch(), a real customer and a third-party customer are not", async () => {
+    setTestUser(priya);
+    const tag = randomUUID().slice(0, 8);
+
+    const direct = await makeCustomer(priya.id, { name: `Direct ${tag}`, kind: "customer" });
+    const thirdParty = await makeCustomer(priya.id, {
+      name: `ThirdParty ${tag}`,
+      kind: "customer",
+      thirdParty: true,
+    });
+    const lead = await makeCustomer(priya.id, { name: `Lead ${tag}`, kind: "lead" });
+
+    const mine = await listCustomers();
+    const ids = mine.map((c) => c.id);
+    assert.ok(ids.includes(direct.id), "a direct customer is missing from listCustomers()");
+    assert.ok(ids.includes(thirdParty.id), "a third-party customer is missing from listCustomers()");
+    assert.ok(!ids.includes(lead.id), "a lead (kind='lead', third_party=false) was not excluded from listCustomers()");
+
+    const found = await globalSearch(`Direct ${tag}`);
+    assert.ok(found.customers.some((c) => c.id === direct.id), "a direct customer was not found by globalSearch()");
+    const foundThirdParty = await globalSearch(`ThirdParty ${tag}`);
+    assert.ok(
+      foundThirdParty.customers.some((c) => c.id === thirdParty.id),
+      "a third-party customer was not found by globalSearch()",
+    );
+    const foundLead = await globalSearch(`Lead ${tag}`);
+    assert.ok(
+      !foundLead.customers.some((c) => c.id === lead.id),
+      "a raised lead was still returned by globalSearch()",
+    );
+  });
+
+  test("listCustomers() and globalSearch() still respect scope — another telecaller's book stays out of both", async () => {
+    setTestUser(priya);
+    const tag = randomUUID().slice(0, 8);
+    const notMine = await makeCustomer(rakesh.id, { name: `NotMine ${tag}`, kind: "customer" });
+
+    const mine = await listCustomers();
+    assert.ok(!mine.map((c) => c.id).includes(notMine.id), "another telecaller's customer leaked into listCustomers()");
+
+    const found = await globalSearch(`NotMine ${tag}`);
+    assert.ok(
+      !found.customers.some((c) => c.id === notMine.id),
+      "another telecaller's customer leaked into globalSearch()",
+    );
   });
 });
