@@ -47,6 +47,7 @@ import {
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { canOpenModule } from "@/lib/access";
+import { modulesForApp } from "@/lib/modules";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import {
   advanceLeadStage,
@@ -976,6 +977,69 @@ describe("A — authorisation is the existing model, asked in the existing order
     const narrowed = await makeUser("Narrowed", "manager", [{ app: "sales", role: "manager" }]);
     await db.insert(appModuleAccess).values({ id: id("ama"), userId: narrowed.id, app: "sales", module: "sales.lead-funnel" });
     assert.equal(await canOpenModule(narrowed.id, "sales.leads"), false);
+  });
+
+  test("sales.leads and sales.lead-pipeline are two separate locks: holding one is not holding the other", async () => {
+    /* All Leads only, explicitly — never Sales Manager. This is the exact
+       shape the whole reason for a standalone module exists to prove: sharing
+       a key meant this workspace could not be withheld on its own. */
+    const allLeadsOnly = await makeUser("All Leads Only", "manager", [{ app: "sales", role: "manager" }]);
+    await db
+      .insert(appModuleAccess)
+      .values({ id: id("ama"), userId: allLeadsOnly.id, app: "sales", module: "sales.leads" });
+    assert.equal(await canOpenModule(allLeadsOnly.id, "sales.leads"), true);
+    assert.equal(
+      await canOpenModule(allLeadsOnly.id, "sales.lead-pipeline"),
+      false,
+      "holding All Leads must not open the Sales Manager workspace",
+    );
+
+    /* And the reverse: Sales Manager only, never All Leads. */
+    const pipelineOnly = await makeUser("Pipeline Only", "manager", [{ app: "sales", role: "manager" }]);
+    await db
+      .insert(appModuleAccess)
+      .values({ id: id("ama"), userId: pipelineOnly.id, app: "sales", module: "sales.lead-pipeline" });
+    assert.equal(await canOpenModule(pipelineOnly.id, "sales.lead-pipeline"), true);
+    assert.equal(await canOpenModule(pipelineOnly.id, "sales.leads"), false);
+  });
+
+  test("an administrator on a whole-app grant does not inherit Sales Manager — the exact production shape", async () => {
+    /* A: an admin-level Sales Dashboard grant with ZERO module rows — the shape
+       a terminal grant or the provisioning endpoint writes, and the one an
+       administrator's own account is routinely given. This is not a
+       hypothetical: it is the account found in production that prompted this
+       change. */
+    const wholeAppAdmin = await makeUser("Whole App Admin", "admin", [{ app: "sales", role: "admin" }]);
+    assert.equal(
+      await canOpenModule(wholeAppAdmin.id, "sales.lead-pipeline"),
+      false,
+      "an administrator must not inherit Sales Manager from a whole-app grant",
+    );
+    // The rest of the app is untouched by the same grant.
+    assert.equal(await canOpenModule(wholeAppAdmin.id, "sales.leads"), true);
+
+    /* B: the same account, after Sales Manager is explicitly ticked — the way
+       the Access screen actually does it, by writing back every module it
+       already showed as granted plus the new one. A bare single row inserted
+       directly, bypassing that convention, legitimately narrows the rest of
+       the app too — that is `moduleAllowed`'s ordinary rule for ANY module
+       row and is not specific to `explicitOnly`, so the test reproduces the
+       real write rather than an artificial partial one. */
+    const everyOtherSalesModule = modulesForApp("sales")
+      .map((m) => m.key)
+      .filter((k) => k !== "sales.lead-pipeline");
+    await db.insert(appModuleAccess).values([
+      ...everyOtherSalesModule.map((module) => ({ id: id("ama"), userId: wholeAppAdmin.id, app: "sales" as const, module })),
+      { id: id("ama"), userId: wholeAppAdmin.id, app: "sales" as const, module: "sales.lead-pipeline" },
+    ]);
+    assert.equal(await canOpenModule(wholeAppAdmin.id, "sales.lead-pipeline"), true);
+    assert.equal(await canOpenModule(wholeAppAdmin.id, "sales.leads"), true, "everything held before is still held");
+
+    /* F, restated against a real account: Calling desk is unaffected by any of
+       this — an administrator's whole-CRM grant still carries it, exactly as
+       before this change. */
+    const wholeCrmAdmin = await makeUser("Whole CRM Admin", "admin", [{ app: "crm", role: "admin" }]);
+    assert.equal(await canOpenModule(wholeCrmAdmin.id, "crm.lead-calling-desk"), true);
   });
 
   test("a telecaller cannot verify, and a salesman cannot approve a sample", async () => {

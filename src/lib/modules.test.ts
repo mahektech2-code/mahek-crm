@@ -9,14 +9,7 @@ import {
 } from "./modules";
 import { grantableApps } from "./modules";
 import { NAV, PINNED, navHrefs as crmNavHrefs } from "@/components/shell/nav";
-import {
-  NOT_IN_SIDEBAR,
-  SALES_MANAGER_HREF,
-  SALES_NAV,
-  SALES_PINNED,
-  navHrefs,
-  salesNavAllowed,
-} from "@/app/sales/nav";
+import { NOT_IN_SIDEBAR, SALES_NAV, SALES_PINNED, navHrefs } from "@/app/sales/nav";
 
 /* ---------------------------------------------------------------------------
  * The module registry, which is what an access grant points at.
@@ -59,6 +52,51 @@ describe("what a module grant means", () => {
     // An administrator narrowed on purpose stays narrowed everywhere else.
     assert.equal(moduleAllowed("crm.leads", rows, "crm", true), false);
     assert.equal(moduleAllowed("crm.customers", rows, "crm", true), true);
+  });
+
+  /*
+   * A whole-app grant with no module rows — the shape `npm run app:grant` and
+   * the provisioning endpoint both write, knowing nothing of modules — reaches
+   * every module, `offByDefault` included; an administrator reaches every
+   * `offByDefault` module regardless of rows. Both are correct for a desk an
+   * administrator hands out. Neither is correct for a SEAT nobody should carry
+   * without somebody deciding so, which is what `explicitOnly` answers.
+   * Production carried exactly the case row (A) below: an admin-level Sales
+   * Dashboard grant with zero module rows.
+   */
+  it("an explicitOnly module answers to its own row alone — not a whole-app grant, not an administrator hat", () => {
+    const marked = modulesForApp("sales").filter((m) => m.explicitOnly).map((m) => m.key);
+    assert.deepEqual(marked, ["sales.lead-pipeline"], "the one module this bypass must not reach");
+
+    // A. admin + whole Sales app, no explicit row -> denied
+    assert.equal(moduleAllowed("sales.lead-pipeline", [], "sales", true), false);
+    // B. admin + the module named explicitly -> allowed
+    assert.equal(moduleAllowed("sales.lead-pipeline", ["sales.lead-pipeline"], "sales", true), true);
+    // C. non-admin + whole Sales app, no explicit row -> denied
+    assert.equal(moduleAllowed("sales.lead-pipeline", [], "sales", false), false);
+    // D. non-admin + the module named explicitly -> allowed
+    assert.equal(moduleAllowed("sales.lead-pipeline", ["sales.lead-pipeline"], "sales", false), true);
+
+    // E. sales.leads is untouched: a whole-app grant still opens it, admin or not.
+    assert.equal(moduleAllowed("sales.leads", [], "sales", true), true);
+    assert.equal(moduleAllowed("sales.leads", [], "sales", false), true);
+
+    // F. crm.lead-calling-desk keeps its OLD, unchanged behaviour: this change
+    // touches nothing about it. `offByDefault` alone still means "no rows
+    // means every module", exactly as its own doc comment says, for admin and
+    // non-admin alike — the "zero rows" fallback below does not read the
+    // administrator flag at all. What keeps existing non-admin whole-CRM
+    // accounts off the desk in PRODUCTION is `0170_the_calling_desk_is_
+    // granted_not_inherited.sql`, which backfilled their zero-row state into
+    // an explicit list that omits it — not this function distinguishing them.
+    // A brand new whole-CRM grant made today, with truly zero rows, opens the
+    // desk exactly like every other module: this is the very gap `explicitOnly`
+    // exists to close, unconditionally, with no backfill ever required.
+    assert.equal(moduleAllowed("crm.lead-calling-desk", [], "crm", true), true);
+    assert.equal(moduleAllowed("crm.lead-calling-desk", [], "crm", false), true);
+    // Narrowed rows that simply omit it behave as everyone already expects.
+    assert.equal(moduleAllowed("crm.lead-calling-desk", ["crm.dashboard"], "crm", false), false);
+    assert.equal(moduleAllowed("crm.lead-calling-desk", ["crm.dashboard"], "crm", true), true);
   });
 });
 
@@ -112,21 +150,21 @@ describe("the registry and the navigation agree", () => {
   it("every Sales Dashboard sidebar link is a module that can be withheld", () => {
     const hrefs = new Set(modulesForApp("sales").map((m) => m.href));
     for (const href of navHrefs()) {
-      // The Sales Manager workspace is the ONE link that is not a module's own
-      // href: it rides on `sales.leads`, which is what its route guard asks.
-      if (href === SALES_MANAGER_HREF) continue;
       assert.ok(hrefs.has(href), `${href} is in the sidebar and has no module`);
     }
   });
 
-  it("the Sales Manager link is offered to exactly the people who hold sales.leads", () => {
-    const leads = { key: "sales.leads", href: "/sales/leads" };
-    const other = { key: "sales.funnel", href: "/sales/leads/funnel" };
-    assert.ok(salesNavAllowed([leads, other]).includes(SALES_MANAGER_HREF));
-    assert.equal(salesNavAllowed([other]).includes(SALES_MANAGER_HREF), false, "narrowed away from All Leads, so no link");
-    assert.equal(salesNavAllowed([]).includes(SALES_MANAGER_HREF), false);
-    // It adds a link and takes nothing away.
-    assert.deepEqual(salesNavAllowed([leads, other]).slice(0, 2), ["/sales/leads", "/sales/leads/funnel"]);
+  it("the Sales Manager link is its own module, separate from All Leads", () => {
+    const pipeline = modulesForApp("sales").find((m) => m.key === "sales.lead-pipeline");
+    assert.equal(pipeline?.href, "/sales-lead-pipeline");
+    assert.equal(pipeline?.offByDefault, true);
+    assert.ok(navHrefs().includes("/sales-lead-pipeline"));
+    const item = SALES_NAV.flatMap((g) => g.items).find((i) => i.href === "/sales-lead-pipeline");
+    assert.equal(item?.label, "Sales Manager");
+    // Holding sales.leads alone does not carry sales.lead-pipeline, or the
+    // whole point of separating them is lost.
+    assert.equal(moduleAllowed("sales.lead-pipeline", ["sales.leads"], "sales"), false);
+    assert.equal(moduleAllowed("sales.lead-pipeline", ["sales.leads", "sales.lead-pipeline"], "sales"), true);
   });
 
   it("the Calling desk link is already in the CRM sidebar, on its own module", () => {
