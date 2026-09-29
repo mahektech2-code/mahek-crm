@@ -26,6 +26,7 @@ import {
   type NextActionKind,
 } from "@/lib/engines/lead-calling-desk";
 import {
+  convertLeadToProspect,
   logDeskMessage,
   logQualificationCall,
   markDeskLost,
@@ -903,6 +904,177 @@ export function RequestDialog({
       </div>
       <div className="mt-3 text-[12.5px] text-muted">
         Nothing here is asked of the customer a second time — the Sales Manager confirms or corrects it.
+      </div>
+      {error ? <p className="mt-2 mb-0 text-[13px] text-danger">{error}</p> : null}
+    </Modal>
+  );
+}
+
+/* -------------------------------------------------------- Convert to Prospect */
+
+/**
+ * Convert a ready Suspect straight to Prospect.
+ *
+ * Every field here is the same one `RequestDialog` asks — the coded reason,
+ * the sales type where none is set, the kind of business and who to ask for
+ * where the record lacks them — because `convertLeadToProspect` checks the
+ * same readiness `requestProspect` does. What differs is only what pressing
+ * the button DOES: this moves the lead to Prospect at once, with no Sales
+ * Manager verification in between.
+ */
+export function ConvertDialog({
+  lead,
+  prospectReasons,
+  onClose,
+}: {
+  lead: DeskLeadRecord;
+  prospectReasons: Coded[];
+  onClose: () => void;
+}) {
+  const done = useDone();
+  const [reason, setReason] = React.useState(lead.requestReason ?? prospectReasons[0]?.code ?? "");
+  const needsSalesType = lead.salesType === null;
+  const [salesType, setSalesType] = React.useState("");
+  const [note, setNote] = React.useState(lead.requestNote ?? "");
+  const needsType = !isAnswered("customerType", lead.values.customerType);
+  const needsContact = !lead.contactPerson?.trim();
+  const [customerType, setCustomerType] = React.useState("");
+  const [contactPerson, setContactPerson] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const sent = DESK_FIELDS.filter((f) => isAnswered(f.key, lead.values[f.key]));
+  const typeField = DESK_FIELDS.find((f) => f.key === "customerType")!;
+
+  async function save() {
+    if (!reason) {
+      setError("Say why this is worth pursuing.");
+      return;
+    }
+    if (needsSalesType && !salesType) {
+      setError("Choose how this lead will be sold — Direct customer or Third Party Customer.");
+      return;
+    }
+    if (needsType && !customerType) {
+      setError("Say what kind of business this is.");
+      return;
+    }
+    if (needsContact && !contactPerson.trim()) {
+      setError("Say who to ask for.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    let result;
+    try {
+      result = await convertLeadToProspect({
+        customerId: lead.id,
+        reasonCode: reason,
+        note: note.trim() || undefined,
+        salesType: needsSalesType ? (salesType as "direct" | "third_party") : undefined,
+        customerType: needsType ? (customerType as never) : undefined,
+        contactPerson: needsContact ? contactPerson.trim() : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    done(result.message, onClose);
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={560}
+      title={
+        <div>
+          <div>Convert to Prospect</div>
+          <div className="mt-0.5 text-[13px] font-normal text-muted">
+            {lead.name} · {lead.callCount} call{lead.callCount === 1 ? "" : "s"} used
+          </div>
+        </div>
+      }
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={busy} onClick={() => void save()}>
+            {busy ? "Converting…" : "Convert to Prospect"}
+          </Button>
+        </>
+      }
+    >
+      <Note tone="brand">
+        <b>This converts the lead immediately.</b> All required answers are in, so pressing this moves{" "}
+        {lead.name} to Prospect now — no Sales Manager verification call is needed for this lead.
+      </Note>
+
+      <FieldLabel label="Why is this worth pursuing?" className="mb-3">
+        <div className="mt-1.5 flex flex-col gap-1.5">
+          {prospectReasons.map((r) => (
+            <Choice key={r.code} name="pr" checked={reason === r.code} onChange={() => setReason(r.code)}>
+              {r.label}
+            </Choice>
+          ))}
+        </div>
+      </FieldLabel>
+
+      {needsSalesType ? (
+        <FieldLabel label="Sales type" className="mb-3">
+          <Select value={salesType} onChange={(e) => setSalesType(e.target.value)} className="w-full">
+            <option value="">Not Decided — pick one…</option>
+            <option value="direct">Direct customer</option>
+            <option value="third_party">Third Party Customer</option>
+          </Select>
+          <span className="mt-1 block text-[12px] text-muted">
+            How Mahek will sell to this lead. It decides which steps come next.
+          </span>
+        </FieldLabel>
+      ) : null}
+      {needsType ? (
+        <FieldLabel label="Kind of business" className="mb-3">
+          <Select value={customerType} onChange={(e) => setCustomerType(e.target.value)} className="w-full">
+            <option value="">Pick one…</option>
+            {(typeField.options ?? []).map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </Select>
+        </FieldLabel>
+      ) : null}
+      {needsContact ? (
+        <FieldLabel label="Who to ask for" className="mb-3">
+          <Input value={contactPerson} onChange={(e) => setContactPerson(e.target.value)} />
+        </FieldLabel>
+      ) : null}
+
+      <FieldLabel label="What they said" className="mb-3">
+        <Textarea
+          rows={2}
+          placeholder="Optional — in the customer's words"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      </FieldLabel>
+
+      <div className="mb-1 text-xs font-medium tracking-[0.04em] text-muted uppercase">
+        Collected during the calls
+      </div>
+      <div className="divide-y divide-divider rounded-[4px] border border-line">
+        {sent.map((f) => (
+          <div key={f.key} className="flex items-baseline justify-between gap-4 px-3 py-1.5 text-[13px]">
+            <span className="text-muted">{f.label}</span>
+            <span className="text-right font-medium text-ink">
+              {displayAnswer(f.key, lead.values[f.key], lead.productName, lead.gstVerified)}
+            </span>
+          </div>
+        ))}
       </div>
       {error ? <p className="mt-2 mb-0 text-[13px] text-danger">{error}</p> : null}
     </Modal>

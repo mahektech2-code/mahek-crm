@@ -587,6 +587,147 @@ const requestSchema = z.object({
 });
 
 /**
+ * Everything a Suspect must satisfy before it may become a Prospect —
+ * shared between `requestProspect` (the Sales Manager verification path) and
+ * `convertLeadToProspect` (the calling desk's own direct promotion).
+ *
+ * ONE READINESS CONDITION, asked once. The five required desk answers
+ * (`requiredProgress`, the same engine the "Ready for Prospect" phase and the
+ * button's enabled state are drawn from), the sales type, the coded reason and
+ * the §28 Prospect gate itself are all checked here — so neither caller can
+ * drift from what the other demands, and a lead accepted by one cannot later
+ * be refused by the promotion for something it was never asked. `nextAction`
+ * lets each caller quote what THEIR next action will read, since §24 only
+ * asks that one exists, not what it says.
+ */
+async function preparePromotion(
+  p: z.infer<typeof requestSchema>,
+  ctx: { user: { id: string } },
+  nextAction: { action: string; date: string },
+): Promise<
+  Result<{
+    lead: NonNullable<Awaited<ReturnType<typeof leadRow>>>;
+    req: Awaited<ReturnType<typeof requestOf>>;
+    salesType: "direct" | "third_party";
+    setsSalesType: boolean;
+    managerId: string | null;
+    /** `managerId ?? ctx.user.id` — the same owner the dry run above was asked
+        with, so a caller's real write can never name a different one. */
+    nextActionOwnerId: string;
+    day: string;
+  }>
+> {
+  const found = await reachable(p.customerId);
+  if (!found.ok) return found.refusal;
+  const lead = found.lead;
+  const req = await requestOf(p.customerId);
+
+  if (lead.leadStage === "prospect") {
+    return err("This lead is already a Prospect.", "rule_violation");
+  }
+  if (!isWorkingStage(lead.leadStage)) {
+    return err("Only a Suspect can be put forward as a Prospect.", "rule_violation");
+  }
+  if (req.state === "awaiting" || req.state === "followup") {
+    return err(
+      "This lead is already with the Sales Manager. It is not a Prospect until they verify it.",
+      "rule_violation",
+    );
+  }
+
+  const values: DeskValues = {
+    decisionMaker: lead.leadDecisionMaker,
+    monthlyLitres: lead.leadMonthlyVolumeLitres,
+    potentialPaise: lead.leadEstimatedPotentialPaise,
+    requiredProductId: lead.leadRequiredProductId,
+    competitor: lead.leadCompetitor,
+  };
+  const progress = requiredProgress(values);
+  if (!progress.complete) {
+    return err(
+      `Not ready for Prospect yet. Still needed: ${progress.missing.map((f) => f.label).join(", ")}.`,
+      "rule_violation",
+      progress.missing.map<FieldError>((f) => ({ field: f.key, message: `${f.label} is still needed` })),
+    );
+  }
+
+  /* THE SALES TYPE IS NEVER DEFAULTED. A lead nobody has said how it will be
+     sold is drawn on the Direct ladder, but drawing is not deciding: the ladder
+     chooses the gates, so the desk names one here, in the same act. */
+  const setsSalesType = lead.leadSalesType == null;
+  const salesType = lead.leadSalesType ?? p.salesType ?? null;
+  if (!salesType) {
+    return err(
+      "Choose how this lead will be sold — Direct customer or Third Party Customer — before requesting a Prospect.",
+      "validation",
+      [{ field: "salesType", message: "Choose a sales type." }],
+    );
+  }
+  if (!ladderFor(salesType).includes("prospect")) {
+    return err(
+      "This lead is on a ladder that has no Prospect rung, so it cannot be requested as one.",
+      "rule_violation",
+    );
+  }
+
+  const config = await getConfig();
+  if (!config["leads.prospectReasons"].some((r) => r.code === p.reasonCode)) {
+    return err("Pick one of the listed reasons.", "validation", [
+      { field: "reasonCode", message: "Say why this is worth pursuing." },
+    ]);
+  }
+
+  const day = await today();
+
+  /* The person the verification — or, on direct promotion, the coordinating
+     seat — is owed to: whoever already holds the lead manager seat, otherwise
+     the one the region defaults to. */
+  const candidates = lead.leadManagerId ? [] : await leadManagerCandidatesFor(p.customerId);
+  const managerId = lead.leadManagerId ?? candidates[0]?.id ?? null;
+  const nextActionOwnerId = managerId ?? ctx.user.id;
+
+  /* THE DRY RUN. The same gate the promotion will be asked, with what this
+     request supplies. Anything still missing is named, so the desk can fix it
+     now rather than finding out after the fact. */
+  const gate = await leadGateInput(p.customerId);
+  if (gate) {
+    const verdict = gateTo(
+      {
+        ...gate,
+        salesType,
+        customerType: gate.customerType || p.customerType || null,
+        contactPerson: gate.contactPerson?.trim() ? gate.contactPerson : (p.contactPerson ?? null),
+        prospectReasonRecorded: true,
+        nextAction: nextAction.action,
+        nextActionDate: nextAction.date,
+        nextActionOwnerId,
+      },
+      "prospect",
+    );
+    if (!verdict.open) {
+      return err(
+        `Not ready to put forward: ${verdict.missing.map((c) => c.says).join("; ")}.`,
+        "rule_violation",
+        verdict.missing.map<FieldError>((c) => ({ field: c.id, message: c.says })),
+      );
+    }
+  }
+
+  /* Safe: `ladderFor(salesType).includes("prospect")` above already refused a
+     `distributor` lead — that ladder carries no Prospect rung — so anything
+     reaching here is one of the two this function's callers ever act on. */
+  return ok({
+    lead,
+    req,
+    salesType: salesType as "direct" | "third_party",
+    setsSalesType,
+    managerId,
+    nextActionOwnerId,
+    day,
+  });
+}
+
+/**
  * Ask for a ready lead to be put forward as a Prospect — or resubmit one the
  * manager sent back.
  *
@@ -596,16 +737,14 @@ const requestSchema = z.object({
  * it (see `settleProspectRequest`). That is the whole of the rule: a request is
  * not a conversion, and the desk must never be able to make one.
  *
- * WHAT IS CHECKED HERE IS WHAT THE PROMOTION WILL NEED. The five answers, the
- * sales type (the Prospect rung sits on the three ladders and not the legacy
- * one) and the coded reason are checked, and then the Prospect gate itself is
- * asked as a dry run with the request's own inputs — so a request that is
- * accepted cannot later be refused at promotion for something the desk was
- * never asked. What the five do not cover, the kind of business and who to ask
- * for, is asked in the same act if the record lacks it.
+ * This is the path `convertLeadToProspect` falls back to when
+ * `leads.callingDeskDirectPromotion` is switched off — the Sales Manager
+ * verification architecture stays exactly as it was, ready to be the only
+ * path again the day that setting is flipped back.
  *
- * THE FIVE ARE CHECKED HERE AND NOT ONLY BY THE BUTTON, because a button is
- * drawn from a phase and a phase is a reading; this is the write.
+ * WHAT IS CHECKED HERE IS WHAT THE PROMOTION WILL NEED — see `preparePromotion`.
+ * What the five required answers do not cover, the kind of business and who to
+ * ask for, is asked in the same act if the record lacks it.
  */
 export async function requestProspect(
   input: z.input<typeof requestSchema>,
@@ -618,67 +757,8 @@ export async function requestProspect(
     const ctx = await requireCapability("lead.work");
     const barred = await deskRefusal(ctx.user.id);
     if (barred) return barred;
-    const found = await reachable(p.customerId);
-    if (!found.ok) return found.refusal;
-    const lead = found.lead;
-    const req = await requestOf(p.customerId);
-
-    if (lead.leadStage === "prospect") {
-      return err("This lead is already a Prospect.", "rule_violation");
-    }
-    if (!isWorkingStage(lead.leadStage)) {
-      return err("Only a Suspect can be put forward as a Prospect.", "rule_violation");
-    }
-    if (req.state === "awaiting" || req.state === "followup") {
-      return err(
-        "This lead is already with the Sales Manager. It is not a Prospect until they verify it.",
-        "rule_violation",
-      );
-    }
-    const resubmitted = req.state === "returned";
-
-    const values: DeskValues = {
-      decisionMaker: lead.leadDecisionMaker,
-      monthlyLitres: lead.leadMonthlyVolumeLitres,
-      potentialPaise: lead.leadEstimatedPotentialPaise,
-      requiredProductId: lead.leadRequiredProductId,
-      competitor: lead.leadCompetitor,
-    };
-    const progress = requiredProgress(values);
-    if (!progress.complete) {
-      return err(
-        `Not ready for Prospect yet. Still needed: ${progress.missing.map((f) => f.label).join(", ")}.`,
-        "rule_violation",
-        progress.missing.map<FieldError>((f) => ({ field: f.key, message: `${f.label} is still needed` })),
-      );
-    }
-
-    /* THE SALES TYPE IS NEVER DEFAULTED. A lead nobody has said how it will be
-       sold is drawn on the Direct ladder, but drawing is not deciding: the ladder
-       chooses the gates, so the desk names one here, in the same act. */
-    const setsSalesType = lead.leadSalesType == null;
-    const salesType = lead.leadSalesType ?? p.salesType ?? null;
-    if (!salesType) {
-      return err(
-        "Choose how this lead will be sold — Direct customer or Third Party Customer — before requesting a Prospect.",
-        "validation",
-        [{ field: "salesType", message: "Choose a sales type." }],
-      );
-    }
-    if (!ladderFor(salesType).includes("prospect")) {
-      return err(
-        "This lead is on a ladder that has no Prospect rung, so it cannot be requested as one.",
-        "rule_violation",
-      );
-    }
 
     const config = await getConfig();
-    if (!config["leads.prospectReasons"].some((r) => r.code === p.reasonCode)) {
-      return err("Pick one of the listed reasons.", "validation", [
-        { field: "reasonCode", message: "Say why this is worth pursuing." },
-      ]);
-    }
-
     const day = await today();
     const due = nextWorkingDay(day as BusinessDate, {
       timezone: config["workingDay.timezone"],
@@ -686,37 +766,10 @@ export async function requestProspect(
       workingDays: config["workingDay.workingDays"],
     });
 
-    /* The person the verification is owed to: whoever already holds the lead
-       manager seat, otherwise the one the region defaults to. */
-    const candidates = lead.leadManagerId ? [] : await leadManagerCandidatesFor(p.customerId);
-    const managerId = lead.leadManagerId ?? candidates[0]?.id ?? null;
-
-    /* THE DRY RUN. The same gate the promotion will be asked, with what this
-       request supplies. Anything still missing is named, so the desk can fix it
-       now rather than the manager finding out after they have rung the customer. */
-    const gate = await leadGateInput(p.customerId);
-    if (gate) {
-      const verdict = gateTo(
-        {
-          ...gate,
-          salesType,
-          customerType: gate.customerType || p.customerType || null,
-          contactPerson: gate.contactPerson?.trim() ? gate.contactPerson : (p.contactPerson ?? null),
-          prospectReasonRecorded: true,
-          nextAction: "Sales manager verification",
-          nextActionDate: due,
-          nextActionOwnerId: managerId ?? ctx.user.id,
-        },
-        "prospect",
-      );
-      if (!verdict.open) {
-        return err(
-          `Not ready to put forward: ${verdict.missing.map((c) => c.says).join("; ")}.`,
-          "rule_violation",
-          verdict.missing.map<FieldError>((c) => ({ field: c.id, message: c.says })),
-        );
-      }
-    }
+    const prepared = await preparePromotion(p, ctx, { action: "Sales manager verification", date: due });
+    if (!prepared.ok) return prepared;
+    const { lead, req, salesType, setsSalesType, managerId, nextActionOwnerId } = prepared.data;
+    const resubmitted = req.state === "returned";
 
     const now = new Date();
     const requestId = gen("prq");
@@ -731,7 +784,7 @@ export async function requestProspect(
            list and not on the desk's. */
         leadNextAction: "Sales manager verification",
         leadNextActionDate: due,
-        leadNextActionOwnerId: managerId ?? ctx.user.id,
+        leadNextActionOwnerId: nextActionOwnerId,
         leadNextActionOutcome: "Verify what the calling desk collected, then confirm the Prospect",
         leadLastActivityDate: day,
         updatedAt: now,
@@ -809,6 +862,139 @@ export async function requestProspect(
       manager
         ? `${resubmitted ? "Resubmitted" : "Prospect requested"}. ${manager.name} verifies it — it is not a Prospect until they confirm.`
         : `${resubmitted ? "Resubmitted" : "Requested"}, but no sales manager covers this lead yet — assign one on the record so the verification has an owner.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ═══════════════════════════════════════ the calling desk's own conversion */
+
+/**
+ * Convert a ready Suspect straight to Prospect — the telecaller's own act,
+ * with no Sales Manager verification call in between.
+ *
+ * MAHEK'S OWN REVERSAL OF THE RULE ABOVE `requestProspect` STATES. Where the
+ * three qualification calls collect everything a Prospect is asked for, on
+ * Call 1, 2 or 3, the telecaller presses this and the lead moves — the same
+ * gated move `settleProspectRequest` makes after a verified call, run under the
+ * telecaller's own hat instead of the manager's. Nothing here is a second
+ * conversion mechanism: it is `advanceLeadStage({ to: "prospect" })`, the one
+ * door every promotion in this funnel already goes through.
+ *
+ * `leads.callingDeskDirectPromotion` is what makes this a REVERSIBLE decision
+ * rather than a rewrite. Off, this becomes `requestProspect` outright — the
+ * Sales Manager verification queue, untouched, exactly as it stood before this
+ * function existed. On (the default), the lead is promoted directly and the
+ * queue is never touched: `prospect_request_state` stays `null` throughout,
+ * so a lead converted this way was never, even for an instant, "awaiting" or
+ * "with the Sales Manager".
+ *
+ * THE READINESS CHECKED IS `preparePromotion`'S, the same one `requestProspect`
+ * checks — the five required desk answers, the sales type, the coded reason,
+ * and the §28 Prospect gate itself. A malicious or direct call with any of
+ * that missing is refused here exactly as it would be there; the button on the
+ * record screen is drawn from the same `requiredProgress` reading, so the two
+ * can never disagree about when a lead is ready.
+ */
+export async function convertLeadToProspect(
+  input: z.input<typeof requestSchema>,
+): Promise<Result<{ promoted: boolean; requested?: boolean }>> {
+  try {
+    const parsed = requestSchema.safeParse(input);
+    if (!parsed.success) return zodErr(parsed.error);
+    const p = parsed.data;
+
+    const ctx = await requireCapability("lead.work");
+    const barred = await deskRefusal(ctx.user.id);
+    if (barred) return barred;
+
+    const config = await getConfig();
+    if (!config["leads.callingDeskDirectPromotion"]) {
+      /* THE ARCHITECTURE SWITCHES BACK WHOLE, not halfway. A lead put forward
+         under this setting goes to the same verification queue it always did,
+         under the same function, so re-enabling verification needs no second
+         code path kept alive in parallel — only this one flag. */
+      const requested = await requestProspect(input);
+      if (!requested.ok) return requested;
+      return ok({ promoted: false, requested: true }, requested.message);
+    }
+
+    const day = await today();
+    const prepared = await preparePromotion(p, ctx, { action: "Start qualification", date: day });
+    if (!prepared.ok) return prepared;
+    const { lead, salesType, setsSalesType, managerId } = prepared.data;
+
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      /* Only what the record is missing is written, so a conversion never
+         overwrites a business type or a contact somebody already gave — the
+         same discipline `requestProspect` keeps. */
+      const set: Partial<typeof customers.$inferInsert> = { leadLastActivityDate: day, updatedAt: now };
+      if (setsSalesType) set.leadSalesType = salesType;
+      if (!lead.customerType && p.customerType) set.customerType = p.customerType;
+      if (!lead.contactPerson?.trim() && p.contactPerson) set.contactPerson = p.contactPerson;
+      /* The seat is FILLED, never moved, and `lead_manager_decided_at` is left
+         alone: nobody chose this person, the region did. */
+      if (!lead.leadManagerId && managerId) set.leadManagerId = managerId;
+      /* A lead the manager had once RETURNED, then completed on a later call,
+         converts here rather than resubmitting — the queue it was in is left
+         behind rather than resolved through it. */
+      await tx.update(customers).set(set).where(eq(customers.id, p.customerId));
+
+      if (setsSalesType) {
+        await tx.insert(auditLog).values({
+          id: gen("aud"),
+          actorId: ctx.user.id,
+          action: "lead.salesType.set",
+          entityType: "customer",
+          entityId: p.customerId,
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+          beforeState: { salesType: null, stage: lead.leadStage },
+          afterState: { salesType, reason: "Chosen by the calling desk when converting to Prospect" },
+        });
+      }
+    });
+
+    /* THE ACTUAL PROMOTION — the same gated move `settleProspectRequest` makes
+       after a verified call, so a Prospect made this way and one made after
+       verification are indistinguishable on every screen and every report
+       downstream of `lead_stage`. It runs its own §28 gate again: the dry run
+       above is a courtesy that lets the desk fix what it can before saving,
+       never the actual enforcement. */
+    const moved = await advanceLeadStage({
+      customerId: p.customerId,
+      to: "prospect",
+      reasonCode: p.reasonCode,
+      note: p.note,
+      nextAction: {
+        action: "Start qualification",
+        date: day,
+        ownerId: managerId ?? ctx.user.id,
+        outcome: "Open qualification and take the eight conditions to done",
+      },
+    });
+    if (!moved.ok) {
+      return err(`Not converted: ${moved.error}`, "rule_violation");
+    }
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: ctx.user.id,
+      action: "lead.callingDesk.convertToProspect",
+      entityType: "customer",
+      entityId: p.customerId,
+      actorRole: ctx.authorisedBy,
+      actorApp: ctx.authorisedIn,
+      beforeState: { leadStage: lead.leadStage },
+      afterState: { leadStage: "prospect", reason: p.reasonCode },
+    });
+
+    refresh(p.customerId);
+    return ok(
+      { promoted: true },
+      "Converted to Prospect — no Sales Manager verification was needed for this lead.",
     );
   } catch (e) {
     return fromThrown(e);
