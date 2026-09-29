@@ -280,6 +280,7 @@ export default async function CustomerRecordPage({
         paysInDays: Number(stats?.paysInDays ?? 0),
         creditTermDays: customer.creditTermDays,
         gstin: customer.gstin,
+        grade: customer.grade,
         route: customer.route,
         area: customer.area,
         territoryRegion: customer.territoryRegion,

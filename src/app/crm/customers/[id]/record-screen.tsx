@@ -259,6 +259,8 @@ export function RecordScreen({
     paysInDays: number;
     creditTermDays: number;
     gstin: string | null;
+    /** A+ to C, kept on the ERP's Sales Party profile. */
+    grade: string | null;
     route: string | null;
     area: string | null;
     territoryRegion: string | null;
@@ -1045,6 +1047,7 @@ export function RecordScreen({
             */}
             <dl className="mt-2.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm leading-[22px]">
               <Fact label="GSTIN" value={customer.gstin} />
+              <Fact label="Grade" value={customer.grade} />
               <Fact label="Credit terms" value={`${customer.creditTermDays} days`} />
               <Fact label="Route" value={customer.route} />
               <Fact label="Area" value={customer.area} />

@@ -123,6 +123,7 @@ export const ERP_GROUPS: ErpGroup[] = [
       s("sfgBatches", "sfg-batches", "SFG batches", "Liquid made from raw-material lots. One line per lot consumed.", true),
       s("fgFill", "fg-fill", "FG filling", "SFG filled into cans or drums.", true),
       s("packBatches", "pack-batches", "Packing batches", "Loose cans packed into boxes. A batch posts only when the cans used match the boxes.", true),
+      s("recipes", "recipes", "Recipes", "What one batch of each SFG product takes. A batch can start from it, and one that used noticeably more is flagged.", true),
     ],
   },
   {

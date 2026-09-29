@@ -10765,6 +10765,34 @@ export const erpSfgEntries = pgTable(
   ],
 );
 
+/**
+ * A STANDARD RECIPE: how much of each raw material one batch of an SFG product
+ * takes. New, not in Mahek Plus — there every batch was typed from scratch,
+ * so nothing could say a batch had used more than it should. It prefills a
+ * new batch ("Start a batch" on the Recipes screen) and flags a batch line
+ * that used more than the recipe allows (`erp.production.recipeTolerancePercent`).
+ * It never refuses a batch: a recipe is what is expected, not a gate.
+ */
+export const erpRecipes = pgTable(
+  "erp_recipes",
+  {
+    id: text("id").primaryKey(),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    qtyPerBatch: erpQty("qty_per_batch").notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [uniqueIndex("erp_recipes_key").on(t.formulationId, t.rawMaterialId)],
+);
+
 export const erpFgFills = pgTable(
   "erp_fg_fills",
   {

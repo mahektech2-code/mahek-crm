@@ -3525,6 +3525,17 @@ export const SETTINGS = [
     default: false,
   },
   {
+    key: "erp.production.recipeTolerancePercent",
+    type: "integer",
+    category: "erp",
+    label: "Recipe tolerance",
+    description:
+      "How far above its product's recipe a batch line may use a raw material before the SFG batches list flags it, in percent. The flag asks somebody to look; it never refuses a batch.",
+    default: 5,
+    min: 0,
+    max: 100,
+  },
+  {
     key: "erp.orders.live",
     type: "boolean",
     category: "erp",
@@ -4682,6 +4693,7 @@ export type Config = {
   "whatsapp.autoConfirmAfterHours": number;
 
   "erp.orders.live": boolean;
+  "erp.production.recipeTolerancePercent": number;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;
   "erp.ai.alerts.rateJumpPct": number;

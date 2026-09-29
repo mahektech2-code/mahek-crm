@@ -56,7 +56,7 @@ export function askTools(ctx: ErpContext, records: AskRecord[]) {
         fromScreen(ctx, { rm: "rmStock", sfg: "sfgStock", fg: "fgStock", pack: "packStock" }[stage], (r) => anyHas(r, item) && has(r.v.godown, godown), [item, godown].filter(Boolean).join(" at ") || "all", records),
     }),
     orders: tool({
-      description: "Taken order lines, by status (Under Process, Ready, Today, Delay, Cancel, Tomorrow, Hold From Office) and words to match (customer, SKU, order number). Includes allocation state and whether billed.",
+      description: "Taken order lines, by status (Under Process, Ready, Hold From Office, Cancel) and words to match (customer, SKU, order number). Includes allocation state, whether billed, and the planned dispatch date (a line due today or late is flagged).",
       inputSchema: z.object({ status: z.string().nullable(), match: z.string().nullable() }),
       execute: async ({ status, match }) => fromScreen(ctx, "orders", (r) => has(r.v.status, status) && anyHas(r, match), [status, match].filter(Boolean).join(" · ") || "all", records),
     }),

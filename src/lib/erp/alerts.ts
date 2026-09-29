@@ -158,6 +158,7 @@ export async function runErpAlerts(now = new Date()): Promise<{ raised: number; 
   const live = new Set(candidates.map((c) => `${c.kind}|${c.subject}`));
   let raised = 0;
   let resolved = 0;
+  const newlyLow: Candidate[] = [];
   await db.transaction(async (tx) => {
     const open = await tx.select({ id: erpAlerts.id, kind: erpAlerts.kind, subject: erpAlerts.subject }).from(erpAlerts).where(ne(erpAlerts.status, "Resolved"));
     const openKeys = new Set(open.map((a) => `${a.kind}|${a.subject}`));
@@ -174,10 +175,47 @@ export async function runErpAlerts(now = new Date()): Promise<{ raised: number; 
         .onConflictDoNothing()
         .returning({ id: erpAlerts.id });
       raised += ins.length;
+      if (ins.length && c.kind === "belowLevel") newlyLow.push(c);
     }
   });
+  await tellRequisitioners(newlyLow);
   const [{ n }] = await q<{ n: number }>(sql`select count(*)::int as n from erp_alerts where status <> 'Resolved'`);
   return { raised, resolved, open: Number(n) };
+}
+
+/**
+ * A NEW LOW-STOCK ALERT REACHES THE PEOPLE WHO WOULD RAISE THE REQUISITION.
+ * The alert sits on the Alerts screen either way; waiting for somebody to open
+ * it is how an item runs out. So whoever works at that godown and can raise a
+ * requisition is told once, when the alert is raised — not on every run while
+ * it stays open. Nobody assigned to the godown means nobody is told, and the
+ * alert is still there to be found.
+ */
+async function tellRequisitioners(alerts: Candidate[]): Promise<void> {
+  if (!alerts.length) return;
+  const people = await q<{ userId: string; godown: string }>(sql`
+    select s.user_id as "userId", g.name as godown
+      from erp_godown_staff s
+      join erp_godowns g on g.id = s.godown_id
+      join app_access a on a.user_id = s.user_id and a.app::text = 'erp'
+      join users u on u.id = s.user_id and u.active
+     where not exists (select 1 from app_module_access m where m.user_id = s.user_id and m.app::text = 'erp')
+        or exists (select 1 from app_module_access m where m.user_id = s.user_id and m.module = 'erp.requisitions')
+  `);
+  const { notifyUsers } = await import("@/lib/notify");
+  const { erpLink } = await import("./registry");
+  const entries = alerts.flatMap((a) =>
+    people
+      .filter((p) => p.godown === a.values.godown)
+      .map((p) => ({
+        userId: p.userId,
+        title: `Below re-order level: ${String(a.values.item)}`,
+        body: `${a.explanation} Raise a requisition from the levels list.`,
+        kind: "warn" as const,
+        href: erpLink(a.screen, { f: a.recordIds.join(","), fl: "Below minimum" }),
+      })),
+  );
+  await notifyUsers(entries);
 }
 
 /** Open alerts a person may see: they hold the alert's screen, and its power where it has one. */
