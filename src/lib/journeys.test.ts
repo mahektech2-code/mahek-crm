@@ -16,7 +16,7 @@ import { COMPLAINT_CATEGORIES } from "@/lib/constants";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { NO_ORDER_REASONS } from "@/lib/call-outcomes";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -10760,6 +10760,66 @@ describe("screen 5 — raising a lead, its \"Under\" and its priority", () => {
       .from(customers)
       .where(eq(customers.id, asManager.data.customerId));
     assert.equal(row.leadPriority, "high");
+  });
+
+  /**
+   * The owner picked on the intake form is told the moment the lead is
+   * raised — an existing notification, not a new one. What changed is only
+   * where it sends them: a lead raised from the CRM's own screen opens the
+   * Calling Desk's record (Call 1/2/3, the Prospect gate), never the shared
+   * `/sales/leads/[id]` record a CRM-only telecaller may not even be able to
+   * reach. Everything else about the notification — that it fires, that it
+   * is skipped for a self-assignment, that the next-action owner is told
+   * too — is untouched and asserted here so a later change cannot quietly
+   * regress it.
+   */
+  test("the picked Owner is told where the CRM's own Calling Desk workflow actually is", async () => {
+    setTestUser(priya);
+    const r = await captureLead({ ...base(), ownerId: rakesh.id, workspace: "crm" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    if (!r.ok) return;
+
+    const told = await db.select().from(notifications).where(eq(notifications.userId, rakesh.id));
+    assert.equal(told.length, 1);
+    assert.equal(told[0].href, `/crm/leads/calling-desk/${r.data.customerId}`);
+    assert.match(told[0].title, /raised for you/i);
+  });
+
+  test("a lead raised from the Sales/Manager console keeps its existing link, workspace omitted or not", async () => {
+    setTestUser(priya);
+
+    const noWorkspace = await captureLead({ ...base(), ownerId: rakesh.id });
+    assert.equal(noWorkspace.ok, true, noWorkspace.ok ? "" : noWorkspace.error);
+    if (noWorkspace.ok) {
+      const told = await db
+        .select()
+        .from(notifications)
+        .where(eq(notifications.userId, rakesh.id))
+        .orderBy(desc(notifications.createdAt))
+        .limit(1);
+      assert.equal(told[0].href, `/sales/leads/${noWorkspace.data.customerId}`);
+    }
+
+    const asSales = await captureLead({ ...base(), ownerId: rakesh.id, workspace: "sales" });
+    assert.equal(asSales.ok, true, asSales.ok ? "" : asSales.error);
+    if (asSales.ok) {
+      const told = await db
+        .select()
+        .from(notifications)
+        .where(eq(notifications.userId, rakesh.id))
+        .orderBy(desc(notifications.createdAt))
+        .limit(1);
+      assert.equal(told[0].href, `/sales/leads/${asSales.data.customerId}`);
+    }
+  });
+
+  test("raising a lead for yourself tells nobody, whichever workspace it came from", async () => {
+    setTestUser(priya);
+    const r = await captureLead({ ...base(), ownerId: priya.id, workspace: "crm" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    if (!r.ok) return;
+    const told = await db.select().from(notifications).where(eq(notifications.userId, priya.id));
+    assert.equal(told.length, 0, "nobody is told what they just did themselves");
   });
 
   /**

@@ -40,7 +40,7 @@ import {
   type DeskLeadFacts,
   type DeskValues,
 } from "./lead-calling-desk";
-import { deskReference, displayAnswer, shortDay } from "../calling-desk-labels";
+import { deskReference, displayAnswer, isCreatedToday, shortDay } from "../calling-desk-labels";
 import { DESK_LIST_CAP, deskSummary, type DeskLeadRow } from "../calling-desk-summary";
 import { ladderFor } from "./lead-ladder";
 
@@ -457,6 +457,8 @@ describe("the dashboard filters in the page", () => {
   const day = "2026-09-24";
   const row = (over: Partial<DeskLeadRow> & { id: string }): DeskLeadRow => ({
     name: over.id,
+    contactPerson: null,
+    phone: null,
     city: null,
     source: "Website enquiry",
     stage: "suspect",
@@ -518,5 +520,32 @@ describe("the dashboard filters in the page", () => {
     assert.deepEqual(s.ready.map((r) => r.id), ["c"]);
     assert.deepEqual(s.pending.map((r) => r.id), ["d"]);
     assert.ok(DESK_LIST_CAP >= 100);
+  });
+});
+
+describe("isCreatedToday — 'Created today', never 'New'", () => {
+  test("a lead created well inside today's business day is Created today", () => {
+    assert.equal(isCreatedToday("2026-09-24T10:00:00.000Z", "2026-09-24"), true);
+  });
+
+  test("yesterday's lead is not Created today, however recently it was touched", () => {
+    assert.equal(isCreatedToday("2026-09-23T10:00:00.000Z", "2026-09-24"), false);
+  });
+
+  /*
+   * THE ZONE, NOT A BARE TRUNCATION — the same §11 rule this codebase tests
+   * for everywhere else a stored instant becomes a date. Asia/Kolkata is
+   * UTC+5:30, so 20:00 UTC on the 24th is already 01:30 IST on the 25th, and
+   * 19:00 UTC on the 23rd is 00:30 IST on the 24th. A bare `.slice(0, 10)` on
+   * either would answer the opposite of what is asserted here.
+   */
+  test("a late-UTC instant that has already crossed into IST tomorrow is not today's", () => {
+    assert.equal(isCreatedToday("2026-09-24T20:00:00.000Z", "2026-09-24"), false);
+    assert.equal(isCreatedToday("2026-09-24T20:00:00.000Z", "2026-09-25"), true);
+  });
+
+  test("an early-UTC instant that is already IST's next day counts against that day", () => {
+    assert.equal(isCreatedToday("2026-09-23T19:00:00.000Z", "2026-09-24"), true);
+    assert.equal(isCreatedToday("2026-09-23T19:00:00.000Z", "2026-09-23"), false);
   });
 });

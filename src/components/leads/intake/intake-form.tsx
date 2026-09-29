@@ -121,6 +121,7 @@ export function IntakeForm({
     try {
       const litres = f.monthlyLitres.replace(/[\s,]/g, "");
       const result = await captureLead({
+        workspace,
         salesType: answer === "undecided" || answer === null ? null : answer,
         name: f.name,
         companyName: f.companyName || undefined,

@@ -11,7 +11,24 @@
 
 import type { DeskPhase, LadderKey } from "./engines/lead-calling-desk";
 import { MAX_QUALIFICATION_CALLS, nextCallNumber } from "./engines/lead-calling-desk";
+import { calendarDate } from "./business-date";
 import { shortDate, stamp } from "./format";
+
+/**
+ * Whether a lead was created on today's business day — "Created today", never
+ * "New". `created_at` is an instant and `day` is already the business's own
+ * calendar date, so the instant is converted the same zone-safe way every
+ * other reading in this codebase is: `calendarDate`, never a bare truncation.
+ *
+ * Deliberately NOT "unseen" or "unassigned" — those are the notification
+ * bell's job, fed by its own `read` column. This depends on `created_at`
+ * alone, so a later reassignment, call, or stage move can never turn it on or
+ * off, and it needs no write to clear: it simply stops being true the moment
+ * the business day rolls over.
+ */
+export function isCreatedToday(createdAt: string, day: string): boolean {
+  return calendarDate(new Date(createdAt)) === day;
+}
 
 export type Tone = "neutral" | "brand" | "success" | "warn" | "danger" | "muted";
 

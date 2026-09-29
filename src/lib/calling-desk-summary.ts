@@ -30,6 +30,10 @@ import type { LeadSalesType, LeadStage } from "./lead-labels";
 export type DeskLeadRow = {
   id: string;
   name: string;
+  /** The shop's own contact, where one was given — for search, nothing else. */
+  contactPerson: string | null;
+  /** For search only. Never rendered on the row; the record screen shows it. */
+  phone: string | null;
   city: string | null;
   source: string | null;
   stage: LeadStage;
