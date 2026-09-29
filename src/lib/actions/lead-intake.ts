@@ -83,6 +83,16 @@ function refresh(customerId?: string) {
     revalidatePath("/sales/leads/intake");
     revalidatePath("/sales/leads/intake/duplicates");
     if (customerId) revalidatePath(`/sales/leads/${customerId}`);
+    /* This writer is shared with the CRM's own intake screen (see
+       `lib/lead-workspace.ts`), and the CRM's Calling Desk is a different
+       route tree entirely — named explicitly rather than assumed covered,
+       since a Server Action's `revalidatePath` is documented (as of the
+       installed Next version) to also refresh every other previously-visited
+       page on next navigation, which likely already reaches this route today.
+       That behaviour is called out in Next's own docs as temporary; naming
+       the path here costs nothing and stops this from depending on it. */
+    revalidatePath("/crm/leads/calling-desk");
+    if (customerId) revalidatePath(`/crm/leads/calling-desk/${customerId}`);
   } catch {
     /* no request context — a job or a test, where nothing is cached */
   }
@@ -218,6 +228,17 @@ const captureSchema = z.object({
    * that decides who may say it.
    */
   priority: z.enum(LEAD_PRIORITIES).nullable().optional(),
+
+  /**
+   * Which app raised this — never asked of the person filling in the form,
+   * read off the page the same way `IntakeForm` already reads it (see
+   * `lib/lead-workspace.ts`). Its only job is choosing where the owner
+   * notification below opens: the CRM's own Calling Desk record for a lead
+   * raised there, or the shared lead record for everything else, exactly as
+   * it already did before this field existed. Absent means "sales", which is
+   * the answer every caller predating this field already got.
+   */
+  workspace: z.enum(["crm", "sales"]).optional(),
 });
 
 export type CaptureLeadInput = z.input<typeof captureSchema>;
@@ -548,7 +569,18 @@ export async function captureLead(
           title,
           body,
           kind: "info",
-          href: `/sales/leads/${customerId}`,
+          /* A lead raised from the CRM is worked from the Calling Desk's own
+             record — the screen with Call 1/2/3 and the Prospect gate on it —
+             not the shared lead record `/sales/leads/[id]` answers to.
+             Sending a CRM-only telecaller there would land on a screen behind
+             an app grant they may not hold, or the wrong record entirely.
+             Every other caller of this function (sales' own intake, bulk
+             import, an enquiry conversion) sends no `workspace` and keeps
+             exactly the link it always got. */
+          href:
+            v.workspace === "crm"
+              ? `/crm/leads/calling-desk/${customerId}`
+              : `/sales/leads/${customerId}`,
         })
         .catch(() => {});
     }

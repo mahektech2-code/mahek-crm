@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Badge, Card, SectionLabel, cx } from "@/components/ui/primitives";
+import { Badge, Card, Input, SectionLabel, cx } from "@/components/ui/primitives";
 import { shortDate } from "@/lib/format";
 import { ladderFor } from "@/lib/engines/lead-ladder";
 import {
@@ -12,7 +12,7 @@ import {
   isWorking,
   type DeskView,
 } from "@/lib/engines/lead-calling-desk";
-import { LADDER_LABEL, dueLabel, rowBar, shortDay } from "@/lib/calling-desk-labels";
+import { LADDER_LABEL, dueLabel, isCreatedToday, rowBar, shortDay } from "@/lib/calling-desk-labels";
 import { DESK_LIST_CAP, deskSummary, type DeskLeadRow } from "@/lib/calling-desk-summary";
 import { CallMeter, DeskIcon, LeadStatusBadges, MetricStrip, PhaseBadge } from "./desk-parts";
 
@@ -56,6 +56,11 @@ function LeadRow({ r, base, day }: { r: DeskLeadRow; base: string; day: string }
         <span className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium text-ink">{r.name}</span>
           <LeadStatusBadges salesType={r.salesType} phase={r.phase} priority={r.priority} />
+          {isCreatedToday(r.createdAt, day) ? (
+            <Badge tone="brand" title="Raised today, in this business day">
+              Created today
+            </Badge>
+          ) : null}
         </span>
         <span className="block truncate text-[13px] text-muted">{deskLine(r)}</span>
       </span>
@@ -138,7 +143,34 @@ export function Dashboard({
     document.getElementById("lead-list")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const rows = desk.rows.slice(0, DESK_LIST_CAP);
+  /*
+   * SEARCH, OVER `all` AND NOT OVER A TILE.
+   *
+   * `all` is the whole of the desk's own book — already narrowed by the same
+   * `scopedToUsers(scopedUserIds(resolveScope().scope))` clause every tile
+   * trusts — so filtering it client-side can never show a lead outside scope:
+   * there is nothing here to show beyond what the server already sent. No new
+   * query, no new round trip. While a search is typed it stands in for the
+   * tile entirely — the whole point is finding a lead you already know exists,
+   * wherever it happens to sit — and clearing it returns to whichever tile was
+   * selected before.
+   */
+  const [query, setQuery] = React.useState("");
+  const digitsOnly = (s: string) => s.replace(/\D/g, "");
+  const q = query.trim().toLowerCase();
+  const qDigits = digitsOnly(query);
+  const searching = q.length > 0;
+  const searchResults = React.useMemo(() => {
+    if (!searching) return [];
+    return all.filter((r) => {
+      if (r.name.toLowerCase().includes(q)) return true;
+      if (r.contactPerson && r.contactPerson.toLowerCase().includes(q)) return true;
+      if (qDigits && r.phone && digitsOnly(r.phone).includes(qDigits)) return true;
+      return false;
+    });
+  }, [all, q, qDigits, searching]);
+
+  const rows = (searching ? searchResults : desk.rows).slice(0, DESK_LIST_CAP);
   const ready = desk.ready.slice(0, 8);
   const pending = desk.pending.slice(0, 8);
 
@@ -176,6 +208,16 @@ export function Dashboard({
             New lead
           </Link>
         </div>
+      </div>
+
+      {/* -------------------------------------------------------- search */}
+      <div className="mb-4">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search your leads by business name, contact or phone…"
+          className="w-full max-w-md"
+        />
       </div>
 
       {/* Leads nobody owns are on no telecaller's desk. Only somebody whose scope is wider than
@@ -301,8 +343,18 @@ export function Dashboard({
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.7fr_1fr]">
         <div id="lead-list">
           <div className="flex items-center justify-between">
-            <SectionLabel>{DESK_VIEW_LABEL[view]}</SectionLabel>
-            {view !== "queue" ? (
+            <SectionLabel>
+              {searching ? `Search results for “${query.trim()}”` : DESK_VIEW_LABEL[view]}
+            </SectionLabel>
+            {searching ? (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                className="cursor-pointer text-[12.5px] font-medium text-brand-hover hover:underline"
+              >
+                Clear search
+              </button>
+            ) : view !== "queue" ? (
               <button
                 type="button"
                 onClick={() => choose("queue")}
@@ -317,18 +369,21 @@ export function Dashboard({
               <div className="px-5 py-10 text-center">
                 <div className="text-sm font-semibold text-ink">Nothing here</div>
                 <div className="mt-1 text-[13px] text-muted">
-                  {view === "queue"
-                    ? "No calls or follow-ups are due. Every lead has its next step scheduled ahead."
-                    : "No leads match this filter."}
+                  {searching
+                    ? "No lead in your book matches that — try a shorter name or just the digits of the phone number."
+                    : view === "queue"
+                      ? "No calls or follow-ups are due. Every lead has its next step scheduled ahead."
+                      : "No leads match this filter."}
                 </div>
               </div>
             ) : (
               rows.map((r) => <LeadRow key={r.id} r={r} base={base} day={day} />)
             )}
           </Card>
-          {desk.total > rows.length ? (
+          {(searching ? searchResults.length : desk.total) > rows.length ? (
             <p className="mt-2 text-[12px] text-muted">
-              Showing the first {rows.length} of {desk.total}. The figures above count every one.
+              Showing the first {rows.length} of {searching ? searchResults.length : desk.total}.
+              {searching ? "" : " The figures above count every one."}
             </p>
           ) : null}
         </div>
