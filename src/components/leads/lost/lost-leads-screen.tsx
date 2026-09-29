@@ -186,7 +186,7 @@ export function LostLeadsScreen({
             <>
               <Table
                 chrome={false}
-                minWidth={1200}
+                minWidth={1270}
                 head={
                   <>
                     <HeadCell width={240}>Customer</HeadCell>
