@@ -1408,6 +1408,34 @@ line entering order details gets its follow-up record, a bill's first verified
 line opens its transport record (a unique index is the "once"). Routing that
 needs a decision stays a button, as in the source.
 
+**ONE ORDER BOOK, and the ERP writes into it once it takes the orders.**
+MahekOne's `orders` and `bills` are what targets, the Call Log, outstanding,
+the buying cycle and the owner's KPIs read, and they were filled from the
+Taken Order and Order Details sheets. An ERP keeping its orders to itself was
+a second order book none of those could see. `erp.orders.live` is the
+cut-over: off (the default) the ERP runs on its own and the sheet stays the
+source; on, `lib/erp/book.ts` writes every ERP order NUMBER as one `orders`
+row (`source = erp`, `ERP-<n>`) and, once dispatch-verified, one `bills` row
+(`ERPBILL-<n>`, `stated`, under the Tally number or the sheet's fallback
+chain) — the sheet projection writes no order or bill, a Pending customer's
+order waits in the Accounts approval queue instead of on "Approved By Admin"
+(`afterBookDecision` tells the ERP lines the answer), and
+`recomputeOrderSystemHolds` reads the ERP's open lines instead of the Taken
+Order tab. The book copy is a PROJECTION rewritten whole after every ERP
+order write (`syncBookOrders`), never edited in place, and its keys are its
+own so the sheet can never overwrite it. `npm run jobs -- erp-book-sync`
+rebuilds all of it on go-live day. Never turn the switch on while the team is
+still typing orders into the sheet: every order would be counted twice.
+
+**Billing is one step, and dates are dates.** Mahek Plus asked for "Done" and
+then "Add To Order Details", because billing lived in another sheet; "Bill
+it" is both, and "Undo billing" is the way back until dispatch-verification.
+Today, Tomorrow and Delay were dates written as statuses — `dispatch_on` holds
+the date and the lists say today, tomorrow or late from it. The order screens
+are tabs of one Orders screen, order follow-up is the CRM's buying cycle rather
+than a second prediction, and a customer's monthly target is the CRM's Monthly
+Targets row, never a column of the ERP's own.
+
 **The AI features draft and a person decides** (`docs/erp/04`). Everything a
 rule can do is ordinary code: the alert rules (`engines/alerts.ts`, run hourly
 and nightly by `runErpAlerts`, deduplicated by a partial unique index and

@@ -7,8 +7,7 @@ import type { ErpContext } from "./access";
 import { visibleAlerts } from "./alerts";
 import { incompletePackIds } from "./counts";
 import { ALERT_LABEL, type AlertKind } from "./engines/alerts";
-import { callingDate, followFigures } from "./engines/followup";
-import { addDaysIso, monthId, targetReached } from "./engines/sales";
+import { monthId, targetReached } from "./engines/sales";
 import { erpLink } from "./registry";
 import { today } from "./screens/common";
 import { pendingCnRows } from "./screens/logistics";
@@ -280,7 +279,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     }
     if (has("trackLr")) {
       const by = new Map<string, string[]>();
-      rows.filter((r) => r.lr && r.track === "Track").forEach((r) => by.set(String(r.stage), [...(by.get(String(r.stage)) ?? []), String(r.id)]));
+      rows.filter((r) => r.lr && r.stage !== "Close - Received to Party").forEach((r) => by.set(String(r.stage), [...(by.get(String(r.stage)) ?? []), String(r.id)]));
       for (const [stage, ids] of by) logistics.push({ l: `Tracking · ${stage}`, v: String(ids.length), href: tileHref("trackLr", ids, stage) });
     }
     if (has("transport")) {
@@ -316,32 +315,6 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   }
   push("Requests and credit notes", req);
 
-  /* ========================================================= follow-up */
-  if (has("followup")) {
-    const [ls, fus] = await Promise.all([lines(), q(sql`select order_id as id, reminder_days_party as days from erp_followups`)]);
-    const figs = followFigures(ls.filter((l) => l.o.status !== "Cancel").map((l) => ({ id: l.o.id, party: l.delivery.id, product: l.sku.fgId ?? l.sku.name, date: l.o.orderDate })));
-    const byId = new Map(ls.map((l) => [l.o.id, l]));
-    /* The latest follow-up record per party only. */
-    const latest = new Map<string, { id: string; date: string; calling: string | null }>();
-    for (const f of fus) {
-      const l = byId.get(String(f.id));
-      const fig = figs.get(String(f.id));
-      if (!l || !fig) continue;
-      const cur = latest.get(l.delivery.id);
-      if (!cur || l.o.orderDate > cur.date) latest.set(l.delivery.id, { id: l.o.id, date: l.o.orderDate, calling: callingDate(fig.nextOrder, f.days == null ? null : Number(f.days)) });
-    }
-    const vals = [...latest.values()].filter((x): x is { id: string; date: string; calling: string } => !!x.calling);
-    const week = addDaysIso(day, 7);
-    const dueToday = vals.filter((x) => x.calling === day).map((x) => x.id);
-    const overdue = vals.filter((x) => x.calling < day).map((x) => x.id);
-    const next = vals.filter((x) => x.calling > day && x.calling <= week).map((x) => x.id);
-    push("Order follow-up", [
-      { l: "Calls due today", v: String(dueToday.length), tone: dueToday.length ? "warn" : undefined, href: tileHref("followup", dueToday, "Due today") },
-      { l: "Calls overdue", v: String(overdue.length), tone: overdue.length ? "danger" : undefined, href: tileHref("followup", overdue, "Overdue") },
-      { l: "Calls in the next 7 days", v: String(next.length), href: tileHref("followup", next, "Next 7 days") },
-    ]);
-  }
-
   /* ======================================================== petty cash */
   if (has("expenses") || has("credits")) {
     const [credits, expenses] = await Promise.all([
@@ -372,11 +345,11 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const mine = await loadCustomers(or(eq(customers.salesAmId, ctx.user.id), sql`lower(${customers.salesPersonName}) = lower(${ctx.user.name})`));
     const { rows } = await details();
     const mid = monthId(day);
-    const withTarget = mine.filter((c) => (c.p?.monthlyTargetPaise ?? 0) > 0);
+    const withTarget = mine.filter((c) => (c.monthlyTargetPaise ?? 0) > 0);
     const reached = withTarget.filter((c) =>
       targetReached(
         rows.filter((r) => r.l.o.billingCustomerId === c.id && r.monthId === mid).reduce((a, r) => a + (r.amount ?? 0), 0),
-        c.p?.monthlyTargetPaise ?? null,
+        c.monthlyTargetPaise,
       ),
     );
     cust.push({ l: "My customers at target", v: `${reached.length} of ${withTarget.length}`, sub: `this month · ${plural(mine.length, "customer")} tagged to you`, href: tileHref("myCustomers", null, "") });

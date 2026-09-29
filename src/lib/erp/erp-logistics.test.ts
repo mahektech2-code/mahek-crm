@@ -18,7 +18,6 @@ import {
   customers,
   erpCustomerProfiles,
   erpFgEntries,
-  erpFollowups,
   erpOrderDetails,
   erpOrders,
   erpProductPacking,
@@ -67,9 +66,8 @@ async function dispatch(date: string, qty: number, bill: string, dispatched: str
   const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.orderDate} = ${date} and ${erpOrders.qtyCans} = ${qty}`);
   await mod("orders").actions!.ready(ctx, o.id, {});
   assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: String(qty) }, [], o.id)).ok);
-  await mod("orders").actions!.done(ctx, o.id, {});
   await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: String(qty), rate: "300", bill, transport: "0" }, [], o.id);
-  assert.ok((await mod("orders").actions!.toDetails(ctx, o.id, {})).ok);
+  assert.ok((await mod("orders").actions!.bill(ctx, o.id, {})).ok);
   assert.ok((await mod("orderDetails").actions!.verify(ctx, o.id, { date: dispatched })).ok);
   return o;
 }
@@ -101,8 +99,8 @@ after(async () => {
   await db.$client.end();
 });
 
-describe("dispatch opens the transport and follow-up records (§18)", () => {
-  test("one transport record per bill, and one follow-up per line", async () => {
+describe("dispatch opens the transport record (§18)", () => {
+  test("one transport record per bill", async () => {
     const o = await dispatch("2026-08-01", 10, "MMI/26-27/1", "2026-08-02");
     const [t] = await db.select().from(erpTransports);
     assert.equal(t.orderNo, o.orderNo);
@@ -110,16 +108,23 @@ describe("dispatch opens the transport and follow-up records (§18)", () => {
     assert.equal(t.billDate, "2026-08-02");
     assert.equal(t.transporter, "VRL");
     assert.equal(t.paymentType, "Paid");
-    assert.equal((await db.select().from(erpFollowups).where(eq(erpFollowups.orderId, o.id))).length, 1);
   });
 
-  test("a tracked consignment needs its LR, and an LR takes it off Pending LR", async () => {
+  test("an LR puts a consignment on the road and takes it off Pending LR; reaching the party takes it off the road", async () => {
     const ctx = await as(admin);
     const [t] = await db.select().from(erpTransports);
-    assert.equal(msg(await mod("pendingLr").actions!.update(ctx, t.id, { track: "Track", stage: "In Transit" })), "A consignment is tracked by its LR number");
-    assert.ok((await mod("pendingLr").actions!.update(ctx, t.id, { lr: "LR-7781", track: "Track", stage: "In Transit" })).ok);
+    assert.equal(t.materialStage, "Dispatched");
+    assert.ok((await mod("pendingLr").actions!.update(ctx, t.id, { stage: "In Transit" })).ok);
+    assert.equal((await mod("pendingLr").load(ctx)).rows.length, 1, "no LR yet");
+    assert.equal((await mod("trackLr").load(ctx)).rows.length, 0, "nothing to follow without an LR");
+    assert.ok((await mod("pendingLr").actions!.update(ctx, t.id, { lr: "LR-7781", stage: "In Transit" })).ok);
     assert.equal((await mod("pendingLr").load(ctx)).rows.length, 0);
     assert.equal((await mod("trackLr").load(ctx)).rows.length, 1);
+    const all = (await mod("transport").load(ctx)).rows[0];
+    assert.match(String(all.v.stage), /In Transit/);
+    assert.ok((await mod("trackLr").actions!.update(ctx, t.id, { lr: "LR-7781", stage: "Close - Received to Party" })).ok);
+    assert.equal((await mod("trackLr").load(ctx)).rows.length, 0);
+    assert.ok((await mod("trackLr").actions!.update(ctx, t.id, { lr: "LR-7781", stage: "In Transit" })).ok);
   });
 
   test("paid freight lists the line until its extra expense is entered, and the transport record follows", async () => {
@@ -158,22 +163,6 @@ describe("customer requests and credit notes", () => {
     assert.equal(d.creditNotePaise, 10000);
     const afterMargin = (await mod("orderDetails").load(a)).rows[0].v.margin as number | null;
     if (before != null && afterMargin != null) assert.equal(before - afterMargin, 10000);
-  });
-});
-
-describe("order follow-up", () => {
-  test("the previous order and the gap are by date, and the next order is predicted from the average", async () => {
-    await dispatch("2026-08-21", 5, "MMI/26-27/2", "2026-08-22");
-    const ctx = await as(admin);
-    const { rows } = await mod("followup").load(ctx);
-    const latest = rows.find((r) => r.v.date === "2026-08-21")!;
-    assert.equal(latest.v.lastParty, "2026-08-01");
-    assert.equal(latest.v.dayCount, 20);
-    assert.equal(latest.v.average, 20);
-    assert.equal(latest.v.next, "2026-09-10");
-    assert.ok((await mod("followup").actions!.edit(ctx, latest.id, { party: "-3" })).ok);
-    const again = (await mod("followup").load(ctx)).rows.find((r) => r.id === latest.id)!;
-    assert.equal(again.v.calling, "2026-09-07");
   });
 });
 

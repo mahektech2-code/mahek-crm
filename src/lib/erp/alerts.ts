@@ -25,7 +25,7 @@ import {
   type Candidate,
   type Thresholds,
 } from "./engines/alerts";
-import { cashBalances, cashKey } from "./engines/followup";
+import { cashBalances, cashKey } from "./engines/cash";
 import { today } from "./screens/common";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, orderLines } from "./screens/sales";

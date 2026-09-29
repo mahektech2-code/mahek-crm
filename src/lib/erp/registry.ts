@@ -147,22 +147,19 @@ export const ERP_GROUPS: ErpGroup[] = [
   },
   {
     id: "sales",
-    label: "Sales orders",
+    label: "Orders",
     icon: "receipt",
     screens: [
-      s("orderInbox", "order-inbox", "Order inbox", "WhatsApp messages the ERP read as possible orders. Nothing becomes an order until someone accepts the draft.", true),
-      s("orders", "orders", "Taken orders", "Every sales-order line, grouped by order number.", true),
-      s("pendingOrders", "pending-orders", "Pending orders", "Open order lines that have not reached order details.", true),
-      s("readyOrders", "ready-orders", "Under process and ready", "The godown's working list. Mark many lines Ready at once.", true),
-      s("batchCodes", "batch-codes", "Batch codes", "Every lot allocated to an order line, grouped by godown.", true),
-      s("labels", "labels", "Sales label printing", "Open orders by transporter, with labels to print.", true),
+      s("orders", "orders", "Orders", "From the order being taken to the bill leaving the godown. Each tab is one step of it.", true, [
+        v("pendingOrders", "Pending"),
+        v("readyOrders", "Under process & ready"),
+        v("orderDetails", "Billing & dispatch"),
+        v("batchCodes", "Batch codes"),
+        v("labels", "Labels"),
+        v("orders", "All lines"),
+        v("orderInbox", "WhatsApp inbox"),
+      ]),
     ],
-  },
-  {
-    id: "details",
-    label: "Order details",
-    icon: "file",
-    screens: [s("orderDetails", "order-details", "Order details", "Billing and dispatch. Verify a line once it has left, with its dispatch date.", true)],
   },
   {
     id: "logistics",
@@ -187,15 +184,6 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("issueCn", "Credit notes"),
         v("complaints", "Without a credit note"),
       ]),
-    ],
-  },
-  {
-    id: "followup",
-    label: "Order follow-up",
-    icon: "phone",
-    screens: [
-      s("followup", "followup", "Order follow-up", "When each customer is likely to order again, and when to call them.", true),
-      s("pivot", "pivot", "Party order pivot", "Per party: last order and the gap since.", true),
     ],
   },
   {

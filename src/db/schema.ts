@@ -217,7 +217,11 @@ export const sourceModuleEnum = pgEnum("source_module", [
  * one that already means something else. A source that lies is a source no
  * report can be built on.
  */
-export const orderSourceEnum = pgEnum("order_source", ["crm", "external", "mbos"]);
+/**
+ * `erp`: taken in the ERP and written into the book by `lib/erp/book.ts` once
+ * the ERP is where orders are taken (`erp.orders.live`).
+ */
+export const orderSourceEnum = pgEnum("order_source", ["crm", "external", "mbos", "erp"]);
 /**
  * An order taken on a call is not yet an order the business has agreed to:
  * accounts check the customer first. New CRM orders start at
@@ -10410,7 +10414,6 @@ export const erpCustomerProfiles = pgTable("erp_customer_profiles", {
   grade: text("grade"),
   standingInstructions: text("standing_instructions"),
   allocateEmail: text("allocate_email"),
-  monthlyTargetPaise: bigint("monthly_target_paise", { mode: "number" }),
   pendingActivation: boolean("pending_activation").notNull().default(false),
   activatedAt: timestamp("activated_at", { withTimezone: true }),
   activatedById: text("activated_by_id").references(() => users.id),
@@ -10933,15 +10936,29 @@ export const erpOrders = pgTable(
       .notNull()
       .references(() => products.id),
     qtyCans: integer("qty_cans").notNull(),
-    /** Under Process | Ready | Today | Delay | Cancel | Tomorrow | Hold From Office. */
+    /**
+     * Under Process | Ready | Hold From Office | Cancel.
+     *
+     * Mahek Plus also had Today, Tomorrow and Delay, which are dates written as
+     * statuses: "Tomorrow" is wrong the day after somebody sets it, and only a
+     * person remembering fixes it. They are `dispatch_on` now, and the screens
+     * say today / tomorrow / late from the date (0183 moved every old value).
+     */
     status: text("status").notNull().default("Under Process"),
+    /** The day this line is planned to leave the godown. Null: not planned yet. */
+    dispatchOn: date("dispatch_on"),
     ratePaise: bigint("rate_paise", { mode: "number" }),
     /** 1000 = 10%. */
     discountBp: integer("discount_bp"),
     tallyBillNo: text("tally_bill_no"),
     transportCostPaise: bigint("transport_cost_paise", { mode: "number" }).notNull().default(0),
     remark: text("remark"),
-    /** Done | Not Done. */
+    /**
+     * Done | Not Done — whether the line is BILLED. Done and "Add to order
+     * details" were two presses for one fact in Mahek Plus (the office has
+     * entered the bill); "Bill it" sets this and writes the line's
+     * `erp_order_details` row in one transaction.
+     */
     entryStatus: text("entry_status").notNull().default("Not Done"),
     /** "Pending" when the billing party was pending on entry; "Approved By Admin" once approved. */
     partyStatus: text("party_status"),
@@ -11018,7 +11035,7 @@ export const erpTransports = pgTable(
     extraExpensePaise: bigint("extra_expense_paise", { mode: "number" }),
     /** Track | Don't Track. */
     trackStatus: text("track_status").notNull().default("Don't Track"),
-    materialStage: text("material_stage").notNull().default("Dispatch from Bhiwandi"),
+    materialStage: text("material_stage").notNull().default("Dispatched"),
     reminderDate: date("reminder_date"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -11061,7 +11078,13 @@ export const erpRequests = pgTable(
   (t) => [index("erp_requests_customer_idx").on(t.customerId)],
 );
 
-/** One per order-details line; everything else it shows is derived from the orders. */
+/**
+ * RETIRED — nothing writes or reads it. Mahek Plus's order follow-up predicted
+ * each party's next order from its order dates; the CRM does that from the
+ * measured buying cycle and puts the call on a telecaller's list, so the ERP's
+ * screens were removed (0183). The rows are kept rather than dropped: they are
+ * remarks somebody typed, and deleting them is a decision nobody has made.
+ */
 export const erpFollowups = pgTable("erp_followups", {
   orderId: text("order_id")
     .primaryKey()

@@ -265,6 +265,8 @@ export async function approveOrder(orderId: string): Promise<Result> {
 
   // It is a purchase now, so the cycle, the average and the history all change.
   await recomputeBuyingCycle(order.customerId);
+  /* An ERP order waits on this decision too: its lines learn the answer. */
+  await (await import("../erp/book")).afterBookDecision(orderId);
 
   /*
    * And it may be the order that makes them a customer.
@@ -357,6 +359,8 @@ export async function declineOrder(
   // the calling list on their own cycle rather than staying quiet on the
   // strength of an order that was refused.
   await recomputeBuyingCycle(order.customerId);
+  /* An ERP order waits on this decision too: its lines learn the answer. */
+  await (await import("../erp/book")).afterBookDecision(orderId);
   await tellTheAuthor(order, ctx.user, reason.trim());
   return okVoid("Order declined");
 }

@@ -20,6 +20,7 @@ import {
   users,
 } from "@/db/schema";
 import { err, fieldErr, okVoid } from "@/lib/result";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import type { ErpContext } from "../access";
 import type { ErpPower } from "../powers";
 import {
@@ -610,6 +611,14 @@ export type CustomerRow = {
   status: string;
   kind: string;
   createdAt: Date;
+  /**
+   * This month's target, from the CRM's monthly targets — the one customer
+   * target in MahekOne, set from the CRM's or Accounts' Monthly Targets. The
+   * ERP kept a standing target of its own on the profile; two targets for one
+   * customer is how a salesman and his manager argue about the same shop, so
+   * 0183 carried it across and the ERP reads this one.
+   */
+  monthlyTargetPaise: number | null;
   p: typeof erpCustomerProfiles.$inferSelect | null;
 };
 
@@ -635,6 +644,12 @@ export async function loadCustomers(where?: ReturnType<typeof and>): Promise<Cus
       status: customers.status,
       kind: customers.kind,
       createdAt: customers.createdAt,
+      monthlyTargetPaise: sql<number | null>`(
+        select t.target_amount from monthly_targets t
+         where t.customer_id = customers.id
+           and t.year = extract(year from now() at time zone ${APP_TIMEZONE})::int
+           and t.month = extract(month from now() at time zone ${APP_TIMEZONE})::int
+      )`.mapWith((v) => (v == null ? null : Number(v))),
       p: erpCustomerProfiles,
     })
     .from(customers)
@@ -680,7 +695,6 @@ async function customerEditForm(id: string, mine = false): Promise<FormSpec | nu
       whatsapp: r.whatsapp ?? "",
       email: r.email ?? "",
       counter: (r.p?.counterTypes ?? []).join("|"),
-      target: rupeesField(r.p?.monthlyTargetPaise),
       credit: r.creditDays == null ? "" : String(r.creditDays),
       ...(mine
         ? {}
@@ -705,7 +719,6 @@ async function customerEditForm(id: string, mine = false): Promise<FormSpec | nu
       { k: "whatsapp", l: "WhatsApp contact", t: "text" },
       { k: "email", l: "Party email", t: "text" },
       { k: "counter", l: "Counter type", t: "multi", opts: counters },
-      { k: "target", l: "Monthly target (₹)", t: "num", min: 0 },
       { k: "credit", l: "Credit days", t: "num", min: 0 },
       ...(mine
         ? []
@@ -773,7 +786,7 @@ function customerFields(r: CustomerRow, canSeeTarget: boolean): { l: string; v: 
     { l: "Delivery type", v: r.deliveryType || "—" },
     { l: "Weight type", v: r.p?.weightType || "—" },
     { l: "Standing instructions", v: r.p?.standingInstructions || "—" },
-    ...(canSeeTarget ? [{ l: "Monthly target", v: r.p?.monthlyTargetPaise ? inr(r.p.monthlyTargetPaise) : "—" }] : []),
+    ...(canSeeTarget ? [{ l: "Monthly target", v: r.monthlyTargetPaise ? `${inr(r.monthlyTargetPaise)} this month · set in Monthly Targets` : "Not set · Monthly Targets in the CRM or Accounts" }] : []),
     { l: "Counter type", v: (r.p?.counterTypes ?? []).join(", ") || "—" },
     { l: "Segment", v: r.p?.segment || "—" },
     { l: "GST number", v: r.gstin || "—" },
@@ -976,7 +989,6 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
     transporter: text(h.transporter),
     weightType: text(h.weight),
     counterTypes: multi(h.counter),
-    monthlyTargetPaise: paise(h.target),
     ...(mine
       ? {}
       : { segment: text(h.segment), standingInstructions: text(h.instr), allocateEmail: text(h.allocate) }),

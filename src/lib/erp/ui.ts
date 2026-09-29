@@ -217,7 +217,7 @@ export const ST_TONE: Record<string, Tone> = {
   B: "neutral", C: "warn", Billed: "neutral", Acknowledged: "info", "Resolved automatically": "success",
   Resolved: "success", New: "brand", Converted: "success", "Not an order": "muted", Duplicate: "warn",
   High: "success", Low: "warn", "Invoice Received": "info", "Purchase Matched": "brand",
-  "Purchase Verified": "success", Dispatched: "success", Transfer: "neutral",
+  "Purchase Verified": "success", Dispatched: "success", Transfer: "neutral", Declined: "danger",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */
@@ -250,6 +250,9 @@ export const FLAG: Record<string, [string, Tone]> = {
   below: ["Below level", "danger"],
   noLevel: ["No level set", "neutral"],
   notPosted: ["Not posted to inventory", "warn"],
+  dueToday: ["Dispatch today", "brand"],
+  dueTomorrow: ["Dispatch tomorrow", "neutral"],
+  late: ["Dispatch late", "danger"],
 };
 
 /* -------------------------------------------------------------- formatting */

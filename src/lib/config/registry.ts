@@ -90,7 +90,9 @@ export type SettingCategory =
    * thresholds the deterministic alert rules and suggestions read. AI drafts
    * and a person decides, so none of these changes a record on its own.
    */
-  | "erp-ai";
+  | "erp-ai"
+  /** The ERP as an operations system: whether it is where orders are taken. */
+  | "erp";
 
 export type SettingDefinition = {
   key: string;
@@ -3523,6 +3525,15 @@ export const SETTINGS = [
     default: false,
   },
   {
+    key: "erp.orders.live",
+    type: "boolean",
+    category: "erp",
+    label: "The ERP takes the orders",
+    description:
+      "Off: orders still come from the Taken Order and Order Details sheets, and the ERP's own orders stay inside the ERP. On: every ERP order is written into MahekOne's order book and bills (targets, the Call Log, outstanding and reorder predictions read it), the order sheet stops writing orders and bills, orders from a Pending customer go to the Accounts approval queue, and a customer is held off the Call Log while an ERP order of theirs is open. Turn it on the day the team stops typing orders into the sheet — never while both are in use, or every order is counted twice.",
+    default: false,
+  },
+  {
     key: "erp.ai.voice.enabled",
     type: "boolean",
     category: "erp-ai",
@@ -4670,6 +4681,7 @@ export type Config = {
   "whatsapp.unconfirmedExpiryHours": number;
   "whatsapp.autoConfirmAfterHours": number;
 
+  "erp.orders.live": boolean;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;
   "erp.ai.alerts.rateJumpPct": number;

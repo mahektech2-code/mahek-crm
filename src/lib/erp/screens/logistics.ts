@@ -1,21 +1,22 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, employees, erpCredits, erpExpenses, erpFollowups, erpGodowns, erpOrderDetails, erpRequests, erpTransports, erpVideos, users } from "@/db/schema";
+import { customers, employees, erpCredits, erpExpenses, erpGodowns, erpOrderDetails, erpRequests, erpTransports, erpVideos, users } from "@/db/schema";
 import { calendarDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { bindErpFiles } from "../attachments";
-import { erpAudit, erpId, int, multi, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
+import { erpAudit, erpId, multi, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import type { ActionSpec, BulkSpec, CellValue, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { fd, inr } from "../ui";
-import { callingDate, cashBalances, cashKey, followFigures } from "../engines/followup";
-import { addDaysIso, monthId } from "../engines/sales";
+import { cashBalances, cashKey } from "../engines/cash";
+import { monthId } from "../engines/sales";
 import { refValues } from "../refs";
 import { godownIdByName, godownOptions, has, today, type Col } from "./common";
 import { customerForm, loadCustomers, phoneContacts, saveCustomerDetails } from "./masters";
-import { detailRows, orderLines } from "./sales";
+import { detailRows } from "./sales";
+import { syncBookOrders } from "../book";
 import { traceBill, type Trace } from "../trace";
 
 /* ---------------------------------------------------------------------------
@@ -23,7 +24,21 @@ import { traceBill, type Trace } from "../trace";
  * my customers and help videos (spec §12–§13).
  * ------------------------------------------------------------------------- */
 
-export const MATERIAL_STAGES = ["Dispatch from Bhiwandi", "Dispatch from Ambernath", "In Transit", "On the way to Destination area", "Reached Destination Area", "Close - Received to Party"];
+/**
+ * Where a consignment is. Mahek Plus's first two were "Dispatch from Bhiwandi"
+ * and "Dispatch from Ambernath" — a godown written into the list, so a third
+ * godown needed a code change (spec A-26). It is one "Dispatched" stage now,
+ * and the screen names the godown from the order.
+ */
+export const MATERIAL_STAGES = ["Dispatched", "In Transit", "On the way to Destination area", "Reached Destination Area", "Close - Received to Party"];
+const CLOSED = "Close - Received to Party";
+
+/**
+ * On the road: it has an LR and has not reached the party. Mahek Plus asked for
+ * "Track / Don't Track" as well, which could only ever agree with these two
+ * facts or contradict them.
+ */
+export const onTheRoad = (t: { lrNo: string | null; materialStage: string }) => !!t.lrNo && t.materialStage !== CLOSED;
 const MODES = ["Bank Cash", "Cash", "Other"];
 
 /* ============================================================ transport */
@@ -43,7 +58,12 @@ function transportList(scope: TransportScope): ScreenModule {
           .orderBy(desc(erpTransports.billDate), desc(erpTransports.orderNo)),
         detailRows(),
       ]);
-      const shown = rows.filter((r) => (scope === "pendingLr" ? !r.t.lrNo : scope === "trackLr" ? !!r.t.lrNo && r.t.trackStatus === "Track" : true));
+      const shown = rows.filter((r) => (scope === "pendingLr" ? !r.t.lrNo : scope === "trackLr" ? onTheRoad(r.t) : true));
+      /* The godown a bill left from, for "Dispatched from …". */
+      const from = new Map(
+        ((await db.execute(sql`select o.order_no as n, min(g.name) as g from erp_orders o join erp_godowns g on g.id = o.godown_id group by o.order_no`)) as unknown as { n: number; g: string }[]).map((x) => [Number(x.n), x.g]),
+      );
+      const stageWord = (t: typeof rows[number]["t"]) => (t.materialStage === "Dispatched" && from.get(t.orderNo) ? `Dispatched from ${from.get(t.orderNo)}` : t.materialStage);
       const { featureState, pendingFor } = await import("../ai");
       const pendingLr = await pendingFor("photos");
       const photosOn = (await featureState("photos", true)).on;
@@ -55,7 +75,7 @@ function transportList(scope: TransportScope): ScreenModule {
         { k: "lr", l: "LR no", t: "mono" },
         { k: "transporter", l: "Transporter", t: "t" },
         { k: "area", l: "Area", t: "t" },
-        { k: "track", l: "Track status", t: "s" },
+        { k: "track", l: "On the road", t: "s" },
         { k: "payment", l: "Payment type", t: "s" },
         { k: "extra", l: "Extra expense", t: "m" },
         { k: "note", l: "Note", t: "t" },
@@ -90,11 +110,11 @@ function transportList(scope: TransportScope): ScreenModule {
                 lr: t.lrNo,
                 transporter: t.transporter,
                 area: t.area,
-                track: t.trackStatus,
+                track: onTheRoad(t) ? "Yes" : "No",
                 payment: t.paymentType,
                 extra: t.paymentType === "Paid" ? t.extraExpensePaise : null,
                 note: t.note,
-                stage: t.materialStage,
+                stage: stageWord(t),
                 reminder: t.reminderDate,
                 salesMan: r.salesPerson,
                 monthly: mid ? (monthly.get(`${mid}|${t.billingCustomerId}`) ?? 0) : null,
@@ -103,7 +123,7 @@ function transportList(scope: TransportScope): ScreenModule {
             ),
             flags: t.reminderDate && t.reminderDate <= today() && t.materialStage !== "Close - Received to Party" ? ["today"] : [],
             title: `${r.party} · bill ${t.billNo ?? t.orderNo}`,
-            header: `${t.transporter ?? "No transporter"} · ${t.materialStage}`,
+            header: `${t.transporter ?? "No transporter"} · ${stageWord(t)}`,
             actions: [
               ...(pendingLr.has(t.id)
                 ? [
@@ -123,12 +143,11 @@ function transportList(scope: TransportScope): ScreenModule {
                   submit: "Save",
                   fields: [
                     { k: "lr", l: "Despatch LR no", t: "text" },
-                    { k: "track", l: "Track status", t: "select", req: true, opts: ["Track", "Don't Track"] },
                     { k: "stage", l: "Material stage", t: "select", req: true, opts: MATERIAL_STAGES },
                     { k: "reminder", l: "Reminder call", t: "date" },
                     { k: "note", l: "Note", t: "area", mic: true },
                   ],
-                  init: { lr: t.lrNo ?? "", track: t.trackStatus, stage: t.materialStage, reminder: t.reminderDate ?? "", note: t.note ?? "" },
+                  init: { lr: t.lrNo ?? "", stage: MATERIAL_STAGES.includes(t.materialStage) ? t.materialStage : "Dispatched", reminder: t.reminderDate ?? "", note: t.note ?? "" },
                 },
               },
             ],
@@ -147,17 +166,17 @@ function transportList(scope: TransportScope): ScreenModule {
       aiLrRead: async (ctx, id, v) => (await import("../ai-photos")).readLr(ctx, id, text(v.photo)),
       aiLrReject: async (ctx, id) => (await import("../ai-photos")).rejectPhotoReading(ctx, id),
       async update(ctx, id, values) {
-        const track = text(values.track);
         const stage = text(values.stage);
-        if (!track || !["Track", "Don't Track"].includes(track)) return fieldErr("track", "Track status is required");
         if (!stage || !MATERIAL_STAGES.includes(stage)) return fieldErr("stage", "Material stage is required");
         const lr = text(values.lr);
-        if (track === "Track" && !lr) return fieldErr("lr", "A consignment is tracked by its LR number");
+        const track = onTheRoad({ lrNo: lr, materialStage: stage }) ? "Track" : "Don't Track";
         const [before] = await db.select().from(erpTransports).where(eq(erpTransports.id, id));
         if (!before) return err("That bill is not in transport follow-up.", "not_found");
         const after = { lrNo: lr, trackStatus: track, materialStage: stage, reminderDate: text(values.reminder), note: text(values.note), updatedAt: new Date(), updatedById: ctx.user.id };
         await db.update(erpTransports).set(after).where(eq(erpTransports.id, id));
         await erpAudit(ctx, "erp.transport.update", "erp_transport", id, before, after);
+        /* Where the goods are is what everybody else reads the order for. */
+        if (stage !== before.materialStage) await syncBookOrders([before.orderNo]);
         return okVoid(lr && !before.lrNo ? `LR ${lr} recorded` : "Consignment updated");
       },
     },
@@ -602,159 +621,6 @@ async function updateCn(ctx: ErpContext, ids: string[]): Promise<Result<unknown>
   return okVoid(`Credit note copied onto ${rows.length} line${rows.length === 1 ? "" : "s"}`);
 }
 
-/* ============================================================ follow-up */
-
-async function followRows() {
-  const [lines, fus] = await Promise.all([orderLines(), db.select().from(erpFollowups)]);
-  const fg = new Map<string, string>();
-  const fgNames = (await db.execute(sql`select id, name from finished_goods`)) as unknown as { id: string; name: string }[];
-  fgNames.forEach((f) => fg.set(f.id, f.name));
-  const product = (l: (typeof lines)[number]) => (l.sku.fgId ? (fg.get(l.sku.fgId) ?? l.sku.name) : l.sku.name);
-  /* Every order line is history for the party; only lines with a follow-up record are rows. */
-  const figs = followFigures(lines.filter((l) => l.o.status !== "Cancel").map((l) => ({ id: l.o.id, party: l.delivery.id, product: product(l), date: l.o.orderDate })));
-  const byId = new Map(lines.map((l) => [l.o.id, l]));
-  return fus
-    .map((f) => ({ f, l: byId.get(f.orderId), fig: figs.get(f.orderId) }))
-    .filter((x): x is { f: typeof x.f; l: NonNullable<typeof x.l>; fig: NonNullable<typeof x.fig> } => !!x.l && !!x.fig)
-    .map((x) => ({ ...x, product: product(x.l) }))
-    .sort((a, b) => (a.l.o.orderDate < b.l.o.orderDate ? 1 : -1));
-}
-
-/**
- * AI-7: the CRM's own prediction for a party — its measured buying cycle from
- * the last order it knows of — shown beside the follow-up's arithmetic, and
- * labelled as the date the telecallers are working from. It is not a second
- * model.
- */
-async function crmPredictions(): Promise<Map<string, { next: string | null; confidence: number | null; isDefault: boolean }>> {
-  const rows = (await db.execute(sql`select id, last_order_date::text as last, cycle_days as cycle, cycle_confidence as confidence, cycle_is_default as "isDefault" from customers where last_order_date is not null`)) as unknown as { id: string; last: string; cycle: number; confidence: number | null; isDefault: boolean }[];
-  return new Map(rows.map((r) => [r.id, { next: addDaysIso(r.last, Number(r.cycle)), confidence: r.confidence == null ? null : Number(r.confidence), isDefault: Boolean(r.isDefault) }]));
-}
-
-const followup: ScreenModule = {
-  key: "followup",
-  async load() {
-    const [rows, crm] = await Promise.all([followRows(), crmPredictions()]);
-    const cols: ColSpec[] = [
-      { k: "date", l: "Order date", t: "d" },
-      { k: "dayCount", l: "Day count", t: "n" },
-      { k: "party", l: "Delivery party", t: "b" },
-      { k: "calling", l: "Calling date", t: "d" },
-      { k: "next", l: "Next order", t: "d" },
-      { k: "average", l: "Average days", t: "n" },
-      { k: "product", l: "FG product", t: "t" },
-      { k: "orderNo", l: "Order no", t: "mono" },
-      { k: "qty", l: "Qty", t: "n" },
-      { k: "lastParty", l: "Last order (party)", t: "d" },
-      { k: "reminderParty", l: "Reminder days (party)", t: "n" },
-      { k: "lastProduct", l: "Last order (product)", t: "d" },
-      { k: "dayCountProduct", l: "Day count (product)", t: "n" },
-      { k: "reminderProduct", l: "Reminder days (product)", t: "n" },
-      { k: "remark", l: "Remark", t: "t" },
-      { k: "f", l: "Flags", t: "f" },
-    ];
-    const now = today();
-    return {
-      spec: { screen: "followup", cols, hidden: [], sortDefault: ["date", -1], noDataLine: "No follow-ups yet. A line gets one when it reaches order details." },
-      rows: rows.map(({ f, l, fig, product }) => {
-        const calling = callingDate(fig.nextOrder, f.reminderDaysParty);
-        return {
-          id: f.orderId,
-          v: {
-            date: l.o.orderDate,
-            dayCount: fig.dayCountParty,
-            party: l.delivery.name,
-            calling,
-            next: fig.nextOrder,
-            average: fig.averageDays,
-            product,
-            orderNo: String(l.o.orderNo),
-            qty: l.o.qtyCans,
-            lastParty: fig.lastParty,
-            reminderParty: f.reminderDaysParty,
-            lastProduct: fig.lastProduct,
-            dayCountProduct: fig.dayCountProduct,
-            reminderProduct: f.reminderDaysProduct,
-            remark: f.remark,
-          },
-          flags: calling && calling <= now ? ["today"] : [],
-          title: `${l.delivery.name} · ${product}`,
-          header: calling ? `Call on ${fd(calling)}` : "Not enough orders to predict the next one yet",
-          fields: (() => {
-            const p = crm.get(l.delivery.id);
-            if (!p) return [{ l: "CRM prediction", v: "The CRM has no order for this party yet.", der: true }];
-            const conf = p.isDefault ? "a default cycle, not yet measured" : p.confidence == null ? "measured" : `${p.confidence}% confident`;
-            const differs = p.next && fig.nextOrder && p.next !== fig.nextOrder;
-            return [
-              { l: "CRM predicted next order", v: `${p.next ? fd(p.next) : "—"} (${conf})${differs ? " — the date the telecallers are working from" : ""}`, der: true },
-            ];
-          })(),
-          contacts: phoneContacts(l.delivery.phone),
-          actions: [
-            {
-              id: "edit",
-              l: "Reminder and remark",
-              primary: true,
-              prompt: {
-                title: "Follow-up",
-                sub: `${l.delivery.name} · order ${l.o.orderNo}`,
-                submit: "Save",
-                fields: [
-                  { k: "party", l: "Reminder days (party)", t: "num" },
-                  { k: "product", l: "Reminder days (product)", t: "num" },
-                  { k: "remark", l: "Remark", t: "area", mic: true },
-                ],
-                init: { party: f.reminderDaysParty == null ? "" : String(f.reminderDaysParty), product: f.reminderDaysProduct == null ? "" : String(f.reminderDaysProduct), remark: f.remark ?? "" },
-              },
-            },
-          ],
-        };
-      }),
-    };
-  },
-  actions: {
-    async edit(ctx, id, v) {
-      const party = int(v.party);
-      const product = int(v.product);
-      await db.update(erpFollowups).set({ reminderDaysParty: party, reminderDaysProduct: product, remark: text(v.remark), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpFollowups.orderId, id));
-      await erpAudit(ctx, "erp.followup.edit", "erp_followup", id, null, { party, product });
-      return okVoid("Follow-up saved");
-    },
-  },
-};
-
-/** Party order pivot (spec §13.1, A-23): per delivery party and order, the previous order and the gap. */
-const pivot: ScreenModule = {
-  key: "pivot",
-  async load() {
-    const rows = await followRows();
-    const seen = new Set<string>();
-    const cols: ColSpec[] = [
-      { k: "party", l: "Delivery party", t: "b" },
-      { k: "orderNo", l: "Order no", t: "mono" },
-      { k: "date", l: "Order date", t: "d" },
-      { k: "last", l: "Last order date", t: "d" },
-      { k: "diff", l: "Order diff (days)", t: "n" },
-    ];
-    return {
-      spec: { screen: "pivot", cols, hidden: [], groups: ["party"], readOnly: true, download: true, noDataLine: "No orders to compare yet." },
-      rows: rows
-        .filter(({ l }) => {
-          const k = `${l.delivery.id}|${l.o.orderNo}`;
-          if (seen.has(k)) return false;
-          seen.add(k);
-          return true;
-        })
-        .map(({ l, fig }) => ({
-          id: `${l.delivery.id}|${l.o.orderNo}`,
-          v: { party: l.delivery.name, orderNo: String(l.o.orderNo), date: l.o.orderDate, last: fig.lastParty, diff: fig.dayCountParty },
-          flags: [],
-          title: `${l.delivery.name} · order ${l.o.orderNo}`,
-        })),
-    };
-  },
-};
-
 /* ============================================================ petty cash */
 
 async function balances() {
@@ -996,7 +862,7 @@ const myCustomers: ScreenModule = {
           payment: c.freightTerm,
           mobile: c.phone,
           credit: c.creditDays,
-          target: c.p?.monthlyTargetPaise ?? null,
+          target: c.monthlyTargetPaise,
           open: reqBy.get(c.id) ?? 0,
         },
         flags: [],
@@ -1118,8 +984,6 @@ export const LOGISTICS_SCREENS: ScreenModule[] = [
   requestList("issueCn"),
   requestList("complaints"),
   pendingCn,
-  followup,
-  pivot,
   credits,
   expenses,
   myCustomers,
