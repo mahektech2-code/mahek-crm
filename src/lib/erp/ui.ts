@@ -240,6 +240,7 @@ export const FLAG: Record<string, [string, Tone]> = {
   accepted: ["Accepted", "success"],
   rejected: ["Rejected", "danger"],
   requested: ["Requested", "warn"],
+  resolved: ["Resolved", "success"],
   awaitingRoute: ["Awaiting routing", "warn"],
   pendingParty: ["Pending customer", "warn"],
   alert: ["Open alert", "danger"],

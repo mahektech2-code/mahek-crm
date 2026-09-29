@@ -84,7 +84,11 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
     detailRows(),
     orderLines(),
     q(sql`select t.id, t.bill_no as "billNo", c.name as party, t.bill_date::text as "billDate", t.lr_no as lr from erp_transports t join customers c on c.id = t.billing_customer_id`),
-    q(sql`select r.id, c.name as party, r.approved_at as "approvedAt", r.cn_number is not null as issued, r.status = 'Accepted' as accepted, r.cn_required as cn from erp_requests r join customers c on c.id = r.customer_id`),
+    /* Accepted = the complaint moved to in_progress; when is its status history. */
+    q(sql`select r.id, c.name as party,
+                 (select min(h.at) from complaint_status_history h where h.complaint_id = r.id and h.to_status = 'in_progress') as "approvedAt",
+                 r.cn_status = 'issued' as issued, r.status = 'in_progress' as accepted, r.request_cn as cn
+            from complaints r join customers c on c.id = r.customer_id`),
     q(sql`select c.id, c.employee_name as employee, c.godown_id as "godownId", g.name as godown, c.mode, c.amount_paise::float8 as amount from erp_credits c join erp_godowns g on g.id = c.godown_id`),
     q(sql`select e.id, e.expense_by as by, e.godown_id as "godownId", g.name as godown, e.mode, e.amount_paise::float8 as amount, e.particular, e.expense_date::text as date from erp_expenses e join erp_godowns g on g.id = e.godown_id`),
     rmReorderRows(),

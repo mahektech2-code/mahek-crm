@@ -41,6 +41,7 @@ import {
 import { fgLots, lockLot, packLots } from "../stock";
 import { erpOrdersLive, orderNosOf, syncBookOrders } from "../book";
 import { erpLink } from "../registry";
+import { issuedCreditNotes } from "./complaints";
 import { godownIdByName, godownOptions, has, inTx, refuse, today, type Col } from "./common";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
 
@@ -935,11 +936,23 @@ type DetailRow = {
   company: string;
   costing: number | null;
   margin: number | null;
+  /** Credit notes issued on this line's bill and goods, before GST. */
+  creditNote: number | null;
   monthId: string | null;
 };
 
+/**
+ * What the credit notes issued against a line's bill and goods take off its
+ * margin. A credit note comes off the bill WITH GST, and the margin is before
+ * GST, so it is taken back to the line's own rate.
+ */
+function creditOf(credits: Map<string, number>, l: OrderLine, gstBp: number): number | null {
+  const paid = credits.get(`${l.o.billingCustomerId}|${l.o.tallyBillNo ?? ""}|${l.sku.name}`);
+  return paid == null ? null : Math.round((paid * 10000) / (10000 + gstBp));
+}
+
 export async function detailRows(): Promise<{ rows: DetailRow[]; billTotal: Map<string, number>; monthly: Map<string, number> }> {
-  const [ls, details, costs] = await Promise.all([orderLines(), db.select().from(erpOrderDetails), allocationCosts()]);
+  const [ls, details, costs, credits] = await Promise.all([orderLines(), db.select().from(erpOrderDetails), allocationCosts(), issuedCreditNotes()]);
   const byId = new Map(ls.map((l) => [l.o.id, l]));
   const rows: DetailRow[] = [];
   for (const d of details) {
@@ -956,7 +969,8 @@ export async function detailRows(): Promise<{ rows: DetailRow[]; billTotal: Map<
       litres: bill.litres,
       company: bill.company,
       costing,
-      margin: margin({ amountPaise: bill.amountPaise, discountedPaise: bill.discountedPaise, costingPaise: costing, creditNotePaise: d.creditNotePaise }),
+      margin: margin({ amountPaise: bill.amountPaise, discountedPaise: bill.discountedPaise, costingPaise: costing, creditNotePaise: creditOf(credits, l, d.gstBp) }),
+      creditNote: creditOf(credits, l, d.gstBp),
       monthId: monthId(d.dispatchDate),
     });
   }
@@ -1120,7 +1134,7 @@ const orderDetails: ScreenModule = {
                 ? [
                     { l: "Lot-code costing", v: r.costing == null ? "—" : inr(r.costing), der: true },
                     { l: "Cost price per can", v: r.costing == null ? "—" : inr(Math.round(r.costing / l.o.qtyCans)), der: true },
-                    { l: "Credit note amount", v: d.creditNotePaise == null ? "—" : inr(d.creditNotePaise) },
+                    { l: "Credit note amount (before GST)", v: r.creditNote == null ? "—" : inr(r.creditNote) },
                   ]
                 : []),
               { l: "Order fulfil days", v: d.dispatchDate ? String(daysBetween(l.o.orderDate, d.dispatchDate)) : "—", der: true },

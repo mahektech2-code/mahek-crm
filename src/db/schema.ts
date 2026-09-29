@@ -3675,6 +3675,14 @@ export const complaints = pgTable(
     cnReference: text("cn_reference"),
     /** Whoever actually reported it — not always the customer's main number. */
     mobileNumber: text("mobile_number"),
+    /**
+     * The salesman a complaint was raised FOR, where somebody in the office
+     * wrote it down on his behalf — the ERP's "Name of salesman". Null means
+     * whoever logged it raised it.
+     */
+    salesmanName: text("salesman_name"),
+    /** The date printed on the credit note, where it differs from the day it was recorded. */
+    cnDate: date("cn_date"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -10999,7 +11007,6 @@ export const erpOrderDetails = pgTable("erp_order_details", {
     .references(() => erpOrders.id),
   gstBp: integer("gst_bp").notNull().default(1800),
   extraExpensesPaise: bigint("extra_expenses_paise", { mode: "number" }),
-  creditNotePaise: bigint("credit_note_paise", { mode: "number" }),
   /** Pending | Dispatched. */
   dispatchStatus: text("dispatch_status").notNull().default("Pending"),
   dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
@@ -11044,6 +11051,12 @@ export const erpTransports = pgTable(
   (t) => [uniqueIndex("erp_transports_order_key").on(t.orderNo)],
 );
 
+/**
+ * RETIRED — the ERP's customer requests are the CRM's `complaints` now (0184
+ * carried every row across under the same id). Nothing reads or writes this
+ * table; it is kept because deleting records somebody typed is a decision
+ * nobody has made.
+ */
 export const erpRequests = pgTable(
   "erp_requests",
   {

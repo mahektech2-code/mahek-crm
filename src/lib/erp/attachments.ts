@@ -13,19 +13,25 @@ import { listUserApps, listUserModules } from "@/lib/access";
  * none of these has a customer behind it that decides who should see it.
  * ------------------------------------------------------------------------- */
 
-export type ErpParent = "erp_test" | "erp_purchase" | "erp_request" | "erp_transport" | "erp_video";
+export type ErpParent = "erp_test" | "erp_purchase" | "erp_transport" | "erp_video";
 
-const SCREENS: Record<ErpParent, string[]> = {
+/*
+ * The screen each kind of file is read under. `complaint` is not an ERP parent
+ * — it is the CRM's own — but the ERP's complaints screen decides complaints,
+ * so its holders may open their files too (see `canRead`). The retired
+ * `erp_request` files became the complaint's when 0184 carried them over.
+ */
+const SCREENS: Record<ErpParent | "complaint", string[]> = {
   erp_test: ["testing"],
   erp_purchase: ["register"],
-  erp_request: ["requests", "issueCn", "complaints", "myCustomers"],
-  erp_transport: ["transport", "pendingLr", "trackLr"],
+  erp_transport: ["transport"],
   erp_video: ["videos"],
+  complaint: ["requests", "myCustomers"],
 };
 
 export async function canReadErpAttachment(userId: string, parentType: string, parentId: string): Promise<boolean> {
   void parentId;
-  const screens = SCREENS[parentType as ErpParent];
+  const screens = SCREENS[parentType as ErpParent | "complaint"];
   if (!screens) return false;
   const apps = await listUserApps(userId);
   if (!apps.includes("erp")) return false;

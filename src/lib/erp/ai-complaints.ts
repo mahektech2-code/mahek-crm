@@ -2,28 +2,31 @@ import "server-only";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { erpAiSuggestions, erpRequests } from "@/db/schema";
+import { complaints, erpAiSuggestions } from "@/db/schema";
+import { categoryLabel, categoryValue } from "@/lib/complaint-labels";
+import { getConfig } from "@/lib/config/store";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "./access";
 import { decideSuggestion, featureState, logSuggestion, outcomeOf, readText } from "./ai";
-import { refValues } from "./refs";
 import { erpAudit, text } from "./server";
 import type { FormSpec } from "./ui";
 
 /* ---------------------------------------------------------------------------
- * AI-6's reading half: from a request's own description, a suggested
- * complaint type (one of the reference list, never a new one) and a one-line
- * summary, which the person confirms or changes. It never proposes a credit
- * note amount; the trace and cluster notice beside it are rules.
+ * AI-6's reading half: from a complaint's own description, a suggested
+ * category (one of the CRM's complaint categories, never a new one) and a
+ * one-line summary, which the person confirms or changes. It never proposes a
+ * credit note amount; the trace and cluster notice beside it are rules. The
+ * complaint is the CRM's own record, so a confirmed category is the one the
+ * telecaller sees too.
  * ------------------------------------------------------------------------- */
 
 export async function suggestComplaint(ctx: ErpContext, requestId: string): Promise<Result<unknown>> {
   const state = await featureState("complaints");
   if (!state.on) return err(state.reason, "rule_violation");
-  const [r] = await db.select().from(erpRequests).where(eq(erpRequests.id, requestId));
-  if (!r) return err("That request no longer exists.", "not_found");
-  if (!r.description) return err("The request has no description to read.", "rule_violation");
-  const types = await refValues("complaintType");
+  const [r] = await db.select().from(complaints).where(eq(complaints.id, requestId));
+  if (!r) return err("That complaint no longer exists.", "not_found");
+  if (!r.description) return err("The complaint has no description to read.", "rule_violation");
+  const types = (await getConfig())["complaints.categories"];
   const read = await readText({
     label: "ERP complaint",
     system: `You classify complaints from paint customers. Choose the complaint type ONLY from this list: ${types.join(", ")}. If none fits, answer null. Then write a one-line English summary of what the customer says, without adding causes or blame.`,
@@ -33,7 +36,7 @@ export async function suggestComplaint(ctx: ErpContext, requestId: string): Prom
   });
   if (!read.output) return err("The description could not be read.", "rule_violation");
   const type = read.output.type && types.includes(read.output.type) ? read.output.type : null;
-  await logSuggestion({ feature: "complaints", recordType: "erp_request", recordId: requestId, inputRef: "description", proposed: { type, summary: read.output.summary }, confidence: { type: type ? read.output.typeConfidence : "not found" }, servedBy: read.model, userId: ctx.user.id });
+  await logSuggestion({ feature: "complaints", recordType: "complaint", recordId: requestId, inputRef: "description", proposed: { type, summary: read.output.summary }, confidence: { type: type ? read.output.typeConfidence : "not found" }, servedBy: read.model, userId: ctx.user.id });
   return okVoid(`Suggested ${type ?? "no type from the list"}. Open "Review the suggestion" to confirm.`);
 }
 
@@ -50,7 +53,7 @@ async function pending(requestId: string) {
 export async function complaintReviewForm(screen: string, requestId: string): Promise<FormSpec | null> {
   const s = await pending(requestId);
   if (!s) return null;
-  const [r] = await db.select().from(erpRequests).where(eq(erpRequests.id, requestId));
+  const [r] = await db.select().from(complaints).where(eq(complaints.id, requestId));
   const p = s.proposed as { type: string | null; summary: string | null };
   return {
     screen,
@@ -59,9 +62,9 @@ export async function complaintReviewForm(screen: string, requestId: string): Pr
     title: "Review the complaint suggestion",
     sub: "Suggested from the description. Confirm or change it.",
     submit: "Confirm",
-    init: { type: p.type ?? r?.complaintType ?? "", summary: p.summary ?? "" },
+    init: { type: p.type ?? (r ? categoryLabel(r.category) : ""), summary: p.summary ?? "" },
     header: [
-      { k: "type", l: "Complaint type", t: "select", req: true, opts: await refValues("complaintType"), conf: (s.confidence.type as "high" | "check" | "not found") ?? "check" },
+      { k: "type", l: "Complaint type", t: "select", req: true, opts: (await getConfig())["complaints.categories"], conf: (s.confidence.type as "high" | "check" | "not found") ?? "check" },
       { k: "summary", l: "Summary", t: "text", conf: "check" },
     ],
     evidence: { text: r?.description ?? "" },
@@ -73,10 +76,10 @@ export async function applyComplaint(ctx: ErpContext, suggestionId: string, h: R
   if (!s || s.outcome !== "pending" || !s.recordId) return err("That suggestion has already been decided.", "conflict");
   const type = text(h.type);
   if (!type) return fieldErr("type", "Complaint type is required");
-  await db.update(erpRequests).set({ complaintType: type, updatedAt: new Date() }).where(eq(erpRequests.id, s.recordId));
+  await db.update(complaints).set({ category: categoryValue(type) as never, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(complaints.id, s.recordId));
   const final = { type, summary: text(h.summary) };
   await decideSuggestion(suggestionId, outcomeOf(s.proposed as Record<string, unknown>, final), final);
-  await erpAudit(ctx, "erp.ai.complaint.apply", "erp_request", s.recordId, null, final);
+  await erpAudit(ctx, "erp.ai.complaint.apply", "complaint", s.recordId, null, final);
   return okVoid(`Complaint type ${type} confirmed`);
 }
 
@@ -84,7 +87,7 @@ export async function rejectComplaint(ctx: ErpContext, requestId: string): Promi
   const s = await pending(requestId);
   if (!s) return err("There is no suggestion to reject.", "not_found");
   await decideSuggestion(s.id, "rejected");
-  await erpAudit(ctx, "erp.ai.complaint.reject", "erp_request", requestId, null, { suggestionId: s.id });
+  await erpAudit(ctx, "erp.ai.complaint.reject", "complaint", requestId, null, { suggestionId: s.id });
   return okVoid("Suggestion rejected");
 }
 

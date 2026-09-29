@@ -1,10 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import {
-  COMPLAINT_PRIORITIES,
-  categoryValue,
-} from "@/lib/complaint-labels";
 import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -12,8 +8,6 @@ import { z } from "zod";
 import { db } from "@/db";
 import {
   auditLog,
-  complaints,
-  complaintStatusHistory,
   customers,
   eodReports,
   notifications,
@@ -32,11 +26,11 @@ import {
 } from "@/lib/access-control";
 import { SCOPE_COOKIE_NAME } from "@/lib/scope";
 import {
-  getConfig,
   updateSetting,
   updateSettings,
 } from "@/lib/config/store";
 import { saveInteraction } from "@/lib/services/interaction-service";
+import { createComplaint } from "@/lib/services/complaint-create";
 import type { NextStep } from "@/lib/engines/next-step";
 import {
   recordFollowUpAttempt,
@@ -1250,47 +1244,20 @@ export async function logComplaint(input: {
     // raised ON a call comes through saveInteraction instead, and gets its
     // interaction record there.
     const ctx = await resolveScope();
-    const config = await getConfig();
-    /*
-     * WHAT THE PERSON PICKED, and the configured default where nobody was
-     * asked. Validated against the offered list rather than trusted: a server
-     * action is a URL, and the SLA hangs off this value.
-     */
-    const picked = COMPLAINT_PRIORITIES.find((p) => p.value === input.priority);
-    const severity = picked?.value ?? config["complaints.defaultSeverity"];
-    const slaHours = config["complaints.slaHours"][severity];
-    const complaintId = id("cmp");
-
-    await db.transaction(async (tx) => {
-      await tx.insert(complaints).values({
-        id: complaintId,
-        customerId: input.customerId,
-        loggedByUserId: ctx.user.id,
-        // The dialog offers business labels; the column is an enum, and
-        // `categoryValue` is the one place that translation lives — it used to
-        // be this map, a second map on the handset, and a slug computed on two
-        // page components that agreed with neither.
-        category: categoryValue(input.category) as never,
-        description: input.description.trim(),
-        severity,
-        slaDueAt: new Date(Date.now() + slaHours * 3_600_000),
-        mobileNumber: input.mobileNumber?.trim() || null,
-        requestCn: input.requestCn ?? false,
-        billId: input.requestCn ? (input.billId ?? null) : null,
-        goodsDescription: input.requestCn
-          ? input.goodsDescription?.trim() || null
-          : null,
-        createdById: ctx.user.id,
-        updatedById: ctx.user.id,
-      });
-      await tx.insert(complaintStatusHistory).values({
-        id: id("csh"),
-        complaintId,
-        fromStatus: null,
-        toStatus: "open",
-        changedById: ctx.user.id,
-        note: `Logged by ${ctx.user.name}`,
-      });
+    /* The priority is validated against the offered list inside the writer:
+       a server action is a URL, and the SLA hangs off this value. The ERP's
+       "Raise a customer request" writes through the same function. */
+    const complaintId = await createComplaint({
+      customerId: input.customerId,
+      loggedById: ctx.user.id,
+      loggedByName: ctx.user.name,
+      category: input.category,
+      description: input.description,
+      priority: input.priority,
+      mobileNumber: input.mobileNumber,
+      requestCn: input.requestCn,
+      billId: input.billId,
+      goodsDescription: input.goodsDescription,
     });
 
     const attached = await attachComplaintImages(complaintId, input.images);
