@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   auditLog,
@@ -13,6 +13,7 @@ import {
   mbosDocuments,
   mbosUserTerritories,
   mbosSamples,
+  mbosTasks,
   mbosVisits,
   notifications,
   products,
@@ -30,6 +31,7 @@ import {
   type LeadGateInput,
 } from "../engines/lead-gates";
 import { directionOf, isOnTheBookAt, isParked } from "../engines/lead-ladder";
+import { NURTURE_SOURCE_TYPE } from "../engines/lead-nurture";
 import {
   stageLabel,
   verificationAnswers,
@@ -987,6 +989,28 @@ export async function applyLeadStageMove(
     if (to === "lost" && o.reasonCode) set.leadLostReason = o.reasonCode;
 
     /*
+     * §— A LOST LEAD OWES NOBODY ANYTHING FURTHER.
+     *
+     * §24's next action is a promise about WORKING this lead — the day, the
+     * person, and what they are expected to come back with — and a lead closed
+     * lost has nothing left to come back about. Left standing, it would go on
+     * reading as an active promise on the one screen (Next actions & nurture,
+     * the Lost list itself) that exists to say who is owed what: a lead that
+     * closed lost yesterday would still show tomorrow's call as outstanding,
+     * to a telecaller who has no reason to make it.
+     *
+     * All four are cleared together, the same way they are written together in
+     * `o.nextAction` above — an owner or an outcome left behind describes a
+     * promise that no longer exists.
+     */
+    if (to === "lost") {
+      set.leadNextAction = null;
+      set.leadNextActionDate = null;
+      set.leadNextActionOwnerId = null;
+      set.leadNextActionOutcome = null;
+    }
+
+    /*
      * §— ON HOLD IS A PAUSE, AND A PAUSE HAS TO SAY WHEN IT ENDS.
      *
      * Parking already demanded a reason, and a reason alone is how a lead sits
@@ -1069,6 +1093,44 @@ export async function applyLeadStageMove(
     }
 
     await tx.update(customers).set(set).where(eq(customers.id, lead.id));
+
+    /*
+     * §13's NURTURE SEQUENCE STOPS CHASING A LEAD THAT IS CLOSED.
+     *
+     * `raiseNurtureTasks` fires these off `mbos_tasks`, keyed on
+     * `sourceType = NURTURE_SOURCE_TYPE`, `customerId = <this lead>` — a task
+     * asking a lead manager to chase a sample review, or a salesman to make a
+     * repeat visit, on a lead that has just been told to stop. Closed rather
+     * than deleted, exactly as `closeNurtureTasks` in `mbos-jobs.ts` already
+     * closes these for the same reason a sample review is: a task somebody
+     * already completed is a record of them doing it, and `cancelled` is the
+     * honest status for one the world overtook rather than one that was done.
+     *
+     * SCOPED TO THIS LEAD AND THIS SOURCE TYPE ALONE. Verification calls,
+     * validation calls, sample chases and negotiation/requirement visits raise
+     * their own task rows under their own `sourceType`s — a different kind of
+     * work with its own reason to still be open — and closing those was never
+     * asked for and is not done here: "close only the relevant nurture tasks,
+     * never unrelated ones" is the rule, and the source type is what tells
+     * them apart.
+     */
+    if (to === "lost") {
+      await tx
+        .update(mbosTasks)
+        .set({
+          status: "cancelled",
+          completionNote: "The lead this task chases was closed lost.",
+          completedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(mbosTasks.customerId, lead.id),
+            eq(mbosTasks.sourceType, NURTURE_SOURCE_TYPE),
+            inArray(mbosTasks.status, ["open", "in_progress"]),
+          ),
+        );
+    }
 
     /*
      * §25 — the shared stream, which leads have written nothing to until now.

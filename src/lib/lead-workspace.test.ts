@@ -58,8 +58,15 @@ import {
  * module, its own route and its own grant, in the CRM. Nothing reads it
  * against `sales.lead-pipeline` and nothing should — a person can hold one,
  * both, or neither.
+ *
+ * `crm.lead-lost` is a FOURTH exception, and the same shape as the calling
+ * desk: a lead can be lost from any rung of any ladder, so it is a question
+ * asked of the whole book rather than a cut of one stage's worklist, and a tab
+ * of All Leads could not be withheld from anybody who can open that screen.
+ * There is no Sales Dashboard counterpart yet — the field funnel is walked
+ * through MBOS, and a lost lead there is read off the same rows.
  */
-const CRM_ONLY_LEAD_MODULES = ["lead-calling-desk", "sales-manager"];
+const CRM_ONLY_LEAD_MODULES = ["lead-calling-desk", "sales-manager", "lead-lost"];
 const SALES_ONLY_LEAD_MODULES = ["lead-pipeline"];
 const isSharedLeadModule = (workspace: string, key: string) => {
   const slug = key.slice(workspace.length + 1);
@@ -154,8 +161,8 @@ describe("the Lead Management nav and the module registry agree", () => {
     );
   });
 
-  it("the CRM-only exceptions are exactly the calling desk and Sales Manager: their own modules, off by default, drawn in the CRM sidebar", () => {
-    assert.deepEqual(CRM_ONLY_LEAD_MODULES, ["lead-calling-desk", "sales-manager"]);
+  it("the CRM-only exceptions are exactly the calling desk, Sales Manager and Lost: their own modules, off by default, drawn in the CRM sidebar", () => {
+    assert.deepEqual(CRM_ONLY_LEAD_MODULES, ["lead-calling-desk", "sales-manager", "lead-lost"]);
     for (const slug of CRM_ONLY_LEAD_MODULES) {
       const mod = APP_MODULES.find((m) => m.key === `crm.${slug}`);
       assert.ok(mod, `crm.${slug} is not a module`);

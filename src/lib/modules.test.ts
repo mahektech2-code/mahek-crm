@@ -46,8 +46,8 @@ describe("what a module grant means", () => {
     const off = modulesForApp("crm").filter((m) => m.offByDefault).map((m) => m.key);
     assert.deepEqual(
       off,
-      ["crm.lead-calling-desk", "crm.sales-manager"],
-      "the desk and the CRM's Sales Manager seat are the only modules the bypass can reach",
+      ["crm.lead-calling-desk", "crm.sales-manager", "crm.lead-lost"],
+      "the desk, the CRM's Sales Manager seat and Lost are the only modules the bypass can reach",
     );
 
     for (const key of off) {

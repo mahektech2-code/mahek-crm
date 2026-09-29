@@ -223,6 +223,7 @@ export const NAV: NavGroup[] = [
       { href: at("/leads/handovers"), label: "Handovers", icon: "arrowRight" },
       { href: at("/leads/oversight"), label: "Oversight", icon: "lock" },
       { href: at("/leads/sales-manager"), label: "Sales Manager", icon: "people" },
+      { href: at("/leads/lost"), label: "Lost", icon: "warning" },
     ],
   },
   {
