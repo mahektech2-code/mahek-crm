@@ -138,6 +138,19 @@ function unitOf(field: DeskField): string | null {
   }
 }
 
+/**
+ * One question, one row — label and answer control on the same line so the
+ * relationship between them reads at a glance, never a label sat over a
+ * fixed-width card with the rest of the row left blank.
+ *
+ * The PRODUCT field is the one exception: its control is a search box that
+ * opens a results list, so it takes the full row width with the label above
+ * it rather than squeezed beside it. Every other kind — a number, a short
+ * choice — gets a control sized to what it actually needs
+ * (`sm:w-[230px]`), because a two-digit answer stretched across half the
+ * dialog is the same wasted space as the grey panel this replaced, just
+ * filled with a box instead of left bare.
+ */
 function QuestionCell({
   field,
   customerId,
@@ -155,18 +168,22 @@ function QuestionCell({
   onText: (v: string) => void;
   onProduct: (id: string | null) => void;
 }) {
+  const isProduct = field.kind === "product";
   return (
-    <label className={cx("block bg-surface px-4 py-3", field.kind === "product" ? "sm:col-span-2" : "")}>
-      <span className="flex items-center gap-1.5">
-        <span className="text-[10.5px] font-semibold tracking-[0.04em] text-muted uppercase">
+    <div
+      className={cx(
+        "flex flex-col gap-2 px-4 py-3",
+        isProduct ? "" : "sm:flex-row sm:items-center sm:justify-between sm:gap-4",
+      )}
+    >
+      <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <span className="text-[13px] font-medium text-ink">
           {field.label}
-          {unitOf(field) ? (
-            <span className="font-normal tracking-normal normal-case"> ({unitOf(field)})</span>
-          ) : null}
+          {unitOf(field) ? <span className="font-normal text-muted"> ({unitOf(field)})</span> : null}
         </span>
         {field.required ? <Badge tone="warn">Required</Badge> : null}
       </span>
-      <span className="mt-1 block">
+      <span className={cx("block", isProduct ? "w-full" : "w-full sm:w-[230px] sm:flex-none")}>
         {field.kind === "product" ? (
           <ProductField
             customerId={customerId}
@@ -193,7 +210,7 @@ function QuestionCell({
           />
         )}
       </span>
-    </label>
+    </div>
   );
 }
 
@@ -210,21 +227,19 @@ function QuestionGrid({
   onProduct: (id: string | null) => void;
 }) {
   return (
-    <div className="mb-4 overflow-hidden rounded-[6px] border border-line">
-      <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2">
-        {list.map((f) => (
-          <QuestionCell
-            key={f.key}
-            field={f}
-            customerId={rest.customerId}
-            text={rest.text[f.key] ?? ""}
-            productId={rest.productId}
-            productName={rest.productName}
-            onText={(v) => rest.onText(f.key, v)}
-            onProduct={rest.onProduct}
-          />
-        ))}
-      </div>
+    <div className="mb-4 divide-y divide-line overflow-hidden rounded-[6px] border border-line bg-surface">
+      {list.map((f) => (
+        <QuestionCell
+          key={f.key}
+          field={f}
+          customerId={rest.customerId}
+          text={rest.text[f.key] ?? ""}
+          productId={rest.productId}
+          productName={rest.productName}
+          onText={(v) => rest.onText(f.key, v)}
+          onProduct={rest.onProduct}
+        />
+      ))}
     </div>
   );
 }
