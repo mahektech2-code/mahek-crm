@@ -1404,9 +1404,15 @@ transaction, is how two saves both spend the last litre.
 
 **Automations run in the save that qualifies them** (spec §18): a rated
 purchase posts to RM stock, a complete packing batch posts its one entry, a
-line entering order details gets its follow-up record, a bill's first verified
-line opens its transport record (a unique index is the "once"). Routing that
-needs a decision stays a button, as in the source.
+line is billed and enters order details in one step, a bill's first verified
+line opens its transport record (a unique index is the "once"), and an inward
+line goes to testing or to the register AS IT IS SAVED — the item's testing
+list already answered which, so the "Send to Testing / Send to Purchase" press
+Mahek Plus asked for is gone, kept only as the way out for a line the register
+refused (a lot number already taken). A purchase's bill and its status are one
+progress line (`purchaseStage`: Arrived or Tested → Bill received → Matched →
+Verified); recording the bill is the Invoice Received step, and a status past
+Pending means the bill is in hand.
 
 **ONE ORDER BOOK, and the ERP writes into it once it takes the orders.**
 MahekOne's `orders` and `bills` are what targets, the Call Log, outstanding,
