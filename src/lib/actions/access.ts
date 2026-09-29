@@ -9,6 +9,7 @@ import {
   appModuleAccess,
   auditLog,
   employees,
+  erpUserPowers,
   passwordResets,
   sessions,
   users,
@@ -20,6 +21,7 @@ import { newPassword } from "@/lib/password";
 import { initialsOf } from "@/lib/format";
 import { err as fail, fieldErr, ok, type Result } from "@/lib/result";
 import { widestRole, type Role } from "@/lib/access-control";
+import { ERP_POWERS } from "@/lib/erp/powers";
 import {
   employeesForLink,
   listCandidates,
@@ -112,6 +114,11 @@ export type SetAccessInput = {
   employeeId?: string | null;
   /** The whole picture, not a change to it. Apps absent here are revoked. */
   grants: AccessGrantInput[];
+  /**
+   * The ERP's special powers, the whole list. Absent leaves them as they are;
+   * they are cleared with the ERP itself, like its module rows.
+   */
+  erpPowers?: string[] | null;
   /** Only read when an account has to be created. */
   account?: {
     /** At least one of these two. Both is fine and often better. */
@@ -217,6 +224,45 @@ async function writeModules(
  * The employee must be ACTIVE in HRMS. That check is here and not only in the
  * picker, because the picker is a screen and this is the door.
  */
+/**
+ * WHO MAY GIVE AN ERP POWER. The bar the ERP's own Powers screen set before
+ * powers moved here: an ERP administrator (the admin level on the ERP, or a
+ * platform admin) or somebody holding the directory power. A manager may grant
+ * the ERP itself; deciding who verifies tests or sees purchase money is not the
+ * same decision, and moving the control must not lower the bar on it.
+ */
+async function mayGiveErpPowers(user: { id: string; role: string }): Promise<boolean> {
+  if (user.role === "admin") return true;
+  const [grant] = await db
+    .select({ role: appAccess.role })
+    .from(appAccess)
+    .where(and(eq(appAccess.userId, user.id), eq(appAccess.app, "erp")))
+    .limit(1);
+  if (grant?.role === "admin") return true;
+  const [power] = await db
+    .select({ power: erpUserPowers.power })
+    .from(erpUserPowers)
+    .where(and(eq(erpUserPowers.userId, user.id), eq(erpUserPowers.power, "employeeAdmin")))
+    .limit(1);
+  return !!power;
+}
+
+/** The powers a person should hold after this save, or null where they do not change. */
+function wantedErpPowers(input: SetAccessInput, keepsErp: boolean, current: string[]): string[] | null {
+  if (!keepsErp) return current.length ? [] : null;
+  if (input.erpPowers == null) return null;
+  const next = ERP_POWERS.filter((p) => input.erpPowers!.includes(p));
+  const same = next.length === current.length && next.every((p) => current.includes(p));
+  return same ? null : next;
+}
+
+async function writeErpPowers(userId: string, powers: string[], by: string) {
+  await db.transaction(async (tx) => {
+    await tx.delete(erpUserPowers).where(eq(erpUserPowers.userId, userId));
+    if (powers.length) await tx.insert(erpUserPowers).values(powers.map((power) => ({ userId, power, grantedById: by })));
+  });
+}
+
 export async function setAccess(
   input: SetAccessInput,
 ): Promise<Result<SetAccessResult>> {
@@ -368,6 +414,8 @@ export async function setAccess(
         await writeModules(tx, userId!, app, modules, me.id);
       }
     });
+    const newPowers = wantedErpPowers(input, wanted.has("erp"), []);
+    if (newPowers?.length && (await mayGiveErpPowers(me))) await writeErpPowers(userId!, newPowers, me.id);
 
     await audit(
       me.id,
@@ -444,7 +492,18 @@ export async function setAccess(
     return was.size !== now.length || now.some((m) => !was.has(m));
   });
 
-  if (!granted.length && !revoked.length && !changed.length) {
+  const currentPowers = (
+    await db.select({ power: erpUserPowers.power }).from(erpUserPowers).where(eq(erpUserPowers.userId, userId))
+  ).map((r) => r.power);
+  const powers = wantedErpPowers(input, wanted.has("erp"), currentPowers);
+  /* Clearing powers because the ERP itself is being taken away needs no ERP
+     administrator: the grant that gave them meaning is going. Changing them
+     while the ERP stays does. */
+  if (powers && wanted.has("erp") && !(await mayGiveErpPowers(me))) {
+    return fieldErr("erpPowers", "Only an ERP administrator gives or takes ERP powers.");
+  }
+
+  if (!granted.length && !revoked.length && !changed.length && !powers) {
     return ok(
       { userId, created: false, resetLinkSent: false, granted: [], revoked: [], changed: [] },
       "No change.",
@@ -523,7 +582,10 @@ export async function setAccess(
     .filter(Boolean)
     .join("; ");
 
-  await audit(me.id, "set-app-access", userId, detail);
+  if (powers) await writeErpPowers(userId, powers, me.id);
+  const powerDetail = powers ? `ERP powers ${currentPowers.length} → ${powers.length}${powers.length ? ` (${powers.join(", ")})` : ""}` : "";
+
+  await audit(me.id, "set-app-access", userId, [detail, powerDetail].filter(Boolean).join("; "));
   refresh();
 
   const said = [
@@ -537,6 +599,7 @@ export async function setAccess(
           .join(", ")
       : "",
     revoked.length ? `no longer opens ${describe(revoked)}` : "",
+    powers && wanted.has("erp") ? `holds ${powers.length} ERP power${powers.length === 1 ? "" : "s"}` : "",
   ].filter(Boolean);
 
   return ok(

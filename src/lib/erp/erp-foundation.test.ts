@@ -19,8 +19,11 @@ import {
   erpCustomerProfiles,
   erpGodownStaff,
   erpRawMaterials,
+  erpUserPowers,
   users,
 } from "@/db/schema";
+import { setAccess } from "@/lib/actions/access";
+import { moduleKeysForApp } from "@/lib/modules";
 import { setTestUser } from "@/lib/auth";
 import { erpContext, requireErpWrite, ErpNotPermitted } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
@@ -183,17 +186,43 @@ describe("customers", () => {
 });
 
 describe("powers and godowns", () => {
-  test("only an administrator gives powers, and a given power reveals its column", async () => {
-    const c = await as(clerk);
-    const refused = await mod("powers").actions!.set(c, clerk.id, { powers: "See purchase money" });
+  test("powers are given on the Access dialog, only by an ERP administrator, and a given power reveals its column", async () => {
+    const whole = { app: "erp", modules: moduleKeysForApp("erp"), role: "associate" as const };
+    /* A manager may grant the ERP itself, and is still refused the powers:
+       moving the control to the Admin Console did not lower the bar on it. */
+    const manager = await makeUser("Ravi Manager", "manager");
+    setTestUser(manager);
+    const refused = await setAccess({ userId: clerk.id, grants: [whole], erpPowers: ["viewPurchaseMoney"] });
     assert.ok(!refused.ok);
-    const a = await as(admin);
-    const ok = await mod("powers").actions!.set(a, clerk.id, { powers: "See purchase money" });
-    assert.ok(ok.ok);
+    assert.equal((await as(clerk)).powers.has("viewPurchaseMoney"), false);
+
+    setTestUser(admin);
+    const given = await setAccess({ userId: clerk.id, grants: [whole], erpPowers: ["viewPurchaseMoney", "notAPower"] });
+    assert.ok(given.ok, JSON.stringify(given));
     const c2 = await as(clerk);
-    assert.ok(c2.powers.has("viewPurchaseMoney"));
+    assert.deepEqual([...c2.powers], ["viewPurchaseMoney"], "an unknown power is dropped, never stored");
     const { spec } = await mod("rawMaterials").load(c2);
     assert.ok(spec.cols.some((x) => x.k === "price"));
+
+    /* Taking the ERP away takes its powers with it, like its screens. */
+    setTestUser(admin);
+    const other = await makeUser("Sunil Other", "associate");
+    await db.insert(appAccess).values({ id: id("aca"), userId: other.id, app: "crm", role: "associate" });
+    await setAccess({ userId: other.id, grants: [whole, { app: "crm", modules: moduleKeysForApp("crm"), role: "associate" }], erpPowers: ["viewCost"] });
+    assert.equal((await db.select().from(erpUserPowers).where(eq(erpUserPowers.userId, other.id))).length, 1);
+    await setAccess({ userId: other.id, grants: [{ app: "crm", modules: moduleKeysForApp("crm"), role: "associate" }] });
+    assert.equal((await db.select().from(erpUserPowers).where(eq(erpUserPowers.userId, other.id))).length, 0);
+  });
+
+  test("a screen's tabs are opened by holding the screen, and never granted apart from it", async () => {
+    const t = await makeUser("Tara Transport", "associate");
+    await db.insert(appModuleAccess).values({ id: id("ama"), userId: t.id, app: "erp", module: "erp.transport" });
+    const ctx = await as(t);
+    for (const k of ["transport", "pendingLr", "trackLr", "paidFreight"]) assert.ok(ctx.screens.has(k), k);
+    assert.equal(ctx.screens.has("stock"), false);
+    assert.equal(ctx.screens.has("rmStock"), false, "a tab of a screen they do not hold stays closed");
+    await assert.rejects(requireErpWrite("rmStock"), ErpNotPermitted);
+    await requireErpWrite("pendingLr");
   });
 
   test("the reserved godown cannot be switched off, and staff decide the working location", async () => {

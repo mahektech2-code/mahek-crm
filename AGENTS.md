@@ -1332,15 +1332,34 @@ outside those documents is in scope.
 **One registry, three readers.** `lib/erp/registry.ts` lists every screen by
 group. A screen becomes a module (`erp.<key>`) in `lib/modules.ts` only once it
 is `built`, and the sidebar, the module guard and the Access screen all read
-it. Each screen is its own module because the source granted screens one at a
-time. The dashboard and Settings are always open.
+it. The dashboard and Settings are always open.
+
+**A list that was only a filter is a TAB, not a screen.** Mahek Plus drew a
+separate view for every filter of one table — Pending LR, Track LR and All
+transport are one list three ways; each stock stage had an "available" view and
+a "log" view — and the first build copied every one into its own sidebar entry,
+module and grant: 54 screens. A screen's `views` in the registry are its tabs.
+Each tab keeps its own server module under its own key (its rows and actions
+are exactly what they were), is reached as `?view=<key>`, and is opened by
+holding the SCREEN: `erpContext` adds every tab's key to the screens a holder
+may use, so a check naming `pendingLr` answers as Transport. A tab is never a
+module, so it can never be granted apart from its screen, and
+`registry.test.ts` pins that. Link to a list with `erpLink(key)`, never by
+pasting `?f=` onto `erpHref` — a tab's link already carries a query.
+`0182_erp_screens_merged` moved every grant naming an old screen onto the
+screen it became; `next.config.ts` redirects the old URLs.
 
 **Its decisions are POWERS granted to people, not capabilities of a level.**
 The source tied "verify a test", "see purchase money" and the rest to three
 email addresses and an admin role; a hat (app, level) cannot say "the CEO"
 without making every ERP manager the CEO. `lib/erp/powers.ts` names them,
 `erp_user_powers` grants them, an ERP administrator holds all of them without a
-row, and the ERP powers screen is where an administrator hands them out. A
+row. They are handed out on the Admin Console's Access dialog, under the ERP
+app's screens — one place decides what somebody's ERP lets them do — and
+`setAccess` refuses a change to them from anybody who is not an ERP
+administrator (or holds the directory power), because a manager may grant the
+ERP and is still not the person who decides who verifies tests. Taking the ERP
+away takes its powers with it, like its module rows. A
 column a power reveals is removed on the SERVER (`visibleCols` /
 `withoutHidden`) — the value never reaches the browser — and every write that
 needs one re-checks it in the handler.
@@ -1367,7 +1386,7 @@ guessed default.
 **The ERP extends MahekOne's records rather than copying them** (PRD §8): a
 Sales Party IS a `customers` row plus `erp_customer_profiles`; a product IS a
 `products` row plus `erp_product_packing`; price lists are the Price Desk's,
-read; employees are HRMS's, read. "Deactive" is the customer's own
+read; employees are HRMS's, and the ERP no longer draws its own copy of them. "Deactive" is the customer's own
 `status = deactivated`, so the CRM and the ERP cannot disagree about whether a
 customer is closed. "Item Lost Record" is a reserved godown, so a write-off is
 a movement into a real location rather than stock that simply vanished.

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText, FLAG, inr, nf, ST_TONE } from "@/lib/erp/ui";
@@ -29,6 +30,9 @@ import { RecordDrawer } from "./record-drawer";
 /** More status values than this and they are a dropdown, not a row of tabs. */
 const MAX_TABS = 7;
 
+/** A tab of a screen with several lists (`views` in the registry): a link, because each tab is its own server read. */
+export type ListTab = { key: string; label: string; href: string; active: boolean };
+
 /** The coloured edge a flagged row carries, in the CRM's tokens. */
 const EDGE: Partial<Record<Tone, string>> = {
   danger: "shadow-[inset_3px_0_0_var(--color-danger)]",
@@ -46,6 +50,8 @@ export function ListScreen({
   initialOpen,
   godowns,
   filter,
+  tabs,
+  toggle,
 }: {
   spec: ListSpec;
   rows: ListRow[];
@@ -58,6 +64,10 @@ export function ListScreen({
   godowns: PickItem[];
   /** A dashboard pre-filter: the ids it counted, and what to call it. */
   filter?: { label: string; ids: string[] } | null;
+  /** The screen's tabs, when it has several lists. */
+  tabs?: ListTab[];
+  /** The current tab's second list (every entry behind the available stock), and the way back. */
+  toggle?: { label: string; href: string } | null;
 }) {
   const ui = useErpUi();
   const router = useRouter();
@@ -72,6 +82,10 @@ export function ListScreen({
   const [size, setSize] = useState(25);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [openId, setOpenId] = useState<string | null>(initialOpen ?? null);
+  /* Clearing a filter or closing a record returns to the same TAB: the tab is
+     in the query, and a bare path would open the screen's first one. */
+  const tabKey = params.get("view");
+  const home = tabKey ? `${path}?view=${encodeURIComponent(tabKey)}` : path;
 
   const cols = spec.cols;
   const colOf = (k: string): ColSpec => cols.find((c) => c.k === k) ?? { k, l: k, t: "t" };
@@ -161,14 +175,14 @@ export function ListScreen({
   const open = rows.find((r) => r.id === openId) ?? null;
   const closeRec = () => {
     setOpenId(null);
-    if (params.get("open")) router.replace(path);
+    if (params.get("open")) router.replace(home);
   };
   const clearAll = () => {
     setQ("");
     setChip("");
     setGf("");
     setPage(1);
-    if (filter) router.replace(path);
+    if (filter) router.replace(home);
   };
   const noMatchBits = [q ? `“${q}”` : "", chip, filter ? filter.label.toLowerCase() : "", gf].filter(Boolean).join(" · ");
   const pickChip = (v: string) => {
@@ -219,6 +233,30 @@ export function ListScreen({
           </>
         }
       />
+
+      {tabs && tabs.length > 1 ? (
+        <nav aria-label={`${label} lists`} className="mb-4 flex flex-wrap items-center border-b border-line">
+          {tabs.map((t) => (
+            <Link
+              key={t.key}
+              href={t.href}
+              aria-current={t.active ? "page" : undefined}
+              className={cx(
+                "-mb-px border-b-2 px-4 py-2.5 text-sm whitespace-nowrap",
+                t.active ? "border-brand font-medium text-ink" : "border-transparent text-muted hover:text-body",
+              )}
+            >
+              {t.label}
+            </Link>
+          ))}
+          <span className="flex-1" />
+          {toggle ? (
+            <Link href={toggle.href} className="px-2 py-2.5 text-[13px] font-medium text-[#5223E0] hover:underline">
+              {toggle.label}
+            </Link>
+          ) : null}
+        </nav>
+      ) : null}
 
       {metrics ? <MetricStrip metrics={metrics} /> : null}
 
@@ -295,7 +333,7 @@ export function ListScreen({
           {filter ? (
             <span className="inline-flex h-8 items-center gap-1.5 rounded-[4px] border border-brand bg-brand-soft pr-1 pl-2.5 text-[13px] font-medium text-[#5223E0]">
               From dashboard · {filter.label}
-              <button onClick={() => router.replace(path)} aria-label="Remove filter" className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[3px] hover:bg-brand-softer">
+              <button onClick={() => router.replace(home)} aria-label="Remove filter" className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[3px] hover:bg-brand-softer">
                 <ShellIcon name="close" size={14} />
               </button>
             </span>

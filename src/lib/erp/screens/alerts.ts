@@ -6,7 +6,7 @@ import { calendarDate } from "@/lib/business-date";
 import { err, fieldErr, okVoid } from "@/lib/result";
 import { runErpAlerts, visibleAlerts } from "../alerts";
 import { ALERT_LABEL, type AlertKind } from "../engines/alerts";
-import { erpHref, erpScreen } from "../registry";
+import { erpLink, erpScreen } from "../registry";
 import { erpAudit, text, type ScreenModule } from "../server";
 import type { ColSpec, ListRow } from "../ui";
 import type { ErpContext } from "../access";
@@ -52,7 +52,7 @@ export const alertsScreen: ScreenModule = {
           title: ALERT_LABEL[a.kind as AlertKind] ?? a.kind,
           header: a.explanation,
           actions: [
-            ...(screen ? [{ id: "open", l: "Open the records", primary: true, href: `${erpHref(screen)}?f=${encodeURIComponent(a.recordIds.join(","))}&fl=${encodeURIComponent(ALERT_LABEL[a.kind as AlertKind] ?? "Alert")}` }] : []),
+            ...(screen ? [{ id: "open", l: "Open the records", primary: true, href: erpLink(a.screen, { f: a.recordIds.join(","), fl: ALERT_LABEL[a.kind as AlertKind] ?? "Alert" }) }] : []),
             ...(a.status === "Open"
               ? [{ id: "ack", l: "Acknowledge", prompt: { title: "Acknowledge", sub: a.explanation, submit: "Acknowledge", fields: [{ k: "note", l: "Note", t: "area" as const, req: true, mic: true }] } }]
               : []),

@@ -9,7 +9,7 @@ import { incompletePackIds } from "./counts";
 import { ALERT_LABEL, type AlertKind } from "./engines/alerts";
 import { callingDate, followFigures } from "./engines/followup";
 import { addDaysIso, monthId, targetReached } from "./engines/sales";
-import { erpHref, erpScreen } from "./registry";
+import { erpLink } from "./registry";
 import { today } from "./screens/common";
 import { pendingCnRows } from "./screens/logistics";
 import { loadCustomers, partyStatus } from "./screens/masters";
@@ -39,10 +39,7 @@ export type Section = { t: string; tiles: Tile[] };
 
 /** A link to a screen, pre-filtered to the ids a tile counted. */
 export function tileHref(screen: string, ids: string[] | null, label: string): string {
-  const s = erpScreen(screen);
-  const base = s ? erpHref(s) : "/erp";
-  if (!ids) return base;
-  return `${base}?f=${encodeURIComponent(ids.join(","))}&fl=${encodeURIComponent(label)}`;
+  return ids ? erpLink(screen, { f: ids.join(","), fl: label }) : erpLink(screen);
 }
 
 type Row = Record<string, unknown>;
