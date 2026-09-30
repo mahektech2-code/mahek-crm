@@ -67,6 +67,7 @@ export function IntakeForm({
   canWork,
   canPrioritise,
   distributors,
+  defaultOwnerId = "",
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -76,6 +77,12 @@ export function IntakeForm({
   canWork: boolean;
   /** `lead.verify` — priority is a manager's word, so nobody else is offered it. */
   canPrioritise: boolean;
+  /**
+   * Who the owner box opens on: the person raising the lead, when they are the
+   * kind of person who works one (holds the Calling desk and is not a manager).
+   * Empty otherwise, which is "Unassigned" and is said as such.
+   */
+  defaultOwnerId?: string;
   /**
    * §23's "Under" — who bills this shop, for the third-party ladder only.
    * The same direct-customer candidates `crm/distributor-picker.tsx` already
@@ -107,7 +114,7 @@ export function IntakeForm({
     competitor: "",
     requirement: "",
     application: "",
-    ownerId: "",
+    ownerId: defaultOwnerId,
     notes: "",
     priority: "",
     distributorCustomerId: "",

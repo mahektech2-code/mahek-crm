@@ -23,7 +23,7 @@ import {
 import { orderCountsSql, orderDeliveredSql } from "../order-status";
 import { getConfig } from "../config/store";
 import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
-import type { Hat } from "../access-control";
+import { canAny, hatsFor, type Hat } from "../access-control";
 import {
   gateTo,
   PROSPECT_CONDITIONS,
@@ -93,12 +93,16 @@ const LEAD_COLUMNS = {
      Both are read by the qualification gate. */
   leadBuyer: customers.leadBuyer,
   gstVerified: customers.gstVerified,
+  gstVerifiedAt: customers.gstVerifiedAt,
+  gstVerifiedById: customers.gstVerifiedById,
   /* §5.3 — read by the gate through `figuresAreStale` and by the record page,
      which prints the date so somebody can see how old the figures are rather
      than only being refused by them. */
   leadFiguresConfirmedAt: customers.leadFiguresConfirmedAt,
   leadQualificationReview: customers.leadQualificationReview,
   leadQualificationReviewNote: customers.leadQualificationReviewNote,
+  leadQualificationReviewedAt: customers.leadQualificationReviewedAt,
+  leadQualificationReviewedById: customers.leadQualificationReviewedById,
   leadPriority: customers.leadPriority,
   leadHoldResumeDate: customers.leadHoldResumeDate,
   leadCreditDaysWanted: customers.leadCreditDaysWanted,
@@ -886,6 +890,14 @@ export async function evaluateLeadStageMove(input: {
   return { ok: true, kind: "overridden", overriddenConditions: missing.map((c) => c.id) };
 }
 
+/** Thrown by `applyLeadStageMove` when `expectFrom` no longer matches the lead. */
+export class StageAlreadyMoved extends Error {
+  constructor() {
+    super("The lead has already moved off the rung this move was made from.");
+    this.name = "StageAlreadyMoved";
+  }
+}
+
 export type LeadMoveActor = {
   userId: string;
   /**
@@ -935,6 +947,16 @@ export async function applyLeadStageMove(
     hold?: { reason?: string; resumeDate: string } | null;
     /** The business date, resolved by the caller — engines read no clock. */
     day: string;
+    /**
+     * The rung the caller read the lead on. Where it is given, the move is made
+     * only if the lead is STILL there when the transaction takes its lock —
+     * otherwise `StageAlreadyMoved` is thrown and nothing is written. It is what
+     * makes a move that two doors can both attempt (a verification arriving from
+     * the console and from a phone at the same moment) happen once, with one
+     * transition row, instead of twice. Optional and additive: no existing
+     * caller passes it, and the handset's own moves are unaffected.
+     */
+    expectFrom?: LeadStage | null;
   },
 ): Promise<{ transitionId: string; promoted: boolean }> {
   const salesType = lead.leadSalesType as LeadSalesType | null;
@@ -954,6 +976,15 @@ export async function applyLeadStageMove(
   const promoted = lead.kind === "lead" && isOnTheBookAt(to, salesType);
 
   await db.transaction(async (tx) => {
+    if (o.expectFrom) {
+      const [current] = await tx
+        .select({ stage: customers.leadStage })
+        .from(customers)
+        .where(eq(customers.id, lead.id))
+        .for("update");
+      if (current?.stage !== o.expectFrom) throw new StageAlreadyMoved();
+    }
+
     await tx.insert(leadStageTransitions).values({
       id: transitionId,
       customerId: lead.id,
@@ -1257,6 +1288,13 @@ export async function leadManagerCandidates(region: string | null): Promise<
 
   const out: { id: string; name: string; national: boolean }[] = [];
   for (const m of managers) {
+    /* A candidate has to be somebody who can actually DO the verification.
+       `users.role` is the widest level held under any hat, so an Accounts-only
+       manager reads as "manager" here and would be handed a verification call
+       the capability check then refuses - a Prospect nobody can verify, with the
+       cause in a matrix nobody is looking at. `lead.verify` is asked of the
+       hats, which is the same question the verification action itself asks. */
+    if (!canAny(await hatsFor({ id: m.id, role: "manager" }), "lead.verify")) continue;
     const mine = covered.get(m.id);
     /* No rows at all is national. Rows that are all somewhere else is a
        manager who covers a different part of the country, and offering them

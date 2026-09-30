@@ -56,6 +56,14 @@ import {
   type LeadRow,
 } from "@/lib/services/lead-service";
 import { LEAD_BULK_CAP } from "@/lib/services/sales-service";
+import {
+  isReviewer,
+  openQualificationAfterVerification,
+  recordReviewVoid,
+  settleQualificationState,
+} from "@/lib/services/lead-qualification-flow-service";
+import { gstinChangeClear, materialOf, reviewVoidPatch } from "@/lib/lead-review-void";
+import { qualificationAccess, QUALIFICATION_ONLY_FIELDS } from "@/lib/lead-qualification-access";
 
 /* ---------------------------------------------------------------------------
  * Every write the lead funnel makes from a browser.
@@ -568,11 +576,30 @@ export async function setLeadSalesType(
       }
     }
 
+    /* A CHANGE OF SALES TYPE VOIDS A MANAGER'S REVIEW WHOEVER MAKES IT. It is the
+       one structural edit: it changes which conditions exist at all, so the
+       verdict was about a different set. (An ordinary manager edit does not void
+       his own review; this does, and `reviewVoidPatch` says so.) */
+    const voided = reviewVoidPatch(
+      lead,
+      { leadSalesType: salesType },
+      { reviewer: await isReviewer(ctx.user) },
+    );
+
     await db.transaction(async (tx) => {
       await tx
         .update(customers)
-        .set({ leadSalesType: salesType, updatedAt: new Date() })
+        .set({ leadSalesType: salesType, updatedAt: new Date(), ...(voided?.set ?? {}) })
         .where(eq(customers.id, customerId));
+      if (voided) {
+        await recordReviewVoid(tx, {
+          lead,
+          voided,
+          actorId: ctx.user.id,
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+        });
+      }
 
       await tx.insert(auditLog).values({
         id: gen("aud"),
@@ -587,6 +614,7 @@ export async function setLeadSalesType(
       });
     });
 
+    if (voided) await settleQualificationState(customerId, ctx.user.id, { voided: true });
     refresh(customerId);
     return ok(null, "Sales type changed.");
   } catch (e) {
@@ -619,6 +647,14 @@ export async function saveLeadQualification(
     if (!found.ok) return found.refusal;
     const lead = found.lead;
 
+    /* QUALIFICATION IS WRITTEN AT QUALIFICATION. A Prospect the Sales Manager has
+       not verified yet has no Qualification to answer, and a tick saved against
+       it would be counted the moment the rung opens — as work somebody did
+       before anybody had checked there was a lead. Refused here, on the server,
+       and drawn as disabled on the screen from the same sentence. */
+    const access = qualificationAccess(lead.leadStage);
+    if (!access.writable) return err(access.reason, "rule_violation");
+
     const known = new Set(
       checklistFor(lead.leadSalesType as LeadSalesType | null, "qualification").map((c) => c.id),
     );
@@ -631,12 +667,31 @@ export async function saveLeadQualification(
 
     const merged = { ...(lead.leadQualification ?? {}), ...kept };
     const day = await today();
+    const voided = reviewVoidPatch(
+      lead,
+      { leadQualification: merged },
+      { reviewer: await isReviewer(ctx.user) },
+    );
 
     await db.transaction(async (tx) => {
       await tx
         .update(customers)
-        .set({ leadQualification: merged, leadLastActivityDate: day, updatedAt: new Date() })
+        .set({
+          leadQualification: merged,
+          leadLastActivityDate: day,
+          updatedAt: new Date(),
+          ...(voided?.set ?? {}),
+        })
         .where(eq(customers.id, customerId));
+      if (voided) {
+        await recordReviewVoid(tx, {
+          lead,
+          voided,
+          actorId: ctx.user.id,
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+        });
+      }
 
       await tx.insert(auditLog).values({
         id: gen("aud"),
@@ -651,6 +706,7 @@ export async function saveLeadQualification(
       });
     });
 
+    await settleQualificationState(customerId, ctx.user.id, { voided: Boolean(voided) });
     refresh(customerId);
     return {
       ok: true,
@@ -683,6 +739,10 @@ const prospectFieldsSchema = z.object({
   decisionMaker: z.string().trim().max(200).nullish(),
   creditDaysWanted: z.number().int().min(0).max(365).nullish(),
   application: z.string().trim().max(500).nullish(),
+  /* Who PLACES the order, where that is not who decides. The gate has read it
+     since the qualification checklist was cut to eight and the Calling Desk has
+     written it; the Qualification screen had nowhere to. */
+  buyer: z.string().trim().max(200).nullish(),
   gstin: z.string().trim().max(20).nullish(),
   companyName: z.string().trim().max(200).nullish(),
 });
@@ -711,6 +771,19 @@ export async function saveProspectFields(
     const ctx = await requireCapability("lead.work");
     const found = await reachableLead(customerId);
     if (!found.ok) return found.refusal;
+    const lead = found.lead;
+
+    /* THE QUALIFICATION-ONLY ANSWERS ARE WRITTEN AT QUALIFICATION. The other
+       answers this action takes — the kind of business, the figures, the contact
+       — are the Prospect's own and stay writable, because the Calling Desk and
+       the Sales Manager pipeline both send them. It is the four that belong to
+       the Telecaller's Qualification (GST number, application, credit days,
+       buyer) that wait for the Sales Manager to open it. */
+    const asked = QUALIFICATION_ONLY_FIELDS.filter((k) => f[k] !== undefined);
+    if (asked.length) {
+      const access = qualificationAccess(lead.leadStage);
+      if (!access.writable) return err(access.reason, "rule_violation");
+    }
 
     const set: Partial<typeof customers.$inferInsert> = {
       leadLastActivityDate: await today(),
@@ -725,11 +798,32 @@ export async function saveProspectFields(
     if (f.decisionMaker !== undefined) set.leadDecisionMaker = f.decisionMaker;
     if (f.creditDaysWanted !== undefined) set.leadCreditDaysWanted = f.creditDaysWanted;
     if (f.application !== undefined) set.leadApplication = f.application;
+    if (f.buyer !== undefined) set.leadBuyer = f.buyer;
     if (f.gstin !== undefined) set.gstin = f.gstin;
     if (f.companyName !== undefined) set.companyName = f.companyName;
 
+    /* A CHANGED NUMBER IS NOT THE NUMBER SOMEBODY VALIDATED. Clearing is by value,
+       so re-saving the same GSTIN leaves the validation alone. */
+    const gstClear = f.gstin !== undefined ? gstinChangeClear(lead, f.gstin) : null;
+    if (gstClear) Object.assign(set, gstClear);
+
+    /* Only the columns this call is actually setting are offered to the rule — read
+       straight off `set`, so an identical re-save is recognised as no change at
+       all and a column this action never writes can never be missed. */
+    const voided = reviewVoidPatch(lead, materialOf(set), { reviewer: await isReviewer(ctx.user) });
+    if (voided) Object.assign(set, voided.set);
+
     await db.transaction(async (tx) => {
       await tx.update(customers).set(set).where(eq(customers.id, customerId));
+      if (voided) {
+        await recordReviewVoid(tx, {
+          lead,
+          voided,
+          actorId: ctx.user.id,
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+        });
+      }
       await tx.insert(auditLog).values({
         id: gen("aud"),
         actorId: ctx.user.id,
@@ -742,6 +836,7 @@ export async function saveProspectFields(
       });
     });
 
+    await settleQualificationState(customerId, ctx.user.id, { voided: Boolean(voided) });
     refresh(customerId);
     return ok(null, "Saved.");
   } catch (e) {
@@ -1571,15 +1666,42 @@ export async function recordLeadValidationCall(
       return ok(null, `Recorded. ${settled.error}`);
     }
 
-    if (c.outcome !== "not_qualified") {
+    /*
+     * A SUCCESSFUL VERIFICATION OPENS QUALIFICATION, on every door.
+     *
+     * The helper is shared with the Sales Manager pipeline (which reaches it
+     * through this action) and with the handset, and it does not authorise — this
+     * action already asked for `lead.verify` above. It runs AFTER the desk
+     * request is settled, so a request that has just been promoted to Prospect is
+     * opened in the same act. It cannot fail the call: the call is evidence, and
+     * a refusal comes back in words.
+     */
+    if (c.outcome === "verified") {
+      const opened = await openQualificationAfterVerification(
+        { userId: ctx.user.id, hat: { app: ctx.authorisedIn, role: ctx.authorisedBy }, sourceApp: "crm" },
+        customerId,
+      ).catch(() => null);
+      refresh(customerId);
+      if (opened?.opened) {
+        return ok(
+          null,
+          settled.data.promoted
+            ? "Verified — the lead is now a confirmed Prospect and Qualification is open."
+            : `Verified — ${opened.message.replace(/^Verified — /, "")}`,
+        );
+      }
       return ok(
         null,
-        c.outcome === "verified"
-          ? settled.data.promoted
-            ? "Verified — the lead is now a confirmed Prospect."
-            : "Verified."
-          : "Recorded, and the follow-up is on the salesman's list.",
+        settled.data.promoted
+          ? "Verified — the lead is now a confirmed Prospect."
+          : opened && opened.reason !== "not_prospect" && opened.reason !== "already_open"
+            ? `Verified. Qualification did not open yet: ${opened.message}`
+            : "Verified.",
       );
+    }
+
+    if (c.outcome !== "not_qualified") {
+      return ok(null, "Recorded, and the follow-up is on the owner's list.");
     }
 
     /*

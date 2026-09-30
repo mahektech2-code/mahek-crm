@@ -235,7 +235,8 @@ describe("B — Create lead", () => {
       assert.equal(lead.email, "ganesh@shreeganeshpaints.in");
       assert.match(lead.leadNotes ?? "", /Need PU thinner for our paint shop/);
       assert.match(lead.leadRequirement ?? "", /PU Thinner/);
-      assert.equal(lead.ownerId, null, "assignment is somebody's decision, never automatic");
+      /* The Telecaller who creates the lead owns it — the creator is the initial owner. */
+      assert.equal(lead.ownerId, telecaller.id, "the creator, a Telecaller who holds the desk, is the initial owner");
       assert.equal(bandOf(lead.leadStage!), "new", "the funnel counts it in its first band");
 
       const row = await enquiryRow(enquiryId);
@@ -320,7 +321,7 @@ describe("B — Create lead", () => {
 
   test("the enquiry says whether anybody has the lead it made", async () => {
     const enquiryId = await makeEnquiry("QUOTE");
-    const r = await createLead(enquiryId);
+    const r = await createLead(enquiryId, { ownerId: null });
     assert.ok(r.ok);
     const { getEnquiry } = await import("@/lib/services/enquiry-service");
     const detail = await getEnquiry(enquiryId);
@@ -334,7 +335,7 @@ describe("B — Create lead", () => {
 describe("C — assignment and what each person sees", () => {
   test("an unowned lead is on no telecaller's desk, is seen and flagged for the administrator, and the assigners are told", async () => {
     const enquiryId = await makeEnquiry("QUOTE");
-    const r = await createLead(enquiryId);
+    const r = await createLead(enquiryId, { ownerId: null });
     assert.ok(r.ok);
     assert.match(r.message ?? "", /no owner yet/i, "the person who created it is told it is unowned");
     const leadId = r.data.customerId;
@@ -361,7 +362,7 @@ describe("C — assignment and what each person sees", () => {
 
   test("the administrator assigns it to the telecaller, who can then see it, open it and work it", async () => {
     const enquiryId = await makeEnquiry("DISTRIBUTOR");
-    const r = await createLead(enquiryId);
+    const r = await createLead(enquiryId, { ownerId: null });
     assert.ok(r.ok);
     const leadId = r.data.customerId;
 
@@ -395,7 +396,7 @@ describe("C — assignment and what each person sees", () => {
 
   test("a lead can only be handed to somebody who holds the desk, and only by somebody who may hand work out", async () => {
     const enquiryId = await makeEnquiry("QUOTE");
-    const r = await createLead(enquiryId);
+    const r = await createLead(enquiryId, { ownerId: null });
     assert.ok(r.ok);
     const leadId = r.data.customerId;
 

@@ -4,6 +4,8 @@ import { getConfig } from "@/lib/config/store";
 import { canLead } from "@/lib/services/lead-console-service";
 import { nextActionOwners } from "@/lib/services/lead-intake-service";
 import { distributorOptions } from "@/lib/services/distributor-service";
+import { canOpenModule } from "@/lib/access";
+import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { IntakeForm } from "@/components/leads/intake/intake-form";
 
@@ -48,10 +50,17 @@ export async function Body({
     distributorOptions(),
   ]);
 
+  /* The creator is the initial owner where they work leads — the same rule the
+     server applies when the box is left alone, drawn here so what the form
+     shows is what will be saved. */
+  const creatorWorksLeads =
+    (await canOpenModule(user.id, DESK_MODULE)) && !canPrioritise && owners.some((o) => o.id === user.id);
+
   return (
     <div className="p-6">
       <LeadTabs workspace={workspace} />
       <IntakeForm workspace={workspace}
+        defaultOwnerId={creatorWorksLeads ? user.id : ""}
         sourceOptions={config["leads.sources"]}
         owners={owners}
         canWork={canWork}

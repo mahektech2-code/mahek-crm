@@ -34,7 +34,7 @@ import {
   type NextActionKind,
   type RequestState,
 } from "../engines/lead-calling-desk";
-import { QUALIFICATION_CONDITIONS, gateTo } from "../engines/lead-gates";
+import { QUALIFICATION_CONDITIONS, gateTo, qualificationComplete } from "../engines/lead-gates";
 import { ladderFor } from "../engines/lead-ladder";
 import { resolveScope, scopedToUsers, scopedUserIds } from "../access-control";
 import { MBOS_EVENT } from "../timeline";
@@ -400,6 +400,17 @@ export type DeskLeadRecord = {
     byName: string | null;
   } | null;
   qualification: { done: number; total: number; conditions: { id: string; says: string; done: boolean }[] } | null;
+  /**
+   * WHO VERIFIED THE PROSPECT, and where the manager's review of the
+   * Qualification stands. The desk says "Verified by X on D. Qualification is now
+   * ready for you" off these, and "Awaiting Sales Manager review" once the
+   * Telecaller has finished — read from the lead, never typed on the screen.
+   */
+  verifiedByName: string | null;
+  qualificationReview: "verified" | "incomplete" | "clarification" | null;
+  qualificationReviewNote: string | null;
+  /** Everything the Telecaller owns is answered (the review conditions left out). */
+  qualificationComplete: boolean;
   sample: {
     state: string;
     trialOutcome: string;
@@ -746,6 +757,8 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
   }
 
   const sample = samples[0] ?? null;
+  const qualGate = lead.leadSalesType !== "distributor" ? await leadGateInput(customerId) : null;
+  const qualComplete = qualGate ? qualificationComplete(qualGate) : false;
 
   /* ---- the order, and the after-sales steps read off the ledger ---- */
   const counting = orderRows.filter((o) => countsAsPurchase(o.status));
@@ -936,6 +949,10 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
           }
         : null,
     qualification,
+    verifiedByName: rec.verifiedByName,
+    qualificationReview: rec.qualificationReview,
+    qualificationReviewNote: rec.qualificationReviewNote,
+    qualificationComplete: qualComplete,
     sample: sample
       ? {
           state: sample.state,

@@ -132,6 +132,21 @@ export type LeadActionFacts = {
   stage: LeadStage;
   salesType: LeadSalesType | null;
   /**
+   * The Sales Manager has verified this Prospect (`lead_verified_at`). Optional
+   * because most surfaces that draw a role's sentence hold a list row rather
+   * than the whole record; where it is absent the Prospect reads as still
+   * waiting, which is the honest default.
+   */
+  verified?: boolean;
+  /**
+   * The manager's verdict on the Telecaller's Qualification, and whether the
+   * Telecaller has finished it (`qualificationComplete`, derived from the gate).
+   * Optional for the same reason: a list row does not carry the gate, and an
+   * unknown reads as "still being completed".
+   */
+  qualificationReview?: "verified" | "incomplete" | "clarification" | null;
+  qualificationComplete?: boolean;
+  /**
    * §3.4 — a forecast somebody recorded, NOT a sale. Its presence is what
    * escalates the sales manager's verb in Negotiation from supporting the
    * conversation to closing it, and it is the whole reason that stage forks.
@@ -328,11 +343,23 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
     case "contacted":
       switch (vantage) {
         case "salesman":
-          return { label: "Awaiting manager verification", tone: "warn", actionable: false };
+          /* THERE IS NO SALESMAN IN THIS WORKFLOW. The Telecaller creates the
+             Prospect, the Sales Manager verifies it and the Telecaller then
+             qualifies it. A salesman's sentence here would be an instruction
+             nobody in that seat can act on. */
+          return NOT_YOUR_LADDER;
         case "calling_desk":
-          return { label: "Verification call support", tone: "brand", actionable: true };
+          /* NOT "verification call support", which read as though the Telecaller
+             had a part in the verification. Only a Sales Manager can verify. A
+             Prospect that is verified but still standing here is the recovery
+             case (the opening failed), and opening it is the Telecaller's. */
+          return facts.verified
+            ? { label: "Open qualification", tone: "brand", actionable: true }
+            : { label: "Awaiting Sales Manager verification", tone: "warn", actionable: false };
         case "sales_manager":
-          return { label: "Verify prospect", tone: "danger", actionable: true };
+          return facts.verified
+            ? { label: "Open qualification", tone: "brand", actionable: true }
+            : { label: "Make the verification call", tone: "danger", actionable: true };
         case "management":
           return managementQuiet(facts);
         case "back_office":
@@ -347,11 +374,33 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
     case "qualified":
       switch (vantage) {
         case "salesman":
-          return { label: "Complete qualification visit", tone: "brand", actionable: true };
-        case "calling_desk":
-          return NO_CALLING_DESK_ACTION;
-        case "sales_manager":
-          return { label: "Review qualification", tone: "warn", actionable: true };
+          return NOT_YOUR_LADDER;
+        case "calling_desk": {
+          /* QUALIFICATION IS THE TELECALLER'S. What they see is a counted-down
+             job until it is complete, then a wait for the manager, and their own
+             next step once the manager has spoken. */
+          const review = facts.qualificationReview ?? null;
+          if (review === "verified") {
+            return { label: "Request the sample", tone: "brand", actionable: true };
+          }
+          if (review === "incomplete" || review === "clarification") {
+            return { label: "Answer the Sales Manager's note", tone: "warn", actionable: true };
+          }
+          if (facts.qualificationComplete) {
+            return { label: "Awaiting Sales Manager review", tone: "warn", actionable: false };
+          }
+          return { label: "Complete qualification", tone: "brand", actionable: true };
+        }
+        case "sales_manager": {
+          const review = facts.qualificationReview ?? null;
+          if (review === "verified") {
+            return { label: "Verified — waiting for the sample request", tone: "muted", actionable: false };
+          }
+          if (facts.qualificationComplete) {
+            return { label: "Review qualification", tone: "warn", actionable: true };
+          }
+          return { label: "Qualification in progress", tone: "muted", actionable: false };
+        }
         case "management":
           return managementQuiet(facts);
         case "back_office":

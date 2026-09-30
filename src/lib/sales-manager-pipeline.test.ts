@@ -173,6 +173,12 @@ async function qualifiedLead(over: Partial<typeof customers.$inferInsert> = {}) 
     leadBuyer: "Ganesh's brother",
     leadFiguresConfirmedAt: new Date(),
     leadQualification: { price_discussed: true, delivery_discussed: true, agrees_to_test: true, next_step_agreed: true },
+    /* THE MANAGER'S REVIEW IS MANDATORY FOR SAMPLE/TRIAL, so a lead that is
+       "ready for a sample" carries a verified one. Tests about the review itself
+       override these. */
+    leadQualificationReview: "verified",
+    leadQualificationReviewedAt: new Date(),
+    leadQualificationReviewedById: manager.id,
     ...over,
   });
 }
@@ -613,7 +619,7 @@ describe("M — every mutation persists, and the screen is told what the databas
     assert.equal(held.qualReview?.verdict, "incomplete");
     assert.equal(held.qualReview?.note, "Ask about the credit again.");
     assert.equal(held.gate.kind, "qualify", "a negative review holds the gate shut, and says why");
-    assert.match(held.gate.kind === "qualify" ? (held.gate.note ?? "") : "", /marked this checklist incomplete/i);
+    assert.match(held.gate.kind === "qualify" ? (held.gate.note ?? "") : "", /marked this qualification incomplete/i);
   });
 
   test("the whole sample journey, each step a real row and each gate the engine's", async () => {

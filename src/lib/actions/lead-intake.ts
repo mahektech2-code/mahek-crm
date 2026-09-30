@@ -7,6 +7,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, customerDistributors, customers, notifications, users } from "@/db/schema";
 import { canFor, requireCapability } from "@/lib/access-control";
+import { canOpenModule } from "@/lib/access";
 import { LEAD_PRIORITIES } from "@/lib/lead-priority";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
@@ -18,7 +19,7 @@ import {
   EnquiryLeadConflict,
   linkEnquiryToNewLead,
 } from "@/lib/services/enquiry-service";
-import { notifyDeskAssigners } from "@/lib/services/lead-desk-assignment-service";
+import { DESK_MODULE, notifyDeskAssigners } from "@/lib/services/lead-desk-assignment-service";
 import {
   DUPLICATE_DISMISSED_ACTION,
   phoneAlreadyOnTheBook,
@@ -293,6 +294,39 @@ export async function captureLead(
      * A sentence is what makes it get picked when it is true, and the sentences
      * are what tell Mahek which eleventh source is worth adding to the list.
      */
+    /*
+     * THE PERSON WHO CAPTURES A LEAD IS ITS INITIAL OWNER — where they are the
+     * sort of person who works one.
+     *
+     * The old rule was the opposite ("`owner_id` is never the person doing the
+     * capturing"), and its reason was a salesman: a telecaller taking a call is
+     * not the one who walks to the shop. There is no salesman in this workflow —
+     * the Telecaller who raises the lead is the one who calls it, promotes it
+     * and completes its Qualification — so the reason has gone, and the owner
+     * defaults to the creator.
+     *
+     * TWO EXCEPTIONS keep "owner" from meaning something it should not:
+     *   • a creator who does not hold the Calling desk. A lead owned by somebody
+     *     who cannot open the desk vanishes into a book they cannot read — the
+     *     failure `assignDeskLead` refuses on the way in.
+     *   • a manager (`lead.verify`). A manager raising a lead is handing it to
+     *     the desk, not taking it; making them its owner would put the whole
+     *     desk's book on the person who verifies it.
+     * Both stay unassigned, and the desk assigners are told, exactly as before.
+     *
+     * Only when the caller SAID NOTHING. `ownerId: null` is a deliberate
+     * "unassigned" and is respected, and a named owner is used as named. The
+     * bulk importer takes its own path and its own explicit owner — a defaulted
+     * owner on a thousand-row file reads as one person's book on every list.
+     * Who raised the lead is not stored here at all: it is the actor on the
+     * append-only `lead_created` event, and no reassignment can edit that.
+     */
+    if (v.ownerId === undefined) {
+      const holdsDesk = await canOpenModule(ctx.user.id, DESK_MODULE);
+      const isManager = await canFor(ctx.user, "lead.verify");
+      v = { ...v, ownerId: holdsDesk && !isManager ? ctx.user.id : null };
+    }
+
     if (v.priority && !(await canFor(ctx.user, "lead.verify"))) {
       return err(
         "Priority is set by a manager. Raise the lead without it and ask them to set it.",

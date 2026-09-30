@@ -13,14 +13,13 @@ import {
   archiveLead,
   bulkArchiveLeads,
   bulkChaseLeadOwners,
-  bulkReassignLeads,
   bulkRestoreLeads,
   chaseLeadOwner,
   exportLeadRows,
   leadIdsForSelection,
-  reassignLead,
   restoreLead,
 } from "@/lib/actions/sales";
+import { assignDeskLead, bulkAssignDeskLeads } from "@/lib/actions/lead-desk-assignment";
 import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
 import { healthView } from "@/lib/customer-health";
 import { cx } from "@/components/ui/primitives";
@@ -151,6 +150,7 @@ export function LeadsScreen({
   team,
   desks,
   canPrioritise,
+  canReassign,
   viewer,
   places,
 }: {
@@ -241,6 +241,8 @@ export function LeadsScreen({
    * disabled menu item is a fact about a component.
    */
   canPrioritise: boolean;
+  /** `lead.verify` and the Calling desk — the same two questions `assignDeskLead` asks. */
+  canReassign: boolean;
   /**
    * §7 — WHOSE JOB THIS READER IS DOING, resolved once on the server and
    * applied here per row.
@@ -456,7 +458,7 @@ export function LeadsScreen({
     try {
       const result =
         bulk === "reassign"
-          ? await bulkReassignLeads({ leadIds, salesmanId })
+          ? await bulkAssignDeskLeads({ leadIds, ownerId: salesmanId })
           : bulk === "stage"
             ? await bulkAdvanceLeadStage({ customerIds: leadIds, to: stage })
             : bulk === "archive"
@@ -515,7 +517,7 @@ export function LeadsScreen({
     try {
       const result =
         acting.kind === "reassign"
-          ? await reassignLead({ leadId: acting.lead.id, salesmanId })
+          ? await assignDeskLead({ customerId: acting.lead.id, ownerId: salesmanId })
           : acting.kind === "archive"
             ? await archiveLead({ leadId: acting.lead.id, reason })
             : acting.kind === "priority"
@@ -691,6 +693,7 @@ export function LeadsScreen({
               showArchived={showArchived}
               onClear={() => setPicked(new Set())}
               onSelectEverything={() => void selectEverything()}
+              canReassign={canReassign}
               onAct={beginBulk}
             />
           ) : null}
@@ -943,7 +946,14 @@ export function LeadsScreen({
                         <RowMenu
                           items={[
                             { label: "Open the record", href: leadHref(workspace, `leads/${l.id}`) },
-                            { label: "Reassign the lead", run: () => begin(l, "reassign") },
+                            {
+                              label: "Reassign the lead",
+                              run: () => begin(l, "reassign"),
+                              disabled: !canReassign,
+                              title: canReassign
+                                ? undefined
+                                : "Handing a lead to another Telecaller is a manager's, on the Calling desk. Yours is not one of the hats that carries it.",
+                            },
                             {
                               /* Named for what it is rather than "Set the
                                  priority", so the menu says which of the two
@@ -2038,6 +2048,7 @@ function BulkBar({
   showArchived,
   onClear,
   onSelectEverything,
+  canReassign,
   onAct,
 }: {
   count: number;
@@ -2046,6 +2057,7 @@ function BulkBar({
   showArchived: boolean;
   onClear: () => void;
   onSelectEverything: () => void;
+  canReassign: boolean;
   onAct: (kind: Bulk) => void;
 }) {
   return (
@@ -2090,7 +2102,13 @@ function BulkBar({
           <button
             type="button"
             onClick={() => onAct("reassign")}
-            className="h-8 cursor-pointer rounded-[4px] bg-ink px-3 text-[13px] font-medium text-white hover:opacity-90"
+            disabled={!canReassign}
+            title={
+              canReassign
+                ? undefined
+                : "Handing leads to another Telecaller is a manager's, on the Calling desk. Yours is not one of the hats that carries it."
+            }
+            className="h-8 cursor-pointer rounded-[4px] bg-ink px-3 text-[13px] font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Change owner
           </button>

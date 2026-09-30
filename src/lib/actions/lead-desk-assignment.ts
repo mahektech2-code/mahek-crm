@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, customers } from "@/db/schema";
+import { auditLog, customers, users } from "@/db/schema";
 import { canOpenModule } from "@/lib/access";
 import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
 import { notifyUser } from "@/lib/notify";
@@ -13,14 +13,35 @@ import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { leadRow } from "@/lib/services/lead-service";
 import { DESK_MODULE, deskHolders } from "@/lib/services/lead-desk-assignment-service";
+import { LEAD_BULK_CAP } from "@/lib/services/sales-service";
 
 /* ---------------------------------------------------------------------------
- * GIVING A LEAD TO A TELECALLER.
+ * GIVING A LEAD TO A TELECALLER — and moving it to another.
  *
  * The owner IS the assignment: `ASSIGNED_TO_SQL` resolves a lead through
  * `owner_id`, so this one write is what puts the lead on the person's calling
  * desk and in every scoped list — there is no second table and nothing else to
  * keep in step.
+ *
+ * THIS IS THE REASSIGN. There used to be a second one on the leads list
+ * (`reassignLead`, in the Sales Dashboard's actions) that only accepted a
+ * person holding the FIELD app — a salesman's handset. In a workflow whose
+ * owner is the Telecaller that picker offered nobody who could work the lead
+ * and would have put it on a phone the Telecaller does not have, so the record,
+ * the list and the pipeline all reassign through here instead.
+ *
+ * WHAT A REASSIGNMENT CHANGES is `owner_id`, and one thing that follows from it:
+ * a next action that was OWED BY THE OLD OWNER moves to the new one. A
+ * Telecaller's "Complete the qualification" that stayed with the person the lead
+ * was taken from would be a promise to nobody. A next action owed by anybody
+ * else — above all the Sales Manager's "verification call" or "Review
+ * qualification" — is left exactly where it is: the manager's job does not
+ * become the Telecaller's because the lead changed hands, which is the failure
+ * the workflow exists to prevent.
+ *
+ * WHAT IT NEVER CHANGES is who raised the lead. There is no created-by column to
+ * touch: the creator is the actor on the append-only `lead_created` timeline
+ * event, and a reassignment adds a row to that history rather than editing it.
  *
  * `lead.verify` because handing work out is the manager's judgement, the same
  * capability that sets a lead's priority; an administrator holds it by
@@ -38,6 +59,152 @@ const schema = z.object({
   ownerId: z.string().min(1, "Pick who it goes to."),
 });
 
+type Actor = Awaited<ReturnType<typeof requireCapability>>;
+
+type AssignResult =
+  | { ok: true; changed: boolean; leadName: string }
+  | { ok: false; error: string; code: "not_found" | "rule_violation"; leadName?: string };
+
+/**
+ * One reassignment, with every check and every write — shared by the single and
+ * the bulk door so they cannot come apart.
+ *
+ * Throws only where `assertCustomerInScope` does, which is the scope answer and
+ * is not caught here: a lead the actor may not see must not be named back to
+ * them.
+ */
+async function assignOne(
+  ctx: Actor,
+  customerId: string,
+  target: { id: string; name: string },
+): Promise<AssignResult> {
+  const lead = await leadRow(customerId);
+  if (!lead || lead.leadStage === null) {
+    return { ok: false, code: "not_found", error: "That lead is not on MahekOne." };
+  }
+  if (lead.leadArchived) {
+    return {
+      ok: false,
+      code: "rule_violation",
+      error: "That lead is archived. Restore it before assigning it.",
+      leadName: lead.name,
+    };
+  }
+
+  if (lead.ownerId) {
+    await assertCustomerInScope({
+      kind: lead.kind,
+      ownerId: lead.ownerId,
+      salesAmId: lead.salesAmId,
+      backOfficeAmId: lead.backOfficeAmId,
+      leadManagerId: lead.leadManagerId,
+    });
+  }
+  if (lead.ownerId === target.id) return { ok: true, changed: false, leadName: lead.name };
+
+  /* A next action owed by the old owner follows the lead; one owed by anybody
+     else — the manager's verification, the manager's review — stays with them.
+     Matched on the OWNER column, not on the words, so a next action a person
+     typed by hand follows the same rule as one the workflow wrote. */
+  const followsOwner = Boolean(lead.ownerId) && lead.leadNextActionOwnerId === lead.ownerId;
+
+  const previous = lead.ownerId
+    ? (await db.select({ name: users.name }).from(users).where(eq(users.id, lead.ownerId)).limit(1))[0]
+    : undefined;
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(customers)
+      .set({
+        ownerId: target.id,
+        ...(followsOwner ? { leadNextActionOwnerId: target.id } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(customers.id, lead.id));
+    await writeTimelineEvent(tx, {
+      customerId: lead.id,
+      eventType: MBOS_EVENT.ownerChange,
+      sourceApp: "crm",
+      sourceRecordId: `${lead.id}:desk:${randomUUID().slice(0, 8)}`,
+      occurredAt: new Date(),
+      actorUserId: ctx.user.id,
+      summary: previous
+        ? `Reassigned from ${previous.name} to ${target.name}`
+        : `Assigned to ${target.name} on the calling desk`,
+    });
+    await tx.insert(auditLog).values({
+      id: `aud_${randomUUID().slice(0, 12)}`,
+      actorId: ctx.user.id,
+      action: lead.ownerId ? "lead.reassigned" : "lead.deskAssigned",
+      entityType: "customer",
+      entityId: lead.id,
+      actorRole: ctx.authorisedBy,
+      actorApp: ctx.authorisedIn,
+      beforeState: {
+        ownerId: lead.ownerId ?? null,
+        nextActionOwnerId: lead.leadNextActionOwnerId ?? null,
+      },
+      afterState: {
+        ownerId: target.id,
+        nextActionOwnerId: followsOwner ? target.id : (lead.leadNextActionOwnerId ?? null),
+        nextActionFollowed: followsOwner,
+      },
+    });
+  });
+
+  /* The new owner is told, and the old one — a lead that leaves a book silently
+     reads as a bug in the list. Never able to fail the assignment. */
+  if (target.id !== ctx.user.id) {
+    await notifyUser({
+      userId: target.id,
+      title: `A lead was assigned to you: ${lead.name}`,
+      body: `${ctx.user.name} put it on your calling desk.`,
+      kind: "info",
+      href: `/crm/leads/calling-desk/${lead.id}`,
+    }).catch(() => {});
+  }
+  if (lead.ownerId && lead.ownerId !== ctx.user.id && lead.ownerId !== target.id) {
+    await notifyUser({
+      userId: lead.ownerId,
+      title: `${lead.name} was moved`,
+      body: `${ctx.user.name} reassigned it to ${target.name}.`,
+      kind: "info",
+    }).catch(() => {});
+  }
+
+  return { ok: true, changed: true, leadName: lead.name };
+}
+
+function refresh(customerId?: string) {
+  try {
+    revalidatePath("/crm/leads/calling-desk");
+    revalidatePath("/crm/leads");
+    revalidatePath("/sales/leads");
+    if (customerId) {
+      revalidatePath(`/crm/leads/calling-desk/${customerId}`);
+      revalidatePath(`/crm/leads/${customerId}`);
+      revalidatePath(`/sales/leads/${customerId}`);
+    }
+  } catch {
+    /* no request context — a job or a test, where nothing is cached */
+  }
+}
+
+async function requireAssigner(): Promise<{ ctx: Actor } | { refusal: ReturnType<typeof err> }> {
+  const ctx = await requireCapability("lead.verify");
+  if (!(await canOpenModule(ctx.user.id, DESK_MODULE))) {
+    return { refusal: err("You have not been given the Calling desk. Ask whoever manages access to grant it.", "not_permitted") };
+  }
+  return { ctx };
+}
+
+async function desk(ownerId: string) {
+  return (await deskHolders()).find((h) => h.id === ownerId) ?? null;
+}
+
+const NOT_ON_A_DESK =
+  "That person cannot open the Calling desk, so a lead given to them would not be on any desk they can see. Grant it on the Access screen first.";
+
 export async function assignDeskLead(
   input: z.input<typeof schema>,
 ): Promise<Result<{ ownerName: string }>> {
@@ -46,79 +213,78 @@ export async function assignDeskLead(
     if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Pick who it goes to.", "validation");
     const p = parsed.data;
 
-    const ctx = await requireCapability("lead.verify");
-    if (!(await canOpenModule(ctx.user.id, DESK_MODULE))) {
-      return err("You have not been given the Calling desk.", "not_permitted");
-    }
+    const gate = await requireAssigner();
+    if ("refusal" in gate) return gate.refusal;
 
-    const lead = await leadRow(p.customerId);
-    if (!lead || lead.leadStage === null) return err("That lead is not on MahekOne.", "not_found");
-    if (lead.leadArchived) return err("That lead is archived. Restore it before assigning it.", "rule_violation");
-
-    if (lead.ownerId) {
-      await assertCustomerInScope({
-        kind: lead.kind,
-        ownerId: lead.ownerId,
-        salesAmId: lead.salesAmId,
-        backOfficeAmId: lead.backOfficeAmId,
-        leadManagerId: lead.leadManagerId,
-      });
-    }
-
-    const holders = await deskHolders();
-    const target = holders.find((h) => h.id === p.ownerId);
+    const target = await desk(p.ownerId);
     if (!target) {
-      return err(
-        "That person cannot open the Calling desk, so a lead given to them would not be on any desk they can see. Grant it on the Access screen first.",
-        "rule_violation",
-        [{ field: "ownerId", message: "Does not hold the Calling desk." }],
-      );
-    }
-    if (lead.ownerId === target.id) return ok({ ownerName: target.name }, `Already ${target.name}'s.`);
-
-    await db.transaction(async (tx) => {
-      await tx.update(customers).set({ ownerId: target.id, updatedAt: new Date() }).where(eq(customers.id, lead.id));
-      await writeTimelineEvent(tx, {
-        customerId: lead.id,
-        eventType: MBOS_EVENT.ownerChange,
-        sourceApp: "crm",
-        sourceRecordId: `${lead.id}:desk:${randomUUID().slice(0, 8)}`,
-        occurredAt: new Date(),
-        actorUserId: ctx.user.id,
-        summary: `Assigned to ${target.name} on the calling desk`,
-      });
-      await tx.insert(auditLog).values({
-        id: `aud_${randomUUID().slice(0, 12)}`,
-        actorId: ctx.user.id,
-        action: "lead.deskAssigned",
-        entityType: "customer",
-        entityId: lead.id,
-        actorRole: ctx.authorisedBy,
-        actorApp: ctx.authorisedIn,
-        beforeState: { ownerId: lead.ownerId ?? null },
-        afterState: { ownerId: target.id },
-      });
-    });
-
-    /* The person it lands on is told — work has arrived without their asking —
-       unless they gave it to themselves. Never able to fail the assignment. */
-    if (target.id !== ctx.user.id) {
-      await notifyUser({
-        userId: target.id,
-        title: `A lead was assigned to you: ${lead.name}`,
-        body: `${ctx.user.name} put it on your calling desk.`,
-        kind: "info",
-        href: `/crm/leads/calling-desk/${lead.id}`,
-      }).catch(() => {});
+      return err(NOT_ON_A_DESK, "rule_violation", [{ field: "ownerId", message: "Does not hold the Calling desk." }]);
     }
 
-    try {
-      revalidatePath("/crm/leads/calling-desk");
-      revalidatePath(`/crm/leads/calling-desk/${lead.id}`);
-    } catch {
-      /* no request context */
-    }
+    const done = await assignOne(gate.ctx, p.customerId, target);
+    if (!done.ok) return err(done.error, done.code);
+    if (!done.changed) return ok({ ownerName: target.name }, `Already ${target.name}'s.`);
+
+    refresh(p.customerId);
     return ok({ ownerName: target.name }, `Assigned to ${target.name}.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+const bulkSchema = z.object({
+  leadIds: z.array(z.string().min(1)).min(1, "Nothing selected."),
+  ownerId: z.string().min(1, "Pick who they go to."),
+});
+
+/**
+ * Change the owner of a selection — the same act as {@link assignDeskLead}, once
+ * per lead, sequentially, so a batch cannot come out different from doing them
+ * one at a time. What did not move comes back NAMED with the reason, so exactly
+ * those leads can stay ticked.
+ */
+export async function bulkAssignDeskLeads(
+  input: z.input<typeof bulkSchema>,
+): Promise<Result<{ done: number; failed: Array<{ id: string; name: string; why: string }> }>> {
+  try {
+    const parsed = bulkSchema.safeParse(input);
+    if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Nothing selected.", "validation");
+
+    const gate = await requireAssigner();
+    if ("refusal" in gate) return gate.refusal;
+
+    const target = await desk(parsed.data.ownerId);
+    if (!target) {
+      return err(NOT_ON_A_DESK, "rule_violation", [{ field: "ownerId", message: "Does not hold the Calling desk." }]);
+    }
+
+    const ids = Array.from(new Set(parsed.data.leadIds)).slice(0, LEAD_BULK_CAP);
+    let done = 0;
+    const failed: Array<{ id: string; name: string; why: string }> = [];
+    for (const id of ids) {
+      try {
+        const r = await assignOne(gate.ctx, id, target);
+        if (!r.ok) failed.push({ id, name: r.leadName ?? "A lead", why: r.error });
+        else if (!r.changed) failed.push({ id, name: r.leadName, why: "already theirs" });
+        else done += 1;
+      } catch {
+        /* Out of scope: refused without being named — a lead the caller may not
+           see is not described back to them. */
+        failed.push({ id, name: "A lead", why: "not in your book" });
+      }
+    }
+
+    refresh();
+    const head = `${done} ${done === 1 ? "lead" : "leads"} now ${target.name}'s.`;
+    return ok(
+      { done, failed },
+      failed.length
+        ? `${head} ${failed.length} did not move: ${failed
+            .slice(0, 3)
+            .map((f) => `${f.name} — ${f.why}`)
+            .join("; ")}`
+        : head,
+    );
   } catch (e) {
     return fromThrown(e);
   }

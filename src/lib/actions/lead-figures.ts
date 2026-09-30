@@ -9,6 +9,8 @@ import { auditLog, customers } from "@/db/schema";
 import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
 import { requireUser } from "@/lib/auth";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
+import { qualificationAccess } from "@/lib/lead-qualification-access";
+import { settleQualificationState } from "@/lib/services/lead-qualification-flow-service";
 
 /* ---------------------------------------------------------------------------
  * §5.3 — SOMEBODY SAYS THE FOUR CONVERSION FIGURES STILL HOLD.
@@ -122,6 +124,11 @@ export async function confirmLeadFigures(
        allowed to do this" is not answerable from the person alone. */
     const { authorisedBy, authorisedIn } = await requireCapability("lead.work");
 
+    /* Standing behind the figures is a Qualification act, so it waits for the
+       Sales Manager to have verified the Prospect like every other one. */
+    const access = qualificationAccess(row.leadStage);
+    if (!access.writable) return err(access.reason, "rule_violation");
+
     /*
      * A CONFIRMATION THAT NOTHING IS STILL TRUE IS A LIE, so an empty lead is
      * refused — and the test is ALL FOUR EMPTY rather than ANY ONE empty, which
@@ -190,8 +197,13 @@ export async function confirmLeadFigures(
      * date itself is drawn on the lead record where the figures are.
      */
 
-    revalidatePath(`/sales/leads/${customerId}`);
-    revalidatePath(`/crm/leads/${customerId}`);
+    await settleQualificationState(customerId, user.id);
+    try {
+      revalidatePath(`/sales/leads/${customerId}`);
+      revalidatePath(`/crm/leads/${customerId}`);
+    } catch {
+      /* no request context - a job or a test, where nothing is cached */
+    }
     return ok(
       null,
       `Noted — the figures on ${row.name} stand as they are, as of today.`,

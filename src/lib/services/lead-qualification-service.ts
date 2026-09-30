@@ -211,6 +211,19 @@ async function raiseValidationTask(
   assigneeId: string,
   customerName: string,
 ): Promise<string> {
+  const due = await nextWorkingDate();
+  return insertValidationTask(customerId, assigneeId, customerName, due);
+}
+
+/**
+ * The next working day, holidays included — as a business date string.
+ *
+ * Exported because the workflow that opens Qualification asks the same
+ * question: a next action owed "tomorrow" that lands on a Sunday is already
+ * overdue when its owner first sees it, and two definitions of a working day
+ * would put the validation call and the qualification on different calendars.
+ */
+export async function nextWorkingDate(): Promise<string> {
   const config = await getConfig();
   const holidays = await db.query.mbosHolidays
     .findMany()
@@ -241,7 +254,15 @@ async function raiseValidationTask(
       workingDays: config["workingDay.workingDays"],
     });
   }
+  return due;
+}
 
+async function insertValidationTask(
+  customerId: string,
+  assigneeId: string,
+  customerName: string,
+  due: string,
+): Promise<string> {
   const id = gen("mbos_task");
   await db
     .insert(mbosTasks)
