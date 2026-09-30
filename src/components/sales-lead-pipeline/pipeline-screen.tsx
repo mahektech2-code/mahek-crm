@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Callout, Card, PageHeader, SectionLabel } from "@/components/ui/primitives";
 import type { PipelineFunnelData } from "@/lib/sales-lead-pipeline/types";
+import { pipelineLinks, type PipelineWorkspace } from "@/lib/sales-lead-pipeline/workspace";
 
 /**
  * The funnel, counted by `funnelByRung` — one grouped query over the scoped
@@ -9,7 +10,14 @@ import type { PipelineFunnelData } from "@/lib/sales-lead-pipeline/types";
  *
  * A server component: there is nothing to click that a link does not do.
  */
-export function PipelineScreen({ funnel }: { funnel: PipelineFunnelData & { retiredNote: string | null } }) {
+export function PipelineScreen({
+  funnel,
+  workspace = "sales",
+}: {
+  funnel: PipelineFunnelData & { retiredNote: string | null };
+  workspace?: PipelineWorkspace;
+}) {
+  const BASE = pipelineLinks(workspace).base;
   const direct = funnel.direct;
   const maxCount = Math.max(1, ...direct.map((f) => f.count));
   const distributorTotal = funnel.distributor.reduce((n, f) => n + f.count, 0);
@@ -32,7 +40,7 @@ export function PipelineScreen({ funnel }: { funnel: PipelineFunnelData & { reti
           {direct.map((f) => (
             <Link
               key={f.stage}
-              href={`/sales-lead-pipeline/list?stage=${stageParam(f.stage)}`}
+              href={`${BASE}/list?stage=${stageParam(f.stage)}`}
               className="flex flex-1 flex-col items-center justify-end gap-1.5"
             >
               <span className="text-sm font-semibold text-ink">{f.count}</span>
@@ -70,7 +78,7 @@ export function PipelineScreen({ funnel }: { funnel: PipelineFunnelData & { reti
           {funnel.distributor.map((f, i) => (
             <div key={f.stage} className="flex flex-1 items-center">
               <Link
-                href={`/sales-lead-pipeline/list?stage=${f.stage}`}
+                href={`${BASE}/list?stage=${f.stage}`}
                 className="flex flex-col items-center gap-1 text-center"
               >
                 <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-soft text-[12px] font-semibold text-brand-hover">

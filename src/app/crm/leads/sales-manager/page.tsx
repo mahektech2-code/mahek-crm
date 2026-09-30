@@ -1,23 +1,20 @@
 /*
- * A ROUTE, and no screen behind it yet.
- *
- * `crm.sales-manager` is a permission with nothing wired to it: the checkbox
- * exists on the Access screen and this route answers to it, but there is no
- * screen here to open. Said plainly rather than left as a blank page, the
- * same way `AppPlaceholder` says it for a whole unbuilt app.
+ * The CRM's Sales Manager workspace — the same dashboard the Sales Dashboard's
+ * `/sales-lead-pipeline` draws, read through the CRM Sales Manager's own scope
+ * (`customers.sales_manager_id` = the signed-in person; an administrator sees
+ * everything). Nothing here decides anything: the figures, the gates and the
+ * actions are the shared Sales Manager service's, and the scope travels on the
+ * request — see `lib/services/crm-sales-manager-scope.ts`.
  */
-export const metadata = { title: "Sales Manager — CRM — MahekOne" };
+import { DashboardScreen } from "@/components/sales-lead-pipeline/dashboard-screen";
+import { today } from "@/lib/recompute";
+import { pipelineDashboard } from "@/lib/sales-lead-pipeline/sales-manager-pipeline-service";
 
-export default function Page() {
-  return (
-    <div className="flex flex-1 items-center justify-center p-6">
-      <div className="max-w-[460px] text-center">
-        <div className="text-[22px] leading-7 font-semibold text-ink">Sales Manager</div>
-        <p className="mt-2 text-[15px] leading-[22px] text-muted">
-          Not built yet. The permission is grantable and this route is guarded by it — the
-          screen itself has not been built.
-        </p>
-      </div>
-    </div>
-  );
+export const metadata = { title: "Sales Manager — CRM — MahekOne" };
+export const dynamic = "force-dynamic";
+
+export default async function Page() {
+  const day = await today();
+  const data = await pipelineDashboard(day);
+  return <DashboardScreen data={data} workspace="crm" />;
 }

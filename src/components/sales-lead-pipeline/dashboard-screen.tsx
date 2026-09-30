@@ -8,8 +8,8 @@ import { LeadStatusBadges } from "./badges";
 import { personName } from "@/lib/sales-lead-pipeline/reference";
 import { Icon } from "@/components/shell/icons";
 import type { DashboardData, PipelineRow } from "@/lib/sales-lead-pipeline/types";
+import { pipelineLinks, type PipelineWorkspace } from "@/lib/sales-lead-pipeline/workspace";
 
-const BASE = "/sales-lead-pipeline";
 
 /** Maps the verb on a focus row onto the CRM's own existing badge tones. */
 function toneForLabel(label: string | undefined): Tone {
@@ -28,8 +28,10 @@ function toneForLabel(label: string | undefined): Tone {
  * and every list is one page of `leadsPage` — so a tile and the list it opens
  * cannot disagree, and nothing here loads the book into the browser.
  */
-export function DashboardScreen({ data }: { data: DashboardData }) {
+export function DashboardScreen({ data, workspace = "sales" }: { data: DashboardData; workspace?: PipelineWorkspace }) {
   const router = useRouter();
+  const links = pipelineLinks(workspace);
+  const BASE = links.base;
   const { book, manager: mgr, funnel, attention, focus } = data;
   const today = new Date(`${data.today}T00:00:00`);
   const maxCount = Math.max(1, ...funnel.map((f) => f.count));
@@ -51,7 +53,7 @@ export function DashboardScreen({ data }: { data: DashboardData }) {
               View pipeline
             </Link>
             <Link
-              href="/sales/leads/intake"
+              href={links.intake}
               className="inline-flex h-9 items-center gap-1.5 rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover hover:border-brand-hover"
             >
               <Icon name="plus" size={15} />
@@ -78,7 +80,7 @@ export function DashboardScreen({ data }: { data: DashboardData }) {
       <SectionLabel>Sales Manager — verification &amp; nurturing</SectionLabel>
       <MetricStrip
         metrics={[
-          { label: "Prospects Pending Verification", value: String(mgr.pendingVerification), tone: mgr.pendingVerification ? undefined : "ink", sub: "incl. calling-desk requests", onClick: () => goto("/sales/leads/qualify") },
+          { label: "Prospects Pending Verification", value: String(mgr.pendingVerification), tone: mgr.pendingVerification ? undefined : "ink", sub: "incl. calling-desk requests", onClick: () => goto(links.qualify) },
           { label: "Verified Prospects", value: String(mgr.verifiedProspects), tone: "success", sub: "verified, not yet qualifying", onClick: () => goto(`${BASE}/list?stage=prospect,contacted`) },
           { label: "Verification Failed", value: String(mgr.verificationFailed), tone: mgr.verificationFailed ? "danger" : "ink", sub: "closed in the last 30 days" },
           { label: "Sample Reviews Pending", value: String(mgr.sampleReviewsPending), sub: "shop has it, no verdict", onClick: () => goto(`${BASE}/list?stage=sample_received,sample_review`) },
@@ -105,7 +107,7 @@ export function DashboardScreen({ data }: { data: DashboardData }) {
                   </div>
                 </div>
               ) : (
-                attention.map((l) => <AttentionRow key={l.id} lead={l} today={today} />)
+                attention.map((l) => <AttentionRow key={l.id} lead={l} today={today} base={BASE} />)
               )}
             </Card>
             {book.overdue + book.today > attention.length ? (
@@ -177,12 +179,12 @@ export function DashboardScreen({ data }: { data: DashboardData }) {
   );
 }
 
-function AttentionRow({ lead: l, today }: { lead: PipelineRow; today: Date }) {
+function AttentionRow({ lead: l, today, base }: { lead: PipelineRow; today: Date; base: string }) {
   const d = daysUntil(l.nextActionDate, today);
   const overdueRow = d !== null && d < 0;
   return (
     <Link
-      href={`${BASE}/${l.id}`}
+      href={`${base}/${l.id}`}
       className="flex items-center gap-3 border-b border-divider px-4 py-3 last:border-0 hover:bg-canvas"
     >
       <span className={`h-full w-1 flex-none self-stretch rounded ${overdueRow ? "bg-danger" : "bg-warn"}`} />

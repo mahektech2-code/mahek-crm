@@ -99,6 +99,7 @@ async function reachableCandidate(customerId: string) {
       ownerId: customers.ownerId,
       salesAmId: customers.salesAmId,
       backOfficeAmId: customers.backOfficeAmId,
+      salesManagerId: customers.salesManagerId,
       salesType: customers.leadSalesType,
       stage: customers.leadStage,
       thirdParty: customers.thirdParty,

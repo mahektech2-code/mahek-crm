@@ -6,6 +6,7 @@ import { and, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appIdEnum, auditLog, users, type User } from "@/db/schema";
 import { APP_HEADER } from "@/proxy";
+import { inCrmSalesManagerWorkspace, leadInSalesManagersBook } from "@/lib/services/crm-sales-manager-scope";
 import { getApp, type AppId } from "@/lib/apps";
 import { requireUser } from "./auth";
 import { getScope as getScopePreference } from "./scope";
@@ -1404,8 +1405,27 @@ export async function assertCustomerInScope(
      * stricter check.
      */
     relationshipOwnerId?: string | null;
+    /**
+     * The Sales Manager seat. Read ONLY inside the CRM Sales Manager workspace,
+     * where it is the whole rule; everywhere else it is ignored, because that
+     * seat drives no scope anywhere else (see `crm-sales-manager-scope.ts`).
+     * Optional for the reason the four above are, with one difference: inside
+     * that workspace a caller that leaves it out is REFUSED, not given the old
+     * check — the read that drew the lead used this same seat, and a write that
+     * cannot show it must not pass.
+     */
+    salesManagerId?: string | null;
   } | null,
 ) {
+  /* THE CRM SALES MANAGER WORKSPACE HAS ONE RULE, and it is the read's rule.
+     A lead that `leadsVisible` drew from `sales_manager_id` is a lead this
+     lets the person act on, whatever level their CRM hat happens to be. */
+  if (await inCrmSalesManagerWorkspace()) {
+    const { user } = await resolveScope();
+    if (leadInSalesManagersBook(customer, user)) return;
+    throw new NotPermittedError("customer.read");
+  }
+
   const { scope } = await resolveScope();
   const ids = scopedUserIds(scope);
   if (ids === null) return;

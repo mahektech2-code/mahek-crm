@@ -47,11 +47,14 @@ import { VERIFICATION_QUESTIONS, isVerificationFinding } from "@/lib/lead-labels
  * signature, and the half that drifts is the one that is not type-checked.
  * ------------------------------------------------------------------------- */
 
-const PIPELINE_PATH = "/sales-lead-pipeline";
+/* Both workspaces draw these screens, and an action does not know which one
+   asked — so it refreshes both. Revalidating a route nobody has open costs
+   nothing. */
+const PIPELINE_PATHS = ["/sales-lead-pipeline", "/crm/leads/sales-manager"] as const;
 
 function refresh() {
   try {
-    revalidatePath(PIPELINE_PATH, "layout");
+    for (const path of PIPELINE_PATHS) revalidatePath(path, "layout");
   } catch {
     /* no request context — a job or a test, where nothing is cached */
   }

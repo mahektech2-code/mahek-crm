@@ -15,6 +15,7 @@ import { APP_TIMEZONE, asDate } from "../business-date";
 import { orderCountsSql } from "../order-status";
 import { MBOS_EVENT, sourceIdField } from "../timeline";
 import { leadsVisible, managerScope, onlyMine } from "./sales-service";
+import { inSalesManagersBook } from "./crm-sales-manager-scope";
 /* §5.3 — ONE definition of "are these figures old enough to need standing
    behind", shared with the server action's own assembler rather than restated
    here. `lead-service.ts` does not import this file, so there is no cycle. */
@@ -733,6 +734,7 @@ export async function sampleDesk(
              on a.subject_id = s.id and a.type = 'sample'
      where s.state <> 'cancelled'
        ${onlyMine(scope, "s.salesman_id")}
+       ${inSalesManagersBook(scope)}
      order by
        /* Worst first: a request nobody has answered stops a salesman dead;
           a delivery past its promised date is a courier to ring; everything
@@ -824,6 +826,7 @@ export async function nurtureSchedule(
        and c.lead_archived = false
        ${only}
        ${onlyMine(scope, "t.assigned_to_user_id")}
+       ${inSalesManagersBook(scope)}
      order by
        case when t.status in ('done', 'cancelled') then 1 else 0 end,
        t.due_date asc nulls last, t.id asc
@@ -853,6 +856,7 @@ export async function nurtureSchedule(
        and c.lead_archived = false
        ${only}
        ${onlyMine(scope, "t.assigned_to_user_id")}
+       ${inSalesManagersBook(scope)}
   `);
 
   const open = rows.filter((r) => r.status !== "done" && r.status !== "cancelled");

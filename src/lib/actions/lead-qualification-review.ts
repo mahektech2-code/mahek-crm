@@ -112,6 +112,7 @@ export async function reviewLeadQualification(
         ownerId: true,
         salesAmId: true,
         backOfficeAmId: true,
+        salesManagerId: true,
         leadStage: true,
         leadManagerId: true,
         leadQualificationReview: true,

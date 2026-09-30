@@ -150,7 +150,7 @@ async function loadForTransition(
   | {
       ok: true;
       sample: typeof mbosSamples.$inferSelect;
-      customer: { id: string; name: string; kind: "lead" | "customer"; ownerId: string | null; salesAmId: string | null; backOfficeAmId: string | null };
+      customer: { id: string; name: string; kind: "lead" | "customer"; ownerId: string | null; salesAmId: string | null; backOfficeAmId: string | null; salesManagerId: string | null };
     }
 > {
   const [row] = await db
@@ -163,6 +163,7 @@ async function loadForTransition(
         ownerId: customers.ownerId,
         salesAmId: customers.salesAmId,
         backOfficeAmId: customers.backOfficeAmId,
+        salesManagerId: customers.salesManagerId,
       },
     })
     .from(mbosSamples)
@@ -243,6 +244,7 @@ export async function requestSample(
         ownerId: customers.ownerId,
         salesAmId: customers.salesAmId,
         backOfficeAmId: customers.backOfficeAmId,
+        salesManagerId: customers.salesManagerId,
         leadStage: customers.leadStage,
         salesType: customers.leadSalesType,
       })

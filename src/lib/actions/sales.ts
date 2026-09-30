@@ -27,7 +27,9 @@ import {
   users,
 } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
+import { canOpenModule, listUserApps } from "@/lib/access";
+import { assertCustomerInScope } from "@/lib/access-control";
+import { inCrmSalesManagerWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { getConfig, updateSettings } from "@/lib/config/store";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
@@ -96,8 +98,29 @@ async function requireSales() {
   return user;
 }
 
+/**
+ * `requireSales`, or — inside the CRM Sales Manager workspace only — the
+ * module that workspace answers to.
+ *
+ * Reassigning a lead is a Sales Manager action, and the CRM's Sales Manager
+ * holds `crm.sales-manager`, not the Sales Dashboard. Everywhere else this is
+ * `requireSales` unchanged, so the Sales Dashboard's own door is exactly what
+ * it was.
+ */
+async function requireSalesOrCrmSalesManager() {
+  if (!(await inCrmSalesManagerWorkspace())) return requireSales();
+  const user = await requireUser();
+  if (!(await canOpenModule(user.id, "crm.sales-manager"))) {
+    throw Object.assign(new Error("The CRM Sales Manager workspace has not been granted to you."), {
+      name: "NotPermittedError",
+    });
+  }
+  return user;
+}
+
 function refresh() {
   try {
+    revalidatePath("/crm/leads/sales-manager", "layout");
     revalidatePath("/sales");
     revalidatePath("/sales/approvals");
     revalidatePath("/sales/journeys");
@@ -1616,10 +1639,21 @@ export async function reassignLead(input: {
   salesmanId: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesOrCrmSalesManager();
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
+    /* In the CRM Sales Manager workspace the lead has to be in THEIR book, the
+       same rule the list that offered it was drawn from. Elsewhere this is a
+       no-op here and the Sales Dashboard's own checks stand. */
+    if (await inCrmSalesManagerWorkspace()) {
+      await assertCustomerInScope({
+        kind: lead.kind,
+        ownerId: lead.ownerId,
+        salesAmId: lead.salesAmId,
+        salesManagerId: lead.salesManagerId,
+      });
+    }
     if (lead.leadArchived) {
       return err(
         "That lead is archived. Restore it before moving it to somebody else.",

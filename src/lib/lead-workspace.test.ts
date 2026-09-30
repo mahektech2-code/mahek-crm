@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { APP_MODULES, modulesForApp } from "./modules";
 import {
@@ -10,6 +10,7 @@ import {
   sectionForPath,
   type LeadWorkspace,
 } from "./lead-workspace";
+import { pipelineLinks } from "./sales-lead-pipeline/workspace";
 
 /* ---------------------------------------------------------------------------
  * The Lead Management workspace has TWO lists of where you can go, and they
@@ -355,4 +356,64 @@ describe("the workspace's own folder guards nothing", () => {
       );
     });
   }
+});
+
+/* ---------------------------------------------------------------------------
+ * The Sales Manager screens are mounted twice as well — on the Sales Dashboard
+ * at /sales-lead-pipeline and in the CRM at /crm/leads/sales-manager — and the
+ * only thing that differs is where a link leads.
+ * ------------------------------------------------------------------------- */
+describe("the Sales Manager screens are workspace-aware", () => {
+  it("defaults to the Sales Dashboard, exactly the routes they had before the CRM mounted them", () => {
+    const sales = pipelineLinks();
+    assert.equal(sales.base, "/sales-lead-pipeline");
+    assert.equal(sales.intake, "/sales/leads/intake");
+    assert.equal(sales.qualify, "/sales/leads/qualify");
+    assert.equal(sales.record("cus_1"), "/sales/leads/cus_1");
+    assert.equal(pipelineLinks("sales").base, sales.base, "naming the default is the same as omitting it");
+    assert.equal(pipelineLinks("sales").record("x"), sales.record("x"));
+  });
+
+  it("the CRM sends a manager to the CRM's own intake, qualification and record", () => {
+    const crm = pipelineLinks("crm");
+    assert.equal(crm.base, "/crm/leads/sales-manager");
+    assert.equal(crm.intake, "/crm/leads/intake");
+    assert.equal(crm.qualify, "/crm/leads/qualify");
+    assert.equal(crm.record("cus_1"), "/crm/leads/cus_1");
+  });
+
+  it("every route either workspace links to exists", () => {
+    for (const ws of ["sales", "crm"] as const) {
+      const l = pipelineLinks(ws);
+      const dir = (route: string) => "src/app" + route.replace("cus_1", "[id]");
+      for (const route of [l.intake, l.qualify, l.record("cus_1")]) {
+        assert.ok(existsSync(dir(route) + "/page.tsx"), `${ws}: ${route} has no page`);
+      }
+      for (const sub of ["", "/pipeline", "/list", "/[id]"]) {
+        assert.ok(existsSync(`src/app${l.base}${sub}/page.tsx`), `${ws}: ${l.base}${sub} has no page`);
+      }
+    }
+  });
+
+  it("the CRM workspace has the states a screen owes: loading, failure and not found", () => {
+    for (const file of ["loading.tsx", "error.tsx", "not-found.tsx", "layout.tsx"]) {
+      assert.ok(existsSync(`src/app/crm/leads/sales-manager/${file}`), `missing ${file}`);
+    }
+  });
+
+  it("no shared component spells a workspace's route — they ask pipelineLinks", () => {
+    const dir = "src/components/sales-lead-pipeline";
+    for (const file of readdirSync(dir).filter((f) => f.endsWith(".tsx"))) {
+      const code = readFileSync(`${dir}/${file}`, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+      assert.equal(/["'`]\/sales-lead-pipeline|["'`]\/sales\/leads/.test(code), false, `${file} hard-codes a Sales route`);
+      assert.equal(/["'`]\/crm\/leads/.test(code), false, `${file} hard-codes a CRM route`);
+    }
+  });
+
+  it("the CRM pages hand the CRM workspace to the shared screens", () => {
+    for (const page of ["page.tsx", "pipeline/page.tsx", "list/page.tsx", "[id]/page.tsx"]) {
+      const src = readFileSync(`src/app/crm/leads/sales-manager/${page}`, "utf8");
+      assert.match(src, /workspace="crm"/, `${page} must pass workspace="crm"`);
+    }
+  });
 });
