@@ -1,18 +1,18 @@
 "use client";
 
-import { createContext, useCallback, useContext, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, cx } from "@/components/ui/primitives";
 import { ConfirmDialog, Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import type { ActionSpec, BulkSpec, FieldSpec, FormSpec, PromptSpec } from "@/lib/erp/ui";
+import type { ActionSpec, BulkSpec, FieldSpec, FormSpec, PromptSpec, ToolResult, ToolSpec } from "@/lib/erp/ui";
 import { whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
-import { erpLoadForm, erpRunAction, erpRunBulk, erpSubmitForm } from "@/lib/actions/erp";
 import type { Result } from "@/lib/result";
 import { Field } from "./field";
 import { ErpVoice } from "./voice";
+import { ERP_KIT, KitContext, useKit, type ScreenKit } from "./kit";
 
 /* ---------------------------------------------------------------------------
  * The ERP's overlays, held once for the whole app: the form drawer, the prompt
@@ -35,6 +35,8 @@ type Ui = {
   /** Runs a record action: confirm → prompt/form → server → toast → refresh. */
   act: (screen: string, a: ActionSpec, recordId: string, after?: () => void) => void;
   bulk: (screen: string, b: BulkSpec, ids: string[], after?: () => void) => void;
+  /** Runs a header tool: confirm → prompt → server → toast, and its dialog if it answered with one. */
+  tool: (screen: string, t: ToolSpec) => void;
 };
 
 const Ctx = createContext<Ui | null>(null);
@@ -45,13 +47,23 @@ export function useErpUi(): Ui {
   return u;
 }
 
-export function ErpUiProvider({ children, voice = false }: { children: React.ReactNode; voice?: boolean }) {
+export function ErpUiProvider({
+  children,
+  voice = false,
+  kit = ERP_KIT,
+}: {
+  children: React.ReactNode;
+  voice?: boolean;
+  /** The app whose server actions, uploads and vocabulary the screens use. The ERP's unless another app says so. */
+  kit?: ScreenKit;
+}) {
   const router = useRouter();
   const { push } = useToast();
   const [confirmState, setConfirmState] = useState<Confirm | null>(null);
   const [promptState, setPromptState] = useState<PromptState | null>(null);
   const [form, setForm] = useState<FormSpec | null>(null);
   const [formKey, setFormKey] = useState(0);
+  const [resultDialog, setResultDialog] = useState<{ screen: string; d: NonNullable<ToolResult["dialog"]> } | null>(null);
 
   const toast = useCallback((t: string, tone: "info" | "error" = "info") => push(t, tone), [push]);
 
@@ -91,7 +103,7 @@ export function ErpUiProvider({ children, voice = false }: { children: React.Rea
         return;
       }
       if (a.loadsForm) {
-        void erpLoadForm(screen, a.id, recordId).then((res) => {
+        void kit.loadForm(screen, a.id, recordId).then((res) => {
           if (res.ok) openForm(res.data);
           else toast(res.error, "error");
         });
@@ -100,18 +112,18 @@ export function ErpUiProvider({ children, voice = false }: { children: React.Rea
       const go = () => {
         if (a.prompt) {
           prompt(a.prompt, async (v) => {
-            const res = await erpRunAction(screen, a.id, recordId, v);
+            const res = await kit.runAction(screen, a.id, recordId, v);
             if (res.ok) finish(res, after);
             return res;
           });
           return;
         }
-        void erpRunAction(screen, a.id, recordId).then((res) => finish(res, after));
+        void kit.runAction(screen, a.id, recordId).then((res) => finish(res, after));
       };
       if (a.confirm) confirm(a.confirm, go);
       else go();
     },
-    [confirm, finish, openForm, prompt, router, toast],
+    [confirm, finish, kit, openForm, prompt, router, toast],
   );
 
   const bulk = useCallback(
@@ -119,23 +131,61 @@ export function ErpUiProvider({ children, voice = false }: { children: React.Rea
       const go = () => {
         if (b.prompt) {
           prompt(b.prompt, async (v) => {
-            const res = await erpRunBulk(screen, b.id, ids, v);
+            const res = await kit.runBulk(screen, b.id, ids, v);
             if (res.ok) finish(res, after);
             return res;
           });
           return;
         }
-        void erpRunBulk(screen, b.id, ids).then((res) => finish(res, after));
+        void kit.runBulk(screen, b.id, ids).then((res) => finish(res, after));
       };
       if (b.confirm) confirm(b.confirm, go);
       else go();
     },
-    [confirm, finish, prompt],
+    [confirm, finish, kit, prompt],
+  );
+
+  const tool = useCallback(
+    (screen: string, t: ToolSpec) => {
+      if (t.why) return;
+      if (t.href) {
+        router.push(t.href);
+        return;
+      }
+      const run = kit.runTool;
+      if (!run) return;
+      const land = (res: Result<unknown>) => {
+        if (!res.ok) {
+          toast(res.error, "error");
+          return;
+        }
+        const data = (res.data ?? {}) as ToolResult;
+        if (res.message) toast(res.message);
+        router.refresh();
+        if (data.dialog) setResultDialog({ screen, d: data.dialog });
+        if (data.navigate) router.push(data.navigate);
+      };
+      const go = () => {
+        if (t.prompt) {
+          prompt(t.prompt, async (v) => {
+            const res = await run(screen, t.id, v);
+            if (res.ok) land(res);
+            return res;
+          });
+          return;
+        }
+        void run(screen, t.id).then(land);
+      };
+      if (t.confirm) confirm(t.confirm, go);
+      else go();
+    },
+    [confirm, kit, prompt, router, toast],
   );
 
   return (
+    <KitContext.Provider value={kit}>
     <ErpVoice.Provider value={voice}>
-      <Ctx.Provider value={{ toast, confirm, prompt, openForm, act, bulk }}>
+      <Ctx.Provider value={{ toast, confirm, prompt, openForm, act, bulk, tool }}>
         {children}
         {form ? (
           <FormDrawer
@@ -153,6 +203,25 @@ export function ErpUiProvider({ children, voice = false }: { children: React.Rea
         {promptState ? (
           <PromptDialog key={promptState.spec.title} state={promptState} onClose={() => setPromptState(null)} />
         ) : null}
+        {resultDialog ? (
+          <ResultDialog
+            d={resultDialog.d}
+            onClose={() => setResultDialog(null)}
+            onNext={
+              resultDialog.d.next && kit.runTool
+                ? async () => {
+                    const n = resultDialog.d.next!;
+                    const res = await kit.runTool!(resultDialog.screen, n.tool, n.values ?? {});
+                    setResultDialog(null);
+                    if (res.ok) {
+                      toast(res.message ?? "Done");
+                      router.refresh();
+                    } else toast(res.error, "error");
+                  }
+                : undefined
+            }
+          />
+        ) : null}
         <ConfirmDialog
           open={!!confirmState}
           title="Please confirm"
@@ -167,6 +236,7 @@ export function ErpUiProvider({ children, voice = false }: { children: React.Rea
         />
       </Ctx.Provider>
     </ErpVoice.Provider>
+    </KitContext.Provider>
   );
 }
 
@@ -319,7 +389,7 @@ function FormDrawer({
     const save = async () => {
       setBusy(true);
       setTopError("");
-      const res = await erpSubmitForm(spec.screen, spec.id, h, lines, spec.recordId);
+      const res = await kit.submitForm(spec.screen, spec.id, h, lines, spec.recordId);
       setBusy(false);
       if (res.ok) return onSaved(res.message ?? "Saved");
       const fe: Record<string, string> = {};
@@ -336,6 +406,7 @@ function FormDrawer({
     } else void save();
   };
 
+  const kit = useKit();
   const summary = runCalc(`${spec.screen}.summary`, { h, l: {}, lines, i: -1, data });
 
   return (
@@ -349,9 +420,12 @@ function FormDrawer({
         <Block title={spec.line ? "Header" : ""}>
           {spec.header
             .filter((f) => visible(f))
-            .map((f) => (
+            .map((f, i, shown) => (
+              <Fragment key={f.k}>
+              {f.sec && f.sec !== shown[i - 1]?.sec ? (
+                <div className="mt-1 border-b border-divider pb-1 text-[12px] font-semibold tracking-[0.04em] text-muted uppercase">{f.sec}</div>
+              ) : null}
               <Field
-                key={f.k}
                 f={f}
                 value={h[f.k] ?? ""}
                 error={errs[`h.${f.k}`]}
@@ -366,6 +440,7 @@ function FormDrawer({
                   setErrs((s) => ({ ...s, [`h.${f.k}`]: "" }));
                 }}
               />
+              </Fragment>
             ))}
         </Block>
         {spec.line
@@ -497,5 +572,77 @@ function Block({ title, onRemove, children }: { title: string; onRemove?: () => 
       ) : null}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3.5 px-3 py-3.5">{children}</div>
     </div>
+  );
+}
+
+/** What a header tool answered with: a message to send, a preview to confirm. */
+function ResultDialog({ d, onClose, onNext }: { d: NonNullable<ToolResult["dialog"]>; onClose: () => void; onNext?: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const tone: Record<string, string> = {
+    danger: "bg-danger-soft text-danger",
+    warn: "bg-warn-soft text-warn-ink",
+    success: "bg-success-soft text-success",
+    info: "bg-brand-soft text-[#5223E0]",
+    brand: "bg-brand-soft text-[#5223E0]",
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={560}
+      title={
+        <>
+          {d.title}
+          {d.sub ? <span className="mt-0.5 block text-[13px] font-normal text-muted">{d.sub}</span> : null}
+        </>
+      }
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+          {d.copy && d.text ? (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                void navigator.clipboard?.writeText(d.text ?? "").then(() => setCopied(true));
+              }}
+            >
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          ) : null}
+          {d.open ? (
+            <a href={d.open.href} target="_blank" rel="noreferrer" onClick={onClose}>
+              <Button variant="primary">{d.open.label}</Button>
+            </a>
+          ) : null}
+          {d.next && onNext ? (
+            <Button
+              variant="primary"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                await onNext();
+                setBusy(false);
+              }}
+            >
+              {busy ? "Working…" : d.next.label}
+            </Button>
+          ) : null}
+        </>
+      }
+    >
+      {d.text ? <pre className="m-0 max-h-[50vh] overflow-y-auto rounded-[6px] bg-canvas p-3 text-[13px] leading-5 whitespace-pre-wrap text-ink">{d.text}</pre> : null}
+      {d.lines?.length ? (
+        <div className="max-h-[50vh] overflow-y-auto rounded-[6px] border border-line">
+          {d.lines.map((l, i) => (
+            <div key={i} className={cx("border-b border-divider px-3 py-2 text-[13px] last:border-0", l.tone ? tone[l.tone] : "text-body")}>
+              {l.text}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </Modal>
   );
 }

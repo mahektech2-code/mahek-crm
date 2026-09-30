@@ -10,6 +10,7 @@ import {
   auditLog,
   employees,
   erpUserPowers,
+  hrmsUserPowers,
   passwordResets,
   sessions,
   users,
@@ -22,6 +23,7 @@ import { initialsOf } from "@/lib/format";
 import { err as fail, fieldErr, ok, type Result } from "@/lib/result";
 import { widestRole, type Role } from "@/lib/access-control";
 import { ERP_POWERS } from "@/lib/erp/powers";
+import { HRMS_POWERS } from "@/lib/hrms/powers";
 import {
   employeesForLink,
   listCandidates,
@@ -119,6 +121,8 @@ export type SetAccessInput = {
    * they are cleared with the ERP itself, like its module rows.
    */
   erpPowers?: string[] | null;
+  /** HRMS's special powers, the whole list, on the same terms as the ERP's. */
+  hrmsPowers?: string[] | null;
   /** Only read when an account has to be created. */
   account?: {
     /** At least one of these two. Both is fine and often better. */
@@ -245,6 +249,42 @@ async function mayGiveErpPowers(user: { id: string; role: string }): Promise<boo
     .where(and(eq(erpUserPowers.userId, user.id), eq(erpUserPowers.power, "employeeAdmin")))
     .limit(1);
   return !!power;
+}
+
+/**
+ * WHO MAY GIVE AN HRMS POWER: a platform admin, an HRMS administrator, or
+ * somebody holding HRMS's own admin power. Who runs payroll and who sees every
+ * Aadhaar number is not decided by whoever may merely grant the app.
+ */
+async function mayGiveHrmsPowers(user: { id: string; role: string }): Promise<boolean> {
+  if (user.role === "admin") return true;
+  const [grant] = await db
+    .select({ role: appAccess.role })
+    .from(appAccess)
+    .where(and(eq(appAccess.userId, user.id), eq(appAccess.app, "hrms")))
+    .limit(1);
+  if (grant?.role === "admin") return true;
+  const [power] = await db
+    .select({ power: hrmsUserPowers.power })
+    .from(hrmsUserPowers)
+    .where(and(eq(hrmsUserPowers.userId, user.id), eq(hrmsUserPowers.power, "admin")))
+    .limit(1);
+  return !!power;
+}
+
+function wantedHrmsPowers(input: SetAccessInput, keepsHrms: boolean, current: string[]): string[] | null {
+  if (!keepsHrms) return current.length ? [] : null;
+  if (input.hrmsPowers == null) return null;
+  const next = HRMS_POWERS.filter((p) => input.hrmsPowers!.includes(p));
+  const same = next.length === current.length && next.every((p) => current.includes(p));
+  return same ? null : next;
+}
+
+async function writeHrmsPowers(userId: string, powers: string[], by: string) {
+  await db.transaction(async (tx) => {
+    await tx.delete(hrmsUserPowers).where(eq(hrmsUserPowers.userId, userId));
+    if (powers.length) await tx.insert(hrmsUserPowers).values(powers.map((power) => ({ userId, power, grantedById: by })));
+  });
 }
 
 /** The powers a person should hold after this save, or null where they do not change. */
@@ -416,6 +456,8 @@ export async function setAccess(
     });
     const newPowers = wantedErpPowers(input, wanted.has("erp"), []);
     if (newPowers?.length && (await mayGiveErpPowers(me))) await writeErpPowers(userId!, newPowers, me.id);
+    const newHrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), []);
+    if (newHrmsPowers?.length && (await mayGiveHrmsPowers(me))) await writeHrmsPowers(userId!, newHrmsPowers, me.id);
 
     await audit(
       me.id,
@@ -503,7 +545,15 @@ export async function setAccess(
     return fieldErr("erpPowers", "Only an ERP administrator gives or takes ERP powers.");
   }
 
-  if (!granted.length && !revoked.length && !changed.length && !powers) {
+  const currentHrmsPowers = (
+    await db.select({ power: hrmsUserPowers.power }).from(hrmsUserPowers).where(eq(hrmsUserPowers.userId, userId))
+  ).map((r) => r.power);
+  const hrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), currentHrmsPowers);
+  if (hrmsPowers && wanted.has("hrms") && !(await mayGiveHrmsPowers(me))) {
+    return fieldErr("hrmsPowers", "Only an HRMS administrator gives or takes HRMS powers.");
+  }
+
+  if (!granted.length && !revoked.length && !changed.length && !powers && !hrmsPowers) {
     return ok(
       { userId, created: false, resetLinkSent: false, granted: [], revoked: [], changed: [] },
       "No change.",
@@ -584,8 +634,12 @@ export async function setAccess(
 
   if (powers) await writeErpPowers(userId, powers, me.id);
   const powerDetail = powers ? `ERP powers ${currentPowers.length} → ${powers.length}${powers.length ? ` (${powers.join(", ")})` : ""}` : "";
+  if (hrmsPowers) await writeHrmsPowers(userId, hrmsPowers, me.id);
+  const hrmsPowerDetail = hrmsPowers
+    ? `HRMS powers ${currentHrmsPowers.length} → ${hrmsPowers.length}${hrmsPowers.length ? ` (${hrmsPowers.join(", ")})` : ""}`
+    : "";
 
-  await audit(me.id, "set-app-access", userId, [detail, powerDetail].filter(Boolean).join("; "));
+  await audit(me.id, "set-app-access", userId, [detail, powerDetail, hrmsPowerDetail].filter(Boolean).join("; "));
   refresh();
 
   const said = [
@@ -600,6 +654,7 @@ export async function setAccess(
       : "",
     revoked.length ? `no longer opens ${describe(revoked)}` : "",
     powers && wanted.has("erp") ? `holds ${powers.length} ERP power${powers.length === 1 ? "" : "s"}` : "",
+    hrmsPowers && wanted.has("hrms") ? `holds ${hrmsPowers.length} HRMS power${hrmsPowers.length === 1 ? "" : "s"}` : "",
   ].filter(Boolean);
 
   return ok(

@@ -10,7 +10,7 @@ import { AppFrame } from "@/components/shell/app-frame";
 import { Modal } from "@/components/ui/overlays";
 import { ToastProvider } from "@/components/ui/toast";
 import type { Config } from "@/lib/config/registry";
-import { crmSchema, toStored } from "@/lib/config/schema-contract";
+import { crmSchema, hrmsSchema, toStored } from "@/lib/config/schema-contract";
 import type { Collection } from "@/lib/config/entity-collections";
 import { updateConfigSettings } from "@/lib/actions/crm";
 import { PLATFORM_SUBTITLES, PLATFORM_TABS } from "./data";
@@ -227,6 +227,7 @@ function appIdOf(section: string, platformKeys: ReadonlySet<string>): string | n
 
 /** Computed once from the CRM's own declaration — pure, so it runs here too. */
 const CRM_SCHEMA = crmSchema();
+const HRMS_SCHEMA = hrmsSchema();
 
 /** Where a screen lives: /admin/people/security. */
 function addressOf(section: string, tab: string): string {
@@ -236,6 +237,7 @@ function addressOf(section: string, tab: string): string {
 /** Landing on a section means landing on its first tab. */
 function firstTab(section: string): string {
   if (section === "crm" || section === `${APP_PREFIX}crm`) return CRM_SCHEMA.tabs[0]?.key ?? "";
+  if (section === "hrms" || section === `${APP_PREFIX}hrms`) return HRMS_SCHEMA.tabs[0]?.key ?? "";
   if (section === CATALOGUE_SECTION) return CATALOGUE_TABS[0].slug;
   if (section === EXPENSE_POLICY_SECTION) return EXPENSE_POLICY_TABS[0].slug;
   if (section === SHEET_SECTION) return SHEET_TABS[0].slug;
@@ -306,7 +308,7 @@ function ConsoleShell({
     .sort((a, b) => a.order - b.order);
   const appId = appIdOf(section, PLATFORM_KEYS);
   const appDef = appId ? (registry.find((a) => a.id === appId) ?? null) : null;
-  const schema = appDef?.id === "crm" ? CRM_SCHEMA : null;
+  const schema = appDef?.id === "crm" ? CRM_SCHEMA : appDef?.id === "hrms" ? HRMS_SCHEMA : null;
   const platformTabs = PLATFORM_TABS[section];
   const tabs: Array<{ slug: string; label: string }> = appDef
     ? (schema?.tabs.map((t) => ({ slug: t.key, label: t.label })) ?? [])

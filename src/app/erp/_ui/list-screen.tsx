@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
-import { cellText, FLAG, inr, nf, ST_TONE } from "@/lib/erp/ui";
+import { cellText, inr, nf } from "@/lib/erp/ui";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, cx, EmptyState, MetricStrip, PageHeader, SortableTh, Td, Th, Tr, type Metric } from "@/components/ui/primitives";
 import { SelectionBar, Tabs } from "@/components/ui/overlays";
@@ -14,6 +14,7 @@ import { GodownPicker, type PickItem } from "./godown-picker";
 import { Icon } from "./icons";
 import { useErpUi } from "./erp-ui";
 import { RecordDrawer } from "./record-drawer";
+import { useKit } from "./kit";
 
 /* ---------------------------------------------------------------------------
  * The generic ERP list, drawn the way the CRM draws a list: the page header
@@ -52,6 +53,7 @@ export function ListScreen({
   filter,
   tabs,
   toggle,
+  above,
 }: {
   spec: ListSpec;
   rows: ListRow[];
@@ -68,8 +70,11 @@ export function ListScreen({
   tabs?: ListTab[];
   /** The current tab's second list (every entry behind the available stock), and the way back. */
   toggle?: { label: string; href: string } | null;
+  /** Drawn between the header and the list: a calendar, a chart, a scope switch. */
+  above?: React.ReactNode;
 }) {
   const ui = useErpUi();
+  const { flags: FLAG, tones: ST_TONE, place } = useKit();
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
@@ -88,7 +93,14 @@ export function ListScreen({
   const home = tabKey ? `${path}?view=${encodeURIComponent(tabKey)}` : path;
 
   const cols = spec.cols;
-  const colOf = (k: string): ColSpec => cols.find((c) => c.k === k) ?? { k, l: k, t: "t" };
+  /* A group key that is not a declared column still gets words, not its
+     identifier: "monthLbl" reads "Month". */
+  const colOf = (k: string): ColSpec =>
+    cols.find((c) => c.k === k) ?? {
+      k,
+      l: k.replace(/Lbl$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase()),
+      t: "t",
+    };
 
   const filtered = useMemo(() => {
     let all = rows;
@@ -129,7 +141,7 @@ export function ListScreen({
       });
     }
     return { all, srt };
-  }, [filtered, chip, q, sort, cols, spec.chips, spec.sortDefault]);
+  }, [filtered, chip, q, sort, cols, spec.chips, spec.sortDefault, FLAG]);
 
   const gk = spec.groups && groupOn ? spec.groups : null;
   const gOf = (r: ListRow) => (gk ?? []).map((k) => cellText(colOf(k), r.v[k])).join(" · ");
@@ -224,6 +236,17 @@ export function ListScreen({
                 Download
               </Button>
             ) : null}
+            {(spec.tools ?? []).map((t) => (
+              <Button
+                key={t.id}
+                variant={t.primary ? "primary" : "secondary"}
+                disabled={!!t.why}
+                title={t.why}
+                onClick={() => ui.tool(spec.screen, t)}
+              >
+                {t.l}
+              </Button>
+            ))}
             {spec.newForm && !spec.readOnly ? (
               <Button variant="primary" onClick={() => spec.newForm && ui.openForm(spec.newForm)}>
                 <ShellIcon name="plus" size={16} />
@@ -258,6 +281,7 @@ export function ListScreen({
         </nav>
       ) : null}
 
+      {above}
       {metrics ? <MetricStrip metrics={metrics} /> : null}
 
       <Card className="overflow-hidden">
@@ -306,9 +330,9 @@ export function ListScreen({
           {spec.godownKey ? (
             <GodownPicker
               value={gf}
-              label={gf || "All godowns"}
+              label={gf || `All ${place.many}`}
               align="left"
-              items={[{ v: "", l: "All godowns", sub: `${godowns.length} godowns` }, ...godowns]}
+              items={[{ v: "", l: `All ${place.many}`, sub: `${godowns.length} ${place.many}` }, ...godowns]}
               onPick={(v) => {
                 setGf(v);
                 setPage(1);
@@ -449,7 +473,7 @@ export function ListScreen({
                           lastG = g;
                         }
                       }
-                      const tone = rowTone(r.flags);
+                      const tone = rowTone(r.flags, FLAG);
                       out.push(
                         <Tr key={r.id} onClick={() => setOpenId(r.id)} className={cx("cursor-pointer", sel[r.id] ? "bg-brand-soft" : "hover:bg-canvas")}>
                           {bulkOn ? (

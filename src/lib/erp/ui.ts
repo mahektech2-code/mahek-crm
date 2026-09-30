@@ -44,7 +44,11 @@ export type FieldType =
   | "text" | "num" | "date" | "select" | "area" | "derived" | "photo" | "video"
   | "multi" | "suggest"
   /** Free text that a barcode scanner types into, offering its options as it goes. */
-  | "scan";
+  | "scan"
+  /** A CSV file, read in the browser: the field's value is the file's text. */
+  | "csv"
+  /** A time of day, "HH:MM". */
+  | "time";
 
 /** A condition on another field of the same form: shown only while it holds. */
 export type When =
@@ -59,6 +63,8 @@ export type FieldSpec = {
   k: string;
   l: string;
   t: FieldType;
+  /** A section heading, drawn where it first changes down the form. */
+  sec?: string;
   req?: boolean;
   /** Fixed options. */
   opts?: string[];
@@ -142,6 +148,44 @@ export type ActionSpec = {
   href?: string;
 };
 
+/**
+ * A button in the list's header that acts on the screen rather than on a
+ * record ("Take my task", "Run now", "Import CSV"). It runs on the server
+ * through the kit's `runTool`, perhaps after a prompt, and may answer with a
+ * dialog (`ToolResult`) — the EOD message to send, an import preview.
+ */
+export type ToolSpec = {
+  id: string;
+  l: string;
+  primary?: boolean;
+  confirm?: string;
+  prompt?: PromptSpec;
+  /** Navigates instead of acting. */
+  href?: string;
+  /** Why it is not available (drawn disabled). */
+  why?: string;
+};
+
+/** What a tool may answer with, beside a toast. Carried as the Result's data. */
+export type ToolResult = {
+  dialog?: {
+    title: string;
+    sub?: string;
+    /** Preformatted text (a message to send, a report). */
+    text?: string;
+    /** Lines drawn one under another, each optionally toned (an import preview). */
+    lines?: { text: string; tone?: Tone }[];
+    /** A button that opens a link (WhatsApp, a file). */
+    open?: { label: string; href: string };
+    /** Offer to copy `text`. */
+    copy?: boolean;
+    /** A follow-up tool the dialog's primary button runs, with values. */
+    next?: { tool: string; label: string; values?: Record<string, string> };
+  };
+  /** Navigate after success. */
+  navigate?: string;
+};
+
 export type BulkSpec = { id: string; l: string; confirm?: string; /** Values to collect once for the whole selection. */ prompt?: PromptSpec };
 
 /* -------------------------------------------------------------------- rows */
@@ -182,6 +226,8 @@ export type ListSpec = {
   scopedLine?: string;
   newForm?: FormSpec;
   newLabel?: string;
+  /** Header buttons that act on the screen (see ToolSpec). */
+  tools?: ToolSpec[];
   download?: boolean;
   readOnly?: boolean;
   noDataLine?: string;

@@ -131,6 +131,8 @@ export type JobName =
   /** The ERP customer profile from the Sales Party sheet — fills blanks only. */
   | "erp-seed-profiles"
   | "erp-alerts"
+  /** HRMS: this month's paid-leave credit for every active employee — idempotent. */
+  | "hrms-leave-credit"
   | "erp-digest"
   | "erp-inbox"
   /**
@@ -192,6 +194,17 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   /* The field app's nightly tidy-up rides the same schedule as the CRM's.
      One cron, one place to look when something did not run. */
   results.push(await run("mbos-nightly", mbosNightly, triggeredById));
+
+  /* HRMS's monthly paid-leave credit. Nightly rather than on the 1st: the
+     partial unique index makes every run after the first a no-op, and a
+     night the cron missed is caught the next night. */
+  results.push(
+    await run("hrms-leave-credit", async () => {
+      const { runMonthlyLeaveCredit } = await import("./hrms/jobs");
+      const r = await runMonthlyLeaveCredit();
+      return { recordsAffected: r.created, detail: `${r.created} credit${r.created === 1 ? "" : "s"} written` };
+    }, triggeredById),
+  );
 
   /* The ERP's alert pass, and the owner's paragraph built from it (AI-4). */
   results.push(await run("erp-alerts", erpAlertsStep, triggeredById));
@@ -906,6 +919,14 @@ export async function runJob(
       return [await runPartySync(triggeredById)];
     case "erp-alerts":
       return [await run("erp-alerts", erpAlertsStep, triggeredById)];
+    case "hrms-leave-credit":
+      return [
+        await run("hrms-leave-credit", async () => {
+          const { runMonthlyLeaveCredit } = await import("./hrms/jobs");
+          const r = await runMonthlyLeaveCredit();
+          return { recordsAffected: r.created, detail: `${r.created} credits written` };
+        }, triggeredById),
+      ];
     case "erp-inbox":
       return [await run("erp-inbox", erpInboxStep, triggeredById)];
     case "erp-book-sync":

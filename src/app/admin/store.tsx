@@ -17,7 +17,7 @@ import type { Person } from "@/lib/services/admin-people-service";
  * what it is for — comes from `APPS`, and the levels come from
  * `lib/role-levels.ts`. Nothing about an app is typed in two places any more.
  */
-const FULL_REGISTRY: RegistryEntry[] = APPS.map((a, i) => {
+const FULL_REGISTRY: RegistryEntry[] = APPS.filter((a) => !a.retiredInto).map((a, i) => {
   const sample = REGISTRY.find((r) => r.id === a.id);
   return {
     ...(sample ?? {}),

@@ -6,6 +6,7 @@ import { cx } from "@/components/ui/primitives";
 import { DictateButton, joinDictation } from "@/components/ui/dictate";
 import { Icon } from "./icons";
 import { ErpVoice } from "./voice";
+import { useKit } from "./kit";
 
 /* ---------------------------------------------------------------------------
  * One form field, drawn as the CRM draws every field: an uppercase label (with
@@ -223,6 +224,9 @@ function Control({
       </span>
     );
   }
+  if (f.t === "csv") return <CsvPicker value={value} error={error} onChange={onChange} />;
+  if (f.t === "time")
+    return <input type="time" value={value} onChange={(e) => onChange(e.target.value)} className={control(error)} />;
   if (f.t === "photo" || f.t === "video") {
     return <PhotoPicker kind={f.t} value={value} error={error} onChange={onChange} />;
   }
@@ -311,6 +315,7 @@ function PhotoPicker({
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
   const [upErr, setUpErr] = useState("");
+  const { uploadUrl } = useKit();
   const pick = async (file: File | undefined) => {
     if (!file) return;
     setBusy(true);
@@ -319,7 +324,7 @@ function PhotoPicker({
       const body = new FormData();
       body.set("file", file);
       body.set("kind", kind);
-      const res = await fetch("/api/erp/attachments", { method: "POST", body });
+      const res = await fetch(uploadUrl, { method: "POST", body });
       const j = (await res.json()) as { id?: string; error?: string };
       if (!res.ok || !j.id) throw new Error(j.error || "Upload failed");
       setName(file.name);
@@ -362,6 +367,33 @@ function PhotoPicker({
         ) : null}
       </span>
       {upErr ? <span className="mt-1 block text-[13px] text-danger">{upErr}</span> : null}
+    </span>
+  );
+}
+
+/** A CSV chosen from the device and read here: the value is its text, so nothing is uploaded until the form is sent. */
+function CsvPicker({ value, error, onChange }: { value: string; error: boolean; onChange: (v: string) => void }) {
+  const [name, setName] = useState("");
+  const rows = value ? value.split(/\r?\n/).filter((l) => l.trim()).length : 0;
+  return (
+    <span
+      className={cx(
+        "relative flex h-10 w-full cursor-pointer items-center gap-2 rounded-[4px] border px-3 text-sm",
+        value ? "border-success bg-success-soft text-success" : cx("border-dashed bg-surface text-body hover:bg-canvas", error ? "border-danger" : "border-line-strong"),
+      )}
+    >
+      {value ? `✓ ${name || "CSV"} · ${rows} lines` : "Choose a CSV file"}
+      <input
+        type="file"
+        accept=".csv,text/csv"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          setName(file.name);
+          void file.text().then(onChange);
+        }}
+        className="absolute inset-0 cursor-pointer opacity-0"
+      />
     </span>
   );
 }

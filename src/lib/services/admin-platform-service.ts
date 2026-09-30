@@ -242,7 +242,7 @@ export async function platformHealth(): Promise<{ facts: Fact[]; apps: AppHealth
     },
   ];
 
-  const apps: AppHealth[] = APPS.map((a) => ({
+  const apps: AppHealth[] = APPS.filter((a) => !a.retiredInto).map((a) => ({
     id: a.id,
     name: a.name,
     built: a.built,

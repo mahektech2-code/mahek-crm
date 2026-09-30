@@ -92,7 +92,9 @@ export type SettingCategory =
    */
   | "erp-ai"
   /** The ERP as an operations system: whether it is where orders are taken. */
-  | "erp";
+  | "erp"
+  /** HRMS: attendance, leave, payroll, performance and tasks (docs/hrms spec §24). */
+  | "hrms";
 
 export type SettingDefinition = {
   key: string;
@@ -3534,6 +3536,409 @@ export const SETTINGS = [
     default: false,
   },
   {
+    key: "hrms.attendance.graceMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "Late check-in grace",
+    description:
+      "Minutes after the official in-time that still count as on time for the late / early remark. Past it, an ordinary check-in is refused with “Late Punch-in, Today Unpaid Leave. Contact Admin” (spec §6.2).",
+    default: 30,
+    min: 0,
+    max: 240,
+  },
+  {
+    key: "hrms.attendance.fullDayPercent",
+    type: "integer",
+    category: "hrms",
+    label: "Full day at this share of duty",
+    description:
+      "A checked-out day is a Full Day when the hours worked reach this percentage of the day's duty duration; below it, a Half Day.",
+    default: 60,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "hrms.attendance.privilegedRangeM",
+    type: "integer",
+    category: "hrms",
+    label: "Office range for HR and admin",
+    description:
+      "How far from the office, in metres, a person holding the attendance-all power may check in or out.",
+    default: 9000,
+    min: 0,
+    max: 50000,
+  },
+  {
+    key: "hrms.attendance.defaultWindowDays",
+    type: "integer",
+    category: "hrms",
+    label: "Attendance lists open on",
+    description:
+      "How many days back the attendance lists show before a date filter is chosen.",
+    default: 400,
+    min: 1,
+    max: 3650,
+  },
+  {
+    key: "hrms.attendance.qrEnabled",
+    type: "boolean",
+    category: "hrms",
+    label: "QR-code check-in",
+    description:
+      "Off in the source for everyone. On, the home card offers scanning the office's QR code instead of the location check.",
+    default: false,
+  },
+  {
+    key: "hrms.attendance.qrGraceMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "QR check-in grace",
+    description:
+      "Grace for QR check-ins (the source's QR rows had none).",
+    default: 0,
+    min: 0,
+    max: 240,
+  },
+  {
+    key: "hrms.attendance.qrFullDayPercent",
+    type: "integer",
+    category: "hrms",
+    label: "QR full day above this share",
+    description:
+      "A QR day is a Full Day above this percentage of duty (the source used more than 70%).",
+    default: 70,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "hrms.office.maxRangeM",
+    type: "integer",
+    category: "hrms",
+    label: "Largest office radius",
+    description:
+      "The largest check-in radius an office may be given, in metres.",
+    default: 20000,
+    min: 10,
+    max: 50000,
+  },
+  {
+    key: "hrms.ot.enabled",
+    type: "boolean",
+    category: "hrms",
+    label: "Overtime",
+    description:
+      "Off in the source for everyone. On, the Overtime screen appears in HRMS.",
+    default: false,
+  },
+  {
+    key: "hrms.ot.minMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "Shortest overtime",
+    description:
+      "Overtime of this many minutes or fewer is refused with “OT not Applicable”.",
+    default: 10,
+    min: 0,
+    max: 240,
+  },
+  {
+    key: "hrms.reports.lateOverMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "Late beyond, on monthly reports",
+    description:
+      "Monthly reports count check-ins more than this many minutes after the official in-time separately.",
+    default: 10,
+    min: 0,
+    max: 240,
+  },
+  {
+    key: "hrms.payroll.pfRatePercent",
+    type: "decimal",
+    category: "hrms",
+    label: "Employee PF rate",
+    description:
+      "Percent of half the basic salary deducted as employee PF.",
+    default: 12,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.payroll.pfCapPaise",
+    type: "integer",
+    category: "hrms",
+    label: "Employee PF cap",
+    description:
+      "The most employee PF deducted in a month, in paise (₹1,800).",
+    default: 180000,
+    min: 0,
+    max: 100000000,
+  },
+  {
+    key: "hrms.payroll.employerPfExtraPercent",
+    type: "decimal",
+    category: "hrms",
+    label: "Employer PF extra",
+    description:
+      "Percent of half the basic added on top of the capped PF for the employer's share (the source's 13% = 12% + 1%).",
+    default: 1,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.payroll.esicEmployeePercent",
+    type: "decimal",
+    category: "hrms",
+    label: "Employee ESIC rate",
+    description:
+      "Percent of gross deducted as ESIC while gross is under the ceiling.",
+    default: 0.75,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.payroll.esicEmployerPercent",
+    type: "decimal",
+    category: "hrms",
+    label: "Employer ESIC rate",
+    description:
+      "Percent of gross the employer adds as ESIC while gross is under the ceiling.",
+    default: 3.25,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.payroll.esicCeilingPaise",
+    type: "integer",
+    category: "hrms",
+    label: "ESIC ceiling",
+    description:
+      "ESIC applies only while gross earning is below this, in paise (₹21,000).",
+    default: 2100000,
+    min: 0,
+    max: 1000000000,
+  },
+  {
+    key: "hrms.payroll.februaryDays",
+    type: "integer",
+    category: "hrms",
+    label: "Days in February",
+    description:
+      "The source always paid February on 28 days.",
+    default: 28,
+    min: 28,
+    max: 29,
+  },
+  {
+    key: "hrms.performance.dailyDivisor",
+    type: "integer",
+    category: "hrms",
+    label: "Working days in a month (daily targets)",
+    description:
+      "Monthly sales targets are divided by this to give a day's target.",
+    default: 25,
+    min: 1,
+    max: 31,
+  },
+  {
+    key: "hrms.performance.periodDivisor",
+    type: "integer",
+    category: "hrms",
+    label: "Days in a month (performance points)",
+    description:
+      "Monthly targets are divided by this and multiplied by the days in the period for performance points.",
+    default: 30,
+    min: 1,
+    max: 31,
+  },
+  {
+    key: "hrms.performance.standardHours",
+    type: "integer",
+    category: "hrms",
+    label: "Standard working hours",
+    description:
+      "Average hours a day that earn a full working-hour point.",
+    default: 8,
+    min: 1,
+    max: 24,
+  },
+  {
+    key: "hrms.performance.financialYearStart",
+    type: "text",
+    category: "hrms",
+    label: "Financial year start (daily score)",
+    description:
+      "The date the daily score's total sale and payment days are counted from (the source used 2023-04-01).",
+    default: "2023-04-01",
+  },
+  {
+    key: "hrms.performance.pointsFinancialDate",
+    type: "text",
+    category: "hrms",
+    label: "Financial date (performance points)",
+    description:
+      "The date performance points count outstanding from (the source defaulted to 2024-04-01).",
+    default: "2024-04-01",
+  },
+  {
+    key: "hrms.performance.gstPercent",
+    type: "decimal",
+    category: "hrms",
+    label: "GST added to total sale",
+    description:
+      "The daily score adds this percentage of GST to the KPI sales amount (the source's 18%).",
+    default: 18,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.performance.employeeOfMonthPercent",
+    type: "integer",
+    category: "hrms",
+    label: "Employee of the Month at",
+    description:
+      "Overall monthly performance at or above this percentage.",
+    default: 90,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.tasks.eodWhatsappNumber",
+    type: "text",
+    category: "hrms",
+    label: "Task EOD goes to",
+    description:
+      "The WhatsApp number Send Task EOD opens, with country code.",
+    default: "919822824973",
+  },
+  {
+    key: "hrms.calling.historyDays",
+    type: "integer",
+    category: "hrms",
+    label: "Calling history",
+    description:
+      "How many days the Calling history tab shows.",
+    default: 10,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "hrms.calling.suggestionFactor",
+    type: "integer",
+    category: "hrms",
+    label: "Suggestion: calls per order",
+    description:
+      "How many calls one order is worth when deciding whether to keep following a customer up: calls − this × orders.",
+    default: 7,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.calling.suggestionThreshold",
+    type: "integer",
+    category: "hrms",
+    label: "Suggestion: deactivate above",
+    description:
+      "Where calls − factor × orders is at or below this, the suggestion is Do FollowUp; above it, Do Deactivate This Customer.",
+    default: 7,
+    min: 0,
+    max: 1000,
+  },
+  {
+    key: "hrms.sales.activityWindowDays",
+    type: "integer",
+    category: "hrms",
+    label: "Sales activity lists open on",
+    description:
+      "How many days back the sales activity list shows by default.",
+    default: 500,
+    min: 1,
+    max: 3650,
+  },
+  {
+    key: "hrms.holidays.editWindowDays",
+    type: "integer",
+    category: "hrms",
+    label: "Holidays editable for",
+    description:
+      "A holiday more than this many days in the past can no longer be edited.",
+    default: 366,
+    min: 1,
+    max: 3650,
+  },
+  {
+    key: "hrms.payroll.ptSlabs",
+    type: "structured",
+    category: "hrms",
+    label: "Professional tax slabs",
+    description:
+      "Maharashtra PT by gender: up to each gross (paise) the tax is the figure beside it; above the last, the rest. February uses the February figure.",
+    default: { female: [{ upToPaise: 2500000, pt: 0 }], male: [{ upToPaise: 750000, pt: 0 }, { upToPaise: 1000000, pt: 17500 }], rest: 20000, february: 30000 },
+  },
+  {
+    key: "hrms.payroll.lateBands",
+    type: "structured",
+    category: "hrms",
+    label: "Late marks to half-days",
+    description:
+      "Late check-ins in a month, and the half-days of salary deducted for them: at least the first number gives the second.",
+    default: [[25, 5], [20, 4], [15, 3], [10, 2], [5, 1]],
+  },
+  {
+    key: "hrms.performance.weights",
+    type: "structured",
+    category: "hrms",
+    label: "Daily score weights",
+    description:
+      "The nine components of the daily sales score and their maximum points (they total 100).",
+    default: { visits: 10, timeCust: 5, noteLen: 5, hours: 10, km: 5, amount: 20, litres: 20, outstanding: 20, tasks: 5 },
+  },
+  {
+    key: "hrms.performance.staffOffices",
+    type: "structured",
+    category: "hrms",
+    label: "Staff performance offices",
+    description:
+      "Monthly staff performance is worked out for active employees of these offices (the source: Mahek Marketing India).",
+    default: ["Mahek Marketing India"],
+  },
+  {
+    key: "hrms.performance.timeGivenBase",
+    type: "integer",
+    category: "hrms",
+    label: "Minutes a visit for full time marks",
+    description: "Time with customers earns its full daily mark at this many minutes per visit.",
+    default: 5,
+    min: 1,
+    max: 240,
+  },
+  {
+    key: "hrms.performance.descriptionBase",
+    type: "integer",
+    category: "hrms",
+    label: "Note characters a visit for full marks",
+    description: "Meeting notes earn their full daily mark at this many characters per visit, not counting spaces and commas.",
+    default: 25,
+    min: 1,
+    max: 1000,
+  },
+  {
+    key: "hrms.performance.outstandingBands",
+    type: "structured",
+    category: "hrms",
+    label: "Average payment days bands",
+    description: "Average payment days under the first earn the full outstanding mark, under the second half, under the third a quarter, beyond it nothing.",
+    default: [15, 30, 45],
+  },
+  {
+    key: "hrms.performance.pointBands",
+    type: "structured",
+    category: "hrms",
+    label: "Performance point bands",
+    description: "Minutes a day with customers and note characters a visit: above the first number a full point, above the second half a point.",
+    default: { time: [180, 90], description: [25, 15] },
+  },
+  {
     key: "erp.production.recipeTolerancePercent",
     type: "integer",
     category: "erp",
@@ -4700,6 +5105,46 @@ export type Config = {
   "whatsapp.contactsPerWeekLimit": number;
   "whatsapp.unconfirmedExpiryHours": number;
   "whatsapp.autoConfirmAfterHours": number;
+
+  "hrms.attendance.graceMinutes": number;
+  "hrms.attendance.fullDayPercent": number;
+  "hrms.attendance.privilegedRangeM": number;
+  "hrms.attendance.defaultWindowDays": number;
+  "hrms.attendance.qrEnabled": boolean;
+  "hrms.attendance.qrGraceMinutes": number;
+  "hrms.attendance.qrFullDayPercent": number;
+  "hrms.office.maxRangeM": number;
+  "hrms.ot.enabled": boolean;
+  "hrms.ot.minMinutes": number;
+  "hrms.reports.lateOverMinutes": number;
+  "hrms.payroll.pfRatePercent": number;
+  "hrms.payroll.pfCapPaise": number;
+  "hrms.payroll.employerPfExtraPercent": number;
+  "hrms.payroll.esicEmployeePercent": number;
+  "hrms.payroll.esicEmployerPercent": number;
+  "hrms.payroll.esicCeilingPaise": number;
+  "hrms.payroll.februaryDays": number;
+  "hrms.performance.dailyDivisor": number;
+  "hrms.performance.periodDivisor": number;
+  "hrms.performance.standardHours": number;
+  "hrms.performance.financialYearStart": string;
+  "hrms.performance.pointsFinancialDate": string;
+  "hrms.performance.gstPercent": number;
+  "hrms.performance.employeeOfMonthPercent": number;
+  "hrms.tasks.eodWhatsappNumber": string;
+  "hrms.calling.historyDays": number;
+  "hrms.calling.suggestionFactor": number;
+  "hrms.calling.suggestionThreshold": number;
+  "hrms.sales.activityWindowDays": number;
+  "hrms.holidays.editWindowDays": number;
+  "hrms.payroll.ptSlabs": { female: { upToPaise: number; pt: number }[]; male: { upToPaise: number; pt: number }[]; rest: number; february: number };
+  "hrms.payroll.lateBands": [number, number][];
+  "hrms.performance.weights": Record<"visits" | "timeCust" | "noteLen" | "hours" | "km" | "amount" | "litres" | "outstanding" | "tasks", number>;
+  "hrms.performance.staffOffices": string[];
+  "hrms.performance.timeGivenBase": number;
+  "hrms.performance.descriptionBase": number;
+  "hrms.performance.outstandingBands": [number, number, number];
+  "hrms.performance.pointBands": { time: [number, number]; description: [number, number] };
 
   "erp.orders.live": boolean;
   "erp.production.recipeTolerancePercent": number;

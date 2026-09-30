@@ -49,7 +49,7 @@ export default async function LoginPage({
       <BrandPanel
         footer={
           <div className="flex flex-wrap gap-2">
-            {APPS.map((app, i) => (
+            {APPS.filter((a) => !a.retiredInto).map((app, i) => (
               <span
                 key={app.id}
                 style={{ animationDelay: `${1600 + i * 90}ms` }}

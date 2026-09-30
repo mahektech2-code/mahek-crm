@@ -6,7 +6,7 @@ import {
 } from "@/lib/access-control";
 import { asc, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, appModuleAccess, employees, erpUserPowers, users } from "@/db/schema";
+import { appAccess, appModuleAccess, employees, erpUserPowers, hrmsUserPowers, users } from "@/db/schema";
 import { APPS, type AppId } from "@/lib/apps";
 import { moduleAllowed, moduleKeysForApp, modulesForApp } from "@/lib/modules";
 
@@ -95,6 +95,7 @@ export type AccessRow = {
    * second place access was decided.
    */
   erpPowers: string[];
+  hrmsPowers: string[];
 };
 
 /**
@@ -200,7 +201,7 @@ function buildGrants(
 
 /** Every account, with what it opens and how far into each app it reaches. */
 export async function listAccess(): Promise<AccessRow[]> {
-  const [accounts, access, moduleRows, staff, powerRows] = await Promise.all([
+  const [accounts, access, moduleRows, staff, powerRows, hrmsPowerRows] = await Promise.all([
     db
       .select({
         id: users.id,
@@ -226,7 +227,10 @@ export async function listAccess(): Promise<AccessRow[]> {
       .from(appModuleAccess),
     employeeRows(),
     db.select({ userId: erpUserPowers.userId, power: erpUserPowers.power }).from(erpUserPowers),
+    db.select({ userId: hrmsUserPowers.userId, power: hrmsUserPowers.power }).from(hrmsUserPowers),
   ]);
+  const hrmsPowersByUser = new Map<string, string[]>();
+  for (const p of hrmsPowerRows) hrmsPowersByUser.set(p.userId, [...(hrmsPowersByUser.get(p.userId) ?? []), p.power]);
 
   const powersByUser = new Map<string, string[]>();
   for (const p of powerRows) powersByUser.set(p.userId, [...(powersByUser.get(p.userId) ?? []), p.power]);
@@ -313,6 +317,7 @@ export async function listAccess(): Promise<AccessRow[]> {
       roles: heldRoles,
       conflicts: conflictsFor(heldHats),
       erpPowers: powersByUser.get(u.id) ?? [],
+      hrmsPowers: hrmsPowersByUser.get(u.id) ?? [],
     };
   });
 }

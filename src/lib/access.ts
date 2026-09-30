@@ -239,18 +239,26 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
       continue;
     }
 
-    // The employee master has nothing waiting in it — it is a record, not a
-    // worklist — so the tile says how many people are on the books. The badge
-    // stays at zero deliberately: a headcount is not a task, and a red pill
-    // over it would read as seventy things somebody has to do.
+    // HRMS is a worklist now as well as the employee master: the badge counts
+    // what this person has to act on — the same counts its own sidebar draws —
+    // and the headcount stays in the sentence, where it is not read as a task.
     if (app.id === "hrms") {
-      const headcount = await activeEmployeeCount();
+      const [{ hrmsContext }, { hrmsNavCounts }] = await Promise.all([import("./hrms/access"), import("./hrms/counts")]);
+      const [headcount, counts] = await Promise.all([activeEmployeeCount(), hrmsContext().then(hrmsNavCounts)]);
+      const parts = [
+        counts.pendingOut ? `${counts.pendingOut} check-out${counts.pendingOut === 1 ? "" : "s"} to close` : "",
+        counts.approvals ? `${counts.approvals} leave request${counts.approvals === 1 ? "" : "s"}` : "",
+        counts.help ? `${counts.help} help request${counts.help === 1 ? "" : "s"}` : "",
+        counts.grievances ? `${counts.grievances} grievance${counts.grievances === 1 ? "" : "s"}` : "",
+      ].filter(Boolean);
       out.push({
         ...app,
-        count: 0,
-        status: headcount
-          ? `${headcount} active employee${headcount === 1 ? "" : "s"}`
-          : "No employees imported yet",
+        count: (counts.pendingOut ?? 0) + (counts.approvals ?? 0) + (counts.help ?? 0) + (counts.grievances ?? 0),
+        status: parts.length
+          ? parts.join(" · ")
+          : headcount
+            ? `${headcount} active employee${headcount === 1 ? "" : "s"}`
+            : "No employees imported yet",
       });
       continue;
     }
@@ -332,7 +340,7 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
 }
 
 export function lockedApps(ids: AppId[]): AppDefinition[] {
-  return APPS.filter((a) => !ids.includes(a.id) && !a.mobileOnly);
+  return APPS.filter((a) => !ids.includes(a.id) && !a.mobileOnly && !a.retiredInto);
 }
 
 /* ------------------------------------------------------- the sign-in log */

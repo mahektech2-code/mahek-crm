@@ -1,7 +1,9 @@
-import { AppPlaceholder } from "@/components/shell/app-placeholder";
+import { permanentRedirect } from "next/navigation";
 
-export const metadata = { title: "Attendance & People - MahekOne" };
-
-export default function Page() {
-  return <AppPlaceholder app="people" />;
+/**
+ * Attendance & People was a placeholder for the work HRMS now does. A bookmark
+ * to it lands in HRMS rather than on "not built yet".
+ */
+export default function RetiredIntoHrms() {
+  permanentRedirect("/hrms");
 }
