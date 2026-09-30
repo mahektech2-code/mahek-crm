@@ -8,16 +8,28 @@ import { useLeadPipeline } from "./provider";
 import { LeadStatusBadges } from "./badges";
 import { COMMS_ACTIONS, STAGE_LABEL, VERIFICATION_RESULT_LABEL, ladderFor, personName } from "@/lib/sales-lead-pipeline/reference";
 import type { Lead, TrialOutcome } from "@/lib/sales-lead-pipeline/types";
+import { PPage, PROTO_FONT, PSectionLabel } from "./proto/ui";
+import {
+  ProtoComms,
+  ProtoNextAction,
+  ProtoOpportunityGrid,
+  ProtoOrderTab,
+  ProtoRecordHeader,
+  ProtoRelationship,
+  ProtoStanding,
+  ProtoTabs,
+  ProtoTimeline,
+} from "./proto/record-parts";
 
 
 const money = (paise?: number) => (paise ? "₹" + Math.round(paise / 100).toLocaleString("en-IN") : "—");
 
-type Tab = "overview" | "sample" | "negotiation" | "profile" | "approval" | "comms" | "timeline";
+type Tab = "overview" | "sample" | "negotiation" | "profile" | "approval" | "order" | "comms" | "timeline";
 
 const SAMPLE_STAGES = ["qualification", "sample_trial", "sample_received", "sample_review", "negotiation", "first_order", "delivery", "payment", "second_order", "customer"];
 const NEGOTIATION_STAGES = ["negotiation", "first_order", "delivery", "payment", "second_order", "customer"];
 
-function tabsFor(lead: Lead): { key: Tab; label: string }[] {
+function tabsFor(lead: Lead, proto = false): { key: Tab; label: string }[] {
   const tabs: { key: Tab; label: string }[] = [{ key: "overview", label: "Overview" }];
   if (lead.salesType === "distributor") {
     tabs.push({ key: "profile", label: "Distributor Profile" }, { key: "approval", label: "Management Approval" });
@@ -27,6 +39,8 @@ function tabsFor(lead: Lead): { key: Tab; label: string }[] {
       tabs.push({ key: "negotiation", label: "Negotiation" });
     }
   }
+  /* The prototype's fourth tab: the order, its steps and its dates. Drawn in the CRM's mounting only. */
+  if (proto && lead.salesType !== "distributor" && lead.orders.length) tabs.push({ key: "order", label: "Order · Delivery · Payment" });
   tabs.push({ key: "comms", label: "Communication" }, { key: "timeline", label: "Timeline" });
   return tabs;
 }
@@ -40,15 +54,69 @@ export type TimelinePaging = { total: number; nextHref: string | null; newestHre
  * database holds.
  */
 export function LeadRecordScreen({ initialTab, timeline }: { initialTab?: string; timeline: TimelinePaging }) {
-  const { lead, openModal, todayDate, links } = useLeadPipeline();
+  const { lead, openModal, todayDate, links, workspace } = useLeadPipeline();
+  const proto = workspace === "crm";
   const BASE = links.base;
   const [tab, setTab] = React.useState<Tab>((initialTab as Tab) || "overview");
 
   const ladder = ladderFor(lead.salesType);
   const currentIdx = ladder.indexOf(lead.stage);
-  const availableTabs = tabsFor(lead);
+  const availableTabs = tabsFor(lead, proto);
   const activeTab = availableTabs.some((t) => t.key === tab) ? tab : "overview";
   const canWork = lead.caps.canWork;
+
+  if (proto) {
+    return (
+      <div style={{ fontFamily: PROTO_FONT }}>
+        <PPage>
+          <div className="mb-2.5 text-[12.5px] text-muted">
+            <Link href={`${BASE}/list`} className="text-brand">All Leads</Link> / {lead.name}
+          </div>
+
+          {lead.lost ? (
+            <Callout tone="danger" className="mb-4">
+              <div>
+                <b>This lead is marked Lost.</b> Reason: {lead.lost.reasonLabel}
+                {lead.lost.by ? ` · by ${personName(lead.lost.by)}` : ""}
+                {lead.lost.date ? ` on ${lead.lost.date}` : ""}.
+                {lead.lost.note ? ` “${lead.lost.note}”` : ""} The record and its full timeline remain, unchanged, for reference.
+              </div>
+            </Callout>
+          ) : null}
+          {lead.deskRequest && !lead.lost ? (
+            <Callout tone="brand" className="mb-4">
+              <div>
+                <b>The calling desk has asked for this lead to be put forward as a Prospect.</b> It stays a Suspect until a verification call succeeds.
+              </div>
+            </Callout>
+          ) : null}
+
+          <ProtoRecordHeader
+            lead={lead}
+            canWork={canWork}
+            editHref={links.record(lead.id)}
+            onReassign={() => openModal("reassign", lead.id)}
+            onLost={() => openModal("lost", lead.id)}
+          />
+          {!lead.lost ? <ProtoNextAction lead={lead} today={todayDate} canWork={canWork} onEdit={() => openModal("nextaction", lead.id)} /> : null}
+          {lead.salesType === "third_party" ? <ProtoRelationship lead={lead} /> : null}
+          <ProtoStanding lead={lead} ladder={ladder} currentIdx={currentIdx} />
+          <ProtoTabs tabs={availableTabs} active={activeTab} onChange={setTab} />
+
+          <div>
+            {activeTab === "overview" ? <OverviewTab lead={lead} proto /> : null}
+            {activeTab === "sample" ? <SampleTab lead={lead} /> : null}
+            {activeTab === "negotiation" ? <NegotiationTab lead={lead} /> : null}
+            {activeTab === "profile" ? <DistributorProfileTab lead={lead} /> : null}
+            {activeTab === "approval" ? <ApprovalTab lead={lead} /> : null}
+            {activeTab === "order" ? <ProtoOrderTab lead={lead} /> : null}
+            {activeTab === "comms" ? <ProtoComms lead={lead} /> : null}
+            {activeTab === "timeline" ? <ProtoTimeline lead={lead} paging={timeline} /> : null}
+          </div>
+        </PPage>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">
@@ -350,7 +418,31 @@ function GateActionCard({ lead }: { lead: Lead }) {
  * either the Suspect visit tracker or the verification summary) beside a
  * narrower right column carrying nothing but "Move this lead forward".
  */
-function OverviewTab({ lead }: { lead: Lead }) {
+function OverviewTab({ lead, proto = false }: { lead: Lead; proto?: boolean }) {
+  if (proto) {
+    return (
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1.5fr_1fr]">
+        <div>
+          <PSectionLabel>Opportunity — collected by the Salesman</PSectionLabel>
+          <ProtoOpportunityGrid lead={lead} />
+          <p className="mb-[18px] text-[12px] text-muted">
+            Collected by the Salesman across the Suspect visits and Prospect conversion. The Sales Manager verifies and nurtures this — it is never re-collected from the customer.
+          </p>
+          {lead.salesmanNotes ? (
+            <div className="mb-[18px] rounded-lg border border-line bg-surface px-4 py-3">
+              <div className="text-[10.5px] font-[650] tracking-[0.04em] text-muted uppercase">Salesman notes</div>
+              <p className="mt-0.5 text-[13px] whitespace-pre-line text-body">{lead.salesmanNotes}</p>
+            </div>
+          ) : null}
+          {lead.stage === "suspect" || lead.stage === "new" ? <SuspectVisitTracker lead={lead} /> : <VerificationSummary lead={lead} />}
+        </div>
+        <div>
+          <PSectionLabel>Move this lead forward</PSectionLabel>
+          <GateActionCard lead={lead} />
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.5fr_1fr]">
       <div>

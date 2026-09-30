@@ -68,7 +68,7 @@ export type SampleState =
 
 export type TimelineEntry = {
   d: string;
-  kind: "system" | "sales_manager" | "salesman";
+  kind: "system" | "sales_manager" | "salesman" | "caller";
   title: string;
   meta?: string;
 };
@@ -380,6 +380,8 @@ export type PipelineRow = {
   nextActionResp?: string;
   /** What the manager can do next — a short label for the focus list. */
   gateLabel?: string;
+  /** A commitment is on file (a forecast). The CRM workspace's focus wording turns on it. */
+  hasCommitment?: boolean;
 };
 
 export type BookTiles = {
@@ -405,6 +407,9 @@ export type ManagerKpis = {
 };
 
 export type FunnelBar = { stage: Stage; label: string; count: number };
+
+/** The four numbers the CRM workspace's sidebar prints — see `pipelineSidebar`. */
+export type SidebarCounts = { all: number; mine: number; today: number; overdue: number };
 
 export type DashboardData = {
   today: string;

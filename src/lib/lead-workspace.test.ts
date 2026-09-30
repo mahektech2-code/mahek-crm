@@ -410,10 +410,51 @@ describe("the Sales Manager screens are workspace-aware", () => {
     }
   });
 
-  it("the CRM pages hand the CRM workspace to the shared screens", () => {
-    for (const page of ["page.tsx", "pipeline/page.tsx", "list/page.tsx", "[id]/page.tsx"]) {
-      const src = readFileSync(`src/app/crm/leads/sales-manager/${page}`, "utf8");
-      assert.match(src, /workspace="crm"/, `${page} must pass workspace="crm"`);
+  it("the CRM pages draw the prototype's screens, and the record is handed the CRM workspace", () => {
+    const at = (page: string) => readFileSync(`src/app/crm/leads/sales-manager/${page}`, "utf8");
+    assert.match(at("page.tsx"), /ProtoDashboard/);
+    assert.match(at("pipeline/page.tsx"), /ProtoPipeline/);
+    for (const view of ["list", "mine", "today", "overdue", "distributors"]) {
+      assert.match(at(`${view}/page.tsx`), /ProtoListPage/, `${view} must draw the prototype list`);
+    }
+    assert.match(at("[id]/page.tsx"), /workspace="crm"/, "the record must be handed the CRM workspace");
+  });
+
+  it("the Sales Dashboard's pages still draw the shared screens, untouched", () => {
+    for (const page of ["page.tsx", "pipeline/page.tsx", "list/page.tsx"]) {
+      const src = readFileSync(`src/app/sales-lead-pipeline/${page}`, "utf8");
+      assert.doesNotMatch(src, /Proto/, `${page} must not draw the CRM prototype`);
+    }
+  });
+
+  it("only ONE header and sidebar are drawn under /crm/leads/sales-manager: the workspace's own", () => {
+    const crmLayout = readFileSync("src/app/crm/layout.tsx", "utf8");
+    /* The CRM layout still runs its checks, then returns a bare frame for this
+       route — before the AppShell (header + sidebar) is ever built. */
+    const bare = crmLayout.indexOf("if (ownFrame)");
+    const shell = crmLayout.indexOf("<AppShell");
+    assert.ok(bare > -1 && shell > -1 && bare < shell, "the workspace branch must return before the CRM shell is built");
+    assert.match(crmLayout, /inCrmSalesManagerWorkspace\(\)/);
+    assert.match(crmLayout.slice(bare, shell), /<AppFrame header=\{null\}/, "no CRM header in the workspace frame");
+    /* Access checks come first, so the workspace cannot be reached around them. */
+    assert.ok(crmLayout.indexOf('redirect("/apps")') < bare);
+
+    /* And the workspace frame carries exactly one of each thing it replaces. */
+    const shellSrc = readFileSync("src/components/sales-lead-pipeline/proto/shell.tsx", "utf8");
+    assert.equal((shellSrc.match(/<NotificationBell/g) ?? []).length, 1, "one bell");
+    assert.equal((shellSrc.match(/<AccountMenu/g) ?? []).length, 1, "one account menu");
+    assert.equal((shellSrc.match(/<aside/g) ?? []).length, 1, "one sidebar");
+    const layout = readFileSync("src/app/crm/leads/sales-manager/layout.tsx", "utf8");
+    assert.equal((layout.match(/<SalesManagerShell/g) ?? []).length, 1);
+    /* Nothing under this route draws a shell of its own a second time. */
+    for (const page of ["page.tsx", "pipeline/page.tsx", "list-view.tsx", "[id]/page.tsx"]) {
+      assert.doesNotMatch(readFileSync(`src/app/crm/leads/sales-manager/${page}`, "utf8"), /SalesManagerShell|AppShell|<Header/, page);
+    }
+  });
+
+  it("the prototype's frame links to seven views that each have a page", () => {
+    for (const view of ["pipeline", "list", "today", "overdue", "mine", "distributors"]) {
+      assert.ok(existsSync(`src/app/crm/leads/sales-manager/${view}/page.tsx`), `${view} has no page`);
     }
   });
 });

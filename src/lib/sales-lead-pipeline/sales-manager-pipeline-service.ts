@@ -63,6 +63,7 @@ import type {
   Lead,
   ListData,
   ManagerKpis,
+  SidebarCounts,
   PipelineFunnelData,
   PipelineRefs,
   PipelineRow,
@@ -172,6 +173,7 @@ const DIRECT_BARS: Stage[] = [
   "sample_review",
   "negotiation",
   "first_order",
+  "second_order",
   "customer",
 ];
 
@@ -273,6 +275,7 @@ function toRow(r: PageRow, extra: RowExtra | undefined): PipelineRow {
     nextActionDate: due,
     nextActionResp: clean(extra?.nextActionOwner) ?? clean(r.leadManagerName),
     gateLabel: focusLabel(r, extra),
+    hasCommitment: r.hasCommitment,
   };
 }
 
@@ -404,6 +407,10 @@ const VIEWS = new Set<LeadView>(["all", "mine", "today", "overdue", "expected", 
 
 export type ListParams = {
   q?: string;
+  /** Comma lists, exactly as `LeadFilters` reads them. */
+  salesType?: string;
+  owner?: string;
+  priority?: string;
   stage?: string;
   view?: string;
   due?: string;
@@ -426,6 +433,9 @@ export async function pipelineList(day: string, params: ListParams): Promise<Lis
       filters: {
         search: clean(params.q),
         stage: clean(params.stage),
+        salesType: clean(params.salesType),
+        owner: clean(params.owner),
+        priority: clean(params.priority),
       },
     }),
     pipelineTiles(day),
@@ -442,11 +452,36 @@ export async function pipelineList(day: string, params: ListParams): Promise<Lis
   };
 }
 
+/**
+ * THE CRM WORKSPACE'S SIDEBAR COUNTS — the four numbers its navigation prints.
+ *
+ * "My leads", "Today's actions" and "Overdue" are the tiles the dashboard
+ * already draws (`leadTileCounts`), so a sidebar count and the tile beside it
+ * cannot disagree; "All Leads" is a `count(*)` over the same scoped book the
+ * list pages, and nothing loads a lead into the layout.
+ */
+
+export async function pipelineSidebar(day: string): Promise<SidebarCounts> {
+  const scope = await managerScope();
+  const [tiles, [row]] = await Promise.all([
+    leadTileCounts(day),
+    db.execute<{ n: number }>(sql`
+      select count(*)::int as n
+        from customers c
+       where c.lead_stage is not null
+         and c.lead_archived = false
+         ${leadsVisible(scope)}
+    `),
+  ]);
+  return { all: Number(row?.n ?? 0), mine: tiles.mine, today: tiles.today, overdue: tiles.overdue };
+}
+
 /* ═════════════════════════════════════════════════════════════════ record */
 
 type Extra = {
   createdAt: string;
   address: string | null;
+  email: string | null;
   notes: string | null;
   prospectRequestState: string | null;
   holdReason: string | null;
@@ -486,7 +521,7 @@ async function newestCallExtras(id: string): Promise<Record<string, string>> {
 
 async function recordExtras(id: string): Promise<Extra | null> {
   const rows = (await db.execute(sql`
-    select c.created_at as "createdAt", c.address, c.lead_notes as notes,
+    select c.created_at as "createdAt", c.address, c.email, c.lead_notes as notes,
            c.prospect_request_state as "prospectRequestState",
            c.lead_hold_reason as "holdReason"
       from customers c
@@ -642,8 +677,12 @@ function orderOf(o: LeadOrderRow): Lead["orders"][number] {
   };
 }
 
-function kindOfEvent(t: { actorName: string | null; sourceApp: string }): TimelineEntry["kind"] {
+function kindOfEvent(t: { actorName: string | null; sourceApp: string; eventType?: string }): TimelineEntry["kind"] {
   if (!t.actorName) return "system";
+  /* A logged call IS the telecaller's work — the one CRM event whose author's
+     job the event itself names. The other CRM events (a stage move, a note, a
+     reassignment) could be anybody's, and are not guessed into a job. */
+  if (t.eventType === "telecaller_call") return "caller";
   return t.sourceApp === "mbos" ? "salesman" : "sales_manager";
 }
 
@@ -1053,6 +1092,7 @@ export async function pipelineLead(
     contact: clean(record.contactPerson),
     phone: clean(record.mobile),
     address: clean(extra?.address),
+    email: clean(extra?.email),
     source: clean(record.source),
     createdAt: extra ? stampDate(extra.createdAt) : "",
     salesType: salesTypeOf(record.salesType),

@@ -8,5 +8,5 @@ export default async function Page({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  return <ProtoListPage viewKey="all" searchParams={await searchParams} />;
+  return <ProtoListPage viewKey="mine" searchParams={await searchParams} />;
 }
