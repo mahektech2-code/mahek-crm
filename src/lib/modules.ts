@@ -417,6 +417,30 @@ export const APP_MODULES: AppModule[] = [
     note:
       "The CRM's own Sales Manager seat. Off by default — grant it to whoever should carry it here, independent of any Sales Dashboard access.",
   },
+  /**
+   * A CENTRAL RECORD OF EVERY LEAD CLOSED LOST, off `crm.leads` for the same
+   * reason the calling desk sits off it: a lead can be lost from any rung of
+   * any ladder, so this is not a cut of one stage's worklist — it is its own
+   * question ("what did we lose, and why") asked of the whole book, and a tab
+   * of All Leads could not be withheld from anybody who can open that screen.
+   *
+   * `offByDefault` for the reason the desk and the Sales Manager seat both
+   * are: a loss report is not everybody's to read, and a whole-CRM grant must
+   * not carry it to every telecaller by accident. No Sales Dashboard
+   * counterpart — that funnel is walked by field salesmen through MBOS, and a
+   * lead lost there is read from the same `customers`/`lead_stage_transitions`
+   * rows this reads, with no second screen needed yet.
+   */
+  {
+    key: "crm.lead-lost",
+    app: "crm",
+    label: "Lost",
+    group: "Lead Management",
+    href: "/crm/leads/lost",
+    offByDefault: true,
+    note:
+      "Every lead closed lost, whatever rung it was lost from, with the reason and who decided it. Off by default — grant it to whoever reviews what the funnel loses.",
+  },
   crm("targets", "Monthly Targets", "Targets & reporting", "Whose numbers are whose. Usually a manager's screen."),
   /*
    * A person's OWN score, and not a manager's screen.

@@ -103,6 +103,11 @@ const files = [
   // The telecaller's calling desk itself: three calls, Ready for Prospect, and
   // that asking for a Prospect is not being one.
   "src/lib/lead-calling-desk.test.ts",
+  // Lead Management → Lost: the module gate, the list narrowed by the same
+  // scope every other lead list runs through, stage-at-loss read off the
+  // closing transition rather than guessed, and the next-action/nurture-task
+  // cleanup touching only the lead and the tasks it is actually about.
+  "src/lib/lead-lost.test.ts",
   // A fresh CRM/Sales grant made through the CLI, the provisioning endpoint
   // or the back-office bulk provision must not carry an offByDefault module
   // (the calling desk, the Sales Manager seat) along for free — and an
