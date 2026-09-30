@@ -85,6 +85,9 @@ import {
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import { initialsOf } from "@/lib/format";
 import { notifyUsers } from "../notify";
+import { gstinChangeClear, reviewVoidPatch } from "../lead-review-void";
+import { leadRow } from "../services/lead-service";
+import { isReviewer, recordReviewVoid } from "../services/lead-qualification-flow-service";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -705,9 +708,25 @@ export async function updateCustomer(
       );
     }
 
+    /* A CHANGED GSTIN IS NOT THE NUMBER ANYBODY VALIDATED — here as everywhere it
+       is written. And if the account is a lead whose Qualification a manager has
+       verified, changing the number takes that verification away unless the
+       manager is the one changing it. */
+    const before = await leadRow(customerId);
+    const gstClear =
+      parsed.data.gstin !== undefined && before
+        ? gstinChangeClear(before, parsed.data.gstin || null)
+        : null;
+    const voided =
+      parsed.data.gstin !== undefined && before
+        ? reviewVoidPatch(before, { gstin: parsed.data.gstin || null }, { reviewer: await isReviewer(ctx.user) })
+        : null;
+
     await db
       .update(customers)
       .set({
+        ...(gstClear ?? {}),
+        ...(voided?.set ?? {}),
         ...(parsed.data.name ? { name: parsed.data.name } : {}),
         ...(parsed.data.contactPerson !== undefined
           ? { contactPerson: parsed.data.contactPerson || null }
@@ -750,6 +769,8 @@ export async function updateCustomer(
         updatedById: ctx.user.id,
       })
       .where(eq(customers.id, customerId));
+
+    if (voided && before) await recordReviewVoid(db, { lead: before, voided, actorId: ctx.user.id });
 
     await db.insert(auditLog).values({
       id: id("aud"),

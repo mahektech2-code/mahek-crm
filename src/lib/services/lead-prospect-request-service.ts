@@ -86,6 +86,10 @@ export async function settleProspectRequest(
       salesAmId: lead.salesAmId,
       backOfficeAmId: lead.backOfficeAmId,
       leadManagerId: lead.leadManagerId,
+      // The CRM Sales Manager seat (PR #491) reaches a lead only through this
+      // one, and verification is that workspace's own act: without it a
+      // seat-only manager's verification is recorded but never opens Qualification.
+      salesManagerId: lead.salesManagerId,
     });
     const req = await requestOf(customerId);
     if (req.state !== "awaiting" && req.state !== "followup") return ok({ promoted: false });

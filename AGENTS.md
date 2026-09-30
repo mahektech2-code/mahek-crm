@@ -74,6 +74,8 @@ npm run jobs -- resolve-places             # build `places` and point every
                            # run when the READING changed, not the answers
 npm run hrms:sync    # pull the employee sheet now
 npm run app:grant -- hrms vikram@mahek.in   # give somebody an app
+npm run report:qualification   # READ-ONLY: what the Telecaller-owned Qualification
+                     # rules mean for the leads already in the book — writes nothing
 npm run catalogue:parse    # regenerate the product master from the document
 npm run catalogue:import -- --dry-run   # what the import would change
 npm run catalogue:import   # apply it — idempotent, re-runnable
@@ -6199,6 +6201,95 @@ holds the Salesman App, which puts the lead on a handset, and a telecaller has
 none. `assignDeskLead` writes the same column and only to somebody who holds the
 desk, because a lead given to somebody who cannot open it would vanish into a
 desk nobody can see.
+
+**QUALIFICATION IS THE TELECALLER'S, AND THERE IS NO SALESMAN IN THE FUNNEL.**
+Suspect → Telecaller Calling Desk → Prospect → Sales Manager verification →
+Qualification by the Telecaller → Sales Manager review → Sample / Trial. The
+Telecaller who works a lead promotes it, completes its Qualification and asks for
+its sample; the Sales Manager verifies the Prospect and reviews the Qualification;
+nobody holding the field app appears anywhere in it (`roleAction` gives the
+`salesman` vantage nothing to do at Prospect or Qualification). The whole hand-off
+between the two is `services/lead-qualification-flow-service.ts` and it is
+written once: `openQualificationAfterVerification` (a successful verification
+opens Qualification, from the console's verification call, the Sales Manager
+pipeline and the handset alike), `settleQualificationState` (who owes what after a
+Qualification write), `handBackAfterReview` and `recordReviewVoid`. It does not
+authorise anything — every caller asks its own question first (`lead.verify` to
+verify, `lead.work` to write) — and it re-reads `lead_verified_at` from the
+database rather than trusting a caller's claim.
+
+**THE STATE IS CARRIED BY THE NEXT ACTION, not by a new column.** The Sales
+Manager's "Sales Manager verification call", the Telecaller's "Complete the
+qualification", the manager's "Review qualification" and the Telecaller's "Request
+the sample" are the §24 next action changing owner (`QUAL_NEXT`), and a bell says
+so. `mbos_tasks` is deliberately not used: a Telecaller has no handset and no
+screen that reads it. Completion is DERIVED (`qualificationComplete`, the sample
+gate with the review conditions left out), so there is no "submit" button to
+forget and no flag that can drift from the gate.
+
+**THE MANAGER'S REVIEW IS MANDATORY AND ONLY `verified` PASSES IT.** No review,
+`incomplete` and `clarification` all block Sample / Trial; the old rule (an
+unreviewed checklist passed, so the book would not stop on the day it shipped) was
+a transition rule and is gone. Nothing was backfilled — the gate evaluates what is
+stored — and `npm run report:qualification` is the READ-ONLY report of what that
+means for the book (it writes nothing).
+
+**A `verified` REVIEW STOPS BEING TRUE WHEN ITS ANSWERS CHANGE.**
+`lib/lead-review-void.ts` (`reviewVoidPatch`, pure) returns the four review
+columns to null in the SAME UPDATE as a material edit made by anybody who is not
+the reviewer; the verdict that stood is kept in the audit log and the timeline
+(`recordReviewVoid`). Material is exactly what the gate reads — GSTIN and its
+validation, application, credit days, buyer, decision maker, the four checklist
+ticks, the four Prospect figures, the sales type and the distributor link. A
+no-op save, the next action, notes and contact details are not. A manager's own
+ordinary edit does not void his review; a change of SALES TYPE does, whoever makes
+it. `lead-review-void.test.ts` scans the source and fails for a file that updates
+`customers` and sets one of these columns without going through the rule, so a new
+writer cannot silently bypass it.
+
+**QUALIFICATION CANNOT BE WRITTEN BEFORE THE PROSPECT IS VERIFIED.**
+`lib/lead-qualification-access.ts` is the one sentence the server refuses with and
+the screen draws disabled from. The Calling Desk's own pre-Prospect answers
+(which include GSTIN, buyer, credit days and application) are its own writes and
+are untouched.
+
+**GST IS THE TELECALLER'S END TO END.** They enter it and they validate it; the
+self-check that refused the lead's owner is gone, and what keeps that honest is
+that a validation belongs to the number it was made against — changing the GSTIN
+clears `gst_verified`, its date and its person, wherever the number is written
+(`gstinChangeClear`). `mbos.ts` must never name `gstVerified:` (a handset cannot
+assert a verdict); it clears through the helper's return value.
+
+**A SAMPLE IS ASKED FOR ONLY WHEN THE LEAD MAY ENTER SAMPLE / TRIAL.**
+`sampleEligibility` asks the ordinary gate (no override) inside `requestSample` and
+the handset's sample handover, before any row is written, for funnel-ladder leads
+below the Sample / Trial rung. That reverses "Answer 05" (a sample on a Suspect is
+marked, not refused) for those leads only; legacy leads and distributors are
+unchanged, and the manager's approval (`sample.approve`) is still required.
+
+**A THIRD-PARTY SALE NEEDS A DISTRIBUTOR WHETHER OR NOT THE MARK IS SET.** The gate
+reads `lead_sales_type = 'third_party'` as well as `customers.third_party`.
+The Telecaller names one through `nameLeadDistributor` — add-only, at Qualification,
+on a third-party lead, `lead.work` — and NOT through `customer.classify`, which
+also converts and reverts the mark and edits or removes arrangements.
+`checkDistributors` (in `distributor-service.ts`) is the one definition of who may
+be named.
+
+**THE PERSON WHO CAPTURES A LEAD OWNS IT, where they work leads.** A Telecaller who
+holds the Calling desk owns what they capture; a manager or a person without the
+desk leaves it unassigned (and the desk assigners are told), an explicit `null` is
+respected, and the bulk importer keeps its explicit owner. Who RAISED a lead is
+never stored on `customers`: it is the actor on the append-only `lead_created`
+timeline event, so no reassignment can edit it. There is one reassign,
+`assignDeskLead` (and `bulkAssignDeskLeads`), for the record, the list and the
+desk: it moves `owner_id`, and a next action that was the OLD owner's follows the
+lead while one owed by the Sales Manager stays with the Sales Manager.
+
+**A PROSPECT NOBODY CAN VERIFY IS NOT CREATED.** Verification is owed by a holder
+of `lead.verify` (candidates are filtered to it — `users.role = 'manager'` alone
+includes an Accounts-only manager), and never falls back to the Telecaller being
+verified; with no manager available the conversion is refused and the lead stays a
+Suspect.
 
 ## Testing
 

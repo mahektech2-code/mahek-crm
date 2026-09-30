@@ -214,19 +214,16 @@ export async function verifyProspect(input: VerifyProspectInput): Promise<Result
     refresh();
     if (!call.ok || p.outcome !== "verified") return call;
 
-    /* Verified: open Qualification if the lead is standing at Prospect. */
+    /* QUALIFICATION IS OPENED BY THE VERIFICATION ITSELF now — `recordLeadValidationCall`
+       runs the shared helper for every door, this one included. What is left here
+       is the wording: this screen said "Qualification is open" and the tests read
+       it, so it still does, off what the lead actually is once the call is in. */
     const [row] = await db
       .select({ stage: customers.leadStage })
       .from(customers)
       .where(eq(customers.id, p.customerId))
       .limit(1);
-    if (row?.stage !== "prospect") return call;
-
-    const moved = await advanceLeadStage({ customerId: p.customerId, to: "qualification" });
-    refresh();
-    return moved.ok
-      ? ok(null, "Verified — Qualification is open.")
-      : ok(null, `Verified. Qualification did not open yet: ${moved.error}`, [moved.error]);
+    return row?.stage === "qualification" ? ok(null, "Verified — Qualification is open.") : call;
   } catch (e) {
     return fromThrown(e);
   }

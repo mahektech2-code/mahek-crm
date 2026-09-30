@@ -64,6 +64,7 @@ import { ConfirmFigures } from "./confirm-figures";
 import { ValidateGst } from "./validate-gst";
 import { SetSalesType } from "./set-sales-type";
 import { AssignLeadManager, type LeadManagerCandidate } from "./assign-lead-manager";
+import { ReassignLead, type Assignee } from "./reassign-lead";
 import { NextActionBand } from "./next-action-band";
 import { RoleReadings } from "./where-it-stands";
 import { timelineActor, type TimelineActorKind } from "./timeline-actor";
@@ -287,6 +288,8 @@ export function LeadRecordScreen({
   canMigrate,
   canChangeLadder,
   leadManagers,
+  assignees,
+  canReassign,
   canOverride,
   canPrioritise,
   canValidateGst,
@@ -378,6 +381,10 @@ export function LeadRecordScreen({
    * in it.
    */
   leadManagers: LeadManagerCandidate[];
+  /** Everyone who holds the Calling desk — the only people a lead can be handed to. */
+  assignees: Assignee[];
+  /** `lead.verify` and the desk, the two questions `assignDeskLead` asks. */
+  canReassign: boolean;
   canOverride: boolean;
   /**
    * §4.1 — whether this person may say how hard to push the lead. The control
@@ -758,7 +765,7 @@ export function LeadRecordScreen({
                 canOverride={canOverride}
                 overrideAllowed={overrideAllowed}
               />
-              <SeatsPanel record={record} leadManagers={leadManagers} canWork={canWork} />
+              <SeatsPanel record={record} leadManagers={leadManagers} assignees={assignees} canReassign={canReassign} canWork={canWork} />
               {/* §5.9 — the chain, and only where there is one. The seats panel
                   above already holds two of its links, four cells apart and
                   each reading as a fact of its own; this is the same facts in
@@ -798,7 +805,12 @@ export function LeadRecordScreen({
 
           {here === "qualification" ? (
             <>
-              <QualificationPanel record={record} base={base} canWork={canWork} />
+              <QualificationPanel
+                record={record}
+                base={base}
+                canWork={canWork}
+                missing={(verdicts.find((v) => v.to === "sample_trial") ?? verdicts.find((v) => v.to === "management_review"))?.missing.map((m) => m.id) ?? []}
+              />
               {/* The two gates that stand between a qualified lead and a
                   sample, on the tab whose whole subject is what has to be true
                   before one goes out. Both are read off a column rather than a
@@ -1328,10 +1340,14 @@ function LadderPanel({
 function SeatsPanel({
   record,
   leadManagers,
+  assignees,
+  canReassign,
   canWork,
 }: {
   record: LeadRecord;
   leadManagers: LeadManagerCandidate[];
+  assignees: Assignee[];
+  canReassign: boolean;
   canWork: boolean;
 }) {
   return (
@@ -1344,6 +1360,28 @@ function SeatsPanel({
           label="Owner (whose book)"
           value={record.salesmanName ?? "Unassigned"}
           sub="A lead answers to its owner; a customer to its sales account manager."
+        >
+          <span className="mt-1 block">
+            <ReassignLead
+              customerId={record.customerId}
+              name={record.name}
+              currentId={record.salesmanId}
+              currentName={record.salesmanName}
+              assignees={assignees}
+              canReassign={canReassign}
+            />
+          </span>
+        </Fact>
+        {/* WHO RAISED IT never changes. It is read off the append-only creation
+            event, so reassigning the owner above cannot touch it. */}
+        <Fact
+          label="Created by"
+          value={record.createdByName ?? "Not recorded"}
+          sub={
+            record.createdAt
+              ? `Raised ${shortDate(new Date(record.createdAt).toISOString())}. Reassigning does not change this.`
+              : "Raised outside MahekOne, so there is no creation record to read."
+          }
         />
         <Fact
           label="Sales account manager"
@@ -1478,20 +1516,28 @@ function QualificationPanel({
   record,
   base,
   canWork,
+  missing,
 }: {
   record: LeadRecord;
   base: string;
   canWork: boolean;
+  /**
+   * The condition ids the GATE says are still missing, from the server-side
+   * verdict. What is DONE is read off this and nothing else: this panel used to
+   * keep a map of its own — including a GST row that read "answered" the moment
+   * a number existed, validated or not — and a second reading of a rule is a
+   * checklist that looks finished while the gate refuses.
+   */
+  missing: string[];
 }) {
   const conditions = checklistFor(record.salesType, "qualification");
-  const columnAnswers: Record<string, string | number | null> = {
-    gst_verified: record.gstin,
-    monthly_requirement: record.monthlyLitres,
-    monthly_potential: record.potentialPaise ? money(record.potentialPaise) : null,
-    required_product: record.requiredProductName,
-    competitor_identified: record.competitor,
+  /* What each condition SHOWS beside it. Display only: it decides nothing. */
+  const shown: Record<string, string | number | null> = {
+    gst_verified: record.gstin
+      ? `${record.gstin}${record.gstVerified ? " · validated" : " · not validated"}`
+      : null,
     credit_days: record.creditDaysWanted,
-    decision_maker: record.decisionMaker,
+    buyer_confirmed: record.buyer ?? record.decisionMaker,
     application_understood: record.application,
   };
 
@@ -1506,12 +1552,7 @@ function QualificationPanel({
     );
   }
 
-  const answered = conditions.filter((c) => {
-    const col = columnAnswers[c.id];
-    if (col !== undefined) return Boolean(col);
-    const q = record.qualification?.[c.id];
-    return typeof q === "string" ? q.trim().length > 0 : Boolean(q);
-  });
+  const answered = conditions.filter((c) => !missing.includes(c.id));
 
   return (
     <Panel
@@ -1523,7 +1564,7 @@ function QualificationPanel({
           title={
             canWork
               ? "Answer them at full size"
-              : "You can read this at full size; working a lead is the salesman's and the manager's."
+              : "You can read this at full size; working a lead is not one of the hats you hold."
           }
           className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
         >
@@ -1533,14 +1574,8 @@ function QualificationPanel({
     >
       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 md:grid-cols-2">
         {conditions.map((c) => {
-          const col = columnAnswers[c.id];
-          const fromColumn = col !== undefined;
-          const q = record.qualification?.[c.id];
-          const ok = fromColumn
-            ? Boolean(col)
-            : typeof q === "string"
-              ? q.trim().length > 0
-              : Boolean(q);
+          const ok = !missing.includes(c.id);
+          const detail = shown[c.id];
           return (
             <div key={c.id} className="flex items-baseline gap-2">
               <span
@@ -1552,13 +1587,7 @@ function QualificationPanel({
               <span className="min-w-0">
                 <span className="block text-[13px] text-body">{c.says}</span>
                 <span className="block truncate text-[12px] text-muted">
-                  {ok
-                    ? fromColumn
-                      ? String(col)
-                      : typeof q === "string"
-                        ? q
-                        : "Recorded"
-                    : "Not answered"}
+                  {ok ? (detail != null && detail !== "" ? String(detail) : "Recorded") : "Not answered"}
                 </span>
               </span>
             </div>

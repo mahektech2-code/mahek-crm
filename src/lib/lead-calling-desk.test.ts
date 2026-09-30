@@ -345,24 +345,36 @@ describe("Test M — the manager settles it", () => {
     assert.match(v.ok ? (v.message ?? "") : "", /Prospect/);
 
     const row = await stageOf(lead.id);
-    assert.equal(row.leadStage, "prospect");
+    assert.equal(row.leadStage, "qualification"); // verified ⇒ Prospect, and Qualification opens in the same act
     assert.equal(row.prospectRequestState, null, "the request is answered");
     assert.equal(row.prospectRequestReason, "regular_requirement", "and its history is kept");
     assert.ok(row.leadVerifiedAt);
     assert.equal(row.leadManagerId, manager.id);
-    assert.equal(row.leadNextAction, "Start qualification");
+    /* Verification promoted it AND opened Qualification, so the next action is
+       now the Telecaller's: complete it. The owner is who it always was. */
+    assert.equal(row.leadNextAction, "Complete the qualification");
+    assert.equal(row.leadNextActionOwnerId, desk.id);
+    assert.equal(row.ownerId, desk.id, "the manager verifying does not become the owner");
 
-    const moves = await db.select().from(leadStageTransitions).where(eq(leadStageTransitions.customerId, lead.id));
-    assert.equal(moves.length, 1);
-    assert.equal(moves[0].toStage, "prospect");
+    const moves = await db
+      .select()
+      .from(leadStageTransitions)
+      .where(eq(leadStageTransitions.customerId, lead.id))
+      .orderBy(leadStageTransitions.at);
+    assert.deepEqual(moves.map((m) => m.toStage), ["prospect", "qualification"]);
     assert.equal(moves[0].reasonCode, "regular_requirement");
     assert.equal(moves[0].actorId, manager.id, "the promotion is the manager's own act");
+    assert.equal(moves[1].actorId, manager.id, "and so is the opening of Qualification");
 
     const bells = await db.select().from(notifications).where(eq(notifications.userId, desk.id));
     assert.ok(bells.some((b) => /Prospect/.test(b.title)));
+    assert.ok(
+      bells.some((b) => /qualification is ready for you/.test(b.title) && /Qualification is now ready for you/.test(b.body)),
+      "the Telecaller is told Qualification is theirs",
+    );
 
     setTestUser(desk);
-    assert.equal((await deskLeadRecord(lead.id, DAY))?.phase, "prospect");
+    assert.equal((await deskLeadRecord(lead.id, DAY))?.phase, "qualification");
   });
 
   test("Follow-up: it stays a Suspect, on hold, and the desk gets the manager's task", async () => {
@@ -387,7 +399,7 @@ describe("Test M — the manager settles it", () => {
     /* Verifying it properly afterwards is what promotes it. */
     const later = await managerVerifies(lead.id, "verified");
     assert.equal(later.ok, true, later.ok ? "" : later.error);
-    assert.equal((await stageOf(lead.id)).leadStage, "prospect");
+    assert.equal((await stageOf(lead.id)).leadStage, "qualification");
   });
 
   test("Return to the Telecaller: it comes back with the manager's note, still a Suspect", async () => {
@@ -430,7 +442,7 @@ describe("Test M — the manager settles it", () => {
 
     const v = await managerVerifies(lead.id, "verified");
     assert.equal(v.ok, true, v.ok ? "" : v.error);
-    assert.equal((await stageOf(lead.id)).leadStage, "prospect");
+    assert.equal((await stageOf(lead.id)).leadStage, "qualification");
   });
 
   test("Returned → Mark Lost: the desk closes it under the configured reason, in its own words", async () => {
@@ -507,8 +519,19 @@ describe("Test X — Convert to Prospect: the calling desk's own direct promotio
     assert.equal(moves[0].reasonCode, "regular_requirement");
     assert.equal(moves[0].actorId, desk.id, "the telecaller's own act, not the manager's");
 
+    /* THE PROSPECT IS CREATED UNVERIFIED, AND THE VERIFICATION IS THE MANAGER'S.
+       The next action is the Sales Manager's verification call — owed by the
+       manager, never the Telecaller, and never "Start qualification", because
+       Qualification does not open until a manager has verified. The owner of the
+       lead is untouched, and the manager is told once. */
+    const after = await db.select().from(customers).where(eq(customers.id, lead.id)).then((r) => r[0]);
+    assert.equal(after.leadNextAction, "Sales Manager verification call");
+    assert.equal(after.leadNextActionOwnerId, manager.id, "the verification is the manager's");
+    assert.notEqual(after.leadNextActionOwnerId, desk.id, "and never the Telecaller's");
+
     const bells = await db.select().from(notifications).where(eq(notifications.userId, manager.id));
-    assert.equal(bells.length, 0, "no verification bell is raised for a direct conversion");
+    assert.equal(bells.length, 1, "the manager is told a Prospect is waiting to be verified");
+    assert.match(bells[0].title, /ready to verify/);
   });
 
   test("complete after Call 2 → converts immediately", async () => {
@@ -675,7 +698,7 @@ describe("Test X — Convert to Prospect: the calling desk's own direct promotio
 
     const v = await managerVerifies(lead.id, "verified");
     assert.equal(v.ok, true, v.ok ? "" : v.error);
-    assert.equal((await stageOf(lead.id)).leadStage, "prospect", "verification is still what promotes it");
+    assert.equal((await stageOf(lead.id)).leadStage, "qualification", "verification is still what promotes it — and now opens Qualification in the same act");
   });
 
   test("the existing Sales Manager Request Prospect workflow is unaffected by this feature", async () => {
@@ -689,7 +712,7 @@ describe("Test X — Convert to Prospect: the calling desk's own direct promotio
     assert.equal((await stageOf(lead.id)).leadStage, "suspect");
     const v = await managerVerifies(lead.id, "verified");
     assert.equal(v.ok, true, v.ok ? "" : v.error);
-    assert.equal((await stageOf(lead.id)).leadStage, "prospect");
+    assert.equal((await stageOf(lead.id)).leadStage, "qualification");
   });
 });
 
@@ -703,7 +726,7 @@ describe("Test S — the salesman's own path is untouched", () => {
     }
     assert.equal((await stageOf(suspect.id)).leadStage, "suspect", "a verification alone does not promote");
     const p = await stageOf(prospect.id);
-    assert.equal(p.leadStage, "prospect");
+    assert.equal(p.leadStage, "qualification", "verifying a Prospect opens Qualification");
     assert.ok(p.leadVerifiedAt);
     assert.equal(p.prospectRequestState, null);
   });

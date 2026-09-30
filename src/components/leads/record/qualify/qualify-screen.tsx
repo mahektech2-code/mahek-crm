@@ -10,7 +10,10 @@ import { useToast } from "@/components/ui/toast";
 import { salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
 import type { Condition, GateVerdict } from "@/lib/engines/lead-gates";
 import { saveLeadQualification, saveProspectFields } from "@/lib/actions/leads";
-import { reviewLeadQualification } from "@/lib/actions/lead-qualification-review";
+import { validateGstin } from "@/lib/actions/lead-gst";
+import { confirmLeadFigures } from "@/lib/actions/lead-figures";
+import { nameLeadDistributor } from "@/lib/actions/lead-distributor-link";
+import { resubmitForReview, reviewLeadQualification } from "@/lib/actions/lead-qualification-review";
 import {
   saveDistributorProfile,
   type DistributorProfilePatch,
@@ -67,6 +70,8 @@ type FieldSpec = {
   kind: FieldKind;
   /** The unit or the shape of the answer, under the box. Never a placeholder. */
   hint?: string;
+  /** A ceiling for a number box, matching the server's own range. */
+  max?: number;
 };
 
 /**
@@ -80,31 +85,12 @@ type FieldSpec = {
  * record, and a column named wrongly writes an answer into the wrong place.
  */
 const SHOP_FIELDS: Record<string, FieldSpec[]> = {
-  /* The one condition with two halves: the gate wants the NUMBER and the tick
-     that somebody checked it, because a GSTIN typed off a letterhead and a
-     GSTIN verified against the portal are different assertions. */
+  /* GST is a NUMBER the Telecaller writes and a validation the Telecaller also
+     records. The validation is NOT a tick: the gate reads `customers.gst_verified`
+     (with who and when), so the control for it is a real action further down,
+     and this box is only the number. Changing the number clears the validation. */
   gst_verified: [
-    { target: "prospect", key: "gstin", kind: "text", hint: "15 characters, as printed" },
-    { target: "tick", key: "gst_verified", kind: "bool", hint: "Checked against the portal" },
-  ],
-  monthly_requirement: [
-    { target: "prospect", key: "monthlyLitres", kind: "litres", hint: "Litres a month" },
-  ],
-  monthly_potential: [
-    {
-      target: "prospect",
-      key: "potentialPaise",
-      kind: "money",
-      hint: "Somebody's estimate of a month, and it is stored as a judgement with a date on it",
-    },
-  ],
-  required_product: [{ target: "prospect", key: "requiredProductId", kind: "product" }],
-  competitor_identified: [
-    { target: "prospect", key: "competitor", kind: "text", hint: "Whose product, in their words" },
-  ],
-  credit_days: [{ target: "prospect", key: "creditDaysWanted", kind: "int", hint: "Days" }],
-  decision_maker: [
-    { target: "prospect", key: "decisionMaker", kind: "text", hint: "Who signs off a purchase" },
+    { target: "prospect", key: "gstin", kind: "text", hint: "15 characters, as printed. Changing it clears any validation." },
   ],
   application_understood: [
     {
@@ -114,6 +100,22 @@ const SHOP_FIELDS: Record<string, FieldSpec[]> = {
       hint: "What they will use it on. A trial nobody can judge is stock given away.",
     },
   ],
+  credit_days: [
+    { target: "prospect", key: "creditDaysWanted", kind: "int", hint: "Days, 0 to 365", max: 365 },
+  ],
+  /* The decision maker is a Prospect answer and is SHOWN, not asked again. What
+     this condition wants is the person who PLACES the order, where that is not
+     the decision maker — either named, or a statement that it is the same
+     person. */
+  buyer_confirmed: [
+    { target: "prospect", key: "buyer", kind: "text", hint: "Who places the order, if that is not the decision maker" },
+    { target: "tick", key: "buyer_confirmed", kind: "bool", hint: "The decision maker also places the order" },
+  ],
+  /* price_discussed, delivery_discussed, agrees_to_test and next_step_agreed have
+     no column: they are genuine ticks, drawn as ticks. The monthly requirement,
+     the potential, the product and the competitor are NOT here — they are
+     Prospect figures, confirmed as a group below, and the gate stopped asking
+     for them at Qualification. */
 };
 
 const DISTRIBUTOR_FIELDS: Record<string, FieldSpec[]> = {
@@ -224,6 +226,13 @@ export function QualifyScreen({
   canWork,
   review,
   canReview,
+  access,
+  decisionMaker,
+  gst,
+  canValidateGst,
+  figures,
+  thirdParty,
+  complete,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -250,9 +259,38 @@ export function QualifyScreen({
    * permission.
    */
   canReview: boolean;
+  /**
+   * WHETHER QUALIFICATION CAN BE WRITTEN AT ALL, from `qualificationAccess` — the
+   * same sentence the actions refuse with. At Prospect it is false and every box
+   * below is drawn disabled under "waiting for the Sales Manager".
+   */
+  access: { writable: boolean; reason: string | null };
+  /** The Prospect answer, shown so it is not asked again. */
+  decisionMaker: string | null;
+  gst: { hasNumber: boolean; verified: boolean; at: Date | string | null; byName: string | null };
+  /** The two questions `validateGstin` asks, resolved on the server. */
+  canValidateGst: boolean;
+  figures: {
+    litres: number | null;
+    potentialPaise: number | null;
+    productName: string | null;
+    competitor: string | null;
+    confirmedAt: Date | string | null;
+    confirmedByName: string | null;
+    stale: boolean;
+  };
+  thirdParty: {
+    applies: boolean;
+    distributors: string[];
+    options: { id: string; name: string; city: string | null }[];
+  };
+  /** Everything the Telecaller owns is answered (the review conditions left out). */
+  complete: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
+  /* Can this person write, HERE, NOW — the capability AND the rung. */
+  const editable = canWork && access.writable;
 
   const distributor = salesType === "distributor";
   const fieldMap = distributor ? DISTRIBUTOR_FIELDS : SHOP_FIELDS;
@@ -289,8 +327,26 @@ export function QualifyScreen({
     return v === true;
   }
 
-  /** Answered by the same reading the gate uses: a value, not a mark. */
+  /**
+   * DONE IS THE GATE'S ANSWER, not this screen's. A condition is drawn as met
+   * only if the server-side verdict says nothing is missing on it — so a box
+   * that looks complete while the backend disagrees (the old GST "checked" tick
+   * was exactly that) cannot exist. What a person has typed and not saved is the
+   * one thing the gate cannot know about, and it is drawn as unsaved rather than
+   * as either answer.
+   */
+  function unsaved(c: Condition): boolean {
+    const specs = fieldMap[c.id];
+    return (specs ?? [{ key: c.id }]).some((sp) => sp.key in draft);
+  }
   function answered(c: Condition): boolean {
+    if (unsaved(c)) return false;
+    if (verdict) return !(verdict.missing ?? []).some((m) => m.id === c.id);
+    return answeredLocally(c);
+  }
+
+  /** The old local reading, kept only for the case where no verdict was computed. */
+  function answeredLocally(c: Condition): boolean {
     const specs = fieldMap[c.id];
     if (!specs) return tickValue(c.id);
     return specs.every((s) => {
@@ -427,7 +483,15 @@ export function QualifyScreen({
             * version of this rule had to avoid. Drawn first because it is the
             * answer to the question the banner under it raises.
             */}
+          {!access.writable ? (
+            <Banner tone="info" title="Qualification is not open yet" body={access.reason} />
+          ) : null}
+
           <ReviewNotice review={review} />
+
+          {editable && complete && (review.verdict === "incomplete" || review.verdict === "clarification") ? (
+            <Resubmit customerId={customerId} />
+          ) : null}
 
           {verdict && opensRung ? (
             verdict.open ? (
@@ -451,7 +515,7 @@ export function QualifyScreen({
             )
           ) : null}
 
-          {canReview ? (
+          {canReview && access.writable ? (
             /* Keyed on the verdict that is stored, so a manager who has just
                sent this back gets a REMOUNT with a cleared note box rather than
                an effect resetting one — the React Compiler rules are on and
@@ -500,12 +564,18 @@ export function QualifyScreen({
                         {blocking ? <Pill tone="warn">Holding the gate</Pill> : null}
                       </div>
 
+                      {c.id === "buyer_confirmed" && decisionMaker ? (
+                        <p className="mt-1 mb-0 text-[12.5px] text-muted">
+                          Decision maker on record: <span className="text-ink">{decisionMaker}</span>
+                        </p>
+                      ) : null}
+
                       {!specs ? (
                         <label className="mt-1.5 flex cursor-pointer items-start gap-2 text-[13px] text-body">
                           <input
                             type="checkbox"
                             className="mt-[3px] h-[15px] w-[15px] accent-[#6835FB]"
-                            disabled={!canWork}
+                            disabled={!editable}
                             checked={tickValue(c.id)}
                             onChange={(e) => set(c.id, e.target.checked)}
                           />
@@ -521,7 +591,7 @@ export function QualifyScreen({
                               key={s.key}
                               spec={s}
                               value={current(s)}
-                              disabled={!canWork}
+                              disabled={!editable}
                               customerId={customerId}
                               productName={s.kind === "product" ? requiredProductName : null}
                               onChange={(v) => set(s.key, v)}
@@ -529,12 +599,40 @@ export function QualifyScreen({
                           ))}
                         </div>
                       )}
+
+                      {c.id === "gst_verified" ? (
+                        <GstValidate
+                          customerId={customerId}
+                          gst={gst}
+                          canValidate={canValidateGst && access.writable}
+                          numberUnsaved={"gstin" in draft}
+                        />
+                      ) : null}
                     </div>
                   );
                 })}
               </div>
             </section>
           ))}
+
+          {!distributor ? (
+            <>
+              <FiguresConfirm
+                customerId={customerId}
+                figures={figures}
+                editable={editable}
+                stale={(verdict?.missing ?? []).some((m) => m.id === "figures_fresh")}
+              />
+              {thirdParty.applies ? (
+                <DistributorNaming
+                  customerId={customerId}
+                  thirdParty={thirdParty}
+                  editable={editable}
+                  needed={(verdict?.missing ?? []).some((m) => m.id === "distributor_named")}
+                />
+              ) : null}
+            </>
+          ) : null}
 
           {error ? (
             <p className="mb-3 text-[13px] text-danger" role="alert">
@@ -545,7 +643,7 @@ export function QualifyScreen({
           <div className="flex flex-wrap items-center gap-3">
             <Button
               tone="primary"
-              disabled={!canWork || busy || !dirty}
+              disabled={!editable || busy || !dirty}
               title={
                 !canWork
                   ? "Working a lead is the salesman's and the manager's. Yours is not one of the hats that carries it."
@@ -842,7 +940,16 @@ function FieldControl({
         />
       ) : (
         <Input
-          type={spec.kind === "date" ? "date" : "text"}
+          type={
+            spec.kind === "date"
+              ? "date"
+              : spec.kind === "int" || spec.kind === "litres"
+                ? "number"
+                : "text"
+          }
+          min={spec.kind === "int" || spec.kind === "litres" ? 0 : undefined}
+          max={spec.max}
+          step={spec.kind === "int" || spec.kind === "litres" ? 1 : undefined}
           inputMode={
             spec.kind === "int" || spec.kind === "litres" || spec.kind === "money"
               ? "numeric"
@@ -860,6 +967,320 @@ function FieldControl({
         </span>
       ) : spec.hint ? (
         <span className="mt-0.5 block text-[12px] text-muted">{spec.hint}</span>
+      ) : null}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- new parts */
+
+function when(at: Date | string | null): string {
+  return at ? stamp(at) : "";
+}
+
+/**
+ * The GST validation — a real act, recorded against a person and a time.
+ *
+ * The Telecaller who entered the number validates it (there is no self-check
+ * any more), through the action that has always written `customers.gst_verified`
+ * and the gate reads. There is no tick to put beside it. It is offered only for
+ * a number that is SAVED: validating a number still in the box would certify
+ * something the record does not hold.
+ */
+function GstValidate({
+  customerId,
+  gst,
+  canValidate,
+  numberUnsaved,
+}: {
+  customerId: string;
+  gst: { hasNumber: boolean; verified: boolean; at: Date | string | null; byName: string | null };
+  canValidate: boolean;
+  numberUnsaved: boolean;
+}) {
+  const router = useRouter();
+  const toast = useToast();
+  const [busy, setBusy] = React.useState(false);
+  const [refusing, setRefusing] = React.useState(false);
+  const [note, setNote] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function run(valid: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await validateGstin({ customerId, valid, note: valid ? undefined : note });
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      setRefusing(false);
+      setNote("");
+      toast.push(r.message ?? "Recorded.");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const status = !gst.hasNumber
+    ? "Enter the GST number first."
+    : gst.verified
+      ? `Validated${gst.byName ? ` by ${gst.byName}` : ""}${gst.at ? ` · ${when(gst.at)}` : ""}.`
+      : gst.at
+        ? `Refused${gst.byName ? ` by ${gst.byName}` : ""} · ${when(gst.at)}. Correct the number and validate it again.`
+        : "Not validated yet.";
+
+  return (
+    <div className="mt-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Pill tone={gst.verified ? "success" : "warn"}>{gst.verified ? "Validated" : "Not validated"}</Pill>
+        <span className="text-[12.5px] text-muted">{status}</span>
+      </div>
+      {canValidate && gst.hasNumber && !numberUnsaved ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Button tone="primary" disabled={busy} onClick={() => void run(true)}>
+            {gst.verified ? "Validate again" : "It checks out"}
+          </Button>
+          <Button disabled={busy} onClick={() => setRefusing((v) => !v)}>
+            It does not check out
+          </Button>
+        </div>
+      ) : numberUnsaved ? (
+        <p className="mt-1 mb-0 text-[12.5px] text-muted">Save the number before validating it.</p>
+      ) : null}
+      {refusing ? (
+        <div className="mt-2">
+          <Textarea
+            rows={2}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            aria-label="What is wrong with the number"
+            placeholder="What is wrong with it"
+          />
+          <div className="mt-2">
+            <Button tone="danger" disabled={busy || !note.trim()} onClick={() => void run(false)}>
+              Record the refusal
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {error ? (
+        <p className="mt-1 mb-0 text-[13px] text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The four Prospect figures, SHOWN and stood behind — never re-asked.
+ *
+ * The monthly requirement, the potential, the product and the competitor were
+ * captured once, at Prospect. The gate asks for one thing about them at
+ * Qualification: that somebody still stands behind them, persisted as
+ * `lead_figures_confirmed_at` and the person who confirmed. This is that action
+ * and not a local tick — a tick here would look done while `figures_fresh`
+ * refused.
+ */
+function FiguresConfirm({
+  customerId,
+  figures,
+  editable,
+  stale,
+}: {
+  customerId: string;
+  figures: {
+    litres: number | null;
+    potentialPaise: number | null;
+    productName: string | null;
+    competitor: string | null;
+    confirmedAt: Date | string | null;
+    confirmedByName: string | null;
+    stale: boolean;
+  };
+  editable: boolean;
+  stale: boolean;
+}) {
+  const router = useRouter();
+  const toast = useToast();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function confirm() {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await confirmLeadFigures({ customerId });
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      toast.push(r.message ?? "Confirmed.");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+          Figures from the Prospect
+        </span>
+        {stale ? <Pill tone="warn">Holding the gate</Pill> : <Pill tone="success">Current</Pill>}
+      </div>
+      <dl className="m-0 mb-2 grid grid-cols-1 gap-x-8 gap-y-1 text-[13px] sm:grid-cols-2">
+        <div><dt className="inline text-muted">Monthly litres: </dt><dd className="m-0 inline text-ink">{figures.litres ?? "—"}</dd></div>
+        <div><dt className="inline text-muted">Potential: </dt><dd className="m-0 inline text-ink">{figures.potentialPaise != null ? money(figures.potentialPaise) : "—"}</dd></div>
+        <div><dt className="inline text-muted">Product: </dt><dd className="m-0 inline text-ink">{figures.productName ?? "—"}</dd></div>
+        <div><dt className="inline text-muted">Competitor: </dt><dd className="m-0 inline text-ink">{figures.competitor ?? "—"}</dd></div>
+      </dl>
+      <p className="mb-2 text-[12.5px] text-muted">
+        {figures.confirmedAt
+          ? `Confirmed${figures.confirmedByName ? ` by ${figures.confirmedByName}` : ""} · ${when(figures.confirmedAt)}.`
+          : "Nobody has confirmed these yet."}{" "}
+        They were captured at Prospect and are not asked again — only that they still hold.
+      </p>
+      <Button tone="primary" disabled={!editable || busy} onClick={() => void confirm()}>
+        {busy ? "Saving…" : "They still hold"}
+      </Button>
+      {error ? (
+        <p className="mt-2 mb-0 text-[13px] text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * Who invoices this third-party shop — the Telecaller may NAME one, and only
+ * that. Editing or removing an arrangement, and converting an account to or from
+ * third-party status, stay with the people who hold `customer.classify`.
+ */
+function DistributorNaming({
+  customerId,
+  thirdParty,
+  editable,
+  needed,
+}: {
+  customerId: string;
+  thirdParty: { distributors: string[]; options: { id: string; name: string; city: string | null }[] };
+  editable: boolean;
+  needed: boolean;
+}) {
+  const router = useRouter();
+  const toast = useToast();
+  const [pick, setPick] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function add() {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await nameLeadDistributor({ customerId, distributorId: pick });
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      setPick("");
+      toast.push(r.message ?? "Named.");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+          Who invoices this shop
+        </span>
+        {needed ? <Pill tone="warn">Holding the gate</Pill> : <Pill tone="success">Named</Pill>}
+      </div>
+      <p className="mb-2 text-[13px] text-body">
+        {thirdParty.distributors.length
+          ? thirdParty.distributors.join(", ")
+          : "Nobody is named. A sample cannot go to a counter nobody bills."}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={pick}
+          disabled={!editable || busy}
+          onChange={(e) => setPick(e.target.value)}
+          aria-label="Distributor"
+          className="h-9 min-w-[240px] rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+        >
+          <option value="">Pick an account we invoice…</option>
+          {thirdParty.options.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}
+              {o.city ? ` · ${o.city}` : ""}
+            </option>
+          ))}
+        </select>
+        <Button tone="primary" disabled={!editable || busy || !pick} onClick={() => void add()}>
+          {busy ? "Saving…" : "Name this distributor"}
+        </Button>
+      </div>
+      <p className="mt-2 mb-0 text-[12px] text-muted">
+        Correcting or removing a distributor once named is a manager&rsquo;s or accounts&rsquo;.
+      </p>
+      {error ? (
+        <p className="mt-2 mb-0 text-[13px] text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * "I have addressed the note" — for a note answered on the phone rather than in a
+ * field. Changing an answer sends the lead back for review on its own; a save that
+ * changes nothing deliberately does not (that would make every stray click a new
+ * review request while the manager's note is still outstanding), so this is the
+ * deliberate way to say it.
+ */
+function Resubmit({ customerId }: { customerId: string }) {
+  const router = useRouter();
+  const toast = useToast();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function send() {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await resubmitForReview(customerId);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      toast.push(r.message ?? "Sent back.");
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mb-3">
+      <Button tone="primary" disabled={busy} onClick={() => void send()}>
+        {busy ? "Sending…" : "I have addressed the note — ask for review again"}
+      </Button>
+      <span className="ml-3 text-[12.5px] text-muted">
+        Changing an answer does this by itself; use this when the note was answered without changing one.
+      </span>
+      {error ? (
+        <p className="mt-1 mb-0 text-[13px] text-danger" role="alert">
+          {error}
+        </p>
       ) : null}
     </div>
   );

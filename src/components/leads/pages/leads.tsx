@@ -1,11 +1,10 @@
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { requireUser } from "@/lib/auth";
-import { requireModule } from "@/lib/access";
+import { canOpenModule, requireModule } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import {
   archivedLeadsCount,
-  fieldTeam,
   leadFilterOptions,
   leadPlaceTree,
   leadsPage,
@@ -21,6 +20,7 @@ import {
   verificationQueue,
 } from "@/lib/services/lead-console-service";
 import { vantageViewer } from "@/lib/services/lead-vantage-service";
+import { DESK_MODULE, deskHolders } from "@/lib/services/lead-desk-assignment-service";
 import { LeadsScreen } from "@/components/leads/leads-screen";
 
 
@@ -127,7 +127,6 @@ export async function Body({
   const [
     page,
     config,
-    team,
     archivedCount,
     verification,
     exceptions,
@@ -145,7 +144,6 @@ export async function Body({
         perPage: Number(params.per) || LEADS_PER_PAGE,
       }),
       getConfig(),
-      fieldTeam(),
       archivedLeadsCount(),
       verificationQueue(day, { limit: 1 }),
       leadsWithoutNextAction(day, { limit: 1 }),
@@ -224,7 +222,13 @@ export async function Body({
       staleDays={config["mbos.leads.staleDays"]}
       healthAtRiskBelow={config["mbos.health.atRiskBelow"]}
       healthStrongAtOrAbove={config["mbos.health.strongAtOrAbove"]}
-      team={team.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name }))}
+      /* WHO A LEAD CAN BE MOVED TO is whoever holds the Calling desk. This was the
+         field team — people holding the Salesman App — which offered a Telecaller
+         nobody who could work the lead. */
+      team={await deskHolders()}
+      canReassign={
+        (await canLead(user, "lead.verify")) && (await canOpenModule(user.id, DESK_MODULE))
+      }
       /* §4.1 — the manager's priority is a manager's to set, and the same
          capability is checked in `setLeadPriority`. `lead.verify` is asked for
          rather than a capability of its own: it already means "the sales

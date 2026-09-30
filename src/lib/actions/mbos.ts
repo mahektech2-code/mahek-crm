@@ -48,6 +48,13 @@ import {
 import { MBOS_EVENT, writeTimelineEvent, type TimelineWriter } from "../timeline";
 import { APP_TIMEZONE, calendarDate } from "../business-date";
 import { qualifyLead } from "../services/lead-qualification-service";
+import {
+  openQualificationAfterVerification,
+  recordReviewVoid,
+  sampleEligibility,
+  settleQualificationState,
+} from "../services/lead-qualification-flow-service";
+import { gstinChangeClear, materialOf, reviewVoidPatch } from "../lead-review-void";
 import { convertLeadOnSecondOrder } from "../services/lead-conversion-service";
 import { canAny, grantingHat, hatsFor, scopedToUsers } from "../access-control";
 import {
@@ -3202,6 +3209,16 @@ async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<H
   if (!found.ok) return { kind: "rejected", value: found.value };
   const customer = found.customer;
 
+  /* THE HANDOVER OBEYS THE SAME GATE AS THE REQUEST. A phone that could record a
+     sample handed to a funnel lead ahead of Qualification and the Sales
+     Manager's review would be the way round `requestSample`'s check — same
+     stock, no approval, and no gate. The refusal is a REJECTION, not a retry:
+     the gate will not open by resending. Legacy leads are unaffected. */
+  const eligible = await sampleEligibility(customer.id);
+  if (eligible.applies && !eligible.eligible) {
+    return { kind: "rejected", value: reject("validation", eligible.message) };
+  }
+
   if (p.productId) {
     const [product] = await db
       .select({ name: products.name, active: products.active, status: products.status })
@@ -3965,7 +3982,30 @@ async function handleLeadUpdate(
      copying the words in would route a restricted note around its own
      restriction. The entry says one was written and where to find it. */
 
-  await db.update(customers).set(changed).where(eq(customers.id, item.entityId));
+  /*
+   * A WRITE FROM A PHONE IS A WRITE TO THE QUALIFICATION, and the two rules that
+   * protect it on the console protect it here. A changed GSTIN is not the number
+   * anybody validated, and a material change made by somebody who is not the
+   * reviewer takes a manager's `verified` away. Both are computed from the
+   * columns about to be written, so a payload that re-sends a value already
+   * stored changes nothing. The verification columns are cleared through the
+   * helper's return value rather than named here: the handset must never assert
+   * a verdict of its own, and `mbos-wire.test.ts` pins that this file does not.
+   */
+  const gstClear = changed.gstin !== undefined ? gstinChangeClear(existing, changed.gstin) : null;
+  if (gstClear) Object.assign(changed, gstClear);
+  const voided = reviewVoidPatch(existing, materialOf(changed), {
+    reviewer: canAny(await hatsFor(principal.user), "lead.verify"),
+  });
+  if (voided) Object.assign(changed, voided.set);
+
+  await db.transaction(async (tx) => {
+    await tx.update(customers).set(changed).where(eq(customers.id, item.entityId));
+    if (voided) {
+      await recordReviewVoid(tx, { lead: existing, voided, actorId: principal.user.id });
+    }
+  });
+  await settleQualificationState(item.entityId, principal.user.id, { voided: Boolean(voided) });
 
   /*
    * §9 — WHAT THE FIELD ITSELF CHECKED, as rows rather than as a note.
@@ -4161,7 +4201,14 @@ async function handleLeadUpdate(
    * and `qualification` is the funnel's — the seat is filled at whichever of
    * them this lead's ladder actually uses.
    */
-  if (p.stage === "qualified" || p.stage === "qualification") {
+  /* THE LEGACY `qualified` RUNG ONLY. `qualifyLead` fills the lead manager seat
+     from the org chart and raises a validation call for it — the old ladder's
+     "a Prospect was confirmed". On the funnel ladders that call IS the Sales
+     Manager's verification and it has already been made by the time a lead is at
+     `qualification`, so firing it there put a second validation call on a
+     manager's list for a call they had just made. The funnel's seat is filled at
+     conversion and its verification is asked for by the next action. */
+  if (p.stage === "qualified") {
     await qualifyLead(item.entityId, principal.user.id, existing.name).catch(() => {});
   }
 
@@ -4834,6 +4881,30 @@ async function handleLeadValidation(
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
 
+  /*
+   * A VERIFICATION IS THE SALES MANAGER'S, ON A PHONE AS AT A DESK.
+   *
+   * `recordLeadValidationCall` asks for `lead.verify` before it writes a word;
+   * this door authenticated a DEVICE and asked only whether the customer was
+   * in the caller's scope — which for a field user is his own book. So anybody
+   * holding the field app could send a `confirmed` for a lead in it, stamp
+   * `lead_verified_at` and unlock Qualification for himself: the exact bypass
+   * the Prospect verification exists to prevent, on the one door nobody was
+   * watching. Every verdict on this wire is a verification call, so the check
+   * is for the item, not for the verdict. A manager's handset holds the hat
+   * (the field app's manager level carries `lead.verify`), so this refuses
+   * almost nobody — which is why it has to be written down.
+   */
+  if (!canAny(await hatsFor(principal.user), "lead.verify")) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "not_permitted",
+        "Verifying a Prospect is the Sales Manager's. Your MahekOne account is not set up to record a verification call, so this was not saved.",
+      ),
+    };
+  }
+
   const found = await scopedCustomer(principal, p.customerId);
   if (!found.ok) return { kind: "rejected", value: found.value };
   const customer = found.customer;
@@ -5002,37 +5073,25 @@ async function afterValidationVerdict(
       })
       .where(eq(customers.id, customerId));
 
-    if (!salesmanId) return;
-    const day = await today();
-    await db
-      .insert(mbosTasks)
-      .values({
-        id: gen("mbos_task"),
-        title: `Requirement visit — ${customerName}`,
-        description:
-          "Take the price list and the approved discount. Get the product, the quantity and the monthly consumption in writing. No price or delivery commitments at this stage — anything commercial goes to the Lead Manager as a note.",
-        assignedToUserId: salesmanId,
-        priority: "high",
-        dueDate: day,
-        customerId,
-        status: "open",
-        sourceType: "requirement_visit",
-        sourceId: customerId,
-        createdById: principal.user.id,
-        updatedById: principal.user.id,
-      })
-      .onConflictDoNothing();
-
-    await db
-      .insert(notifications)
-      .values({
-        id: gen("ntf"),
-        userId: salesmanId,
-        title: "A Prospect was confirmed",
-        body: `${customerName} came through the validation call. There is a requirement visit on your list — take the price list.`,
-        kind: "info",
-      })
-      .catch(() => {});
+    /*
+     * A CONFIRMED VERIFICATION OPENS QUALIFICATION, the same as it does from the
+     * console. It used to stamp the column and stop, and raise a "requirement
+     * visit" for the lead's owner — a task written for a salesman walking a beat
+     * ("take the price list… no price or delivery commitments") on a lead whose
+     * next job is now the Telecaller's Qualification, which asks about price and
+     * delivery. It was also the ONLY writer of that task, so nothing else read
+     * it. It is gone: the shared helper hands the next action to the lead's owner
+     * and tells them, through the bell they actually have.
+     *
+     * The authorisation is above (`handleLeadValidation` asked for
+     * `lead.verify`); the helper re-reads `lead_verified_at` and asks the same
+     * gate as every other move, with no override. It cannot fail the call.
+     */
+    const hats = await hatsFor(principal.user);
+    await openQualificationAfterVerification(
+      { userId: principal.user.id, hat: grantingHat(hats, "lead.verify"), sourceApp: "mbos" },
+      customerId,
+    ).catch(() => {});
     return;
   }
 
