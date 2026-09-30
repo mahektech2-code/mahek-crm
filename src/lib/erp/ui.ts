@@ -63,6 +63,8 @@ export type FieldSpec = {
   k: string;
   l: string;
   t: FieldType;
+  /** A section heading, drawn where it first changes down the form. */
+  sec?: string;
   req?: boolean;
   /** Fixed options. */
   opts?: string[];

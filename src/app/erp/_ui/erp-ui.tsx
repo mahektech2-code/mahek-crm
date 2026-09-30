@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, cx } from "@/components/ui/primitives";
 import { ConfirmDialog, Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
@@ -420,9 +420,12 @@ function FormDrawer({
         <Block title={spec.line ? "Header" : ""}>
           {spec.header
             .filter((f) => visible(f))
-            .map((f) => (
+            .map((f, i, shown) => (
+              <Fragment key={f.k}>
+              {f.sec && f.sec !== shown[i - 1]?.sec ? (
+                <div className="mt-1 border-b border-divider pb-1 text-[12px] font-semibold tracking-[0.04em] text-muted uppercase">{f.sec}</div>
+              ) : null}
               <Field
-                key={f.k}
                 f={f}
                 value={h[f.k] ?? ""}
                 error={errs[`h.${f.k}`]}
@@ -437,6 +440,7 @@ function FormDrawer({
                   setErrs((s) => ({ ...s, [`h.${f.k}`]: "" }));
                 }}
               />
+              </Fragment>
             ))}
         </Block>
         {spec.line

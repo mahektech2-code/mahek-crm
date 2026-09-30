@@ -1,8 +1,8 @@
 import "server-only";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { attachments, employees, hrmsAttendance } from "@/db/schema";
-import { hrmsContext, scopeOf } from "./access";
+import { attachments, employees, hrmsAssetAssignments, hrmsAttendance } from "@/db/schema";
+import { has, hrmsContext, scopeOf } from "./access";
 
 /* ---------------------------------------------------------------------------
  * HRMS attachments: who may open which file, and binding uploads to the
@@ -36,8 +36,19 @@ export async function canReadHrmsAttachment(parentType: string, parentId: string
       return parentId === ctx.employee?.id || holds("employees", "idCards");
     case "hrms_office":
       return true;
-    case "hrms_asset":
-      return holds("assetStock", "assignments");
+    case "hrms_asset": {
+      if (!holds("assetStock", "assignments")) return false;
+      if (has(ctx, "hr") || ctx.administrator) return true;
+      /* A hand-over photo belongs to one person's assignment: anybody else
+         holding the screen would otherwise open it by id. A stock lot's
+         invoice is the store's, read by whoever holds the stock screen. */
+      const [a] = await db
+        .select({ employeeId: hrmsAssetAssignments.employeeId })
+        .from(hrmsAssetAssignments)
+        .where(eq(hrmsAssetAssignments.id, parentId))
+        .limit(1);
+      return a ? a.employeeId === ctx.employee?.id : holds("assetStock");
+    }
     case "hrms_document":
       return holds("documents");
     case "hrms_journey":

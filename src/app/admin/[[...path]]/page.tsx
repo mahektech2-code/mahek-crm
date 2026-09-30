@@ -5,7 +5,7 @@ import { webApps } from "@/lib/apps";
 import { canFor } from "@/lib/access-control";
 import { getConfig, configWarnings } from "@/lib/config/store";
 import { listCollections } from "@/lib/config/entity-collections";
-import { crmSchema, schemaFields, toConsole } from "@/lib/config/schema-contract";
+import { crmSchema, hrmsSchema, schemaFields, toConsole } from "@/lib/config/schema-contract";
 import {
   catalogueSummary,
   listAliases,
@@ -194,7 +194,7 @@ export default async function Page({
 
   // Stored values, projected into the shapes the console's controls edit.
   const values: Record<string, unknown> = {};
-  for (const f of schemaFields(crmSchema())) {
+  for (const f of [...schemaFields(crmSchema()), ...schemaFields(hrmsSchema())]) {
     values[f.key] = toConsole(config[f.key as keyof Config], f.control, f.parts);
   }
 

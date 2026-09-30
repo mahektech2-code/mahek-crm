@@ -16,6 +16,7 @@ import { ErpUiProvider } from "@/app/erp/_ui/erp-ui";
 import { hrmsSearch, type HrmsSearchHit } from "@/lib/actions/hrms-screens";
 import type { Notification } from "@/db/schema";
 import type { AppDefinition } from "@/lib/apps";
+import "@/lib/hrms/calcs";
 import { HRMS_KIT } from "./kit";
 import { HIcon, hasHIcon } from "./icons";
 

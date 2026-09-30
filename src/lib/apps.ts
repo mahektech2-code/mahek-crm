@@ -44,6 +44,12 @@ export type AppDefinition = {
    * to offer it, and `app_access` still needs the id.
    */
   mobileOnly?: boolean;
+  /**
+   * An app whose work another app now does. Its id stays, so a grant made
+   * before the retirement still resolves, but nothing draws it — two tiles
+   * for one job is how people end up keeping two records of it.
+   */
+  retiredInto?: AppId;
 };
 
 export const APPS: AppDefinition[] = [
@@ -113,10 +119,11 @@ export const APPS: AppDefinition[] = [
     id: "people",
     name: "Attendance & People",
     initials: "AP",
-    description: "Hours, leave and the team roster.",
-    href: "/people",
+    description: "Hours, leave and the team roster — now HRMS.",
+    href: "/hrms",
     tone: "neutral",
     built: false,
+    retiredInto: "hrms",
   },
   {
     id: "reports",
@@ -132,8 +139,8 @@ export const APPS: AppDefinition[] = [
     name: "HRMS",
     initials: "HR",
     description:
-      "The employee master — who works here, where, since when and on what.",
-    href: "/hrms/employees",
+      "Check in and out, leave, payroll, tasks, performance, the sales desk and the employee master.",
+    href: "/hrms",
     tone: "neutral",
     built: true,
   },
@@ -296,7 +303,7 @@ export function getApp(id: string): AppDefinition | undefined {
  * others: the exclusion has to live in one place to be certain it is everywhere.
  */
 export function webApps(ids: readonly AppId[]): AppDefinition[] {
-  return APPS.filter((a) => ids.includes(a.id) && !a.mobileOnly);
+  return APPS.filter((a) => ids.includes(a.id) && !a.mobileOnly && !a.retiredInto);
 }
 
 /** "MAHEK CRM" for the CRM, "MAHEK OM" and so on for the rest. */

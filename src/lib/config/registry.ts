@@ -3823,6 +3823,28 @@ export const SETTINGS = [
     max: 365,
   },
   {
+    key: "hrms.calling.suggestionFactor",
+    type: "integer",
+    category: "hrms",
+    label: "Suggestion: calls per order",
+    description:
+      "How many calls one order is worth when deciding whether to keep following a customer up: calls − this × orders.",
+    default: 7,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.calling.suggestionThreshold",
+    type: "integer",
+    category: "hrms",
+    label: "Suggestion: deactivate above",
+    description:
+      "Where calls − factor × orders is at or below this, the suggestion is Do FollowUp; above it, Do Deactivate This Customer.",
+    default: 7,
+    min: 0,
+    max: 1000,
+  },
+  {
     key: "hrms.sales.activityWindowDays",
     type: "integer",
     category: "hrms",
@@ -3879,6 +3901,42 @@ export const SETTINGS = [
     description:
       "Monthly staff performance is worked out for active employees of these offices (the source: Mahek Marketing India).",
     default: ["Mahek Marketing India"],
+  },
+  {
+    key: "hrms.performance.timeGivenBase",
+    type: "integer",
+    category: "hrms",
+    label: "Minutes a visit for full time marks",
+    description: "Time with customers earns its full daily mark at this many minutes per visit.",
+    default: 5,
+    min: 1,
+    max: 240,
+  },
+  {
+    key: "hrms.performance.descriptionBase",
+    type: "integer",
+    category: "hrms",
+    label: "Note characters a visit for full marks",
+    description: "Meeting notes earn their full daily mark at this many characters per visit, not counting spaces and commas.",
+    default: 25,
+    min: 1,
+    max: 1000,
+  },
+  {
+    key: "hrms.performance.outstandingBands",
+    type: "structured",
+    category: "hrms",
+    label: "Average payment days bands",
+    description: "Average payment days under the first earn the full outstanding mark, under the second half, under the third a quarter, beyond it nothing.",
+    default: [15, 30, 45],
+  },
+  {
+    key: "hrms.performance.pointBands",
+    type: "structured",
+    category: "hrms",
+    label: "Performance point bands",
+    description: "Minutes a day with customers and note characters a visit: above the first number a full point, above the second half a point.",
+    default: { time: [180, 90], description: [25, 15] },
   },
   {
     key: "erp.production.recipeTolerancePercent",
@@ -5075,12 +5133,18 @@ export type Config = {
   "hrms.performance.employeeOfMonthPercent": number;
   "hrms.tasks.eodWhatsappNumber": string;
   "hrms.calling.historyDays": number;
+  "hrms.calling.suggestionFactor": number;
+  "hrms.calling.suggestionThreshold": number;
   "hrms.sales.activityWindowDays": number;
   "hrms.holidays.editWindowDays": number;
   "hrms.payroll.ptSlabs": { female: { upToPaise: number; pt: number }[]; male: { upToPaise: number; pt: number }[]; rest: number; february: number };
   "hrms.payroll.lateBands": [number, number][];
   "hrms.performance.weights": Record<"visits" | "timeCust" | "noteLen" | "hours" | "km" | "amount" | "litres" | "outstanding" | "tasks", number>;
   "hrms.performance.staffOffices": string[];
+  "hrms.performance.timeGivenBase": number;
+  "hrms.performance.descriptionBase": number;
+  "hrms.performance.outstandingBands": [number, number, number];
+  "hrms.performance.pointBands": { time: [number, number]; description: [number, number] };
 
   "erp.orders.live": boolean;
   "erp.production.recipeTolerancePercent": number;

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Badge, Card, CardHeader, Select, Th, Td, Tr } from "@/components/ui/primitives";
-import { crmSchema } from "@/lib/config/schema-contract";
+import { crmSchema, hrmsSchema } from "@/lib/config/schema-contract";
 import { useAdmin } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ export function SchemaInspector() {
   const [appId, setAppId] = React.useState("crm");
   const app = registry.find((a) => a.id === appId)!;
   const live = app.status === "Live";
-  const schema = crmSchema();
+  const schema = appId === "hrms" ? hrmsSchema() : crmSchema();
   const fields = live
     ? schema.tabs.flatMap((t) => t.groups.flatMap((g) => g.fields.map((f) => ({ tab: t.label, ...f }))))
     : [];

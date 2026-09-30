@@ -67,10 +67,14 @@ function fallbackControl(def: SettingDefinition): Control {
   }
 }
 
+/** HRMS publishes its own schema below, so the CRM's does not carry its keys. */
+const isHrmsKey = (key: string) => key.startsWith("hrms.");
+
 export function crmSchema(): AppSchema {
   const byTab = new Map<string, Map<string, SchemaField[]>>();
 
   for (const raw of SETTINGS as readonly SettingDefinition[]) {
+    if (isHrmsKey(raw.key)) continue;
     const p = PRESENTATION[raw.key];
     const tab = p?.tab ?? "Other";
     const group = p?.group ?? "Not yet placed";
@@ -131,6 +135,58 @@ export function crmSchema(): AppSchema {
     }));
 
   return { tabs };
+}
+
+/* ---------------------------------------------------------------------------
+ * HRMS's schema. Its settings are placed by the second segment of the key —
+ * `hrms.payroll.pfRatePercent` sits under Payroll — so a setting added to the
+ * registry appears in the right tab with no presentation entry to remember.
+ * ------------------------------------------------------------------------- */
+
+const HRMS_TABS: Array<{ slug: string; label: string; groups: Record<string, string> }> = [
+  {
+    slug: "attendance",
+    label: "Attendance",
+    groups: { attendance: "Check-in and the working day", office: "Offices", ot: "Overtime", reports: "Monthly reports", holidays: "Holidays" },
+  },
+  { slug: "payroll", label: "Payroll", groups: { payroll: "Salary, PF, ESIC and PT" } },
+  {
+    slug: "performance",
+    label: "Performance & sales",
+    groups: { performance: "Performance points", sales: "Sales activity", calling: "Calling", tasks: "Tasks" },
+  },
+];
+
+export function hrmsSchema(): AppSchema {
+  const tabs: SchemaTab[] = HRMS_TABS.map((t) => ({ key: t.slug, label: t.label, groups: [] }));
+  for (const raw of SETTINGS as readonly SettingDefinition[]) {
+    if (!isHrmsKey(raw.key)) continue;
+    const seg = raw.key.split(".")[1] ?? "";
+    const ti = Math.max(0, HRMS_TABS.findIndex((t) => seg in t.groups));
+    const label = HRMS_TABS[ti].groups[seg] ?? "Other";
+    const p = PRESENTATION[raw.key];
+    const control = p?.control ?? fallbackControl(raw);
+    let group = tabs[ti].groups.find((g) => g.label === label);
+    if (!group) tabs[ti].groups.push((group = { label, fields: [] }));
+    group.fields.push({
+      key: raw.key,
+      label: raw.label,
+      control,
+      help: raw.description,
+      unit: p?.unit,
+      min: raw.min,
+      max: raw.max,
+      options: p?.options ? [...p.options] : raw.options ? [...raw.options] : undefined,
+      parts: p?.parts,
+      adminOnly: p?.adminOnly,
+      def: toConsole(raw.default, control, p?.parts),
+    });
+  }
+  for (const t of tabs) {
+    const seq = Object.values(HRMS_TABS.find((x) => x.slug === t.key)!.groups);
+    t.groups.sort((a, b) => seq.indexOf(a.label) - seq.indexOf(b.label));
+  }
+  return { tabs: tabs.filter((t) => t.groups.length) };
 }
 
 function order(list: readonly string[], value: string): number {

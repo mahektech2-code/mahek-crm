@@ -22,6 +22,7 @@ import { useToast } from "@/components/ui/toast";
 import { grantableApps, moduleGroupsForApp, modulesForApp } from "@/lib/modules";
 import type { AppId } from "@/lib/apps";
 import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
+import { HRMS_POWERS, HRMS_POWER_LABEL } from "@/lib/hrms/powers";
 import {
   candidatesForGrant,
   employeesToLink,
@@ -665,6 +666,10 @@ function AccessDialog({
      powers with it, the same as its screens. */
   const powersBefore = React.useMemo(() => person?.erpPowers ?? [], [person]);
   const [powers, setPowers] = React.useState<string[]>(powersBefore);
+  /* HRMS's powers, the same way: who is HR, who approves leave, who runs
+     payroll. Unticking HRMS takes them with it. */
+  const hrmsPowersBefore = React.useMemo(() => person?.hrmsPowers ?? [], [person]);
+  const [hrmsPowers, setHrmsPowers] = React.useState<string[]>(hrmsPowersBefore);
   /*
    * WHICH HAT EACH APP IS HELD UNDER, beside the screens it opens.
    *
@@ -721,6 +726,7 @@ function AccessDialog({
         role: roleDraft[app] ?? (person?.role as RoleId) ?? role,
       })),
       erpPowers: draft.erp ? powers : [],
+      hrmsPowers: draft.hrms ? hrmsPowers : [],
       account: chosen.userId
         ? undefined
         : { email: email.trim() || null, phone: phone.trim() || null, role },
@@ -753,7 +759,10 @@ function AccessDialog({
   const powersAfter = draft.erp ? powers : [];
   const powersChanged = powersAfter.length !== powersBefore.length || powersAfter.some((p) => !powersBefore.includes(p));
   const moduleChanges = describeChanges(before, draft);
-  const changes = { ...moduleChanges, any: moduleChanges.any || powersChanged };
+  const hrmsPowersAfter = draft.hrms ? hrmsPowers : [];
+  const hrmsPowersChanged =
+    hrmsPowersAfter.length !== hrmsPowersBefore.length || hrmsPowersAfter.some((p) => !hrmsPowersBefore.includes(p));
+  const changes = { ...moduleChanges, any: moduleChanges.any || powersChanged || hrmsPowersChanged };
 
   return (
     <Modal
@@ -826,6 +835,8 @@ function AccessDialog({
           fieldError={fieldError}
           powers={powers}
           onPowers={setPowers}
+          hrmsPowers={hrmsPowers}
+          onHrmsPowers={setHrmsPowers}
         />
       ) : step === "review" ? (
         <ReviewStep
@@ -839,6 +850,7 @@ function AccessDialog({
           roleDraft={roleDraft}
           accountRole={(person?.role as RoleId) ?? role}
           powerChange={powersChanged ? { before: powersBefore, after: powersAfter } : null}
+          hrmsPowerChange={hrmsPowersChanged ? { before: hrmsPowersBefore, after: hrmsPowersAfter } : null}
         />
       ) : (
         <CredentialStep
@@ -1162,6 +1174,8 @@ function AccessStep({
   fieldError,
   powers,
   onPowers,
+  hrmsPowers,
+  onHrmsPowers,
 }: {
   needsAccount: boolean;
   name: string;
@@ -1182,6 +1196,9 @@ function AccessStep({
   /** The ERP's special powers, drawn under the ERP app while it is ticked. */
   powers: string[];
   onPowers: (next: string[]) => void;
+  /** HRMS's special powers, drawn under HRMS while it is ticked. */
+  hrmsPowers: string[];
+  onHrmsPowers: (next: string[]) => void;
 }) {
   const setApp = (app: AppId, modules: string[]) => {
     const next = { ...draft };
@@ -1264,7 +1281,9 @@ function AccessStep({
       ) : null}
 
       <div className="overflow-hidden rounded-[4px] border border-line">
-        {APPS.map((app, i) => (
+        {/* A retired app is drawn only while somebody still holds it, so the
+            grant can be taken away; it is never offered to anybody new. */}
+        {APPS.filter((a) => !a.retiredInto || draft[a.id]).map((app, i) => (
           <AppBlock
             key={app.id}
             app={app.id}
@@ -1276,7 +1295,13 @@ function AccessStep({
             role={roleDraft[app.id] ?? accountRole}
             onRole={(next) => onRoleDraft({ ...roleDraft, [app.id]: next })}
             onChange={(modules) => setApp(app.id, modules)}
-            powers={app.id === "erp" ? { held: powers, onChange: onPowers, error: fieldError.erpPowers } : undefined}
+            powers={
+              app.id === "erp"
+                ? { held: powers, onChange: onPowers, error: fieldError.erpPowers, list: ERP_POWERS, labels: ERP_POWER_LABEL, adminLine: "An ERP administrator holds every power." }
+                : app.id === "hrms"
+                  ? { held: hrmsPowers, onChange: onHrmsPowers, error: fieldError.hrmsPowers, list: HRMS_POWERS, labels: HRMS_POWER_LABEL, adminLine: "An HRMS administrator holds every power." }
+                  : undefined
+            }
           />
         ))}
       </div>
@@ -1313,8 +1338,15 @@ function AppBlock({
   role: RoleId;
   onRole: (next: RoleId) => void;
   onChange: (modules: string[]) => void;
-  /** The ERP's special powers, for the ERP app alone. */
-  powers?: { held: string[]; onChange: (next: string[]) => void; error?: string };
+  /** An app's special powers — the ERP's and HRMS's — beside its screens. */
+  powers?: {
+    held: string[];
+    onChange: (next: string[]) => void;
+    error?: string;
+    list: readonly string[];
+    labels: Record<string, { label: string; source: string }>;
+    adminLine: string;
+  };
 }) {
   const all = ALL_OF(app);
   const groups = moduleGroupsForApp(app);
@@ -1448,17 +1480,17 @@ function AppBlock({
             Powers
           </span>
           {role === "admin" ? (
-            <span className="text-[13px] text-muted">An ERP administrator holds every power.</span>
+            <span className="text-[13px] text-muted">{powers.adminLine}</span>
           ) : (
             <span className="grid min-w-0 flex-1 grid-cols-3 gap-x-3">
-              {ERP_POWERS.map((p) => (
+              {powers.list.map((p) => (
                 <Checkbox
                   key={p}
                   checked={powers.held.includes(p)}
-                  title={ERP_POWER_LABEL[p].source}
+                  title={powers.labels[p]?.source}
                   onChange={() => powers.onChange(powers.held.includes(p) ? powers.held.filter((x) => x !== p) : [...powers.held, p])}
                   className="min-w-0 py-[1px]"
-                  label={<span className="truncate text-[13px] text-body">{ERP_POWER_LABEL[p].label}</span>}
+                  label={<span className="truncate text-[13px] text-body">{powers.labels[p]?.label ?? p}</span>}
                 />
               ))}
             </span>
@@ -1528,6 +1560,7 @@ function ReviewStep({
   roleDraft,
   accountRole,
   powerChange,
+  hrmsPowerChange,
 }: {
   name: string;
   creating: boolean;
@@ -1541,6 +1574,8 @@ function ReviewStep({
   accountRole: RoleId;
   /** The ERP powers before and after, where they change. */
   powerChange: { before: string[]; after: string[] } | null;
+  /** The HRMS powers before and after, where they change. */
+  hrmsPowerChange: { before: string[]; after: string[] } | null;
 }) {
   const appName = (id: AppId) => APPS.find((a) => a.id === id)?.name ?? id;
   /* "Manager in Accounts", because a level on its own no longer names a hat
@@ -1635,6 +1670,19 @@ function ReviewStep({
             detail: powerChange.after.length
               ? `${powerChange.after.map((p) => ERP_POWER_LABEL[p as keyof typeof ERP_POWER_LABEL]?.label ?? p).join(", ")}.`
               : "no ERP powers.",
+          },
+        ]
+      : []),
+    ...(hrmsPowerChange
+      ? [
+          {
+            key: "hrms-powers",
+            tone: (hrmsPowerChange.after.length < hrmsPowerChange.before.length ? "warn" : "success") as "warn" | "success",
+            tag: "Powers",
+            what: "HRMS",
+            detail: hrmsPowerChange.after.length
+              ? `${hrmsPowerChange.after.map((p) => HRMS_POWER_LABEL[p as keyof typeof HRMS_POWER_LABEL]?.label ?? p).join(", ")}.`
+              : "no HRMS powers.",
           },
         ]
       : []),

@@ -93,7 +93,14 @@ export function ListScreen({
   const home = tabKey ? `${path}?view=${encodeURIComponent(tabKey)}` : path;
 
   const cols = spec.cols;
-  const colOf = (k: string): ColSpec => cols.find((c) => c.k === k) ?? { k, l: k, t: "t" };
+  /* A group key that is not a declared column still gets words, not its
+     identifier: "monthLbl" reads "Month". */
+  const colOf = (k: string): ColSpec =>
+    cols.find((c) => c.k === k) ?? {
+      k,
+      l: k.replace(/Lbl$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase()),
+      t: "t",
+    };
 
   const filtered = useMemo(() => {
     let all = rows;
