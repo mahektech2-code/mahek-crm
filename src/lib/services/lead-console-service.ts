@@ -1106,6 +1106,16 @@ export type LeadRecord = {
   /* ---- §7 §8 the verification ---- */
   verifiedAt: Date | null;
   verifiedByName: string | null;
+  /**
+   * WHO RAISED THE LEAD AND WHEN — read from the append-only `lead_created`
+   * timeline event, not from a column. `customers` has no created-by column and
+   * none is added: the creator is a fact about the past that the history already
+   * records permanently, and a reassignment (which moves `owner_id`) cannot
+   * touch it because nothing edits that history. Null for a lead nobody raised
+   * through MahekOne — a row the sheet projected, or one older than the event.
+   */
+  createdByName: string | null;
+  createdAt: Date | string | null;
 
   /* ---- §5.3 the manager's verdict on the checklist ----
    *
@@ -1304,6 +1314,13 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
            c.handed_over_at as "handedOverAt",
 
            c.lead_verified_at as "verifiedAt", v.name as "verifiedByName",
+           (select te.occurred_at from timeline_events te
+             where te.customer_id = c.id and te.event_type = 'lead_created'
+             order by te.occurred_at asc limit 1) as "createdAt",
+           (select cu.name from timeline_events te
+              join users cu on cu.id = te.actor_user_id
+             where te.customer_id = c.id and te.event_type = 'lead_created'
+             order by te.occurred_at asc limit 1) as "createdByName",
 
            c.lead_qualification_review::text as "qualificationReview",
            c.lead_qualification_review_note as "qualificationReviewNote",

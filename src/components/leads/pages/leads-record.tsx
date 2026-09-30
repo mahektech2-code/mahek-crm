@@ -1,10 +1,13 @@
 import { type LeadWorkspace } from "@/lib/lead-workspace";
+import { qualificationAccess } from "@/lib/lead-qualification-access";
+import { canOpenModule } from "@/lib/access";
+import { DESK_MODULE, deskHolders } from "@/lib/services/lead-desk-assignment-service";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { nowMs } from "@/lib/format";
 import { today } from "@/lib/recompute";
-import { gateForNext, ladderVerdicts, mustDecideSuspect } from "@/lib/engines/lead-gates";
+import { gateForNext, ladderVerdicts, mustDecideSuspect, qualificationComplete } from "@/lib/engines/lead-gates";
 import { isParked, rungOf } from "@/lib/engines/lead-ladder";
 import {
   canLead,
@@ -169,25 +172,28 @@ export async function Body({
    * §11.6 — WHO MAY ANSWER THE GST CHECK ON THIS LEAD, resolved here because it
    * is the action's rule and the screen must not invent a second one.
    *
-   * Two halves, both read straight off `validateGstin`. The capability OR the
-   * named back office seat says who may — a team that has put somebody in that
-   * seat should not have to also grant them an app for the one thing the seat
-   * is for. And the lead's own owner or sales account manager may NOT, whatever
-   * else they hold, because the man who wrote the number down cannot be the man
-   * who certifies it; that is the entire purpose of the column.
+   * The capability OR the named back office seat says who may — a team that has
+   * put somebody in that seat should not have to also grant them an app for the
+   * one thing the seat is for. THE LEAD'S OWN OWNER MAY TOO: the Telecaller who
+   * entered the number validates it, and there is no longer a self-check here
+   * or in `validateGstin` to disagree about. What stays is that the validation
+   * belongs to the number it was made against (a changed GSTIN clears it), and
+   * that it is a Qualification act — refused before the Sales Manager has
+   * verified the Prospect.
    *
    * The sentence travels with the answer, so the disabled control's hover says
    * the same thing the action would have said.
    */
   const gstSeatOrCapability =
     record.backOfficeAmId === user.id || (await canLead(user, "lead.gstValidate"));
-  const gstCollectedByMe = record.salesmanId === user.id || record.salesAmId === user.id;
-  const canValidateGst = gstSeatOrCapability && !gstCollectedByMe;
-  const gstBlockedReason = gstCollectedByMe
-    ? "You recorded this number, so you cannot be the one who checks it. A check somebody performs on their own work is not a check — ask the back office or accounts."
+  const gstNotYet = qualificationAccess(record.stage);
+  const gstBeforeQualification = ["suspect", "new", "prospect", "contacted"].includes(record.stage);
+  const canValidateGst = gstSeatOrCapability && !gstBeforeQualification;
+  const gstBlockedReason = gstBeforeQualification
+    ? gstNotYet.reason
     : gstSeatOrCapability
       ? null
-      : "Checking a GST number is the back office's, the CRM's or the accounts desk's. Yours is not one of the hats that carries it.";
+      : "Checking a GST number is the CRM's, the Sales Dashboard's or the accounts desk's. Yours is not one of the hats that carries it.";
   const ladder = ladderOf(record);
 
   /*
@@ -226,6 +232,12 @@ export async function Body({
     hasCommitment: isConfirmedCommitment(record),
     hasOrder: record.countingOrderCount > 0,
     sampleAwaitingDispatch: samples.some((s) => s.state === "approved"),
+    /* THE TELECALLER'S QUALIFICATION, read off the gate rather than typed here:
+       whether the manager has verified the Prospect, what the manager said about
+       the Qualification, and whether everything the Telecaller owns is answered. */
+    verified: Boolean(record.verifiedAt),
+    qualificationReview: record.qualificationReview,
+    qualificationComplete: qualificationComplete(gateInput),
   };
 
   /*
@@ -246,6 +258,9 @@ export async function Body({
     hasCommitment: actionFacts.hasCommitment,
     hasOrder: actionFacts.hasOrder,
     sampleState: (record.sample?.state as SampleState | undefined) ?? null,
+    verified: actionFacts.verified,
+    qualificationReady:
+      Boolean(actionFacts.qualificationComplete) && record.qualificationReview === "verified",
   };
 
   return (
@@ -318,6 +333,10 @@ export async function Body({
          `assignLeadManager` seats when nobody names anybody, so the picker and
          the action cannot disagree about one lead. */
       leadManagers={leadManagers}
+      assignees={await deskHolders()}
+      canReassign={
+        (await canLead(user, "lead.verify")) && (await canOpenModule(user.id, DESK_MODULE))
+      }
       canOverride={(await canLead(user, "lead.override")) && config["leads.allowManagerOverride"]}
       /* §4.1 — how hard to push this lead is the manager's word, and
          `lead.verify` is the capability that already means exactly that: the

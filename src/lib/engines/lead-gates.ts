@@ -199,10 +199,10 @@ export type LeadGateInput = {
   /**
    * §5.3 — the sales manager's verdict on the qualification checklist.
    *
-   * `incomplete` and `clarification` HOLD the lead, on Mahek's instruction.
-   * Undefined is a checklist nobody has reviewed, which passes: demanding a
-   * review nobody was ever asked for would stop every lead in the book on the
-   * day it shipped.
+   * ONLY `verified` PASSES Sample/Trial. `incomplete`, `clarification`, null and
+   * undefined all hold: a qualification nobody has reviewed is not reviewed.
+   * (It used to be that undefined passed, so the book did not stop on the day
+   * the gate shipped. That was a transition rule, not a business rule.)
    */
   qualificationReview?: "verified" | "incomplete" | "clarification" | null;
   /**
@@ -443,33 +443,52 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       }
 
       /*
-       * §5.3 — AND A MANAGER WHO SAID IT WAS NOT FINISHED IS NOW LISTENED TO.
+       * THE MANAGER'S REVIEW IS MANDATORY, AND ONLY `verified` PASSES IT.
        *
-       * This is a reversal. The manager's review was recorded and changed
-       * nothing: the checklist alone decided, so he could write "this is not
-       * finished, go back and ask him about the credit" and watch the lead
-       * move to a sample regardless. A verdict nobody has to answer is a
-       * comment, and people stop writing comments nobody answers.
+       * This was §5.3's "the two negative verdicts hold, an unreviewed checklist
+       * passes" — chosen so shipping the gate would not stop the whole book on
+       * the day it landed. Mahek's answer is the opposite and it is permanent:
+       * the Telecaller completes Qualification and a Sales Manager reads it
+       * before anything leaves the godown, so a checklist nobody has reviewed
+       * is one that has not been checked.
        *
-       * Only the two NEGATIVE verdicts hold. An unreviewed checklist passes —
-       * demanding a review that nobody has been asked for would stop the whole
-       * book on the day this shipped, which is the one way to make a new gate
-       * hated before anybody understands it.
+       * Three states, three sentences, one rule. `incomplete` and
+       * `clarification` still carry the manager's own instruction; no review at
+       * all says the review is what is missing. A `verified` verdict that a
+       * Telecaller's later edit took away (`reviewVoidPatch`) is a null here, so
+       * it reads as no review — which is exactly what it now is.
+       *
+       * Leads already sitting at Qualification with no review are subject to it
+       * too. Nothing is backfilled: the gate evaluates what is stored.
        */
       if (i.qualificationReview === "incomplete" || i.qualificationReview === "clarification") {
         out.push({
           id: "manager_review_open",
           says:
             i.qualificationReview === "incomplete"
-              ? "Your sales manager marked this checklist incomplete — answer his note and ask him to look again"
-              : "Your sales manager asked for a clarification — answer it and ask him to look again",
+              ? "Your sales manager marked this qualification incomplete — answer the note and it goes back for review"
+              : "Your sales manager asked for a clarification — answer it and it goes back for review",
+        });
+      } else if (i.qualificationReview !== "verified") {
+        out.push({
+          id: "manager_review_pending",
+          says: "Your sales manager has to review and verify this qualification",
         });
       }
 
       /* §23 — a shop we do not invoice has to say who does, before it is given
          anything. A sample sent to a counter nobody bills is stock nobody can
-         account for. */
-      if (i.thirdParty && !(i.distributorCount && i.distributorCount > 0)) {
+         account for.
+
+         A THIRD-PARTY SALE IS ONE SOMEBODY ELSE INVOICES, WHICHEVER WAY IT WAS
+         SAID. The customer's `third_party` mark is what a manager sets on an
+         account; the lead's sales type is what the Telecaller chose on the desk.
+         Reading only the mark left every desk-raised third-party lead exempt
+         from the very question that ladder exists to ask. */
+      if (
+        (i.thirdParty || i.salesType === "third_party") &&
+        !(i.distributorCount && i.distributorCount > 0)
+      ) {
         out.push({
           id: "distributor_named",
           says: "Say which distributor invoices this shop",
@@ -723,6 +742,33 @@ export function gateTo(i: LeadGateInput, to: LeadStage): GateVerdict {
   }
 
   return { to, open: missing.length === 0, missing };
+}
+
+/** The two conditions that are the MANAGER's, and never the Telecaller's to satisfy. */
+const REVIEW_CONDITION_IDS: readonly string[] = [
+  "manager_review_pending",
+  "manager_review_open",
+];
+
+/**
+ * Has the Telecaller finished the Qualification — every condition met except
+ * the manager's own review?
+ *
+ * This is DERIVED from the gate on every read and stored nowhere, so it cannot
+ * drift from what the gate refuses on. It is what the manager's "Review
+ * qualification" is waiting for, and what the Telecaller's "Complete
+ * qualification" is counting down. §24's next action is left out deliberately:
+ * the workflow itself hands the next action from one person to the other, so it
+ * is the workflow's to supply and not a condition somebody has to remember.
+ *
+ * False for a distributor, whose Qualification leads to management review
+ * rather than to a sample.
+ */
+export function qualificationComplete(i: LeadGateInput): boolean {
+  if (i.salesType === "distributor" || !i.salesType) return false;
+  return gateTo(i, "sample_trial").missing.every(
+    (c) => REVIEW_CONDITION_IDS.includes(c.id) || c.id === "next_action",
+  );
 }
 
 /** The ordinary question: may it go UP one, and what is in the way. */

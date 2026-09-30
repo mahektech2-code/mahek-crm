@@ -66,6 +66,15 @@ export type LeadGateControl =
   | "verify"
   /** §5.3 — the sample request form. */
   | "request_sample"
+  /**
+   * The Telecaller's Qualification, which is a screen of its own — the eight
+   * conditions, the figures and (for a third-party shop) the distributor. Drawn
+   * instead of the sample form for as long as the Qualification is unfinished or
+   * the Sales Manager has not verified it: a sample cannot be asked for until
+   * then, and pointing somebody at a form the server will refuse is the failure
+   * this control exists to avoid.
+   */
+  | "qualify"
   /** §5.4 — dispatch, receipt and the trial review, which the sample desk owns. */
   | "sample_desk"
   /** §5.5 first act — the forecast. A commitment is not a sale. */
@@ -135,6 +144,14 @@ export type LeadGateActionFacts = {
    * not become.
    */
   sampleState: SampleState | null;
+  /** The Sales Manager has verified this Prospect. Absent reads as not yet. */
+  verified?: boolean;
+  /**
+   * The Qualification is complete AND the manager's review is `verified` — the
+   * whole of what the sample gate reads. Absent keeps the old behaviour (the
+   * sample form), for a surface that holds a list row rather than the gate.
+   */
+  qualificationReady?: boolean;
 };
 
 const NOTHING: LeadGateAction = {
@@ -208,6 +225,17 @@ export function gateAction(facts: LeadGateActionFacts): LeadGateAction {
      */
     case "contacted":
     case "prospect":
+      /* A Prospect the manager has already verified but that is still standing
+         here is the recovery case — the automatic opening did not happen — and
+         opening it is an ordinary move. */
+      if (facts.verified) {
+        return {
+          label: "Open qualification",
+          tone: "brand",
+          control: "advance",
+          says: "The Sales Manager has verified this Prospect. Qualification is the Telecaller's to complete.",
+        };
+      }
       return {
         label: "Make the verification call",
         tone: "danger",
@@ -225,6 +253,14 @@ export function gateAction(facts: LeadGateActionFacts): LeadGateAction {
      */
     case "qualified":
     case "qualification":
+      if (!distributor && facts.qualificationReady === false) {
+        return {
+          label: "Complete qualification",
+          tone: "brand",
+          control: "qualify",
+          says: "Answer every condition. When it is complete the Sales Manager reviews it, and only a verified qualification can be sent a sample.",
+        };
+      }
       return distributor
         ? {
             label: "Send for management review",

@@ -122,6 +122,9 @@ export function RecordScreen({
       : null,
     managerName: lead.managerName,
     deskName: lead.ownerName,
+    verified: Boolean(lead.verifiedAt),
+    qualReview: lead.qualificationReview,
+    qualComplete: lead.qualificationComplete,
   });
   const open = (kind: NonNullable<DialogState>["kind"], preset?: string | null) => setDialog({ kind, preset });
   /* The desk's own words where the desk closed it; the configured label it was filed under otherwise. */
@@ -224,9 +227,32 @@ export function RecordScreen({
       {!lead.lost && phase === "prospect" ? (
         <Callout tone="brand">
           <div>
-            <b>Prospect confirmed</b> by {lead.managerName ?? "the Sales Manager"}
-            {lead.stageDates.prospect ? ` on ${shortDate(lead.stageDates.prospect)}` : ""}. It is with the Sales
-            Manager now; the Telecaller&rsquo;s part is done.
+            <b>Prospect created.</b> Waiting for Sales Manager verification
+            {lead.managerName ? ` — ${lead.managerName} has it` : ""}. Qualification opens as soon as they
+            verify it, and it is yours to complete.
+          </div>
+        </Callout>
+      ) : null}
+      {!lead.lost && phase === "qualification" ? (
+        <Callout tone={lead.qualificationReview === "incomplete" || lead.qualificationReview === "clarification" ? "warn" : "brand"}>
+          <div>
+            {lead.verifiedAt ? (
+              <>
+                <b>
+                  Verified by {lead.verifiedByName ?? "the Sales Manager"} on {shortDate(lead.verifiedAt)}.
+                </b>{" "}
+                Qualification is now ready for you.
+              </>
+            ) : (
+              <b>Qualification is open.</b>
+            )}
+            {lead.qualificationReview === "verified"
+              ? " The Sales Manager has verified your qualification — you can request the sample."
+              : lead.qualificationReview === "incomplete" || lead.qualificationReview === "clarification"
+                ? ` The Sales Manager sent it back: ${lead.qualificationReviewNote ?? "answer their note"}`
+                : lead.qualificationComplete
+                  ? " You have answered everything; it is with the Sales Manager for review."
+                  : ""}
           </div>
         </Callout>
       ) : null}
@@ -268,6 +294,18 @@ export function RecordScreen({
             >
               Edit
             </Button>
+            {!lead.lost && phase === "qualification" && canWork && !(lead.qualificationComplete && lead.qualificationReview !== "verified" && lead.qualificationReview !== "incomplete" && lead.qualificationReview !== "clarification") ? (
+              <Link
+                href={lead.qualificationReview === "verified" ? `/crm/leads/${lead.id}?tab=samples` : `/crm/leads/${lead.id}/qualify`}
+                className="inline-flex h-8 items-center rounded-[4px] bg-brand px-3 text-[13px] font-medium text-white no-underline hover:no-underline"
+              >
+                {lead.qualificationReview === "verified"
+                  ? "Request the sample"
+                  : lead.qualificationReview === "incomplete" || lead.qualificationReview === "clarification"
+                    ? "Answer the note"
+                    : "Complete qualification"}
+              </Link>
+            ) : null}
             {!lead.lost && canAssign ? (
               <Button size="sm" variant="secondary" onClick={() => open("assign")}>
                 {lead.ownerName ? "Reassign" : "Assign"}
@@ -909,8 +947,15 @@ function QualificationCard({ lead }: { lead: DeskLeadRecord }) {
       <p className="mt-3 mb-0 text-[12.5px] text-muted">
         {all
           ? "All conditions were satisfied before Sample / Trial opened."
-          : "Managed by the Sales Manager — read-only for the Telecaller."}
+          : lead.phase === "qualification"
+            ? "Yours to complete. Answer them on the Qualification screen — the Sales Manager reviews it when every one is done."
+            : ""}
       </p>
+      {lead.phase === "qualification" ? (
+        <p className="mt-2 mb-0 text-[12.5px]">
+          <Link href={`/crm/leads/${lead.id}/qualify`}>Open the Qualification screen</Link>
+        </p>
+      ) : null}
     </SectionCard>
   );
 }

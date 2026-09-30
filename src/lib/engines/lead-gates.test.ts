@@ -172,6 +172,10 @@ function trialReady(over: Partial<LeadGateInput> = {}): LeadGateInput {
     decisionMaker: "Ramesh",
     application: "Wood finishing",
     qualification: ticks,
+    /* The Sales Manager's review is MANDATORY for Sample/Trial, so a lead that is
+       otherwise ready carries a verified one. Every test that wants the review
+       missing says so by overriding it. */
+    qualificationReview: "verified",
     ...NEXT_ACTION,
     ...over,
   };
@@ -399,12 +403,23 @@ describe("§5 — the eight before anybody may send a sample", () => {
       );
     });
 
-    /* THE ONE THAT KEEPS IT SHIPPABLE. An unreviewed checklist passes —
-       otherwise every lead in the book stops on deploy day, waiting on a
-       review nobody was ever asked for. */
-    test("an unreviewed checklist is not a refusal", () => {
-      assert.equal(gateTo(trialReady({ qualificationReview: null }), "sample_trial").open, true);
-      assert.equal(gateTo(trialReady(), "sample_trial").open, true);
+    /* THE RULE HAS FLIPPED, AND IT IS PERMANENT. A checklist nobody has reviewed
+       used to pass (so the book would not stop on deploy day); the Sales
+       Manager's review is now mandatory, and only `verified` passes it. */
+    test("NO REVIEW BLOCKS — null and undefined are both a refusal", () => {
+      for (const review of [null, undefined] as const) {
+        const v = gateTo(trialReady({ qualificationReview: review }), "sample_trial");
+        assert.equal(v.open, false, String(review));
+        assert.deepEqual(v.missing.map((c) => c.id), ["manager_review_pending"], String(review));
+      }
+    });
+
+    test("incomplete and clarification both block, under their own ids", () => {
+      for (const review of ["incomplete", "clarification"] as const) {
+        const v = gateTo(trialReady({ qualificationReview: review }), "sample_trial");
+        assert.equal(v.open, false, review);
+        assert.deepEqual(v.missing.map((c) => c.id), ["manager_review_open"], review);
+      }
     });
 
     test("the refusal names which of the two it was", () => {
@@ -425,6 +440,21 @@ describe("§5 — the eight before anybody may send a sample", () => {
 
     const named = gateTo({ ...shop, distributorCount: 1 }, "sample_trial");
     assert.equal(named.open, true);
+  });
+
+  test("THE SALES TYPE IS ENOUGH — a third-party lead needs a distributor without the customer's mark", () => {
+    const lead = trialReady({ salesType: "third_party", thirdParty: false, distributorCount: 0 });
+    const v = gateTo(lead, "sample_trial");
+    assert.equal(v.open, false);
+    assert.deepEqual(v.missing.map((c) => c.id), ["distributor_named"]);
+    assert.equal(gateTo({ ...lead, distributorCount: 1 }, "sample_trial").open, true);
+  });
+
+  test("a direct shop is asked no such thing, mark or no mark on a lead that is not third-party", () => {
+    assert.equal(
+      gateTo(trialReady({ salesType: "direct", thirdParty: false, distributorCount: 0 }), "sample_trial").open,
+      true,
+    );
   });
 
   test("a shop we invoice ourselves is asked no such thing", () => {
@@ -1114,6 +1144,8 @@ describe("a manager override is not this engine's business", () => {
       "sample_trial",
     );
     assert.equal(withNoise.open, false);
-    assert.equal(withNoise.missing.length, QUALIFICATION_CONDITIONS.length);
+    /* The eight conditions, plus the manager's review — which nothing on the
+       input but a real `verified` verdict can satisfy. */
+    assert.equal(withNoise.missing.length, QUALIFICATION_CONDITIONS.length + 1);
   });
 });

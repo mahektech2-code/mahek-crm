@@ -205,6 +205,11 @@ export type StageStatusFacts = {
   commitment: string | null;
   managerName: string | null;
   deskName: string | null;
+  /** The Sales Manager has verified this Prospect. */
+  verified?: boolean;
+  qualReview?: "verified" | "incomplete" | "clarification" | null;
+  /** The Telecaller has answered everything they own. */
+  qualComplete?: boolean;
 };
 
 /**
@@ -237,9 +242,27 @@ export function stageStatus(f: StageStatusFacts): { text: string; who: string | 
     case "returned":
       return { text: "Verification failed — returned to the Telecaller", who: desk };
     case "prospect":
-      return { text: "Prospect confirmed — qualification not started", who: mgr };
+      /* THE TELECALLER'S PART IS NOT DONE — it is waiting. A direct promotion
+         creates a Prospect nobody has verified, and the next step is the Sales
+         Manager's. Qualification opens when they verify it. */
+      return {
+        text: "Prospect created. Waiting for Sales Manager verification.",
+        who: mgr,
+      };
     case "qualification":
-      return { text: `${f.qualDone} of ${f.qualTotal} qualification conditions done`, who: mgr };
+      if (f.qualReview === "verified") {
+        return { text: "Qualification verified by the Sales Manager — ready for the sample request", who: desk };
+      }
+      if (f.qualReview === "incomplete" || f.qualReview === "clarification") {
+        return { text: "The Sales Manager sent the qualification back — answer the note", who: desk };
+      }
+      if (f.qualComplete) {
+        return { text: "Qualification complete — awaiting Sales Manager review", who: mgr };
+      }
+      return {
+        text: `${f.qualDone} of ${f.qualTotal} qualification conditions done — yours to complete`,
+        who: desk,
+      };
     case "sample_trial":
       return {
         text:

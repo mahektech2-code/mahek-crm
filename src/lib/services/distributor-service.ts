@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   customerDistributors,
@@ -19,6 +19,58 @@ import {
   type GateVerdict,
 } from "@/lib/engines/lead-gates";
 import { leadGateInput } from "@/lib/services/lead-service";
+
+/**
+ * Are these accounts we bill? Returns the message to refuse with, or null.
+ *
+ * The one check every path that NAMES a distributor makes — the manager's and
+ * accounts' `addDistributor`/`updateDistributor`/`convertToThirdParty`, and the
+ * Telecaller's narrow `nameLeadDistributor` — so that "who may be somebody's
+ * distributor" has exactly one definition. It lives here rather than in either
+ * action file for the reason the picker's list does: a second copy would let the
+ * Telecaller name an account the manager could not, and the half that drifts is
+ * the half nobody is reading.
+ *
+ * One query for the whole list, and it names the FIRST offender rather than
+ * saying "one of these is wrong" — a message somebody cannot act on is a message
+ * that gets clicked through.
+ */
+export async function checkDistributors(
+  distributorIds: string[],
+  shopIds: string[],
+): Promise<string | null> {
+  const unique = [...new Set(distributorIds)];
+  if (unique.length !== distributorIds.length) {
+    return "The same distributor is named twice. One arrangement per distributor.";
+  }
+  const clash = unique.find((d) => shopIds.includes(d));
+  if (clash) return "An account cannot be its own distributor.";
+
+  const rows = await db
+    .select({
+      id: customers.id,
+      name: customers.name,
+      kind: customers.kind,
+      thirdParty: customers.thirdParty,
+      status: customers.status,
+    })
+    .from(customers)
+    .where(inArray(customers.id, unique));
+
+  if (rows.length !== unique.length) return "That distributor no longer exists.";
+  for (const r of rows) {
+    if (r.kind !== "customer") {
+      return `${r.name} has never ordered from us, so it cannot bill anybody. A distributor is an account we invoice.`;
+    }
+    if (r.thirdParty) {
+      return `${r.name} is itself a third-party customer — we deliver to it and somebody else bills it, so it cannot be a distributor.`;
+    }
+    if (r.status === "deactivated") {
+      return `${r.name} is deactivated, so it cannot be named as who bills a shop from today.`;
+    }
+  }
+  return null;
+}
 
 /* ---------------------------------------------------------------------------
  * The arrangement behind the mark.

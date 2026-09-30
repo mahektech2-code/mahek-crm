@@ -6,7 +6,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, calls, customers, users } from "@/db/schema";
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { assertCustomerInScope, canAny, hatsFor, requireCapability } from "@/lib/access-control";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import { addDays, nextWorkingDay, type BusinessDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
@@ -41,6 +41,7 @@ import {
 import { gateTo } from "@/lib/engines/lead-gates";
 import { ladderFor } from "@/lib/engines/lead-ladder";
 import { leadGateInput, leadManagerCandidatesFor, leadRow } from "@/lib/services/lead-service";
+import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
 import { requestOf } from "@/lib/services/lead-prospect-request-service";
 import { advanceLeadStage, setLeadNextAction } from "@/lib/actions/leads";
 import { canOpenModule } from "@/lib/access";
@@ -610,9 +611,9 @@ async function preparePromotion(
     req: Awaited<ReturnType<typeof requestOf>>;
     salesType: "direct" | "third_party";
     setsSalesType: boolean;
-    managerId: string | null;
-    /** `managerId ?? ctx.user.id` — the same owner the dry run above was asked
-        with, so a caller's real write can never name a different one. */
+    managerId: string;
+    /** The Sales Manager the verification is owed to — the same owner the dry run
+        above was asked with, so a caller's real write can never name a different one. */
     nextActionOwnerId: string;
     day: string;
   }>
@@ -682,9 +683,46 @@ async function preparePromotion(
   /* The person the verification — or, on direct promotion, the coordinating
      seat — is owed to: whoever already holds the lead manager seat, otherwise
      the one the region defaults to. */
-  const candidates = lead.leadManagerId ? [] : await leadManagerCandidatesFor(p.customerId);
-  const managerId = lead.leadManagerId ?? candidates[0]?.id ?? null;
-  const nextActionOwnerId = managerId ?? ctx.user.id;
+  /*
+   * THE VERIFICATION IS THE SALES MANAGER'S, AND NEVER THE TELECALLER'S.
+   *
+   * This used to fall back to `ctx.user.id` when nobody covered the lead, which
+   * put the verification call on the person being verified: a Prospect whose
+   * only possible verifier is the Telecaller who raised it is a Prospect that
+   * verifies itself. So there is no fallback. The seat holder is used where
+   * there is one (a manager somebody chose, or one who still holds
+   * `lead.verify`); otherwise the region's default, filtered to people who can
+   * really verify; and where there is nobody the conversion is REFUSED and the
+   * lead stays a Suspect — ready, waiting for somebody to be set — rather than
+   * becoming a Prospect nobody can verify.
+   */
+  let managerId: string | null = null;
+  if (lead.leadManagerId) {
+    const decided = Boolean(lead.leadManagerDecidedAt);
+    const seat = await db
+      .select({ id: users.id, role: users.role, active: users.active })
+      .from(users)
+      .where(eq(users.id, lead.leadManagerId))
+      .limit(1);
+    const seatHolder = seat[0];
+    if (
+      seatHolder?.active &&
+      (decided || canAny(await hatsFor({ id: seatHolder.id, role: seatHolder.role }), "lead.verify"))
+    ) {
+      managerId = seatHolder.id;
+    }
+  }
+  if (!managerId) {
+    const candidates = await leadManagerCandidatesFor(p.customerId);
+    managerId = candidates[0]?.id ?? null;
+  }
+  if (!managerId) {
+    return err(
+      "No Sales Manager covers this lead's region. Ask an administrator.",
+      "rule_violation",
+    );
+  }
+  const nextActionOwnerId: string = managerId;
 
   /* THE DRY RUN. The same gate the promotion will be asked, with what this
      request supplies. Anything still missing is named, so the desk can fix it
@@ -796,7 +834,7 @@ export async function requestProspect(
       if (!lead.contactPerson?.trim() && p.contactPerson) set.contactPerson = p.contactPerson;
       /* The seat is FILLED, never moved, and `lead_manager_decided_at` is left
          alone: nobody chose this person, the region did. */
-      if (!lead.leadManagerId && managerId) set.leadManagerId = managerId;
+      if (managerId !== lead.leadManagerId && !lead.leadManagerDecidedAt) set.leadManagerId = managerId;
 
       await tx.update(customers).set(set).where(eq(customers.id, p.customerId));
 
@@ -921,7 +959,8 @@ export async function convertLeadToProspect(
     }
 
     const day = await today();
-    const prepared = await preparePromotion(p, ctx, { action: "Start qualification", date: day });
+    const due = addDays(day, config["leads.verificationDueDays"]);
+    const prepared = await preparePromotion(p, ctx, { action: QUAL_NEXT.verify, date: due });
     if (!prepared.ok) return prepared;
     const { lead, salesType, setsSalesType, managerId } = prepared.data;
 
@@ -936,7 +975,7 @@ export async function convertLeadToProspect(
       if (!lead.contactPerson?.trim() && p.contactPerson) set.contactPerson = p.contactPerson;
       /* The seat is FILLED, never moved, and `lead_manager_decided_at` is left
          alone: nobody chose this person, the region did. */
-      if (!lead.leadManagerId && managerId) set.leadManagerId = managerId;
+      if (managerId !== lead.leadManagerId && !lead.leadManagerDecidedAt) set.leadManagerId = managerId;
       /* A lead the manager had once RETURNED, then completed on a later call,
          converts here rather than resubmitting — the queue it was in is left
          behind rather than resolved through it. */
@@ -968,11 +1007,14 @@ export async function convertLeadToProspect(
       to: "prospect",
       reasonCode: p.reasonCode,
       note: p.note,
+      /* THE NEXT STEP IS THE SALES MANAGER'S VERIFICATION, not the Telecaller's
+         qualification: Qualification does not open until a manager has verified
+         this Prospect. The owner of the lead is untouched. */
       nextAction: {
-        action: "Start qualification",
-        date: day,
-        ownerId: managerId ?? ctx.user.id,
-        outcome: "Open qualification and take the eight conditions to done",
+        action: QUAL_NEXT.verify,
+        date: due,
+        ownerId: managerId,
+        outcome: "Verify the visit and what the desk collected, then Qualification opens",
       },
     });
     if (!moved.ok) {
@@ -991,11 +1033,20 @@ export async function convertLeadToProspect(
       afterState: { leadStage: "prospect", reason: p.reasonCode },
     });
 
+    /* The manager is told, because verification is now theirs to do and the
+       first they would otherwise know is a lead going overdue against their name. */
+    if (managerId !== ctx.user.id) {
+      await notifyUser({
+        userId: managerId,
+        title: `${lead.name} is ready to verify`,
+        body: `${ctx.user.name} created a Prospect from ${lead.name}. Qualification opens when you verify it.`,
+        kind: "info",
+        href: `/crm/leads/${p.customerId}/verify`,
+      }).catch(() => {});
+    }
+
     refresh(p.customerId);
-    return ok(
-      { promoted: true },
-      "Converted to Prospect — no Sales Manager verification was needed for this lead.",
-    );
+    return ok({ promoted: true }, "Prospect created. Waiting for Sales Manager verification.");
   } catch (e) {
     return fromThrown(e);
   }

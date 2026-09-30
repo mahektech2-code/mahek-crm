@@ -125,10 +125,71 @@ describe("scope of each vantage, as §7 states it", () => {
 
   test("the calling desk never reaches past the early rungs", () => {
     const acting = ALL_LEAD_STAGES.filter((s) => roleAction(facts(s), "calling_desk").actionable);
-    /* Suspect, its legacy twin, Prospect and its legacy twin, and nothing
-     * else: §7 scopes the desk to intake. `second_order` used to be on this
-     * list and is the cell the engine file argues about at length. */
-    assert.deepEqual(acting.sort(), ["contacted", "new", "prospect", "suspect"]);
+    /* Suspect and its legacy twin (the calls), and Qualification and its legacy
+     * twin — which is the Telecaller's to complete once the Sales Manager has
+     * verified the Prospect. NOT Prospect: the desk waits there. `second_order`
+     * used to be on this list and is the cell the engine file argues about at
+     * length. */
+    assert.deepEqual(acting.sort(), ["new", "qualification", "qualified", "suspect"]);
+  });
+
+  describe("Prospect → Qualification, with the Telecaller as owner", () => {
+    test("at Prospect the Telecaller WAITS and the Sales Manager makes the call", () => {
+      for (const stage of ["prospect", "contacted"] as LeadStage[]) {
+        const desk = roleAction(facts(stage), "calling_desk");
+        assert.equal(desk.label, "Awaiting Sales Manager verification", stage);
+        assert.equal(desk.actionable, false, stage);
+        const manager = roleAction(facts(stage), "sales_manager");
+        assert.equal(manager.label, "Make the verification call", stage);
+        assert.equal(manager.actionable, true, stage);
+      }
+    });
+
+    test("nothing offers the Telecaller a verification — the misleading label is gone", () => {
+      for (const stage of ALL_LEAD_STAGES) {
+        for (const v of [undefined, true]) {
+          assert.doesNotMatch(
+            roleAction(facts(stage, { verified: v }), "calling_desk").label,
+            /verification call support/i,
+            stage,
+          );
+        }
+      }
+    });
+
+    test("THERE IS NO SALESMAN — he has no action at Prospect or Qualification", () => {
+      for (const stage of ["prospect", "contacted", "qualification", "qualified"] as LeadStage[]) {
+        const a = roleAction(facts(stage), "salesman");
+        assert.equal(a.actionable, false, stage);
+        assert.equal(a.label, "No action for you on this lead", stage);
+      }
+    });
+
+    test("at Qualification the Telecaller has a job, then a wait, then the manager's word", () => {
+      const stage = "qualification" as LeadStage;
+      const job = roleAction(facts(stage), "calling_desk");
+      assert.deepEqual([job.label, job.actionable], ["Complete qualification", true]);
+
+      const waiting = roleAction(facts(stage, { qualificationComplete: true }), "calling_desk");
+      assert.deepEqual([waiting.label, waiting.actionable], ["Awaiting Sales Manager review", false]);
+
+      for (const review of ["incomplete", "clarification"] as const) {
+        const back = roleAction(facts(stage, { qualificationComplete: true, qualificationReview: review }), "calling_desk");
+        assert.deepEqual([back.label, back.actionable], ["Answer the Sales Manager's note", true], review);
+      }
+
+      const done = roleAction(facts(stage, { qualificationComplete: true, qualificationReview: "verified" }), "calling_desk");
+      assert.deepEqual([done.label, done.actionable], ["Request the sample", true]);
+    });
+
+    test("the manager reviews only a qualification the Telecaller has finished", () => {
+      const stage = "qualification" as LeadStage;
+      assert.equal(roleAction(facts(stage), "sales_manager").actionable, false);
+      const ready = roleAction(facts(stage, { qualificationComplete: true }), "sales_manager");
+      assert.deepEqual([ready.label, ready.actionable], ["Review qualification", true]);
+      const verified = roleAction(facts(stage, { qualificationComplete: true, qualificationReview: "verified" }), "sales_manager");
+      assert.equal(verified.actionable, false);
+    });
   });
 
   test("the repeat-order rung is not the calling desk's", () => {
