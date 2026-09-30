@@ -28,7 +28,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, customers, products, users } from "@/db/schema";
+import { appAccess, appModuleAccess, customers, products, timelineEvents, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { canOpenModule } from "@/lib/access";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
@@ -42,6 +42,7 @@ import {
   pipelineFunnel,
   pipelineLead,
   pipelineList,
+  pipelineSidebar,
 } from "@/lib/sales-lead-pipeline/sales-manager-pipeline-service";
 import { leadTileCounts } from "@/lib/services/lead-views-service";
 
@@ -393,5 +394,65 @@ describe("X — the scope is this workspace's, and only this workspace's", () =>
     const r = await setLeadNextAction(mineA.id, { action: "Outside the workspace", date: NEXT_WEEK, ownerId: salesman.id });
     assert.equal(r.ok, false);
     assert.equal((await row(mineA.id)).leadNextAction, null);
+  });
+});
+
+/* ═══════════════════════════════════════════ V — the prototype's five views */
+
+describe("V — the prototype's views read the same book, narrowed", () => {
+  test("the sidebar's four counts are the scoped book's: all, mine, today and overdue", async () => {
+    const c = await pipelineSidebar(DAY);
+    assert.equal(c.all, 2, "Manager Aye's book is two leads — not the company's five");
+    assert.equal(typeof c.mine, "number");
+    assert.equal(typeof c.today, "number");
+    assert.equal(typeof c.overdue, "number");
+
+    setTestUser(admin);
+    assert.equal((await pipelineSidebar(DAY)).all, 5, "an administrator's book is every lead");
+  });
+
+  test("Sales type, Owner and Priority narrow inside the book and never past it", async () => {
+    await makeLead({ name: "Dist lead", salesManagerId: smA.id, ownerId: salesman2.id, leadSalesType: "distributor", leadPriority: "high" });
+    await makeLead({ name: "Third lead", salesManagerId: smA.id, ownerId: salesman.id, leadSalesType: "third_party", leadPriority: "low" });
+    await makeLead({ name: "Not mine", salesManagerId: smB.id, ownerId: salesman.id, leadSalesType: "distributor", leadPriority: "high" });
+
+    const page = (o: Record<string, string>) => pipelineList(DAY, { q: "", stage: "", view: "", page: 1, ...o });
+    const names = async (o: Record<string, string>) => (await page(o)).rows.map((r) => r.name).sort();
+
+    /* The Distributors & Third-Party view is this filter, and only over MY book. */
+    assert.deepEqual(await names({ salesType: "distributor,third_party" }), ["Dist lead", "Third lead"]);
+    assert.deepEqual(await names({ salesType: "distributor" }), ["Dist lead"]);
+    assert.deepEqual(await names({ owner: salesman2.id }), ["Dist lead"]);
+    assert.deepEqual(await names({ priority: "high" }), ["Dist lead"], "Manager Bee's high-priority lead is not offered");
+    assert.deepEqual(await names({ priority: "low" }), ["Third lead"]);
+  });
+
+  test("the pipeline draws ten bars, second order among them, and a lead standing on it is counted", async () => {
+    await makeLead({ name: "Repeat", salesManagerId: smA.id, ownerId: salesman.id, leadStage: "second_order" });
+    const funnel = await pipelineFunnel(DAY);
+    assert.equal(funnel.direct.length, 10);
+    assert.equal(funnel.direct.find((f) => f.stage === "second_order")?.count, 1);
+  });
+
+  test("the record carries the customer's email, and names a telecaller's logged call as the telecaller's", async () => {
+    await db.update(customers).set({ email: "shop@example.test" }).where(eq(customers.id, mineA.id));
+    await db.insert(timelineEvents).values({
+      id: id("tle"),
+      customerId: mineA.id,
+      eventType: "telecaller_call",
+      sourceApp: "crm",
+      sourceRecordId: id("cal"),
+      occurredAt: new Date(),
+      actorUserId: noModule.id,
+      summary: "Rang the shop",
+    });
+    const rec = (await pipelineLead(mineA.id, DAY))!;
+    assert.equal(rec.lead.email, "shop@example.test");
+    assert.equal(rec.lead.timeline.find((t) => t.title === "Rang the shop")?.kind, "caller");
+  });
+
+  test("the dashboard's focus rows say whether a commitment is on file", async () => {
+    const dash = await pipelineDashboard(DAY);
+    assert.ok(dash.focus.every((r) => typeof r.hasCommitment === "boolean"));
   });
 });

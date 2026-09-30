@@ -6,6 +6,14 @@ import { Modal } from "@/components/ui/modal";
 import { ProductField } from "@/components/products/product-field";
 import { RadioCard, FindingFieldRow, FindingFieldInput, SalesmanFindingsCard, initialFindingState, type FindingRowState } from "./radio-card";
 import { useLeadPipeline } from "./provider";
+
+/**
+ * A dialog's width: the Sales Dashboard's own, or the prototype's where the
+ * CRM's mounting draws it. The dialogs are the same; only the box differs.
+ */
+function useProtoWidth(sales: number, crm: number): number {
+  return useLeadPipeline().workspace === "crm" ? crm : sales;
+}
 import { FEEDBACK_FIELDS, FIRST_ORDER_QUESTIONS, VERIFICATION_FAILED_CODE } from "@/lib/lead-labels";
 import {
   CONVERSION_FIELD_KEYS,
@@ -479,6 +487,7 @@ function VerifyModal({ lead, onClose }: ModalProps) {
 /* ------------------------------------------------------- qualification */
 
 function QualifyModal({ lead, onClose }: ModalProps) {
+  const width = useProtoWidth(580, 560);
   const { doSaveChecklist, doReviewChecklist, busy } = useLeadPipeline();
   const status = qualificationStatus(lead);
   const tickable = lead.qualItems.filter((c) => c.tickable);
@@ -495,7 +504,7 @@ function QualifyModal({ lead, onClose }: ModalProps) {
     <Modal
       open
       onClose={onClose}
-      width={580}
+      width={width}
       title={
         <div>
           <div>Qualification checklist</div>
@@ -740,6 +749,7 @@ function DispatchSampleModal({ lead, onClose }: ModalProps) {
 }
 
 function SampleReviewModal({ lead, onClose }: ModalProps) {
+  const width = useProtoWidth(540, 500);
   const { doSampleReview } = useLeadPipeline();
   const [fields, setFields] = React.useState<Record<string, string>>({});
   const [outcome, setOutcome] = React.useState<"approved" | "more_testing" | "rejected">("approved");
@@ -751,7 +761,7 @@ function SampleReviewModal({ lead, onClose }: ModalProps) {
     <Modal
       open
       onClose={onClose}
-      width={540}
+      width={width}
       title={lead.name}
       footer={
         <Footer
@@ -793,6 +803,7 @@ function SampleReviewModal({ lead, onClose }: ModalProps) {
 const answerId = (id: string) => FIRST_ORDER_QUESTIONS.find((q) => q.id === id)?.id ?? id;
 
 function AskOrderModal({ lead, onClose }: ModalProps) {
+  const width = useProtoWidth(540, 520);
   const { doAskOrder, refs } = useLeadPipeline();
   const [product, setProduct] = React.useState(lead.product ?? "");
   const [qty, setQty] = React.useState("");
@@ -817,7 +828,7 @@ function AskOrderModal({ lead, onClose }: ModalProps) {
     <Modal
       open
       onClose={onClose}
-      width={540}
+      width={width}
       title={
         <div>
           <div>Record Commitment / Expected Order</div>
@@ -861,6 +872,7 @@ function AskOrderModal({ lead, onClose }: ModalProps) {
 }
 
 function ConfirmOrderModal({ lead, onClose }: ModalProps) {
+  const width = useProtoWidth(540, 520);
   const { doConfirmOrder, today } = useLeadPipeline();
   const [orderedOn, setOrderedOn] = React.useState(today);
   const [value, setValue] = React.useState("");
@@ -873,7 +885,7 @@ function ConfirmOrderModal({ lead, onClose }: ModalProps) {
     <Modal
       open
       onClose={onClose}
-      width={540}
+      width={width}
       title={
         <div>
           <div>Confirm Actual Order</div>
@@ -920,6 +932,7 @@ function ConfirmOrderModal({ lead, onClose }: ModalProps) {
 /* ---------------------------------------------------- lost / reassign / next */
 
 function LostModal({ lead, onClose }: ModalProps) {
+  const width = useProtoWidth(480, 520);
   const { doLost, refs } = useLeadPipeline();
   /* The verification-failed reason is FIXED and reserved for the verification
      call; offering it here would file an ordinary loss under it. */
@@ -930,7 +943,7 @@ function LostModal({ lead, onClose }: ModalProps) {
     <Modal
       open
       onClose={onClose}
-      width={480}
+      width={width}
       title={
         <div>
           <div>{lead.stage === "suspect" || lead.stage === "new" ? "Not a Prospect" : "Mark Lost"}</div>
@@ -955,13 +968,14 @@ function LostModal({ lead, onClose }: ModalProps) {
 }
 
 function ReassignModal({ lead, onClose }: ModalProps) {
+  const width = useProtoWidth(460, 480);
   const { doReassign, refs } = useLeadPipeline();
   const [owner, setOwner] = React.useState(lead.ownerId ?? "");
   return (
     <Modal
       open
       onClose={onClose}
-      width={460}
+      width={width}
       title={lead.name}
       footer={<Footer onClose={onClose} label="Reassign" disabled={!owner || owner === lead.ownerId} onSave={() => void doReassign(owner)} />}
     >
@@ -984,6 +998,7 @@ function ReassignModal({ lead, onClose }: ModalProps) {
 }
 
 function NextActionModal({ lead, onClose }: ModalProps) {
+  const width = useProtoWidth(480, 460);
   const { doNextAction, refs, today } = useLeadPipeline();
   const [text, setText] = React.useState(lead.nextAction ?? "");
   const [date, setDate] = React.useState(lead.nextActionDate ?? "");
@@ -1004,7 +1019,7 @@ function NextActionModal({ lead, onClose }: ModalProps) {
     <Modal
       open
       onClose={onClose}
-      width={480}
+      width={width}
       title="Set next action"
       footer={
         <Footer

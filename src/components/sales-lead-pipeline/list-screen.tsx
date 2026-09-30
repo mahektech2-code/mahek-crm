@@ -18,7 +18,7 @@ const money = (paise?: number) => (paise ? "₹" + Math.round(paise / 100).toLoc
  * The options carry the SAME lists, so a tile's URL selects its own option and
  * the number on the tile is the number of rows this filter returns.
  */
-const STAGE_OPTIONS: { value: string; label: string }[] = [
+export const STAGE_OPTIONS: { value: string; label: string }[] = [
   { value: "suspect,new", label: "Suspect" },
   { value: "prospect,contacted", label: "Prospect" },
   { value: "qualification,qualified", label: "Qualification" },

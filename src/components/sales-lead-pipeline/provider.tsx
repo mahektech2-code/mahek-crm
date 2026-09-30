@@ -71,6 +71,8 @@ type Ctx = {
   lead: Lead;
   /** Where this workspace's links lead — see `lib/sales-lead-pipeline/workspace.ts`. */
   links: PipelineLinks;
+  /** Which app is drawing. The CRM draws the prototype's look; the Sales Dashboard keeps its own. */
+  workspace: PipelineWorkspace;
   modal: Modal;
   busy: boolean;
   /** The last refusal, shown inside whichever dialog is open. Cleared when one opens or closes. */
@@ -207,6 +209,7 @@ export function LeadPipelineProvider({
     refs,
     lead,
     links: pipelineLinks(workspace),
+    workspace,
     modal,
     busy,
     error,
