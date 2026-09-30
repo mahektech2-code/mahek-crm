@@ -1,5 +1,14 @@
 import { APPS, type AppId } from "./apps";
 import { ERP_GROUPS, erpHref } from "./erp/registry";
+import { HRMS_GROUPS, hrmsHref } from "./hrms/registry";
+
+/** What withholding an HRMS screen means, where it is not obvious. */
+const HRMS_NOTES: Record<string, string> = {
+  org: "Who reports to whom, and the only screen that can change it. Withholding it leaves the chart readable nowhere rather than read-only — there is no other view of it.",
+  employees: "Salaries, home addresses and identity numbers.",
+  payroll: "Everyone's salaries for payroll holders; everyone else sees only their own paid payslips.",
+  home: "Checking in. Everybody who holds HRMS reaches it whatever else they were narrowed to.",
+};
 
 /* ---------------------------------------------------------------------------
  * What a person can open INSIDE an app.
@@ -776,23 +785,25 @@ export const APP_MODULES: AppModule[] = [
   sales("notify", "Send a notification", "Administration", "A message to one salesman, a few, or the whole team — in-app and pushed."),
   sales("audit", "Audit trail", "Administration", "Every decision made here, with a name against it."),
 
-  /* -------------------------------------------------------------- the HRMS */
-  {
-    key: "hrms.org",
-    app: "hrms",
-    label: "Org Chart",
-    group: "Employees",
-    href: "/hrms/org",
-    note: "Who reports to whom, and the only screen that can change it. Withholding it leaves the chart readable nowhere rather than read-only — there is no other view of it.",
-  },
-  {
-    key: "hrms.employees",
-    app: "hrms",
-    label: "All Employees",
-    group: "Employees",
-    href: "/hrms/employees",
-    note: "Salaries, home addresses and identity numbers.",
-  },
+  /* -------------------------------------------------------------- the HRMS
+   * One module per HRMS screen, read off its own registry so the sidebar,
+   * this guard and the access screen cannot disagree. Home is the app root
+   * and matched exactly, or it would swallow every /hrms/* path. The two
+   * keys that existed before the rebuild — `hrms.employees` and `hrms.org` —
+   * keep their keys, so every grant that named them means what it meant. */
+  ...HRMS_GROUPS.flatMap((g) =>
+    g.screens.map(
+      (sc): AppModule => ({
+        key: `hrms.${sc.key}`,
+        app: "hrms",
+        label: sc.label,
+        group: `HRMS · ${g.label}`,
+        href: hrmsHref(sc),
+        exact: sc.slug === "",
+        ...(HRMS_NOTES[sc.key] ? { note: HRMS_NOTES[sc.key] } : {}),
+      }),
+    ),
+  ),
 
   /* ------------------------------------------------------------- the admin */
   {

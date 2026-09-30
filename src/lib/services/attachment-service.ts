@@ -333,6 +333,12 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     return canReadErpAttachment(ctx.user.id, row.parentType, row.parentId);
   }
 
+  /* HRMS files belong to an HRMS record, read under the screen it lives on. */
+  if (row.parentType.startsWith("hrms_")) {
+    const { canReadHrmsAttachment } = await import("@/lib/hrms/attachments");
+    return canReadHrmsAttachment(row.parentType, row.parentId);
+  }
+
   if (row.parentType === "price_list_document") {
     const ctx = await resolveScope();
     return canFor(ctx.user, "pricelist.read");

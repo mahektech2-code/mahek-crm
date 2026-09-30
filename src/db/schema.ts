@@ -630,6 +630,14 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "erp_transport",
   /** An uploaded help video. */
   "erp_video",
+  /* HRMS parents: read under the HRMS screen the record lives on (see
+     lib/hrms/attachments.ts), never under a customer's scope. */
+  "hrms_attendance",
+  "hrms_employee",
+  "hrms_office",
+  "hrms_asset",
+  "hrms_document",
+  "hrms_journey",
 ]);
 
 /**
@@ -2246,6 +2254,13 @@ export const customers = pgTable(
     freightTerm: text("freight_term"),
     /** "Door Delivery" or "Godown Delivery", as the party sheet spells it. Mirrored, never typed. */
     deliveryType: text("delivery_type"),
+    /* The HRMS Sales desk's own fields for a customer (spec §14.1): how
+       valuable the back office rates it, its segment, what to remember when
+       calling, and the salesman tagged to it beside the one who sells. */
+    rating: text("rating"),
+    segmentation: text("segmentation"),
+    specialInstructions: text("special_instructions"),
+    taggedEmployeeName: text("tagged_employee_name"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -4985,7 +5000,8 @@ export const employees = pgTable(
     conveyancePaise: bigint("conveyance_paise", { mode: "number" }),
     otherSalaryPaise: bigint("other_salary_paise", { mode: "number" }),
 
-    monthlyPaidLeave: integer("monthly_paid_leave"),
+    /** Days a month, credited on the 1st by HRMS. Decimal: 1.5 is ordinary. */
+    monthlyPaidLeave: numeric("monthly_paid_leave", { precision: 5, scale: 2, mode: "number" }),
     yearlyMaximumLeave: integer("yearly_maximum_leave"),
 
     pfEsicApplicable: boolean("pf_esic_applicable"),
@@ -5010,6 +5026,32 @@ export const employees = pgTable(
 
     /** The sheet's own path into its images folder. Not a URL we can serve. */
     photoPath: text("photo_path"),
+
+    /* --------------------------------------------------------------------
+     * HRMS AUTHORSHIP. The table began as a mirror of the Employee Details
+     * tab; HRMS now signs people up and edits them. `source` says who created
+     * the row, and `hrmsDecidedAt` is the mark of a person having changed it
+     * in HRMS — the sync keeps its hands off a row carrying it, the same
+     * discipline `customers.amDecidedAt` keeps for the sales seats.
+     * ------------------------------------------------------------------ */
+    source: text("source").notNull().default("sheet"),
+    hrmsDecidedAt: timestamp("hrms_decided_at", { withTimezone: true }),
+    /** The profile photo and the ID card, as attachments. */
+    photoAttachmentId: text("photo_attachment_id"),
+    idCardAttachmentId: text("id_card_attachment_id"),
+    /**
+     * The full numbers, for HRMS-authored rows only. Read by payroll (bank
+     * details on a payslip) and by holders of the Aadhaar power; every other
+     * screen shows the last four digits. The sheet's rows keep theirs in `raw`.
+     */
+    accountNumber: text("account_number"),
+    aadhaarNumber: text("aadhaar_number"),
+    /** Monthly sales targets (sales staff only). */
+    targetVisits: integer("target_visits"),
+    targetKm: integer("target_km"),
+    targetLitres: integer("target_litres"),
+    targetHours: integer("target_hours"),
+    targetAmountPaise: bigint("target_amount_paise", { mode: "number" }),
 
     /**
      * Every column exactly as the sheet gave it, keyed by header — minus the
@@ -11262,3 +11304,677 @@ export const erpDigests = pgTable("erp_digests", {
 export type ErpPurchase = typeof erpPurchases.$inferSelect;
 export type ErpInward = typeof erpInward.$inferSelect;
 export type ErpTest = typeof erpTests.$inferSelect;
+
+/* ===================================================================== HRMS
+ * The HRMS app's own records (docs/hrms/02-HRMS-FUNCTIONAL-SPEC.md). Every
+ * row names an EMPLOYEE — `employees.id` — not a MahekOne account, because
+ * most of the company is on the payroll long before (or without ever) having
+ * a login, and the head who marks a godown hand present is doing it FOR them.
+ *
+ * Times of day are "HH:MM" text, dates are ISO dates, durations are minutes
+ * and money is paise, as everywhere else in MahekOne.
+ * ======================================================================= */
+
+const hrmsStamps = () => ({
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id"),
+  updatedById: text("updated_by_id"),
+});
+
+/** Where people check in: the pin, the radius and the hours (spec §5.1). */
+export const hrmsOffices = pgTable(
+  "hrms_offices",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    city: text("city"),
+    state: text("state"),
+    region: text("region"),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    address: text("address"),
+    radiusM: integer("radius_m").notNull().default(200),
+    openingTime: text("opening_time"),
+    closingTime: text("closing_time"),
+    timingType: text("timing_type").notNull().default("Full Day"),
+    paidLeaveNote: text("paid_leave_note"),
+    imageAttachmentId: text("image_attachment_id"),
+    /** The text the office's printed QR code carries. */
+    qrText: text("qr_text"),
+    active: boolean("active").notNull().default(true),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_offices_name_key").on(t.name), uniqueIndex("hrms_offices_qr_key").on(t.qrText)],
+);
+
+/** Each person's in and out time for a weekday (spec §5.2). */
+export const hrmsStaffTimings = pgTable(
+  "hrms_staff_timings",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** "Monday" … "Sunday". */
+    weekday: text("weekday").notNull(),
+    inTime: text("in_time").notNull(),
+    outTime: text("out_time").notNull(),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_staff_timings_key").on(t.employeeId, t.weekday)],
+);
+
+/**
+ * One attendance day per employee (spec §6). The official in/out time and
+ * the target are STAMPED at check-in from that weekday's timing, the way the
+ * source's app formulas were computed when the row was written: changing a
+ * timing next month must not move last month's late counts or salaries.
+ */
+export const hrmsAttendance = pgTable(
+  "hrms_attendance",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    officeName: text("office_name"),
+    /** geo · qr · officer · import · admin. */
+    method: text("method").notNull().default("geo"),
+    checkIn: text("check_in").notNull(),
+    checkOut: text("check_out"),
+    stoppageMin: integer("stoppage_min").notNull().default(0),
+    officialIn: text("official_in"),
+    officialOut: text("official_out"),
+    targetMin: integer("target_min"),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    accuracyM: integer("accuracy_m"),
+    distanceM: integer("distance_m"),
+    outLat: doublePrecision("out_lat"),
+    outLng: doublePrecision("out_lng"),
+    outDistanceM: integer("out_distance_m"),
+    checkInCode: text("check_in_code"),
+    inPhotoId: text("in_photo_id"),
+    outPhotoId: text("out_photo_id"),
+    remark: text("remark"),
+    /** The account that marked it for somebody else (a head, HR, an import). */
+    markedById: text("marked_by_id"),
+    markedByName: text("marked_by_name"),
+    /** The source's "Report To" column: the position of whoever wrote the row. */
+    reportToStamp: text("report_to_stamp"),
+    /** The QR record's "Edit Help Button" flag. */
+    editHelp: boolean("edit_help").notNull().default(false),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_attendance_day_key").on(t.employeeId, t.date), index("hrms_attendance_date_idx").on(t.date)],
+);
+
+/** A leave or half-day request (spec §7.1). */
+export const hrmsLeaveRequests = pgTable(
+  "hrms_leave_requests",
+  {
+    id: text("id").primaryKey(),
+    reqNo: text("req_no").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    officeName: text("office_name"),
+    appliedOn: date("applied_on").notNull(),
+    /** "Leave" or "Half Day". */
+    type: text("type").notNull(),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    days: numeric("days", { precision: 5, scale: 2, mode: "number" }).notNull(),
+    reason: text("reason"),
+    /** Requesting · Approved · Rejected. */
+    status: text("status").notNull().default("Requesting"),
+    paid: numeric("paid", { precision: 5, scale: 2, mode: "number" }),
+    unpaid: numeric("unpaid", { precision: 5, scale: 2, mode: "number" }),
+    approvedByName: text("approved_by_name"),
+    approvedById: text("approved_by_id"),
+    approvedOn: date("approved_on"),
+    officerRemark: text("officer_remark"),
+    statusAt: timestamp("status_at", { withTimezone: true }),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    ...hrmsStamps(),
+  },
+  (t) => [
+    uniqueIndex("hrms_leave_requests_no_key").on(t.reqNo),
+    index("hrms_leave_requests_emp_idx").on(t.employeeId, t.startDate),
+  ],
+);
+
+/** A paid-leave credit for a month (spec §7.4). One from the job per person per month. */
+export const hrmsLeaveCredits = pgTable(
+  "hrms_leave_credits",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** "YYYY-MM". */
+    month: text("month").notNull(),
+    days: numeric("days", { precision: 5, scale: 2, mode: "number" }).notNull(),
+    /** job · hand. */
+    source: text("source").notNull().default("hand"),
+    ...hrmsStamps(),
+  },
+  (t) => [
+    uniqueIndex("hrms_leave_credits_job_key").on(t.employeeId, t.month).where(sql`${t.source} = 'job'`),
+    index("hrms_leave_credits_emp_idx").on(t.employeeId, t.month),
+  ],
+);
+
+/** A holiday and who it applies to (spec §7.6). */
+export const hrmsHolidays = pgTable(
+  "hrms_holidays",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    /** Festival · Weekly · National · Nature. */
+    category: text("category").notNull(),
+    name: text("name").notNull(),
+    /** "All employees", or an office name. */
+    tagged: text("tagged").notNull().default("All employees"),
+    /** Named employees, when a holiday was tagged person by person (imports, the source's own rows). */
+    taggedEmployeeIds: jsonb("tagged_employee_ids").$type<string[]>().notNull().default([]),
+    remark: text("remark"),
+    createdByName: text("created_by_name"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_holidays_date_idx").on(t.date)],
+);
+
+/** Overtime, one per employee per date (spec §8). */
+export const hrmsOvertime = pgTable(
+  "hrms_overtime",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    /** "Before Duty" or "After Duty". */
+    slot: text("slot").notNull(),
+    startTime: text("start_time").notNull(),
+    endTime: text("end_time").notNull(),
+    minutes: integer("minutes").notNull(),
+    remark: text("remark"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_overtime_day_key").on(t.employeeId, t.date)],
+);
+
+/** The one stored input on a monthly report (spec §9). */
+export const hrmsMonthlyRemarks = pgTable(
+  "hrms_monthly_remarks",
+  {
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    month: text("month").notNull(),
+    remark: text("remark").notNull(),
+    ...hrmsStamps(),
+  },
+  (t) => [primaryKey({ columns: [t.employeeId, t.month] })],
+);
+
+/** A salary for a month (spec §10). `figures` is the breakdown, frozen at approval. */
+export const hrmsSalaries = pgTable(
+  "hrms_salaries",
+  {
+    id: text("id").primaryKey(),
+    salaryNo: text("salary_no").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** The month it pays for, "YYYY-MM". */
+    month: text("month").notNull(),
+    salaryDate: date("salary_date").notNull(),
+    /** Prepared · Approved · Paid. */
+    status: text("status").notNull().default("Prepared"),
+    compDays: numeric("comp_days", { precision: 5, scale: 2, mode: "number" }).notNull().default(0),
+    incentivePaise: bigint("incentive_paise", { mode: "number" }).notNull().default(0),
+    advanceDeductionPaise: bigint("advance_deduction_paise", { mode: "number" }).notNull().default(0),
+    daysInMonth: integer("days_in_month").notNull(),
+    figures: jsonb("figures").$type<Record<string, number | string>>().notNull(),
+    inHandPaise: bigint("in_hand_paise", { mode: "number" }).notNull(),
+    remark: text("remark"),
+    approvedByName: text("approved_by_name"),
+    approvedById: text("approved_by_id"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    preparedByName: text("prepared_by_name"),
+    utr: text("utr"),
+    paidOn: date("paid_on"),
+    payslipCode: text("payslip_code"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_salaries_month_key").on(t.employeeId, t.month), uniqueIndex("hrms_salaries_no_key").on(t.salaryNo)],
+);
+
+/** A salary advance (spec §10.4). What is outstanding is derived. */
+export const hrmsAdvances = pgTable(
+  "hrms_advances",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    remark: text("remark"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_advances_emp_idx").on(t.employeeId)],
+);
+
+/** An expense claim or payment (spec §11). */
+export const hrmsExpenses = pgTable(
+  "hrms_expenses",
+  {
+    id: text("id").primaryKey(),
+    serial: text("serial").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    /** "Expense Claim" or "Expense Paid". */
+    payType: text("pay_type").notNull(),
+    location: text("location"),
+    category: text("category"),
+    particular: text("particular"),
+    claimPaise: bigint("claim_paise", { mode: "number" }),
+    paidPaise: bigint("paid_paise", { mode: "number" }),
+    reason: text("reason"),
+    /** Pending · Verified. */
+    verify: text("verify").notNull().default("Pending"),
+    createdByName: text("created_by_name"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_expenses_serial_key").on(t.serial), index("hrms_expenses_emp_idx").on(t.employeeId, t.date)],
+);
+
+/** A task template (spec §13.1). */
+export const hrmsTaskTemplates = pgTable(
+  "hrms_task_templates",
+  {
+    id: text("id").primaryKey(),
+    serial: integer("serial").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    task: text("task").notNull(),
+    /** Daily · Weekly · Monthly. */
+    frequency: text("frequency").notNull(),
+    /** Weekday names, for Daily and Weekly. */
+    weekdays: jsonb("weekdays").$type<string[]>().notNull().default([]),
+    category: text("category"),
+    dayOfMonth: integer("day_of_month"),
+    beforeDay: integer("before_day"),
+    startTime: text("start_time"),
+    endTime: text("end_time"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_task_templates_emp_idx").on(t.employeeId)],
+);
+
+/** Today's checklist items (spec §13.2). */
+export const hrmsChecklist = pgTable(
+  "hrms_checklist",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    templateId: text("template_id"),
+    task: text("task").notNull(),
+    frequency: text("frequency"),
+    weekday: text("weekday"),
+    startTime: text("start_time"),
+    endTime: text("end_time"),
+    /** "" (not yet) · Done · Not Done · N/A. */
+    status: text("status").notNull().default(""),
+    workingTime: text("working_time"),
+    remark: text("remark"),
+    naReason: text("na_reason"),
+    stampedAt: timestamp("stamped_at", { withTimezone: true }),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_checklist_day_idx").on(t.employeeId, t.date)],
+);
+
+/** An assigned to-do (spec §13.3). */
+export const hrmsTodos = pgTable(
+  "hrms_todos",
+  {
+    id: text("id").primaryKey(),
+    forDate: date("for_date").notNull(),
+    tillDate: date("till_date"),
+    /** The giver; null for a monthly template's copy. */
+    fromEmployeeId: text("from_employee_id"),
+    /** "Monthly Task" or the giver's name, as it was when given. */
+    fromLabel: text("from_label").notNull(),
+    toEmployeeId: text("to_employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    category: text("category"),
+    task: text("task").notNull(),
+    urgent: boolean("urgent").notNull().default(false),
+    /** Open · Done. */
+    status: text("status").notNull().default("Open"),
+    /** "" · Verified · Pending. */
+    recheck: text("recheck").notNull().default(""),
+    remark: text("remark"),
+    doneAt: timestamp("done_at", { withTimezone: true }),
+    doneOn: date("done_on"),
+    /** "YYYY-MM" for a to-do Take monthly task created — the once-a-month guard. */
+    monthlyKey: text("monthly_key"),
+    templateId: text("template_id"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_todos_to_idx").on(t.toEmployeeId, t.status), index("hrms_todos_from_idx").on(t.fromEmployeeId)],
+);
+
+/** A task shared with a buddy (spec §13.4). */
+export const hrmsBuddyTasks = pgTable(
+  "hrms_buddy_tasks",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    fromEmployeeId: text("from_employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    toEmployeeId: text("to_employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    task: text("task").notNull(),
+    note: text("note"),
+    /** Shared · Accepted · Task done. */
+    status: text("status").notNull().default("Shared"),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    doneAt: timestamp("done_at", { withTimezone: true }),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_buddy_tasks_to_idx").on(t.toEmployeeId, t.date)],
+);
+
+/** A salesman's daily KPI entry (spec §12.1). */
+export const hrmsKpi = pgTable(
+  "hrms_kpi",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    area: text("area"),
+    visits: integer("visits").notNull().default(0),
+    productive: integer("productive").notNull().default(0),
+    litres: numeric("litres", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+    km: numeric("km", { precision: 10, scale: 2, mode: "number" }).notNull().default(0),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull().default(0),
+    outstandingPaise: bigint("outstanding_paise", { mode: "number" }).notNull().default(0),
+    stoppageMin: integer("stoppage_min").notNull().default(0),
+    /** Minutes spent with customers that day (the source's Activity "time given"). */
+    timeGivenMin: integer("time_given_min").notNull().default(0),
+    notes: text("notes"),
+    /** Which figures were pre-filled, and from where. */
+    prefill: jsonb("prefill").$type<Record<string, string>>().notNull().default({}),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_kpi_day_key").on(t.employeeId, t.date)],
+);
+
+/** The performance review form for a period (spec §12.4, "LION form"). */
+export const hrmsReviews = pgTable(
+  "hrms_reviews",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    fromDate: date("from_date").notNull(),
+    toDate: date("to_date").notNull(),
+    issues: text("issues"),
+    ideas: text("ideas"),
+    nextPlan: text("next_plan"),
+    actionForSir: text("action_for_sir"),
+    pdfCode: text("pdf_code"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_reviews_period_key").on(t.employeeId, t.fromDate, t.toDate)],
+);
+
+/** A back-office calling row (spec §14.2). */
+export const hrmsCalling = pgTable(
+  "hrms_calling",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** The caller. */
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    status: text("status").notNull().default(""),
+    secondStatus: text("second_status"),
+    note: text("note"),
+    followUp: date("follow_up"),
+    misses: integer("misses").notNull().default(0),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_calling_emp_idx").on(t.employeeId, t.date), index("hrms_calling_customer_idx").on(t.customerId)],
+);
+
+/** A sales activity logged from the web (spec §14.3). */
+export const hrmsActivities = pgTable(
+  "hrms_activities",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    customerName: text("customer_name"),
+    note: text("note"),
+    minutes: integer("minutes").notNull().default(0),
+    mood: text("mood"),
+    issue: text("issue"),
+    reminder: date("reminder"),
+    meetType: text("meet_type"),
+    purpose: text("purpose"),
+    area: text("area"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_activities_emp_idx").on(t.employeeId, t.date)],
+);
+
+/** A journey plan (spec §14.4). */
+export const hrmsJourneys = pgTable(
+  "hrms_journeys",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    location: text("location"),
+    plan: text("plan"),
+    customerIds: jsonb("customer_ids").$type<string[]>().notNull().default([]),
+    remark: text("remark"),
+    fileAttachmentId: text("file_attachment_id"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_journeys_emp_idx").on(t.employeeId, t.startDate)],
+);
+
+/** Asset stock-in (spec §15.1). */
+export const hrmsAssetStock = pgTable(
+  "hrms_asset_stock",
+  {
+    id: text("id").primaryKey(),
+    code: text("code").notNull(),
+    purchaseDate: date("purchase_date").notNull(),
+    name: text("name").notNull(),
+    /** Stationery · Tangible Assets · Other. */
+    category: text("category").notNull(),
+    costPaise: bigint("cost_paise", { mode: "number" }).notNull().default(0),
+    qty: integer("qty").notNull(),
+    officeName: text("office_name"),
+    description: text("description"),
+    warrantyTill: date("warranty_till"),
+    invoiceAttachmentId: text("invoice_attachment_id"),
+    imageAttachmentId: text("image_attachment_id"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_asset_stock_code_key").on(t.code)],
+);
+
+/** An asset handed to somebody, and its return (spec §15.2). */
+export const hrmsAssetAssignments = pgTable(
+  "hrms_asset_assignments",
+  {
+    id: text("id").primaryKey(),
+    stockId: text("stock_id")
+      .notNull()
+      .references(() => hrmsAssetStock.id, { onDelete: "cascade" }),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    fromName: text("from_name"),
+    qty: integer("qty").notNull(),
+    date: date("date").notNull(),
+    responsibility: text("responsibility"),
+    photo1Id: text("photo1_id"),
+    photo2Id: text("photo2_id"),
+    /** Assigned · Restored. */
+    status: text("status").notNull().default("Assigned"),
+    restoredOn: date("restored_on"),
+    restoredBy: text("restored_by"),
+    restoredQty: integer("restored_qty"),
+    restoredRemark: text("restored_remark"),
+    restoredPhotoId: text("restored_photo_id"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_asset_assignments_emp_idx").on(t.employeeId), index("hrms_asset_assignments_stock_idx").on(t.stockId)],
+);
+
+/** A help request (spec §16.1). */
+export const hrmsHelp = pgTable(
+  "hrms_help",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    inTime: text("in_time"),
+    outTime: text("out_time"),
+    text: text("text"),
+    /** Pending · Approved. */
+    status: text("status").notNull().default("Pending"),
+    adminRemark: text("admin_remark"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decidedById: text("decided_by_id"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_help_emp_idx").on(t.employeeId, t.date)],
+);
+
+/** A grievance (spec §16.2). */
+export const hrmsGrievances = pgTable(
+  "hrms_grievances",
+  {
+    id: text("id").primaryKey(),
+    no: integer("no").notNull(),
+    date: date("date").notNull(),
+    byEmployeeId: text("by_employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** "CEO", "HR", "Company", or a person's name. */
+    toLabel: text("to_label").notNull(),
+    toEmployeeId: text("to_employee_id"),
+    issue: text("issue").notNull(),
+    /** Pending · Solve. */
+    status: text("status").notNull().default("Pending"),
+    solution: text("solution"),
+    solvedById: text("solved_by_id"),
+    stars: integer("stars"),
+    feedbackAt: timestamp("feedback_at", { withTimezone: true }),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_grievances_no_key").on(t.no)],
+);
+
+/** A company document (spec §17.1). */
+export const hrmsDocuments = pgTable("hrms_documents", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  /** PDF & audio · Image · Video · Link. */
+  type: text("type").notNull(),
+  fileAttachmentId: text("file_attachment_id"),
+  url: text("url"),
+  description: text("description"),
+  date: date("date").notNull(),
+  /** "All employees", "Field staff", or an office name. */
+  tagged: text("tagged").notNull().default("All employees"),
+  taggedEmployeeIds: jsonb("tagged_employee_ids").$type<string[]>().notNull().default([]),
+  ...hrmsStamps(),
+});
+
+/** A notification written in HRMS (spec §17.2); delivery is MahekOne's bell. */
+export const hrmsNotifications = pgTable("hrms_notifications", {
+  id: text("id").primaryKey(),
+  fromEmployeeId: text("from_employee_id"),
+  fromName: text("from_name").notNull(),
+  /** Null for "All employees". */
+  toEmployeeId: text("to_employee_id"),
+  toLabel: text("to_label").notNull(),
+  text: text("text").notNull(),
+  /** The HRMS screen key the bell opens. */
+  landing: text("landing"),
+  seenAt: timestamp("seen_at", { withTimezone: true }),
+  ...hrmsStamps(),
+});
+
+/** The editable value lists every HRMS form picks from (spec §3). */
+export const hrmsRefLists = pgTable("hrms_ref_lists", {
+  list: text("list").primaryKey(),
+  values: jsonb("values").$type<string[]>().notNull().default([]),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id"),
+});
+
+/** HRMS special powers granted to a person (PRD §5.3). */
+export const hrmsUserPowers = pgTable(
+  "hrms_user_powers",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    power: text("power").notNull(),
+    grantedById: text("granted_by_id").references(() => users.id),
+    grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.power] })],
+);
+
+/** HRMS numbering series (employee codes, request numbers, serials), one row per series. */
+export const hrmsSeries = pgTable("hrms_series", {
+  key: text("key").primaryKey(),
+  last: integer("last").notNull().default(0),
+});
+
+export type HrmsOffice = typeof hrmsOffices.$inferSelect;
+export type HrmsAttendance = typeof hrmsAttendance.$inferSelect;
+export type HrmsLeaveRequest = typeof hrmsLeaveRequests.$inferSelect;
+export type HrmsSalary = typeof hrmsSalaries.$inferSelect;

@@ -1,5 +1,6 @@
 import { Badge as CrmBadge, type Tone as CrmTone } from "@/components/ui/primitives";
-import { FLAG, ST_TONE, type Tone } from "@/lib/erp/ui";
+import type { Tone } from "@/lib/erp/ui";
+import { useKit } from "./kit";
 
 /*
  * The ERP's statuses and flags, drawn as the CRM's own badge.
@@ -29,20 +30,21 @@ export function Badge({ label, tone }: { label: string; tone?: Tone }) {
 
 /** A status value, in the tone that value is always drawn in. */
 export function StatusBadge({ value }: { value: string | number | null | undefined }) {
+  const { tones } = useKit();
   if (value == null || value === "") return null;
   const v = String(value);
-  return <Badge label={v} tone={ST_TONE[v] ?? "neutral"} />;
+  return <Badge label={v} tone={tones[v] ?? "neutral"} />;
 }
 
 export function FlagBadge({ flag }: { flag: string }) {
-  const f = FLAG[flag];
+  const f = useKit().flags[flag];
   return <Badge label={f ? f[0] : flag} tone={f ? f[1] : "neutral"} />;
 }
 
 /** The first flag that deserves a coloured edge on its row. */
-export function rowTone(flags: string[]): Tone | null {
+export function rowTone(flags: string[], vocab: Record<string, [string, Tone]>): Tone | null {
   for (const f of flags) {
-    const t = FLAG[f]?.[1];
+    const t = vocab[f]?.[1];
     if (t && t !== "neutral" && t !== "muted") return t;
   }
   return null;

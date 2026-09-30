@@ -1,89 +1,49 @@
-import { redirect } from "next/navigation";
-import Link from "next/link";
-import { requireUser } from "@/lib/auth";
-import { listUserApps, listUserModules } from "@/lib/access";
-import { getApp, webApps } from "@/lib/apps";
-import { AppFrame } from "@/components/shell/app-frame";
-import { AppSwitcher } from "@/components/shell/app-switcher";
-import { Wordmark } from "@/components/shell/wordmark";
-import { AccountMenu } from "@/components/shell/account-menu";
+import { listUserApps } from "@/lib/access";
+import { webApps } from "@/lib/apps";
+import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
-import { FeedbackButton } from "@/components/shell/feedback-button";
-import { ToastProvider } from "@/components/ui/toast";
+import { listNotifications } from "@/lib/queries";
+import { requireHrmsApp } from "@/lib/hrms/access";
+import { HRMS_GROUPS, hrmsHref } from "@/lib/hrms/registry";
+import { hrmsNavCounts } from "@/lib/hrms/counts";
+import { HrmsShell, type NavGroup } from "./_ui/hrms-shell";
 
 /**
- * The HRMS shell.
+ * The HRMS's shell.
  *
- * Like the Orders app and unlike the CRM: no calling sidebar, because nobody
- * works a queue in here. There is one module today — All Employees — and it
- * still gets a module row, because the second one arrives beside it rather
- * than rearranging the app somebody has learned.
+ * The grant is checked here as well as on the launcher — a bookmarked /hrms
+ * must not open for somebody never given it; salaries and home addresses are
+ * in here — and the sidebar draws only the screens this person holds. Each
+ * screen's page checks its own module again, because a link that is not drawn
+ * is a statement to the browser, not a permission.
  */
-const MODULES = [
-  { href: "/hrms/employees", label: "All Employees" },
-  // The second module the comment above anticipated. It arrives beside the
-  // first rather than rearranging the app somebody has already learned.
-  { href: "/hrms/org", label: "Org Chart" },
-];
+export default async function HrmsLayout({ children }: { children: React.ReactNode }) {
+  const ctx = await requireHrmsApp();
+  const [apps, hat, counts, notifications] = await Promise.all([
+    listUserApps(ctx.user.id),
+    hatForHeader(ctx.user, "hrms"),
+    hrmsNavCounts(ctx),
+    listNotifications(ctx.user.id),
+  ]);
 
-export default async function HrmsLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const user = await requireUser();
-  const apps = await listUserApps(user.id);
-
-  // Checked here as well as on the launcher: a bookmarked /hrms must not open
-  // for somebody who was never given it. Salaries and home addresses are in
-  // here, so this is the check that matters most in the app.
-  if (!apps.includes("hrms")) redirect("/apps");
-
-  // One module today, and it still gets filtered rather than assumed — the
-  // second one arrives beside it rather than rearranging this.
-  const modules = await listUserModules(user.id, "hrms");
-  if (modules.length === 0) redirect("/apps");
-
-  const app = getApp("hrms")!;
-  const hat = await hatForHeader(user, "hrms");
+  const nav: NavGroup[] = HRMS_GROUPS.map((g) => ({
+    id: g.id,
+    label: g.label,
+    icon: g.icon,
+    screens: g.screens
+      .filter((s) => ctx.screens.has(s.key))
+      .map((s) => ({ key: s.key, label: s.label, href: hrmsHref(s), count: counts[s.key] ?? 0, bottom: s.bottom })),
+  })).filter((g) => g.screens.length > 0);
 
   return (
-    <ToastProvider>
-      {/* The floor and the scroll model are the frame's — this app stated
-          neither, which is how an app ends up with no floor at all. See
-          `components/shell/app-frame.tsx`. */}
-      <AppFrame
-        header={
-            <header className="flex h-14 flex-none items-center gap-3 border-b border-line bg-surface px-4">
-              {apps.length > 1 ? (
-                <AppSwitcher
-                  apps={webApps(apps)}
-                  current="hrms"
-                />
-              ) : null}
-              <Wordmark label={app.name} />
-              <nav className="ml-4 flex items-center gap-1">
-                {MODULES.filter((m) => modules.some((a) => a.href === m.href)).map((m) => (
-                  <Link
-                    key={m.href}
-                    href={m.href}
-                    className="rounded-[4px] px-3 py-1.5 text-[13px] font-medium text-body hover:bg-canvas"
-                  >
-                    {m.label}
-                  </Link>
-                ))}
-              </nav>
-              <span className="flex-1" />
-              <FeedbackButton compact />
-              {/* HRMS is the app somebody can hold on its own, so it lands them
-                  straight in and they never see the launcher. Without the menu
-                  here, an HRMS-only account has no door to its own password. */}
-              <AccountMenu user={user} hat={hat} variant="header" />
-            </header>
-        }
-      >
-        {children}
-      </AppFrame>
-    </ToastProvider>
+    <HrmsShell
+      nav={nav}
+      user={{ name: ctx.user.name, email: ctx.user.email, phone: ctx.user.phone, initials: initialsOf(ctx.user.name), role: ctx.user.role }}
+      hat={hat}
+      notifications={notifications}
+      apps={webApps(apps)}
+    >
+      {children}
+    </HrmsShell>
   );
 }
