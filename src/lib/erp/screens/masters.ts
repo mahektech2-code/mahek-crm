@@ -4,7 +4,6 @@ import { db } from "@/db";
 import {
   appAccess,
   customers,
-  employees,
   erpCustomerProfiles,
   erpGodownStaff,
   erpGodowns,
@@ -12,7 +11,6 @@ import {
   erpRawMaterials,
   erpRefValues,
   erpSuppliers,
-  erpUserPowers,
   finishedGoods,
   priceListRates,
   priceLists,
@@ -22,8 +20,9 @@ import {
   users,
 } from "@/db/schema";
 import { err, fieldErr, okVoid } from "@/lib/result";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import type { ErpContext } from "../access";
-import { ERP_POWERS, ERP_POWER_LABEL, isErpPower, type ErpPower } from "../powers";
+import type { ErpPower } from "../powers";
 import {
   BOX_TYPES,
   DELIVERY_TYPES,
@@ -50,7 +49,7 @@ import {
   type ScreenModule,
 } from "../server";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
-import { inr, nf } from "../ui";
+import { inr } from "../ui";
 import { rmTotalsByItem } from "../stock";
 
 /* ---------------------------------------------------------------------------
@@ -612,6 +611,14 @@ export type CustomerRow = {
   status: string;
   kind: string;
   createdAt: Date;
+  /**
+   * This month's target, from the CRM's monthly targets — the one customer
+   * target in MahekOne, set from the CRM's or Accounts' Monthly Targets. The
+   * ERP kept a standing target of its own on the profile; two targets for one
+   * customer is how a salesman and his manager argue about the same shop, so
+   * 0183 carried it across and the ERP reads this one.
+   */
+  monthlyTargetPaise: number | null;
   p: typeof erpCustomerProfiles.$inferSelect | null;
 };
 
@@ -637,6 +644,12 @@ export async function loadCustomers(where?: ReturnType<typeof and>): Promise<Cus
       status: customers.status,
       kind: customers.kind,
       createdAt: customers.createdAt,
+      monthlyTargetPaise: sql<number | null>`(
+        select t.target_amount from monthly_targets t
+         where t.customer_id = customers.id
+           and t.year = extract(year from now() at time zone ${APP_TIMEZONE})::int
+           and t.month = extract(month from now() at time zone ${APP_TIMEZONE})::int
+      )`.mapWith((v) => (v == null ? null : Number(v))),
       p: erpCustomerProfiles,
     })
     .from(customers)
@@ -682,7 +695,6 @@ async function customerEditForm(id: string, mine = false): Promise<FormSpec | nu
       whatsapp: r.whatsapp ?? "",
       email: r.email ?? "",
       counter: (r.p?.counterTypes ?? []).join("|"),
-      target: rupeesField(r.p?.monthlyTargetPaise),
       credit: r.creditDays == null ? "" : String(r.creditDays),
       ...(mine
         ? {}
@@ -707,7 +719,6 @@ async function customerEditForm(id: string, mine = false): Promise<FormSpec | nu
       { k: "whatsapp", l: "WhatsApp contact", t: "text" },
       { k: "email", l: "Party email", t: "text" },
       { k: "counter", l: "Counter type", t: "multi", opts: counters },
-      { k: "target", l: "Monthly target (₹)", t: "num", min: 0 },
       { k: "credit", l: "Credit days", t: "num", min: 0 },
       ...(mine
         ? []
@@ -775,7 +786,7 @@ function customerFields(r: CustomerRow, canSeeTarget: boolean): { l: string; v: 
     { l: "Delivery type", v: r.deliveryType || "—" },
     { l: "Weight type", v: r.p?.weightType || "—" },
     { l: "Standing instructions", v: r.p?.standingInstructions || "—" },
-    ...(canSeeTarget ? [{ l: "Monthly target", v: r.p?.monthlyTargetPaise ? inr(r.p.monthlyTargetPaise) : "—" }] : []),
+    ...(canSeeTarget ? [{ l: "Monthly target", v: r.monthlyTargetPaise ? `${inr(r.monthlyTargetPaise)} this month · set in Monthly Targets` : "Not set · Monthly Targets in the CRM or Accounts" }] : []),
     { l: "Counter type", v: (r.p?.counterTypes ?? []).join(", ") || "—" },
     { l: "Segment", v: r.p?.segment || "—" },
     { l: "GST number", v: r.gstin || "—" },
@@ -978,7 +989,6 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
     transporter: text(h.transporter),
     weightType: text(h.weight),
     counterTypes: multi(h.counter),
-    monthlyTargetPaise: paise(h.target),
     ...(mine
       ? {}
       : { segment: text(h.segment), standingInstructions: text(h.instr), allocateEmail: text(h.allocate) }),
@@ -1272,149 +1282,6 @@ const priceListsScreen: ScreenModule = {
   },
 };
 
-/* ============================================================ employees */
-
-const employeesScreen: ScreenModule = {
-  key: "employees",
-  async load(ctx) {
-    if (!ctx.powers.has("employeeAdmin")) {
-      return {
-        spec: { screen: "employees", cols: [], hidden: [], readOnly: true, noDataLine: "The employee directory is only on an ERP administrator's account." },
-        rows: [],
-      };
-    }
-    const rows = await db.select().from(employees).orderBy(asc(employees.name));
-    const cols: ColSpec[] = [
-      { k: "name", l: "Name", t: "b" },
-      { k: "position", l: "Position", t: "t" },
-      { k: "office", l: "Office", t: "t" },
-      { k: "mobile", l: "Mobile", t: "ph" },
-      { k: "status", l: "Status", t: "s" },
-      { k: "perms", l: "Permissions (legacy)", t: "t", w: 220 },
-      { k: "ux", l: "Ux Permission (legacy)", t: "t" },
-      { k: "f", l: "Flags", t: "f" },
-    ];
-    return {
-      spec: { screen: "employees", cols, hidden: [], groups: ["status"], readOnly: true, noDataLine: "No employees yet. The directory is mirrored from the HRMS employee sheet." },
-      rows: rows.map((e) => {
-        const raw = (e.raw ?? {}) as Record<string, string>;
-        const status = e.status === "active" ? "Active" : "Inactive";
-        return {
-          id: e.id,
-          v: {
-            name: e.name,
-            position: e.position,
-            office: e.officeName,
-            mobile: e.personalMobile,
-            status,
-            perms: raw["Permissions"] || null,
-            ux: raw["Ux Permission"] || null,
-          },
-          flags: status === "Inactive" ? ["inactive"] : [],
-          title: e.name,
-          fields: [
-            { l: "Employee id", v: e.employeeCode || "—" },
-            { l: "Report to", v: e.reportsTo || "—" },
-            { l: "Area allocated", v: e.areaAllocated || "—" },
-            { l: "Joined", v: e.dateOfJoining || "—" },
-            { l: "Bank", v: e.bankName ? `${e.bankName} ·· ${e.accountNumberLast4 ?? ""}` : "—" },
-            { l: "Email", v: e.email || "—" },
-            { l: "Yearly paid leave", v: e.monthlyPaidLeave == null ? "—" : nf(e.monthlyPaidLeave * 12) },
-            { l: "Yearly maximum leave", v: e.yearlyMaximumLeave == null ? "—" : nf(e.yearlyMaximumLeave) },
-            { l: "PF/ESIC applicable", v: e.pfEsicApplicable == null ? "—" : e.pfEsicApplicable ? "Yes" : "No" },
-          ],
-          contacts: phoneContacts(e.personalMobile, e.email),
-          actions: [{ id: "access", l: "Manage ERP access", primary: true, href: "/admin/people" }],
-          by: "Mirrored from the HRMS employee sheet · edited there, not here",
-        };
-      }),
-    };
-  },
-};
-
-/* ============================================================== powers */
-
-const powersScreen: ScreenModule = {
-  key: "powers",
-  async load(ctx) {
-    const people = await db
-      .select({ id: users.id, name: users.name, email: users.email, grant: appAccess.role, account: users.role })
-      .from(users)
-      .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "erp")))
-      .orderBy(asc(users.name));
-    const rows = await db.select().from(erpUserPowers);
-    const byUser = new Map<string, string[]>();
-    rows.forEach((r) => byUser.set(r.userId, [...(byUser.get(r.userId) ?? []), r.power]));
-    const admin = ctx.powers.has("employeeAdmin");
-    const labels = ERP_POWERS.map((p) => ERP_POWER_LABEL[p].label);
-    const cols: ColSpec[] = [
-      { k: "name", l: "Person", t: "b" },
-      { k: "level", l: "ERP level", t: "s" },
-      { k: "powers", l: "Powers", t: "t", w: 360 },
-      { k: "count", l: "Count", t: "n" },
-    ];
-    return {
-      spec: {
-        screen: "powers",
-        cols,
-        hidden: [],
-        groups: ["level"],
-        noDataLine: "Nobody holds the ERP yet. Grant it in the Admin Console, then give powers here.",
-      },
-      rows: people.map((p) => {
-        const level = (p.grant ?? p.account) as string;
-        const isAdmin = level === "admin";
-        const held = isAdmin ? [...ERP_POWERS] : (byUser.get(p.id) ?? []).filter(isErpPower);
-        const heldLabels = held.map((x) => ERP_POWER_LABEL[x].label);
-        return {
-          id: p.id,
-          v: {
-            name: p.name,
-            level: isAdmin ? "Administrator" : level === "manager" ? "Manager" : "Associate",
-            powers: isAdmin ? "Every power (administrator)" : heldLabels.join(", ") || "None",
-            count: held.length,
-          },
-          flags: [],
-          title: p.name,
-          header: p.email ?? undefined,
-          fields: ERP_POWERS.map((x) => ({ l: ERP_POWER_LABEL[x].label, v: held.includes(x) ? "Yes" : "No" })),
-          actions: isAdmin
-            ? []
-            : [
-                {
-                  id: "set",
-                  l: "Change powers",
-                  primary: true,
-                  why: admin ? "" : "Only an ERP administrator gives powers",
-                  prompt: {
-                    title: `Powers for ${p.name}`,
-                    sub: "Each power reveals a column or allows a decision. They are checked on the server as well as hidden here.",
-                    submit: "Save powers",
-                    fields: [{ k: "powers", l: "Powers", t: "multi", opts: labels }],
-                    init: { powers: heldLabels.join("|") },
-                  },
-                },
-              ],
-        };
-      }),
-    };
-  },
-  actions: {
-    async set(ctx, userId, values) {
-      if (!ctx.powers.has("employeeAdmin")) return err("Only an ERP administrator gives powers.", "not_permitted");
-      const chosen = multi(values.powers);
-      const powers = ERP_POWERS.filter((p) => chosen.includes(ERP_POWER_LABEL[p].label));
-      await db.transaction(async (tx) => {
-        await tx.delete(erpUserPowers).where(eq(erpUserPowers.userId, userId));
-        if (powers.length)
-          await tx.insert(erpUserPowers).values(powers.map((power) => ({ userId, power, grantedById: ctx.user.id })));
-      });
-      await erpAudit(ctx, "erp.powers.set", "user", userId, null, { powers });
-      return okVoid(`${powers.length} power${powers.length === 1 ? "" : "s"} saved`);
-    },
-  },
-};
-
 /* ====================================================== reference lists */
 
 const refListsScreen: ScreenModule = {
@@ -1523,8 +1390,6 @@ export const MASTER_SCREENS: ScreenModule[] = [
   customersScreen,
   godowns,
   priceListsScreen,
-  employeesScreen,
-  powersScreen,
   refListsScreen,
 ];
 

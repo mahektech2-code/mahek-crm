@@ -12,7 +12,7 @@ import {
 import { requireUser } from "@/lib/auth";
 import { levelInApp } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
-import { ERP_ALWAYS_OPEN } from "./registry";
+import { ERP_ALWAYS_OPEN, ERP_SCREENS, erpKeysOf } from "./registry";
 import { ERP_POWERS, type ErpPower } from "./powers";
 
 /* ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ export type ErpContext = {
   /** True for an ERP administrator — holds every power without a row. */
   administrator: boolean;
   powers: ReadonlySet<ErpPower>;
-  /** Screen keys (not module keys) this person may open. */
+  /** Screen keys (not module keys) this person may open, and the keys of those screens' tabs. */
   screens: ReadonlySet<string>;
   /** Godowns the person is assigned to and may work at. */
   assignedGodowns: ErpGodownRef[];
@@ -58,8 +58,13 @@ export const erpContext = cache(async function erpContext(): Promise<ErpContext>
     administrator ? ERP_POWERS : powerRows.map((r) => r.power).filter((p): p is ErpPower => (ERP_POWERS as readonly string[]).includes(p)),
   );
 
-  const screens = new Set<string>(modules.map((m) => m.key.replace(/^erp\./, "")));
-  if (level) ERP_ALWAYS_OPEN.forEach((k) => screens.add(k));
+  const held = new Set<string>(modules.map((m) => m.key.replace(/^erp\./, "")));
+  if (level) ERP_ALWAYS_OPEN.forEach((k) => held.add(k));
+  /* A screen's tabs come with the screen: they are not modules, so nothing
+     could grant them on their own, and every check below that names a tab's
+     key (a dashboard tile, a sidebar count, an action) answers as the screen. */
+  const screens = new Set<string>();
+  for (const sc of ERP_SCREENS) if (held.has(sc.key)) erpKeysOf(sc).forEach((k) => screens.add(k));
 
   /*
    * AN ADMINISTRATOR IS ASSIGNED EVERYWHERE. The source's CEO picks any godown;
@@ -137,7 +142,7 @@ export function powerRefusal(power: ErpPower): string {
     customerStatus: "Only an admin or the office changes a customer's status.",
     approveParty: "Only an admin approves orders from a pending customer.",
     decideRequests: "Only the CEO or an admin decides a customer request.",
-    employeeAdmin: "Only an ERP administrator manages the directory and ERP powers.",
+    employeeAdmin: "Only an ERP administrator manages godowns and ERP powers.",
   };
   return map[power];
 }

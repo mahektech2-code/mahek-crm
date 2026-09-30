@@ -535,13 +535,27 @@ const inward: ScreenModule = {
       /* "Add more" on a PR keeps its number; a new inward draws the next one. */
       const fixed = int(h.prFixed);
       let pr = 0;
+      /*
+       * EACH LINE GOES WHERE IT IS GOING, IN THE SAME SAVE. Mahek Plus asked a
+       * person to press "Send to Testing" or "Send to Purchase" on every line,
+       * and the item's own testing list already answered which: a line that
+       * needs testing is on the tester's queue, and one that does not is a
+       * register row. A line the register refuses (a lot number already used)
+       * stays unrouted with its manual button, rather than failing the whole
+       * delivery.
+       */
+      const sent = { testing: 0, register: 0, stuck: [] as string[] };
       await db.transaction(async (tx) => {
         pr = fixed ?? (await nextNumber(tx, "pr"));
         for (const { l, m, qty } of parsed) {
+          const inwardId = erpId("pin");
+          const testing = m.testingList.length > 0;
+          const receivedDate = text(h.date) ?? today();
+          const unit = m.materialType === "Box" ? "Pcs" : m.unit;
           await tx.insert(erpInward).values({
-            id: erpId("pin"),
+            id: inwardId,
             prNumber: pr,
-            receivedDate: text(h.date) ?? today(),
+            receivedDate,
             supplierId: sup.id,
             godownId,
             materialType: m.materialType,
@@ -549,16 +563,42 @@ const inward: ScreenModule = {
             drums: m.materialType === "Chemical" ? int(l.drums) : null,
             weightWithDrum: m.materialType === "Chemical" ? num(l.weight) : null,
             quantity: qty,
-            unit: m.materialType === "Box" ? "Pcs" : m.unit,
+            unit,
             remark: text(l.remark),
-            testingRequired: m.testingList.length > 0,
+            testingRequired: testing,
+            ...(testing ? { routed: "Testing", routedAt: new Date(), routedById: ctx.user.id } : {}),
             createdById: ctx.user.id,
             updatedById: ctx.user.id,
           });
+          if (testing) {
+            sent.testing++;
+            continue;
+          }
+          const made = await createPurchase(tx, ctx, {
+            prNumber: pr,
+            purchaseDate: receivedDate,
+            supplierId: sup.id,
+            rawMaterialId: m.id,
+            quantity: qty,
+            unit: unit === "Unit" ? "Pcs" : unit,
+            godownId,
+            drums: m.materialType === "Chemical" ? int(l.drums) : null,
+            remark: text(l.remark),
+            source: "inward",
+            inwardId,
+          });
+          if (made.ok) {
+            await tx.update(erpInward).set({ routed: "Purchase", routedAt: new Date(), routedById: ctx.user.id }).where(eq(erpInward.id, inwardId));
+            sent.register++;
+          } else sent.stuck.push(m.name);
         }
       });
-      await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, supplier });
-      return okVoid(`PR ${pr} · ${parsed.length} line${parsed.length > 1 ? "s" : ""} saved. Route each to testing or the register.`);
+      await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, supplier, ...sent });
+      const where = [sent.testing ? `${sent.testing} to testing` : "", sent.register ? `${sent.register} in the register` : ""].filter(Boolean).join(", ");
+      return okVoid(
+        `PR ${pr} · ${parsed.length} line${parsed.length > 1 ? "s" : ""} saved${where ? ` · ${where}` : ""}` +
+          (sent.stuck.length ? ` · ${sent.stuck.join(", ")} not in the register: that lot number is taken — change the PR number and send it` : ""),
+      );
     },
   },
   actions: {
@@ -1146,6 +1186,23 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
   };
 }
 
+/**
+ * WHERE A PURCHASE HAS GOT TO, as one line. Mahek Plus carried three answers
+ * — the test's verdict, a purchase status and a separate "bill received"
+ * toggle — which could disagree (Purchase Matched with no bill). They are one
+ * progress now: Arrived (or Tested) → Bill received → Matched → Verified, and
+ * the bill and the status move together (see the actions below).
+ */
+export function purchaseStage(p: { status: string; billReceived: string | null; testId: string | null }): string {
+  if (p.status === "Purchase Verified") return "Verified";
+  if (p.status === "Purchase Matched") return "Matched";
+  if (p.status === "Invoice Received" || p.billReceived === "Received") return "Bill received";
+  return p.testId ? "Tested" : "Arrived";
+}
+
+/** The statuses that say a bill is in hand. */
+const BILLED = ["Invoice Received", "Purchase Matched", "Purchase Verified"];
+
 const register: ScreenModule = {
   key: "register",
   async load(ctx) {
@@ -1174,7 +1231,7 @@ const register: ScreenModule = {
       { k: "rate", l: "Rate", t: "m", pw: "viewPurchaseMoney" },
       { k: "gst", l: "GST %", t: "n", pw: "viewPurchaseMoney" },
       { k: "final", l: "Final amount", t: "m", pw: "viewPurchaseMoney" },
-      { k: "bill", l: "Bill", t: "s", pw: "viewPurchaseMoney" },
+      { k: "stage", l: "Stage", t: "s", pw: "viewPurchaseMoney" },
       { k: "billNo", l: "Bill no", t: "t" },
       { k: "posting", l: "Inventory", t: "s" },
       { k: "f", l: "Flags", t: "f" },
@@ -1217,7 +1274,7 @@ const register: ScreenModule = {
               l: "Bill Received",
               prompt: { title: "Bill received", submit: "Save", fields: [{ k: "billNo", l: "Bill number", t: "text", req: true }], init: { billNo: p.billNumber ?? "" } },
             });
-          else actions.push({ id: "billNotReceived", l: "Bill Not Received" });
+          else actions.push({ id: "billNotReceived", l: "Bill Not Received", why: p.status === "Purchase Matched" || p.status === "Purchase Verified" ? "It has been matched to its bill" : "" });
           actions.push({
             id: "status",
             l: "Change Status",
@@ -1279,7 +1336,7 @@ const register: ScreenModule = {
               rate: p.ratePaise,
               gst: p.gstBp / 100,
               final: f.finalPaise,
-              bill: p.billReceived ?? "Not Received",
+              stage: purchaseStage(p),
               billNo: p.billNumber,
               posting: posted ? "Posted" : "Not posted: rate missing",
               godown: r.godown,
@@ -1365,13 +1422,23 @@ const register: ScreenModule = {
       if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
       const billNo = text(values.billNo);
       if (!billNo) return fieldErr("billNo", "Bill number is required");
-      await db.update(erpPurchases).set({ billReceived: "Received", billNumber: billNo, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchases.id, id));
+      /* A bill in hand is the Invoice Received step, not a second flag beside it. */
+      await db
+        .update(erpPurchases)
+        .set({ billReceived: "Received", billNumber: billNo, status: sql`case when ${erpPurchases.status} = 'Pending' then 'Invoice Received' else ${erpPurchases.status} end`, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(eq(erpPurchases.id, id));
       await erpAudit(ctx, "erp.purchase.billReceived", "erp_purchase", id, null, { billNo });
       return okVoid(`Bill ${billNo} recorded`);
     },
     async billNotReceived(ctx, id) {
       if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
-      await db.update(erpPurchases).set({ billReceived: "Bill Not Received", updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchases.id, id));
+      const [p] = await db.select({ status: erpPurchases.status }).from(erpPurchases).where(eq(erpPurchases.id, id));
+      if (!p) return err("That purchase no longer exists.", "not_found");
+      if (p.status === "Purchase Matched" || p.status === "Purchase Verified") return err("A purchase matched to its bill has its bill.", "rule_violation");
+      await db
+        .update(erpPurchases)
+        .set({ billReceived: "Bill Not Received", status: p.status === "Invoice Received" ? "Pending" : p.status, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(eq(erpPurchases.id, id));
       await erpAudit(ctx, "erp.purchase.billNotReceived", "erp_purchase", id);
       return okVoid("Marked bill not received");
     },
@@ -1380,7 +1447,11 @@ const register: ScreenModule = {
       const status = text(values.status);
       const allowed = settableStatuses(ctx.powers.has("verifyPurchase"));
       if (!status || !allowed.includes(status)) return fieldErr("status", status === "Purchase Verified" ? "Only the verifier sets Purchase Verified" : "Pick a status");
-      await db.update(erpPurchases).set({ status, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchases.id, id));
+      /* Past Pending, the bill is in hand — the one line cannot say Matched and "no bill". */
+      await db
+        .update(erpPurchases)
+        .set({ status, ...(BILLED.includes(status) ? { billReceived: "Received" } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(eq(erpPurchases.id, id));
       await erpAudit(ctx, "erp.purchase.status", "erp_purchase", id, null, { status });
       return okVoid(`Status is ${status}`);
     },
@@ -1394,7 +1465,10 @@ const register: ScreenModule = {
   bulk: {
     async billReceivedMany(ctx, ids) {
       if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
-      await db.update(erpPurchases).set({ billReceived: "Received", updatedAt: new Date(), updatedById: ctx.user.id }).where(inArray(erpPurchases.id, ids));
+      await db
+        .update(erpPurchases)
+        .set({ billReceived: "Received", status: sql`case when ${erpPurchases.status} = 'Pending' then 'Invoice Received' else ${erpPurchases.status} end`, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(inArray(erpPurchases.id, ids));
       await erpAudit(ctx, "erp.purchase.billReceived.bulk", "erp_purchase", null, null, { ids });
       return okVoid(`${ids.length} marked bill received`);
     },

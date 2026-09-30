@@ -7,11 +7,10 @@ import type { ErpContext } from "./access";
 import { visibleAlerts } from "./alerts";
 import { incompletePackIds } from "./counts";
 import { ALERT_LABEL, type AlertKind } from "./engines/alerts";
-import { callingDate, followFigures } from "./engines/followup";
-import { addDaysIso, monthId, targetReached } from "./engines/sales";
-import { erpHref, erpScreen } from "./registry";
+import { monthId, targetReached } from "./engines/sales";
+import { erpLink } from "./registry";
 import { today } from "./screens/common";
-import { pendingCnRows } from "./screens/logistics";
+import { requestStatus } from "./screens/complaints";
 import { loadCustomers, partyStatus } from "./screens/masters";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, orderLines, ORDER_STATUSES } from "./screens/sales";
@@ -39,10 +38,7 @@ export type Section = { t: string; tiles: Tile[] };
 
 /** A link to a screen, pre-filtered to the ids a tile counted. */
 export function tileHref(screen: string, ids: string[] | null, label: string): string {
-  const s = erpScreen(screen);
-  const base = s ? erpHref(s) : "/erp";
-  if (!ids) return base;
-  return `${base}?f=${encodeURIComponent(ids.join(","))}&fl=${encodeURIComponent(label)}`;
+  return ids ? erpLink(screen, { f: ids.join(","), fl: label }) : erpLink(screen);
 }
 
 type Row = Record<string, unknown>;
@@ -230,10 +226,15 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       }
     const ready = open.filter((l) => l.o.status === "Ready" && l.o.entryStatus !== "Done");
     const short = ready.filter((l) => l.allocation === "Add More Quantity").map((l) => l.o.id);
-    const awaitingDone = ready.filter((l) => l.allocation === "Done").map((l) => l.o.id);
+    const toBill = ready.filter((l) => l.allocation === "Done").map((l) => l.o.id);
+    /* The planned dispatch date, said as today and late — never a status. */
+    const dueToday = open.filter((l) => l.due === "today").map((l) => l.o.id);
+    const late = open.filter((l) => l.due === "late").map((l) => l.o.id);
     const screen = has("readyOrders") ? "readyOrders" : "orders";
     sales.push({ l: "Allocation short", v: String(short.length), sub: "Ready, lots still to allocate", tone: short.length ? "warn" : undefined, href: tileHref(screen, short, "Allocation short") });
-    sales.push({ l: "Awaiting Done", v: String(awaitingDone.length), sub: "Ready and allocated", href: tileHref(screen, awaitingDone, "Awaiting Done") });
+    sales.push({ l: "Ready to bill", v: String(toBill.length), sub: "Ready and allocated — Bill it once the bill no. and rate are in", href: tileHref(screen, toBill, "Ready to bill") });
+    sales.push({ l: "Dispatch today", v: String(dueToday.length), sub: "planned for today", href: tileHref("orders", dueToday, "Dispatch today") });
+    sales.push({ l: "Dispatch late", v: String(late.length), sub: "planned for a day already past", tone: late.length ? "danger" : undefined, href: tileHref("orders", late, "Dispatch late") });
     const missing = ls.filter((l) => l.o.status !== "Cancel" && (!l.o.tallyBillNo || l.o.ratePaise == null)).map((l) => l.o.id);
     sales.push({ l: "Missing bill no / rate", v: String(missing.length), tone: missing.length ? "warn" : undefined, href: tileHref("orders", missing, "Bill or rate missing") });
     if (pw("approveParty")) {
@@ -283,7 +284,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     }
     if (has("trackLr")) {
       const by = new Map<string, string[]>();
-      rows.filter((r) => r.lr && r.track === "Track").forEach((r) => by.set(String(r.stage), [...(by.get(String(r.stage)) ?? []), String(r.id)]));
+      rows.filter((r) => r.lr && r.stage !== "Close - Received to Party").forEach((r) => by.set(String(r.stage), [...(by.get(String(r.stage)) ?? []), String(r.id)]));
       for (const [stage, ids] of by) logistics.push({ l: `Tracking · ${stage}`, v: String(ids.length), href: tileHref("trackLr", ids, stage) });
     }
     if (has("transport")) {
@@ -295,20 +296,17 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
 
   /* ========================================================== requests */
   const req: Tile[] = [];
-  if (["requests", "issueCn", "pendingCn"].some(has)) {
-    const rows = await q(sql`select id, status, cn_required as cn, cn_number as number, raised_at as raised, resolved_at as resolved from erp_requests`);
+  if (["requests", "issueCn"].some(has)) {
+    /* The CRM's complaints — one record, whichever app raised it. */
+    const rows = (await q(sql`select id, status, cn_status as "cnStatus", request_cn as cn, created_at as raised, resolved_at as resolved from complaints`)).map((r) => ({ id: r.id, cn: r.cn, raised: r.raised, resolved: r.resolved, word: requestStatus({ status: String(r.status), cnStatus: (r.cnStatus as string | null) ?? null }) }));
     if (has("requests"))
-      for (const st of ["Requested", "Accepted", "Rejected"]) {
-        const ids = rows.filter((r) => r.status === st).map((r) => String(r.id));
-        req.push({ l: `Requests · ${st}`, v: String(ids.length), tone: st === "Requested" && ids.length ? "warn" : undefined, href: tileHref("requests", ids, st) });
+      for (const st of ["Requested", "Accepted", "Rejected"] as const) {
+        const ids = rows.filter((r) => r.word === st).map((r) => String(r.id));
+        req.push({ l: `Complaints · ${st}`, v: String(ids.length), tone: st === "Requested" && ids.length ? "warn" : undefined, href: tileHref("requests", ids, st) });
       }
     if (has("issueCn")) {
-      const ids = rows.filter((r) => r.status === "Accepted" && r.cn && !r.number).map((r) => String(r.id));
+      const ids = rows.filter((r) => r.word === "Accepted" && r.cn).map((r) => String(r.id));
       req.push({ l: "Credit notes to issue", v: String(ids.length), tone: ids.length ? "warn" : undefined, href: tileHref("issueCn", ids, "To issue") });
-    }
-    if (has("pendingCn")) {
-      const n = (await pendingCnRows()).length;
-      req.push({ l: "Credit notes pending sync", v: String(n), tone: n ? "warn" : undefined, href: tileHref("pendingCn", null, "") });
     }
     if (has("requests")) {
       const resolved = rows.filter((r) => r.resolved && calendarDate(asDate(r.resolved)).startsWith(month));
@@ -318,32 +316,6 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     }
   }
   push("Requests and credit notes", req);
-
-  /* ========================================================= follow-up */
-  if (has("followup")) {
-    const [ls, fus] = await Promise.all([lines(), q(sql`select order_id as id, reminder_days_party as days from erp_followups`)]);
-    const figs = followFigures(ls.filter((l) => l.o.status !== "Cancel").map((l) => ({ id: l.o.id, party: l.delivery.id, product: l.sku.fgId ?? l.sku.name, date: l.o.orderDate })));
-    const byId = new Map(ls.map((l) => [l.o.id, l]));
-    /* The latest follow-up record per party only. */
-    const latest = new Map<string, { id: string; date: string; calling: string | null }>();
-    for (const f of fus) {
-      const l = byId.get(String(f.id));
-      const fig = figs.get(String(f.id));
-      if (!l || !fig) continue;
-      const cur = latest.get(l.delivery.id);
-      if (!cur || l.o.orderDate > cur.date) latest.set(l.delivery.id, { id: l.o.id, date: l.o.orderDate, calling: callingDate(fig.nextOrder, f.days == null ? null : Number(f.days)) });
-    }
-    const vals = [...latest.values()].filter((x): x is { id: string; date: string; calling: string } => !!x.calling);
-    const week = addDaysIso(day, 7);
-    const dueToday = vals.filter((x) => x.calling === day).map((x) => x.id);
-    const overdue = vals.filter((x) => x.calling < day).map((x) => x.id);
-    const next = vals.filter((x) => x.calling > day && x.calling <= week).map((x) => x.id);
-    push("Order follow-up", [
-      { l: "Calls due today", v: String(dueToday.length), tone: dueToday.length ? "warn" : undefined, href: tileHref("followup", dueToday, "Due today") },
-      { l: "Calls overdue", v: String(overdue.length), tone: overdue.length ? "danger" : undefined, href: tileHref("followup", overdue, "Overdue") },
-      { l: "Calls in the next 7 days", v: String(next.length), href: tileHref("followup", next, "Next 7 days") },
-    ]);
-  }
 
   /* ======================================================== petty cash */
   if (has("expenses") || has("credits")) {
@@ -375,11 +347,11 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const mine = await loadCustomers(or(eq(customers.salesAmId, ctx.user.id), sql`lower(${customers.salesPersonName}) = lower(${ctx.user.name})`));
     const { rows } = await details();
     const mid = monthId(day);
-    const withTarget = mine.filter((c) => (c.p?.monthlyTargetPaise ?? 0) > 0);
+    const withTarget = mine.filter((c) => (c.monthlyTargetPaise ?? 0) > 0);
     const reached = withTarget.filter((c) =>
       targetReached(
         rows.filter((r) => r.l.o.billingCustomerId === c.id && r.monthId === mid).reduce((a, r) => a + (r.amount ?? 0), 0),
-        c.p?.monthlyTargetPaise ?? null,
+        c.monthlyTargetPaise,
       ),
     );
     cust.push({ l: "My customers at target", v: `${reached.length} of ${withTarget.length}`, sub: `this month · ${plural(mine.length, "customer")} tagged to you`, href: tileHref("myCustomers", null, "") });

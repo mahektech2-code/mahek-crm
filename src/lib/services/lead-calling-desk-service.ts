@@ -95,6 +95,10 @@ type RawRow = {
   id: string;
   name: string;
   companyName: string | null;
+  /** The shop's own contact and number — read here only so the dashboard can
+      search by them; the engine's twelve answers do not touch either. */
+  contactPerson: string | null;
+  phone: string | null;
   city: string | null;
   source: string | null;
   stage: string;
@@ -164,6 +168,8 @@ function toRow(r: RawRow, sources: readonly { code: string; label: string }[] = 
   return {
     id: r.id,
     name: r.companyName || r.name,
+    contactPerson: r.contactPerson,
+    phone: r.phone,
     city: r.city,
     source: sourceName(r.source, sources),
     stage: r.stage as LeadStage,
@@ -202,6 +208,7 @@ const MARK = sql.raw(`'${CALL_MARK}'`);
  */
 const ROW_COLUMNS = sql`
   customers.id, customers.name, customers.company_name as "companyName", customers.city,
+  customers.contact_person as "contactPerson", customers.phone,
   customers.lead_source as source,
   customers.lead_stage::text as stage, customers.lead_sales_type::text as "salesType",
   customers.lead_priority::text as priority,

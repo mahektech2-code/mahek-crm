@@ -217,7 +217,8 @@ export const ST_TONE: Record<string, Tone> = {
   B: "neutral", C: "warn", Billed: "neutral", Acknowledged: "info", "Resolved automatically": "success",
   Resolved: "success", New: "brand", Converted: "success", "Not an order": "muted", Duplicate: "warn",
   High: "success", Low: "warn", "Invoice Received": "info", "Purchase Matched": "brand",
-  "Purchase Verified": "success", Dispatched: "success", Transfer: "neutral",
+  "Purchase Verified": "success", Dispatched: "success", Transfer: "neutral", Declined: "danger",
+  Arrived: "neutral", Tested: "info", "Bill received": "info", Matched: "brand",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */
@@ -240,6 +241,7 @@ export const FLAG: Record<string, [string, Tone]> = {
   accepted: ["Accepted", "success"],
   rejected: ["Rejected", "danger"],
   requested: ["Requested", "warn"],
+  resolved: ["Resolved", "success"],
   awaitingRoute: ["Awaiting routing", "warn"],
   pendingParty: ["Pending customer", "warn"],
   alert: ["Open alert", "danger"],
@@ -250,6 +252,10 @@ export const FLAG: Record<string, [string, Tone]> = {
   below: ["Below level", "danger"],
   noLevel: ["No level set", "neutral"],
   notPosted: ["Not posted to inventory", "warn"],
+  overRecipe: ["Above the recipe", "warn"],
+  dueToday: ["Dispatch today", "brand"],
+  dueTomorrow: ["Dispatch tomorrow", "neutral"],
+  late: ["Dispatch late", "danger"],
 };
 
 /* -------------------------------------------------------------- formatting */

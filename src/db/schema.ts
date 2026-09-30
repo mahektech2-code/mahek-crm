@@ -217,7 +217,11 @@ export const sourceModuleEnum = pgEnum("source_module", [
  * one that already means something else. A source that lies is a source no
  * report can be built on.
  */
-export const orderSourceEnum = pgEnum("order_source", ["crm", "external", "mbos"]);
+/**
+ * `erp`: taken in the ERP and written into the book by `lib/erp/book.ts` once
+ * the ERP is where orders are taken (`erp.orders.live`).
+ */
+export const orderSourceEnum = pgEnum("order_source", ["crm", "external", "mbos", "erp"]);
 /**
  * An order taken on a call is not yet an order the business has agreed to:
  * accounts check the customer first. New CRM orders start at
@@ -2061,6 +2065,19 @@ export const customers = pgTable(
     /* flags */
     doNotContact: boolean("do_not_contact").notNull().default(false),
 
+    /*
+     * WhatsApp DND — no WhatsApp message goes to this customer, by any path,
+     * automatic or by hand. Deliberately NOT `do_not_contact`: that one takes
+     * the customer off the calling list as well, and a shop that asked us to
+     * stop messaging it has not asked us to stop ringing. Set and cleared on
+     * the Founder desk's Contacts tab, always with a remark; the history is
+     * `whatsapp_dnd_events`, and these four columns are its newest row.
+     */
+    whatsappDnd: boolean("whatsapp_dnd").notNull().default(false),
+    whatsappDndReason: text("whatsapp_dnd_reason"),
+    whatsappDndAt: timestamp("whatsapp_dnd_at", { withTimezone: true }),
+    whatsappDndByName: text("whatsapp_dnd_by_name"),
+
     /* ------------------------------------------------------------------
      * MBOS — field sales.
      *
@@ -3658,6 +3675,14 @@ export const complaints = pgTable(
     cnReference: text("cn_reference"),
     /** Whoever actually reported it — not always the customer's main number. */
     mobileNumber: text("mobile_number"),
+    /**
+     * The salesman a complaint was raised FOR, where somebody in the office
+     * wrote it down on his behalf — the ERP's "Name of salesman". Null means
+     * whoever logged it raised it.
+     */
+    salesmanName: text("salesman_name"),
+    /** The date printed on the credit note, where it differs from the day it was recorded. */
+    cnDate: date("cn_date"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -3999,6 +4024,28 @@ export const whatsappServiceEvents = pgTable(
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("whatsapp_service_events_at_idx").on(t.at.desc())],
+);
+
+/**
+ * Every time a customer was put on WhatsApp DND or taken off it, with the
+ * remark. Append-only: the customer row carries only the current answer, and
+ * "who stopped messages to this shop, and why" is asked months later.
+ */
+export const whatsappDndEvents = pgTable(
+  "whatsapp_dnd_events",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    dnd: boolean("dnd").notNull(),
+    reason: text("reason").notNull(),
+    changedById: text("changed_by_id").references(() => users.id),
+    /** Stored beside the id so the history still reads after somebody leaves. */
+    changedByName: text("changed_by_name").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("whatsapp_dnd_events_customer_idx").on(t.customerId, t.at.desc())],
 );
 
 /* -------------------------------------------------------- §3.11 monthly target */
@@ -10375,7 +10422,6 @@ export const erpCustomerProfiles = pgTable("erp_customer_profiles", {
   grade: text("grade"),
   standingInstructions: text("standing_instructions"),
   allocateEmail: text("allocate_email"),
-  monthlyTargetPaise: bigint("monthly_target_paise", { mode: "number" }),
   pendingActivation: boolean("pending_activation").notNull().default(false),
   activatedAt: timestamp("activated_at", { withTimezone: true }),
   activatedById: text("activated_by_id").references(() => users.id),
@@ -10719,6 +10765,34 @@ export const erpSfgEntries = pgTable(
   ],
 );
 
+/**
+ * A STANDARD RECIPE: how much of each raw material one batch of an SFG product
+ * takes. New, not in Mahek Plus — there every batch was typed from scratch,
+ * so nothing could say a batch had used more than it should. It prefills a
+ * new batch ("Start a batch" on the Recipes screen) and flags a batch line
+ * that used more than the recipe allows (`erp.production.recipeTolerancePercent`).
+ * It never refuses a batch: a recipe is what is expected, not a gate.
+ */
+export const erpRecipes = pgTable(
+  "erp_recipes",
+  {
+    id: text("id").primaryKey(),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    qtyPerBatch: erpQty("qty_per_batch").notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [uniqueIndex("erp_recipes_key").on(t.formulationId, t.rawMaterialId)],
+);
+
 export const erpFgFills = pgTable(
   "erp_fg_fills",
   {
@@ -10898,15 +10972,29 @@ export const erpOrders = pgTable(
       .notNull()
       .references(() => products.id),
     qtyCans: integer("qty_cans").notNull(),
-    /** Under Process | Ready | Today | Delay | Cancel | Tomorrow | Hold From Office. */
+    /**
+     * Under Process | Ready | Hold From Office | Cancel.
+     *
+     * Mahek Plus also had Today, Tomorrow and Delay, which are dates written as
+     * statuses: "Tomorrow" is wrong the day after somebody sets it, and only a
+     * person remembering fixes it. They are `dispatch_on` now, and the screens
+     * say today / tomorrow / late from the date (0183 moved every old value).
+     */
     status: text("status").notNull().default("Under Process"),
+    /** The day this line is planned to leave the godown. Null: not planned yet. */
+    dispatchOn: date("dispatch_on"),
     ratePaise: bigint("rate_paise", { mode: "number" }),
     /** 1000 = 10%. */
     discountBp: integer("discount_bp"),
     tallyBillNo: text("tally_bill_no"),
     transportCostPaise: bigint("transport_cost_paise", { mode: "number" }).notNull().default(0),
     remark: text("remark"),
-    /** Done | Not Done. */
+    /**
+     * Done | Not Done — whether the line is BILLED. Done and "Add to order
+     * details" were two presses for one fact in Mahek Plus (the office has
+     * entered the bill); "Bill it" sets this and writes the line's
+     * `erp_order_details` row in one transaction.
+     */
     entryStatus: text("entry_status").notNull().default("Not Done"),
     /** "Pending" when the billing party was pending on entry; "Approved By Admin" once approved. */
     partyStatus: text("party_status"),
@@ -10947,7 +11035,6 @@ export const erpOrderDetails = pgTable("erp_order_details", {
     .references(() => erpOrders.id),
   gstBp: integer("gst_bp").notNull().default(1800),
   extraExpensesPaise: bigint("extra_expenses_paise", { mode: "number" }),
-  creditNotePaise: bigint("credit_note_paise", { mode: "number" }),
   /** Pending | Dispatched. */
   dispatchStatus: text("dispatch_status").notNull().default("Pending"),
   dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
@@ -10983,7 +11070,7 @@ export const erpTransports = pgTable(
     extraExpensePaise: bigint("extra_expense_paise", { mode: "number" }),
     /** Track | Don't Track. */
     trackStatus: text("track_status").notNull().default("Don't Track"),
-    materialStage: text("material_stage").notNull().default("Dispatch from Bhiwandi"),
+    materialStage: text("material_stage").notNull().default("Dispatched"),
     reminderDate: date("reminder_date"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -10992,6 +11079,12 @@ export const erpTransports = pgTable(
   (t) => [uniqueIndex("erp_transports_order_key").on(t.orderNo)],
 );
 
+/**
+ * RETIRED — the ERP's customer requests are the CRM's `complaints` now (0184
+ * carried every row across under the same id). Nothing reads or writes this
+ * table; it is kept because deleting records somebody typed is a decision
+ * nobody has made.
+ */
 export const erpRequests = pgTable(
   "erp_requests",
   {
@@ -11026,7 +11119,13 @@ export const erpRequests = pgTable(
   (t) => [index("erp_requests_customer_idx").on(t.customerId)],
 );
 
-/** One per order-details line; everything else it shows is derived from the orders. */
+/**
+ * RETIRED — nothing writes or reads it. Mahek Plus's order follow-up predicted
+ * each party's next order from its order dates; the CRM does that from the
+ * measured buying cycle and puts the call on a telecaller's list, so the ERP's
+ * screens were removed (0183). The rows are kept rather than dropped: they are
+ * remarks somebody typed, and deleting them is a decision nobody has made.
+ */
 export const erpFollowups = pgTable("erp_followups", {
   orderId: text("order_id")
     .primaryKey()

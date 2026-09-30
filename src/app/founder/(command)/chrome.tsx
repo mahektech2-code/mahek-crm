@@ -304,6 +304,12 @@ export const WHATSAPP_TABS: DeskTab[] = [
     subtitle: "Rules that send the approved templates on their own — when each one fires, how often, and the hours anything may go out.",
   },
   {
+    href: "/founder/whatsapp/contacts",
+    label: "Contacts & DND",
+    subtitle:
+      "Every customer and whether WhatsApp messages may go to them. A customer on DND gets no message by any path — automatic or by hand — while calls carry on as before.",
+  },
+  {
     href: "/founder/whatsapp/messages",
     label: "Messages",
     subtitle:

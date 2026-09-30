@@ -102,6 +102,48 @@ const nextConfig: NextConfig = {
       { source: "/founder/people", destination: "/founder?s=people", permanent: true },
       { source: "/founder/crm", destination: "/founder?s=sales", permanent: true },
 
+      /*
+       * The ERP's lists that were each their own screen in Mahek Plus are tabs
+       * of one screen now — the four stock stages and their logs, the re-order
+       * lists, Pending LR and Track LR, the petty-cash credits. A bookmark to
+       * the old screen lands on its tab.
+       */
+      { source: "/erp/rm-stock", destination: "/erp/stock", permanent: true },
+      { source: "/erp/rm-log", destination: "/erp/stock?view=rmLog", permanent: true },
+      { source: "/erp/sfg-stock", destination: "/erp/stock?view=sfgStock", permanent: true },
+      { source: "/erp/sfg-log", destination: "/erp/stock?view=sfgLog", permanent: true },
+      { source: "/erp/fg-stock", destination: "/erp/stock?view=fgStock", permanent: true },
+      { source: "/erp/fg-log", destination: "/erp/stock?view=fgLog", permanent: true },
+      { source: "/erp/pack-stock", destination: "/erp/stock?view=packStock", permanent: true },
+      { source: "/erp/pack-log", destination: "/erp/stock?view=packLog", permanent: true },
+      { source: "/erp/reorder-rm", destination: "/erp/rm-levels", permanent: true },
+      { source: "/erp/reorder-fg", destination: "/erp/fg-levels", permanent: true },
+      { source: "/erp/pending-lr", destination: "/erp/transport", permanent: true },
+      { source: "/erp/track-lr", destination: "/erp/transport?view=trackLr", permanent: true },
+      { source: "/erp/paid-freight", destination: "/erp/transport?view=paidFreight", permanent: true },
+      { source: "/erp/credits", destination: "/erp/expenses?view=credits", permanent: true },
+      { source: "/erp/powers", destination: "/admin/people", permanent: true },
+      { source: "/erp/employees", destination: "/hrms/employees", permanent: true },
+      /* The sales-order lists and Order details are tabs of one Orders screen;
+         order follow-up is the CRM's buying cycle now, so its old screens land
+         on the ERP's home rather than on a 404. */
+      { source: "/erp/pending-orders", destination: "/erp/orders", permanent: true },
+      { source: "/erp/ready-orders", destination: "/erp/orders?view=readyOrders", permanent: true },
+      { source: "/erp/order-details", destination: "/erp/orders?view=orderDetails", permanent: true },
+      { source: "/erp/batch-codes", destination: "/erp/orders?view=batchCodes", permanent: true },
+      { source: "/erp/labels", destination: "/erp/orders?view=labels", permanent: true },
+      { source: "/erp/order-inbox", destination: "/erp/orders?view=orderInbox", permanent: true },
+      /* Complaints and credit notes are one screen on the CRM's complaints;
+         Pending CN is gone (the margin reads the credit note where it is). */
+      { source: "/erp/issue-cn", destination: "/erp/requests?view=issueCn", permanent: true },
+      { source: "/erp/complaints", destination: "/erp/requests?view=complaints", permanent: true },
+      { source: "/erp/pending-cn", destination: "/erp/requests?view=issueCn", permanent: true },
+      /* Inward, the register and drum labels are tabs of one Purchases screen. */
+      { source: "/erp/inward", destination: "/erp/register", permanent: true },
+      { source: "/erp/barcode", destination: "/erp/register?view=barcode", permanent: true },
+      { source: "/erp/followup", destination: "/erp", permanent: true },
+      { source: "/erp/pivot", destination: "/erp", permanent: true },
+
       { source: "/orders", destination: "/accounts", permanent: true },
       { source: "/orders/:path*", destination: "/accounts/:path*", permanent: true },
 

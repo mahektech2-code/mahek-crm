@@ -20,6 +20,26 @@ export type ErpIcon =
   | "swap" | "refresh" | "receipt" | "file" | "truck" | "chat" | "phone"
   | "wallet" | "people" | "play" | "gear";
 
+/**
+ * A TAB of a screen. Mahek Plus drew a separate view for every filter of one
+ * table — Pending LR, Track LR and All transport are one list three ways — and
+ * the first build of the ERP copied that into one sidebar entry, one module
+ * and one grant each. A view is that list again, reached from its screen
+ * rather than from the sidebar: it keeps its own server module (its rows, its
+ * actions) under its own key, and it is opened by holding the SCREEN. It is
+ * never a module of its own, so it can never be granted apart from its screen.
+ */
+export type ErpView = {
+  /** The server module key that draws this tab. */
+  key: string;
+  label: string;
+  /**
+   * A second list the tab switches to without a tab of its own — the full
+   * entry log behind an "available stock" tab. Drawn as a toggle.
+   */
+  alt?: { key: string; label: string; back: string };
+};
+
 export type ErpScreen = {
   /** Stable key; the module key is `erp.<key>`. Never renamed — it is a grant. */
   key: string;
@@ -29,6 +49,8 @@ export type ErpScreen = {
   /** The sentence under the title, from the design. */
   sub: string;
   built: boolean;
+  /** Tabs, the first being what the screen opens on. Absent: the screen is one list, its own key. */
+  views?: ErpView[];
 };
 
 export type ErpGroup = {
@@ -38,13 +60,16 @@ export type ErpGroup = {
   screens: ErpScreen[];
 };
 
-const s = (key: string, slug: string, label: string, sub: string, built = false): ErpScreen => ({
+const s = (key: string, slug: string, label: string, sub: string, built = false, views?: ErpView[]): ErpScreen => ({
   key,
   slug,
   label,
   sub,
   built,
+  ...(views ? { views } : {}),
 });
+
+const v = (key: string, label: string, alt?: ErpView["alt"]): ErpView => ({ key, label, ...(alt ? { alt } : {}) });
 
 export const ERP_GROUPS: ErpGroup[] = [
   {
@@ -70,10 +95,9 @@ export const ERP_GROUPS: ErpGroup[] = [
       s("suppliers", "suppliers", "Purchase parties", "Suppliers, grouped by state. Call is the quick action.", true),
       s("products", "products", "Products", "From liquid to boxed SKU: what each finished good is made of and how it is packed.", true),
       s("customers", "customers", "Sales parties", "Customers. A Pending party needs admin activation before its orders can move.", true),
+      s("myCustomers", "my-customers", "My customers", "Your own customers and what they have raised.", true),
       s("godowns", "godowns", "Godowns", "Every godown by region, plus the reserved Item Lost Record godown that only write-offs use.", true),
-      s("priceLists", "price-lists", "Price lists", "Rates by list. Rate excluding GST is calculated.", true),
-      s("employees", "employees", "Employees", "Directory. Legacy permission values are shown read-only; ERP access is managed in the Admin Console.", true),
-      s("powers", "powers", "ERP powers", "Who may see money and cost, verify tests, write off stock and decide requests. An ERP administrator holds every power.", true),
+      s("priceLists", "price-lists", "Price lists", "Rates by list, as published on the Price Desk. Rate excluding GST is calculated.", true),
       s("refLists", "reference-lists", "Reference lists", "The editable value lists every form picks from.", true),
     ],
   },
@@ -83,132 +107,98 @@ export const ERP_GROUPS: ErpGroup[] = [
     icon: "cart",
     screens: [
       s("requisitions", "requisitions", "Purchase requisitions", "What the godowns need bought. Status changes directly on the record.", true),
-      s("inward", "inward", "Purchase inward", "Goods arriving against a PR. Each line goes once to testing or straight to the purchase register.", true),
+      s("register", "register", "Purchases", "Goods arriving and the lots they become. A line that needs testing goes to the tester as it is saved; the rest are in the register at once, and post to stock when a rate is entered.", true, [
+        v("inward", "Arrivals"),
+        v("register", "Register"),
+        v("barcode", "Drum labels"),
+      ]),
       s("testing", "testing", "Purchase testing", "Evidence for the tests each chemical requires. Only the verifier can verify.", true),
-      s("register", "register", "Purchase register", "Every verified or direct purchase with its rate, GST and bill. Stock posts only once a rate is entered.", true),
-      s("barcode", "barcode", "Purchase barcode", "Chemical lots at your working godown, ready for drum labels.", true),
     ],
   },
   {
-    id: "rm",
-    label: "Raw-material inventory",
-    icon: "flask",
-    screens: [
-      s("rmStock", "rm-stock", "Available raw-material stock", "One row per lot and godown with stock above zero.", true),
-      s("rmLog", "rm-log", "Inventory log", "Every raw-material entry, newest first. Entries are written by purchases and transfers only.", true),
-    ],
-  },
-  {
-    id: "sfg",
-    label: "Semi-finished",
+    id: "production",
+    label: "Production",
     icon: "beaker",
     screens: [
       s("sfgBatches", "sfg-batches", "SFG batches", "Liquid made from raw-material lots. One line per lot consumed.", true),
-      s("sfgStock", "sfg-stock", "Available SFG stock", "Semi-finished lots with litres remaining.", true),
-      s("sfgLog", "sfg-log", "SFG log", "Every semi-finished entry, newest first.", true),
-    ],
-  },
-  {
-    id: "fg",
-    label: "Finished goods",
-    icon: "can",
-    screens: [
       s("fgFill", "fg-fill", "FG filling", "SFG filled into cans or drums.", true),
-      s("fgStock", "fg-stock", "Available FG stock", "Loose finished goods, lot by lot.", true),
-      s("fgLog", "fg-log", "FG log", "Every finished-goods entry, newest first.", true),
-    ],
-  },
-  {
-    id: "pack",
-    label: "FG packing",
-    icon: "box",
-    screens: [
       s("packBatches", "pack-batches", "Packing batches", "Loose cans packed into boxes. A batch posts only when the cans used match the boxes.", true),
-      s("packStock", "pack-stock", "Available packing stock", "Boxed stock, grouped by SKU.", true),
-      s("packLog", "pack-log", "Packing log", "Every packing entry, newest first.", true),
+      s("recipes", "recipes", "Recipes", "What one batch of each SFG product takes. A batch can start from it, and one that used noticeably more is flagged.", true),
     ],
   },
   {
-    id: "transfer",
-    label: "Item transfer",
-    icon: "swap",
-    screens: [s("transfers", "transfers", "Item transfers", "Stock moved between godowns, including write-offs to Item Lost Record.", true)],
-  },
-  {
-    id: "reorder",
-    label: "Re-order",
-    icon: "refresh",
+    id: "stock",
+    label: "Stock",
+    icon: "flask",
     screens: [
-      s("rmLevels", "rm-levels", "Raw-material levels", "Minimum and maximum per godown. Sorted by how close each item is to its minimum.", true),
-      s("fgLevels", "fg-levels", "Finished-goods levels", "Minimum per SKU. Loose SKUs read FG stock, boxed SKUs read packing stock.", true),
-      s("reorderRm", "reorder-rm", "Re-order raw items", "Followed items below their minimum. Raise a requisition from any row.", true),
-      s("reorderFg", "reorder-fg", "Re-order finished goods", "Followed SKUs below their minimum.", true),
+      s("stock", "stock", "Stock", "What is in each godown, lot by lot, at every stage. Every entry behind it is one switch away.", true, [
+        v("rmStock", "Raw material", { key: "rmLog", label: "Show every entry", back: "Show available stock" }),
+        v("sfgStock", "Semi-finished", { key: "sfgLog", label: "Show every entry", back: "Show available stock" }),
+        v("fgStock", "Finished goods", { key: "fgLog", label: "Show every entry", back: "Show available stock" }),
+        v("packStock", "Packed", { key: "packLog", label: "Show every entry", back: "Show available stock" }),
+      ]),
+      s("transfers", "transfers", "Item transfers", "Stock moved between godowns, including write-offs to Item Lost Record.", true),
+      s("rmLevels", "rm-levels", "Raw-material levels", "Minimum and maximum per godown. Raise a requisition from any item below its minimum.", true, [
+        v("reorderRm", "Below minimum"),
+        v("rmLevels", "All levels"),
+      ]),
+      s("fgLevels", "fg-levels", "Finished-goods levels", "Minimum per SKU. Loose SKUs read FG stock, boxed SKUs read packing stock.", true, [
+        v("reorderFg", "Below minimum"),
+        v("fgLevels", "All levels"),
+      ]),
     ],
   },
   {
     id: "sales",
-    label: "Sales orders",
+    label: "Orders",
     icon: "receipt",
     screens: [
-      s("orderInbox", "order-inbox", "Order inbox", "WhatsApp messages the ERP read as possible orders. Nothing becomes an order until someone accepts the draft.", true),
-      s("orders", "orders", "Taken orders", "Every sales-order line, grouped by order number.", true),
-      s("pendingOrders", "pending-orders", "Pending orders", "Open order lines that have not reached order details.", true),
-      s("readyOrders", "ready-orders", "Under process and ready", "The godown's working list. Mark many lines Ready at once.", true),
-      s("batchCodes", "batch-codes", "Batch codes", "Every lot allocated to an order line, grouped by godown.", true),
-      s("labels", "labels", "Sales label printing", "Open orders by transporter, with labels to print.", true),
+      s("orders", "orders", "Orders", "From the order being taken to the bill leaving the godown. Each tab is one step of it.", true, [
+        v("pendingOrders", "Pending"),
+        v("readyOrders", "Under process & ready"),
+        v("orderDetails", "Billing & dispatch"),
+        v("batchCodes", "Batch codes"),
+        v("labels", "Labels"),
+        v("orders", "All lines"),
+        v("orderInbox", "WhatsApp inbox"),
+      ]),
     ],
-  },
-  {
-    id: "details",
-    label: "Order details",
-    icon: "file",
-    screens: [s("orderDetails", "order-details", "Order details", "Billing and dispatch. Verify a line once it has left, with its dispatch date.", true)],
   },
   {
     id: "logistics",
     label: "Logistics",
     icon: "truck",
     screens: [
-      s("transport", "transport", "All transport", "Every dispatched bill, its LR and where the consignment is.", true),
-      s("pendingLr", "pending-lr", "Pending LR", "Dispatched bills without an LR number yet.", true),
-      s("trackLr", "track-lr", "Track LR", "Consignments still on the road. Update the stage and the next reminder call.", true),
-      s("paidFreight", "paid-freight", "Transportation paid", "Paid-freight lines still without their extra expense, grouped by transporter.", true),
+      s("transport", "transport", "Transport", "Every dispatched bill, its LR and where the consignment is.", true, [
+        v("pendingLr", "Pending LR"),
+        v("trackLr", "On the road"),
+        v("transport", "All bills"),
+        v("paidFreight", "Paid freight"),
+      ]),
     ],
   },
   {
     id: "requests",
-    label: "Requests & credit notes",
+    label: "Complaints & credit notes",
     icon: "chat",
     screens: [
-      s("requests", "requests", "Customer requests", "Complaints and credit-note requests raised by sales, grouped by status.", true),
-      s("issueCn", "issue-cn", "Issue credit note", "Accepted requests that need a credit note issued.", true),
-      s("complaints", "complaints", "Customer complaints", "Requests without a credit note, grouped by complaint type.", true),
-      s("pendingCn", "pending-cn", "Pending CN", "Order lines whose credit-note amount has not reached the margin yet.", true),
-    ],
-  },
-  {
-    id: "followup",
-    label: "Order follow-up",
-    icon: "phone",
-    screens: [
-      s("followup", "followup", "Order follow-up", "When each customer is likely to order again, and when to call them.", true),
-      s("pivot", "pivot", "Party order pivot", "Per party: last order and the gap since.", true),
+      s("requests", "requests", "Complaints & credit notes", "The customer's complaints and the credit notes they ask for — the same records the CRM keeps, whichever app raised them.", true, [
+        v("requests", "All"),
+        v("issueCn", "Credit notes"),
+        v("complaints", "Without a credit note"),
+      ]),
     ],
   },
   {
     id: "expenses",
-    label: "Expenses",
+    label: "Petty cash",
     icon: "wallet",
     screens: [
-      s("credits", "credits", "Petty-cash credits", "Funds given to employees, per godown and mode.", true),
-      s("expenses", "expenses", "Expenses", "Petty-cash spending, verified by the manager.", true),
+      s("expenses", "expenses", "Petty cash", "Funds given to people and what they spent, per godown and mode, with what is left.", true, [
+        v("expenses", "Expenses"),
+        v("credits", "Funds given"),
+      ]),
     ],
-  },
-  {
-    id: "mycust",
-    label: "My customers",
-    icon: "people",
-    screens: [s("myCustomers", "my-customers", "My customers", "Your own customers and what they have raised.", true)],
   },
   {
     id: "help",
@@ -226,8 +216,9 @@ export const ERP_GROUPS: ErpGroup[] = [
 
 export const ERP_SCREENS: ErpScreen[] = ERP_GROUPS.flatMap((g) => g.screens);
 
+/** The screen a module key is drawn on — its own, or the one it is a tab of. */
 export function erpScreen(key: string): ErpScreen | undefined {
-  return ERP_SCREENS.find((x) => x.key === key);
+  return erpPlace(key)?.screen;
 }
 
 export function erpScreenBySlug(slug: string): ErpScreen | undefined {
@@ -236,6 +227,48 @@ export function erpScreenBySlug(slug: string): ErpScreen | undefined {
 
 export function erpHref(screen: ErpScreen): string {
   return screen.slug ? `/erp/${screen.slug}` : "/erp";
+}
+
+/**
+ * Where a module key is drawn: a screen of its own, or a tab (or a tab's
+ * toggle) of one. Every link to a list goes through this, so a dashboard tile
+ * or an alert naming `pendingLr` lands on the Transport screen's Pending LR
+ * tab rather than on a page that no longer exists.
+ */
+export function erpPlace(key: string): { screen: ErpScreen; view: string | null } | undefined {
+  const own = ERP_SCREENS.find((x) => x.key === key);
+  if (own) return { screen: own, view: own.views?.some((x) => x.key === key) && own.views[0].key !== key ? key : null };
+  for (const screen of ERP_SCREENS)
+    for (const view of screen.views ?? [])
+      if (view.key === key || view.alt?.key === key) return { screen, view: key === screen.views![0].key ? null : key };
+  return undefined;
+}
+
+/** A link to a list by its module key, with any query it should open with. */
+export function erpLink(key: string, query: Record<string, string | null | undefined> = {}): string {
+  const place = erpPlace(key);
+  if (!place) return "/erp";
+  const q = new URLSearchParams();
+  if (place.view) q.set("view", place.view);
+  for (const [k, val] of Object.entries(query)) if (val) q.set(k, val);
+  const qs = q.toString();
+  return qs ? `${erpHref(place.screen)}?${qs}` : erpHref(place.screen);
+}
+
+/** The label a list goes by, whether it is a screen or a tab of one. */
+export function erpListLabel(key: string): string {
+  const place = erpPlace(key);
+  if (!place) return key;
+  if (!place.view) return place.screen.label;
+  const view = place.screen.views?.find((x) => x.key === place.view || x.alt?.key === place.view);
+  return view ? `${place.screen.label} · ${view.label}` : place.screen.label;
+}
+
+/** Every module key a screen's holder may use: its own and its tabs'. */
+export function erpKeysOf(screen: ErpScreen): string[] {
+  /* A screen's own key is usually one of its tabs too (Transport's "All
+     bills" is `transport`); listed twice, a badge would count it twice. */
+  return [...new Set([screen.key, ...(screen.views ?? []).flatMap((x) => [x.key, ...(x.alt ? [x.alt.key] : [])])])];
 }
 
 export function erpGroupOf(key: string): ErpGroup | undefined {

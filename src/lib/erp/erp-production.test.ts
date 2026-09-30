@@ -21,6 +21,7 @@ import {
   erpSfgLines,
   erpSuppliers,
   finishedGoods,
+  notifications,
   productBrands,
   productFormulations,
   products,
@@ -29,7 +30,8 @@ import {
 import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
-import { fgLots, packLots, rmLotStock, sfgLots } from "@/lib/erp/stock";
+import { fgLots, packLots, rmLots, rmLotStock, sfgLots } from "@/lib/erp/stock";
+import { runErpAlerts } from "@/lib/erp/alerts";
 import { erpNavCounts } from "@/lib/erp/counts";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -274,5 +276,59 @@ describe("costs stay behind their power", () => {
     }
     const fills = await db.select().from(erpFgFills).where(eq(erpFgFills.lotCode, "FG1BH"));
     assert.equal(fills.length, 1);
+  });
+});
+
+describe("what filling and packing use comes out of stock (A-30)", () => {
+  test("the cans filled and the boxes packed leave their lots, and a level does not count them twice", async () => {
+    const lots = await rmLots();
+    const can = lots.filter((l) => l.item === "Tin can 5L" && l.godownId === "erpg_bhiwandi").reduce((n, l) => n + l.stock, 0);
+    const box = lots.filter((l) => l.item === "Box6" && l.godownId === "erpg_bhiwandi").reduce((n, l) => n + l.stock, 0);
+    assert.equal(can, 100 - 52, "52 cans were filled");
+    assert.equal(box, 50 - 10, "one batch of 10 boxes was packed");
+    const ctx = await as(admin);
+    const level = (await mod("rmLevels").load(ctx)).rows.find((r) => r.v.item === "Tin can 5L");
+    assert.equal(level?.v.available, 48, "the level reads the lot stock as it stands");
+  });
+
+  test("a packing batch is refused when the empty boxes are not at the godown", async () => {
+    const ctx = await as(admin);
+    assert.ok((await mod("fgFill").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", sfg: SFG, sfgLot: "1ASTOL1", fg: FG, size: "5", canUse: "Tin can 5L", cans: "20" }, [])).ok);
+    const lot = (await fgLots()).find((l) => l.stock >= 4)!.lotCode;
+    const refused = await mod("packBatches").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", fg: FG, sku: BOXED, boxes: "41", lot, cans: "4" }, []);
+    assert.match(fieldMsg(refused), /^Low Box Quantity · 41 Box6 needed, 40 at Bhiwandi/);
+    const fits = await mod("packBatches").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", fg: FG, sku: BOXED, boxes: "5", lot, cans: "4" }, []);
+    assert.ok(fits.ok, JSON.stringify(fits));
+  });
+});
+
+describe("recipes", () => {
+  test("a recipe starts a batch with its lines, and a batch that used more than it allows is flagged", async () => {
+    const ctx = await as(admin);
+    assert.ok((await mod("recipes").forms!.new(ctx, { product: SFG }, [{ item: "Toluene", qty: "200" }])).ok);
+    const [r] = (await mod("recipes").load(ctx)).rows;
+    const start = await mod("recipes").formLoaders!.start(ctx, r.id);
+    assert.equal(start?.screen, "sfgBatches");
+    assert.equal(start?.init?.product, SFG);
+    assert.deepEqual(start?.initLines, [{ item: "Toluene", qty: "200" }]);
+    /* The batch made earlier used 400 over 2 batches: exactly the recipe. */
+    const line = () => mod("sfgBatches").load(ctx).then((x) => x.rows.find((y) => y.v.item === "Toluene")!);
+    assert.ok(!(await line()).flags.includes("overRecipe"));
+    assert.ok((await mod("recipes").actions!.qty(ctx, r.id, { qty: "150" })).ok);
+    assert.ok((await line()).flags.includes("overRecipe"), "400 against 300 and a 5% tolerance");
+    const c = await as(clerk);
+    assert.ok(!(await mod("recipes").actions!.qty(c, r.id, { qty: "1" })).ok, "a manager sets a recipe");
+  });
+});
+
+describe("low stock reaches the people who would buy", () => {
+  test("a new below-level alert tells whoever works at that godown, once", async () => {
+    await db.execute(sql`insert into erp_godown_staff (godown_id, user_id) values ('erpg_bhiwandi', ${clerk.id}) on conflict do nothing`);
+    await runErpAlerts();
+    const mine = await db.select().from(notifications).where(eq(notifications.userId, clerk.id));
+    assert.ok(mine.some((n) => n.title === "Below re-order level: Tin can 5L"), JSON.stringify(mine.map((n) => n.title)));
+    const count = mine.length;
+    await runErpAlerts();
+    assert.equal((await db.select().from(notifications).where(eq(notifications.userId, clerk.id))).length, count, "an alert already open tells nobody again");
   });
 });

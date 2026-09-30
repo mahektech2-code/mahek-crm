@@ -16,6 +16,7 @@ import { appAccess, erpInward, erpPurchases, erpRawMaterials, erpRmEntries, erpS
 import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
+import { purchaseStage } from "@/lib/erp/screens/purchase";
 import { rmLots, rmLotStock } from "@/lib/erp/stock";
 import { erpNavCounts } from "@/lib/erp/counts";
 
@@ -74,7 +75,7 @@ after(async () => {
 });
 
 describe("inward", () => {
-  test("one inward draws one PR for all its lines, and knows which lines need testing", async () => {
+  test("one inward draws one PR for all its lines, and sends each where it is going as it is saved", async () => {
     const ctx = await as(admin);
     const r = await mod("inward").forms!.new(ctx, { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi" }, [
       { type: "Chemical", item: "Toluene", drums: "2", weight: "400", qty: "360" },
@@ -88,8 +89,12 @@ describe("inward", () => {
     assert.equal(byItem.rm_tol.testingRequired, true);
     assert.equal(byItem.rm_mek.testingRequired, false);
     assert.equal(byItem.rm_can.unit, "Unit");
+    /* No "Send to Testing / Send to Purchase" press: the testing list decided. */
+    assert.equal(byItem.rm_tol.routed, "Testing");
+    assert.equal(byItem.rm_mek.routed, "Purchase");
+    assert.equal(byItem.rm_can.routed, "Purchase");
     const counts = await erpNavCounts(ctx);
-    assert.equal(counts.inward, 3);
+    assert.equal(counts.inward, 0, "nothing is left waiting to be routed");
   });
 
   test("a minus quantity is refused in the source's words", async () => {
@@ -98,19 +103,16 @@ describe("inward", () => {
     assert.ok(!r.ok && r.fieldErrors?.[0].message === "Minus Quantity Not Allowed");
   });
 
-  test("a line routes once: a tested item cannot skip testing, and a second press is refused", async () => {
+  test("a line routes once: a tested item cannot skip testing, and it cannot be sent again", async () => {
     const ctx = await as(admin);
     const [tol] = await db.select().from(erpInward).where(eq(erpInward.rawMaterialId, "rm_tol"));
-    const skip = await mod("inward").actions!.toPurchase(ctx, tol.id, {});
-    assert.ok(!skip.ok);
-    assert.ok((await mod("inward").actions!.toTesting(ctx, tol.id, {})).ok);
-    assert.ok(!(await mod("inward").actions!.toTesting(ctx, tol.id, {})).ok);
+    assert.ok(!(await mod("inward").actions!.toPurchase(ctx, tol.id, {})).ok);
+    assert.ok(!(await mod("inward").actions!.toTesting(ctx, tol.id, {})).ok, "it was sent when it was saved");
   });
 
   test("an untested line goes straight to the register, but reaches stock only with a rate", async () => {
     const ctx = await as(admin);
     const [mek] = await db.select().from(erpInward).where(eq(erpInward.rawMaterialId, "rm_mek"));
-    assert.ok((await mod("inward").actions!.toPurchase(ctx, mek.id, {})).ok);
     const [p] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, mek.id));
     assert.equal(p.lotNo, "ASMEK1001");
     assert.equal(p.availableLitres, 200, "160 kg at density 0.8 is 200 litres");
@@ -196,6 +198,24 @@ describe("register and stock", () => {
     const [p] = await db.select().from(erpPurchases).limit(1);
     const r = await mod("register").actions!.rate(c, p.id, { rate: "1" });
     assert.ok(!r.ok && r.code === "not_permitted");
+  });
+
+  test("a purchase moves along one line: the bill and the status cannot disagree", async () => {
+    const ctx = await as(admin);
+    const [can] = await db.select().from(erpPurchases).where(eq(erpPurchases.rawMaterialId, "rm_can"));
+    assert.equal(purchaseStage(can), "Arrived");
+    assert.ok((await mod("register").actions!.billReceived(ctx, can.id, { billNo: "AS/77" })).ok);
+    const [billed] = await db.select().from(erpPurchases).where(eq(erpPurchases.id, can.id));
+    assert.equal(billed.status, "Invoice Received", "a bill in hand is the Invoice Received step");
+    assert.equal(purchaseStage(billed), "Bill received");
+    assert.ok((await mod("register").actions!.status(ctx, can.id, { status: "Purchase Verified" })).ok);
+    assert.equal(purchaseStage((await db.select().from(erpPurchases).where(eq(erpPurchases.id, can.id)))[0]), "Verified");
+    assert.ok(!(await mod("register").actions!.billNotReceived(ctx, can.id, {})).ok, "a verified purchase has its bill");
+    assert.ok((await mod("register").actions!.reopen(ctx, can.id, {})).ok);
+    assert.ok((await mod("register").actions!.billNotReceived(ctx, can.id, {})).ok);
+    const [back] = await db.select().from(erpPurchases).where(eq(erpPurchases.id, can.id));
+    assert.equal(back.billReceived, "Bill Not Received");
+    assert.equal(purchaseStage(back), "Arrived");
   });
 
   test("only the verifier sets Purchase Verified", async () => {

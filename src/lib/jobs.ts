@@ -133,6 +133,12 @@ export type JobName =
   | "erp-alerts"
   | "erp-digest"
   | "erp-inbox"
+  /**
+   * The ERP's orders into MahekOne's order book, all of them, and the Call
+   * Log's hold rebuilt from the ERP's open lines. The step to run the day
+   * `erp.orders.live` is turned on; it writes nothing while it is off.
+   */
+  | "erp-book-sync"
   | "party-sync"
   | "project-sheet"
   | "revert-sheet-paid"
@@ -902,6 +908,20 @@ export async function runJob(
       return [await run("erp-alerts", erpAlertsStep, triggeredById)];
     case "erp-inbox":
       return [await run("erp-inbox", erpInboxStep, triggeredById)];
+    case "erp-book-sync":
+      return [
+        await run(
+          "erp-book-sync",
+          async () => {
+            const { erpOrdersLive, syncAllBookOrders } = await import("./erp/book");
+            if (!(await erpOrdersLive())) return { recordsAffected: 0, detail: "the ERP does not take the orders yet (erp.orders.live is off) — nothing written" };
+            const n = await syncAllBookOrders();
+            const holds = await (await import("./recompute")).recomputeOrderSystemHolds();
+            return { recordsAffected: n, detail: `${n} ERP orders in the book · ${holds.held} customers held off the Call Log` };
+          },
+          triggeredById,
+        ),
+      ];
     case "erp-digest":
       return [
         await run(

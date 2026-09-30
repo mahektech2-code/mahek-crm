@@ -1,6 +1,6 @@
 "use client";
 
-import { erpHref, erpScreen } from "@/lib/erp/registry";
+import { erpLink, erpScreen } from "@/lib/erp/registry";
 import { inr } from "@/lib/erp/ui";
 import { SectionLabel } from "@/components/ui/primitives";
 import { registerPanel, type PanelProps } from "../panels";
@@ -23,7 +23,7 @@ type Assist = {
 function href(s: Step): string | null {
   const screen = erpScreen(s.screen);
   if (!screen || !s.ids.length) return null;
-  return `${erpHref(screen)}?f=${encodeURIComponent(s.ids.join(","))}&fl=${encodeURIComponent(s.stage)}`;
+  return erpLink(s.screen, { f: s.ids.join(","), fl: s.stage });
 }
 
 function TracePanel({ data }: PanelProps) {

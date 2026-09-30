@@ -23,7 +23,7 @@ import {
   erpProductPacking,
   erpPurchases,
   erpRawMaterials,
-  erpRequests,
+  complaints,
   erpSuppliers,
   erpTests,
   erpTransports,
@@ -34,6 +34,7 @@ import {
   users,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
+import { createComplaint } from "@/lib/services/complaint-create";
 import { erpContext } from "@/lib/erp/access";
 import { featureState, logSuggestion } from "@/lib/erp/ai";
 import { askTools } from "@/lib/erp/ai-ask";
@@ -247,11 +248,12 @@ describe("LR and test photos (AI-8)", () => {
 describe("complaint review (AI-6)", () => {
   test("a confirmed suggestion sets the type, and the summary is kept with it", async () => {
     const a = await as(admin);
-    await db.insert(erpRequests).values({ id: "req_1", customerId: "cus_shree", description: "Two cans came dented", complaintType: null });
-    const sid = await logSuggestion({ feature: "complaints", recordType: "erp_request", recordId: "req_1", proposed: { type: "Packaging", summary: "Two cans arrived dented." }, confidence: { type: "high" }, userId: a.user.id });
-    await ok(applyComplaint(a, sid, { type: "Packaging", summary: "Two cans arrived dented." }));
-    const [r] = await db.select().from(erpRequests).where(eq(erpRequests.id, "req_1"));
-    assert.equal(r.complaintType, "Packaging");
+    /* The complaint is the CRM's own record, so the confirmed type is the category the telecaller sees too. */
+    await createComplaint({ id: "req_1", customerId: "cus_shree", loggedById: a.user.id, loggedByName: a.user.name, category: "Other", description: "Two cans came dented" });
+    const sid = await logSuggestion({ feature: "complaints", recordType: "complaint", recordId: "req_1", proposed: { type: "Leakage / Packaging", summary: "Two cans arrived dented." }, confidence: { type: "high" }, userId: a.user.id });
+    await ok(applyComplaint(a, sid, { type: "Leakage / Packaging", summary: "Two cans arrived dented." }));
+    const [r] = await db.select().from(complaints).where(eq(complaints.id, "req_1"));
+    assert.equal(r.category, "packaging_damage");
     const [s] = await db.select().from(erpAiSuggestions).where(eq(erpAiSuggestions.id, sid));
     assert.equal(s.outcome, "accepted");
   });
@@ -266,6 +268,6 @@ describe("Ask the ERP's tools (AI-5)", () => {
     assert.ok(res.rows.length >= 2);
     assert.ok(res.rows.every((r) => !("rate" in r) && !("final" in r)));
     assert.ok(res.hiddenFromThisPerson.includes("Rate"));
-    assert.ok(records[0].href.startsWith("/erp/register?f="));
+    assert.ok(records[0].href.startsWith("/erp/register?view=register&f="), records[0].href);
   });
 });

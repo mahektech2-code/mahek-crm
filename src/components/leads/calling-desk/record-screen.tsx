@@ -42,6 +42,7 @@ import {
   LogCallDialog,
   LostDialog,
   AssignDialog,
+  ConvertDialog,
   MessageDialog,
   NextActionDialog,
   RequestDialog,
@@ -49,7 +50,10 @@ import {
 
 type Coded = { code: string; label: string };
 type Tab = "overview" | "calls" | "comms" | "timeline";
-type DialogState = { kind: "call" | "message" | "next" | "request" | "lost" | "assign"; preset?: string | null } | null;
+type DialogState = {
+  kind: "call" | "message" | "next" | "request" | "convert" | "lost" | "assign";
+  preset?: string | null;
+} | null;
 
 /* ---------------------------------------------------------------------------
  * The Telecaller's lead record — Version 6, drawn from the real lead.
@@ -127,7 +131,10 @@ export function RecordScreen({
       ? (lostReasons.find((r) => r.code === lead.lost!.reasonCode)?.label ?? lead.lost.reasonCode)
       : null);
   const canCall = canWork && next !== null;
-  const canRequest = canWork && (phase === "ready" || phase === "returned");
+  /* "Ready" converts straight to Prospect now; "returned" still resubmits into
+     the Sales Manager's verification queue it was sent back from — that button
+     is gated on `canWork` alone, as it always was. */
+  const canConvert = canWork && phase === "ready";
   const canClose = canWork && (working || phase === "ready" || phase === "returned" || phase === "exhausted");
   const tabs: [Tab, string][] = [
     ["overview", "Overview"],
@@ -179,12 +186,11 @@ export function RecordScreen({
               calls needed.
             </div>
             <div className="text-[12.5px] text-muted">
-              Requesting a Prospect sends the lead, with everything collected, to the Sales Manager. It becomes a
-              Prospect only when they verify it.
+              Converting to Prospect moves this lead now — no Sales Manager verification call is needed.
             </div>
           </div>
-          <Button variant="primary" disabled={!canRequest} onClick={() => open("request")}>
-            Request Prospect
+          <Button variant="primary" disabled={!canConvert} onClick={() => open("convert")}>
+            Convert to Prospect
           </Button>
         </Card>
       ) : null}
@@ -446,7 +452,7 @@ export function RecordScreen({
                 lead={lead}
                 canWork={canWork}
                 onCall={() => open("call")}
-                onRequest={() => open("request")}
+                onConvert={() => open("convert")}
                 onLost={() => open("lost")}
                 onOpenCalls={() => setTab("calls")}
               />
@@ -463,6 +469,7 @@ export function RecordScreen({
                 status={status.text}
                 onCall={() => open("call")}
                 onMessage={() => open("message")}
+                onConvert={() => open("convert")}
                 onRequest={() => open("request")}
                 onLost={() => open("lost")}
               />
@@ -492,6 +499,9 @@ export function RecordScreen({
       {dialog?.kind === "next" ? <NextActionDialog lead={lead} today={today} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === "request" ? (
         <RequestDialog lead={lead} prospectReasons={prospectReasons} onClose={() => setDialog(null)} />
+      ) : null}
+      {dialog?.kind === "convert" ? (
+        <ConvertDialog lead={lead} prospectReasons={prospectReasons} onClose={() => setDialog(null)} />
       ) : null}
       {dialog?.kind === "lost" ? <LostDialog lead={lead} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === "assign" ? (
@@ -719,14 +729,14 @@ function SuspectCallsTracker({
   lead,
   canWork,
   onCall,
-  onRequest,
+  onConvert,
   onLost,
   onOpenCalls,
 }: {
   lead: DeskLeadRecord;
   canWork: boolean;
   onCall: () => void;
-  onRequest: () => void;
+  onConvert: () => void;
   onLost: () => void;
   onOpenCalls: () => void;
 }) {
@@ -770,19 +780,19 @@ function SuspectCallsTracker({
       </div>
       {showButtons ? (
         <div className="mt-3.5 flex flex-wrap items-center gap-2">
-          <Button variant="primary" disabled={!canDecide || !canWork} onClick={onRequest}>
-            Request Prospect
+          <Button variant="primary" disabled={!canDecide || !canWork} onClick={onConvert}>
+            Convert to Prospect
           </Button>
           <Button variant="secondary" disabled={!canWork} onClick={onLost}>
             Not a Prospect
           </Button>
           {!canDecide ? (
             <span className="text-[12.5px] text-muted">
-              Requesting a Prospect unlocks when every required answer is in ({req.done} of {req.total}).
+              Converting to Prospect unlocks when every required answer is in ({req.done} of {req.total}).
             </span>
           ) : (
             <span className="text-[12.5px] text-muted">
-              The Sales Manager verifies the request before it becomes a Prospect.
+              Converts immediately — no Sales Manager verification is needed.
             </span>
           )}
         </div>
@@ -1032,6 +1042,7 @@ function GateActionCard({
   status,
   onCall,
   onMessage,
+  onConvert,
   onRequest,
   onLost,
 }: {
@@ -1040,6 +1051,7 @@ function GateActionCard({
   status: string;
   onCall: () => void;
   onMessage: () => void;
+  onConvert: () => void;
   onRequest: () => void;
   onLost: () => void;
 }) {
@@ -1055,9 +1067,9 @@ function GateActionCard({
   if (p === "lost") return note("No further action — this lead is closed. Its history stays for reference.");
   if (p === "ready")
     return box(
-      "All required answers are in. Request the Prospect and pick the reason it is worth pursuing. The Sales Manager then verifies what you collected — you are not converting it yourself.",
-      <Button variant="primary" disabled={!canWork} onClick={onRequest}>
-        Request Prospect
+      "All required answers are in. Pick the reason it is worth pursuing and convert it — this moves the lead to Prospect at once, with no Sales Manager verification call needed.",
+      <Button variant="primary" disabled={!canWork} onClick={onConvert}>
+        Convert to Prospect
       </Button>,
     );
   if (p === "requested")

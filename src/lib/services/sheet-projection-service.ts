@@ -14,6 +14,7 @@ import {
   type OrderLine,
 } from "@/db/schema";
 import { isReceived, netOfTaxPaise } from "@/lib/sheet-parse";
+import { getConfig } from "@/lib/config/store";
 import {
   recomputeAllBillPaid,
   recomputeAllBuyingCycles,
@@ -1255,6 +1256,23 @@ export async function projectSheet(
   options: ProjectionOptions = {},
 ): Promise<ProjectionReport> {
   const customerResult = await projectCustomers(options);
+
+  /*
+   * THE ERP TAKES THE ORDERS once `erp.orders.live` is on, and from then the
+   * sheet is history rather than a source: it writes no order and no bill. Two
+   * authors of one book is every order counted twice. Customers still come
+   * from the party tab — the sheet is simply right about those.
+   */
+  if ((await getConfig())["erp.orders.live"]) {
+    const none = { created: 0, updated: 0, payments: 0, paidWithoutDate: 0, blankStatus: 0, clashed: 0, unstated: 0, skipped: true };
+    return {
+      customers: customerResult,
+      orders: { created: 0, updated: 0, lines: 0 },
+      bills: none,
+      skipped: [{ reason: "the ERP takes the orders (erp.orders.live), so the sheet writes no orders or bills", count: 0 }],
+    };
+  }
+
   const { orders: orderResult, skipped } = await projectOrders(options);
 
   // A sales bill is the order, so bills come from the order history by

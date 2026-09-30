@@ -282,6 +282,7 @@ export async function prepareMessage(
   if (customer.doNotContact) {
     return err(`${customer.name} is marked do not contact.`, "rule_violation");
   }
+  if (customer.whatsappDnd) return err(`${customer.name} is on WhatsApp DND${customer.whatsappDndReason ? ` — ${customer.whatsappDndReason}` : ""}.`, "rule_violation");
 
   const [template] = await db
     .select()
@@ -426,6 +427,7 @@ export async function previewMessage(
   const [template] = await db.select().from(waTemplates).where(eq(waTemplates.id, templateId));
   if (!template) return { ok: false, reasons: ["That template no longer exists."] };
   if (customer.doNotContact) return { ok: false, reasons: [`${customer.name} is marked do not contact.`] };
+  if (customer.whatsappDnd) return { ok: false, reasons: [`${customer.name} is on WhatsApp DND${customer.whatsappDndReason ? ` — ${customer.whatsappDndReason}` : ""}.`] };
 
   const delivery = await deliveryContext();
   const route = routeFor(delivery, { destKind, watiTemplateName: template.watiTemplateName, edited: false });
@@ -680,6 +682,7 @@ async function sendAutomaticAs(
   if (!customer) return err("That customer no longer exists.", "not_found");
   if (actor.checkScope) await assertCustomerInScope(customer);
   if (customer.doNotContact) return err(`${customer.name} is marked do not contact.`, "rule_violation");
+  if (customer.whatsappDnd) return err(`${customer.name} is on WhatsApp DND${customer.whatsappDndReason ? ` — ${customer.whatsappDndReason}` : ""}.`, "rule_violation");
 
   const [template] = message.templateId
     ? await db.select().from(waTemplates).where(eq(waTemplates.id, message.templateId))

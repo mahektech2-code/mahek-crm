@@ -32,3 +32,26 @@ test("the dashboard is the app root and does not swallow the other screens", () 
 test("every power has a label and a sentence saying where it came from", () => {
   for (const p of ERP_POWERS) assert.ok(ERP_POWER_LABEL[p].label && ERP_POWER_LABEL[p].source);
 });
+
+test("a tab is never a module, and every link to one lands on its screen's tab", async () => {
+  const { erpLink, erpPlace, erpKeysOf } = await import("./registry");
+  const modules = new Set(modulesForApp("erp").map((m) => m.key));
+  const tabKeys = new Set<string>();
+  for (const sc of ERP_SCREENS) {
+    for (const k of erpKeysOf(sc).filter((k) => k !== sc.key)) {
+      assert.ok(!modules.has(`erp.${k}`), `${k} is a tab and must not be grantable on its own`);
+      assert.ok(!tabKeys.has(k), `${k} is a tab of two screens`);
+      tabKeys.add(k);
+      assert.equal(erpPlace(k)?.screen.key, sc.key);
+    }
+  }
+  assert.equal(erpLink("pendingLr"), "/erp/transport");
+  assert.equal(erpLink("trackLr", { f: "a,b", fl: "In Transit" }), "/erp/transport?view=trackLr&f=a%2Cb&fl=In+Transit");
+  assert.equal(erpLink("transport"), "/erp/transport?view=transport");
+  assert.equal(erpLink("rmLog"), "/erp/stock?view=rmLog");
+  assert.equal(erpLink("stock"), "/erp/stock");
+  assert.equal(erpLink("reorderRm"), "/erp/rm-levels");
+  assert.equal(erpLink("customers", { open: "c1" }), "/erp/customers?open=c1");
+  assert.equal(erpLink("gone"), "/erp");
+  for (const sc of ERP_SCREENS) assert.equal(new Set(erpKeysOf(sc)).size, erpKeysOf(sc).length, `${sc.key}'s keys are listed once, or its badge counts twice`);
+});

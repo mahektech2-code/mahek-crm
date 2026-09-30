@@ -63,6 +63,7 @@ const SOURCE_WORD: Record<string, string> = {
   crm: "Call",
   mbos: "Field",
   external: "Sheet import",
+  erp: "ERP",
 };
 
 function orderLabel(orderNo: string | null, externalRef: string | null): string {
@@ -617,7 +618,7 @@ async function sourceFoot(ctx: Ctx): Promise<string> {
   const total = rows.reduce((s, r) => s + Number(r.n), 0);
   const lead = "Every figure here is company-wide and follows the period.";
   if (!total) return `${lead} No order counted in this period, so there are no sources to split.`;
-  const word: Record<string, string> = { crm: "calls", mbos: "field", external: "order sheet import" };
+  const word: Record<string, string> = { crm: "calls", mbos: "field", external: "order sheet import", erp: "the ERP" };
   const parts = ["crm", "mbos", "external"]
     .map((k) => ({ k, n: Number(rows.find((r) => r.source === k)?.n ?? 0) }))
     .filter((p) => p.n > 0)
@@ -897,7 +898,7 @@ async function orderRecord(id: string): Promise<RecordView> {
     { label: "Order", value: label },
     { label: "Customer", value: [o.customer, o.city].filter(Boolean).join(", ") },
     { label: "Status", value: status.sub ? `${status.t} — ${status.sub}` : status.t },
-    { label: "Came in through", value: o.source === "crm" ? "A call logged in the CRM" : o.source === "mbos" ? "The Salesman App" : "The order sheet" },
+    { label: "Came in through", value: o.source === "crm" ? "A call logged in the CRM" : o.source === "mbos" ? "The Salesman App" : o.source === "erp" ? "The ERP's order desk" : "The order sheet" },
     { label: "Ordered", value: d(o.ordered_at) },
     { label: "Value, with GST", value: inr(Number(o.total_amount)) },
     { label: "Value, excl. GST", value: o.net_amount_paise === null ? "Not stated on this order" : inr(Number(o.net_amount_paise)) },

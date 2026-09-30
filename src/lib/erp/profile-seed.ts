@@ -47,7 +47,6 @@ export async function seedErpCustomerProfiles(): Promise<{ matched: number; crea
       grade: p.grade,
       standingInstructions: p.standingInstructions,
       allocateEmail: p.allocateEmail,
-      monthlyTargetPaise: p.monthlyTargetPaise,
       pendingActivation: (p.partyStatus ?? "").trim().toLowerCase() === "pending",
     };
     const have = existing.get(customerId);

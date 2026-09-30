@@ -1254,6 +1254,48 @@
       "when": 1790370358688,
       "tag": "0180_erp_alerts_and_ai",
       "breakpoints": true
+    },
+    {
+      "idx": 180,
+      "version": "7",
+      "when": 1790370418688,
+      "tag": "0181_whatsapp_dnd",
+      "breakpoints": true
+    },
+    {
+      "idx": 181,
+      "version": "7",
+      "when": 1790370518688,
+      "tag": "0182_erp_screens_merged",
+      "breakpoints": true
+    },
+    {
+      "idx": 182,
+      "version": "7",
+      "when": 1790370618688,
+      "tag": "0183_erp_one_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "7",
+      "when": 1790370718688,
+      "tag": "0184_erp_complaints_are_crm_complaints",
+      "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "7",
+      "when": 1790370818688,
+      "tag": "0185_erp_one_purchase_screen",
+      "breakpoints": true
+    },
+    {
+      "idx": 185,
+      "version": "7",
+      "when": 1790370918688,
+      "tag": "0186_erp_recipes",
+      "breakpoints": true
     }
   ]
 }

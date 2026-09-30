@@ -6,8 +6,7 @@ import { getConfig } from "@/lib/config/store";
 import { readSecret } from "@/lib/secrets";
 import type { ErpContext } from "./access";
 import { featureState, logSuggestion } from "./ai";
-import { addDaysIso } from "./engines/sales";
-import { erpHref, erpScreen } from "./registry";
+import { erpLink, erpListLabel, erpScreen } from "./registry";
 import { screenModule } from "./screens";
 import { today } from "./screens/common";
 import { traceBill } from "./trace";
@@ -28,14 +27,13 @@ const MAX_ROWS = 12;
 
 /** Rows of one screen, as the person would see them, narrowed by a predicate. */
 async function fromScreen(ctx: ErpContext, key: string, keep: (r: ListRow) => boolean, label: string, records: AskRecord[]) {
-  if (!ctx.screens.has(key)) return { refused: `The ${erpScreen(key)?.label ?? key} screen is not on this person's account.` };
+  if (!ctx.screens.has(key)) return { refused: `The ${erpListLabel(key)} screen is not on this person's account.` };
   const mod = screenModule(key);
   if (!mod) return { refused: "That screen is not built." };
   const { spec, rows } = await mod.load(ctx);
   const kept = rows.filter(keep);
-  const screen = erpScreen(key)!;
-  const href = kept.length && kept.length <= 200 ? `${erpHref(screen)}?f=${encodeURIComponent(kept.map((r) => r.id).join(","))}&fl=${encodeURIComponent(label)}` : erpHref(screen);
-  records.push({ label: `${screen.label} · ${label} (${kept.length})`, href });
+  const href = kept.length && kept.length <= 200 ? erpLink(key, { f: kept.map((r) => r.id).join(","), fl: label }) : erpLink(key);
+  records.push({ label: `${erpListLabel(key)} · ${label} (${kept.length})`, href });
   const cols = spec.cols.filter((c) => c.t !== "f").map((c) => c.k);
   return {
     count: kept.length,
@@ -58,7 +56,7 @@ export function askTools(ctx: ErpContext, records: AskRecord[]) {
         fromScreen(ctx, { rm: "rmStock", sfg: "sfgStock", fg: "fgStock", pack: "packStock" }[stage], (r) => anyHas(r, item) && has(r.v.godown, godown), [item, godown].filter(Boolean).join(" at ") || "all", records),
     }),
     orders: tool({
-      description: "Taken order lines, by status (Under Process, Ready, Today, Delay, Cancel, Tomorrow, Hold From Office) and words to match (customer, SKU, order number). Includes allocation state and whether billed.",
+      description: "Taken order lines, by status (Under Process, Ready, Hold From Office, Cancel) and words to match (customer, SKU, order number). Includes allocation state, whether billed, and the planned dispatch date (a line due today or late is flagged).",
       inputSchema: z.object({ status: z.string().nullable(), match: z.string().nullable() }),
       execute: async ({ status, match }) => fromScreen(ctx, "orders", (r) => has(r.v.status, status) && anyHas(r, match), [status, match].filter(Boolean).join(" · ") || "all", records),
     }),
@@ -84,8 +82,7 @@ export function askTools(ctx: ErpContext, records: AskRecord[]) {
         if (!c) return { refused: `No customer is named "${customerName}".` };
         const t = await traceBill(c.id, billNo, sku);
         t.steps.forEach((s) => {
-          const screen = erpScreen(s.screen);
-          if (screen && ctx.screens.has(s.screen)) records.push({ label: `${s.stage}: ${s.label}`, href: `${erpHref(screen)}?f=${encodeURIComponent(s.ids.join(","))}&fl=${encodeURIComponent(s.stage)}` });
+          if (erpScreen(s.screen) && ctx.screens.has(s.screen)) records.push({ label: `${s.stage}: ${s.label}`, href: erpLink(s.screen, { f: s.ids.join(","), fl: s.stage }) });
         });
         return { steps: t.steps.map((s) => ({ stage: s.stage, label: s.label, detail: s.detail })), missing: t.missing };
       },
@@ -94,19 +91,6 @@ export function askTools(ctx: ErpContext, records: AskRecord[]) {
       description: "Items to re-order: followed raw materials below their level (rm) or finished goods below their minimum (fg).",
       inputSchema: z.object({ kind: z.enum(["rm", "fg"]) }),
       execute: async ({ kind }) => fromScreen(ctx, kind === "rm" ? "reorderRm" : "reorderFg", () => true, "all", records),
-    }),
-    followups: tool({
-      description: "Customers to call about their next order: due today, overdue, or in the next seven days.",
-      inputSchema: z.object({ window: z.enum(["today", "overdue", "week"]) }),
-      execute: async ({ window }) => {
-        const d = today();
-        const week = addDaysIso(d, 7);
-        return fromScreen(ctx, "followup", (r) => {
-          const c = r.v.calling as string | null;
-          if (!c) return false;
-          return window === "today" ? c === d : window === "overdue" ? c < d : c > d && c <= week;
-        }, window, records);
-      },
     }),
     transport: tool({
       description: "Dispatched bills in transport follow-up, by material stage or words to match (LR, transporter, customer).",

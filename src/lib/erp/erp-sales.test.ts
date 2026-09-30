@@ -23,6 +23,7 @@ import {
   erpPackEntries,
   erpProductPacking,
   finishedGoods,
+  monthlyTargets,
   priceListDiscountTerms,
   priceListRates,
   priceLists,
@@ -35,6 +36,7 @@ import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { fgLots, packLots } from "@/lib/erp/stock";
+import { dueOf } from "@/lib/erp/screens/sales";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-09-20";
@@ -101,9 +103,11 @@ before(async () => {
     { id: "cus_new", name: "New Colour House", city: "Nashik", phone: "9876500002", kind: "lead", priceTag: LIST },
   ]);
   await db.insert(erpCustomerProfiles).values([
-    { customerId: "cus_shree", transporter: "VRL", standingInstructions: "Call first", weightType: "With Weight", monthlyTargetPaise: 500000 },
+    { customerId: "cus_shree", transporter: "VRL", standingInstructions: "Call first", weightType: "With Weight" },
     { customerId: "cus_new", pendingActivation: true },
   ]);
+  /* The target is the CRM's Monthly Targets row for the month dispatched in. */
+  await db.insert(monthlyTargets).values({ id: id("mt"), customerId: "cus_shree", year: 2026, month: 9, targetAmount: 500000, isDefault: false });
 
   const [pl] = await db.insert(priceLists).values({ id: id("pl"), name: LIST, effectiveFrom: "2026-01-01", status: "published" }).returning();
   await db.insert(priceListRates).values([
@@ -186,15 +190,16 @@ describe("allocating lots", () => {
 });
 
 describe("order details and dispatch", () => {
-  test("a line reaches order details only when Ready, Done, billed, rated and fully allocated", async () => {
+  test("Bill it takes a Ready, fully allocated line with a bill no. and a rate — one step, not Done then Add To Order Details", async () => {
     const ctx = await as(admin);
     const loose = await orderFor(looseId);
-    const blocked = await mod("orders").actions!.toDetails(ctx, loose.id, {});
-    assert.match(msg(blocked), /a Tally bill no\., entry Done/);
-    assert.ok((await mod("orders").actions!.done(ctx, loose.id, {})).ok);
+    const blocked = await mod("orders").actions!.bill(ctx, loose.id, {});
+    assert.match(msg(blocked), /a Tally bill no\./);
     const edit = await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "20", rate: "400", discount: "5", bill: "MMI/26-27/101", transport: "0" }, [], loose.id);
     assert.ok(edit.ok, JSON.stringify(edit));
-    assert.ok((await mod("orders").actions!.toDetails(ctx, loose.id, {})).ok);
+    assert.ok((await mod("orders").actions!.bill(ctx, loose.id, {})).ok);
+    assert.equal((await orderFor(looseId)).entryStatus, "Done", "billing it is what Done means");
+    assert.equal((await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id))).length, 1);
     const pending = await mod("pendingOrders").load(ctx);
     assert.ok(!pending.rows.some((r) => r.v.orderNo === String(loose.orderNo)), "an order in details has left the pending list");
   });
@@ -229,24 +234,24 @@ describe("order details and dispatch", () => {
 });
 
 describe("numbers and releases", () => {
-  test("Generate New Order Number gives the whole selection one number (A-17)", async () => {
+  test("a dispatch date is planned, and the lists say today, tomorrow or late from it", async () => {
     const ctx = await as(admin);
-    const made = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [
-      { sku: LOOSE, qty: "1" },
-      { sku: LOOSE, qty: "2" },
-    ]);
+    const made = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints", dispatchOn: "2026-10-05" }, [{ sku: LOOSE, qty: "1" }]);
     assert.ok(made.ok);
-    const fresh = (await db.select().from(erpOrders).where(eq(erpOrders.qtyCans, 1))).concat(await db.select().from(erpOrders).where(eq(erpOrders.qtyCans, 2)));
-    const ids = fresh.filter((o) => o.billingCustomerId === "cus_shree").map((o) => o.id);
-    assert.ok((await mod("orders").bulk!.renumber(ctx, ids, {})).ok);
-    const after = await db.select({ no: erpOrders.orderNo }).from(erpOrders).where(sql`${erpOrders.id} in ${ids}`);
-    assert.equal(new Set(after.map((a) => a.no)).size, 1);
+    const [o] = await db.select().from(erpOrders).where(eq(erpOrders.qtyCans, 1));
+    assert.equal(o.dispatchOn, "2026-10-05");
+    assert.equal(o.status, "Under Process");
+    assert.equal(dueOf("2026-10-05", false, "Under Process", "2026-10-05"), "today");
+    assert.equal(dueOf("2026-10-06", false, "Ready", "2026-10-05"), "tomorrow");
+    assert.equal(dueOf("2026-10-01", false, "Ready", "2026-10-05"), "late");
+    assert.equal(dueOf("2026-10-01", true, "Ready", "2026-10-05"), null, "once it has left it is not late");
+    assert.equal(dueOf("2026-10-01", false, "Cancel", "2026-10-05"), null);
+    assert.equal(dueOf(null, false, "Ready", "2026-10-05"), null);
   });
 
-  test("releasing an allocation gives the stock back and undoes Done", async () => {
+  test("releasing an allocation gives the stock back, and a billed line's lots stay until its billing is undone", async () => {
     const ctx = await as(admin);
     const boxed = await orderFor(boxedId);
-    assert.ok((await mod("orders").actions!.done(ctx, boxed.id, {})).ok);
     const [bc] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, boxed.id));
     assert.ok((await mod("batchCodes").actions!.release(ctx, bc.id, {})).ok);
     assert.equal((await packLots())[0].stock, 10);

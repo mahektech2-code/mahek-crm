@@ -259,6 +259,8 @@ export function RecordScreen({
     paysInDays: number;
     creditTermDays: number;
     gstin: string | null;
+    /** A+ to C, kept on the ERP's Sales Party profile. */
+    grade: string | null;
     route: string | null;
     area: string | null;
     territoryRegion: string | null;
@@ -266,6 +268,8 @@ export function RecordScreen({
     /** A shop we deliver to, billed by its distributor. */
     thirdParty: boolean;
     doNotContact: boolean;
+    whatsappDnd: boolean;
+    whatsappDndReason: string | null;
     customerSince: string | null;
     deactivationRequested: boolean;
     deactivationReason: string | null;
@@ -1043,6 +1047,7 @@ export function RecordScreen({
             */}
             <dl className="mt-2.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm leading-[22px]">
               <Fact label="GSTIN" value={customer.gstin} />
+              <Fact label="Grade" value={customer.grade} />
               <Fact label="Credit terms" value={`${customer.creditTermDays} days`} />
               <Fact label="Route" value={customer.route} />
               <Fact label="Area" value={customer.area} />
@@ -1181,6 +1186,9 @@ export function RecordScreen({
                 />
               ) : null}
               {customer.doNotContact ? <Fact label="Standing" value="Do not contact" /> : null}
+              {customer.whatsappDnd ? (
+                <Fact label="WhatsApp" value={`DND${customer.whatsappDndReason ? ` — ${customer.whatsappDndReason}` : ""}`} />
+              ) : null}
               {/* Who it was before, and why it moved. The question people ask
                   after a resignation is not who owns this now — the line above
                   answers that — it is what happened to it. */}

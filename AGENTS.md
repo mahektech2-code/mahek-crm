@@ -1332,15 +1332,34 @@ outside those documents is in scope.
 **One registry, three readers.** `lib/erp/registry.ts` lists every screen by
 group. A screen becomes a module (`erp.<key>`) in `lib/modules.ts` only once it
 is `built`, and the sidebar, the module guard and the Access screen all read
-it. Each screen is its own module because the source granted screens one at a
-time. The dashboard and Settings are always open.
+it. The dashboard and Settings are always open.
+
+**A list that was only a filter is a TAB, not a screen.** Mahek Plus drew a
+separate view for every filter of one table — Pending LR, Track LR and All
+transport are one list three ways; each stock stage had an "available" view and
+a "log" view — and the first build copied every one into its own sidebar entry,
+module and grant: 54 screens. A screen's `views` in the registry are its tabs.
+Each tab keeps its own server module under its own key (its rows and actions
+are exactly what they were), is reached as `?view=<key>`, and is opened by
+holding the SCREEN: `erpContext` adds every tab's key to the screens a holder
+may use, so a check naming `pendingLr` answers as Transport. A tab is never a
+module, so it can never be granted apart from its screen, and
+`registry.test.ts` pins that. Link to a list with `erpLink(key)`, never by
+pasting `?f=` onto `erpHref` — a tab's link already carries a query.
+`0182_erp_screens_merged` moved every grant naming an old screen onto the
+screen it became; `next.config.ts` redirects the old URLs.
 
 **Its decisions are POWERS granted to people, not capabilities of a level.**
 The source tied "verify a test", "see purchase money" and the rest to three
 email addresses and an admin role; a hat (app, level) cannot say "the CEO"
 without making every ERP manager the CEO. `lib/erp/powers.ts` names them,
 `erp_user_powers` grants them, an ERP administrator holds all of them without a
-row, and the ERP powers screen is where an administrator hands them out. A
+row. They are handed out on the Admin Console's Access dialog, under the ERP
+app's screens — one place decides what somebody's ERP lets them do — and
+`setAccess` refuses a change to them from anybody who is not an ERP
+administrator (or holds the directory power), because a manager may grant the
+ERP and is still not the person who decides who verifies tests. Taking the ERP
+away takes its powers with it, like its module rows. A
 column a power reveals is removed on the SERVER (`visibleCols` /
 `withoutHidden`) — the value never reaches the browser — and every write that
 needs one re-checks it in the handler.
@@ -1367,7 +1386,7 @@ guessed default.
 **The ERP extends MahekOne's records rather than copying them** (PRD §8): a
 Sales Party IS a `customers` row plus `erp_customer_profiles`; a product IS a
 `products` row plus `erp_product_packing`; price lists are the Price Desk's,
-read; employees are HRMS's, read. "Deactive" is the customer's own
+read; employees are HRMS's, and the ERP no longer draws its own copy of them. "Deactive" is the customer's own
 `status = deactivated`, so the CRM and the ERP cannot disagree about whether a
 customer is closed. "Item Lost Record" is a reserved godown, so a write-off is
 a movement into a real location rather than stock that simply vanished.
@@ -1385,9 +1404,75 @@ transaction, is how two saves both spend the last litre.
 
 **Automations run in the save that qualifies them** (spec §18): a rated
 purchase posts to RM stock, a complete packing batch posts its one entry, a
-line entering order details gets its follow-up record, a bill's first verified
-line opens its transport record (a unique index is the "once"). Routing that
-needs a decision stays a button, as in the source.
+line is billed and enters order details in one step, a bill's first verified
+line opens its transport record (a unique index is the "once"), and an inward
+line goes to testing or to the register AS IT IS SAVED — the item's testing
+list already answered which, so the "Send to Testing / Send to Purchase" press
+Mahek Plus asked for is gone, kept only as the way out for a line the register
+refused (a lot number already taken). A purchase's bill and its status are one
+progress line (`purchaseStage`: Arrived or Tested → Bill received → Matched →
+Verified); recording the bill is the Invoice Received step, and a status past
+Pending means the bill is in hand.
+
+**ONE ORDER BOOK, and the ERP writes into it once it takes the orders.**
+MahekOne's `orders` and `bills` are what targets, the Call Log, outstanding,
+the buying cycle and the owner's KPIs read, and they were filled from the
+Taken Order and Order Details sheets. An ERP keeping its orders to itself was
+a second order book none of those could see. `erp.orders.live` is the
+cut-over: off (the default) the ERP runs on its own and the sheet stays the
+source; on, `lib/erp/book.ts` writes every ERP order NUMBER as one `orders`
+row (`source = erp`, `ERP-<n>`) and, once dispatch-verified, one `bills` row
+(`ERPBILL-<n>`, `stated`, under the Tally number or the sheet's fallback
+chain) — the sheet projection writes no order or bill, a Pending customer's
+order waits in the Accounts approval queue instead of on "Approved By Admin"
+(`afterBookDecision` tells the ERP lines the answer), and
+`recomputeOrderSystemHolds` reads the ERP's open lines instead of the Taken
+Order tab. The book copy is a PROJECTION rewritten whole after every ERP
+order write (`syncBookOrders`), never edited in place, and its keys are its
+own so the sheet can never overwrite it. `npm run jobs -- erp-book-sync`
+rebuilds all of it on go-live day. Never turn the switch on while the team is
+still typing orders into the sheet: every order would be counted twice.
+
+**Billing is one step, and dates are dates.** Mahek Plus asked for "Done" and
+then "Add To Order Details", because billing lived in another sheet; "Bill
+it" is both, and "Undo billing" is the way back until dispatch-verification.
+Today, Tomorrow and Delay were dates written as statuses — `dispatch_on` holds
+the date and the lists say today, tomorrow or late from it. The order screens
+are tabs of one Orders screen, order follow-up is the CRM's buying cycle rather
+than a second prediction, and a customer's monthly target is the CRM's Monthly
+Targets row, never a column of the ERP's own.
+
+**A COMPLAINT IS A COMPLAINT, whichever app raised it.** The ERP's "customer
+requests" were a second table with the CRM complaint's own fields, so a
+salesman's complaint raised in the ERP never reached the telecaller on the
+customer's next call, and credit notes were recorded in two places. The ERP's
+Complaints & credit notes screen reads and writes `complaints`: raising goes
+through `createComplaint` (`lib/services/complaint-create.ts`, which the CRM's
+`logComplaint` also calls, so both get the SLA and the opening history line);
+accepting and rejecting are the complaint's own status, decided by the ERP's
+"decide requests" power; issuing a credit note is the Accounts service
+(`issueCreditNote`), so it comes off the bill in the ledger and needs
+`creditnote.issue`. "Pending CN" and its Credit Note Updater are gone — an
+order line's margin reads the issued credit note where it is
+(`issuedCreditNotes`). An ERP-only user opens a complaint's files through the
+ERP's complaints screen (`canRead` falls back to it). 0184 carried every ERP
+request across under the same id; `erp_requests` is retired, not dropped.
+
+**What filling and packing use comes out of stock** (spec §14 A-30). Mahek
+Plus subtracted empty cans and boxes only on the re-order screen, so the lot
+stock counted every can ever bought. `rmLots` now takes the cans a filling
+record used and the empty boxes a packing batch used from the item's lots at
+that godown, OLDEST FIRST (neither document names a lot), leaving any excess on
+the newest lot as a visible negative. `rmLevelAvailable` reads that stock as it
+stands — subtracting again would count every can twice — and a packing batch is
+refused on its first line when its empty boxes are not at the godown.
+
+**A recipe is expected, never a gate.** `erp_recipes` holds what one batch of an
+SFG product takes. "Start a batch" opens the SFG form with the recipe's lines,
+and a batch line that used more than `erp.production.recipeTolerancePercent`
+above it is flagged on the batches list; nothing is refused. A new below-level
+alert tells whoever works at that godown and can raise requisitions, once, as it
+is raised.
 
 **The AI features draft and a person decides** (`docs/erp/04`). Everything a
 rule can do is ordinary code: the alert rules (`engines/alerts.ts`, run hourly

@@ -36,8 +36,9 @@ import {
   users,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
-import { invalidateConfig, seedConfig } from "@/lib/config/store";
+import { invalidateConfig, seedConfig, updateSetting } from "@/lib/config/store";
 import {
+  convertLeadToProspect,
   logDeskMessage,
   logQualificationCall,
   markDeskLost,
@@ -117,6 +118,15 @@ async function readyLead(over: Partial<typeof customers.$inferInsert> = {}) {
 
 const ask = (customerId: string, extra: Partial<Parameters<typeof requestProspect>[0]> = {}) =>
   requestProspect({
+    customerId,
+    reasonCode: "regular_requirement",
+    customerType: "manufacturer",
+    note: "Wants a trial first.",
+    ...extra,
+  });
+
+const convert = (customerId: string, extra: Partial<Parameters<typeof convertLeadToProspect>[0]> = {}) =>
+  convertLeadToProspect({
     customerId,
     reasonCode: "regular_requirement",
     customerType: "manufacturer",
@@ -474,6 +484,212 @@ describe("Test M — the manager settles it", () => {
     assert.equal(notice?.state, "awaiting");
     assert.equal(notice?.requestedByName, "Desk Caller");
     assert.equal(notice?.reasonCode, "regular_requirement");
+  });
+});
+
+describe("Test X — Convert to Prospect: the calling desk's own direct promotion", () => {
+  test("complete after Call 1 → converts immediately, no Sales Manager queue touched", async () => {
+    const lead = await readyLead();
+    const r = await convert(lead.id);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal(r.ok && r.data.promoted, true);
+
+    const row = await stageOf(lead.id);
+    assert.equal(row.leadStage, "prospect");
+    assert.equal(row.prospectRequestState, null, "the request queue is never touched by a direct conversion");
+    assert.equal(row.prospectRequestedAt, null);
+    assert.equal(row.leadVerifiedAt, null, "nobody verified this one — that stays honest");
+    assert.equal(row.customerType, "manufacturer");
+
+    const moves = await db.select().from(leadStageTransitions).where(eq(leadStageTransitions.customerId, lead.id));
+    assert.equal(moves.length, 1);
+    assert.equal(moves[0].toStage, "prospect");
+    assert.equal(moves[0].reasonCode, "regular_requirement");
+    assert.equal(moves[0].actorId, desk.id, "the telecaller's own act, not the manager's");
+
+    const bells = await db.select().from(notifications).where(eq(notifications.userId, manager.id));
+    assert.equal(bells.length, 0, "no verification bell is raised for a direct conversion");
+  });
+
+  test("complete after Call 2 → converts immediately", async () => {
+    const lead = await makeLead();
+    const one = await logQualificationCall({
+      customerId: lead.id,
+      outcome: "spoke_callback",
+      answers: call1(),
+      next: { kind: "call", text: "the rest", date: tomorrow },
+    });
+    assert.equal(one.ok && one.data.result, "next");
+    const two = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2 });
+    assert.equal(two.ok && two.data.result, "ready");
+
+    const r = await convert(lead.id);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await stageOf(lead.id)).leadStage, "prospect");
+  });
+
+  test("complete after Call 3 → converts immediately", async () => {
+    const lead = await makeLead();
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { monthlyLitres: 200 }, next: { kind: "call", text: "x", date: tomorrow } });
+    await logQualificationCall({ customerId: lead.id, outcome: "no_answer", noAnswerReason: "busy", answers: {}, next: { kind: "call", text: "x", date: tomorrow } });
+    const three = await logQualificationCall({
+      customerId: lead.id,
+      outcome: "spoke_collected",
+      answers: { requiredProductId: productId, competitor: "Asian", decisionMaker: "Owner", potentialPaise: 6_000_000 },
+    });
+    assert.equal(three.ok && three.data.result, "ready");
+
+    const r = await convert(lead.id);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await stageOf(lead.id)).leadStage, "prospect");
+  });
+
+  test("incomplete after Call 1 → conversion rejected, Call 2 remains available", async () => {
+    const lead = await makeLead();
+    await logQualificationCall({
+      customerId: lead.id,
+      outcome: "spoke_callback",
+      answers: call1(),
+      next: { kind: "call", text: "the rest", date: tomorrow },
+    });
+    const r = await convert(lead.id);
+    assert.equal(r.ok, false);
+    assert.match(!r.ok ? r.error : "", /Decision maker/);
+    assert.equal((await stageOf(lead.id)).leadStage, "suspect", "a refused conversion writes nothing");
+
+    /* Call 2 is still owed and accepted. */
+    assert.equal((await deskLeadRecord(lead.id, DAY))?.phase, "call2");
+    const two = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2 });
+    assert.equal(two.ok, true, two.ok ? "" : two.error);
+  });
+
+  test("incomplete after Call 2 → conversion rejected, Call 3 remains available", async () => {
+    const lead = await makeLead();
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { monthlyLitres: 200 }, next: { kind: "call", text: "x", date: tomorrow } });
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { competitor: "Local" }, next: { kind: "call", text: "x", date: tomorrow } });
+
+    const r = await convert(lead.id);
+    assert.equal(r.ok, false);
+    assert.equal((await stageOf(lead.id)).leadStage, "suspect");
+    assert.equal((await deskLeadRecord(lead.id, DAY))?.phase, "call3");
+
+    const three = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
+    assert.equal(three.ok, true, three.ok ? "" : three.error);
+  });
+
+  test("incomplete after Call 3 → the lead is Lost, and there is no path to convert it", async () => {
+    const lead = await makeLead();
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { monthlyLitres: 200 }, next: { kind: "call", text: "x", date: tomorrow } });
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { competitor: "Local" }, next: { kind: "call", text: "x", date: tomorrow } });
+    const last = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
+    assert.equal(last.ok && last.data.result, "lost");
+    assert.equal((await stageOf(lead.id)).leadStage, "lost");
+
+    const r = await convert(lead.id);
+    assert.equal(r.ok, false, "the required information is still incomplete, and the lead is closed besides");
+    assert.match(!r.ok ? r.error : "", /Only a Suspect/);
+  });
+
+  test("there is no Call 4 after a conversion either — the lead is no longer a Suspect", async () => {
+    const lead = await readyLead();
+    await convert(lead.id);
+    const call = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
+    assert.equal(call.ok, false, "a Prospect is not the desk's to ring again");
+  });
+
+  test("a direct, server-side call with missing required answers is rejected — the UI cannot be worked around", async () => {
+    const lead = await makeLead();
+    /* Nothing at all has been collected — a hand-built payload naming every
+       optional extra still cannot manufacture the five required answers. */
+    const r = await convertLeadToProspect({
+      customerId: lead.id,
+      reasonCode: "regular_requirement",
+      customerType: "manufacturer",
+      contactPerson: "Someone",
+      note: "Trying to skip the calls",
+    });
+    assert.equal(r.ok, false);
+    assert.match(!r.ok ? r.error : "", /Not ready for Prospect yet/);
+    assert.ok(!r.ok && r.fieldErrors && r.fieldErrors.length > 0, "the missing fields are named, exactly as the button's own reading would show them");
+    assert.equal((await stageOf(lead.id)).leadStage, "suspect");
+  });
+
+  test("a successful conversion persists after a fresh read, with the call history and answers intact", async () => {
+    const lead = await readyLead();
+    const before = await db.select().from(calls).where(eq(calls.customerId, lead.id));
+    assert.equal(before.length, 1);
+
+    const r = await convert(lead.id);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    /* Re-read, as a fresh request would. */
+    const row = await stageOf(lead.id);
+    assert.equal(row.leadStage, "prospect");
+    assert.equal(row.leadMonthlyVolumeLitres, 200, "the answers collected across the calls are untouched");
+    assert.equal(row.leadDecisionMaker, "Owner himself");
+    assert.equal(row.leadEstimatedPotentialPaise, 6_000_000);
+    assert.equal(row.leadCompetitor, "Local thinner");
+    assert.equal(row.leadRequiredProductId, productId);
+
+    const after = await db.select().from(calls).where(eq(calls.customerId, lead.id));
+    assert.equal(after.length, 1, "no call record is created or lost by a conversion");
+    assert.deepEqual(after, before, "the call history is exactly what it was");
+
+    const rec = await deskLeadRecord(lead.id, DAY);
+    assert.equal(rec?.phase, "prospect");
+  });
+
+  test("does not create a duplicate customer record, and no distinct 'prospect' row appears", async () => {
+    const lead = await readyLead();
+    await convert(lead.id);
+    const rows = await db.select().from(customers).where(eq(customers.id, lead.id));
+    assert.equal(rows.length, 1, "the same customer row, promoted in place");
+  });
+
+  test("already with the Sales Manager (an older request) cannot also be converted directly", async () => {
+    const lead = await readyLead();
+    await ask(lead.id);
+    const r = await convert(lead.id);
+    assert.equal(r.ok, false);
+    assert.equal((await stageOf(lead.id)).leadStage, "suspect");
+  });
+
+  test("switching leads.callingDeskDirectPromotion off falls back to the Sales Manager verification queue untouched", async () => {
+    await updateSetting("leads.callingDeskDirectPromotion", false, manager.id);
+    invalidateConfig();
+
+    const lead = await readyLead();
+    const r = await convertLeadToProspect({
+      customerId: lead.id,
+      reasonCode: "regular_requirement",
+      customerType: "manufacturer",
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal(r.ok && r.data.promoted, false, "nothing was converted directly");
+    assert.equal(r.ok && r.data.requested, true);
+
+    const row = await stageOf(lead.id);
+    assert.equal(row.leadStage, "suspect", "the old architecture's rule holds: a request is not a conversion");
+    assert.equal(row.prospectRequestState, "awaiting");
+    assert.equal(row.leadManagerId, manager.id);
+
+    const v = await managerVerifies(lead.id, "verified");
+    assert.equal(v.ok, true, v.ok ? "" : v.error);
+    assert.equal((await stageOf(lead.id)).leadStage, "prospect", "verification is still what promotes it");
+  });
+
+  test("the existing Sales Manager Request Prospect workflow is unaffected by this feature", async () => {
+    /* The whole of Test R and Test M above runs unchanged with the direct-
+       promotion setting at its default — this pins the one behaviour those
+       suites do not: that requesting still goes nowhere near `advanceLeadStage`
+       until the manager verifies it, with `convertLeadToProspect` sitting
+       entirely beside that path rather than inside it. */
+    const lead = await readyLead();
+    await ask(lead.id);
+    assert.equal((await stageOf(lead.id)).leadStage, "suspect");
+    const v = await managerVerifies(lead.id, "verified");
+    assert.equal(v.ok, true, v.ok ? "" : v.error);
+    assert.equal((await stageOf(lead.id)).leadStage, "prospect");
   });
 });
 

@@ -90,7 +90,9 @@ export type SettingCategory =
    * thresholds the deterministic alert rules and suggestions read. AI drafts
    * and a person decides, so none of these changes a record on its own.
    */
-  | "erp-ai";
+  | "erp-ai"
+  /** The ERP as an operations system: whether it is where orders are taken. */
+  | "erp";
 
 export type SettingDefinition = {
   key: string;
@@ -3242,6 +3244,15 @@ export const SETTINGS = [
     default: true,
   },
   {
+    key: "leads.callingDeskDirectPromotion",
+    type: "boolean",
+    category: "mbos-leads",
+    label: "The calling desk converts a Suspect to Prospect directly",
+    description:
+      "On, the telecaller's own 'Convert to Prospect' promotes the lead the moment the five required answers are on the record - the same gated move a Sales Manager verification would otherwise make, run under the telecaller's own hat, with no verification call in between. Off, completing the five still only asks for a Prospect: it goes to `prospect_request_state = 'awaiting'` and a Sales Manager's own verification call is what promotes it, exactly as it did before this setting existed. Both paths read the same five-answer readiness and the same §28 gate; this decides only who is trusted to press the button that promotes.",
+    default: true,
+  },
+  {
     key: "leads.prospectReasons",
     type: "structured",
     category: "mbos-leads",
@@ -3520,6 +3531,26 @@ export const SETTINGS = [
     label: "Keep the recording after transcription",
     description:
       "On, voice notes are kept on the handset once transcribed. Off, they are deleted — but only ever after the transcript is confirmed stored, never merely because the upload finished.",
+    default: false,
+  },
+  {
+    key: "erp.production.recipeTolerancePercent",
+    type: "integer",
+    category: "erp",
+    label: "Recipe tolerance",
+    description:
+      "How far above its product's recipe a batch line may use a raw material before the SFG batches list flags it, in percent. The flag asks somebody to look; it never refuses a batch.",
+    default: 5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.orders.live",
+    type: "boolean",
+    category: "erp",
+    label: "The ERP takes the orders",
+    description:
+      "Off: orders still come from the Taken Order and Order Details sheets, and the ERP's own orders stay inside the ERP. On: every ERP order is written into MahekOne's order book and bills (targets, the Call Log, outstanding and reorder predictions read it), the order sheet stops writing orders and bills, orders from a Pending customer go to the Accounts approval queue, and a customer is held off the Call Log while an ERP order of theirs is open. Turn it on the day the team stops typing orders into the sheet — never while both are in use, or every order is counted twice.",
     default: false,
   },
   {
@@ -4670,6 +4701,8 @@ export type Config = {
   "whatsapp.unconfirmedExpiryHours": number;
   "whatsapp.autoConfirmAfterHours": number;
 
+  "erp.orders.live": boolean;
+  "erp.production.recipeTolerancePercent": number;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;
   "erp.ai.alerts.rateJumpPct": number;
@@ -4863,6 +4896,7 @@ export type Config = {
   "leads.duplicateNameSimilarity": number;
   "leads.requireNextAction": boolean;
   "leads.allowManagerOverride": boolean;
+  "leads.callingDeskDirectPromotion": boolean;
   "leads.prospectReasons": { code: string; label: string }[];
   "leads.sampleReasons": { code: string; label: string }[];
   "leads.lostReasons": { code: string; label: string }[];
