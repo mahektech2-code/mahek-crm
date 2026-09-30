@@ -119,6 +119,7 @@ async function reachableLead(
        whose opening throws — which is exactly what the calling desk's requests
        would do to the sales manager they are addressed to. */
     leadManagerId: lead.leadManagerId,
+    salesManagerId: lead.salesManagerId,
   });
   return { ok: true, lead };
 }

@@ -14,6 +14,7 @@ import { confirmedCommitmentSql } from "../lead-commitment";
 import type { LeadPriority } from "../lead-priority";
 import type { BusinessDate } from "../business-date";
 import { cache } from "react";
+import { crmSalesManagerScopeFor, inCrmSalesManagerWorkspace } from "./crm-sales-manager-scope";
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
@@ -99,6 +100,13 @@ export type ManagerScope = {
    * regions contain nobody, and they should see nothing rather than everything.
    */
   salesmanIds: string[] | null;
+  /**
+   * SET ONLY INSIDE THE CRM SALES MANAGER WORKSPACE (`crm-sales-manager-scope.ts`).
+   * When present the lead clause is `sales_manager_id = <this>` and nothing
+   * else — see `leadsVisible`. Absent everywhere else, which is why no other
+   * screen's scope moved.
+   */
+  salesManagerId?: string;
 };
 
 /**
@@ -118,7 +126,7 @@ export type ManagerScope = {
  * Cached per request: the sidebar asks, then every query on the screen asks
  * again, and it is two round trips either way.
  */
-export const managerScope = cache(async function managerScope(): Promise<ManagerScope> {
+const baseManagerScope = cache(async function managerScope(): Promise<ManagerScope> {
   const { requireUser } = await import("../auth");
 
   let userId: string;
@@ -200,6 +208,26 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
 });
 
 /**
+ * The CRM Sales Manager's scope, resolved once per request. Kept apart from
+ * `baseManagerScope` so a request that is NOT in that workspace can never be
+ * handed it, and one that is can never be handed the territory answer.
+ */
+const crmManagerScope = cache(async function crmManagerScope(): Promise<ManagerScope> {
+  const { requireUser } = await import("../auth");
+  return crmSalesManagerScopeFor(await requireUser());
+});
+
+/**
+ * The scope every lead read here narrows by. Territory-based everywhere except
+ * the CRM Sales Manager workspace, which reads `customers.sales_manager_id` —
+ * see `crm-sales-manager-scope.ts` for why the two cannot be one rule.
+ */
+export async function managerScope(): Promise<ManagerScope> {
+  if (await inCrmSalesManagerWorkspace()) return crmManagerScope();
+  return baseManagerScope();
+}
+
+/**
  * WHICH LEADS A MANAGER MAY SEE — `onlyMine` plus the ones nobody holds.
  *
  * `onlyMine` renders `owner_id in (…)`, and `in` NEVER MATCHES NULL. On a book
@@ -224,6 +252,18 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
  * It can only ADD rows, so no manager loses sight of anything they see today.
  */
 export function leadsVisible(scope: ManagerScope, column = "c.owner_id") {
+  /* The CRM Sales Manager's book: their seat, exactly. Unowned leads and leads
+     with an owner but no Sales Manager are deliberately NOT included — they are
+     nobody's until somebody names a Sales Manager, and `assertCustomerInScope`
+     would refuse every action on them anyway. The column is the owner column's
+     sibling on the same table, so the alias each caller passes is kept. */
+  if (scope.salesManagerId) {
+    /* A column that is not an owner column has no sibling seat to compare, and
+       guessing one would fail OPEN. Nothing in this workspace passes one. */
+    if (!/owner_id$/.test(column)) return sql`and false`;
+    const seat = column.replace(/owner_id$/, "sales_manager_id");
+    return sql`and ${sql.raw(seat)} = ${scope.salesManagerId}`;
+  }
   if (scope.salesmanIds === null) return sql``;
   const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
   return sql`and (${sql.raw(column)} in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})

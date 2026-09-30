@@ -34,6 +34,7 @@ import {
 } from "@/lib/actions/sales-manager-pipeline";
 import type { Result } from "@/lib/result";
 import { NETWORK_FAILURE, safeMessage } from "@/lib/sales-lead-pipeline/errors";
+import { pipelineLinks, type PipelineLinks, type PipelineWorkspace } from "@/lib/sales-lead-pipeline/workspace";
 import type { Lead, ModalKind, PipelineRefs, Stage } from "@/lib/sales-lead-pipeline/types";
 
 /**
@@ -68,6 +69,8 @@ type Ctx = {
   todayDate: Date;
   refs: PipelineRefs;
   lead: Lead;
+  /** Where this workspace's links lead — see `lib/sales-lead-pipeline/workspace.ts`. */
+  links: PipelineLinks;
   modal: Modal;
   busy: boolean;
   /** The last refusal, shown inside whichever dialog is open. Cleared when one opens or closes. */
@@ -124,11 +127,14 @@ export function LeadPipelineProvider({
   lead,
   refs,
   today,
+  workspace = "sales",
   children,
 }: {
   lead: Lead;
   refs: PipelineRefs;
   today: string;
+  /** Which app is drawing the screens. `sales` when absent, as it was before the CRM mounted them. */
+  workspace?: PipelineWorkspace;
   children: React.ReactNode;
 }) {
   const [modal, setModal] = React.useState<Modal>({ kind: null, leadId: null });
@@ -200,6 +206,7 @@ export function LeadPipelineProvider({
     todayDate,
     refs,
     lead,
+    links: pipelineLinks(workspace),
     modal,
     busy,
     error,

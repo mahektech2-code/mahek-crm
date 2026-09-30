@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appFor, APP_HEADER } from "@/proxy";
+import { NextRequest } from "next/server";
+import { appFor, APP_HEADER, CRM_SALES_MANAGER_WORKSPACE, proxy, WORKSPACE_HEADER, workspaceFor } from "@/proxy";
 import { APP_IDS } from "@/lib/apps";
 
 /**
@@ -69,4 +70,34 @@ test("the header name is stable", () => {
   /* Written by the proxy and read by `requestAppId`. They import the same
      constant; this fails if somebody inlines a literal on one side. */
   assert.equal(APP_HEADER, "x-mahek-app");
+});
+
+/* --------------------------------------------------- the CRM Sales Manager workspace */
+
+test("only /crm/leads/sales-manager names the CRM Sales Manager workspace", () => {
+  /* The workspace header narrows SCOPE, so the same trap as the app prefix
+     applies: a route that merely starts with the same letters must not claim it,
+     and the rest of the CRM's lead screens must not be swept in. */
+  assert.equal(workspaceFor("/crm/leads/sales-manager"), CRM_SALES_MANAGER_WORKSPACE);
+  assert.equal(workspaceFor("/crm/leads/sales-manager/list"), CRM_SALES_MANAGER_WORKSPACE);
+  assert.equal(workspaceFor("/crm/leads/sales-manager/cus_123"), CRM_SALES_MANAGER_WORKSPACE);
+  assert.equal(workspaceFor("/crm/leads/sales-managerx"), null);
+  for (const path of ["/crm/leads", "/crm/leads/intake", "/crm/leads/cus_1", "/sales-lead-pipeline", "/sales/leads", "/"]) {
+    assert.equal(workspaceFor(path), null, `${path} must not be the CRM Sales Manager workspace`);
+  }
+  /* And it is still the CRM app, so the CRM hat is what resolves. */
+  assert.equal(appFor("/crm/leads/sales-manager/list"), "crm");
+});
+
+test("the workspace header is written by the proxy alone, and a client-supplied one is stripped", () => {
+  assert.equal(WORKSPACE_HEADER, "x-mahek-workspace");
+  const forged = { [WORKSPACE_HEADER]: CRM_SALES_MANAGER_WORKSPACE };
+
+  /* On a route that is NOT the workspace, a forged header is deleted. */
+  const elsewhere = proxy(new NextRequest("http://localhost/crm/leads", { headers: forged }));
+  assert.equal(elsewhere.headers.get(`x-middleware-request-${WORKSPACE_HEADER}`), null);
+
+  /* On the workspace the proxy writes it itself. */
+  const inside = proxy(new NextRequest("http://localhost/crm/leads/sales-manager/list"));
+  assert.equal(inside.headers.get(`x-middleware-request-${WORKSPACE_HEADER}`), CRM_SALES_MANAGER_WORKSPACE);
 });

@@ -7,8 +7,8 @@ import { Button, Card, Input, PageHeader, Select, Td, Th, Tr } from "@/component
 import { LeadStatusBadges } from "./badges";
 import { personName } from "@/lib/sales-lead-pipeline/reference";
 import type { ListData } from "@/lib/sales-lead-pipeline/types";
+import { pipelineLinks, type PipelineWorkspace } from "@/lib/sales-lead-pipeline/workspace";
 
-const BASE = "/sales-lead-pipeline";
 
 const money = (paise?: number) => (paise ? "₹" + Math.round(paise / 100).toLocaleString("en-IN") : "—");
 
@@ -51,7 +51,7 @@ const VIEW_OPTIONS: { value: string; label: string }[] = [
   { value: "lost30", label: "Lost (30 days)" },
 ];
 
-function hrefFor(p: { q?: string; stage?: string; view?: string; page?: number }) {
+function hrefFor(BASE: string, p: { q?: string; stage?: string; view?: string; page?: number }) {
   const sp = new URLSearchParams();
   if (p.q) sp.set("q", p.q);
   if (p.stage) sp.set("stage", p.stage);
@@ -64,18 +64,21 @@ function hrefFor(p: { q?: string; stage?: string; view?: string; page?: number }
 export function ListScreen({
   data,
   params,
+  workspace = "sales",
 }: {
   data: ListData;
   params: { q: string; stage: string; view: string };
+  workspace?: PipelineWorkspace;
 }) {
   const router = useRouter();
+  const BASE = pipelineLinks(workspace).base;
   const [pending, startTransition] = React.useTransition();
   const [q, setQ] = React.useState(params.q);
   const { book } = data;
   const filtered = Boolean(params.q || params.stage || params.view);
 
   const go = (next: { q?: string; stage?: string; view?: string; page?: number }) =>
-    startTransition(() => router.push(hrefFor({ q: params.q, stage: params.stage, view: params.view, ...next })));
+    startTransition(() => router.push(hrefFor(BASE, { q: params.q, stage: params.stage, view: params.view, ...next })));
 
   /* A stage in the URL that is not one of the options (a hand-typed list) is
      still offered, so the select never claims a filter it is not applying. */

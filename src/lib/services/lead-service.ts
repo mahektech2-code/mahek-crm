@@ -110,6 +110,9 @@ const LEAD_COLUMNS = {
   leadNextActionOwnerId: customers.leadNextActionOwnerId,
   leadNextActionOutcome: customers.leadNextActionOutcome,
   leadManagerId: customers.leadManagerId,
+  /* The Sales Manager seat. Read by the CRM Sales Manager workspace's scope
+     check (`assertCustomerInScope`) and by nothing else. */
+  salesManagerId: customers.salesManagerId,
   leadManagerDecidedAt: customers.leadManagerDecidedAt,
   leadVerifiedAt: customers.leadVerifiedAt,
   leadVerifiedById: customers.leadVerifiedById,

@@ -9,7 +9,6 @@ import { LeadStatusBadges } from "./badges";
 import { COMMS_ACTIONS, STAGE_LABEL, VERIFICATION_RESULT_LABEL, ladderFor, personName } from "@/lib/sales-lead-pipeline/reference";
 import type { Lead, TrialOutcome } from "@/lib/sales-lead-pipeline/types";
 
-const BASE = "/sales-lead-pipeline";
 
 const money = (paise?: number) => (paise ? "₹" + Math.round(paise / 100).toLocaleString("en-IN") : "—");
 
@@ -41,7 +40,8 @@ export type TimelinePaging = { total: number; nextHref: string | null; newestHre
  * database holds.
  */
 export function LeadRecordScreen({ initialTab, timeline }: { initialTab?: string; timeline: TimelinePaging }) {
-  const { lead, openModal, todayDate } = useLeadPipeline();
+  const { lead, openModal, todayDate, links } = useLeadPipeline();
+  const BASE = links.base;
   const [tab, setTab] = React.useState<Tab>((initialTab as Tab) || "overview");
 
   const ladder = ladderFor(lead.salesType);
@@ -91,7 +91,7 @@ export function LeadRecordScreen({ initialTab, timeline }: { initialTab?: string
               <Button size="sm" variant="ghost" onClick={() => openModal("reassign", lead.id)}>Reassign</Button>
             ) : null}
             <Link
-              href={`/sales/leads/${lead.id}`}
+              href={links.record(lead.id)}
               className="inline-flex h-8 items-center rounded-[4px] px-3 text-sm font-medium text-body hover:bg-canvas"
             >
               Full record
@@ -395,7 +395,7 @@ function OverviewTab({ lead }: { lead: Lead }) {
 
 /** Up to `leads.suspectMaxVisits` visit chips, a cap-reached warning, and the conversion decision. */
 function SuspectVisitTracker({ lead }: { lead: Lead }) {
-  const { openModal } = useLeadPipeline();
+  const { openModal, links } = useLeadPipeline();
   const cap = lead.suspectCap;
   const canDecide = lead.caps.canWork && !lead.lost && Boolean(lead.salesType);
   return (
@@ -429,7 +429,7 @@ function SuspectVisitTracker({ lead }: { lead: Lead }) {
       {!lead.salesType ? (
         <Callout tone="brand" className="mt-3.5">
           This lead was raised before a sales type was chosen, so it climbs the older ladder and cannot be converted to a Prospect from here. Set its sales type on the{" "}
-          <Link href={`/sales/leads/${lead.id}`} className="font-medium underline">full record</Link> first.
+          <Link href={links.record(lead.id)} className="font-medium underline">full record</Link> first.
         </Callout>
       ) : null}
       {canDecide ? (

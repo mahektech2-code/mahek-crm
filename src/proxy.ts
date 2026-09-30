@@ -53,6 +53,27 @@ const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["/erp", "erp"],
 ];
 
+/**
+ * WHICH WORKSPACE, where one app draws more than one scope.
+ *
+ * `/crm/leads/sales-manager` is the CRM's Sales Manager workspace: the same
+ * lead pipeline the Sales Dashboard draws, read through a different scope (the
+ * leads whose `sales_manager_id` is the signed-in person). Scope is resolved in
+ * services that take no arguments, so — exactly as the app id does — it has to
+ * travel on the request. A server action POSTs to the URL it was rendered from,
+ * so a write lands in the same workspace as the screen that offered it, which
+ * is what keeps a lead you can see a lead you can act on.
+ */
+export const WORKSPACE_HEADER = "x-mahek-workspace";
+export const CRM_SALES_MANAGER_WORKSPACE = "crm-sales-manager";
+const CRM_SALES_MANAGER_PREFIX = "/crm/leads/sales-manager";
+
+export function workspaceFor(pathname: string): string | null {
+  return pathname === CRM_SALES_MANAGER_PREFIX || pathname.startsWith(CRM_SALES_MANAGER_PREFIX + "/")
+    ? CRM_SALES_MANAGER_WORKSPACE
+    : null;
+}
+
 export function appFor(pathname: string): string | null {
   for (const [prefix, app] of APP_ROUTES) {
     if (pathname === prefix || pathname.startsWith(prefix + "/")) return app;
@@ -74,6 +95,12 @@ export function proxy(request: NextRequest) {
    */
   headers.delete(APP_HEADER);
   if (app) headers.set(APP_HEADER, app);
+
+  /* Stripped for the same reason: it narrows scope, and it arrives from the
+     internet. Only this function may write it. */
+  headers.delete(WORKSPACE_HEADER);
+  const workspace = workspaceFor(request.nextUrl.pathname);
+  if (workspace) headers.set(WORKSPACE_HEADER, workspace);
 
   return NextResponse.next({ request: { headers } });
 }
