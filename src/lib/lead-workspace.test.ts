@@ -427,7 +427,7 @@ describe("the Sales Manager screens are workspace-aware", () => {
     }
   });
 
-  it("only ONE header and sidebar are drawn under /crm/leads/sales-manager: the workspace's own", () => {
+  it("only ONE bar is drawn under /crm/leads/sales-manager and no sidebar: the workspace's own", () => {
     const crmLayout = readFileSync("src/app/crm/layout.tsx", "utf8");
     /* The CRM layout still runs its checks, then returns a bare frame for this
        route — before the AppShell (header + sidebar) is ever built. */
@@ -443,7 +443,7 @@ describe("the Sales Manager screens are workspace-aware", () => {
     const shellSrc = readFileSync("src/components/sales-lead-pipeline/proto/shell.tsx", "utf8");
     assert.equal((shellSrc.match(/<NotificationBell/g) ?? []).length, 1, "one bell");
     assert.equal((shellSrc.match(/<AccountMenu/g) ?? []).length, 1, "one account menu");
-    assert.equal((shellSrc.match(/<aside/g) ?? []).length, 1, "one sidebar");
+    assert.equal((shellSrc.match(/<aside/g) ?? []).length, 0, "the workspace draws no sidebar of its own");
     const layout = readFileSync("src/app/crm/leads/sales-manager/layout.tsx", "utf8");
     assert.equal((layout.match(/<SalesManagerShell/g) ?? []).length, 1);
     /* Nothing under this route draws a shell of its own a second time. */
