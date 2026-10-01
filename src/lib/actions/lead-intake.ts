@@ -27,6 +27,9 @@ import {
   type ExistingAccount,
 } from "@/lib/services/lead-intake-service";
 
+/** The module `/crm/leads/sales-manager` is guarded on — holding it is what makes somebody a Sales Manager here. */
+const SALES_MANAGER_MODULE = "crm.sales-manager";
+
 /* ---------------------------------------------------------------------------
  * The office's own way of raising a lead — screens 5, 34 and the one write
  * screen 7 is allowed to make.
@@ -488,6 +491,34 @@ export async function captureLead(
     const customerId = gen("cus");
     const foot: "suspect" | "new" = v.salesType ? "suspect" : "new";
 
+    /*
+     * A SALES MANAGER WHO RAISES A LEAD IS ITS SALES MANAGER, in the same write.
+     *
+     * The Sales Manager workspace's whole scope is `sales_manager_id = me` (see
+     * `crm-sales-manager-scope.ts`), and a lead raised here carried no seat — a
+     * manager has no owner by default either — so it was created and then
+     * appeared in nobody's book, theirs included. Nothing derived one later:
+     * `recomputeSalesManagers` resolves a lead's seat through its OWNER, so an
+     * owner-less lead stays null and a lead with an owner is only seated after
+     * the nightly pass, if the org chart names that owner's manager.
+     *
+     * `sales_manager_decided_at` is the half that makes it stick. That mark is
+     * what the nightly pass skips; without it the same job would blank this
+     * seat back to null the first night the owner is missing from the org chart.
+     * It is a person choosing — the manager raising it for their own book — so
+     * stamping it is true, unlike the qualification flow where the org chart,
+     * not a person, fills the seat.
+     *
+     * WHO COUNTS is whoever holds the Sales Manager module, which is what the
+     * workspace route is guarded on — not `lead.verify`: the account in
+     * production holds the module at the ASSOCIATE level, which does not carry
+     * that capability. An administrator is excluded: they are not narrowed by a
+     * seat, and naming one as the seat would take the lead out of the org
+     * chart's reach for nothing. Anybody else keeps exactly what they had.
+     */
+    const seatsCreator =
+      ctx.user.role !== "admin" && (await canOpenModule(ctx.user.id, SALES_MANAGER_MODULE));
+
     await db.transaction(async (tx) => {
       await tx.insert(customers).values({
         id: customerId,
@@ -507,6 +538,8 @@ export async function captureLead(
         /* Absent means unassigned, and unassigned is said in words on every
            team list. It is NEVER `ctx.user.id` — see the file header. */
         ownerId: v.ownerId ?? null,
+
+        ...(seatsCreator ? { salesManagerId: ctx.user.id, salesManagerDecidedAt: new Date() } : {}),
 
         leadSalesType: v.salesType ?? null,
         leadStage: foot,
@@ -590,6 +623,7 @@ export async function captureLead(
           salesType: v.salesType ?? null,
           stage: foot,
           ownerId: v.ownerId ?? null,
+          salesManagerId: seatsCreator ? ctx.user.id : null,
           nextActionOwnerId: v.nextAction?.ownerId ?? null,
           distributorCustomerId: distributorId,
           duplicateAllowed: Boolean(v.allowDuplicate),

@@ -210,5 +210,7 @@ describe("ProductField keeps working for the screens that already use it", () =>
     assert.doesNotMatch(form, /lead_required_product_id|leadRequiredProductId/);
     // The picker is hidden, and says why, when product search is switched off.
     assert.match(form, /Product search is switched off/);
+    // The voice assistant must not write words behind a chosen product.
+    assert.match(form, /key === "requirement" && requirementProductId/);
   });
 });

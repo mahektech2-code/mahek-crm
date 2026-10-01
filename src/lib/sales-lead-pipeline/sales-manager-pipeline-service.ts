@@ -10,6 +10,7 @@ import { APP_TIMEZONE } from "@/lib/business-date";
 import { gateAction } from "@/lib/engines/lead-gate-action";
 import { gateForNext, gateTo, mustDecideSuspect, checklistFor } from "@/lib/engines/lead-gates";
 import { isParked } from "@/lib/engines/lead-ladder";
+import { isRecentLead } from "@/lib/lead-recent";
 import { stampDate } from "@/lib/format";
 import {
   COMMUNICATION_ACTIONS,
@@ -259,7 +260,7 @@ function focusLabel(r: PageRow, extra: RowExtra | undefined): string | undefined
   }).label;
 }
 
-function toRow(r: PageRow, extra: RowExtra | undefined): PipelineRow {
+function toRow(r: PageRow, extra: RowExtra | undefined, recentDays: number): PipelineRow {
   const lost = r.stage === "lost";
   const due = r.nextActionDate ?? r.nextFollowUpDate ?? r.holdResumeDate ?? undefined;
   return {
@@ -280,12 +281,19 @@ function toRow(r: PageRow, extra: RowExtra | undefined): PipelineRow {
     nextActionResp: clean(extra?.nextActionOwner) ?? clean(r.leadManagerName),
     gateLabel: focusLabel(r, extra),
     hasCommitment: r.hasCommitment,
+    /* `ageDays` is the IST calendar-day age `leadsPage` selects; nothing here reads a date. */
+    isRecent: isRecentLead(r.ageDays, recentDays),
   };
 }
 
+/** `mbos.leads.recentDays` — read once per page rather than once per row. */
+async function recentDaysSetting(): Promise<number> {
+  return (await getConfig())["mbos.leads.recentDays"];
+}
+
 async function rowsFor(page: Awaited<ReturnType<typeof leadsPage>>): Promise<PipelineRow[]> {
-  const extras = await rowExtras(page.rows.map((r) => r.id));
-  return page.rows.map((r) => toRow(r, extras.get(r.id)));
+  const [extras, recentDays] = await Promise.all([rowExtras(page.rows.map((r) => r.id)), recentDaysSetting()]);
+  return page.rows.map((r) => toRow(r, extras.get(r.id), recentDays));
 }
 
 /**
@@ -365,7 +373,10 @@ export async function pipelineDashboard(day: string): Promise<DashboardData> {
      the first already has. */
   const seen = new Set(overdue.rows.map((r) => r.id));
   const attentionRows = [...overdue.rows, ...dueToday.rows.filter((r) => !seen.has(r.id))].slice(0, 6);
-  const extras = await rowExtras([...new Set([...attentionRows, ...focus.rows].map((r) => r.id))]);
+  const [extras, recentDays] = await Promise.all([
+    rowExtras([...new Set([...attentionRows, ...focus.rows].map((r) => r.id))]),
+    recentDaysSetting(),
+  ]);
 
   const manager: ManagerKpis = {
     pendingVerification: queue.total,
@@ -391,8 +402,8 @@ export async function pipelineDashboard(day: string): Promise<DashboardData> {
     book,
     manager,
     funnel: foldDirect(funnels),
-    attention: attentionRows.map((r) => toRow(r, extras.get(r.id))),
-    focus: focus.rows.map((r) => toRow(r, extras.get(r.id))),
+    attention: attentionRows.map((r) => toRow(r, extras.get(r.id), recentDays)),
+    focus: focus.rows.map((r) => toRow(r, extras.get(r.id), recentDays)),
   };
 }
 
@@ -489,6 +500,8 @@ type Extra = {
   notes: string | null;
   prospectRequestState: string | null;
   holdReason: string | null;
+  /** IST calendar days since the lead was raised, worked out in SQL like `leadsPage`'s `ageDays`. */
+  ageDays: number;
 };
 
 /**
@@ -523,11 +536,12 @@ async function newestCallExtras(id: string): Promise<Record<string, string>> {
   });
 }
 
-async function recordExtras(id: string): Promise<Extra | null> {
+async function recordExtras(id: string, day: string): Promise<Extra | null> {
   const rows = (await db.execute(sql`
     select c.created_at as "createdAt", c.address, c.email, c.lead_notes as notes,
            c.prospect_request_state as "prospectRequestState",
-           c.lead_hold_reason as "holdReason"
+           c.lead_hold_reason as "holdReason",
+           (${day}::date - (c.created_at at time zone ${sql.raw(`'${APP_TIMEZONE}'`)})::date)::int as "ageDays"
       from customers c
      where c.id = ${id}
      limit 1
@@ -1006,7 +1020,7 @@ export async function pipelineLead(
     canApproveDistributor,
   ] = await Promise.all([
     getConfig(),
-    recordExtras(id),
+    recordExtras(id, day),
     newestCallExtras(id),
     leadTransitions(id),
     managerCalls(id),
@@ -1099,6 +1113,7 @@ export async function pipelineLead(
     email: clean(extra?.email),
     source: clean(record.source),
     createdAt: extra ? stampDate(extra.createdAt) : "",
+    isRecent: extra ? isRecentLead(extra.ageDays, config["mbos.leads.recentDays"]) : false,
     salesType: salesTypeOf(record.salesType),
     stage,
     priority: priorityOf(record.priority),
@@ -1245,7 +1260,7 @@ export async function pipelineDesk(day: string): Promise<DeskData> {
   ]);
 
   const live = book.rows.filter((r) => r.stage !== "lost");
-  const extras = await rowExtras(live.map((r) => r.id));
+  const [extras, recentDays] = await Promise.all([rowExtras(live.map((r) => r.id)), recentDaysSetting()]);
 
   const sets: Record<Exclude<DeskQueue, "review">, Set<string>> = {
     verify: new Set(verify.rows.map((r) => r.customerId)),
@@ -1268,7 +1283,7 @@ export async function pipelineDesk(day: string): Promise<DeskData> {
     if (sets.sample.has(r.id)) queues.push("sample");
     if (sets.order.has(r.id)) queues.push("order");
     if (sets.overdue.has(r.id)) queues.push("overdue");
-    return { ...toRow(r, extra), ownerId: r.salesmanId, queues };
+    return { ...toRow(r, extra, recentDays), ownerId: r.salesmanId, queues };
   });
 
   return {

@@ -84,6 +84,7 @@ function LeadRow({ row, base, day }: { row: DeskRow; base: string; day: string }
           <PSalesTypeBadge salesType={row.salesType} />
           <PStageBadge stage={row.stage} />
           <PPriorityBadge priority={row.priority} />
+          {row.isRecent ? <PBadge tone="success">Recently</PBadge> : null}
           {row.queues.map((q) => (
             <PBadge key={q} tone={QUEUE_TONE[q]}>
               {QUEUE_LABEL[q]}
