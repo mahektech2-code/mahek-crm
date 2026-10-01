@@ -797,6 +797,9 @@ const idCards: HrmsScreenModule = {
         sortDefault: ["name", 1],
         godownKey: "office",
         noDataLine: hr ? "No active employees." : "Your ID card is not here yet.",
+        /* The design draws ID cards as a gallery: an ID card is checked by
+           looking at it, not by reading "Uploaded" in a column. */
+        cards: { img: "img", title: "name", lines: ["empId", "position", "office"], empty: "No ID card uploaded" },
       },
       rows: rows.map((r) => {
         const actions: ActionSpec[] = [];
@@ -814,7 +817,7 @@ const idCards: HrmsScreenModule = {
         if (r.photo) contacts.push({ l: "Photo", href: attHref(r.photo) });
         return {
           id: r.id,
-          v: { name: r.name, empId: r.code, position: r.position ?? "", office: r.office ?? "", card: r.card ? "Uploaded" : "Missing" },
+          v: { name: r.name, empId: r.code, position: r.position ?? "", office: r.office ?? "", card: r.card ? "Uploaded" : "Missing", img: r.card ? attHref(r.card) : "" },
           flags: [],
           title: r.name,
           header: [r.code, r.position, r.office].filter(Boolean).join(" · "),
@@ -881,7 +884,7 @@ async function officeForm(office?: Office): Promise<FormSpec> {
       { k: "city", l: "City", t: "text", req: true },
       { k: "state", l: "State", t: "text", req: true },
       { k: "region", l: "Region", t: "text", req: true },
-      { k: "pin", l: "Map pin", t: "text", req: true, hint: "Latitude, longitude — e.g. 19.2094, 73.0939. Copy it from the map." },
+      { k: "pin", l: "Map pin", t: "pin", req: true, hint: "Pick the doorway on the map, use your location while standing there, or type latitude, longitude." },
       { k: "address", l: "Address", t: "area", req: true },
       { k: "radius", l: "Radius (metres)", t: "num", req: true, min: 1, max },
       { k: "open", l: "Opening time", t: "time", req: true },

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { CRM_EVENT, MBOS_EVENT } from "@/lib/timeline";
+import { CRM_EVENT, HRMS_EVENT, MBOS_EVENT } from "@/lib/timeline";
 
 /**
  * §R — "Timeline entries should be generated automatically wherever possible."
@@ -50,12 +50,13 @@ const SOURCE = sourceFiles(ROOT)
 test("every declared event kind is actually written somewhere", () => {
   /* A kind declared and never written is a gap in a customer's history that
      reads as lost data rather than as an unbuilt feature. */
-  const declared = { ...CRM_EVENT, ...MBOS_EVENT };
+  const declared = { ...CRM_EVENT, ...MBOS_EVENT, ...HRMS_EVENT };
   const unwritten = Object.entries(declared)
     .filter(([name]) => {
       const crm = `CRM_EVENT.${name}`;
       const mbos = `MBOS_EVENT.${name}`;
-      return !SOURCE.includes(crm) && !SOURCE.includes(mbos);
+      const hrms = `HRMS_EVENT.${name}`;
+      return !SOURCE.includes(crm) && !SOURCE.includes(mbos) && !SOURCE.includes(hrms);
     })
     .map(([name]) => name);
 
@@ -87,7 +88,7 @@ test("quotation is absent, and that is the honest answer", () => {
      
      This test exists so that adding a quotation table is what makes somebody
      delete it, rather than the gap being forgotten. */
-  const kinds = Object.values({ ...CRM_EVENT, ...MBOS_EVENT }) as string[];
+  const kinds = Object.values({ ...CRM_EVENT, ...MBOS_EVENT, ...HRMS_EVENT }) as string[];
   assert.ok(
     !kinds.includes("quotation"),
     "a quotation kind now exists — build the record it projects from, then delete this test",
