@@ -30,7 +30,7 @@ import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { hhmm, isoDate, pretty } from '../src/lib/format';
 import { elapsedLabel, FOLLOW_ON, unansweredQuestions, visitChecks, visitVerdict } from '../src/lib/visit';
-import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, OUTCOMES } from '../src/data/fixtures';
+import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, FOLLOW_UP_MODES, OUTCOMES } from '../src/data/fixtures';
 import { getConfig } from '../src/data/config';
 import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/visits';
 import { checkInAtShop, clearArrival, recordArrival } from '../src/data/arrival';
@@ -111,6 +111,7 @@ export default function Visit() {
   const note = useStore((s) => s.note);
   const outcome = useStore((s) => s.outcome);
   const nextDate = useStore((s) => s.nextDate);
+  const nextMode = useStore((s) => s.nextMode);
   const visitStart = useStore((s) => s.visitStart);
   const visitDone = useStore((s) => s.visitDone);
   const set = useStore((s) => s.set);
@@ -889,7 +890,6 @@ export default function Visit() {
     minimumDwellSeconds: minDwell,
     maxMetresFromShop: maxMetres,
     checkInOverridden: !!overrideReason,
-    hasShopPhoto: !!shots.shop,
     outcome,
     followOnCaptured: !!(outcome && visitDone[outcome]),
     noteChars: note.trim().length,
@@ -1001,6 +1001,7 @@ export default function Visit() {
         custPhotoId: shots.cust ?? null,
         voiceNoteId,
         nextFollowUpDate: nextDate || null,
+        nextFollowUpMode: nextMode,
         journeyStopId: stopId,
         wasPlanned: !!stopId,
         /*
@@ -1467,33 +1468,10 @@ export default function Visit() {
           </View>
         </View>
       }>
-      {/* ---- what was said last time ----
-          Shown before the call, not found after it on the timeline. "Will
-          pay" typed in a hurry three weeks ago reads exactly like a
-          sentence that never named a date — the whole reason a note is
-          worth reading back rather than trusted from memory. */}
-      {lastTime ? (
-        <View
-          style={{
-            borderWidth: 1,
-            borderColor: C.hairline,
-            backgroundColor: C.wash,
-            borderRadius: radius.xl,
-            paddingVertical: 12,
-            paddingHorizontal: 16,
-            marginBottom: 12,
-          }}>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-            <Text style={type.label}>Last time — {pretty(isoDate(new Date(lastTime.checkInAt)))}</Text>
-            {lastTime.outcome ? (
-              <Text style={[type.caption, { color: C.body }]}>{lastTime.outcome}</Text>
-            ) : null}
-          </View>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 4 }} numberOfLines={3}>
-            {lastTime.note}
-          </Text>
-        </View>
-      ) : null}
+      <Text style={type.h2}>{c?.name ?? ''}</Text>
+      <Text style={[type.caption, { marginTop: 2 }]}>
+        {[c?.contactPerson, c?.city].filter(Boolean).join(' · ')}
+      </Text>
 
       {/* ---- where you are ---- */}
       <View
@@ -1502,8 +1480,9 @@ export default function Visit() {
           borderColor: gpsLocked ? C.primaryEdge : gps === 'off' ? C.warnEdge : C.hairline,
           backgroundColor: gpsLocked ? C.primaryTint : gps === 'off' ? C.warnBg : C.surface,
           borderRadius: radius.xl,
-          paddingVertical: 14,
-          paddingHorizontal: 16,
+          paddingVertical: 10,
+          paddingHorizontal: 14,
+          marginTop: 12,
         }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <View
@@ -1536,46 +1515,145 @@ export default function Visit() {
         </View>
       </View>
 
-      <Text style={[type.h2, { marginTop: 16 }]}>{c?.name ?? ''}</Text>
-      <Text style={[type.caption, { marginTop: 2 }]}>
-        {[c?.contactPerson, c?.city].filter(Boolean).join(' · ')}
-      </Text>
+      {/* ---- what was said last time ----
+          Shown before the call, not found after it on the timeline. "Will
+          pay" typed in a hurry three weeks ago reads exactly like a
+          sentence that never named a date — the whole reason a note is
+          worth reading back rather than trusted from memory. */}
+      {lastTime ? (
+        <View
+          style={{
+            borderWidth: 1,
+            borderColor: C.hairline,
+            backgroundColor: C.wash,
+            borderRadius: radius.xl,
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            marginTop: 12,
+          }}>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+            <Text style={type.label}>Last time — {pretty(isoDate(new Date(lastTime.checkInAt)))}</Text>
+            {lastTime.outcome ? (
+              <Text style={[type.caption, { color: C.body }]}>{lastTime.outcome}</Text>
+            ) : null}
+          </View>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 4 }} numberOfLines={3}>
+            {lastTime.note}
+          </Text>
+        </View>
+      ) : null}
 
-      {/* ---- photos ---- */}
-      <Card style={{ marginTop: 16 }}>
-        <Text style={type.label}>Photos</Text>
-        <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
-          {[
-            { k: 'shop' as const, ic: 'shop', on: 'Shop ✓', off: 'Shop photo' },
-            { k: 'cust' as const, ic: 'person', on: 'Owner ✓', off: 'Owner (optional)' },
-          ].map((b) => {
-            const has = !!shots[b.k];
+      {/* ---- what was said ---- */}
+      <Card style={{ marginTop: 12 }}>
+        <Text style={type.label}>What was said</Text>
+
+        {/*
+          ONE MICROPHONE, and what it does depends on the signal.
+
+          It used to be two things on this card: a "Hold to talk" recorder that
+          queued the audio for the office to write out later, and a note box
+          underneath it. The recorder had never been reachable — nothing on any
+          path asked for the RECORD_AUDIO permission, so preparing threw and the
+          screen reported a broken microphone — and the card carried a state
+          called `done` that nothing ever set, so its "AI transcribed · edit
+          before saving" badge could not appear and the salesman had no way to
+          see the transcript at all. What he did see, after a recording that had
+          uploaded perfectly, was "No signal to transcribe".
+
+          Both halves answer the same question, so they are one control now.
+          On signal it dictates: he speaks, reads the English, corrects it and
+          it lands in this box before he saves. Off signal it does what the old
+          recorder claimed to — the audio is queued and the office writes it out
+          — which is the honest fallback rather than an apology, and it is the
+          reason `keepAudio` exists at all.
+
+          The audio is kept in BOTH cases, unlike everywhere else this box
+          appears. A visit note is the one field where the recording is a record
+          of what a customer said rather than a keyboard, and the office keeps
+          it either way.
+        */}
+        <View style={{ marginTop: 12 }}>
+          <VoiceField
+            value={note}
+            onChangeText={(v) => set({ note: v })}
+            keepAudio="keep"
+            onRecording={(uri, _seconds, mode) => void keepVoiceNote(uri, mode)}
+            onHeard={setHeard}
+          />
+          {voiceNoteId ? (
+            <Text style={[type.caption, { marginTop: 6 }]}>
+              The recording goes to the office with this visit.
+            </Text>
+          ) : null}
+        </View>
+      </Card>
+
+      {/* ---- what the assistant made of it ----
+          Directly under the note, because the note is what it reads, and above
+          the outcome chips, because those are the first thing it fills. */}
+      {c ? (
+        <VisitAssistant customerId={c.id} note={note} heard={heard} handlers={assistant} />
+      ) : null}
+
+      {/* ---- how it went ---- */}
+      <View style={{ marginTop: 16 }}>
+        <Text style={[type.label, { marginBottom: 10 }]}>How did it go</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {OUTCOMES.map((o) => {
+            const on = outcome === o.k;
             return (
               <Pressable
-                key={b.k}
-                onPress={() => shoot(b.k)}
+                key={o.k}
+                onPress={() => set({ outcome: o.k })}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
                 style={{
-                  flex: 1,
-                  height: 86,
-                  borderRadius: radius.md,
+                  height: HIT,
+                  paddingHorizontal: 14,
+                  borderRadius: radius.pill,
                   borderWidth: 1,
-                  borderColor: has ? C.primary : C.border,
-                  backgroundColor: has ? C.primaryTint : C.surface,
+                  borderColor: on ? C.primary : C.border,
+                  backgroundColor: on ? C.primaryTint : C.surface,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}>
-                <Icon name={b.ic} size={24} color={has ? C.primaryDeep : C.body} strokeWidth={1.5} />
-                <Text style={[{ fontSize: 14, marginTop: 6, color: has ? C.primaryDeep : C.body }, weight(500)]}>
-                  {has ? b.on : b.off}
+                <Text style={[{ fontSize: 15, color: on ? C.primaryDeep : C.ink }, weight(on ? 600 : 500)]}>
+                  {o.label}
                 </Text>
               </Pressable>
             );
           })}
         </View>
-        {shots.shop || shots.cust ? (
-          <Text style={[type.caption, { marginTop: 10 }]}>Compressed and queued — they upload when you have signal.</Text>
-        ) : null}
-      </Card>
+      </View>
+
+      {/* ---- the follow-on the outcome implies ---- */}
+      {followOn ? (
+        <View style={{ backgroundColor: C.primaryTint, borderWidth: 1, borderColor: C.primaryEdge, borderRadius: radius.card, paddingVertical: 14, paddingHorizontal: 16, marginTop: 14 }}>
+          {doneLine ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: C.successBg, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="task" size={13} color={C.success} strokeWidth={2.4} />
+              </View>
+              <Text style={[{ fontSize: 15, color: C.ink, flex: 1 }, weight(500)]}>{doneLine}</Text>
+            </View>
+          ) : (
+            <View>
+              <Text style={[type.body, { color: C.ink }]}>{followOn.line}</Text>
+              <Pressable
+                onPress={() => {
+                  if (outcome === 'order') return router.push('/order?from=visit');
+                  if (outcome === 'payment') return router.push('/pay?from=visit');
+                  setDraft({});
+                  setFormErr(null);
+                  setForm(outcome === 'complaint' ? 'complaint' : 'sample');
+                }}
+                style={{ width: '100%', height: 52, marginTop: 12, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: shadow.primaryLift }}>
+                <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>{followOn.cta}</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+      ) : null}
 
       {/* ---- §B · is this one going anywhere? ----
           Drawn only for a Suspect, and only once the count is worth mentioning.
@@ -1672,7 +1750,7 @@ export default function Visit() {
         <Card style={{ marginTop: 12 }}>
           <Text style={type.label}>What they need</Text>
           <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
-            Optional. Fill it in when you have taken the price list and asked properly.
+            Fill it in when you have taken the price list and asked properly.
           </Text>
 
           <TextInput
@@ -1725,129 +1803,84 @@ export default function Visit() {
         </Card>
       ) : null}
 
-      {/* ---- what was said ---- */}
-      <Card style={{ marginTop: 12 }}>
-        <Text style={type.label}>What was said</Text>
-
-        {/*
-          ONE MICROPHONE, and what it does depends on the signal.
-
-          It used to be two things on this card: a "Hold to talk" recorder that
-          queued the audio for the office to write out later, and a note box
-          underneath it. The recorder had never been reachable — nothing on any
-          path asked for the RECORD_AUDIO permission, so preparing threw and the
-          screen reported a broken microphone — and the card carried a state
-          called `done` that nothing ever set, so its "AI transcribed · edit
-          before saving" badge could not appear and the salesman had no way to
-          see the transcript at all. What he did see, after a recording that had
-          uploaded perfectly, was "No signal to transcribe".
-
-          Both halves answer the same question, so they are one control now.
-          On signal it dictates: he speaks, reads the English, corrects it and
-          it lands in this box before he saves. Off signal it does what the old
-          recorder claimed to — the audio is queued and the office writes it out
-          — which is the honest fallback rather than an apology, and it is the
-          reason `keepAudio` exists at all.
-
-          The audio is kept in BOTH cases, unlike everywhere else this box
-          appears. A visit note is the one field where the recording is a record
-          of what a customer said rather than a keyboard, and the office keeps
-          it either way.
-        */}
-        <View style={{ marginTop: 12 }}>
-          <VoiceField
-            value={note}
-            onChangeText={(v) => set({ note: v })}
-            keepAudio="keep"
-            onRecording={(uri, _seconds, mode) => void keepVoiceNote(uri, mode)}
-            onHeard={setHeard}
-          />
-          {voiceNoteId ? (
-            <Text style={[type.caption, { marginTop: 6 }]}>
-              The recording goes to the office with this visit.
-            </Text>
-          ) : null}
-        </View>
-      </Card>
-
-      {/* ---- what the assistant made of it ----
-          Directly under the note, because the note is what it reads, and above
-          the outcome chips, because those are the first thing it fills. */}
-      {c ? (
-        <VisitAssistant customerId={c.id} note={note} heard={heard} handlers={assistant} />
-      ) : null}
-
-      {/* ---- how it went ---- */}
-      <View style={{ marginTop: 16 }}>
-        <Text style={[type.label, { marginBottom: 10 }]}>How did it go</Text>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          {OUTCOMES.map((o) => {
-            const on = outcome === o.k;
+      {/* ---- photos ---- */}
+      <Card style={{ marginTop: 16 }}>
+        <Text style={type.label}>Photos</Text>
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+          {[
+            { k: 'shop' as const, ic: 'shop', on: 'Shop ✓', off: 'Shop photo' },
+            { k: 'cust' as const, ic: 'person', on: 'Owner ✓', off: 'Owner photo' },
+          ].map((b) => {
+            const has = !!shots[b.k];
             return (
               <Pressable
-                key={o.k}
-                onPress={() => set({ outcome: o.k })}
+                key={b.k}
+                onPress={() => shoot(b.k)}
+                style={{
+                  flex: 1,
+                  height: 86,
+                  borderRadius: radius.md,
+                  borderWidth: 1,
+                  borderColor: has ? C.primary : C.border,
+                  backgroundColor: has ? C.primaryTint : C.surface,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                <Icon name={b.ic} size={24} color={has ? C.primaryDeep : C.body} strokeWidth={1.5} />
+                <Text style={[{ fontSize: 14, marginTop: 6, color: has ? C.primaryDeep : C.body }, weight(500)]}>
+                  {has ? b.on : b.off}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        {shots.shop || shots.cust ? (
+          <Text style={[type.caption, { marginTop: 10 }]}>Compressed and queued — they upload when you have signal.</Text>
+        ) : null}
+      </Card>
+
+      {/* ---- next contact: how, and when ----
+          How is asked beside when because they are one promise — "I will
+          ring you Thursday" is not "I will come by Thursday", and the task it
+          raises is named by the answer. */}
+      <Card style={{ marginTop: 12 }}>
+        <Text style={[type.label, { marginBottom: 10 }]}>Next contact</Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {FOLLOW_UP_MODES.map((m) => {
+            const on = nextMode === m.k;
+            return (
+              <Pressable
+                key={m.k}
+                onPress={() => set({ nextMode: m.k })}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: on }}
                 style={{
-                  /* Two columns, and the odd seventh stays in its own cell —
-                     a lone full-width chip reads as a different kind of choice. */
-                  width: '48.5%',
-                  minHeight: 58,
-                  padding: 10,
-                  borderRadius: radius.md,
+                  flex: 1,
+                  height: HIT,
+                  borderRadius: radius.pill,
                   borderWidth: 1,
                   borderColor: on ? C.primary : C.border,
                   backgroundColor: on ? C.primaryTint : C.surface,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}>
-                <Text style={[{ fontSize: 15, lineHeight: 20, textAlign: 'center', color: on ? C.primaryDeep : C.ink }, weight(on ? 600 : 400)]}>
-                  {o.label}
+                <Text style={[{ fontSize: 15, color: on ? C.primaryDeep : C.ink }, weight(on ? 600 : 500)]}>
+                  {m.label}
                 </Text>
               </Pressable>
             );
           })}
         </View>
-      </View>
-
-      {/* ---- the follow-on the outcome implies ---- */}
-      {followOn ? (
-        <View style={{ backgroundColor: C.primaryTint, borderWidth: 1, borderColor: C.primaryEdge, borderRadius: radius.card, paddingVertical: 14, paddingHorizontal: 16, marginTop: 14 }}>
-          {doneLine ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: C.successBg, alignItems: 'center', justifyContent: 'center' }}>
-                <Icon name="task" size={13} color={C.success} strokeWidth={2.4} />
-              </View>
-              <Text style={[{ fontSize: 15, color: C.ink, flex: 1 }, weight(500)]}>{doneLine}</Text>
-            </View>
-          ) : (
-            <View>
-              <Text style={[type.body, { color: C.ink }]}>{followOn.line}</Text>
-              <Pressable
-                onPress={() => {
-                  if (outcome === 'order') return router.push('/order?from=visit');
-                  if (outcome === 'payment') return router.push('/pay?from=visit');
-                  setDraft({});
-                  setFormErr(null);
-                  setForm(outcome === 'complaint' ? 'complaint' : 'sample');
-                }}
-                style={{ width: '100%', height: 52, marginTop: 12, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: shadow.primaryLift }}>
-                <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>{followOn.cta}</Text>
-              </Pressable>
-            </View>
-          )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 }}>
+          <Text style={[{ fontSize: 15, color: C.body, flex: 1 }]}>On</Text>
+          <Pressable
+            onPress={() => setCalOpen('next')}
+            accessibilityLabel={'Next contact on ' + pretty(nextDate) + ', change'}
+            style={{ height: HIT, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.surface }}>
+            <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{pretty(nextDate)}</Text>
+            <Icon name="cal" size={16} color={C.body} strokeWidth={1.6} />
+          </Pressable>
         </View>
-      ) : null}
-
-      {/* ---- come back on ---- */}
-      <Card style={{ marginTop: 12 }}>
-        <Text style={[type.label, { marginBottom: 6 }]}>Come back on</Text>
-        <Pressable
-          onPress={() => setCalOpen('next')}
-          style={{ width: '100%', height: 52, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: C.surface }}>
-          <Text style={{ fontSize: 15, color: C.ink }}>{pretty(nextDate)}</Text>
-        </Pressable>
         <Text style={[type.caption, { marginTop: 8 }]}>
           {c?.cycleDays
             ? 'Suggested from their ' + c.cycleDays + '-day buying pattern. Change it if they said otherwise.'
@@ -1855,25 +1888,25 @@ export default function Visit() {
         </Text>
       </Card>
 
-      {/* ---- what is missing, and why the rule exists ---- */}
+      {/* ---- what is missing, and why the rule exists ----
+          Drawn only while something is outstanding, and listing only that.
+          A green checklist of everything already done repeated the save bar
+          and pushed the one line that mattered below the fold. */}
+      {verdict.verified ? null : (
       <View
         style={{
           borderWidth: 1,
-          borderColor: verdict.verified ? C.hairline : C.warnEdge,
-          backgroundColor: verdict.verified ? C.surface : C.warnBg,
+          borderColor: C.warnEdge,
+          backgroundColor: C.warnBg,
           borderRadius: radius.xl,
           paddingVertical: 14,
           paddingHorizontal: 16,
           marginTop: 16,
-          boxShadow: shadow.soft,
         }}>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{verdict.title}</Text>
-          {verdict.verified ? <Text style={[{ fontSize: 13, color: C.success }, weight(500)]}>Ready</Text> : null}
-        </View>
+        <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{verdict.title}</Text>
 
         <View style={{ marginTop: 6 }}>
-          {checks.map((k, i) => (
+          {verdict.failed.map((k, i) => (
             <View key={k.key} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', paddingVertical: 10, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
               <View style={{ width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: k.ok ? C.successBg : C.dangerBg }}>
                 {k.ok ? (
@@ -1912,6 +1945,7 @@ export default function Visit() {
           </Text>
         </Pressable>
       </View>
+      )}
 
       <View style={{ height: 96 }} />
 
@@ -1940,7 +1974,7 @@ export default function Visit() {
         this build learned to hunt up the page for whatever the toast meant.
         This asks every question in one place, with the controls to answer it
         right there, and the button at the bottom checks him out the moment
-        the last one is answered. The evidence (GPS, time, photo) is listed but
+        the last one is answered. The evidence (GPS, time in the shop) is listed but
         cannot be typed into existence, so it offers the unverified save —
         which the answers still have to be given for.
       */}
@@ -1963,8 +1997,8 @@ export default function Visit() {
                     onPress={() => set({ outcome: o.k })}
                     accessibilityRole="radio"
                     accessibilityState={{ selected: outcome === o.k }}
-                    style={{ width: '48.5%', minHeight: 48, padding: 8, borderRadius: radius.md, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 14, textAlign: 'center', color: C.ink }}>{o.label}</Text>
+                    style={{ height: HIT, paddingHorizontal: 14, borderRadius: radius.pill, borderWidth: 1, borderColor: outcome === o.k ? C.primary : C.border, backgroundColor: outcome === o.k ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={[{ fontSize: 15, color: outcome === o.k ? C.primaryDeep : C.ink }, weight(outcome === o.k ? 600 : 500)]}>{o.label}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -2010,7 +2044,7 @@ export default function Visit() {
           ) : null}
 
           {checks
-            .filter((k) => !k.ok && (k.key === 'gps' || k.key === 'dwell' || k.key === 'photo'))
+            .filter((k) => !k.ok && (k.key === 'gps' || k.key === 'dwell'))
             .map((k) => (
               <View key={k.key} style={{ marginTop: 14 }}>
                 <Text style={[{ fontSize: 14, color: C.danger }, weight(500)]}>{k.line}</Text>
@@ -2289,7 +2323,7 @@ export default function Visit() {
       {/* ---- the date picker both of the above share ---- */}
       <BottomSheet open={!!calOpen} onClose={() => setCalOpen(null)}>
         <Text style={[{ fontSize: 17, color: C.ink, marginBottom: 10 }, weight(600)]}>
-          {calOpen === 'trial' ? 'Trial follow-up' : 'Come back on'}
+          {calOpen === 'trial' ? 'Trial follow-up' : 'Next contact on'}
         </Text>
         <Calendar
           selected={calOpen === 'trial' ? draft.trial ?? trialDefault : nextDate}

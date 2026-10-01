@@ -1,9 +1,9 @@
 import React from 'react';
 import { View } from 'react-native';
-import { useFocusEffect, router } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, Divider, Input, Field, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { Badge, Card, Divider, Input, Field, PrimaryButton, T } from '../src/components/ui/primitives';
 import { ConfirmSheet } from '../src/components/ui/overlays';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
@@ -137,9 +137,8 @@ export default function EodScreen() {
             Nothing recorded today
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Open your day and add where you went, and this will fill in.
+            Punch in from Home and this will fill in as you travel.
           </T>
-          <SecondaryButton label="Your day" style={{ marginTop: 14 }} onPress={() => router.push('/day')} />
         </Card>
       ) : (
         <>

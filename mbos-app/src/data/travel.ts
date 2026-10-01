@@ -225,6 +225,30 @@ export async function openDay(args: {
   });
 }
 
+/**
+ * The day's two clock times, taken from punching in and out.
+ *
+ * The meal allowance is priced from when he left and when he got back, and
+ * those used to be typed on a screen of their own that most salesmen never
+ * opened — a day with no departure pays no meals at all. The punch is the same
+ * fact, recorded with a photograph, so it fills them: the first punch-in is
+ * when he left, the last punch-out is when he got back, and punching in again
+ * after a break clears the return so the day reads as still out.
+ *
+ * A day the office has locked is left exactly as it was sent.
+ */
+export async function stampDayClock(userId: string, day: string, edge: 'in' | 'out', at: number): Promise<void> {
+  const id = await openDay({ userId, day });
+  const row = await one<ExpenseDay>('SELECT * FROM expense_days WHERE id = ?', [id]);
+  if (!row || row.lockedAt) return;
+  if (edge === 'in') {
+    if (row.departedAt == null) await updateDay(id, { departedAt: at });
+    else if (row.returnedAt != null) await updateDay(id, { returnedAt: null });
+  } else {
+    await updateDay(id, { returnedAt: at });
+  }
+}
+
 /** Change something about the day. Refused once the office has locked it. */
 export async function updateDay(
   dayId: string,
