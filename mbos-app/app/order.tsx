@@ -1,20 +1,21 @@
 import React from 'react';
-import { View, ScrollView, Pressable, TextInput } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { View, Pressable, TextInput } from 'react-native';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Input, ListCard, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
-import { color as C, radius, shadow, tabular, type, weight } from '../src/theme/tokens';
+import { color as C, radius, tabular, type, weight } from '../src/theme/tokens';
 import { inr, inrFromPaise, plural } from '../src/lib/format';
 import { productLines } from '../src/lib/product-lines';
 import {
   billingChoicesFor,
-  frequentProducts,
+  listCustomersPage,
   productsByIds,
   searchProducts,
-  starterProducts,
   type BillingChoice,
+  type Customer,
 } from '../src/data/customers';
+import { freshSuggestions, rememberedSuggestions, type OrderSuggestions } from '../src/data/order-suggestions';
 import { assessCart, saveOrder, type CartLine, type OrderAssessment } from '../src/data/orders';
 import { lastOrderLines, ratesForTag, type ReorderLine } from '../src/data/pricing';
 import { useCustomer, useStore } from '../src/state/store';
@@ -59,6 +60,8 @@ const SEARCH_LIMIT = 20;
 type Product = {
   id: string;
   name: string;
+  /** The SKU code — the legacy Product ID everybody calls it by. */
+  sku?: string | null;
   packSize?: string | null;
   cansPerBox?: number | null;
   millilitresPerCan?: number | null;
@@ -82,7 +85,29 @@ export default function OrderScreen() {
   /* Every product this panel has been shown, by id. A cart line whose product
      fell out of the last search still has a name, a pack and a rate. */
   const [known, setKnown] = React.useState<Record<string, Product>>({});
-  const [frequent, setFrequent] = React.useState<Product[]>([]);
+  const [suggested, setSuggested] = React.useState<OrderSuggestions | null>(null);
+
+  /*
+   * WHICH SHOP, asked rather than assumed.
+   *
+   * `custId` is whichever shop was opened last, and the + sheet's "Punch order"
+   * opened this form on it without a word — so the order went to the last shop
+   * he had looked at, which on one handset was a lead called OM Enterprises
+   * every time. Arriving from a shop's own record or from a visit, the shop is
+   * the one he is on. Inside a visit he has checked in to, it is that visit's
+   * shop. From anywhere else he says which, and the shop is drawn large enough
+   * to be noticed and changed.
+   */
+  const params = useLocalSearchParams<{ from?: string }>();
+  const arrival = useStore((s) => s.arrival);
+  const inVisit = arrival?.checkedInAt != null ? arrival : null;
+  const shopIsGiven = params.from === 'customer' || params.from === 'visit' || !!inVisit;
+  const [picking, setPicking] = React.useState(!shopIsGiven);
+  React.useEffect(() => {
+    if (inVisit && params.from !== 'customer' && useStore.getState().custId !== inVisit.customerId) {
+      set({ custId: inVisit.customerId });
+    }
+  }, [inVisit, params.from, set]);
   const [results, setResults] = React.useState<Product[]>([]);
   /** Which query the rows in `results` answer. Anything else is stale. */
   const [resultsFor, setResultsFor] = React.useState<string | null>(null);
@@ -166,14 +191,17 @@ export default function OrderScreen() {
          frequent nor a starter. Without this the line sat in the cart
          undrawn, counted by nothing on the screen. */
       const inCartIds = Object.keys(useStore.getState().cart);
-      void Promise.all([
-        frequentProducts(custId),
-        starterProducts(),
-        productsByIds(inCartIds),
-      ]).then(([f, starter, inCart]) => {
+      /* What was last known first — instant, and all there is with no signal —
+         then the office's answer over it. */
+      void Promise.all([rememberedSuggestions(custId), productsByIds(inCartIds)]).then(([known, inCart]) => {
         if (!live) return;
-        setFrequent(f);
-        remember([...f, ...starter, ...inCart]);
+        setSuggested(known);
+        remember([...known.usual, ...known.starter, ...inCart]);
+      });
+      void freshSuggestions(custId).then((today) => {
+        if (!live || !today) return;
+        setSuggested(today);
+        remember([...today.usual, ...today.starter]);
       });
       return () => {
         live = false;
@@ -252,16 +280,18 @@ export default function OrderScreen() {
     };
   }, [billing, lines]);
 
-  if (!c) {
+  if (picking || !c) {
     return (
       <AppFrame title="New order" activeTab={null} onBack={back.go} contentStyle={{ padding: 16 }}>
         <BackLink label={back.label} onPress={back.go} />
-        <Card style={{ paddingVertical: 32, alignItems: 'center' }}>
-          <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Open a customer first</T>
-          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6 }}>
-            An order belongs to a shop. Pick one from Customers.
-          </T>
-        </Card>
+        <ShopPicker
+          current={c}
+          onPick={(id) => {
+            /* Setting a different shop clears the draft — see `draftMovedShop`. */
+            set({ custId: id });
+            setPicking(false);
+          }}
+        />
       </AppFrame>
     );
   }
@@ -303,7 +333,9 @@ export default function OrderScreen() {
   const blank = inCart.some((l) => !l.cans);
   const canSubmit = inCart.length > 0 && !blank && !blocked && !!billing;
 
-  const frequentOffered = frequent.filter((k) => !cart[k.id]);
+  const usual = suggested?.usual ?? [];
+  const starter = suggested?.starter ?? [];
+  const totalCans = inCart.reduce((n, l) => n + l.cans, 0);
 
   /* This account's own list rate, summed — a SEPARATE figure from "Order
      value" above, which stays tied to products.priceSource and reads "Not
@@ -379,15 +411,50 @@ export default function OrderScreen() {
       {/* The owing figure is the BILLER's, so it is named. Reading "nothing
           owing" under a shop's name while the distributor paying for it is
           over their limit is the misreading this line exists to prevent. */}
-      <T s="caption">
-        {(biller?.name ?? c.name) +
-          ' · ' +
-          (credit === null
-            ? 'checking what they owe'
-            : dues
-              ? inr(dues) + ' already owing'
-              : 'nothing owing')}
-      </T>
+      <Card style={{ marginTop: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T s="micro" style={{ color: C.muted }}>{inVisit ? 'ORDER FOR THIS VISIT' : 'ORDER FOR'}</T>
+            <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink, marginTop: 2 }, weight(600)]} numberOfLines={2}>
+              {c.name}
+            </T>
+            <T s="caption" style={{ marginTop: 2 }}>
+              {[c.area, c.city].filter(Boolean).join(', ') || 'No town on the record'}
+              {c.isLead ? ' · Lead' : ''}
+            </T>
+          </View>
+          {/* A visit's order belongs to the visit's shop; anywhere else the
+              shop can be changed, and changing it clears the draft. */}
+          {inVisit || params.from === 'visit' ? null : (
+            <Pressable
+              onPress={() => setPicking(true)}
+              accessibilityRole="button"
+              hitSlop={8}
+              style={({ pressed }) => [
+                {
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: radius.md,
+                  borderWidth: 1,
+                  borderColor: C.primaryEdge,
+                  backgroundColor: C.primaryTint,
+                },
+                pressed && { opacity: 0.85 },
+              ]}>
+              <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(600)]}>Change</T>
+            </Pressable>
+          )}
+        </View>
+        {/* The owing figure is the BILLER's, so it is named. */}
+        <T s="caption" style={{ marginTop: 10, color: dues ? C.ink : C.muted }}>
+          {(biller && biller.id !== c.id ? biller.name + ' · ' : '') +
+            (credit === null
+              ? 'Checking what they owe…'
+              : dues
+                ? inr(dues) + ' already owing' + (limit != null ? ' of ' + inr(limit) + ' credit' : '')
+                : 'Nothing owing')}
+        </T>
+      </Card>
 
       {/* --------------------------------------------- who pays, who receives
           Drawn ONLY where the two differ or there is somebody else in the
@@ -550,100 +617,65 @@ export default function OrderScreen() {
             </Pressable>
           ) : null}
 
-          {frequentOffered.length > 0 ? (
+          {/* WHAT TO OFFER BEFORE ANYTHING IS TYPED. The office's answer — this
+              shop's own history, then the best sellers for a shop with none —
+              remembered per shop, so it is there with no signal. Hidden while a
+              search is open: one list at a time. */}
+          {!query && usual.length > 0 ? (
             <View style={{ marginTop: 16 }}>
-              <SectionLabel style={{ marginBottom: 10 }}>What they usually buy</SectionLabel>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={{ marginHorizontal: -16 }}
-                contentContainerStyle={{ gap: 12, paddingHorizontal: 16, paddingBottom: 4 }}>
-                {frequentOffered.map((k) => (
-                  <Pressable
+              <SectionLabel style={{ marginBottom: 8 }}>What they usually buy</SectionLabel>
+              <ListCard>
+                {usual.map((k, i) => (
+                  <ProductRow
                     key={k.id}
-                    onPress={() => setQty(k.id, '1')}
-                    accessibilityRole="button"
-                    style={({ pressed }) => [
-                      {
-                        width: 180,
-                        backgroundColor: C.surface,
-                        borderWidth: 1,
-                        borderColor: C.hairline,
-                        borderRadius: radius.xl,
-                        padding: 14,
-                        boxShadow: shadow.soft,
-                      },
-                      pressed && { opacity: 0.9 },
-                    ]}>
-                    {/* THE FORMULATION LEADS — `src/lib/product-lines.ts`, the
-                        same rule the CRM's order form runs. The SKU moves down a
-                        line rather than off the card: two tiles can now headline
-                        one liquid and the pack is what tells them apart. The
-                        brand is the fallback where no formulation is filed, as
-                        before. */}
-                    <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-                      {productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).lead}
-                    </T>
-                    <T s="caption" style={{ marginTop: 2 }}>
-                      {productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).detail ?? ''}
-                    </T>
-                    <T style={[{ fontSize: 15, color: C.primaryDeep, marginTop: 10 }, weight(500)]}>+ Add</T>
-                  </Pressable>
+                    p={k}
+                    first={i === 0}
+                    on={!!cart[k.id]}
+                    note={
+                      'Ordered ' +
+                      plural(k.orderCount, 'time') +
+                      (k.lastPurchaseDate ? ' · last ' + shortDate(k.lastPurchaseDate) : '')
+                    }
+                    onAdd={() => setQty(k.id, '1')}
+                  />
                 ))}
-              </ScrollView>
+              </ListCard>
             </View>
+          ) : null}
+
+          {!query && starter.length > 0 ? (
+            <View style={{ marginTop: 16 }}>
+              <SectionLabel style={{ marginBottom: 8 }}>
+                {usual.length ? 'Best sellers' : 'Best sellers — nothing on record for this shop yet'}
+              </SectionLabel>
+              <ListCard>
+                {starter.map((k, i) => (
+                  <ProductRow key={k.id} p={k} first={i === 0} on={!!cart[k.id]} onAdd={() => setQty(k.id, '1')} />
+                ))}
+              </ListCard>
+            </View>
+          ) : null}
+
+          {!query && suggested && !usual.length && !starter.length ? (
+            <T s="caption" style={{ marginTop: 16 }}>
+              {suggested.fresh
+                ? 'Nothing to suggest for this shop yet — search for the product below.'
+                : 'Suggestions arrive the first time this shop is opened with signal. Search below meanwhile.'}
+            </T>
           ) : null}
 
           <Input
             value={oQ}
             onChangeText={(v) => set({ oQ: v })}
-            placeholder="Search products by name or code"
+            placeholder="Search by name, pack size or SKU code"
             style={{ marginTop: 16, borderRadius: radius.md, fontSize: 15 }}
           />
 
           {query ? (
             <ListCard style={{ marginTop: 10 }}>
-              {shown.map((k, i) => {
-                const on = !!cart[k.id];
-                return (
-                  <Pressable
-                    key={k.id}
-                    onPress={() => {
-                      if (!on) setQty(k.id, '1');
-                    }}
-                    disabled={on}
-                    accessibilityRole="button"
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 12,
-                      paddingHorizontal: 16,
-                      paddingVertical: 14,
-                      borderTopWidth: i ? 1 : 0,
-                      borderTopColor: C.wash,
-                      backgroundColor: on ? C.primaryTint : C.surface,
-                    }}>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <T style={{ fontSize: 15, color: C.ink }}>
-                        {productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).lead}
-                      </T>
-                      <T s="caption">
-                        {[
-                          /* The SKU and its pack, which is what separates two
-                             rows headlining one liquid — so it is no longer the
-                             optional half of this line. The rate rides with it
-                             exactly as before. */
-                          productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).detail,
-                          k.sellingPricePaise != null ? inrFromPaise(k.sellingPricePaise) + ' / can' : null,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </T>
-                    </View>
-                    <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(500)]}>{on ? 'Added' : 'Add'}</T>
-                  </Pressable>
-                );
-              })}
+              {shown.map((k, i) => (
+                <ProductRow key={k.id} p={k} first={i === 0} on={!!cart[k.id]} onAdd={() => setQty(k.id, '1')} />
+              ))}
               {/* Three different empty states, and they must never look alike:
                   still looking, nothing matched, nothing offered yet. */}
               {shown.length === 0 ? (
@@ -749,6 +781,7 @@ export default function OrderScreen() {
                           const caption = priced?.schemeNote ?? row.detail ?? '';
                           return (
                             <>
+                              <SkuChip sku={known[line.productId]?.sku} />
                               <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(600)]}>
                                 {row.lead}
                               </T>
@@ -900,6 +933,12 @@ export default function OrderScreen() {
             ) : null}
           </Card>
 
+          {inCart.length ? (
+            <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
+              {plural(inCart.length, 'product') + ' · ' + plural(totalCans, 'can') + ' · for ' + c.name}
+            </T>
+          ) : null}
+
           <PrimaryButton
             label={busy ? 'Sending…' : needsApproval ? 'Send for approval' : 'Submit order'}
             onPress={submit}
@@ -916,5 +955,176 @@ export default function OrderScreen() {
       ) : null}
       <View style={{ height: 8 }} />
     </AppFrame>
+  );
+}
+
+/* ------------------------------------------------------------------ parts */
+
+/** "12 Sep" from an ISO date — a last purchase reads as a day, not a timestamp. */
+function shortDate(iso: string): string {
+  const d = new Date(iso.slice(0, 10) + 'T00:00:00');
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
+}
+
+/**
+ * THE SKU CODE, drawn as a code. It is what the salesman and the shopkeeper
+ * both call a product by, and the one thing that tells two pack sizes of one
+ * liquid apart at a glance — so it leads the row rather than hiding in it.
+ */
+function SkuChip({ sku }: { sku?: string | null }) {
+  if (!sku) return null;
+  return (
+    <View
+      style={{
+        alignSelf: 'flex-start',
+        paddingHorizontal: 6,
+        paddingVertical: 1,
+        borderRadius: 4,
+        backgroundColor: C.wash,
+        marginBottom: 3,
+      }}>
+      <T style={[{ fontSize: 11, lineHeight: 15, color: C.body, letterSpacing: 0.3 }, weight(600), tabular]}>
+        {'SKU ' + sku}
+      </T>
+    </View>
+  );
+}
+
+/** One product to add: the SKU, the liquid, the pack, and one tap. */
+function ProductRow({
+  p,
+  on,
+  first,
+  note,
+  onAdd,
+}: {
+  p: Product;
+  on: boolean;
+  first: boolean;
+  note?: string;
+  onAdd: () => void;
+}) {
+  const row = productLines({ displayName: p.name, subtitle: p.formulation ?? p.brand });
+  return (
+    <Pressable
+      onPress={() => {
+        if (!on) onAdd();
+      }}
+      disabled={on}
+      accessibilityRole="button"
+      accessibilityLabel={(on ? 'Added: ' : 'Add ') + p.name}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderTopWidth: first ? 0 : 1,
+        borderTopColor: C.wash,
+        backgroundColor: on ? C.primaryTint : pressed ? C.wash : C.surface,
+      })}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <SkuChip sku={p.sku} />
+        <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>{row.lead}</T>
+        <T s="caption" numberOfLines={2}>
+          {[row.detail, p.sellingPricePaise != null ? inrFromPaise(p.sellingPricePaise) + ' / can' : null, note]
+            .filter(Boolean)
+            .join(' · ')}
+        </T>
+      </View>
+      <View
+        style={{
+          minWidth: 64,
+          alignItems: 'center',
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: radius.md,
+          backgroundColor: on ? 'transparent' : C.primary,
+        }}>
+        <T style={[{ fontSize: 14, color: on ? C.primaryDeep : C.surface }, weight(600)]}>{on ? '✓ Added' : 'Add'}</T>
+      </View>
+    </Pressable>
+  );
+}
+
+/**
+ * WHICH SHOP THIS ORDER IS FOR, asked when nothing on the way here said.
+ * Searches his own book on the phone — no signal needed — by name, town or
+ * number, and puts the shop he last opened first, because that is usually the
+ * one he means and is never assumed.
+ */
+function ShopPicker({ current, onPick }: { current: Customer | null; onPick: (id: string) => void }) {
+  const [q, setQ] = React.useState('');
+  const [rows, setRows] = React.useState<Customer[]>([]);
+  const [total, setTotal] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    let live = true;
+    const t = setTimeout(() => {
+      void listCustomersPage({ query: q.trim(), limit: 30 }).then((page) => {
+        if (!live) return;
+        setRows(page.rows);
+        setTotal(page.total);
+      });
+    }, 150);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [q]);
+
+  const list = !q.trim() && current ? [current, ...rows.filter((r) => r.id !== current.id)] : rows;
+
+  return (
+    <>
+      <T style={[{ fontSize: 17, color: C.ink, marginTop: 4 }, weight(600)]}>Which shop is this order for?</T>
+      <T s="caption" style={{ marginTop: 4 }}>Search your book by name, town or mobile.</T>
+      <Input
+        value={q}
+        onChangeText={setQ}
+        placeholder="Shop name, town or mobile"
+        autoFocus
+        style={{ marginTop: 12, borderRadius: radius.md, fontSize: 15 }}
+      />
+      <ListCard style={{ marginTop: 10 }}>
+        {list.map((r, i) => (
+          <Pressable
+            key={r.id}
+            onPress={() => onPick(r.id)}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              paddingHorizontal: 16,
+              paddingVertical: 12,
+              borderTopWidth: i ? 1 : 0,
+              borderTopColor: C.wash,
+              backgroundColor: pressed ? C.wash : C.surface,
+            })}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <T style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(500)]} numberOfLines={1}>
+                {r.name}
+              </T>
+              {!q.trim() && current && r.id === current.id ? (
+                <T s="micro" style={{ color: C.primaryDeep }}>LAST OPENED</T>
+              ) : null}
+            </View>
+            <T s="caption" numberOfLines={1}>
+              {[[r.area, r.city].filter(Boolean).join(', '), r.isLead ? 'Lead' : null, r.phone].filter(Boolean).join(' · ')}
+            </T>
+          </Pressable>
+        ))}
+        {list.length === 0 ? (
+          <View style={{ paddingHorizontal: 16, paddingVertical: 24 }}>
+            <T style={{ fontSize: 15, color: C.muted, textAlign: 'center' }}>
+              {total === null ? 'Looking…' : 'No shop on your book matches that.'}
+            </T>
+          </View>
+        ) : null}
+      </ListCard>
+      {total != null && total > list.length && !q.trim() ? (
+        <T s="caption" style={{ marginTop: 8 }}>{'Showing ' + list.length + ' of ' + total + ' — search to narrow it.'}</T>
+      ) : null}
+    </>
   );
 }

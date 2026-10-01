@@ -485,28 +485,18 @@ export async function recordCompetitor(args: {
   });
 }
 
-/** Products this customer has actually bought, most-ordered first. */
-export async function frequentProducts(customerId: string, limit = 6) {
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; sellingPricePaise: number | null; n: number }>(
-    `SELECT p.*, COUNT(ol.id) AS n
-       FROM order_lines ol
-       JOIN orders o ON o.id = ol.orderId
-       JOIN products p ON p.id = ol.productId
-      WHERE o.customerId = ? AND p.active = 1
-      GROUP BY p.id
-      ORDER BY n DESC, p.name
-      LIMIT ?`,
-    [customerId, limit],
-  );
-}
 
 export async function searchProducts(query: string, limit = 20) {
   const like = `%${query.trim().toLowerCase()}%`;
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
+  /* The SKU code is searched too, and an exact code comes first: "216" typed
+     at a counter means Product 216, not every name with a 216 in it. */
+  const code = query.trim().toLowerCase();
+  return all<{ id: string; name: string; sku: string | null; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
     `SELECT * FROM products
-      WHERE active = 1 AND (lower(name) LIKE ? OR lower(COALESCE(formulation,'')) LIKE ? OR lower(COALESCE(brand,'')) LIKE ?)
-      ORDER BY name LIMIT ?`,
-    [like, like, like, limit],
+      WHERE active = 1 AND (lower(name) LIKE ? OR lower(COALESCE(formulation,'')) LIKE ? OR lower(COALESCE(brand,'')) LIKE ?
+                            OR lower(COALESCE(sku,'')) LIKE ?)
+      ORDER BY lower(COALESCE(sku,'')) = ? DESC, name LIMIT ?`,
+    [like, like, like, like, code, limit],
   );
 }
 
@@ -518,20 +508,13 @@ export async function searchProducts(query: string, limit = 20) {
 export async function productsByIds(ids: string[]) {
   if (!ids.length) return [];
   const marks = ids.map(() => '?').join(',');
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
+  return all<{ id: string; name: string; sku: string | null; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
     // Retired since the last order is not re-offered silently.
     `SELECT * FROM products WHERE active = 1 AND id IN (${marks})`,
     ids,
   );
 }
 
-/** A short starter list, so an order form is not an empty search box mid-call. */
-export async function starterProducts(limit = 8) {
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null }>(
-    'SELECT * FROM products WHERE active = 1 ORDER BY displayOrder, name LIMIT ?'.replace('displayOrder, ', ''),
-    [limit],
-  );
-}
 
 
 /* ------------------------------------------------- who we bill for a shop */

@@ -37,7 +37,7 @@ import { checkInAtShop, clearArrival, recordArrival } from '../src/data/arrival'
 import { logComplaint, requestSample } from '../src/data/requests';
 import { sampleReasons } from '../src/data/lead-samples';
 import { type CodedOption } from '../src/engines/funnel';
-import { starterProducts } from '../src/data/customers';
+import { rememberedSuggestions } from '../src/data/order-suggestions';
 import { todayStops } from '../src/data/journey';
 import {
   checkInVerdict,
@@ -493,7 +493,11 @@ export default function Visit() {
     void Promise.all([
       getConfig<number>('mbos.visits.minimumDwellSeconds', 120),
       getConfig<number>('mbos.location.visitMismatchM', 100),
-      starterProducts(5),
+      /* This shop's usual products first, then the best sellers — the order
+         form's own list, not the first five SKUs alphabetically. */
+      custId
+        ? rememberedSuggestions(custId).then((s) => [...s.usual, ...s.starter].slice(0, 5))
+        : Promise.resolve([]),
       todayStops(),
       getConfig<number>('mbos.travel.maxLegKilometres', 400),
       sampleReasons(),

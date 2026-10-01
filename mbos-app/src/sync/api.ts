@@ -646,6 +646,33 @@ export async function visitAssist(args: {
   }
 }
 
+/**
+ * What to offer on the order form: this shop's usual products, from the
+ * office's whole order history, and the best sellers to start a new shop from.
+ *
+ * NOT QUEUED: it is a suggestion, worth something only while the form is open.
+ * `data/order-suggestions.ts` keeps the last answer per shop, so a counter this
+ * phone has served before is offered the same list with no signal.
+ */
+export async function orderProducts(customerId: string): Promise<
+  | {
+      ok: true;
+      usual: { productId: string; orderCount: number; lastPurchaseDate: string | null }[];
+      starter: string[];
+    }
+  | { ok: false; error: string }
+> {
+  try {
+    return await request('/api/mbos/order-products', {
+      method: 'POST',
+      body: JSON.stringify({ customerId }),
+      timeoutMs: 15_000,
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error && e.message ? e.message : 'No answer.' };
+  }
+}
+
 /* --------------------------------------------------------------- last seen */
 
 export async function lastPullAt(): Promise<number> {

@@ -1980,6 +1980,15 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE lead_validations ADD COLUMN readyForOrder TEXT;`,
   ],
 
+  /*
+   * THE SKU CODE, which is what a salesman and a shopkeeper both call a
+   * product by. `products.external_code` at the office — the legacy Product ID
+   * every active SKU carries — and the one thing that tells "Mahek Enamel
+   * Thinner 800Ml (Loose)" from its 44-can box at a glance. The order form
+   * prints it on every row and searches it.
+   */
+  [`ALTER TABLE products ADD COLUMN sku TEXT;`],
+
 ];
 
 /**
