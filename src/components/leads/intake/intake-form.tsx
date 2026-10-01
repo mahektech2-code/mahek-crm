@@ -11,6 +11,7 @@ import { offeredSalesTypes, salesTypeLabel, type LeadSalesType } from "@/lib/lea
 import { captureLead } from "@/lib/actions/lead-intake";
 import type { NextActionOwner } from "@/lib/services/lead-intake-service";
 import { Banner, Button, Pill, ScreenHeader } from "@/components/console/parts";
+import { IntakeAssistant } from "@/components/leads/intake/intake-assistant";
 
 /* ---------------------------------------------------------------------------
  * Screen 5's form.
@@ -346,6 +347,42 @@ export function IntakeForm({
                   It is a different shop — raise it anyway
                 </Button>
               }
+            />
+          ) : null}
+
+          {/*
+            THE VOICE ASSISTANT proposes; it does not save. It is handed the
+            current text of each box (so it never overwrites one), one setter
+            into this form's own state, and a boolean for whether "Under" is
+            drawn — and nothing else: not the sales type, not submit, not the
+            owner, not the priority, not the duplicate override.
+          */}
+          {canWork ? (
+            <IntakeAssistant
+              workspace={workspace}
+              offerUnder={answer === "third_party"}
+              current={{
+                name: f.name,
+                contactPerson: f.contactPerson,
+                phone: f.phone,
+                companyName: f.companyName,
+                city: f.city,
+                address: f.address,
+                customerType: f.customerType,
+                monthlyLitres: f.monthlyLitres,
+                competitor: f.competitor,
+                requirement: f.requirement,
+                application: f.application,
+                notes: f.notes,
+                source: f.source,
+                sourceDetail: f.sourceDetail,
+                distributorCustomerId: f.distributorCustomerId,
+              }}
+              onFill={(key, value) => {
+                set(key)(value);
+                /* The same rule the Lead source box applies when it changes. */
+                if (key === "source" && value !== "other") set("sourceDetail")("");
+              }}
             />
           ) : null}
 

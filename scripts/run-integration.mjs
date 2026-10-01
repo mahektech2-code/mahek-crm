@@ -107,6 +107,10 @@ const files = [
   // outside its scope before reading anything, and that Call 1/2/3 voice
   // proposals save and narrow through the unmodified existing path.
   "src/lib/lead-call-intel.test.ts",
+  // The lead intake form's voice assistant: that it only reads, refuses outside
+  // its permission and module before reading anything, and that the form's own
+  // captureLead is still the only way a lead is made.
+  "src/lib/intake-intel.test.ts",
   // Lead Management → Lost: the module gate, the list narrowed by the same
   // scope every other lead list runs through, stage-at-loss read off the
   // closing transition rather than guessed, and the next-action/nurture-task
