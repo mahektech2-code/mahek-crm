@@ -1,4 +1,5 @@
 import NetInfo from '@react-native-community/netinfo';
+import { checkLeftShopFromLastKnown } from './left-shop';
 import { getKv, run, setKv } from '../db';
 import * as api from './api';
 import {
@@ -53,6 +54,11 @@ export async function isOnline(): Promise<boolean> {
  */
 export async function syncNow(opts: { manual?: boolean } = {}): Promise<SyncOutcome> {
   const empty: SyncOutcome = { ran: false, pushed: 0, accepted: 0, rejected: 0, failed: 0, pulled: 0 };
+
+  /* Asked on every tick, with or without signal — the reminder is local and
+     the reading is the OS's own last one. Not awaited: a sync is not held up
+     by a question about where he is. */
+  void checkLeftShopFromLastKnown();
 
   if (running) return { ...empty, reason: 'A sync is already running' };
   if (!(await isOnline())) return { ...empty, reason: 'No signal — everything stays queued' };

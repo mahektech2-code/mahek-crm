@@ -1019,6 +1019,40 @@ Check out with anything owed opens one sheet with the controls to answer it,
 rather than a toast pointing somewhere up the page. The server does not refuse
 a noteless visit — old APKs still send them, and a refusal would lose the visit.
 
+**WALKING OUT WITHOUT CHECKING OUT IS NOTICED, and the phone asks.** A
+salesman at the end of a long day finishes the conversation, gets back on the
+bike, and the visit is still running in his pocket. The trail already knows
+where he is every few seconds, so `leftShopVerdict` (`engines/left-shop.ts`,
+pure) compares the newest reading against where he CHECKED IN — the fix the
+gate accepted, kept on the arrival as `checkInFix` — and failing that the
+shop's pin. Past `mbos.visit.forgotCheckoutMetres` (500) the phone posts ONE
+local notification, on its own MAX-importance channel with a sound, and
+tapping it opens the check-out for that shop. Local rather than a server push
+because the server does not know he is checked in until the visit is saved,
+and because it has to work with no signal.
+
+**The reading's own error is taken off before it counts.** Asking somebody
+still at the counter whether he forgot is how a reminder becomes one people
+swipe away, so a 300 m-wide fix landing 550 m out does not fire, and a fix
+with no stated accuracy proves nothing. `checkConsistency` keeps the threshold
+at least twice the check-in radius for the same reason.
+
+**It is asked wherever a reading reaches JavaScript**, which is two places:
+the background location task on each delivery, and every sync tick against
+the phone's last known position. The second is what covers a handset whose
+native service uploads its own fixes and never hands them to this side — and
+on such a handset with the app closed, the reminder is only as prompt as the
+background sync task, which Android may run as rarely as every fifteen minutes.
+
+**The 100 m rule is for walking IN, never for walking out.** The visit screen
+used to take a fresh fix whenever it was reopened, so after a reap — or after
+tapping this reminder half a kilometre down the road — it measured where he is
+now against the shop and refused a perfectly good visit its check-out. It
+restores the check-in fix instead. And a visit he forgot to close is closed at
+the moment the trail saw him leave (`leftShopAt`), not at the moment he
+remembered: counting the ride home as time with the customer is the error the
+dwell figure exists to avoid.
+
 **A SUSPECT CANNOT BE VISITED FOR EVER, and the cap ASKS rather than refuses.**
 §B of the brief wants a maximum of three visits "enforced", and enforced as a
 block is the one shape this app must not use: `engines/geo.ts` states the

@@ -538,10 +538,25 @@ export default function Visit() {
   }, [nextDate, c, set]);
 
   /* One attempt at a fix on arrival, ten seconds at most. The salesman is
-     standing in a shop with the owner waiting; a spinner is not an option. */
+     standing in a shop with the owner waiting; a spinner is not an option.
+
+     NOT WHERE THE CHECK-IN ALREADY HAS ONE. The gate measured him at the door
+     and the arrival kept that reading; taking a fresh one here, after Android
+     reaped the app or after he tapped the "forgot to check out" reminder half
+     a kilometre down the road, would measure where he is NOW against the shop
+     and refuse to let a perfectly good visit check out. The 100 m rule is for
+     walking in, never for walking out. */
+  const keptFix =
+    arrival && arrival.customerId === custId && arrival.checkedInAt != null ? arrival.checkInFix ?? null : null;
   React.useEffect(() => {
     let live = true;
     if (gps !== 'acquiring') return;
+    if (keptFix && arrival) {
+      setFix({ lat: keptFix.lat, lng: keptFix.lng, accuracyM: keptFix.accuracyM ?? 9999, at: arrival.arrivedAt });
+      setFixReason(null);
+      set({ gps: 'locked' });
+      return;
+    }
     void (async () => {
       const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
       const result = await getFix({ accuracyThresholdM: threshold });
@@ -554,7 +569,7 @@ export default function Visit() {
     return () => {
       live = false;
     };
-  }, [gps, set]);
+  }, [gps, set, keptFix, arrival]);
 
   /* ────────────────────────────────────────────────────────── arriving */
 
@@ -669,6 +684,7 @@ export default function Visit() {
           customerName: leg.toLabel ?? c?.name ?? 'this shop',
           legId: leg.id,
           arrivedAt: at,
+          checkInFix: got ? { lat: got.lat, lng: got.lng, accuracyM: got.accuracyM } : null,
         }),
       );
       loadLeg();
@@ -870,7 +886,16 @@ export default function Visit() {
     }
   };
 
-  const dwellSeconds = visitStart ? Math.max(0, Math.floor((now - visitStart) / 1000)) : 0;
+  /*
+   * WHEN THE VISIT ENDED. Ordinarily the moment he presses Check out; where the
+   * trail noticed him walk away first, the moment it did. A visit he forgot to
+   * close is closed at the time he left rather than at the time he remembered,
+   * or the ride home would be counted as time with the customer.
+   */
+  const leftAt =
+    arrival && arrival.customerId === custId && arrival.checkedInAt != null ? arrival.leftShopAt ?? null : null;
+  const endAt = leftAt != null ? Math.min(leftAt, now) : now;
+  const dwellSeconds = visitStart ? Math.max(0, Math.floor((endAt - visitStart) / 1000)) : 0;
   const gpsLocked = gps === 'locked';
 
   /* The disagreement between the phone and the book, as a disagreement — one
@@ -966,7 +991,7 @@ export default function Visit() {
     setSaving(true);
     /* The coordinates only. WHEN comes off the dwell clock below — a visit made
        where there is no signal is still a visit that happened at a time. */
-    const checkOut: Fix | null = fix ? { ...fix, at: now } : null;
+    const checkOut: Fix | null = fix ? { ...fix, at: endAt } : null;
     let visitId: string;
     try {
       visitId = await saveVisit({
@@ -992,7 +1017,7 @@ export default function Visit() {
          * duration of zero that nobody measured.
          */
         checkInAt: visitStart ?? now,
-        checkOutAt: visitStart == null ? null : now,
+        checkOutAt: visitStart == null ? null : endAt,
         outcome: outcome ?? 'visited',
         notes: note.trim() || null,
         transcript: null,
@@ -1491,6 +1516,33 @@ export default function Visit() {
           </View>
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 4 }} numberOfLines={3}>
             {lastTime.note}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* ---- he walked out without checking out ----
+          Said at the top, in words, because the button below now closes the
+          visit at a time he did not press it — and he should know that before
+          he does. */}
+      {leftAt != null ? (
+        <View
+          style={{
+            borderWidth: 1,
+            borderColor: C.warnEdge,
+            backgroundColor: C.warnBg,
+            borderRadius: radius.xl,
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            marginBottom: 12,
+          }}>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>You left the shop without checking out</Text>
+          <Text style={[type.caption, { color: C.body, marginTop: 2 }]}>
+            {'Noticed at ' +
+              hhmm(leftAt) +
+              (arrival?.leftShopMetres ? ', about ' + arrival.leftShopMetres + ' m away' : '') +
+              '. Check out from here — no need to go back. The visit closes at ' +
+              hhmm(leftAt) +
+              '.'}
           </Text>
         </View>
       ) : null}

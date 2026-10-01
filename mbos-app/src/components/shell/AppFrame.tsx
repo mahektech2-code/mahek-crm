@@ -381,6 +381,7 @@ export function AppFrame({
         <InVisitBar
           name={arrival.customerName}
           since={arrival.checkedInAt}
+          leftAt={arrival.leftShopAt ?? null}
           onPress={() => {
             set({ custId: arrival.customerId });
             router.push('/visit');
@@ -499,9 +500,20 @@ function ArrivedBar({ name, at, onPress }: { name: string; at: number; onPress: 
  * moment it comes back (`useTicker`), because the figure is a subtraction from
  * the check-in instant rather than a counter — there is nothing to pause.
  */
-function InVisitBar({ name, since, onPress }: { name: string; since: number; onPress: () => void }) {
+function InVisitBar({
+  name,
+  since,
+  leftAt,
+  onPress,
+}: {
+  name: string;
+  since: number;
+  /** When the trail saw him walk away without checking out. The clock stops there. */
+  leftAt: number | null;
+  onPress: () => void;
+}) {
   const now = useTicker(1_000);
-  const spent = elapsedLabel(Math.max(0, Math.floor((now - since) / 1000)));
+  const spent = elapsedLabel(Math.max(0, Math.floor(((leftAt ?? now) - since) / 1000)));
   return (
     <Pressable
       onPress={onPress}
@@ -519,10 +531,12 @@ function InVisitBar({ name, since, onPress }: { name: string; since: number; onP
       <Icon name="shop" size={18} color="#FFFFFF" strokeWidth={1.8} />
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text numberOfLines={1} style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>
-          {'In ' + name}
+          {(leftAt != null ? 'You left ' : 'In ') + name}
         </Text>
         <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
-          {'Checked in ' + hhmm(since) + ' · ' + spent}
+          {leftAt != null
+            ? 'Not checked out · left about ' + hhmm(leftAt)
+            : 'Checked in ' + hhmm(since) + ' · ' + spent}
         </Text>
       </View>
       <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Check out</Text>
