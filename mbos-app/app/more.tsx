@@ -9,7 +9,7 @@ import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { signOut as signOutReal } from '../src/data/session';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
-import { leaveBalances, listExpenses, listSamples } from '../src/data/requests';
+import { listExpenses, listSamples } from '../src/data/requests';
 import { priceDay } from '../src/data/travel';
 import { cashInHand } from '../src/data/payments';
 import { overdueSamples } from '../src/data/lead-samples';
@@ -36,7 +36,6 @@ type Counts = {
   lateSamples: number;
   overdueTasks: number;
   openLeads: number;
-  leaveLeft: number;
   pendingExpenses: number;
   dayOpen: boolean;
   daySent: boolean;
@@ -52,7 +51,6 @@ const EMPTY: Counts = {
   lateSamples: 0,
   overdueTasks: 0,
   openLeads: 0,
-  leaveLeft: 0,
   pendingExpenses: 0,
   dayOpen: false,
   daySent: false,
@@ -112,7 +110,7 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
       label: 'Me',
       items: [
         { label: 'Attendance', badge: '', route: 'attendance' },
-        { label: 'Leave', badge: n.leaveLeft ? n.leaveLeft + ' left' : '', route: 'leave' },
+        { label: 'Leave', badge: '', route: 'leave' },
         { label: 'Salary', badge: '', route: 'salary' },
         /* The day comes before the claims that hang off it: the meal
            allowance is worked out from the times on it, so a salesman who
@@ -191,7 +189,6 @@ export default function MoreScreen() {
       void Promise.all([
         listOpenTasks(),
         openLeadCount(),
-        leaveBalances(),
         listExpenses(),
         listSamples(),
         pendingCount(),
@@ -202,7 +199,7 @@ export default function MoreScreen() {
            a rupee amount in a menu badge reads as something owed to him. */
         cashInHand(userId),
         overdueSamples(today),
-      ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue, today_, maps, cash, late]) => {
+      ]).then(([tasks, openLeads, expenses, samples, toSend, queue, today_, maps, cash, late]) => {
         if (!live) return;
         setCounts({
           savedMaps: maps.length,
@@ -210,7 +207,6 @@ export default function MoreScreen() {
           lateSamples: late.length,
           overdueTasks: tasks.filter((t) => bucketOf(t.dueDate, today) === 'Overdue').length,
           openLeads,
-          leaveLeft: Math.round(balances.reduce((a, b) => a + b.available, 0)),
           pendingExpenses: expenses.filter((e) => e.state === 'Pending').length,
           openSamples: samples.filter((s) => s.state !== 'Converted' && s.state !== 'Rejected').length,
           toSend,

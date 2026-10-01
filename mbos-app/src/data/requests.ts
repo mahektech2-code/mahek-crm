@@ -269,10 +269,25 @@ export async function claimExpense(args: {
 export type LeaveRequest = {
   id: string; kind: string; fromDate: string; toDate: string; halfDay: string | null;
   days: number; reason: string; state: string; lossOfPay: number; syncState: string;
+  clientCreatedAt: number;
+  /** Who decided it, when, and what they said — off the approval, once there is one. */
+  approverName: string | null; decidedAt: number | null; decisionNote: string | null;
 };
 
+const DECIDED = `approvals a WHERE a.subjectType = 'leave' AND a.subjectId = l.id AND a.state <> 'pending' ORDER BY a.decidedAt DESC`;
+
+/** His requests, newest first, each with the decision on it where one has been made. */
 export async function listLeave(): Promise<LeaveRequest[]> {
-  return all<LeaveRequest>('SELECT * FROM leave_requests ORDER BY fromDate DESC');
+  return all<LeaveRequest>(
+    /* Subqueries rather than a join: a request can carry more than one
+       approval row, and a join would list it once per row. */
+    `SELECT l.*,
+            (SELECT a.approverName FROM ${DECIDED} LIMIT 1) AS approverName,
+            (SELECT a.decidedAt FROM ${DECIDED} LIMIT 1) AS decidedAt,
+            (SELECT a.decisionNote FROM ${DECIDED} LIMIT 1) AS decisionNote
+       FROM leave_requests l
+      ORDER BY l.clientCreatedAt DESC`,
+  );
 }
 
 export async function leaveBalances() {

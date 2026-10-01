@@ -130,7 +130,6 @@ export default function AttendanceScreen() {
   const workedSoFar = todaySessions.length ? workedMs(todaySessions, now) : null;
 
   const present = days.filter((d) => d.status === 'Present').length;
-  const onLeave = days.filter((d) => d.status === 'On Leave').length;
   const overrides = days.filter((d) => d.fieldVisitOverride === 1).length;
 
   /* "of N working days" was a count of the days this phone happens to hold a
@@ -140,7 +139,6 @@ export default function AttendanceScreen() {
   const stats: { l: string; v: string; s: string; tone?: 'amber' }[] = [
     { l: 'Present', v: String(present), s: 'of ' + days.length + ' days on this phone' },
     { l: 'Away from base', v: String(overrides), s: 'Field visit', tone: 'amber' },
-    { l: 'On leave', v: String(onLeave), s: 'Approved' },
   ];
 
   return (
