@@ -382,6 +382,24 @@ scope has already answered the question — and emptying his phone for want of a
 allocation nobody would think to make reads as a broken sync rather than as a
 rule.
 
+**A LEAD IS RAISED INSIDE THE SALESMAN'S OWN AREA, and that is Mahek's rule.**
+`placeNewLead` in `lib/territory-rules.ts` states it as "the lead must land in
+his book", because the two are one fact: a lead accepted outside the area is
+one its own author can never open. `handleLead` refuses a create that fails it
+and names his areas in the sentence; the handset's lead form offers only his
+areas as an Area picker (`engines/lead-areas.ts`), so the refusal is what an
+older build meets rather than what a current one is ever shown. A manager or
+admin whom nothing narrows is not refused — `territoryExempt` is the one
+definition the book, the handset's territory state and this gate all read.
+
+**And it is filed under a STATE, or it lands nowhere.** Every allocated city
+carries its state as a parent and `territoryClause` ANDs the two, so a lead
+saved with a town and no state matched no territory at all — every lead ever
+raised on a handset was on nobody's Customers tab, its author's included. The
+state is the phone's pick, else the allocated city's parent, else what the
+book most often files that town under, else his only state; one that none of
+those can resolve is refused rather than guessed.
+
 **A TERRITORY IS A HIERARCHY, picked from the top.** A city belongs to a state
 and a beat to a city, so `mbos_user_territories.parent` says what a row was
 picked UNDER and `PARENT_KIND` is the one statement of the shape — the dialog

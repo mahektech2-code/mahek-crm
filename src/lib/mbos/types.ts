@@ -314,6 +314,14 @@ export type TerritoryState = {
   exempt: boolean;
   /** What to print. The narrowest name of each branch, already deduplicated. */
   places: string[];
+  /**
+   * WHERE A LEAD MAY BE RAISED — every row the book is narrowed by, region
+   * rows included, because `customerIdsInScope` reads them all and a lead the
+   * picker offered must be one the book then finds. Each says what it is and
+   * what it was picked under, so the lead form can fill in the state as well as
+   * the town. Empty with `exempt` means nothing narrows this person at all.
+   */
+  areas: { kind: string; value: string; parent: string | null }[];
 };
 
 export type PullDelta = {

@@ -41,6 +41,8 @@ const files = [
      place to start reading than one sentence naming the table. */
   "src/lib/mbos-columns.test.ts",
   "src/lib/journeys.test.ts",
+  // A lead is raised inside the salesman's own area, and lands there.
+  "src/lib/lead-territory.test.ts",
   // The ERP: access, powers, working location and the masters.
   "src/lib/erp/erp-foundation.test.ts",
   "src/lib/erp/erp-purchase.test.ts",

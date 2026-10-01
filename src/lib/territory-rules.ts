@@ -26,7 +26,7 @@ import {
   qualify,
   stateKeySql,
 } from "@/lib/territory-sql";
-import { stateVariants } from "@/lib/india-states";
+import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
 
 /** The kinds a territory can be, coarsest first. */
 export const TERRITORY_KINDS = ["state", "region", "city", "beat"] as const;
@@ -154,4 +154,106 @@ export function territoryClause(territories: Territory[], table = "customers"): 
   });
 
   return sql`(${sql.join(parts, sql` or `)})`;
+}
+
+/**
+ * WHERE A NEW LEAD MAY BE RAISED — inside the book its salesman can see, and
+ * nowhere else.
+ *
+ * Mahek's rule is that a salesman raises leads in his own territory. It is
+ * stated here as "the lead must land in his book" rather than as a second
+ * reading of what a territory is, because those are the same fact and two
+ * statements of it drift: a lead accepted outside the book is a lead its own
+ * author can never open, which is exactly the failure that surfaced the rule.
+ * `matchesTerritory` is `territoryClause` in JavaScript, row for row — the
+ * parent ANDed, states compared on every spelling — so what this lets in is
+ * what that query then finds.
+ *
+ * THE STATE IS RESOLVED HERE TOO, because without one nothing lands anywhere.
+ * Every allocated city carries its state as a parent, and every handset lead
+ * used to arrive with no state at all — so it matched no territory, and no
+ * lead raised on a phone ever reached a Customers book, inside the area or
+ * not. In order: what the phone said; the parent of the allocated city it
+ * names; what the rest of the book says that town is in (`bookState`, read by
+ * the caller); and, for somebody allocated exactly one state, that state. A
+ * state that cannot be resolved by any of them is not guessed — the lead is
+ * refused as outside, and the sentence asks for the area to be picked.
+ *
+ * `exempt` with nothing allocated is the manager or admin whose book is not
+ * narrowed by territory at all; for them there is nothing to be outside of,
+ * and the state is still resolved where it can be so the row carries one.
+ */
+export type LeadPlace = {
+  city?: string | null;
+  area?: string | null;
+  /** The state the phone named, where its build asks. */
+  state?: string | null;
+  /** The state the book most often files this city under, if any. */
+  bookState?: string | null;
+};
+
+export type LeadPlacement =
+  | { ok: true; state: string | null }
+  | { ok: false; reason: "no_area" | "outside"; areas: string[] };
+
+const same = (a: string | null | undefined, b: string | null | undefined) =>
+  (a ?? "").trim().toLowerCase() !== "" &&
+  (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
+
+const sameState = (a: string | null | undefined, b: string | null | undefined) =>
+  !!a?.trim() && !!b?.trim() && stateVariants(b).includes(stateKey(a));
+
+/** One territory row against one place — `territoryClause`'s own test, in JS. */
+export function matchesTerritory(
+  t: Territory,
+  place: { city?: string | null; area?: string | null; state?: string | null },
+): boolean {
+  const own =
+    t.kind === "state" || t.kind === "region"
+      ? sameState(place.state, t.value)
+      : t.kind === "city"
+        ? same(place.city, t.value)
+        : same(place.area, t.value);
+  const parent = t.parent?.trim();
+  if (!own || !parent || !PARENT_KIND[t.kind]) return own;
+  return PARENT_KIND[t.kind] === "state" ? sameState(place.state, parent) : same(place.city, parent);
+}
+
+/** How an allocation reads on a refusal: "Pune (Maharashtra)", "Odisha". */
+export function territoryLabel(t: Territory): string {
+  const parent = t.parent?.trim();
+  return parent ? `${t.value} (${parent})` : t.value;
+}
+
+export function placeNewLead(
+  territories: Territory[],
+  place: LeadPlace,
+  exempt: boolean,
+): LeadPlacement {
+  const states = territories.filter((t) => t.kind === "state" || t.kind === "region");
+  const onlyState =
+    new Set(states.map((t) => canonicalState(t.value))).size === 1 ? canonicalState(states[0].value) : null;
+  const cityParent = territories.find(
+    (t) => t.kind === "city" && same(place.city, t.value) && t.parent?.trim(),
+  )?.parent;
+
+  const state =
+    [place.state, cityParent, place.bookState, onlyState]
+      .map((s) => (s?.trim() ? canonicalState(s) : ""))
+      .find(Boolean) || null;
+
+  if (!territories.length) {
+    return exempt
+      ? { ok: true, state }
+      : { ok: false, reason: "no_area", areas: [] };
+  }
+
+  const resolved = { city: place.city, area: place.area, state };
+  if (territories.some((t) => matchesTerritory(t, resolved))) return { ok: true, state };
+
+  return {
+    ok: false,
+    reason: "outside",
+    areas: [...new Set(territories.map(territoryLabel))].sort((a, b) => a.localeCompare(b)),
+  };
 }

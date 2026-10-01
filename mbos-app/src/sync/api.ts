@@ -318,6 +318,13 @@ export type TerritoryState = {
   allocated: boolean;
   exempt: boolean;
   places: string[];
+  /**
+   * Where a lead may be raised — see `src/lib/mbos/types.ts`. Absent from an
+   * older server, which the lead form reads as "no rule to apply here" rather
+   * than as "nowhere": refusing every lead because a field did not arrive is
+   * the wire failing silently in the worst direction.
+   */
+  areas?: { kind: string; value: string; parent: string | null }[];
 };
 
 export type PullPayload = {
