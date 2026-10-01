@@ -73,8 +73,8 @@ export default function TravelScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Today&apos;s travel</T>
       <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 14 }}>
-        Recorded from your punch-in, your punch-out and your visits. You never work out the money —
-        it comes from the policy the office has published.
+        Filled in from your punch-in, your punch-out and your visits. You do not work out the money.
+        It comes from the office policy.
       </T>
 
       {priced?.reason ? (
@@ -92,8 +92,8 @@ export default function TravelScreen() {
             </T>
           </View>
           <T s="caption" style={{ marginTop: 2 }}>
-            {km(computation.totalMetres)} across {computation.legs.length}{' '}
-            {computation.legs.length === 1 ? 'journey' : 'journeys'}
+            {km(computation.totalMetres)} in {computation.legs.length}{' '}
+            {computation.legs.length === 1 ? 'trip' : 'trips'}
           </T>
         </Card>
       ) : null}
@@ -152,7 +152,7 @@ export default function TravelScreen() {
             </View>
             {zero ? (
               <Badge tone="neutral" style={{ alignSelf: 'flex-start', marginTop: 6 }}>
-                Recorded, pays nothing
+                Saved, pays nothing
               </Badge>
             ) : null}
             {/* A visit's journey inside a metered day is movement, not a second
@@ -171,7 +171,7 @@ export default function TravelScreen() {
       {locked ? (
         <Card style={{ marginTop: 6, backgroundColor: C.warnBg }}>
           <T s="small" style={{ color: C.ink }}>
-            This day has been sent in. If something on it is wrong, ask your manager to reopen it.
+            This day is already sent. If something is wrong, ask your manager to open it again.
           </T>
         </Card>
       ) : (

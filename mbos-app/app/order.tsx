@@ -393,15 +393,15 @@ export default function OrderScreen() {
 
   const reorder = async () => {
     const found = await productsByIds(lastOrder.map((l) => l.productId));
-    if (!found.length) return notify('Nothing from that order is still offered.');
+    if (!found.length) return notify('No product from that order is sold now.');
     remember(found);
     const byId = new Map(lastOrder.map((l) => [l.productId, l.cans]));
     for (const p of found) setQty(p.id, String(byId.get(p.id) ?? 1));
     const dropped = lastOrder.length - found.length;
     notify(
-      `${plural(found.length, 'line')} from the last order, added` +
-        (dropped ? ` — ${plural(dropped, 'line')} no longer offered` : '') +
-        ' — check quantities before sending.',
+      `${plural(found.length, 'line')} from the last order, added.` +
+        (dropped ? ` ${plural(dropped, 'line')} not sold now.` : '') +
+        ' Check quantities before sending.',
     );
   };
 
@@ -409,15 +409,15 @@ export default function OrderScreen() {
     /* `whyDisabled` keeps this button pressable so the handler can refuse in
        words, which means the in-flight lock has to be checked here as well as
        drawn on the button. */
-    if (busy) return notify('Still sending the last one…');
-    if (!inCart.length) return notify('Add something first');
-    if (blank) return notify('Every line needs a quantity');
-    if (!assessment || blocked) return notify(assessment?.blockReason ?? 'This customer cannot be ordered for');
+    if (busy) return notify('Still sending the last order…');
+    if (!inCart.length) return notify('Add a product first');
+    if (blank) return notify('Set a quantity on every line');
+    if (!assessment || blocked) return notify(assessment?.blockReason ?? 'You cannot take an order for this customer');
     /* Said while he is standing in the shop rather than by a refusal at sync
        hours later: the arrangement names a distributor who is not his. */
     if (!billing || !biller) {
       return notify(
-        `${c.name} is billed to ${billingOptions?.[0]?.name ?? 'somebody'}, who is not on your book. Ask the office to move the account or bill the shop direct.`,
+        `${c.name} is billed to ${billingOptions?.[0]?.name ?? 'someone'}, who is not in your list. Ask the office to move the account, or bill the shop direct.`,
       );
     }
 
@@ -462,8 +462,8 @@ export default function OrderScreen() {
       set({ cart: {} });
       notify(
         sentForApproval
-          ? 'Sent to your manager · queued until approved'
-          : 'Order placed · queued, syncs when you have signal',
+          ? 'Sent to your manager · waiting for approval'
+          : 'Order saved · will send when you have signal',
       );
       back.go();
     } finally {
@@ -494,7 +494,7 @@ export default function OrderScreen() {
               {c.name}
             </T>
             <T s="caption" style={{ marginTop: 2 }}>
-              {[c.area, c.city].filter(Boolean).join(', ') || 'No town on the record'}
+              {[c.area, c.city].filter(Boolean).join(', ') || 'No town saved'}
               {c.isLead ? ' · Lead' : ''}
             </T>
           </View>
@@ -543,13 +543,13 @@ export default function OrderScreen() {
             paddingVertical: 12,
           }}>
           <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk }}>
-            Accounts approved this order, so it is not changed directly. Build it as it should be and say why — accounts
-            accept or decline, and you will see their answer on Your orders.
+            Accounts already approved this order, so you cannot change it directly. Make the order as it should be and
+            say why. Accounts will accept or decline. You will see their answer in Your orders.
           </T>
         </View>
       ) : editId ? (
         <T s="caption" style={{ marginTop: 10 }}>
-          Accounts have not decided this order yet, so your changes replace it.
+          Accounts have not decided on this order yet. Your changes will replace it.
         </T>
       ) : null}
 
@@ -570,12 +570,12 @@ export default function OrderScreen() {
           on the screen saying so. */}
       {billingOptions && (deliverTo || billingOptions.length > 1) ? (
         <Card style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 8 }}>Who pays for this</SectionLabel>
+          <SectionLabel style={{ marginBottom: 8 }}>Who gets the bill</SectionLabel>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <View style={{ flex: 1, minWidth: 0 }}>
               <T s="body" style={weight(500)}>
-                {'Bill to ' + (biller?.name ?? 'nobody on your book')}
+                {'Bill to ' + (biller?.name ?? 'no one in your list')}
               </T>
               <T s="caption" style={{ color: C.muted }}>
                 {deliverTo ? 'Deliver to ' + deliverTo.name : 'Delivered to them'}
@@ -619,7 +619,7 @@ export default function OrderScreen() {
                   <T s="body">{o.name}</T>
                   <T s="caption" style={{ color: C.muted }}>
                     {!o.onBook
-                      ? 'Not on your book — you cannot bill them'
+                      ? 'Not in your list. You cannot bill them'
                       : o.id === c.id
                         ? 'Bill the shop direct'
                         : o.isPrimary
@@ -640,9 +640,9 @@ export default function OrderScreen() {
               through to the shop on its own. */}
           {!!c.thirdParty && biller?.id === c.id ? (
             <T s="caption" style={{ color: C.danger, marginTop: 8 }}>
-              {'The office has this shop billed to ' +
-                (billingOptions.find((o) => o.id !== c.id)?.name ?? 'somebody else') +
-                '. This order invoices the shop itself — check with the office if that is wrong.'}
+              {'The office bills this shop to ' +
+                (billingOptions.find((o) => o.id !== c.id)?.name ?? 'someone else') +
+                '. This order bills the shop itself. Ask the office if that is wrong.'}
             </T>
           ) : null}
 
@@ -652,8 +652,8 @@ export default function OrderScreen() {
           {!biller ? (
             <T s="caption" style={{ color: C.danger, marginTop: 8 }}>
               {'Billed to ' +
-                (billingOptions[0]?.name ?? 'somebody') +
-                ', who is not on your book. Ask the office to move the account, or bill the shop direct.'}
+                (billingOptions[0]?.name ?? 'someone') +
+                ', who is not in your list. Ask the office to move the account, or bill the shop direct.'}
             </T>
           ) : null}
         </Card>
@@ -672,7 +672,7 @@ export default function OrderScreen() {
             paddingVertical: 16,
             marginTop: 16,
           }}>
-          <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>No order can be taken here</T>
+          <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>You cannot take an order here</T>
           <T style={{ fontSize: 13, lineHeight: 19, color: C.ink, marginTop: 6 }}>
             {assessment?.blockReason ?? assessment?.reason ?? ''}
           </T>
@@ -705,9 +705,9 @@ export default function OrderScreen() {
                 pressed && { opacity: 0.9 },
               ]}>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Put back the last order</T>
+                <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Repeat the last order</T>
                 <T s="caption" style={{ marginTop: 2 }}>
-                  {plural(lastOrder.length, 'line')} — check quantities before sending
+                  {plural(lastOrder.length, 'line')}. Check quantities before sending
                 </T>
               </View>
               <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(500)]}>Add all</T>
@@ -764,7 +764,7 @@ export default function OrderScreen() {
           <Input
             value={oQ}
             onChangeText={(v) => set({ oQ: v })}
-            placeholder="Search by name, pack size or SKU code"
+            placeholder="Search product by name, pack size or code"
             style={{ marginTop: 16, borderRadius: radius.md, fontSize: 15 }}
           />
 
@@ -778,7 +778,7 @@ export default function OrderScreen() {
               {shown.length === 0 ? (
                 <View style={{ paddingHorizontal: 16, paddingVertical: 24 }}>
                   <T style={{ fontSize: 15, color: C.muted, textAlign: 'center' }}>
-                    {searching ? 'Looking…' : 'Nothing matches. Try the pack size, or the code.'}
+                    {searching ? 'Searching…' : 'No product found. Try the pack size or the code.'}
                   </T>
                 </View>
               ) : null}
@@ -793,7 +793,7 @@ export default function OrderScreen() {
                     borderTopColor: C.wash,
                   }}>
                   <T s="caption">
-                    {'Showing the first ' + SEARCH_LIMIT + ' — narrow it with the pack size, or the code.'}
+                    {'Showing the first ' + SEARCH_LIMIT + '. Add the pack size or code to find more.'}
                   </T>
                 </View>
               ) : null}
@@ -817,7 +817,7 @@ export default function OrderScreen() {
                   paddingVertical: 24,
                 }}>
                 <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
-                  Tap something they usually buy, or search for it.
+                  Tap a product they usually buy, or search for it.
                 </T>
               </View>
             ) : null}
@@ -1008,10 +1008,10 @@ export default function OrderScreen() {
             {valueUnavailable && inCart.length ? (
               <T s="caption" style={{ marginTop: 6 }}>
                 {listValuePaise != null
-                  ? 'The office order value waits on a setting nobody has switched on yet — see List value above for what this account actually pays.'
+                  ? 'The office has not turned on order value yet. See List value above for what this account pays.'
                   : priceTag
-                    ? `No rate is set for ${priceTag} on every line here yet, so neither figure can be shown.`
-                    : 'This account carries no price tag yet, so there is no rate list to check it against.'}
+                    ? `Some lines have no rate for ${priceTag} yet. So no value can be shown.`
+                    : 'This account has no price list yet. So there are no rates to check.'}
               </T>
             ) : null}
             {needsApproval && assessment ? (
@@ -1065,8 +1065,8 @@ export default function OrderScreen() {
             disabled={!canSubmit || busy}
             whyDisabled={
               busy
-                ? 'The last one is still being sent.'
-                : 'Add a product and set a quantity on every line first.'
+                ? 'The last order is still sending.'
+                : 'Add a product and set a quantity on every line.'
             }
             tone={needsApproval ? 'warn' : 'primary'}
             style={{ marginTop: 16 }}

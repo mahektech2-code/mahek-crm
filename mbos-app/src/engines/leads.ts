@@ -197,13 +197,13 @@ export function matchDuplicate(
 export function stageRefusal(stage: string, reason: string | null | undefined): string | null {
   const said = String(reason ?? '').trim();
   if (stage === 'Lost') {
-    return said ? null : 'Say why it was lost — nobody rings this shop again after this.';
+    return said ? null : 'Say why it was lost. Nobody will call this shop again after this.';
   }
   /* On hold asks too, and for the opposite reason to Lost. Lost wants the
      reason because nobody will ever look again; this one wants it because
      somebody will — "back after Diwali" is what tells them when. */
   if (stage === 'On hold') {
-    return said ? null : 'Say what you are waiting for — that is what tells anybody when to pick it up again.';
+    return said ? null : 'Say what you are waiting for. This tells everyone when to start again.';
   }
   return null;
 }
@@ -331,10 +331,10 @@ export function leadAlert(lead: LeadTiming, today: string, cfg: LeadThresholds):
 
   const quiet = daysBetween(lead.lastActivityDate, today);
   if (quiet == null) return null;
-  if (quiet >= cfg.archiveDays) return 'Nothing for ' + quiet + ' days — archive it or ring it';
-  if (quiet >= cfg.staleDays) return 'Gone quiet — ' + quiet + ' days since anything happened';
+  if (quiet >= cfg.archiveDays) return 'Nothing for ' + quiet + ' days. Call them or close it';
+  if (quiet >= cfg.staleDays) return 'Quiet for ' + quiet + ' days. Nothing has happened';
   if (lead.stage === 'New' && quiet >= cfg.escalateAfterDays) {
-    return 'Untouched for ' + quiet + ' days — your manager sees this one';
+    return 'No work for ' + quiet + ' days. Your manager can see this';
   }
   return null;
 }
@@ -393,8 +393,8 @@ export function reorderLabel(
   if (!state) return null;
   const since = daysBetween(lastOrderDate, today) ?? 0;
   return state === 'overdue'
-    ? 'Overdue to reorder — ' + since + ' days, buys every ' + cycleDays
-    : 'Due to reorder — ' + since + ' days, buys every ' + cycleDays;
+    ? 'Late to reorder. ' + since + ' days since last order, buys every ' + cycleDays
+    : 'Due to reorder. ' + since + ' days since last order, buys every ' + cycleDays;
 }
 
 /* ------------------------------------------------- what the book is cut by */
@@ -711,11 +711,11 @@ export function owedLabel(owed: LeadOwed | null, pretty: (iso: string) => string
   if (owed.daysLate > 0) {
     switch (owed.source) {
       case 'action':
-        return 'Late \u2014 this was due on ' + when;
+        return 'Late. This was due on ' + when;
       case 'promise':
-        return 'Late \u2014 you said you would go back on ' + when;
+        return 'Late. You said you would go back on ' + when;
       case 'hold':
-        return 'Late \u2014 back off hold since ' + when;
+        return 'Late. Hold ended on ' + when;
     }
   }
   switch (owed.source) {
@@ -724,7 +724,7 @@ export function owedLabel(owed: LeadOwed | null, pretty: (iso: string) => string
     case 'promise':
       return 'You said you would go back ' + when;
     case 'hold':
-      return 'Comes back off hold ' + when;
+      return 'Hold ends ' + when;
   }
 }
 

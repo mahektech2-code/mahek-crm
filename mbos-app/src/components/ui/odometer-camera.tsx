@@ -154,7 +154,7 @@ export function OdometerCamera({
           {shot ? (
             <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="contain" />
           ) : denied ? (
-            <Refusal body="Camera permission is off for MBOS. The meter reading has to be photographed, so turn the camera on in your phone’s Settings and try again. Tell your manager if you cannot." />
+            <Refusal body="Camera permission is off for MBOS. You must take a photo of the meter. Turn on the camera in your phone Settings, then try again. If you cannot, tell your manager." />
           ) : permission?.granted ? (
             /* Rear-facing, unmirrored. A mirrored odometer is a mirrored
                NUMBER, which is the one thing on this photograph anybody will
@@ -170,7 +170,7 @@ export function OdometerCamera({
           {shot ? (
             <>
               <T style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.65)' }}>
-                Now type what the meter reads, in kilometres.
+                Now type the meter reading in km.
               </T>
               <View
                 style={{
@@ -193,7 +193,7 @@ export function OdometerCamera({
                   placeholder="41208"
                   placeholderTextColor="rgba(255,255,255,0.35)"
                   autoFocus
-                  accessibilityLabel="Odometer reading in kilometres"
+                  accessibilityLabel="Meter reading in km"
                   style={{ flex: 1, height: 52, fontSize: 22, color: '#FFFFFF', letterSpacing: 0.5 }}
                 />
                 <T style={[{ fontSize: 15, color: 'rgba(255,255,255,0.6)' }, weight(500)]}>km</T>
@@ -207,21 +207,21 @@ export function OdometerCamera({
                 </T>
               ) : previousKm != null ? (
                 <T style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.5)' }}>
-                  You set off on {previousKm.toLocaleString('en-IN')} km.
+                  Your start reading was {previousKm.toLocaleString('en-IN')} km.
                 </T>
               ) : null}
 
-              <PrimaryButton label="Save this reading" onPress={confirm} />
-              <SecondaryButton label="Take it again" onPress={() => { setShot(null); setErr(null); }} />
+              <PrimaryButton label="Save reading" onPress={confirm} />
+              <SecondaryButton label="Take again" onPress={() => { setShot(null); setErr(null); }} />
             </>
           ) : (
             <>
               <PrimaryButton
-                label={shooting ? 'Taking…' : 'Photograph the meter'}
+                label={shooting ? 'Taking…' : 'Take meter photo'}
                 onPress={() => void take()}
                 disabled={!permission?.granted || !ready || shooting}
                 whyDisabled={
-                  denied ? 'Camera permission is off for MBOS.' : 'The camera is still starting up.'
+                  denied ? 'Camera permission is off for MBOS.' : 'Wait. The camera is still starting.'
                 }
               />
               {/*

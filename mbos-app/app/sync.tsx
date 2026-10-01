@@ -49,11 +49,11 @@ function stateLabel(q: QueueItem): string {
     : q.state === 'syncing'
       ? 'Sending'
       : q.state === 'rejected'
-        ? 'Refused'
+        ? 'Not accepted'
         : q.state === 'blocked'
-          ? 'Held back'
+          ? 'On hold'
           : q.attempts > 0
-            ? 'Retrying'
+            ? 'Trying again'
             : 'Waiting';
 }
 
@@ -92,7 +92,7 @@ const KIND: Record<string, string> = {
   lead: 'Lead',
   approval: 'Approval',
   order_change_request: 'Order change request',
-  competitor: 'Competitor note',
+  competitor: 'Other brand note',
 };
 
 function describe(item: QueueItem): string {
@@ -223,14 +223,14 @@ export default function SyncScreen() {
       load();
       notify(
         !outcome.ran
-          ? (outcome.reason ?? 'Nothing could be sent just now')
+          ? (outcome.reason ?? 'Could not send now. Try again in a minute.')
           : outcome.pushed === 0
-            ? 'Nothing was waiting to go up'
+            ? 'Nothing was waiting to send'
             : outcome.accepted > 0
-              ? plural(outcome.accepted, 'record') + ' sent'
+              ? plural(outcome.accepted, 'entry', 'entries') + ' sent to office'
               : outcome.rejected > 0
-                ? plural(outcome.rejected, 'record') + ' the office would not accept'
-                : (outcome.reason ?? 'Nothing went up — your work is still safe on this phone'),
+                ? plural(outcome.rejected, 'entry', 'entries') + ' not accepted by the office'
+                : (outcome.reason ?? 'Nothing was sent. Your work is still safe on this phone.'),
       );
     } finally {
       setSending(false);
@@ -255,10 +255,10 @@ export default function SyncScreen() {
 
       <Card>
         <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-          {waiting ? plural(waiting, 'thing') + ' waiting' : 'Everything has gone up'}
+          {waiting ? plural(waiting, 'thing') + ' waiting to send' : 'All sent to office'}
         </T>
         <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-          Everything you save works offline. It goes out on its own when you have signal.
+          You can save without signal. It sends by itself when you have signal.
         </T>
         <PrimaryButton
           label={sending ? 'Sending…' : 'Send now'}
@@ -273,7 +273,7 @@ export default function SyncScreen() {
           {/* The plural form is given rather than derived: appending an `s` to
               the whole phrase reads "2 photo or recordings". */}
           {plural(media.pending, 'photo or recording', 'photos and recordings') +
-            ' uploading separately — records always go first.'}
+            ' sending. Your entries go first.'}
         </T>
       ) : null}
 
@@ -303,7 +303,7 @@ export default function SyncScreen() {
             <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>Could not be sent</T>
             <T s="caption" style={{ color: C.danger }}>
               {plural(media.failed, 'photo or recording', 'photos and recordings') +
-                ' gave up — they are still on this phone.'}
+                ' did not send. They are still on this phone.'}
             </T>
           </View>
           <Pressable
@@ -312,8 +312,8 @@ export default function SyncScreen() {
                 load();
                 notify(
                   n === 0
-                    ? 'Nothing left to try again'
-                    : plural(n, 'photo or recording', 'photos and recordings') + ' back in the queue',
+                    ? 'Nothing to try again'
+                    : plural(n, 'photo or recording', 'photos and recordings') + ' waiting to send again',
                 );
                 /* Media rides out on the back of a pass — see the `finally` in
                    `syncNow`. Queuing them and never asking for one would leave
@@ -331,7 +331,7 @@ export default function SyncScreen() {
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-            <T style={{ fontSize: 15, color: C.danger }}>Retry</T>
+            <T style={{ fontSize: 15, color: C.danger }}>Try again</T>
           </Pressable>
         </View>
       ) : null}
@@ -349,7 +349,7 @@ export default function SyncScreen() {
                 the headline above and called out in their own line, and a
                 second unqualified number on one screen is how this screen came
                 to disagree with itself three ways in the first place. */}
-            {`Showing the ${rows.length} most urgent of ${plural(depth, 'record')} waiting.`}
+            {`Showing the ${rows.length} most urgent of ${plural(depth, 'entry', 'entries')} waiting.`}
           </T>
         ) : null}
         {rows.map((q, i) => (
@@ -397,7 +397,7 @@ export default function SyncScreen() {
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}>
-                <T style={{ fontSize: 15, color: C.body }}>Retry</T>
+                <T style={{ fontSize: 15, color: C.body }}>Try again</T>
               </Pressable>
             ) : null}
           </View>
@@ -429,8 +429,8 @@ export default function SyncScreen() {
             {'Update to ' + update.version}
           </T>
           <T style={{ fontSize: 13, lineHeight: 19, color: C.body, marginTop: 4 }}>
-            A newer MahekOne has been released. Tap to download it, then open the file to install —
-            nothing on this phone is lost and you stay signed in.
+            A new version of the app is out. Tap to download it. Then open the file to install.
+            Nothing on this phone is lost. You stay signed in.
           </T>
         </Pressable>
       ) : null}
@@ -479,7 +479,7 @@ export default function SyncScreen() {
           <View style={{ flex: 1, minWidth: 0 }}>
             <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>Not accepted</T>
             <T s="caption" style={{ color: C.danger }}>
-              {plural(rejected, 'record') + ' the office refused — nothing has been thrown away.'}
+              {plural(rejected, 'entry', 'entries') + ' not accepted by the office. Nothing is lost.'}
             </T>
           </View>
           <Icon name="forward" size={20} color={C.danger} strokeWidth={1.5} />
@@ -501,10 +501,10 @@ export default function SyncScreen() {
               { fontSize: 12, lineHeight: 16, letterSpacing: 0.48, textTransform: 'uppercase', color: C.warnInk },
               weight(500),
             ]}>
-            One thing changed under you
+            Someone changed your entry
           </T>
           <T s="small" style={{ color: C.ink, marginTop: 6 }}>
-            Your edit was replaced by a newer one from the desk team. Your manager can see both.
+            The office team made a newer change to your entry. Your manager can see both.
           </T>
         </View>
       ) : null}
@@ -517,8 +517,8 @@ export default function SyncScreen() {
         {(() => {
           const b = runningBuild();
           return b.embedded
-            ? 'Running the build that was installed'
-            : `Running update ${b.id.slice(0, 8)}${b.channel ? ' · ' + b.channel : ''}`;
+            ? 'App version: as installed'
+            : `App update ${b.id.slice(0, 8)}${b.channel ? ' · ' + b.channel : ''}`;
         })()}
       </T>
     </AppFrame>

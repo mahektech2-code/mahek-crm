@@ -294,9 +294,9 @@ export function untargetedLine(month: PerformanceMonth): string | null {
       ? names[0]
       : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
   return (
-    `Nothing was asked of you on ${listed}, so ` +
-    `${names.length === 1 ? 'it is' : 'they are'} left out and the weight is ` +
-    'shared among the rest. The score is still out of 100.'
+    `You have no target for ${listed}. ` +
+    `So ${names.length === 1 ? 'it is' : 'they are'} left out, and the other parts count more. ` +
+    'The score is still out of 100.'
   );
 }
 
@@ -349,7 +349,7 @@ export function shortfalls(month: PerformanceMonth): string[] {
   for (const c of month.categories) {
     if (c.status !== 'below-minimum') continue;
     lines.push(
-      `${c.name} is at ${(c.actualBp / 100).toFixed(1)}% — below the ${(c.minimumBp / 100).toFixed(0)}% minimum.`,
+      `${c.name} is at ${(c.actualBp / 100).toFixed(1)}%. The minimum is ${(c.minimumBp / 100).toFixed(0)}%.`,
     );
   }
   return lines;

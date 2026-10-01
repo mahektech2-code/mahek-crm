@@ -516,8 +516,8 @@ async function startBackground(everyMs: number): Promise<BackgroundStart> {
       showsBackgroundLocationIndicator: true,
       pausesUpdatesAutomatically: false,
       foregroundService: {
-        notificationTitle: 'MahekOne is following your route',
-        notificationBody: 'Recording where the day takes you. Stops the moment you punch out.',
+        notificationTitle: 'MahekOne is saving your route',
+        notificationBody: 'Saving where you go today. Stops when you punch out.',
         killServiceOnDestroy: false,
       },
     });

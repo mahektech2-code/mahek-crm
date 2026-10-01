@@ -183,7 +183,7 @@ export function SelfieCamera({
             <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="cover" />
           ) : denied ? (
             <Refusal
-              body="Camera permission is off for MBOS. Attendance needs the photo, so turn the camera on in your phone’s Settings and try again. Tell your manager if you cannot."
+              body="Camera permission is off for MBOS. Attendance needs a selfie. Turn on the camera in your phone Settings, then try again. If you cannot, tell your manager."
             />
           ) : permission?.granted ? (
             <CameraView
@@ -227,18 +227,18 @@ export function SelfieCamera({
           {shot ? (
             <>
               <PrimaryButton label="Use this photo" onPress={() => onDone({ uri: shot })} />
-              <SecondaryButton label="Take it again" onPress={() => setShot(null)} />
+              <SecondaryButton label="Take again" onPress={() => setShot(null)} />
             </>
           ) : (
             <>
               <PrimaryButton
-                label={shooting ? 'Taking…' : 'Take the photo'}
+                label={shooting ? 'Taking…' : 'Take photo'}
                 onPress={() => void take()}
                 disabled={!permission?.granted || !ready || shooting}
                 whyDisabled={
                   denied
                     ? 'Camera permission is off for MBOS.'
-                    : 'The camera is still starting up.'
+                    : 'Wait. The camera is still starting.'
                 }
               />
               {/*

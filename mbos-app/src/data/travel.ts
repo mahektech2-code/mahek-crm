@@ -270,7 +270,7 @@ export async function updateDay(
   if (row.lockedAt) {
     return {
       ok: false,
-      reason: 'You have already sent this day in. Ask your manager to reopen it — what you sent stays exactly as you sent it.',
+      reason: 'You already sent this day. Ask your manager to open it again. What you sent stays the same.',
     };
   }
 
@@ -456,7 +456,7 @@ export async function priceDay(
       computation: null,
       route: null,
       policy: null,
-      reason: 'This phone has no expense policy yet. Everything you record is kept, and the office will work out what it is worth when it arrives.',
+      reason: 'This phone has no expense policy yet. Everything you save is kept. The office will work out how much you get.',
     };
   }
 
@@ -551,12 +551,12 @@ export async function submitDay(
   note: string | null,
 ): Promise<{ ok: boolean; reason?: string; claimedPaise?: number }> {
   const priced = await priceDay(userId, day);
-  if (!priced.day) return { ok: false, reason: 'There is nothing recorded for that day.' };
-  if (priced.day.lockedAt) return { ok: false, reason: 'You have already sent this day in.' };
+  if (!priced.day) return { ok: false, reason: 'Nothing is saved for that day.' };
+  if (priced.day.lockedAt) return { ok: false, reason: 'You already sent this day.' };
   if (priced.day.returnedAt == null) {
     return {
       ok: false,
-      reason: 'Say what time you got back first — the meal allowance is worked out from when you left and when you returned.',
+      reason: 'First say what time you got back. The meal allowance depends on when you left and came back.',
     };
   }
 
@@ -651,7 +651,7 @@ export async function closeStaleLegs(userId: string, dayBoundaryMs: number): Pro
     [userId, dayBoundaryMs],
   );
   for (const leg of open) {
-    await closeAbandoned(leg, 'Closed automatically at the end of the day — no arrival was recorded.');
+    await closeAbandoned(leg, 'Closed by the app at the end of the day. No arrival was saved.');
   }
   return open.length;
 }
@@ -909,7 +909,7 @@ export async function startSession(args: {
 }): Promise<{ ok: true; legId: string } | { ok: false; reason: string }> {
   const running = await openSessionLeg(args.userId);
   if (running) {
-    await closeAbandoned(running, 'Closed automatically — a new session was started.');
+    await closeAbandoned(running, 'Closed by the app. You punched in again.');
   }
 
   const dayId = await openDay({ userId: args.userId, day: args.day });
@@ -949,7 +949,7 @@ export async function endSession(args: {
   odometer: { km: number; photoId: string } | null;
 }): Promise<{ ok: boolean; reason?: string }> {
   const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [args.legId]);
-  if (!leg) return { ok: false, reason: 'That session is not on this phone.' };
+  if (!leg) return { ok: false, reason: 'That check-in is not on this phone.' };
   if (leg.endedAt != null) return { ok: true };
 
   await patchLeg(leg, {
@@ -981,7 +981,7 @@ export async function closeStaleSessions(userId: string, dayBoundaryMs: number):
     [userId, dayBoundaryMs],
   );
   for (const leg of open) {
-    await closeAbandoned(leg, 'Closed automatically at the end of the day — no punch-out was recorded.');
+    await closeAbandoned(leg, 'Closed by the app at the end of the day. No punch-out was saved.');
   }
   return open.length;
 }

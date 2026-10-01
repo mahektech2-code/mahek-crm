@@ -70,9 +70,9 @@ export function useVisitAssistantAvailable(): boolean {
 }
 
 const STATE_WORD: Record<string, { text: string; fg: string; bg: string }> = {
-  ready: { text: 'Filled in — check it', fg: C.success, bg: C.successBg },
+  ready: { text: 'Filled in. Check it', fg: C.success, bg: C.successBg },
   confirm: { text: 'Needs you', fg: C.warnInk, bg: C.warnBg },
-  duplicate: { text: 'Already on record', fg: C.info, bg: C.infoBg },
+  duplicate: { text: 'Already saved', fg: C.info, bg: C.infoBg },
 };
 
 function StatePill({ state }: { state: string }) {
@@ -156,9 +156,9 @@ export function VisitAssistant({
   };
 
   const whyOff = !text
-    ? 'Say or type what happened first — the note box above.'
+    ? 'First say or type what happened, in the note box above.'
     : !online
-      ? 'No signal — fill the visit yourself. Your note is kept either way.'
+      ? 'No signal. Fill the visit yourself. Your note is safe.'
       : undefined;
 
   return (
@@ -170,8 +170,8 @@ export function VisitAssistant({
 
       {!result ? (
         <Text style={[type.caption, { marginTop: 6 }]}>
-          Say what happened in the shop, in any language — MahekOne fills the visit and lines up
-          what comes next. You check everything; nothing saves until you press Save.
+          Say what happened in the shop, in any language. MahekOne fills the visit and the
+          next steps. You check everything. Nothing saves until you press Save.
         </Text>
       ) : null}
 
@@ -179,7 +179,7 @@ export function VisitAssistant({
 
       {stale ? (
         <Text style={[type.caption, { marginTop: 10, color: C.warnInk }]}>
-          The note has changed since this was read. Read it again to include what you added.
+          The note has changed. Read it again to add what you wrote.
         </Text>
       ) : null}
       {error ? <Text style={[type.caption, { marginTop: 10, color: C.warnInk }]}>{error}</Text> : null}
@@ -224,7 +224,7 @@ function Proposal({
     <View style={{ marginTop: 8 }}>
       {result.summary ? <Text style={[type.bodyInk, { marginBottom: 4 }]}>{result.summary}</Text> : null}
       <Text style={type.caption}>
-        {waiting === 0 ? 'Nothing needs you — check it and fill the visit.' : `${waiting} thing${waiting === 1 ? '' : 's'} to answer below.`}
+        {waiting === 0 ? 'Nothing to answer. Check it and fill the visit.' : `${waiting} thing${waiting === 1 ? '' : 's'} to answer below.`}
       </Text>
       {result.notes.map((n) => (
         <Text key={n} style={[type.caption, { marginTop: 4 }]}>
@@ -287,13 +287,13 @@ function Proposal({
 
       {result.competitor || result.feedback.length ? (
         <Section title="For your manager">
-          {result.competitor ? <Text style={type.small}>{'Competitor named: ' + result.competitor}</Text> : null}
+          {result.competitor ? <Text style={type.small}>{'Other brand named: ' + result.competitor}</Text> : null}
           {result.feedback.map((f) => (
             <Text key={f.text} style={type.small}>
               {(f.tone === 'negative' ? '▾ ' : f.tone === 'positive' ? '▴ ' : '• ') + f.text}
             </Text>
           ))}
-          <Text style={[type.caption, { marginTop: 4 }]}>Keep it in the note if it matters — the office reads the note.</Text>
+          <Text style={[type.caption, { marginTop: 4 }]}>If it matters, keep it in the note. The office reads the note.</Text>
         </Section>
       ) : null}
     </View>
@@ -384,15 +384,15 @@ function ActionRow({
       <Questions items={a.state === 'duplicate' ? [] : a.questions} />
 
       {a.state === 'duplicate' ? null : a.kind === 'order' ? (
-        <DoorButton label="Put it in the cart and open the order" onPress={() => handlers.onOrder(a, picked)} />
+        <DoorButton label="Add to cart, open order" onPress={() => handlers.onOrder(a, picked)} />
       ) : a.kind === 'payment' ? (
-        <DoorButton label="Open the receipt, filled in" onPress={() => handlers.onPayment(a)} />
+        <DoorButton label="Open filled receipt" onPress={() => handlers.onPayment(a)} />
       ) : a.kind === 'complaint' ? (
-        <DoorButton label="Open the complaint, filled in" onPress={() => handlers.onComplaint(a)} />
+        <DoorButton label="Open filled complaint" onPress={() => handlers.onComplaint(a)} />
       ) : a.kind === 'sample' ? (
-        <DoorButton label="Open the sample request, filled in" onPress={() => handlers.onSample(a)} />
+        <DoorButton label="Open filled sample request" onPress={() => handlers.onSample(a)} />
       ) : a.kind === 'requirement' ? (
-        <DoorButton label="Fill the requirement" onPress={() => handlers.onRequirement(a)} />
+        <DoorButton label="Fill what they need" onPress={() => handlers.onRequirement(a)} />
       ) : a.kind === 'lead_decision' && a.decision ? (
         <DoorButton
           label={a.decision === 'qualified' ? 'Mark it "A prospect"' : 'Mark it "Lost"'}

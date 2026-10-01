@@ -94,7 +94,7 @@ export const FROM_LABEL: Record<string, string> = {
   pay: 'Payment',
   tasks: 'Tasks',
   samples: 'Samples',
-  sync: 'Sync',
+  sync: 'Waiting to send',
   attendance: 'Attendance',
   leave: 'Leave',
   salary: 'Salary',
@@ -278,18 +278,18 @@ export function AppFrame({
     {
       glyph: 'visit',
       label: 'Start visit',
-      sub: 'How you travel, then GPS and photos',
+      sub: 'Pick how you travel, then GPS and photos',
       run: () => {
         /* One shop at a time. See the bar below: a salesman standing outside a
            shop he has arrived at is not about to set off for another, and
            letting him would leave an arrival nobody could ever close. */
         if (arrival && arrival.checkedInAt == null) {
-          return notify(`Check in at ${arrival.customerName} first — you arrived there at ${hhmm(arrival.arrivedAt)}.`);
+          return notify(`Check in at ${arrival.customerName} first. You reached there at ${hhmm(arrival.arrivedAt)}.`);
         }
         /* And one visit at a time: the one he is in has to be checked out of,
            with its questions answered, before another can begin. */
         if (arrival && arrival.checkedInAt != null) {
-          return notify(`Check out of ${arrival.customerName} first — you are still in that visit.`);
+          return notify(`Check out of ${arrival.customerName} first. You are still in that visit.`);
         }
         if (!custId) return notify('Choose the shop first, then start the visit.');
         askTravel({ customerId: custId, customerName: customer?.name ?? 'this shop' });
@@ -300,7 +300,7 @@ export function AppFrame({
     /* The form is asked for here and opened by the Leads screen, so the shop
        he is standing outside is typed in rather than found for a second time. */
     { glyph: 'add', label: 'Add lead', sub: 'A shop you just walked past', run: () => { set({ sheet: 'leadForm' }); router.push(`/leads${fromHere}`); } },
-    { glyph: 'camera', label: 'Log expense', sub: 'Photograph the bill', run: () => router.push(`/expenses${fromHere}`) },
+    { glyph: 'camera', label: 'Add expense', sub: 'Take a photo of the bill', run: () => router.push(`/expenses${fromHere}`) },
     { glyph: 'task', label: 'Create task', sub: 'For you or for someone else', run: () => router.push(`/tasks${fromHere}`) },
     { glyph: 'sample', label: 'Request sample', sub: 'Sent for approval', run: () => router.push(`/samples${fromHere}`) },
   ];

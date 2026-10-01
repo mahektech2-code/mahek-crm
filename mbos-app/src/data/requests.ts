@@ -397,7 +397,7 @@ export async function requestTour(args: {
   notes?: string;
 }): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
   if (args.endDate < args.startDate) {
-    return { ok: false, message: 'That tour ends before it starts.' };
+    return { ok: false, message: 'The end date is before the start date.' };
   }
 
   const base = await stamp('tour');

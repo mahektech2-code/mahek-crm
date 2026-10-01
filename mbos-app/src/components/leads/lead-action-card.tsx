@@ -140,8 +140,8 @@ export function LeadActionCard({
     : lead.nextActionOwnerId === meId
       ? 'Yours to do'
       : lead.nextActionOwnerId === lead.leadManagerId
-        ? (lead.leadManagerName ?? 'Your lead manager') + ' is holding this'
-        : 'Somebody at the office is holding this';
+        ? (lead.leadManagerName ?? 'Your lead manager') + ' will do this'
+        : 'The office will do this';
 
   return (
     <Card>
@@ -152,7 +152,7 @@ export function LeadActionCard({
           </T>
           <T s="caption" style={{ marginTop: 2 }} numberOfLines={1}>
             {[lead.company?.trim() ? lead.name : null, lead.city].filter(Boolean).join(' · ') ||
-              'No town recorded'}
+              'No town saved'}
           </T>
         </View>
         {rung ? (
@@ -193,7 +193,7 @@ export function LeadActionCard({
       ) : null}
       {lead.nextActionOutcome?.trim() ? (
         <T s="caption" style={{ marginTop: 2 }} numberOfLines={2}>
-          {'Comes back with: ' + lead.nextActionOutcome.trim()}
+          {'Expected result: ' + lead.nextActionOutcome.trim()}
         </T>
       ) : null}
 
@@ -202,7 +202,7 @@ export function LeadActionCard({
           a name should be says nothing at all. */}
       {missing.length ? (
         <T style={[{ fontSize: 13, lineHeight: 19, marginTop: 6, color: C.warnInk }, weight(500)]}>
-          {'Nobody has said ' + missing.join(', ') + '.'}
+          {'Not set yet: ' + missing.join(', ') + '.'}
         </T>
       ) : null}
 

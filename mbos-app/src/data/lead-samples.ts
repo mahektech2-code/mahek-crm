@@ -242,23 +242,23 @@ export async function cancelReasons(): Promise<CodedOption[]> {
  */
 export function whatIsOwed(s: FunnelSample): string | null {
   switch (s.state) {
-    case 'Requested': return 'Waiting on the office to approve it';
-    case 'Approved': return 'Approved — waiting for it to go out';
-    case 'Dispatched': return 'Sent. Check they have it';
+    case 'Requested': return 'Waiting for the office to approve it';
+    case 'Approved': return 'Approved. Waiting for it to be sent';
+    case 'Dispatched': return 'Sent. Check they got it';
     /* Started and not finished is a different call from not started at all:
        one asks how it is going, the other asks whether the can was even
        opened. Both are chased, and saying which is what makes the chase land. */
     case 'Awaiting feedback':
       return s.trialStartedAt
         ? 'They have started the trial. Ask how it is going'
-        : 'They have it. Ask whether they have tried it yet';
-    case 'Tried': return 'They have tried it — write down what they said';
+        : 'They have it. Ask if they have tried it yet';
+    case 'Tried': return 'They have tried it. Write down what they said';
     case 'Rejected': return null;
     /* A reviewed sample is finished EXCEPT on the third verdict: "they want to
        try it again on a different substrate" is a live trial with a next step,
        and filing it as done is how it goes quiet. */
     case 'Reviewed':
-      return s.trialOutcome === 'more_testing' ? 'They want to try it again — another sample is the next step' : null;
+      return s.trialOutcome === 'more_testing' ? 'They want to try it again. Send another sample next' : null;
     case 'Converted': return null;
     case 'Cancelled': return null;
     default: return null;
@@ -381,7 +381,7 @@ export async function requestLeadSample(args: {
   if (!args.application.trim()) {
     return {
       ok: false,
-      message: 'What will they use it on? A trial nobody can judge is a can given away.',
+      message: 'What will they use it on? Without this, nobody can judge the trial.',
     };
   }
   if (!args.reasonCode) return { ok: false, message: 'Say why they want a trial.' };
@@ -485,7 +485,7 @@ export async function markDispatched(
 ): Promise<SampleResult<null>> {
   if (!args.courierName.trim()) return { ok: false, message: 'Who is carrying it?' };
   if (!args.courierDocket.trim()) {
-    return { ok: false, message: 'The docket number — without it nobody can trace it.' };
+    return { ok: false, message: 'Add the docket number. Without it, nobody can track it.' };
   }
   if (!args.expectedDeliveryDate) return { ok: false, message: 'When should it get there?' };
 
@@ -587,7 +587,7 @@ export async function markTried(id: string): Promise<SampleResult<null>> {
 export const REJECTION_FEEDBACK_FIELDS = ['otherComments', 'priceFeedback', 'competitorComparison'] as const;
 
 export const REJECTION_NEEDS_WHY =
-  'A rejected trial has to say why — the price, the comparison against what they use now, or in your own words. Without it the next sample goes out exactly the same.';
+  'Say why they did not like it. Write about the price, how it compares with what they use now, or in your own words. Without this, the next sample will go the same way.';
 
 export function rejectionSaidWhy(
   fields: Partial<Record<(typeof FEEDBACK_FIELDS)[number]['id'], string>>,
@@ -748,11 +748,11 @@ export async function cancelSample(
 ): Promise<SampleResult<null>> {
   const code = (args.reasonCode ?? '').trim();
   const said = (args.remarks ?? '').trim();
-  if (!code) return { ok: false, message: 'Pick why the trial is being called off.' };
+  if (!code) return { ok: false, message: 'Pick why the trial is cancelled.' };
   if (code === REASON_CODE_NEEDING_REMARKS && !said) {
     return {
       ok: false,
-      message: '“Other” with nothing behind it is the one cancellation nobody can act on. A sentence, however short.',
+      message: 'You picked “Other”. Write a short reason.',
     };
   }
   const at = Date.now();

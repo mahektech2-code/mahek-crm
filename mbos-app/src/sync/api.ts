@@ -185,7 +185,7 @@ async function request<T>(
     const { timeoutMs: _t, auth: _a, ...rest } = init;
     res = await fetch(`${BASE}${path}`, { ...rest, headers, signal: controller.signal });
   } catch (e) {
-    throw new Error(e instanceof Error && e.name === 'AbortError' ? 'MahekOne did not answer in time' : 'No connection to MahekOne');
+    throw new Error(e instanceof Error && e.name === 'AbortError' ? 'MahekOne did not answer in time. Try again.' : 'No internet. Could not reach MahekOne.');
   } finally {
     clearTimeout(timeout);
   }
@@ -193,7 +193,7 @@ async function request<T>(
   if (res.status === 401 && init.auth !== false) {
     const refreshed = await tryRefresh();
     if (refreshed) return request<T>(path, init);
-    throw new Error('Your session has ended. Sign in again.');
+    throw new Error('You have been signed out. Sign in again.');
   }
 
   if (!res.ok) {
@@ -573,8 +573,8 @@ export async function dictateTranscribe(args: {
       ok: false,
       error:
         e instanceof Error && e.name === 'AbortError'
-          ? 'That took too long to send. Your recording is still here — try again.'
-          : 'No connection to MahekOne. Type the note instead.',
+          ? 'That took too long to send. Your recording is still here. Try again.'
+          : 'No internet. Type the note instead.',
     };
   } finally {
     clearTimeout(timeout);
@@ -588,7 +588,7 @@ export async function dictateTranscribe(args: {
      six things went wrong and each one sends the person somewhere different;
      a generic message here would throw all of that away. */
   if (!body || !body.ok) {
-    return { ok: false, error: body?.error ?? 'That did not come back. Try recording again.' };
+    return { ok: false, error: body?.error ?? 'No answer came back. Try recording again.' };
   }
   return body;
 }
@@ -605,7 +605,7 @@ export async function dictateRefine(args: {
     });
     return out;
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'That did not come back.' };
+    return { ok: false, error: e instanceof Error ? e.message : 'No answer came back. Try again.' };
   }
 }
 

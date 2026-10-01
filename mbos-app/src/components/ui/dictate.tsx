@@ -340,7 +340,7 @@ function DictationBody({
     }
     const uri = recorder.uri;
     if (!uri) {
-      setError('That recording did not come out. Try again.');
+      setError('The recording did not work. Try again.');
       setPhase('failed');
       return;
     }
@@ -360,8 +360,8 @@ function DictationBody({
       if (!ready.ok) {
         setError(
           ready.reason === 'permission'
-            ? 'MahekOne is not allowed to use the microphone. Turn it on for MahekOne in your phone settings, then try again.'
-            : 'The microphone would not open. Type the note instead.',
+            ? 'MahekOne does not have microphone permission. Turn it on in your phone Settings, then try again.'
+            : 'The microphone did not open. Type the note instead.',
         );
         setPhase('failed');
         return;
@@ -373,7 +373,7 @@ function DictationBody({
         setPhase('recording');
       } catch {
         if (cancelled) return;
-        setError('The microphone would not start. Type the note instead.');
+        setError('The microphone did not start. Type the note instead.');
         setPhase('failed');
       }
     })();
@@ -453,13 +453,13 @@ function DictationBody({
   if (phase === 'recording') {
     return (
       <View>
-        <Text style={type.h2}>{paused ? 'Held' : 'Listening'}</Text>
+        <Text style={type.h2}>{paused ? 'Paused' : 'Listening'}</Text>
         <Text style={[type.caption, { marginTop: 2 }]}>
           {paused
-            ? 'Nothing is being recorded. Carry on when you are ready.'
+            ? 'Not recording now. Tap Continue when you are ready.'
             : mode === 'record'
-              ? 'No signal, so this is being kept as a recording. The office writes it out and it appears on this visit.'
-              : 'Speak in any language. You will read it before it goes in.'}
+              ? 'No signal. Your voice is saved as a recording. The office will type it and add it to this visit.'
+              : 'Speak in any language. You will see the text before it is added.'}
         </Text>
 
         <View
@@ -510,7 +510,7 @@ function DictationBody({
               justifyContent: 'center',
             }}>
             <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>
-              {paused ? 'Carry on' : 'Hold'}
+              {paused ? 'Continue' : 'Pause'}
             </Text>
           </Pressable>
           <Pressable
@@ -524,7 +524,7 @@ function DictationBody({
               justifyContent: 'center',
             }}>
             <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>
-              {mode === 'record' ? 'Done — keep it' : 'Done — write it out'}
+              {mode === 'record' ? 'Done, save it' : 'Done, make text'}
             </Text>
           </Pressable>
         </View>
@@ -540,9 +540,9 @@ function DictationBody({
         {/* The same bars, now still: the microphone is closed and there is
             nothing left to measure, so nothing here claims to be measuring. */}
         <LevelMeter level={0} live={false} />
-        <Text style={[type.h3, { marginTop: 16 }]}>Writing down what you said…</Text>
+        <Text style={[type.h3, { marginTop: 16 }]}>Making text of what you said…</Text>
         <Text style={[type.caption, { marginTop: 4, textAlign: 'center' }]}>
-          {clock(recorded)} of speech. A few seconds on a good signal, longer on a bad one.
+          {clock(recorded)} of speech. A few seconds with good signal. Longer with weak signal.
         </Text>
       </View>
     );
@@ -553,11 +553,11 @@ function DictationBody({
   if (phase === 'kept') {
     return (
       <View style={{ paddingVertical: 18 }}>
-        <Text style={type.h3}>Recorded — {clock(recorded)}</Text>
+        <Text style={type.h3}>Recorded: {clock(recorded)}</Text>
         <Text style={[type.body, { marginTop: 8 }]}>
-          It goes to the office with this visit, and is written out from there. You will see the
-          words on the visit once it has been. Type anything you need in the meantime — nothing
-          overwrites what you write.
+          It goes to the office with this visit. The office will type it. Then you will see the
+          words on the visit. You can type a note now too. Nothing will remove
+          what you type.
         </Text>
         <Pressable
           onPress={onClose}
@@ -637,14 +637,14 @@ function DictationBody({
         }}
       />
       <Text style={[type.caption, { marginTop: 6 }]}>
-        Everything you said, not a summary. Correct it here, or ask below.
+        This is all you said, not a short version. Fix it here, or use the buttons below.
       </Text>
 
       {spoken && spoken !== english ? (
         <View style={{ marginTop: 12 }}>
           <Pressable onPress={() => setShowSpoken((v) => !v)} hitSlop={8}>
             <Text style={[{ fontSize: 14, color: C.primaryDeep }, weight(500)]}>
-              {showSpoken ? 'Hide' : 'Show'} what was heard{language ? ` (${language})` : ''}
+              {showSpoken ? 'Hide' : 'Show'} what the app heard{language ? ` (${language})` : ''}
             </Text>
           </Pressable>
           {showSpoken ? (
@@ -673,7 +673,7 @@ function DictationBody({
         {canRefine ? (
           <>
             <SmallButton
-              label={busy === 'tighten' ? 'Tightening…' : 'Tighten'}
+              label={busy === 'tighten' ? 'Shortening…' : 'Make shorter'}
               disabled={busy !== null || !english.trim()}
               onPress={() => void refine('tighten')}
             />
@@ -702,7 +702,7 @@ function DictationBody({
           <TextInput
             value={instruction}
             onChangeText={setInstruction}
-            placeholder="Say it shorter / drop the part about the driver"
+            placeholder="For example: make it shorter, or remove the part about the driver"
             placeholderTextColor={C.faint}
             style={{
               flex: 1,
@@ -750,7 +750,7 @@ function DictationBody({
             justifyContent: 'center',
           }}>
           <Text style={[{ fontSize: 16, color: '#FFFFFF' }, weight(600)]}>
-            {hasExistingText ? 'Add to the note' : 'Put it in the box'}
+            {hasExistingText ? 'Add to note' : 'Add to box'}
           </Text>
         </Pressable>
       </View>
@@ -765,7 +765,7 @@ function DictationBody({
           onPress={() => onImport({ text: english.trim(), replace: true, spoken, language })}
           style={{ height: HIT, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>
           <Text style={[{ fontSize: 15, color: C.muted }, weight(500)]}>
-            Replace what is there instead
+            Replace the old text instead
           </Text>
         </Pressable>
       ) : null}
@@ -840,7 +840,7 @@ export function MicButton({
       onPress={onPress}
       hitSlop={10}
       accessibilityLabel={
-        disabled && reason ? reason : 'Speak instead of typing — say it in any language'
+        disabled && reason ? reason : 'Speak instead of typing. Any language is fine.'
       }
       style={[
         {
@@ -950,11 +950,11 @@ export function VoiceField({
         {dictation.available ? (
           <MicButton
             disabled={blocked}
-            reason="No signal — dictation needs a connection. Type the note instead."
+            reason="No signal. Voice typing needs internet. Type the note instead."
             onPress={() => {
               setNudge(null);
               if (blocked) {
-                setNudge('No signal — dictation needs a connection. Type the note instead.');
+                setNudge('No signal. Voice typing needs internet. Type the note instead.');
                 return;
               }
               setOpen(true);
@@ -968,7 +968,7 @@ export function VoiceField({
           speak or type needs to know which of the two he is about to get. */}
       {dictation.available && offline && canRecordOffline ? (
         <Text style={[type.caption, { marginTop: 6 }]}>
-          No signal — the mic will record it, and the office writes it out.
+          No signal. The mic will record your voice. The office will type it.
         </Text>
       ) : null}
       {nudge ? <Text style={[type.caption, { marginTop: 6, color: C.warnInk }]}>{nudge}</Text> : null}

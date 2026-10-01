@@ -128,7 +128,7 @@ export function assessFix(fix: Fix | null, thresholdM: number): FixAssessment {
       usable: false,
       accuracyM: null,
       reason: 'no_fix',
-      sentence: 'No GPS fix — saved without a location.',
+      sentence: 'No GPS signal. Saved without a location.',
     };
   }
   if (fix.accuracyM == null) {
@@ -136,7 +136,7 @@ export function assessFix(fix: Fix | null, thresholdM: number): FixAssessment {
       usable: false,
       accuracyM: null,
       reason: 'accuracy_unknown',
-      sentence: 'The phone did not say how accurate this fix is — saved and flagged.',
+      sentence: 'The phone did not say how strong the GPS signal is. Saved and marked for checking.',
     };
   }
   if (fix.accuracyM > thresholdM) {
@@ -144,14 +144,14 @@ export function assessFix(fix: Fix | null, thresholdM: number): FixAssessment {
       usable: false,
       accuracyM: fix.accuracyM,
       reason: 'accuracy_poor',
-      sentence: `Location accurate to about ${Math.round(fix.accuracyM)} m — too wide to rely on, saved and flagged.`,
+      sentence: `GPS signal is weak, about ${Math.round(fix.accuracyM)} m. Saved and marked for checking.`,
     };
   }
   return {
     usable: true,
     accuracyM: fix.accuracyM,
     reason: null,
-    sentence: `Location accurate to about ${Math.round(fix.accuracyM)} m.`,
+    sentence: `GPS signal good, within about ${Math.round(fix.accuracyM)} m.`,
   };
 }
 
@@ -183,7 +183,7 @@ export function withinGeofence(
       inside: false,
       metresAway: null,
       unknown: true,
-      sentence: 'No GPS fix — the location could not be checked.',
+      sentence: 'No GPS signal. Could not check the location.',
     };
   }
   const metresAway = haversineMetres(fix, centre);
@@ -193,8 +193,8 @@ export function withinGeofence(
     metresAway,
     unknown: false,
     sentence: inside
-      ? `Inside the boundary · ${Math.round(metresAway)} m from the centre.`
-      : `${Math.round(metresAway)} m away — outside the ${Math.round(radiusM)} m boundary.`,
+      ? `Inside the area · ${Math.round(metresAway)} m from the centre.`
+      : `${Math.round(metresAway)} m away. Outside the ${Math.round(radiusM)} m area.`,
   };
 }
 
@@ -234,7 +234,7 @@ export function visitLocationVerdict(
       mismatch: false,
       metresAway: null,
       reason: 'no_fix',
-      sentence: 'No GPS fix — the visit is saved with no location against it.',
+      sentence: 'No GPS signal. The visit is saved without a location.',
     };
   }
   if (!customerCoords) {
@@ -242,7 +242,7 @@ export function visitLocationVerdict(
       mismatch: false,
       metresAway: null,
       reason: 'customer_not_located',
-      sentence: 'This shop has no recorded location yet — nothing to compare against.',
+      sentence: 'This shop has no saved location yet. Nothing to compare with.',
     };
   }
   const metresAway = haversineMetres(fix, customerCoords);
@@ -251,14 +251,14 @@ export function visitLocationVerdict(
       mismatch: true,
       metresAway,
       reason: 'too_far',
-      sentence: `${Math.round(metresAway)} m from the recorded address — saved, and sent to your manager to confirm.`,
+      sentence: `${Math.round(metresAway)} m from the shop's saved location. Saved and sent to your manager to check.`,
     };
   }
   return {
     mismatch: false,
     metresAway,
     reason: 'ok',
-    sentence: `At the shop · ${Math.round(metresAway)} m from the recorded address.`,
+    sentence: `At the shop · ${Math.round(metresAway)} m from its saved location.`,
   };
 }
 
@@ -328,8 +328,8 @@ export function checkInVerdict(
       pinsTheShop: false,
       sentence:
         assessment.reason === 'no_fix'
-          ? 'No GPS fix yet — a check-in needs one. Step outside or near a window and press again.'
-          : `The phone can only place you to about ${assessment.accuracyM == null ? 'an unknown distance' : Math.round(assessment.accuracyM) + ' m'} — too wide to check against the shop. Step outside or near a window and press again.`,
+          ? 'No GPS signal yet. You need it to check in. Step outside or near a window and press again.'
+          : `GPS signal is weak (about ${assessment.accuracyM == null ? 'an unknown distance' : Math.round(assessment.accuracyM) + ' m'}). It is not enough to check you are at the shop. Step outside or near a window and press again.`,
     };
   }
 
@@ -340,7 +340,7 @@ export function checkInVerdict(
       reason: 'unpinned',
       metresAway: null,
       pinsTheShop: true,
-      sentence: 'This shop has no recorded location yet — checking in here saves it.',
+      sentence: 'This shop has no saved location yet. Your check-in here will save it.',
     };
   }
 
@@ -352,7 +352,7 @@ export function checkInVerdict(
       reason: 'too_far',
       metresAway,
       pinsTheShop: false,
-      sentence: `You are ${Math.round(metresAway)} m from this shop's recorded location. A check-in has to be made within ${Math.round(radiusM)} m of it.`,
+      sentence: `You are ${Math.round(metresAway)} m from this shop's saved location. You must be within ${Math.round(radiusM)} m to check in.`,
     };
   }
 
@@ -362,6 +362,6 @@ export function checkInVerdict(
     reason: 'ok',
     metresAway,
     pinsTheShop: false,
-    sentence: `At the shop · ${Math.round(metresAway)} m from its recorded location.`,
+    sentence: `At the shop · ${Math.round(metresAway)} m from its saved location.`,
   };
 }

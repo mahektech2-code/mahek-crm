@@ -91,7 +91,7 @@ export default function EodScreen() {
     setConfirming(false);
     try {
       const r = await submitDay(userId, day, note.trim() || null);
-      if (!r.ok) return notify(r.reason ?? 'That could not be sent.');
+      if (!r.ok) return notify(r.reason ?? 'Not sent. Try again.');
       notify('Sent to the office.');
       load();
     } finally {
@@ -115,8 +115,8 @@ export default function EodScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Close the day</T>
       <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 14 }}>
-        Check it, then send it. Once you send it the day is locked and only your manager can reopen
-        it.
+        Check it, then send it. After you send it, the day is locked. Only your manager can open it
+        again.
       </T>
 
       {priced === null ? (
@@ -127,17 +127,17 @@ export default function EodScreen() {
         <Card style={{ paddingVertical: 28 }}>
           <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
             {readFailed
-              ? 'Today could not be read just now. Come back to this screen to try again.'
-              : 'Reading…'}
+              ? 'Today did not load. Come back to this screen to try again.'
+              : 'Loading…'}
           </T>
         </Card>
       ) : !priced.day ? (
         <Card style={{ paddingVertical: 28 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-            Nothing recorded today
+            Nothing saved today
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Punch in from Home and this will fill in as you travel.
+            Punch in from Home. This will fill in as you travel.
           </T>
         </Card>
       ) : (
@@ -149,19 +149,19 @@ export default function EodScreen() {
           ) : null}
 
           <Card>
-            <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>What today comes to</T>
+            <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Today’s total</T>
             {c ? (
               <>
-                {line('Travel', c.travelPaise, `${(c.totalMetres / 1000).toFixed(1)} km across ${c.legs.length} ${c.legs.length === 1 ? 'leg' : 'legs'}`)}
+                {line('Travel', c.travelPaise, `${(c.totalMetres / 1000).toFixed(1)} km in ${c.legs.length} ${c.legs.length === 1 ? 'trip' : 'trips'}`)}
                 {line(
                   'Food',
                   c.foodPaise,
                   c.dormitoryApplied
-                    ? 'The dormitory allowance, instead of the day’s meals'
-                    : c.meals.filter((m) => m.earned).map((m) => m.meal).join(', ') || 'nothing earned',
+                    ? 'Dormitory allowance, in place of meals'
+                    : c.meals.filter((m) => m.earned).map((m) => m.meal).join(', ') || 'nothing',
                 )}
                 {c.lodgingClaimedPaise ? line('Hotel', c.lodgingEligiblePaise) : null}
-                {c.otherClaimedPaise ? line('Everything else', c.otherEligiblePaise) : null}
+                {c.otherClaimedPaise ? line('Other costs', c.otherEligiblePaise) : null}
 
                 <Divider style={{ marginVertical: 14 }} />
 
@@ -180,16 +180,16 @@ export default function EodScreen() {
                 {c.totalExcessPaise > 0 ? (
                   <Card style={{ marginTop: 12, backgroundColor: C.warnBg }}>
                     <T s="small" style={{ color: C.ink }}>
-                      {inrFromPaise(c.totalExcessPaise)} of what you claimed is above what the policy
-                      allows. It is still sent — your manager decides it, and can allow it.
+                      {inrFromPaise(c.totalExcessPaise)} of your claim is above the policy limit.
+                      It is still sent. Your manager will decide, and can allow it.
                     </T>
                   </Card>
                 ) : null}
               </>
             ) : (
               <T s="small" style={{ color: C.muted, marginTop: 8 }}>
-                Nothing can be worked out until the office publishes a policy covering today.
-                Everything you recorded is kept and will be worked out then.
+                The office has not set a policy for today yet. So nothing can be worked out now.
+                Everything you added is saved. It will be worked out later.
               </T>
             )}
           </Card>
@@ -226,7 +226,7 @@ export default function EodScreen() {
           {locked ? (
             <Card style={{ marginTop: 12, backgroundColor: C.warnBg }}>
               <T s="small" style={{ color: C.ink }}>
-                Sent. This day is locked — ask your manager if something has to change.
+                Sent. This day is locked. Ask your manager if something must change.
               </T>
             </Card>
           ) : (
@@ -235,12 +235,12 @@ export default function EodScreen() {
                 <Input value={note} onChangeText={setNote} placeholder="Optional" multiline />
               </Field>
               <PrimaryButton
-                label="Send the day in"
+                label="Send day"
                 style={{ marginTop: 14 }}
                 disabled={busy || noReturn}
                 whyDisabled={
                   noReturn
-                    ? 'Say what time you got back first — the meal allowance is worked out from it.'
+                    ? 'First add the time you got back. Your food allowance is worked out from it.'
                     : undefined
                 }
                 onPress={() => setConfirming(true)}
@@ -252,13 +252,13 @@ export default function EodScreen() {
 
       <ConfirmSheet
         open={confirming}
-        title="Send today in?"
+        title="Send today?"
         body={
           c
-            ? `You are sending ${inrFromPaise(c.totalClaimedPaise)}. After this the day is locked and only your manager can reopen it.`
-            : 'After this the day is locked and only your manager can reopen it.'
+            ? `You are sending ${inrFromPaise(c.totalClaimedPaise)}. After this the day is locked. Only your manager can open it again.`
+            : 'After this the day is locked. Only your manager can open it again.'
         }
-        confirmLabel="Send it"
+        confirmLabel="Send"
         /* The sheet can ask for a reason; sending a day needs none — he is not
            explaining anything, he is finishing. The note above is his to leave
            or not. */

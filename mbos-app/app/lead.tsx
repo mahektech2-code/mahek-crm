@@ -246,7 +246,7 @@ export default function LeadRecord() {
         <Card style={{ paddingVertical: 32 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>This lead is not on this phone</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Go back to the list and open it from there.
+            Go back to the list. Open it from there.
           </T>
         </Card>
       </AppFrame>
@@ -275,7 +275,7 @@ export default function LeadRecord() {
   }
   const litres = lead.monthlyLitres ?? lead.monthlyVolumeLitres;
   if (litres != null) {
-    learned.push({ label: 'Gets through', value: plural(litres, 'litre') + ' a month', finding: 'monthly_litres' });
+    learned.push({ label: 'Uses', value: plural(litres, 'litre') + ' a month', finding: 'monthly_litres' });
   }
   const onNow = lead.competitor?.trim() || lead.competitorName?.trim();
   if (onNow) learned.push({ label: 'Buys from now', value: onNow, finding: 'competitor' });
@@ -320,20 +320,20 @@ export default function LeadRecord() {
           <Divider style={{ marginVertical: 14 }} />
 
           <T style={[{ fontSize: 17, lineHeight: 24, color: C.ink }, weight(600)]}>
-            {'You have been ' + plural(visits, 'time') + '. Is this worth pursuing?'}
+            {'You have visited ' + plural(visits, 'time') + '. Should you keep visiting?'}
           </T>
           <T style={{ fontSize: 15, lineHeight: 22, color: C.muted, marginTop: 6 }}>
-            {'A suspect gets ' + config.suspectMaxVisits +
-              ' visits to become something, and this one has had them. Nothing else on this record works until you answer — that is the point of the question, not a fault.'}
+            {'A Suspect gets ' + config.suspectMaxVisits +
+              ' visits. This one has had them all. Answer this first. Nothing else works until you do.'}
           </T>
 
           <PrimaryButton
-            label="Yes — make it a Prospect"
+            label="Yes, make it a Prospect"
             onPress={() => setSuspect('prospect')}
             style={{ marginTop: 16 }}
           />
           <SecondaryButton
-            label="No — not a prospect"
+            label="No, not a Prospect"
             onPress={() => setSuspect('not')}
             style={{ marginTop: 10 }}
           />
@@ -364,12 +364,12 @@ export default function LeadRecord() {
   const convert = () =>
     askConfirm({
       title: 'Make them a customer?',
-      body: title + ' becomes an account you can order against. The lead stays, linked to it, and this cannot be undone.',
+      body: title + ' becomes a customer. You can take orders from them. The lead stays linked to it. You cannot undo this.',
       confirmLabel: 'Convert',
       run: () => {
         void convertToCustomer(lead, today).then((r) => {
           if (!r.ok) return notify(r.message);
-          notify('Customer created · ' + title);
+          notify('Customer added · ' + title);
           set({ custId: r.value, pTab: 0 });
           router.push('/customer');
         });
@@ -442,7 +442,7 @@ export default function LeadRecord() {
             {lead.mobile ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={'Ring ' + title}
+                accessibilityLabel={'Call ' + title}
                 onPress={() => {
                   void callNumber(lead.mobile!).then((out) => {
                     if (out.status === 'failed') return notify(out.reason);
@@ -465,12 +465,12 @@ export default function LeadRecord() {
                   backgroundColor: pressed ? C.wash : C.primaryTint,
                 })}>
                 <Icon name="call" size={16} color={C.primaryDeep} />
-                <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(500)]}>Ring</T>
+                <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(500)]}>Call</T>
               </Pressable>
             ) : null}
           </View>
           <Line
-            label="Might buy"
+            label="Can buy"
             value={lead.estimatedPotentialPaise ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month' : 'Not estimated'}
           />
           {/* Where it actually came from, in more words than "manual". The
@@ -491,7 +491,7 @@ export default function LeadRecord() {
         ) : null}
 
         {stage === 'lost' && lead.lostReason ? (
-          <T style={{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.danger }}>{'Lost — ' + lead.lostReason}</T>
+          <T style={{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.danger }}>{'Lost: ' + lead.lostReason}</T>
         ) : null}
 
         {/* Why it is not moving. It was on the list card and nowhere on the
@@ -510,7 +510,7 @@ export default function LeadRecord() {
         {stage === 'suspect' && !lead.suspectDecidedAt ? (
           <T style={{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.muted }}>
             {'Visit ' + Math.max(1, visits) + ' of ' + config.suspectMaxVisits +
-              ' — decide by then whether this is a prospect.'}
+              '. Decide by then if this is a Prospect.'}
           </T>
         ) : null}
 
@@ -535,7 +535,7 @@ export default function LeadRecord() {
           started from nothing and he stopped filling them in. */}
       {learned.length > 0 || lead.shopPhotoId ? (
         <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>What you learned in the shop</SectionLabel>
+          <SectionLabel style={{ marginBottom: 10 }}>What you found in the shop</SectionLabel>
           <Card>
             {learned.length > 0 ? (
               <View style={{ gap: 8 }}>
@@ -568,8 +568,7 @@ export default function LeadRecord() {
                      that no longer exists is a grey rectangle that explains
                      nothing. */
                   <T s="caption">
-                    The shop front was photographed. The picture has gone up to the office and is not on this
-                    phone any more.
+                    Shop photo taken. It was sent to the office. It is not on this phone now.
                   </T>
                 )}
               </View>
@@ -581,7 +580,7 @@ export default function LeadRecord() {
       {/* ------------------------------------------------- §3 the ladder */}
       {settled ? null : (
         <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>The climb</SectionLabel>
+          <SectionLabel style={{ marginBottom: 10 }}>Lead stage</SectionLabel>
           {/* Every rung of THIS lead's ladder, not a hardcoded six. A salesman
               learns the process from seeing what is above him, which is why
               the whole ladder is drawn rather than only the next step. */}
@@ -611,7 +610,7 @@ export default function LeadRecord() {
                   whyDisabled={
                     gate.open
                       ? undefined
-                      : 'Still to do: ' + gate.missing.map((c) => c.says.toLowerCase()).join('; ')
+                      : 'Still to do: ' + gate.missing.map((c) => c.says.toLowerCase()).join(', ')
                   }
                   onPress={() => {
                     if (!gate.open) {
@@ -659,7 +658,7 @@ export default function LeadRecord() {
                     ? 'Waiting: ' + lead.holdReason
                     : lead.holdReasonCode
                       ? 'Waiting: ' + labelOf(config.holdReasons, lead.holdReasonCode)
-                      : 'Nobody wrote down what it is waiting for.'}
+                      : 'No reason was written for the hold.'}
                 </T>
                 {/* THE CODE AS WELL AS THE SENTENCE, where there are both.
                     `holdReason` is what somebody typed and this is the coded
@@ -697,22 +696,21 @@ export default function LeadRecord() {
                 {lead.holdResumeDate ?? lead.nextFollowUpDate ? (
                   <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 6 }, weight(500)]}>
                     {(lead.holdResumeDate ?? lead.nextFollowUpDate!) <= today
-                      ? 'It was due back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!) + ' — pick it up'
+                      ? 'It was due back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!) + '. Work on it now.'
                       : 'Comes back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!)}
                   </T>
                 ) : (
                   <T style={{ fontSize: 15, lineHeight: 21, color: C.warnInk, marginTop: 6 }}>
-                    No day was set for it to come back. Nothing will bring it back to you.
+                    No return day was set. It will not come back by itself.
                   </T>
                 )}
                 <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
-                  It is not lost and nothing about it has been given up on. Nothing climbs until somebody says
-                  which rung it comes back to.
+                  It is not lost. To work on it again, choose the stage it goes back to.
                 </T>
 
                 {returning ? (
                   <>
-                    <T s="caption" style={{ marginTop: 12 }}>Bring it back to</T>
+                    <T s="caption" style={{ marginTop: 12 }}>Bring it back to this stage</T>
                     {/* The rungs it can be WORKED at. The end of the ladder is
                         left off: coming back off a hold is picking up where it
                         stopped, and a one-tap jump to Converted on a record
@@ -751,7 +749,7 @@ export default function LeadRecord() {
             ) : (
               <Card>
                 <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>
-                  Top of the ladder — there is no rung above this one.
+                  This is the last stage. There is no stage after this.
                 </T>
               </Card>
             )}
@@ -781,11 +779,11 @@ export default function LeadRecord() {
               </>
             ) : (
               <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>
-                Nothing is owed on this lead by anybody. That is how one sits for six weeks.
+                No action is pending on this lead. Set one, or it will be forgotten.
               </T>
             )}
             <SecondaryButton
-              label={lead.nextAction ? 'Change it' : 'Say what happens next'}
+              label={lead.nextAction ? 'Change it' : 'Set next action'}
               onPress={() => setNextOpen(true)}
               style={{ marginTop: 12 }}
             />
@@ -800,7 +798,7 @@ export default function LeadRecord() {
           and why the sentence about commercial authority sits under them. */}
       {lead.thirdParty ? (
         <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>Who this shop goes through</SectionLabel>
+          <SectionLabel style={{ marginBottom: 10 }}>Who sells to this shop</SectionLabel>
           <RelationshipChain
             shopName={title}
             distributorSalesmanName={lead.distributorSalesmanName}
@@ -819,7 +817,7 @@ export default function LeadRecord() {
       {/* -------------------------------------------------------- the forms */}
       {settled ? null : (
         <View style={{ marginTop: 20, gap: 10 }}>
-          <SectionLabel style={{ marginBottom: 0 }}>The work</SectionLabel>
+          <SectionLabel style={{ marginBottom: 0 }}>Work to do</SectionLabel>
 
           {/* §5.5 — THE COMMITMENT, and it sits at the TOP of the work.
               It is the one condition in front of `first_order` that is this
@@ -843,11 +841,11 @@ export default function LeadRecord() {
           ) : null}
 
           <SecondaryButton
-            label="Prospect details — the eight answers"
+            label="Prospect details (8 questions)"
             onPress={() => router.push(`/lead-prospect?id=${lead.id}&from=lead`)}
           />
           <SecondaryButton
-            label={salesType === 'distributor' ? 'Distributor qualification — thirty questions' : 'Qualification checklist'}
+            label={salesType === 'distributor' ? 'Distributor qualification (30 questions)' : 'Qualification checklist'}
             onPress={() => router.push(`/lead-qualify?id=${lead.id}&from=lead`)}
           />
 
@@ -861,7 +859,7 @@ export default function LeadRecord() {
             whyDisabled={
               sampleGate.open
                 ? undefined
-                : 'Outstanding: ' + sampleGate.missing.map((c) => c.says.toLowerCase()).join('; ')
+                : 'Still to do: ' + sampleGate.missing.map((c) => c.says.toLowerCase()).join(', ')
             }
             onPress={() => {
               if (!sampleGate.open) {
@@ -872,7 +870,7 @@ export default function LeadRecord() {
           />
           {sampleGate.open ? null : (
             <T s="caption">
-              {plural(sampleGate.missing.length, 'thing') + ' still to answer before a sample can go out.'}
+              {plural(sampleGate.missing.length, 'thing') + ' to answer before a sample can go.'}
             </T>
           )}
 
@@ -880,12 +878,12 @@ export default function LeadRecord() {
             label={
               lead.thirdParty
                 ? 'Billed by ' + (lead.distributorName ?? 'a distributor')
-                : 'Who invoices this shop'
+                : 'Who bills this shop'
             }
             onPress={() => setParties(true)}
           />
           <DashedButton
-            label={'Kind of sale: ' + salesTypeLabel(salesType) + ' — change it'}
+            label={'Kind of sale: ' + salesTypeLabel(salesType) + '. Change it'}
             onPress={() => setLadderOpen(true)}
           />
         </View>
@@ -929,7 +927,7 @@ export default function LeadRecord() {
       {/* --------------------------------------------------- follow-up */}
       {settled ? null : (
         <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>Go back to them on</SectionLabel>
+          <SectionLabel style={{ marginBottom: 10 }}>Next follow-up on</SectionLabel>
           <Pressable
             onPress={() => setCal(true)}
             accessibilityRole="button"
@@ -943,7 +941,7 @@ export default function LeadRecord() {
               paddingHorizontal: 14,
             }}>
             <T style={{ fontSize: 16, color: lead.nextFollowUpDate ? C.ink : C.faint }}>
-              {lead.nextFollowUpDate ? dmy(lead.nextFollowUpDate) : 'Pick a day'}
+              {lead.nextFollowUpDate ? dmy(lead.nextFollowUpDate) : 'Choose a day'}
             </T>
           </Pressable>
         </View>
@@ -978,7 +976,7 @@ export default function LeadRecord() {
           leaves the reader to notice is a screen that produces it for nobody. */}
       {checks.length ? (
         <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>The office rang them</SectionLabel>
+          <SectionLabel style={{ marginBottom: 10 }}>The office called them</SectionLabel>
           <View style={{ gap: 10 }}>
             {checks.map((v) => {
               const tone: BadgeTone =
@@ -1067,12 +1065,12 @@ export default function LeadRecord() {
 
       {/* ------------------------------------------------- §25 the timeline */}
       <View style={{ marginTop: 20 }}>
-        <SectionLabel style={{ marginBottom: 10 }}>What has happened</SectionLabel>
+        <SectionLabel style={{ marginBottom: 10 }}>History</SectionLabel>
 
         {events.length === 0 ? (
           <Card style={{ paddingVertical: 24 }}>
             <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
-              Nothing recorded yet. What they buy now, and from whom, is the useful part.
+              Nothing here yet. Add a note. Write what they buy now, and from whom.
             </T>
           </Card>
         ) : (
@@ -1103,7 +1101,7 @@ export default function LeadRecord() {
             onChangeText={setNote}
             placeholder="Buys 20 cans a month from Asian, wants 45 days credit"
           />
-          <PrimaryButton label="Add the note" onPress={saveNote} style={{ marginTop: 10 }} />
+          <PrimaryButton label="Add note" onPress={saveNote} style={{ marginTop: 10 }} />
         </View>
       </View>
 
@@ -1128,11 +1126,11 @@ export default function LeadRecord() {
           </>
         )}
         <DashedButton
-          label={lead.archived ? 'Bring it back to the list' : 'Archive it — kept, just out of the way'}
+          label={lead.archived ? 'Bring it back to the list' : 'Close it (hide from list)'}
           onPress={() => {
             void setArchived(lead.id, !lead.archived, today).then(() => {
               load();
-              notify(lead.archived ? 'Back on the list' : 'Archived — find it under Archived');
+              notify(lead.archived ? 'Back on the list' : 'Closed. Find it under Archived.');
             });
           }}
         />
@@ -1162,7 +1160,7 @@ export default function LeadRecord() {
         open={lost}
         onClose={() => setLost(false)}
         title="Mark this lead lost?"
-        body={title + ' stays on the list under Lost, with the reason on it. Nobody rings this shop again after this.'}
+        body={title + ' moves to Lost, with the reason. Nobody will call this shop again.'}
         options={config.lostReasons}
         confirmLabel="Mark it lost"
         noteLabel="What they actually said"
@@ -1195,10 +1193,10 @@ export default function LeadRecord() {
         title="Put this lead on hold?"
         body={
           title +
-          ' stops being chased until the day you name. It is not lost, it stays on your list, and nothing about it is given up on.'
+          ' will not be followed up until the day you choose. It is not lost. It stays on your list.'
         }
         options={config.holdReasons}
-        confirmLabel="Next — when does it come back?"
+        confirmLabel="Next: choose return day"
         noteLabel="What they actually said"
         /* Only "Other" costs a sentence. A code meaning "something else" with
            nothing behind it is the one row nobody can act on afterwards, and
@@ -1215,7 +1213,7 @@ export default function LeadRecord() {
           {/* The sentence says what the date DOES, because a date on a screen
               that does nothing is how "back after Diwali" became a lead nobody
               looked at for six months. */}
-          On this day it returns to your list with the action you set next.
+          On this day it comes back to your list, with the next action you set.
         </T>
         <View style={{ marginTop: 14 }}>
           <Calendar
@@ -1225,7 +1223,7 @@ export default function LeadRecord() {
                on the day it is made is not a hold, and the screen saying so is
                kinder than a park that quietly means nothing. */
             disabledReason={(iso) =>
-              iso <= today ? 'A hold has to end after today, or it is not a hold.' : null
+              iso <= today ? 'Choose a day after today.' : null
             }
             onPick={(iso) =>
               setHold((h) => (h?.step === 'until' ? { step: 'next', code: h.code, note: h.note, until: iso } : h))
@@ -1306,7 +1304,7 @@ export default function LeadRecord() {
           void setSalesType(lead.id, t, reason).then((r) => {
             if (!r.ok) return notify(r.message);
             load();
-            notify(salesTypeLabel(t) + ' — back to the foot of that ladder');
+            notify(salesTypeLabel(t) + '. Lead goes back to the first stage.');
           });
         }}
       />
@@ -1344,7 +1342,7 @@ export default function LeadRecord() {
               /* The confirmation says what it DID and, in the same breath, what
                  it did not: a salesman who has just written down a promise will
                  reasonably look for the ladder to have moved. */
-              notify(plural(c.quantityCans, 'can') + ' expected ' + dmy(c.date) + ' — noted, not ordered');
+              notify(plural(c.quantityCans, 'can') + ' expected ' + dmy(c.date) + '. Saved. This is not an order.');
             })
             .finally(() => {
               committing.current = false;
@@ -1382,8 +1380,8 @@ export default function LeadRecord() {
         title={asking === 'not' ? 'Not a prospect?' : 'Make this a Prospect?'}
         body={
           asking === 'not'
-            ? 'It closes with the reason on it, and stays on the list under Lost.'
-            : 'Your sales manager comes onto it from here, and rings the customer to check.'
+            ? 'It closes with the reason. It stays on the list under Lost.'
+            : 'Your sales manager will now work on it too. They will call the customer to check.'
         }
         options={asking === 'not' ? view.config.lostReasons : view.config.prospectReasons}
         confirmLabel={asking === 'not' ? 'Close it' : 'Make it a Prospect'}
@@ -1441,7 +1439,7 @@ function LadderSheet({
         What kind of sale is this?
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
-        It decides which questions the rest of the funnel asks. Changing it starts the climb again at the foot.
+        This decides which questions come next. If you change it, the lead goes back to the first stage.
       </T>
 
       {/* The same withdrawal as the raise screen, and it bites hardest here:
@@ -1466,7 +1464,7 @@ function LadderSheet({
 
       <View style={{ marginTop: 12 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Why it is changing</SectionLabel>
-        <Input value={reason} onChangeText={setReason} placeholder="Optional — he sells on rather than uses it" />
+        <Input value={reason} onChangeText={setReason} placeholder="Optional. Example: he sells it, does not use it" />
       </View>
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
@@ -1474,7 +1472,7 @@ function LadderSheet({
         <PrimaryButton
           label="Change it"
           disabled={!picked || picked === current}
-          whyDisabled={!picked ? 'Pick one first.' : 'That is what it is already.'}
+          whyDisabled={!picked ? 'Choose one first.' : 'It is already this.'}
           onPress={() => picked && picked !== current && onPick(picked, reason)}
           style={{ flex: 1, borderRadius: radius.xl }}
         />
@@ -1533,15 +1531,15 @@ function PartiesSheet({
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
       <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-        Who invoices this shop?
+        Who bills this shop?
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
-        A shop we deliver to and do not bill is a third-party customer, and it has to say who does.
+        If we deliver but do not bill the shop, it is a third-party customer. Say who bills it.
       </T>
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
         <Choice label="We do" selected={!thirdParty} onPress={() => setThirdParty(false)} style={{ paddingHorizontal: 16 }} />
-        <Choice label="A distributor does" selected={thirdParty} onPress={() => setThirdParty(true)} style={{ paddingHorizontal: 16 }} />
+        <Choice label="A distributor" selected={thirdParty} onPress={() => setThirdParty(true)} style={{ paddingHorizontal: 16 }} />
       </View>
 
       {thirdParty ? (
@@ -1561,14 +1559,14 @@ function PartiesSheet({
                 />
               ))}
               {hits.length === 0 ? (
-                <T s="caption">Nothing matched. Only accounts we invoice can be named here.</T>
+                <T s="caption">No match. You can only choose shops we bill.</T>
               ) : null}
             </View>
           </View>
 
           <View style={{ marginTop: 12 }}>
             <SectionLabel style={{ marginBottom: 6 }}>Their salesman for this shop</SectionLabel>
-            <Input value={salesman} onChangeText={setSalesman} placeholder="Rahul — the man who actually calls on them" />
+            <Input value={salesman} onChangeText={setSalesman} placeholder="Example: Rahul, who visits this shop" />
             <T s="caption" style={{ marginTop: 6 }}>
               A name is enough. He has no login here and does not need one.
             </T>
@@ -1581,7 +1579,7 @@ function PartiesSheet({
         <PrimaryButton
           label="Save"
           disabled={thirdParty && !chosen}
-          whyDisabled="Say which distributor invoices this shop — a marked shop with nobody billing it is a record nobody can ask about."
+          whyDisabled="Choose the distributor who bills this shop."
           onPress={() => {
             if (thirdParty && !chosen) return;
             onSave({
@@ -1648,7 +1646,7 @@ function told(
   if (v.confirmedMonthlyVolumeLitres != null) {
     const mine = lead.monthlyLitres ?? lead.monthlyVolumeLitres;
     rows.push({
-      label: 'Gets through',
+      label: 'Uses',
       said: plural(v.confirmedMonthlyVolumeLitres, 'litre') + ' a month',
       differsFrom:
         mine != null && mine !== v.confirmedMonthlyVolumeLitres ? plural(mine, 'litre') + ' a month' : null,
@@ -1664,7 +1662,7 @@ function told(
   if (v.confirmedPotentialPaise != null) {
     const mine = lead.estimatedPotentialPaise;
     rows.push({
-      label: 'Could be worth',
+      label: 'Can buy',
       said: inrFromPaise(v.confirmedPotentialPaise) + ' a month',
       differsFrom: mine != null && mine !== v.confirmedPotentialPaise ? inrFromPaise(mine) + ' a month' : null,
     });

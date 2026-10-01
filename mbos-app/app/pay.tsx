@@ -62,7 +62,7 @@ const MODES: { label: PaymentMode; glyph: IconName }[] = [
   { label: 'Bank transfer', glyph: 'route' },
 ];
 
-const CHEQUE_PHOTO_LINE = 'Photograph the cheque before you hand it back.';
+const CHEQUE_PHOTO_LINE = 'Take a photo of the cheque before you give it back.';
 
 /**
  * How many bills are drawn before the rest are folded away.
@@ -82,7 +82,7 @@ const BILLS_SHOWN = 5;
  * own drawer. It is asked of everybody, because the man asking is holding the
  * cheque and can read it off the paper.
  */
-const CHEQUE_DATE_LINE = 'The date written on the cheque is needed.';
+const CHEQUE_DATE_LINE = 'Pick the date written on the cheque.';
 
 /** How long a typed name waits before it becomes a query — the customers list's own pause. */
 const SEARCH_PAUSE_MS = 250;
@@ -321,7 +321,7 @@ export default function PayScreen() {
     /* `whyDisabled` keeps this button pressable so the handler can refuse in
        words, which means the in-flight lock has to be checked here as well as
        drawn on the button. */
-    if (busy) return notify('Still recording the last one…');
+    if (busy) return notify('Still saving the last payment…');
     if (!payMode) return notify('Pick how they are paying');
     if (!amt) return notify('Enter the amount');
     if (needsCheque && !payChq.trim()) return notify('Cheque number is needed');
@@ -335,7 +335,7 @@ export default function PayScreen() {
       body:
         `${inr(amt)} from ${c.name}, by ${payMode.toLowerCase()}` +
         (needsCheque ? ` — cheque ${payChq.trim()}, dated ${dmy(chequeDate)}` : '') +
-        '. The receipt is written the moment you say yes, and nothing on this phone can edit it afterwards.',
+        '. The receipt is made when you say yes. You cannot change it later on this phone.',
       confirmLabel: 'Yes, take it',
       run: () => void write(payMode as PaymentMode, c),
     });
@@ -408,8 +408,8 @@ export default function PayScreen() {
     askConfirm({
       title: 'Send the receipt?',
       body: phone
-        ? `${inr(amt)} recorded for ${cust.name}. Your WhatsApp opens with the receipt written — you press send.`
-        : `${inr(amt)} recorded for ${cust.name}. There is no number on this customer, so the receipt can only be copied.`,
+        ? `${inr(amt)} saved for ${cust.name}. WhatsApp will open with the receipt ready. You press send.`
+        : `${inr(amt)} saved for ${cust.name}. This customer has no number, so you can only copy the receipt.`,
       confirmLabel: phone ? 'Open WhatsApp' : 'Copy the receipt',
       run: async () => {
         const out = phone ? await openWhatsApp(phone, slip) : await copyToClipboard(slip);
@@ -572,7 +572,7 @@ export default function PayScreen() {
                   </View>
                   {unstated ? (
                     <T style={{ fontSize: 13, color: C.muted, textAlign: 'right', maxWidth: 110 }}>
-                      Not stated either way
+                      No payment info yet
                     </T>
                   ) : (
                     <T style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
@@ -603,8 +603,8 @@ export default function PayScreen() {
             {chosen.length === 0
               ? 'Pick the bill they are paying.'
               : onAccountPaise > 0 && amt > 0
-                ? `${chosen.length} named · ${inrFromPaise(onAccountPaise)} more than they cover, which sits on account.`
-                : `${chosen.length} named.`}
+                ? `${chosen.length} picked · ${inrFromPaise(onAccountPaise)} extra. It is kept as advance on the account.`
+                : `${chosen.length} picked.`}
           </T>
           {chosen.length === 0 ? (
             <Pressable

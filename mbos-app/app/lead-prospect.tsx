@@ -78,11 +78,11 @@ import { productLines } from '../src/lib/product-lines';
  */
 const CHECKED: readonly { field: string; label: string }[] = [
   { field: 'monthly_litres', label: 'Litres a month' },
-  { field: 'potential', label: 'What they could be worth' },
-  { field: 'competitor', label: 'Whose product they are on' },
-  { field: 'required_product', label: 'Which of ours they need' },
-  { field: 'contact_person', label: 'Who we ask for' },
-  { field: 'decision_maker', label: 'Who signs off a purchase' },
+  { field: 'potential', label: 'How much they can buy' },
+  { field: 'competitor', label: 'Which brand they use now' },
+  { field: 'required_product', label: 'Which of our products they need' },
+  { field: 'contact_person', label: 'Who to ask for' },
+  { field: 'decision_maker', label: 'Who decides to buy' },
 ];
 
 const CHECKED_LABELS: Record<string, string> = Object.fromEntries(
@@ -100,9 +100,9 @@ const CHECKED_LABELS: Record<string, string> = Object.fromEntries(
  */
 const CUSTOMER_TYPES: readonly { code: string; label: string; hint: string }[] = [
   { code: 'retailer', label: 'Shop', hint: 'Sells over a counter' },
-  { code: 'dealer', label: 'Dealer', hint: 'Sells on, in volume' },
+  { code: 'dealer', label: 'Dealer', hint: 'Sells to other shops, in bulk' },
   { code: 'manufacturer', label: 'Manufacturer', hint: 'Uses it in what they make' },
-  { code: 'distributor', label: 'Distributor', hint: 'Stocks and supplies others' },
+  { code: 'distributor', label: 'Distributor', hint: 'Keeps stock, supplies other shops' },
 ];
 
 /**
@@ -420,7 +420,7 @@ export default function ProspectForm() {
             />
           ))}
           {productQuery.trim() && hits.length === 0 ? (
-            <T s="caption">Nothing in the catalogue matches that.</T>
+            <T s="caption">No product matches that.</T>
           ) : null}
         </View>
       </>
@@ -460,7 +460,7 @@ export default function ProspectForm() {
           {lead.company?.trim() || lead.name}
         </T>
         <T s="caption" style={{ marginTop: 2 }}>
-          {stageLabel(input.stage) + ' · everything on this page in one go'}
+          {stageLabel(input.stage) + ' · fill everything on this page'}
         </T>
       </Card>
 
@@ -495,11 +495,11 @@ export default function ProspectForm() {
         ) : (
           <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
         )}
-        <T s="caption" style={{ marginTop: 6 }}>What they actually get through, of everything — not just ours.</T>
+        <T s="caption" style={{ marginTop: 6 }}>How much they use in total. Not only ours.</T>
       </View>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>What they could be worth a month</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>How much they can buy a month</SectionLabel>
         {originals.potential ? (
           <VerifyFieldRow
             field="potential"
@@ -513,11 +513,11 @@ export default function ProspectForm() {
         ) : (
           <Input value={potential} onChangeText={setPotential} placeholder="40000" keyboardType="number-pad" />
         )}
-        <T s="caption" style={{ marginTop: 6 }}>In rupees, roughly.</T>
+        <T s="caption" style={{ marginTop: 6 }}>In rupees, about.</T>
       </View>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Whose product are they on now</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Which brand they use now</SectionLabel>
         {originals.competitor ? (
           <VerifyFieldRow
             field="competitor"
@@ -533,7 +533,7 @@ export default function ProspectForm() {
       </View>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Which of ours do they need</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Which of our products they need</SectionLabel>
         {originals.required_product ? (
           <VerifyFieldRow
             field="required_product"
@@ -558,7 +558,7 @@ export default function ProspectForm() {
             }}
             renderCorrected={() => (
               <View>
-                <T s="caption" style={{ marginBottom: 6 }}>Which of ours they actually need</T>
+                <T s="caption" style={{ marginBottom: 6 }}>Which of our products they need</T>
                 {productField()}
               </View>
             )}
@@ -569,7 +569,7 @@ export default function ProspectForm() {
       </View>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Who we ask for when we ring</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Who to ask for when we call</SectionLabel>
         {originals.contact_person ? (
           <VerifyFieldRow
             field="contact_person"
@@ -589,7 +589,7 @@ export default function ProspectForm() {
           IS one of the twelve at qualification, so it is asked here where the
           salesman is already standing in front of the man. */}
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Who actually signs off a purchase</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Who decides to buy</SectionLabel>
         {originals.decision_maker ? (
           <VerifyFieldRow
             field="decision_maker"
@@ -597,32 +597,32 @@ export default function ProspectForm() {
             reported={originals.decision_maker}
             answer={checks.decision_maker ?? BLANK_VERIFY}
             onChange={(patch) => patchCheck('decision_maker', patch)}
-            placeholder="The proprietor, his son"
+            placeholder="The owner, his son"
           />
         ) : (
-          <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Optional — the proprietor, his son" />
+          <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Optional. The owner, his son" />
         )}
       </View>
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Credit they want, in days</SectionLabel>
-        <Input value={creditDays} onChangeText={setCreditDays} placeholder="Optional — 30" keyboardType="number-pad" />
+        <Input value={creditDays} onChangeText={setCreditDays} placeholder="Optional. Example: 30" keyboardType="number-pad" />
       </View>
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>What they will use it on</SectionLabel>
-        <Input value={application} onChangeText={setApplication} placeholder="Optional — furniture polish, spray booth" />
+        <Input value={application} onChangeText={setApplication} placeholder="Optional. Furniture polish, spray booth" />
       </View>
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>GST number</SectionLabel>
-        <Input value={gstin} onChangeText={setGstin} placeholder="Optional here — required before a sample goes out" autoCapitalize="characters" />
+        <Input value={gstin} onChangeText={setGstin} placeholder="Optional now. Needed before a sample" autoCapitalize="characters" />
       </View>
 
       {/* -------------------------------------------------- §24 and §5 */}
       <View style={{ marginTop: 18, gap: 10 }}>
         <SecondaryButton
-          label={lead.nextAction ? 'Next: ' + lead.nextAction : 'Say what happens next'}
+          label={lead.nextAction ? 'Next: ' + lead.nextAction : 'Set next action'}
           onPress={() => setNextOpen(true)}
         />
         {lead.nextActionDate ? <T s="caption">{pretty(lead.nextActionDate)}</T> : null}
@@ -631,7 +631,7 @@ export default function ProspectForm() {
           label={
             lead.prospectReasonCode
               ? 'Why: ' + labelOf(config.prospectReasons, lead.prospectReasonCode)
-              : 'Say why this is worth pursuing'
+              : 'Say why to follow up'
           }
           onPress={() => setReasonOpen(true)}
         />
@@ -649,7 +649,7 @@ export default function ProspectForm() {
             padding: 12,
             gap: 6,
           }}>
-          <T s="caption">Still to answer before this can be a Prospect</T>
+          <T s="caption">Answer these to make it a Prospect</T>
           {outstanding.map((c) => (
             <T key={c.id} style={{ fontSize: 15, lineHeight: 21, color: C.ink }}>{'· ' + c.says}</T>
           ))}
@@ -657,7 +657,7 @@ export default function ProspectForm() {
       ) : (
         <View style={{ marginTop: 16 }}>
           <T style={[{ fontSize: 15, lineHeight: 21, color: C.success }, weight(500)]}>
-            All eight answered. Save, then move it up from the record.
+            All 8 answered. Save, then move it up on the lead page.
           </T>
         </View>
       )}
@@ -672,13 +672,12 @@ export default function ProspectForm() {
       */}
       {Object.values(checks).some((a) => a.verdict === 'corrected') ? (
         <T s="caption" style={{ marginTop: 14 }}>
-          The office gets the corrected answer. Why it changed is kept on this phone until their side
-          can hold it.
+          The office gets the corrected answer. The reason stays on this phone for now.
         </T>
       ) : null}
 
       <PrimaryButton
-        label="Save the details"
+        label="Save details"
         onPress={() => save()}
         disabled={Boolean(refusal)}
         whyDisabled={refusal ?? undefined}
@@ -694,10 +693,10 @@ export default function ProspectForm() {
         key={reasonOpen ? 'why-open' : 'why-shut'}
         open={reasonOpen}
         onClose={() => setReasonOpen(false)}
-        title="Why is this worth pursuing?"
-        body="Ten answers, and none of them is a text box — this is the question that stops a shop somebody walked past becoming a prospect."
+        title="Why follow up this shop?"
+        body="Choose one reason. A shop becomes a Prospect only with a real reason."
         options={config.prospectReasons}
-        confirmLabel="That is why"
+        confirmLabel="Save reason"
         onConfirm={(code) => {
           setReasonOpen(false);
           void save(code);

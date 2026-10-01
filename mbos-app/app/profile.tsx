@@ -66,9 +66,9 @@ type Pref = { k: 'wifi'; l: string; s: string; blocked?: string };
 const PREFS: Pref[] = [
   {
     k: 'wifi',
-    l: 'Sync on Wi-Fi only',
-    s: 'Saves data when you are on mobile',
-    blocked: 'Not built — the sync runs on whatever connection there is.',
+    l: 'Send on Wi-Fi only',
+    s: 'Saves mobile data',
+    blocked: 'Not ready yet. The app sends on any connection.',
   },
 ];
 
@@ -154,7 +154,7 @@ export default function ProfileScreen() {
       setLockOn(wanted);
       notify(
         wanted
-          ? 'App lock on — MBOS will ask for your fingerprint when you come back to it'
+          ? 'App lock on. MBOS will ask for your fingerprint when you open it.'
           : 'App lock off',
       );
     } finally {
@@ -176,7 +176,7 @@ export default function ProfileScreen() {
 
   const PF_WORK = [
     { l: 'Reports to', v: me?.reportsToName ?? '' },
-    { l: 'Territory', v: me?.territory ?? '' },
+    { l: 'Area', v: me?.territory ?? '' },
     { l: 'Employee code', v: me?.employeeCode ?? '' },
   ].filter((w) => w.v);
 
@@ -229,8 +229,8 @@ export default function ProfileScreen() {
         ))}
       </ListCard>
       <T s="caption" style={{ marginTop: 8 }}>
-        This is what the office holds for you. Ask your manager to change any of it — a correction typed
-        here would not reach them.
+        This is what the office has for you. To change anything, ask your manager.
+        You cannot change it here.
       </T>
 
       <T s="label" style={{ marginTop: 20, marginBottom: 8 }}>
@@ -256,7 +256,7 @@ export default function ProfileScreen() {
         ))}
       </ListCard>
       <T s="caption" style={{ marginTop: 8 }}>
-        Your territory and reporting line are set by the office. Ask your manager if either is wrong.
+        The office sets your area and your manager. If either is wrong, ask your manager.
       </T>
 
       <T s="label" style={{ marginTop: 20, marginBottom: 8 }}>
@@ -321,7 +321,7 @@ export default function ProfileScreen() {
               {push == null
                 ? 'Checking…'
                 : push.ok
-                  ? 'On. Decisions reach you without opening the app.'
+                  ? 'On. Office replies reach you even when the app is closed.'
                   : push.why}
             </T>
           </View>
@@ -370,7 +370,7 @@ export default function ProfileScreen() {
             <T s="caption" style={{ marginTop: 1 }}>
               {lockOffer && !lockOffer.ok
                 ? lockOffer.why
-                : 'Asked for when you come back to the app. Your day keeps syncing while it is locked.'}
+                : 'Asked when you open the app. Your work keeps sending while it is locked.'}
             </T>
           </View>
           {lockOffer?.ok ? (
@@ -386,7 +386,7 @@ export default function ProfileScreen() {
           const opened = await openPasswordReset();
           notify(
             opened
-              ? 'Opening the reset page. It emails a link to your work address.'
+              ? 'Opening the reset page. It sends a link to your work email.'
               : 'Could not open the browser. Ask your manager to send you a reset link.',
           );
         }}
@@ -398,9 +398,9 @@ export default function ProfileScreen() {
           askConfirm({
             title: 'Sign out?',
             body: waiting
-              ? plural(waiting, 'record') +
-                ' have not been sent yet. They stay on this phone and go up when you sign in again.'
-              : 'Everything you have saved has gone up already.',
+              ? plural(waiting, 'entry', 'entries') +
+                ' not sent yet. They stay on this phone. They will send when you sign in again.'
+              : 'Everything you saved is already sent to office.',
             confirmLabel: 'Sign out',
             run: () => {
               /* The outbox is kept. Clearing it here would make the sentence

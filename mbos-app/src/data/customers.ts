@@ -693,7 +693,7 @@ export async function addFieldShop(args: {
      field he was never asked for is the worst way to find that out. */
   if (!city) return { ok: false, message: 'Which town is it in?' };
   if (phone.replace(/\D/g, '').length < 6) {
-    return { ok: false, message: 'A working phone number, so the office can reach them.' };
+    return { ok: false, message: 'Add a working phone number, so the office can call them.' };
   }
   if (!args.distributorCustomerId) {
     return { ok: false, message: 'Say who is billed for this shop.' };

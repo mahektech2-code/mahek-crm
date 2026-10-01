@@ -33,14 +33,14 @@ import type { TravelMode } from '../../data/travel';
 export function modeHint(m: TravelMode, where: 'day' | 'leg'): string {
   if (m.requiresOdometer) {
     return where === 'day'
-      ? 'Photograph the meter now and again when you punch out'
-      : 'Photograph the meter now and again when you get there';
+      ? 'Take a meter photo now, and again when you punch out'
+      : 'Take a meter photo now, and again when you reach the shop';
   }
-  if (m.requiresTicket) return 'Add the ticket when you save the visit, if you keep it';
+  if (m.requiresTicket) return 'Add the ticket photo when you save the visit, if you have it';
   /* Public transport is the one day-level answer that leaves a question open,
      and saying so here is what stops the journey's own sheet reading as the
      app having forgotten what he already told it. */
-  if (m.key === 'public_transport') return 'You will be asked bus, train or auto at each shop';
+  if (m.key === 'public_transport') return 'At each shop, you will pick bus, train or auto';
   return 'Nothing to record';
 }
 

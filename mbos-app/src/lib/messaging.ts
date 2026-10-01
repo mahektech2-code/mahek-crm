@@ -53,7 +53,7 @@ export async function openWhatsApp(phone: string, message: string): Promise<Send
     return { status: 'handed_off', channel: 'whatsapp' };
   } catch {
     await Clipboard.setStringAsync(message);
-    return { status: 'copied', reason: 'WhatsApp would not open. The message is copied — paste it there.' };
+    return { status: 'copied', reason: 'WhatsApp did not open. The message is copied. Paste it there.' };
   }
 }
 
@@ -93,7 +93,7 @@ export async function openMaps(args: {
   if (!query) {
     return {
       status: 'failed',
-      reason: 'No location and no name to search for on this customer.',
+      reason: 'This customer has no location and no name to search.',
     };
   }
 
@@ -111,7 +111,7 @@ export async function openMaps(args: {
     await Linking.openURL(web);
     return { status: 'opened' };
   } catch {
-    return { status: 'failed', reason: 'No maps app would open on this handset.' };
+    return { status: 'failed', reason: 'No maps app opened on this phone.' };
   }
 }
 
@@ -149,7 +149,7 @@ export async function openRoute(
   if (pinned.length === 0) {
     return {
       status: 'failed',
-      reason: 'None of today’s stops has a location saved, so there is no route to open.',
+      reason: 'None of today’s stops has a saved location. There is no route to open.',
     };
   }
   if (pinned.length === 1) {
@@ -175,7 +175,7 @@ export async function openRoute(
     await Linking.openURL(url);
     return { status: 'opened', used: used.length + 1, dropped };
   } catch {
-    return { status: 'failed', reason: 'No maps app would open on this handset.' };
+    return { status: 'failed', reason: 'No maps app opened on this phone.' };
   }
 }
 
@@ -189,7 +189,7 @@ export async function openSms(phone: string, message: string): Promise<SendOutco
     return { status: 'handed_off', channel: 'sms' };
   } catch {
     await Clipboard.setStringAsync(message);
-    return { status: 'copied', reason: 'The messaging app would not open. The message is copied.' };
+    return { status: 'copied', reason: 'The messaging app did not open. The message is copied.' };
   }
 }
 
@@ -212,7 +212,7 @@ export async function shareText(message: string, title?: string): Promise<SendOu
     await Share.share({ message, title });
     return { status: 'handed_off', channel: 'copy' };
   } catch {
-    return { status: 'failed', reason: 'Nothing could open to share that.' };
+    return { status: 'failed', reason: 'No app opened to share this.' };
   }
 }
 
@@ -221,7 +221,7 @@ export async function callNumber(phone: string): Promise<SendOutcome> {
     await Linking.openURL(`tel:${phone.replace(/[^0-9+]/g, '')}`);
     return { status: 'handed_off', channel: 'sms' };
   } catch {
-    return { status: 'failed', reason: 'The phone app would not open.' };
+    return { status: 'failed', reason: 'The phone app did not open.' };
   }
 }
 
@@ -260,14 +260,14 @@ export function receiptMessage(args: {
     '',
     args.confirmed
       ? `Receipt no: ${args.reference}`
-      : `Reference: ${args.reference} — the office will confirm the receipt number.`,
+      : `Reference: ${args.reference}. The office will send the receipt number.`,
   ];
 
   if (!args.confirmed) {
     /* Said plainly, because a cheque can bounce and cash can fail to arrive.
        A receipt that implies the business has the money when it has not seen
        it yet is the one sentence on this slip that could be untrue. */
-    lines.push('', 'This is your salesman’s record of the payment, not a bank confirmation.');
+    lines.push('', 'This is the salesman’s note of your payment. It is not a bank receipt.');
   }
 
   return lines.join('\n');
@@ -285,7 +285,7 @@ export function orderMessage(args: {
   const out = [
     `Order — ${args.customerName}`,
     `Date: ${args.when}`,
-    args.confirmed ? `Order no: ${args.reference}` : `Reference: ${args.reference} — number to follow.`,
+    args.confirmed ? `Order no: ${args.reference}` : `Reference: ${args.reference}. Order number will follow.`,
     '',
     ...args.lines.map((l) => `${l.name} — ${l.cans} ${l.cans === 1 ? 'can' : 'cans'}`),
   ];
@@ -354,5 +354,5 @@ export async function navigateTo(
      salesman standing outside with a number he can paste is better off than one
      told "navigation is unavailable". */
   await Clipboard.setStringAsync(point);
-  return { status: 'copied', reason: 'No maps app would open — the location is on your clipboard.' };
+  return { status: 'copied', reason: 'No maps app opened. The location is copied.' };
 }

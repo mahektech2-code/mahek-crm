@@ -40,7 +40,7 @@ function stateOf(o: PunchedOrder): { label: string; tone: BadgeTone } {
     case 'approved': return { label: 'Approved', tone: 'success' };
     case 'rejected': return { label: 'Not approved', tone: 'danger' };
     case 'cancelled': return { label: 'Cancelled', tone: 'neutral' };
-    case 'pending_approval': return { label: 'With the office', tone: 'amber' };
+    case 'pending_approval': return { label: 'With office', tone: 'amber' };
     case 'dispatched': return { label: 'Dispatched', tone: 'success' };
     case 'in_transit': return { label: 'On its way', tone: 'success' };
     case 'delivered': return { label: 'Delivered', tone: 'success' };
@@ -90,18 +90,18 @@ export default function OrdersScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Your orders</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        {waiting ? plural(waiting, 'order') + ' with the office' : 'Nothing waiting on the office'}
+        {waiting ? plural(waiting, 'order') + ' waiting for office' : 'No order waiting for office'}
       </T>
 
       <PrimaryButton
-        label="Punch an order"
+        label="New order"
         style={{ marginTop: 12, borderRadius: radius.xl }}
         onPress={() => router.push('/order?from=orders')}
       />
 
       {rows === null ? (
         <T s="small" style={{ color: C.muted, marginTop: 16 }}>
-          Reading…
+          Loading…
         </T>
       ) : rows.length === 0 ? (
         <Card style={{ marginTop: 16, paddingVertical: 28 }}>
@@ -109,7 +109,7 @@ export default function OrdersScreen() {
             No orders yet.
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6 }}>
-            Everything you punch shows up here, whether it has reached the office or not.
+            Every order you take shows here, sent or not.
           </T>
         </Card>
       ) : (
@@ -149,7 +149,7 @@ export default function OrdersScreen() {
                         are no prices in the product master to fall back on. */}
                     <T style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
                       {o.valueUnavailable || o.netTotalPaise == null
-                        ? 'Not valued'
+                        ? 'No value'
                         : inrFromPaise(o.netTotalPaise)}
                     </T>
                   </View>
@@ -192,9 +192,9 @@ export default function OrdersScreen() {
                 {on ? (
                   <View style={{ paddingHorizontal: 16, paddingBottom: 14, gap: 6 }}>
                     {mine == null ? (
-                      <T s="caption">Reading…</T>
+                      <T s="caption">Loading…</T>
                     ) : mine.length === 0 ? (
-                      <T s="caption">No lines were recorded on this order.</T>
+                      <T s="caption">No products on this order.</T>
                     ) : (
                       mine.map((l) => (
                         <View key={l.id} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>

@@ -83,7 +83,7 @@ export default function Login() {
       setCodeSentTo(r.sentTo);
     } catch (e) {
       setErr('pw');
-      setServerMessage(e instanceof ApiError && e.message ? e.message : 'The code could not be sent. Check your signal, or use your password.');
+      setServerMessage(e instanceof ApiError && e.message ? e.message : 'Code not sent. Check your signal, or use your password.');
     } finally {
       setSendingCode(false);
     }
@@ -185,15 +185,15 @@ export default function Login() {
 
     signIn();
     boot.setSession(outcome.session);
-    if (outcome.offline) notify('Signed in from this phone — your book is as of the last time you had signal');
+    if (outcome.offline) notify('Signed in without signal. Your data is from the last time you had signal.');
     router.replace('/home');
   }
 
   const steps = [
-    'Verifying mobile',
-    'Verifying password',
+    'Checking mobile',
+    'Checking password',
     'Checking employee status',
-    'Checking assigned territory',
+    'Checking your area',
     'Loading your day',
   ];
 
@@ -236,7 +236,7 @@ export default function Login() {
 
         <Text style={[type.h2, { marginTop: 28 }]}>Sign in</Text>
         <Text style={[type.body, { color: C.muted, marginTop: 6 }]}>
-          Mahek field sales. Your accounts team sets this up — there is no sign-up.
+          Mahek field sales. Your accounts team makes your account. There is no sign-up.
         </Text>
 
         {/* ---- the check ladder ---- */}
@@ -277,9 +277,9 @@ export default function Login() {
               <View style={{ backgroundColor: C.dangerBg, borderLeftWidth: 3, borderLeftColor: C.danger, borderRadius: 8, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 16 }}>
                 <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
                   {err === 'payload'
-                    ? (serverMessage ?? "Signed in, but the day's data could not be saved on this phone.") +
-                      ' Try again; if it keeps happening tell your manager, this one will not fix itself.'
-                    : (serverMessage ?? 'This account is not active. Ask your sales manager to switch it back on.')}
+                    ? (serverMessage ?? "Signed in, but today's data was not saved on this phone.") +
+                      ' Try again. If it keeps happening, tell your manager.'
+                    : (serverMessage ?? 'This account is off. Ask your sales manager to turn it on.')}
                 </Text>
               </View>
             ) : null}
@@ -331,7 +331,7 @@ export default function Login() {
                   ? serverMessage
                   : mob.length === 0
                     ? 'Enter your mobile number.'
-                    : `That is ${mob.length} digits — a mobile number has ${MOBILE_DIGITS}.`}
+                    : `You typed ${mob.length} digits. A mobile number has ${MOBILE_DIGITS}.`}
               </Text>
             ) : null}
 
@@ -458,7 +458,7 @@ export default function Login() {
                     const opened = await openPasswordReset();
                     notify(
                       opened
-                        ? 'Opening the reset page. It emails a link to your work address.'
+                        ? 'Opening the reset page. It sends a link to your work email.'
                         : 'Could not open the browser. Ask your manager to send you a reset link.',
                     );
                   }}

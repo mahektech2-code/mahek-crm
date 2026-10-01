@@ -34,7 +34,7 @@ import { color as C, radius, weight, tabular, type BadgeTone } from '../src/them
    days", so an office that set 15 had two contradictory sentences on one
    screen — and he plans around the wrong one and the claim is refused. */
 const exRule = (maxAgeDays: number) =>
-  'Every claim needs the bill or proof of payment — photos or a PDF, as many as it takes. Claims older than ' +
+  'Every claim needs the bill or payment proof. Add photos or a PDF, as many as needed. Claims older than ' +
   maxAgeDays +
   ' days are not accepted.';
 
@@ -225,9 +225,9 @@ export default function ExpensesScreen() {
   }, [maxAgeDays]);
   const refuse = (iso: string) =>
     iso < oldestIso
-      ? 'Older than ' + maxAgeDays + ' days — this cannot be claimed'
+      ? 'Older than ' + maxAgeDays + ' days. You cannot claim it'
       : iso > todayIso
-        ? 'That day has not happened yet'
+        ? 'That day has not come yet'
         : null;
 
   const add = () => {
@@ -286,7 +286,7 @@ export default function ExpensesScreen() {
       note: x.remarks ?? '',
       when: dmy(x.spentOn),
       whenIso: x.spentOn,
-      files: x.billPhotoId ? [{ mediaId: x.billPhotoId, label: 'Bill attached', isPdf: false, fresh: false }] : [],
+      files: x.billPhotoId ? [{ mediaId: x.billPhotoId, label: 'Bill added', isPdf: false, fresh: false }] : [],
     });
     setOpen(true);
   };
@@ -314,7 +314,7 @@ export default function ExpensesScreen() {
     setErr([]);
   };
   const attach = async (how: 'camera' | 'gallery' | 'pdf') => {
-    if (!room) return notify(`A claim can carry ${maxFiles} files — remove one to add another.`);
+    if (!room) return notify(`A claim can have ${maxFiles} files. Remove one to add another.`);
     const parent = { parentType: 'expense', parentId: 'pending', kind: 'bill_photo' as const };
     if (how === 'camera') {
       const shot = await takePhoto({ ...parent, source: 'camera' });
@@ -338,7 +338,7 @@ export default function ExpensesScreen() {
       return;
     }
     addFiles(got.picked);
-    if (got.refused.length) notify('Not attached: ' + got.refused.join('; ') + '.');
+    if (got.refused.length) notify('Not added: ' + got.refused.join(', ') + '.');
   };
   const removeFile = (mediaId: string) => {
     const f = ex.files.find((x) => x.mediaId === mediaId);
@@ -349,7 +349,7 @@ export default function ExpensesScreen() {
   const send = async () => {
     /* One claim per press, and the second press ANSWERS rather than doing
        nothing — `whyDisabled` keeps the button pressable for exactly this. */
-    if (sending) return notify('This claim is on its way — give it a moment.');
+    if (sending) return notify('Sending this claim. Please wait.');
 
     /* EVERY failing field at once, and a summary above the button.
        Returning on the first one meant a claim missing both a bill and a note
@@ -401,8 +401,8 @@ export default function ExpensesScreen() {
          engine, same day, same sentence. */
       notify(
         exOver
-          ? 'Claimed ' + inrFromPaise(exAmtPaise) + ' · over the cap, your manager has to allow it'
-          : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · with your manager',
+          ? 'Claimed ' + inrFromPaise(exAmtPaise) + ' · above the limit. Your manager must allow it'
+          : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · sent to your manager',
       );
     } finally {
       setSending(false);
@@ -414,7 +414,7 @@ export default function ExpensesScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Expenses</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        {inrFromPaise(pending) + ' waiting on your manager'}
+        {inrFromPaise(pending) + ' waiting for your manager'}
       </T>
 
       <PrimaryButton label="Add an expense" style={{ marginTop: 12, borderRadius: radius.xl }} onPress={add} />
@@ -439,7 +439,7 @@ export default function ExpensesScreen() {
                 {dmy(e.spentOn) + ' · ' + (e.remarks ?? '')}
               </T>
               <T style={{ fontSize: 13, lineHeight: 19, color: e.billPhotoId ? C.muted : C.warn }}>
-                {e.billPhotoId ? 'Bill attached' : 'No bill — may be rejected'}
+                {e.billPhotoId ? 'Bill added' : 'No bill. May not be accepted.'}
               </T>
               {e.state === 'Rejected' ? (
                 <>
@@ -448,13 +448,13 @@ export default function ExpensesScreen() {
                       a row reading "Bill attached", and it sent him to
                       photograph a bill that was never the problem. */}
                   <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
-                    {e.rejectionReason ?? 'Sent back — your manager has not said why'}
+                    {e.rejectionReason ?? 'Sent back. Your manager did not give a reason.'}
                   </T>
                   <Pressable
                     accessibilityRole="button"
                     onPress={() => fix(e)}
                     style={{ minHeight: 48, justifyContent: 'center', marginTop: 2 }}>
-                    <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>Correct it and send again</T>
+                    <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>Fix and send again</T>
                   </Pressable>
                 </>
               ) : null}
@@ -468,13 +468,13 @@ export default function ExpensesScreen() {
           the one he is looking for. */}
       {totals && totals.count > rows.length ? (
         <T s="caption" style={{ marginTop: 10 }}>
-          {'The ' + rows.length + ' most recent of ' + totals.count + ' claims. The office holds them all.'}
+          {'Latest ' + rows.length + ' of ' + totals.count + ' claims. The office has all of them.'}
         </T>
       ) : null}
 
       {/* ------------------------------------------------------ claim sheet */}
       <BottomSheet open={open} onClose={() => close()} scroll>
-        <T s="h2">{fixing ? 'Correct this claim' : 'Claim an expense'}</T>
+        <T s="h2">{fixing ? 'Fix this claim' : 'Claim an expense'}</T>
 
         <View style={{ marginTop: 14 }}>
           <T s="label">What for</T>
@@ -573,7 +573,7 @@ export default function ExpensesScreen() {
                 <Pressable
                   key={b.how}
                   accessibilityRole="button"
-                  accessibilityLabel={b.how === 'camera' ? 'Photograph the bill' : b.how === 'gallery' ? 'Choose photos from the gallery' : 'Attach a PDF'}
+                  accessibilityLabel={b.how === 'camera' ? 'Photograph the bill' : b.how === 'gallery' ? 'Choose photos from the gallery' : 'Add a PDF'}
                   onPress={() => void attach(b.how)}
                   style={{
                     flex: 1,
@@ -595,10 +595,10 @@ export default function ExpensesScreen() {
             </View>
           ) : null}
           <T style={{ fontSize: 13, lineHeight: 19, marginTop: 6, color: bad('bill') ? C.danger : C.muted }}>
-            Required on every claim. Add every page, and the payment screenshot if you have one.
+            Needed on every claim. Add every page. Add the payment screenshot if you have it.
           </T>
           {bad('bill') ? (
-            <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Attach the bill or proof of payment.</T>
+            <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Add the bill or payment proof.</T>
           ) : null}
         </View>
 
@@ -634,7 +634,7 @@ export default function ExpensesScreen() {
                reopened weeks later carries the day it was spent on. Say which
                rule refuses it, and that it has to be re-picked. */
             <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 6 }}>
-              {whenWhy + '. Pick a day the office will still take, or ask your manager.'}
+              {whenWhy + '. Pick another day, or ask your manager.'}
             </T>
           ) : null}
         </View>
@@ -652,7 +652,7 @@ export default function ExpensesScreen() {
           />
           {bad('note') ? (
             <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
-              Say what it was for — your manager approves on this.
+              Say what it was for. Your manager approves based on this.
             </T>
           ) : null}
         </View>
@@ -670,10 +670,10 @@ export default function ExpensesScreen() {
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <SecondaryButton label="Cancel" onPress={() => close()} style={{ flex: 1 }} />
           <PrimaryButton
-            label={sending ? 'Sending…' : fixing ? 'Send it again' : 'Send the claim'}
+            label={sending ? 'Sending…' : fixing ? 'Send again' : 'Send claim'}
             onPress={send}
             disabled={sending}
-            whyDisabled="This claim is on its way — give it a moment."
+            whyDisabled="Sending this claim. Please wait."
             style={{ flex: 1 }}
           />
         </View>
@@ -696,7 +696,7 @@ export default function ExpensesScreen() {
         <T s="caption" style={{ marginTop: 10 }}>
           {'Anything older than ' +
             maxAgeDays +
-            ' days cannot be claimed, and neither can a day that has not happened yet.'}
+            ' days cannot be claimed. A future day cannot be claimed either.'}
         </T>
         <SecondaryButton label="Close" onPress={() => setCal(false)} style={{ minHeight: 48, height: 48, marginTop: 10 }} />
       </BottomSheet>

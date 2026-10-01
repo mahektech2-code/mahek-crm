@@ -551,7 +551,7 @@ export async function setSalesType(
   await addEvent({
     leadId: id,
     kind: 'sales_type',
-    summary: 'Sales type set — ' + salesType.replace('_', ' '),
+    summary: 'Sales type set: ' + salesType.replace('_', ' '),
     detail: reason?.trim() || null,
     fromStage: was,
     toStage: stage,
@@ -671,7 +671,7 @@ export async function saveQualification(
   await addEvent({
     leadId: id,
     kind: 'qualification',
-    summary: groupName ? 'Qualification saved — ' + groupName : 'Qualification saved',
+    summary: groupName ? 'Qualification saved: ' + groupName : 'Qualification saved',
     detail: Object.keys(answers).length + ' answered',
   });
   return ok;
@@ -701,7 +701,7 @@ export async function saveDistributorProfile(
   await addEvent({
     leadId: id,
     kind: 'distributor_profile',
-    summary: groupName ? 'Distributor details saved — ' + groupName : 'Distributor details saved',
+    summary: groupName ? 'Distributor details saved: ' + groupName : 'Distributor details saved',
   });
   return ok;
 }
@@ -718,8 +718,8 @@ export async function setNextAction(
   next: { action: string; date: string; ownerId: string; outcome?: string | null },
 ): Promise<LeadResult<null>> {
   if (!next.action.trim()) return { ok: false, message: 'Say what happens next.' };
-  if (!next.date) return { ok: false, message: 'Pick the day it happens on.' };
-  if (!next.ownerId) return { ok: false, message: 'Say who is doing it.' };
+  if (!next.date) return { ok: false, message: 'Pick the day it happens.' };
+  if (!next.ownerId) return { ok: false, message: 'Say who will do it.' };
 
   const today = isoDate(new Date());
   await updateAndQueue({
@@ -794,8 +794,8 @@ export async function decideSuspect(
     return {
       ok: false,
       message: decision.prospect
-        ? 'Say why this is worth pursuing.'
-        : 'Say why it is not — nobody comes back to this shop after this.',
+        ? 'Say why this lead is worth following up.'
+        : 'Say why not. Nobody will come back to this shop after this.',
     };
   }
 
@@ -843,7 +843,7 @@ export async function decideSuspect(
   await addEvent({
     leadId: id,
     kind: 'suspect_decision',
-    summary: decision.prospect ? 'Worth pursuing — now a Prospect' : 'Not a prospect',
+    summary: decision.prospect ? 'Worth following up. Now a Prospect' : 'Not a prospect',
     detail: said || decision.reasonCode,
     fromStage: 'suspect',
     toStage: stage,
@@ -872,7 +872,7 @@ export async function advanceStage(
     return {
       ok: false,
       message:
-        'Not yet — ' + verdict.missing.map((c) => c.says.toLowerCase()).join('; ') + '.',
+        'Not yet. ' + verdict.missing.map((c) => c.says).join('. ') + '.',
     };
   }
 
@@ -927,7 +927,7 @@ export async function markLost(
      and why neither is. The code is still what gets counted; the sentence is
      what a lost lead is left with where the office has configured no codes. */
   if (!reasonCode && !said) {
-    return { ok: false, message: 'Say why — nobody rings this shop again after this.' };
+    return { ok: false, message: 'Say why. Nobody will call this shop again after this.' };
   }
   const lead = await getLead(id);
   if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
@@ -1035,13 +1035,13 @@ export async function putOnHold(
   /* Checked here as well as in the sheet, because a sheet is a screen and this
      is the function every caller reaches — the same reason the server checks
      it again after both of them. */
-  if (!code) return { ok: false, message: 'Pick why it is stopping — it is what gets counted afterwards.' };
+  if (!code) return { ok: false, message: 'Pick why it is on hold. This reason is counted later.' };
   if (code === REASON_CODE_NEEDING_REMARKS && !said) {
-    return { ok: false, message: 'You picked Other — say in words what it actually is.' };
+    return { ok: false, message: 'You picked Other. Write the reason in words.' };
   }
-  if (!hold.resumeDate) return { ok: false, message: 'Name the day it comes back.' };
+  if (!hold.resumeDate) return { ok: false, message: 'Pick the day it comes back.' };
   if (!hold.next.action.trim() || !hold.next.date || !hold.next.ownerId) {
-    return { ok: false, message: 'Say what happens when it comes back, on what day, and who is doing it.' };
+    return { ok: false, message: 'Say what happens when it comes back, on which day, and who will do it.' };
   }
 
   const today = isoDate(new Date());
@@ -1115,7 +1115,7 @@ export async function putOnHold(
   await addEvent({
     leadId: id,
     kind: 'hold',
-    summary: 'On hold — ' + labelOf(holdReasons, code),
+    summary: 'On hold: ' + labelOf(holdReasons, code),
     detail: [said, 'Back on ' + hold.resumeDate].filter(Boolean).join(' · '),
     fromStage: from,
     toStage: 'on_hold',
@@ -1143,7 +1143,7 @@ export async function setLeadParties(
   },
 ): Promise<LeadResult<null>> {
   if (parties.thirdParty && !parties.distributorCustomerId) {
-    return { ok: false, message: 'Say which distributor invoices this shop.' };
+    return { ok: false, message: 'Say which distributor bills this shop.' };
   }
 
   const today = isoDate(new Date());
@@ -1170,7 +1170,7 @@ export async function setLeadParties(
     kind: 'parties',
     summary: parties.thirdParty
       ? 'Billed by ' + (parties.distributorName ?? 'a distributor')
-      : 'We invoice this shop ourselves',
+      : 'We bill this shop ourselves',
     detail: parties.distributorSalesmanName ?? null,
   });
   return ok;
@@ -1229,9 +1229,9 @@ export async function recordExpectedOrder(
     blockerCode?: string | null;
   },
 ): Promise<LeadResult<null>> {
-  if (!args.expectedDate) return { ok: false, message: 'Ask when they will place it.' };
+  if (!args.expectedDate) return { ok: false, message: 'Ask when they will place the order.' };
   if (!args.expectedQuantityCans || args.expectedQuantityCans <= 0) {
-    return { ok: false, message: 'Ask how many cans. A promise with no size on it cannot be planned around.' };
+    return { ok: false, message: 'Ask how many cans. We cannot plan without the size.' };
   }
   const today = isoDate(new Date());
   const blocker = args.blockerCode?.trim() || 'no_blocker';
@@ -1260,7 +1260,7 @@ export async function recordExpectedOrder(
     leadId: id,
     kind: 'expected_order',
     summary: plural(args.expectedQuantityCans, 'can') + ' expected ' + args.expectedDate,
-    detail: blocker === 'no_blocker' ? null : 'Blocked on ' + labelOf(ORDER_BLOCKERS, blocker),
+    detail: blocker === 'no_blocker' ? null : 'Held up by: ' + labelOf(ORDER_BLOCKERS, blocker),
   });
   return ok;
 }

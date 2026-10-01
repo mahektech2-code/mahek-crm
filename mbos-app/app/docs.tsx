@@ -49,13 +49,13 @@ export default function DocsScreen() {
     (d: DocumentRow) => {
       const uri = d.localUri?.trim();
       if (!uri) {
-        notify(d.title + ' is not on this phone — ask the office to send it to you.');
+        notify(d.title + ' is not on this phone. Ask the office to send it.');
         return;
       }
       void (async () => {
         try {
           if (!(await Linking.canOpenURL(uri))) {
-            notify('Nothing on this phone can open ' + d.title + '.');
+            notify('This phone has no app to open ' + d.title + '.');
             return;
           }
           await Linking.openURL(uri);
@@ -73,7 +73,7 @@ export default function DocsScreen() {
 
       <T style={type.h1}>Documents</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        Everything downloaded here works without signal.
+        Downloaded files open without signal.
       </T>
 
       {/* Three states, and they are three different sentences: still reading,
@@ -87,7 +87,7 @@ export default function DocsScreen() {
         <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing published yet</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Price lists, policies and your own papers appear here once the office publishes them.
+            Price lists, rules and your papers will show here when the office adds them.
           </T>
         </Card>
       ) : (

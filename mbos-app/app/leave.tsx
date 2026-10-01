@@ -112,10 +112,12 @@ export default function LeaveScreen() {
 
   /* A range cannot end before it starts; the calendar refuses it. */
   const refuseTo = (iso: string) =>
-    pick === 'to' && !!lv.from && iso < lv.from ? 'Leave cannot end before it starts' : null;
+    pick === 'to' && !!lv.from && iso < lv.from ? 'Last day cannot be before the first day' : null;
 
   const send = async () => {
-    if (sending) return;
+    /* The second press ANSWERS rather than doing nothing — `whyDisabled` keeps
+       the button pressable for exactly this. */
+    if (sending) return notify('Sending this request. Please wait.');
     if (!lv.from || (lv.span === 'many' && (!lv.to || dayCount < 1))) return setErr('dates');
     if (!lv.reason.trim()) return setErr('reason');
 
@@ -290,7 +292,7 @@ export default function LeaveScreen() {
         ) : null}
 
         <T s="label" style={{ marginTop: 16, marginBottom: 6 }}>
-          Reason
+          Why
         </T>
         <VoiceField
           value={lv.reason}
@@ -299,7 +301,9 @@ export default function LeaveScreen() {
           placeholder="Sister's wedding in Amravati"
         />
         {err === 'reason' ? (
-          <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Add a reason.</T>
+          <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
+            Your manager approves based on the reason. Please write it.
+          </T>
         ) : null}
 
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
@@ -308,7 +312,7 @@ export default function LeaveScreen() {
             label={sending ? 'Sending…' : 'Send'}
             onPress={send}
             disabled={sending}
-            whyDisabled="Sending your request."
+            whyDisabled="Sending this request. Please wait."
             style={{ flex: 1 }}
           />
         </View>

@@ -107,7 +107,7 @@ test('reasons stack, and the list says all of them', () => {
 
   assert.equal(both[0]?.shop.id, 'two-reasons');
   assert.ok(both[0].reasons.length >= 2, both[0].reasons.join(', '));
-  assert.ok(both[0].reasons.includes('Money outstanding'));
+  assert.ok(both[0].reasons.includes('Payment pending'));
 });
 
 test('a trivial debt is not a reason to make a detour', () => {
