@@ -400,6 +400,11 @@ export function IntakeForm({
                 distributorCustomerId: f.distributorCustomerId,
               }}
               onFill={(key, value) => {
+                /* A product the person chose from the catalogue wins over words
+                   the assistant heard: the text box is locked while one is
+                   chosen, and a value set behind it would show on screen and be
+                   dropped on save. */
+                if (key === "requirement" && requirementProductId) return;
                 set(key)(value);
                 /* The same rule the Lead source box applies when it changes. */
                 if (key === "source" && value !== "other") set("sourceDetail")("");
