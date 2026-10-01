@@ -426,6 +426,12 @@ export async function createLead(args: {
   company?: string | null;
   mobile: string;
   city?: string | null;
+  /* The locality, where the area he picked was a beat. */
+  area?: string | null;
+  /* The state the shop is in, from the area he picked. Not a column here — it
+     travels to the office, which files the lead under it so that it lands in
+     his territory (`handleLead`). */
+  state?: string | null;
   source?: string | null;
   /* WHAT "OTHER" HAS TO SAY, and it used to ride in the note.
      `customers.lead_source_detail` is the server's column and `handleLead`
@@ -538,6 +544,7 @@ export async function createLead(args: {
          were mended. See `wireSource`. */
       source: wireSource(args.source),
       sourceDetail: args.sourceDetail?.trim() || undefined,
+      state: args.state?.trim() || undefined,
     },
     row: {
       ...base,
@@ -545,6 +552,7 @@ export async function createLead(args: {
       company: args.company?.trim() || null,
       mobile: mobile || null,
       city: args.city?.trim() || null,
+      area: args.area?.trim() || null,
       source: args.source ?? null,
       sourceDetail: args.sourceDetail?.trim() || null,
       estimatedPotentialPaise: args.estimatedPotentialPaise ?? null,

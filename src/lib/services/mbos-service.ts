@@ -695,7 +695,7 @@ export async function customerIdsInScope(
    * empty book that says why is a question; one that does not is a fortnight
    * of somebody assuming the sync is broken.
    */
-  const exempt = principal.role === "admin" || principal.role === "manager";
+  const exempt = territoryExempt(principal);
   const territories = await territoriesFor(principal.user.id);
   if (!exempt && !territories.length) return [];
 
@@ -728,15 +728,25 @@ export async function territoryStateFor(
   return mbosTerritoryState(principal, await territoriesFor(principal.user.id));
 }
 
+/**
+ * WHO TERRITORY DOES NOT NARROW WHEN NOTHING IS ALLOCATED — a manager or an
+ * admin. One definition, read by the book, the state the handset is sent and
+ * the lead gate, so the three cannot disagree about one person.
+ */
+export function territoryExempt(principal: MbosPrincipal): boolean {
+  return principal.role === "admin" || principal.role === "manager";
+}
+
 export function mbosTerritoryState(
   principal: MbosPrincipal,
   territories: Territory[],
 ): TerritoryState {
-  const exempt = principal.role === "admin" || principal.role === "manager";
+  const exempt = territoryExempt(principal);
   const working = territories.filter((t) => t.kind !== "region");
   return {
     allocated: working.length > 0,
     exempt,
+    areas: territories.map((t) => ({ kind: t.kind, value: t.value, parent: t.parent ?? null })),
     /* The narrowest name of each branch, which is what somebody recognises:
        "Pune" rather than "Maharashtra, Pune" on a chip a phone has to fit. */
     places: [...new Set(working.map((t) => t.value))].sort((a, b) => a.localeCompare(b)),

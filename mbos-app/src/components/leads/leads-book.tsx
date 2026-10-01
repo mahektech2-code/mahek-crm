@@ -14,6 +14,8 @@ import {
   type LeadBookFilter,
 } from '../../data/leads';
 import { leadSources } from '../../data/config';
+import { territoryState } from '../../sync/pull';
+import { areaRule, type AreaChoice, type AreaRule } from '../../engines/lead-areas';
 import { takePhoto } from '../../native/capture';
 import {
   CUSTOMER_TYPES,
@@ -386,6 +388,10 @@ export function LeadsBook() {
   const [company, setCompany] = React.useState('');
   const [mobile, setMobile] = React.useState('');
   const [city, setCity] = React.useState('');
+  /* WHERE HE MAY RAISE ONE. Read when the form opens, from what the office
+     last said about his area — see `engines/lead-areas.ts`. */
+  const [areas, setAreas] = React.useState<AreaRule>({ kind: 'free' });
+  const [pickedArea, setPickedArea] = React.useState<AreaChoice | null>(null);
   /**
    * THE CODE, NOT THE WORD, and the list is the office's.
    *
@@ -485,6 +491,7 @@ export function LeadsBook() {
     setCompany('');
     setMobile('');
     setCity('');
+    setPickedArea(null);
     setSource(null);
     setSourceDetail('');
     setSalesType(null);
@@ -501,7 +508,10 @@ export function LeadsBook() {
     setDup(null);
   }, []);
 
-  const openForm = React.useCallback(() => setFormOpen(true), []);
+  const openForm = React.useCallback(() => {
+    void territoryState().then((t) => setAreas(areaRule(t)));
+    setFormOpen(true);
+  }, []);
 
   /* The + sheet on every screen offers "Add lead", which lands here with the
      form already asked for — the salesman is standing outside the shop. */
@@ -539,6 +549,14 @@ export function LeadsBook() {
     if (!name.trim()) return setErr('Say who this is — a name or the shop.');
     if (mobile.replace(/\D/g, '').length < 10) return setErr('A ten-digit mobile, so somebody can ring them.');
     if (!source) return setErr('Say how you found them. It is the one question only you can answer.');
+    /* Mahek's rule: a lead is raised inside his own area. Asked here so it is
+       never refused in the office after the shop, the photograph and the pin
+       are already behind it. */
+    if (areas.kind === 'none') {
+      return setErr('No area has been allocated to you yet, so a lead cannot be raised. Ask the office to set one.');
+    }
+    if (areas.kind === 'pick' && !pickedArea) return setErr('Pick the area this shop is in — a lead can only be raised inside yours.');
+    if (pickedArea && !pickedArea.city && !city.trim()) return setErr('Which town in ' + pickedArea.label + '?');
     /* Refused on the phone as well as in the office, because being told after
        the fact loses the sentence he had in mind while he was standing there. */
     if (source === OTHER_SOURCE && !sourceDetail.trim()) {
@@ -552,7 +570,9 @@ export function LeadsBook() {
         name,
         company,
         mobile,
-        city,
+        city: pickedArea?.city ?? city,
+        area: pickedArea?.area ?? null,
+        state: pickedArea?.state ?? null,
         source,
         /* Where it actually came from, on its own column at both ends —
            `customers.lead_source_detail` on the server and `leads.sourceDetail`
@@ -823,8 +843,41 @@ export function LeadsBook() {
         </View>
 
         <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>City</SectionLabel>
-          <Input value={city} onChangeText={setCity} placeholder="Nagpur" />
+          {areas.kind === 'none' ? (
+            <T style={{ color: C.warnInk }}>
+              No area has been allocated to you yet. A lead can only be raised inside your own area — ask the office to
+              set one.
+            </T>
+          ) : (
+            <>
+              {areas.kind === 'pick' ? (
+                <>
+                  <SectionLabel style={{ marginBottom: 6 }}>Area</SectionLabel>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                    {areas.choices.map((a) => (
+                      <Choice
+                        key={a.key}
+                        label={a.label}
+                        selected={pickedArea?.key === a.key}
+                        onPress={() => {
+                          setPickedArea(a);
+                          setErr(null);
+                        }}
+                        style={{ paddingHorizontal: 14 }}
+                      />
+                    ))}
+                  </View>
+                </>
+              ) : null}
+              {/* A town picks itself; a state, or no rule at all, asks for one. */}
+              {pickedArea?.city ? null : (
+                <>
+                  <SectionLabel style={{ marginBottom: 6 }}>City</SectionLabel>
+                  <Input value={city} onChangeText={setCity} placeholder="Nagpur" />
+                </>
+              )}
+            </>
+          )}
         </View>
 
         <View style={{ marginTop: 12 }}>

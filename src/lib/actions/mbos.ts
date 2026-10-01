@@ -94,8 +94,12 @@ import {
   loadPrincipal,
   runLoginChecks,
   buildBootstrap,
+  territoryExempt,
   type MbosPrincipal,
 } from "../services/mbos-service";
+import { territoriesFor } from "../services/territory-service";
+import { placeNewLead } from "../territory-rules";
+import { TERRITORY_REGION_SQL } from "../territory-sql";
 import {
   LEAVE_TYPES,
   type LeaveType,
@@ -3355,6 +3359,11 @@ const leadSchema = z.object({
   city: z.string().max(120).nullish(),
   area: z.string().max(120).nullish(),
   /*
+   * The state the shop is in, picked with the town on builds that ask. Older
+   * builds send none and `placeNewLead` resolves one — see it for the order.
+   */
+  state: z.string().max(80).nullish(),
+  /*
    * A STRING, AND THE LIST IS `leads.sources`.
    *
    * It was a seven-value enum typed out here, and `leads.sources` is ten codes
@@ -4407,6 +4416,50 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
     }
   }
 
+  /*
+   * A LEAD IS RAISED INSIDE THE SALESMAN'S OWN AREA, and it is filed under a
+   * state so that it lands there.
+   *
+   * Mahek's rule. It is a refusal, unlike the source or the rung above, and
+   * the difference is what an acceptance would cost: a lead outside the area
+   * is one its author can never open — the book narrows by territory, the
+   * Customers tab reads the book, and the lead sits in the office on nobody's
+   * phone. That is how the rule surfaced. Current builds pick the area from a
+   * list, so this refusal is what an OLDER build meets, and it says which
+   * areas are his.
+   *
+   * Only a create is asked. An update to a lead that already exists has
+   * already been placed, and refusing an edit would strand the record.
+   */
+  let leadState: string | null = null;
+  if (item.op === "create") {
+    const [book] = await db.execute<{ state: string | null }>(sql`
+      select ${sql.raw(TERRITORY_REGION_SQL)} as state
+        from customers
+       where lower(trim(customers.city)) = ${(p.city ?? "").trim().toLowerCase()}
+         and ${sql.raw(TERRITORY_REGION_SQL)} is not null
+       group by 1
+       order by count(*) desc
+       limit 1`);
+    const placement = placeNewLead(
+      await territoriesFor(principal.user.id),
+      { city: p.city, area: p.area, state: p.state, bookState: book?.state ?? null },
+      territoryExempt(principal),
+    );
+    if (!placement.ok) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "not_permitted",
+          placement.reason === "no_area"
+            ? `${p.name} was not saved: no area has been allocated to you yet, and a lead can only be raised inside your own area. Ask the office to set one.`
+            : `${p.name} was not saved: ${p.city?.trim() || "that place"} is outside your area (${placement.areas.join(", ")}). A lead can only be raised where you work — ask the office if this shop should be yours.`,
+        ),
+      };
+    }
+    leadState = placement.state;
+  }
+
   const day = await today();
   /*
    * `customers.city` is NOT NULL and the handset's lead form does not require
@@ -4528,6 +4581,8 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
       phone: p.mobile,
       city,
       area: p.area ?? null,
+      /* What puts it in a territory at all — see the gate above. */
+      territoryRegion: leadState,
       kind: "lead",
       /* NOT `?? "manual"`, which is how a lead nobody could attribute came to
          assert a channel. Null says the true thing — nobody recorded one — and
