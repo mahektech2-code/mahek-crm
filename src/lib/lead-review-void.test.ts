@@ -174,6 +174,8 @@ const NOT_A_REVIEW_WRITER: Record<string, string> = {
     "the stage move: it inserts the transition row and moves the rung, and never edits an answer a review depends on",
   "src/lib/actions/lead-intake.ts":
     "a lead being created, or a bulk file of new ones — nothing has been reviewed",
+  "src/lib/services/customer-master-projection-service.ts":
+    "sets the sales type only when INSERTING a shop it has never seen; its one update enriches contact details on an existing account and never touches an answer a review reads",
 };
 
 describe("no writer of a material column can go round the rule", () => {
