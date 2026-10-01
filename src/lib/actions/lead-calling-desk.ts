@@ -43,6 +43,9 @@ import { ladderFor } from "@/lib/engines/lead-ladder";
 import { leadGateInput, leadManagerCandidatesFor, leadRow } from "@/lib/services/lead-service";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
 import { requestOf } from "@/lib/services/lead-prospect-request-service";
+import { latestReopen, lostFromOf, reopenLostLead, reopenedAtOf } from "@/lib/services/lead-reopen-service";
+import { stageLabel, type LeadSalesType } from "@/lib/lead-labels";
+import { reopenTarget } from "@/lib/engines/lead-reopen";
 import { advanceLeadStage, setLeadNextAction } from "@/lib/actions/leads";
 import { canOpenModule } from "@/lib/access";
 
@@ -171,6 +174,7 @@ function refresh(customerId: string) {
     revalidatePath(`/crm/leads/calling-desk/${customerId}`);
     revalidatePath(`/crm/leads/${customerId}/verify`);
     revalidatePath("/crm/leads/qualify/verification");
+    revalidatePath("/crm/leads/lost");
     revalidatePath("/sales/leads");
     revalidatePath(`/sales/leads/${customerId}`);
   } catch {
@@ -203,6 +207,8 @@ async function reachable(customerId: string) {
 
 /** How many of the three calls have been made. */
 async function callsMade(customerId: string): Promise<number> {
+  /* Counted since the lead was last reopened — earlier calls stay on the
+     record, they just are not this round's three. See `reopenedAtSql`. */
   const [made] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(calls)
@@ -210,6 +216,7 @@ async function callsMade(customerId: string): Promise<number> {
       and(
         eq(calls.customerId, customerId),
         sql`${calls.outcomeDetail}->>${sql.raw(`'${CALL_MARK}'`)} is not null`,
+        sql`${calls.startedAt} >= ${reopenedAtOf(customerId)}`,
       ),
     );
   return made?.n ?? 0;
@@ -343,6 +350,10 @@ export async function logQualificationCall(
         email: row.email,
       };
 
+      /* THIS ROUND'S CALLS. A lead reopened from Lost starts its three calls
+         again; the earlier ones are never deleted or renumbered, they simply
+         belong to the round before the reopen. */
+      const reopen = await latestReopen(p.customerId, tx);
       const prior = await tx
         .select({ detail: calls.outcomeDetail })
         .from(calls)
@@ -350,6 +361,7 @@ export async function logQualificationCall(
           and(
             eq(calls.customerId, p.customerId),
             sql`${calls.outcomeDetail}->>${sql.raw(`'${CALL_MARK}'`)} is not null`,
+            sql`${calls.startedAt} >= ${reopenedAtOf(p.customerId)}`,
           ),
         );
       const priorOutcomes = prior
@@ -462,7 +474,11 @@ export async function logQualificationCall(
         },
         /* The second lock after the row lock: a duplicate submit of the same
            call number cannot land even if the count were somehow read stale. */
-        idempotencyKey: `qualcall:${p.customerId}:${callNumber}`,
+        /* Call 1 of a reopened round must not collide with Call 1 of the first,
+           so a round that follows a reopen carries that reopen in its key. */
+        idempotencyKey: reopen
+          ? `qualcall:${p.customerId}:${reopen.id}:${callNumber}`
+          : `qualcall:${p.customerId}:${callNumber}`,
         createdById: ctx.user.id,
       });
 
@@ -1238,6 +1254,98 @@ export async function markDeskLost(input: z.input<typeof lostSchema>): Promise<R
 
     refresh(p.customerId);
     return ok(null, "Lead marked Lost. The record and its history are kept.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ═════════════════════════════════════════════════════ reversing a loss */
+
+const reopenSchema = z.object({
+  customerId: z.string().min(1),
+  /** One of `leads.reopenReasons`, validated against configuration by the service. */
+  reasonCode: z.string().trim().min(1, "Why is it being reopened?").max(60),
+  note: z.string().trim().max(1000).optional(),
+  /** Optional: the desk's default is a call, today. */
+  nextDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Give the day as a date.")
+    .optional(),
+});
+
+/**
+ * Reverse a Lost lead — the Telecaller's door onto `reopenLostLead`.
+ *
+ * THIN ON PURPOSE. What reopening means is decided once, in the shared service,
+ * and this adds only the desk's own questions: the Calling desk grant, the lead
+ * being in this person's scope, and — the one rule that is the desk's — that a
+ * loss the Sales Manager closed on a FAILED VERIFICATION is not the desk's to
+ * take back. That is the manager's judgement about whether the opportunity was
+ * real, and a Telecaller reversing it would be second-guessing a call they did
+ * not make.
+ *
+ * WHAT MAKES IT WORKABLE: the lead returns to the rung it was lost from and its
+ * three calls start again. Not by deleting or editing a call — every earlier
+ * call stays on the record — but because the desk counts the calls made SINCE
+ * the reopen (`reopenedAtSql`). A lead lost at Call 3 therefore comes back owed
+ * Call 1, rather than as an `exhausted` lead nobody can ring.
+ */
+export async function reopenDeskLead(input: z.input<typeof reopenSchema>): Promise<Result<null>> {
+  try {
+    const parsed = reopenSchema.safeParse(input);
+    if (!parsed.success) return zodErr(parsed.error);
+    const p = parsed.data;
+
+    const ctx = await requireCapability("lead.work");
+    const barred = await deskRefusal(ctx.user.id);
+    if (barred) return barred;
+    const found = await reachable(p.customerId);
+    if (!found.ok) return found.refusal;
+    const lead = found.lead;
+
+    if (lead.leadStage !== "lost") {
+      return err("This lead is not Lost, so there is nothing to reverse.", "rule_violation");
+    }
+
+    const target = reopenTarget({
+      lostFrom: await lostFromOf(p.customerId),
+      salesType: lead.leadSalesType as LeadSalesType | null,
+      lostReason: lead.leadLostReason,
+    });
+    if (target.basis === "verification_failed") {
+      return err(
+        "This lead was closed because its verification failed. That is the Sales Manager's judgement, so it is theirs to reverse — ask them.",
+        "not_permitted",
+      );
+    }
+
+    const day = await today();
+    const working = isWorkingStage(target.stage);
+    const moved = await reopenLostLead({
+      actor: { userId: ctx.user.id, hat: { app: ctx.authorisedIn, role: ctx.authorisedBy }, sourceApp: "crm" },
+      customerId: p.customerId,
+      reasonCode: p.reasonCode,
+      note: p.note,
+      nextAction: {
+        action: working
+          ? nextActionText("call", 1, "")
+          : `Carry on from ${stageLabel(target.stage)} — lead reopened`,
+        date: p.nextDate ?? day,
+        ownerId: lead.ownerId ?? ctx.user.id,
+        outcome: null,
+      },
+      day,
+      seat: "calling_desk",
+    });
+    if (!moved.ok) return moved;
+
+    refresh(p.customerId);
+    return ok(
+      null,
+      working
+        ? `Reopened — back at ${stageLabel(moved.data.stage)} and callable again. The earlier calls are kept.`
+        : moved.message,
+    );
   } catch (e) {
     return fromThrown(e);
   }

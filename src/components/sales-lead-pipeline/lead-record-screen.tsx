@@ -45,7 +45,22 @@ export function tabsFor(lead: Lead, proto = false): { key: Tab; label: string }[
   return tabs;
 }
 
-export type TimelinePaging = { total: number; nextHref: string | null; newestHref: string | null };
+/** The mark a reopened lead carries — read off its transitions, so it can never disagree with the history. */
+function ReopenedNote({ lead }: { lead: Lead }) {
+  if (!lead.reopened || lead.lost) return null;
+  return (
+    <Callout tone="brand" className="mb-4">
+      <div>
+        <b>Reopened.</b> This lead was Lost and was reversed
+        {lead.reopened.date ? ` on ${lead.reopened.date}` : ""}
+        {lead.reopened.by ? ` by ${personName(lead.reopened.by)}` : ""}
+        {lead.reopened.times > 1 ? ` (${lead.reopened.times} times)` : ""}. The earlier loss stays in its timeline.
+      </div>
+    </Callout>
+  );
+}
+
+export type TimelinePaging ={ total: number; nextHref: string | null; newestHref: string | null };
 
 /**
  * One lead, drawn from what the server rendered. `useLeadPipeline().lead` is a
@@ -81,8 +96,14 @@ export function LeadRecordScreen({ initialTab, timeline }: { initialTab?: string
                 {lead.lost.date ? ` on ${lead.lost.date}` : ""}.
                 {lead.lost.note ? ` “${lead.lost.note}”` : ""} The record and its full timeline remain, unchanged, for reference.
               </div>
+              {lead.caps.canReopen ? (
+                <div className="mt-2">
+                  <Button size="sm" variant="secondary" onClick={() => openModal("reopen", lead.id)}>Reverse Lead</Button>
+                </div>
+              ) : null}
             </Callout>
           ) : null}
+          <ReopenedNote lead={lead} />
           {lead.deskRequest && !lead.lost ? (
             <Callout tone="brand" className="mb-4">
               <div>
@@ -132,8 +153,14 @@ export function LeadRecordScreen({ initialTab, timeline }: { initialTab?: string
             {lead.lost.date ? ` on ${lead.lost.date}` : ""}.
             {lead.lost.note ? ` “${lead.lost.note}”` : ""} The record and its full timeline remain, unchanged, for reference.
           </div>
+          {lead.caps.canReopen ? (
+            <div className="mt-2">
+              <Button size="sm" variant="secondary" onClick={() => openModal("reopen", lead.id)}>Reverse Lead</Button>
+            </div>
+          ) : null}
         </Callout>
       ) : null}
+      <ReopenedNote lead={lead} />
 
       {lead.deskRequest && !lead.lost ? (
         <Callout tone="brand" className="mb-4">

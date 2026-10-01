@@ -67,6 +67,8 @@ export function LeadModals() {
       return <ConfirmOrderModal key={key} lead={lead} onClose={closeModal} />;
     case "lost":
       return <LostModal key={key} lead={lead} onClose={closeModal} />;
+    case "reopen":
+      return <ReopenModal key={key} lead={lead} onClose={closeModal} />;
     case "reassign":
       return <ReassignModal key={key} lead={lead} onClose={closeModal} />;
     case "nextaction":
@@ -962,6 +964,74 @@ function LostModal({ lead, onClose }: ModalProps) {
       </Field>
       <Field label="Note">
         <Textarea placeholder="Optional detail" value={note} onChange={(e) => setNote(e.target.value)} rows={3} />
+      </Field>
+    </Modal>
+  );
+}
+
+/**
+ * REVERSE A LOSS. Shows what it was lost for and exactly where it will go back to
+ * — the rung comes from the lead (`lost.reopenTo`, the server's own rule), never
+ * from this file — then asks why. The reasons are `leads.reopenReasons`; Other
+ * demands the note, which the server refuses without as well.
+ */
+function ReopenModal({ lead, onClose }: ModalProps) {
+  const width = useProtoWidth(480, 520);
+  const { doReopen, refs } = useLeadPipeline();
+  const [reason, setReason] = React.useState("");
+  const [note, setNote] = React.useState("");
+  const needsNote = reason === "other";
+  const lost = lead.lost;
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={width}
+      title={
+        <div>
+          <div>Reverse Lead</div>
+          <div className="mt-0.5 text-[13px] font-normal text-muted">
+            {lead.name} · the same record comes back; the loss stays in its history
+          </div>
+        </div>
+      }
+      footer={
+        <Footer
+          onClose={onClose}
+          label="Reverse Lead"
+          disabled={!reason || (needsNote && !note.trim())}
+          onSave={() => void doReopen(reason, note)}
+        />
+      }
+    >
+      <FormError />
+      {lost ? (
+        <Callout className="mb-3">
+          <div>
+            <div>
+              <b>Lost for:</b> {lost.reasonLabel}
+              {lost.date ? ` · ${lost.date}` : ""}
+            </div>
+            <div className="mt-1">
+              <b>Goes back to:</b> {lost.reopenTo.label}. {lost.reopenTo.explains}
+            </div>
+          </div>
+        </Callout>
+      ) : null}
+      <Field label="Why is it being reopened?" className="mb-3">
+        <div className="mt-1.5 flex flex-col gap-1.5">
+          {refs.reopenReasons.map((r) => (
+            <RadioCard key={r.code} name="rr" label={r.label} checked={reason === r.code} onChange={() => setReason(r.code)} />
+          ))}
+        </div>
+      </Field>
+      <Field label={needsNote ? "Note (required)" : "Note"}>
+        <Textarea
+          placeholder={needsNote ? "Say what it actually is" : "Optional detail"}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={3}
+        />
       </Field>
     </Modal>
   );

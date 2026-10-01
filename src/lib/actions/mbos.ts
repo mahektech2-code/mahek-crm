@@ -54,6 +54,7 @@ import {
   sampleEligibility,
   settleQualificationState,
 } from "../services/lead-qualification-flow-service";
+import { latestReopen } from "../services/lead-reopen-service";
 import { gstinChangeClear, materialOf, reviewVoidPatch } from "../lead-review-void";
 import { convertLeadOnSecondOrder } from "../services/lead-conversion-service";
 import { canAny, grantingHat, hatsFor, scopedToUsers } from "../access-control";
@@ -1454,7 +1455,17 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       });
     }
 
-    if (p.suspectDecision) {
+    /* The same rule as `handleLeadUpdate`: a "not a prospect" decided at the
+       visit before the office reopened the lead does not close it again. The
+       VISIT itself is real work and lands regardless — only the loss is skipped. */
+    const staleLoss =
+      p.suspectDecision === "lost" &&
+      customer.leadStage !== "lost" &&
+      Boolean(
+        await latestReopen(customer.id, tx).then((r) => r && r.at.getTime() > item.clientCreatedAt),
+      );
+
+    if (p.suspectDecision && !staleLoss) {
       const stays = p.suspectDecision === "still_suspect";
       await tx
         .update(customers)
@@ -3664,6 +3675,39 @@ async function handleLeadUpdate(
       message:
         "That lead has not reached the office yet, so there is nothing to change. It will be tried again once it has.",
     };
+  }
+
+  /*
+   * A LOSS DECIDED BEFORE THE OFFICE REOPENED THE LEAD IS NOT A LOSS OF THE LEAD
+   * AS IT NOW STANDS.
+   *
+   * The outbox drains hours later against a book that has moved. A salesman who
+   * marked a lead Lost with no signal, and an office user who then reversed it,
+   * have made two decisions in an order the phone could not see — and without
+   * this the late arrival of the first quietly undid the second, because the
+   * move below is judged against the lead's CURRENT rung (`qualification`),
+   * from which `lost` is always allowed.
+   *
+   * `clientCreatedAt` is the moment the salesman pressed the button (the
+   * queue's `createdAt`), not the moment the outbox drained, which is exactly
+   * the comparison wanted: was this decided before or after the reopen. It is
+   * REFUSED in words rather than dropped, so it lands in his rejections with its
+   * payload intact and he can close the lead again if it is still the answer —
+   * the phone then holds the reopened lead, which the same pull delivers. A
+   * loss decided AFTER the reopen is untouched, and so is a lead that is already
+   * Lost (nothing to undo).
+   */
+  if (p.stage === "lost" && existing.leadStage !== "lost") {
+    const reopen = await latestReopen(item.entityId);
+    if (reopen && reopen.at.getTime() > item.clientCreatedAt) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `${existing.name} was marked lost on this phone before the office reopened it, so the loss was not applied. The lead is open again — if it is still lost, close it again from the lead.`,
+        ),
+      };
+    }
   }
 
   if (p.stage === "lost" && !p.lostReason && !p.reasonCode) {

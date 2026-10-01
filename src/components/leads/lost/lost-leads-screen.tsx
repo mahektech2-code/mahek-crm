@@ -19,9 +19,11 @@ import {
 } from "@/components/console/parts";
 import { shortDate } from "@/lib/format";
 import { SALES_TYPE_BUCKETS, type FilterOption } from "@/lib/lead-filters";
+import { ReopenLostDialog, type ReopenOffer } from "./reopen-lost-dialog";
 import {
   ALL_LEAD_STAGES,
   LOST_REASONS,
+  VERIFICATION_FAILED_CODE,
   labelOf,
   salesTypeLabel,
   stageLabel,
@@ -32,12 +34,15 @@ import type { LostLeadRow, LostLeadTiles } from "@/lib/services/lead-lost-servic
  * LEAD MANAGEMENT → LOST — a central, searchable record of every lead closed
  * lost, whatever rung it was lost from.
  *
- * READ-ONLY, deliberately. There is no mutation on this screen: a lead is
- * still closed lost from its own record, through the same §26 gate every
- * other stage move runs, and this page's only job is to make that history
- * findable. Nothing here writes anything, so there is no acting state, no
- * modal and no row menu of the kind `leads-screen.tsx` carries — inventing one
- * would be inventing a permission nobody asked for.
+ * READ-ONLY for everybody who holds only this module. A lead is still closed
+ * lost from its own record, through the same §26 gate every other stage move
+ * runs, and this page's job is to make that history findable.
+ *
+ * THE ONE EXCEPTION is Reverse, and it is offered only where the page found the
+ * person holding one of the two doors onto reopening a lost lead (the Sales
+ * Manager's `lead.verify`, or the Calling desk grant). Reading this list is not
+ * a permission to reverse anything: a person without either sees no column, and
+ * the two server actions behind it ask their own question again.
  *
  * The row's name is the door to the record, exactly as `EntityLink` argues on
  * every other table here: this screen shows WHERE a lead was lost from, and
@@ -65,7 +70,10 @@ export function LostLeadsScreen({
   filters,
   ownerOptions,
   tiles,
+  reopen = null,
 }: {
+  /** Set only for somebody who holds one of the two reverse doors. Null leaves the list read-only. */
+  reopen?: ReopenOffer | null;
   workspace: LeadWorkspace;
   leads: LostLeadRow[];
   pageInfo: {
@@ -89,6 +97,7 @@ export function LostLeadsScreen({
 }) {
   const router = useRouter();
   const search = useSearchParams();
+  const [reversing, setReversing] = React.useState<LostLeadRow | null>(null);
 
   const navigate = React.useCallback(
     (patch: Record<string, string | number | undefined>) => {
@@ -186,7 +195,7 @@ export function LostLeadsScreen({
             <>
               <Table
                 chrome={false}
-                minWidth={1270}
+                minWidth={reopen ? 1380 : 1270}
                 head={
                   <>
                     <HeadCell width={240}>Customer</HeadCell>
@@ -197,6 +206,7 @@ export function LostLeadsScreen({
                     <HeadCell width={120}>Lost date</HeadCell>
                     <HeadCell width={150}>Lost by</HeadCell>
                     <HeadCell width={130}>Last activity</HeadCell>
+                    {reopen ? <HeadCell width={110}>Reverse</HeadCell> : null}
                   </>
                 }
               >
@@ -249,6 +259,21 @@ export function LostLeadsScreen({
                     <Cell>
                       {l.lastActivityDate ? shortDate(l.lastActivityDate) : <span className="text-muted">—</span>}
                     </Cell>
+                    {reopen ? (
+                      <Cell>
+                        {/* The desk may not take back a loss the Sales Manager closed on a failed
+                            verification — the server refuses it too, this only keeps the button honest. */}
+                        {reopen.seat === "calling_desk" && l.lostReason === VERIFICATION_FAILED_CODE ? (
+                          <span className="text-[12px] text-muted" title="Closed on a failed verification — the Sales Manager's to reverse.">
+                            Manager only
+                          </span>
+                        ) : (
+                          <Button onClick={() => setReversing(l)}>
+                            Reverse
+                          </Button>
+                        )}
+                      </Cell>
+                    ) : null}
                   </Row>
                 ))}
               </Table>
@@ -266,6 +291,9 @@ export function LostLeadsScreen({
           )}
         </div>
       )}
+      {reversing && reopen ? (
+        <ReopenLostDialog key={reversing.id} lead={reversing} offer={reopen} onClose={() => setReversing(null)} />
+      ) : null}
     </div>
   );
 }

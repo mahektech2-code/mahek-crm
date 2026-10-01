@@ -117,7 +117,15 @@ export type Order = {
   billNo?: string;
 };
 
-export type Lost = { reason: string; reasonLabel: string; by: string; date: string; note?: string };
+export type Lost = {
+  reason: string;
+  reasonLabel: string;
+  by: string;
+  date: string;
+  note?: string;
+  /** Where Reverse would put it, and why — the same rule the server writes with, so the dialog cannot promise a rung the move will not make. */
+  reopenTo: { stage: Stage; label: string; explains: string };
+};
 
 export type DistributorProfile = {
   gstVerified: boolean;
@@ -258,6 +266,8 @@ export type Caps = {
   canDistributorTerms: boolean;
   /** `distributor.approve` — management's step. A sales manager may recommend and may not appoint. */
   canApproveDistributor: boolean;
+  /** `lead.verify` — a Sales Manager's. Reversing a loss is their judgement, not every associate's who can read the Lost list. */
+  canReopen: boolean;
 };
 
 export type Lead = {
@@ -313,6 +323,8 @@ export type Lead = {
   /** The salesman's own words (`customers.lead_notes`), read-only here. */
   salesmanNotes?: string;
   lost?: Lost;
+  /** Set once this lead has been reopened from Lost — derived from the transitions, so it is never stored and never drifts. */
+  reopened?: { date: string; by: string; times: number };
   nextAction?: string;
   nextActionDate?: string;
   nextActionResp?: string;
@@ -354,6 +366,7 @@ export type ModalKind =
   | "askOrder"
   | "confirmOrder"
   | "lost"
+  | "reopen"
   | "reassign"
   | "nextaction"
   | "distributorTerms"
@@ -452,6 +465,8 @@ export type Person = { id: string; name: string };
  */
 export type PipelineRefs = {
   lostReasons: Coded[];
+  /** `leads.reopenReasons` — why a Lost lead is being brought back. */
+  reopenReasons: Coded[];
   /** What a verification call FOUND when it closes a lead — `leads.verificationFailureReasons`. */
   failureReasons: Coded[];
   prospectReasons: Coded[];

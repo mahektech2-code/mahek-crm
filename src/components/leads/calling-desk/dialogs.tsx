@@ -14,6 +14,7 @@ import {
   DESK_LOST_REASONS,
   MAX_QUALIFICATION_CALLS,
   isAnswered,
+  isWorkingStage,
   lostCodeForCause,
   nextActionKindOf,
   questionsForCall,
@@ -30,6 +31,7 @@ import {
   logDeskMessage,
   logQualificationCall,
   markDeskLost,
+  reopenDeskLead,
   requestProspect,
   setDeskNextAction,
 } from "@/lib/actions/lead-calling-desk";
@@ -322,7 +324,8 @@ export function LogCallDialog({
   const willBeReady = spoke && progress.complete;
   const willBeLost = endsLead || (!willBeReady && exhausted && outcome !== null);
   const needsNext = outcome !== null && !willBeReady && !willBeLost;
-  const priorOutcomes = lead.calls.map((c) => c.outcome);
+  /* THIS ROUND only: calls made before a reopen are history, not part of the three. */
+  const priorOutcomes = lead.calls.filter((c) => !c.earlier).map((c) => c.outcome);
   const suggested = suggestedLostCode(priorOutcomes, outcome ?? undefined);
   const lostCode = lostOverride ?? suggested;
 
@@ -1130,7 +1133,7 @@ export function ConvertDialog({
 export function LostDialog({ lead, onClose }: { lead: DeskLeadRecord; onClose: () => void }) {
   const done = useDone();
   const [reason, setReason] = React.useState(
-    suggestedLostCode(lead.calls.map((c) => c.outcome)) || lostCodeForCause("no_response"),
+    suggestedLostCode(lead.calls.filter((c) => !c.earlier).map((c) => c.outcome)) || lostCodeForCause("no_response"),
   );
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -1187,6 +1190,105 @@ export function LostDialog({ lead, onClose }: { lead: DeskLeadRecord; onClose: (
       </FieldLabel>
       <FieldLabel label="Note">
         <Textarea rows={3} placeholder="Optional detail" value={note} onChange={(e) => setNote(e.target.value)} />
+      </FieldLabel>
+      {error ? <p className="mt-2 mb-0 text-[13px] text-danger">{error}</p> : null}
+    </Modal>
+  );
+}
+
+/* -------------------------------------------------------------- Reverse Lead */
+
+/**
+ * Bring a Lost lead back to the desk. It names what the lead was lost for and
+ * where it goes back to — read off the record (`lost.reopenTo`, the server's own
+ * rule) rather than worked out here — then asks why. Other demands the note,
+ * which the server refuses without as well.
+ */
+export function ReopenDialog({
+  lead,
+  reopenReasons,
+  onClose,
+}: {
+  lead: DeskLeadRecord;
+  reopenReasons: { code: string; label: string }[];
+  onClose: () => void;
+}) {
+  const done = useDone();
+  const [reason, setReason] = React.useState("");
+  const [note, setNote] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const needsNote = reason === "other";
+  const lost = lead.lost;
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    let result;
+    try {
+      result = await reopenDeskLead({ customerId: lead.id, reasonCode: reason, note: note.trim() || undefined });
+    } finally {
+      setBusy(false);
+    }
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    done(result.message, onClose);
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={480}
+      title={
+        <div>
+          <div>Reverse Lead</div>
+          <div className="mt-0.5 text-[13px] font-normal text-muted">
+            {lead.name} · the same record comes back; the loss and every call stay in its history
+          </div>
+        </div>
+      }
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={busy || !reason || (needsNote && !note.trim())} onClick={() => void save()}>
+            {busy ? "Saving…" : "Reverse Lead"}
+          </Button>
+        </>
+      }
+    >
+      {lost ? (
+        <div className="mb-3 rounded-[4px] border border-line px-3 py-2 text-[13px]">
+          <div>
+            <b>Lost for:</b>{" "}
+            {lost.deskLabel ?? lost.reasonCode ?? "No reason recorded"}
+          </div>
+          <div className="mt-1">
+            <b>Goes back to:</b> {lost.reopenTo.label}. {lost.reopenTo.explains}
+            {isWorkingStage(lost.reopenTo.stage) ? " Its three calls start again; the earlier ones are kept." : ""}
+          </div>
+        </div>
+      ) : null}
+      <FieldLabel label="Why is it being reopened?" className="mb-3">
+        <div className="mt-1.5 flex flex-col gap-1.5">
+          {reopenReasons.map((r) => (
+            <Choice key={r.code} name="rr" checked={reason === r.code} onChange={() => setReason(r.code)}>
+              {r.label}
+            </Choice>
+          ))}
+        </div>
+      </FieldLabel>
+      <FieldLabel label={needsNote ? "Note (required)" : "Note"}>
+        <Textarea
+          rows={3}
+          placeholder={needsNote ? "Say what it actually is" : "Optional detail"}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
       </FieldLabel>
       {error ? <p className="mt-2 mb-0 text-[13px] text-danger">{error}</p> : null}
     </Modal>

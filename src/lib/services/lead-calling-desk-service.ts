@@ -43,7 +43,7 @@ import { countsAsPurchase } from "../order-status";
 import { deskReference } from "../calling-desk-labels";
 import { deskSummary, type DeskLeadRow, type DeskSummary } from "../calling-desk-summary";
 import type { LeadPriority } from "../lead-priority";
-import type { LeadSalesType, LeadStage } from "../lead-labels";
+import { stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
 import {
   leadReceipts,
   leadRecord,
@@ -52,6 +52,8 @@ import {
 } from "./lead-console-service";
 import { leadRow, leadGateInput } from "./lead-service";
 import { leadSamplesFor } from "./lead-record-service";
+import { reopenedAtSql } from "./lead-reopen-service";
+import { isReopenTransition, reopenTarget, type ReopenTarget } from "../engines/lead-reopen";
 
 /* ---------------------------------------------------------------------------
  * The calling desk's reads: the dashboard, and one lead's whole record.
@@ -230,9 +232,11 @@ const ROW_COLUMNS = sql`
   customers.lead_credit_days_wanted::int as "creditDaysWanted", customers.gstin,
   customers.address, customers.email,
   (select count(*)::int from calls k
-     where k.customer_id = customers.id and k.outcome_detail->>${MARK} is not null) as "callCount",
+     where k.customer_id = customers.id and k.outcome_detail->>${MARK} is not null
+       and k.started_at >= ${reopenedAtSql("customers.id")}) as "callCount",
   (select array_agg(k.outcome_detail->>'qualOutcome' order by k.started_at) from calls k
-     where k.customer_id = customers.id and k.outcome_detail->>${MARK} is not null) as "callOutcomes"`;
+     where k.customer_id = customers.id and k.outcome_detail->>${MARK} is not null
+       and k.started_at >= ${reopenedAtSql("customers.id")}) as "callOutcomes"`;
 
 const ROW_JOINS = sql`
   left join users ou on ou.id = customers.owner_id
@@ -289,6 +293,8 @@ export type DeskCall = {
   nextDate: string | null;
   finalDisposition: string | null;
   byName: string;
+  /** Made before the lead was last reopened — kept on the record, not counted in this round's three. */
+  earlier: boolean;
 };
 
 /**
@@ -398,7 +404,11 @@ export type DeskLeadRecord = {
     detail: string | null;
     at: string | null;
     byName: string | null;
+    /** Where Reverse would put it, and why — the same rule the server writes with. */
+    reopenTo: { stage: LeadStage; label: string; explains: string; basis: ReopenTarget["basis"] };
   } | null;
+  /** Set once the lead has been reopened from Lost — derived from the transitions, never stored. */
+  reopened: { at: string; byName: string | null; times: number } | null;
   qualification: { done: number; total: number; conditions: { id: string; says: string; done: boolean }[] } | null;
   /**
    * WHO VERIFIED THE PROSPECT, and where the manager's review of the
@@ -646,7 +656,14 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
   ]);
 
   const requestState = isRequestState(extras?.requestState) ? extras.requestState : null;
-  const phase = phaseOf(lead.leadStage, values, callRows.length, requestState);
+  /* A lead reopened from Lost starts its three calls again. Every call stays
+     on the record (`callRows`); only this round's are COUNTED. `transitions`
+     is newest first, so the first reopen found is the latest. */
+  const reopenMoves = transitions.filter(isReopenTransition);
+  const lastReopen = reopenMoves[0] ?? null;
+  const reopenedAtMs = lastReopen ? new Date(lastReopen.at).getTime() : -Infinity;
+  const roundCalls = callRows.filter((r) => r.at.getTime() >= reopenedAtMs);
+  const phase = phaseOf(lead.leadStage, values, roundCalls.length, requestState);
 
   /* ---- the calls, and which one captured which answer ---- */
   const answeredOn: Partial<Record<DeskFieldKey, number>> = {};
@@ -677,6 +694,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
       nextDate: d.nextDate ?? null,
       finalDisposition: d.final ?? null,
       byName: r.byName,
+      earlier: r.at.getTime() < reopenedAtMs,
     });
   }
 
@@ -734,7 +752,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
   stageDates.suspect ??= day(extras?.createdAt);
   const key =
     phase === "lost"
-      ? ladderKeyOfLost(lostMove?.fromStage ?? null, values, callRows.length)
+      ? ladderKeyOfLost(lostMove?.fromStage ?? null, values, roundCalls.length)
       : ladderKeyOf(phase);
 
   /* ---- the qualification checklist, read through the gate that enforces it ---- */
@@ -887,7 +905,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
     answeredOn,
     marks,
     calls: deskCalls,
-    callCount: deskCalls.length,
+    callCount: roundCalls.length,
     requestState,
     requestedAt: extras?.requestedAt ? new Date(extras.requestedAt).toISOString() : null,
     requestedByName: extras?.requestedByName ?? null,
@@ -946,8 +964,23 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
             detail: lostParts.detail,
             at: lostMove ? new Date(lostMove.at).toISOString() : null,
             byName: lostMove?.actorName ?? null,
+            reopenTo: (() => {
+              const t: ReopenTarget = reopenTarget({
+                lostFrom: (lostMove?.fromStage as LeadStage | null) ?? null,
+                salesType: lead.leadSalesType as LeadSalesType | null,
+                lostReason: rec.lostReason,
+              });
+              return { stage: t.stage, label: stageLabel(t.stage), explains: t.explains, basis: t.basis };
+            })(),
           }
         : null,
+    reopened: lastReopen
+      ? {
+          at: new Date(lastReopen.at).toISOString(),
+          byName: lastReopen.actorName ?? null,
+          times: reopenMoves.length,
+        }
+      : null,
     qualification,
     verifiedByName: rec.verifiedByName,
     qualificationReview: rec.qualificationReview,

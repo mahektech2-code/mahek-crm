@@ -22,6 +22,7 @@ import {
   submitForManagementReview,
 } from "@/lib/actions/distributor-appointment";
 import { reassignLead } from "@/lib/actions/sales";
+import { reopenSalesManagerLead } from "@/lib/actions/lead-reopen";
 import {
   convertProspect,
   markLeadLost,
@@ -85,6 +86,7 @@ type Ctx = {
   doConvert: (input: Omit<ConvertProspectInput, "customerId">) => Promise<boolean>;
   doVerify: (input: Omit<VerifyProspectInput, "customerId">) => Promise<boolean>;
   doLost: (reasonCode: string, note: string) => Promise<boolean>;
+  doReopen: (reasonCode: string, note: string) => Promise<boolean>;
 
   /* --- qualification --- */
   doSaveChecklist: (answers: Record<string, boolean>) => Promise<boolean>;
@@ -220,6 +222,8 @@ export function LeadPipelineProvider({
     doConvert: (input) => run(() => convertProspect({ customerId: id, ...input })),
     doVerify: (input) => run(() => verifyProspect({ customerId: id, ...input })),
     doLost: (reasonCode, note) => run(() => markLeadLost({ customerId: id, reasonCode, note: note.trim() || undefined })),
+    doReopen: (reasonCode, note) =>
+      run(() => reopenSalesManagerLead({ customerId: id, reasonCode, note: note.trim() || undefined })),
 
     doSaveChecklist: (answers) => run(() => saveLeadQualification(id, answers), { close: false, success: "Checklist saved." }),
     doReviewChecklist: (verdict, note) =>

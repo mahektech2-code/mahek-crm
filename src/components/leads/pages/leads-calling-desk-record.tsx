@@ -51,6 +51,7 @@ export async function Body({
       })}
       prospectReasons={config["leads.prospectReasons"]}
       lostReasons={config["leads.lostReasons"]}
+      reopenReasons={config["leads.reopenReasons"]}
       sampleReasons={config["leads.sampleReasons"]}
       orderBlockers={config["leads.orderBlockers"]}
       base={leadHref(workspace, "leads/calling-desk")}
