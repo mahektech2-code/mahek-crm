@@ -59,7 +59,7 @@ export const FOLLOW_ON: Partial<Record<OutcomeKey, { label: string; word: string
 };
 
 export type VisitCheck = {
-  key: 'gps' | 'dwell' | 'photo' | 'followon' | 'outcome' | 'note';
+  key: 'gps' | 'dwell' | 'followon' | 'outcome' | 'note';
   ok: boolean;
   line: string;
   /** Only shown when the check has failed — the reason the rule exists at all. */
@@ -91,7 +91,6 @@ export type VisitFacts = {
    * what the office is told changes; what changes is that he is asked once.
    */
   checkInOverridden: boolean;
-  hasShopPhoto: boolean;
   outcome: OutcomeKey | null;
   followOnCaptured: boolean;
   /** How much he has written about the visit, trimmed. */
@@ -103,7 +102,7 @@ export type VisitFacts = {
 /**
  * THE QUESTIONS, as against the evidence.
  *
- * GPS, time in the shop and the photograph are EVIDENCE: a salesman may be
+ * GPS and time in the shop are EVIDENCE: a salesman may be
  * unable to produce them for reasons that are not his fault, and "save it
  * unverified with a reason" exists for exactly that. The outcome, its
  * follow-on and the note are ANSWERS — only he can give them, nothing stops
@@ -169,12 +168,10 @@ export function visitChecks(f: VisitFacts): VisitCheck[] {
         : `Only ${f.dwellSeconds}s so far — a visit needs ${floor}`,
       why: 'Two minutes is the floor agreed with your manager.',
     },
-    {
-      key: 'photo',
-      ok: f.hasShopPhoto,
-      line: f.hasShopPhoto ? 'Shop photo taken' : 'Shop photo not taken',
-      why: 'The photo is what the office sees when nobody was there.',
-    },
+    /* No photograph check. The shop and owner photos are offered on the form
+       and never required: a visit is not refused, or saved unverified, for
+       want of a picture of a counter. The tiles do not say "optional" either —
+       they are simply there to be pressed. */
     {
       key: 'followon',
       ok: !fo || f.followOnCaptured,

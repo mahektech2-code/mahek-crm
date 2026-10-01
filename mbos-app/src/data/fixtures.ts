@@ -24,14 +24,28 @@
 
 export type OutcomeKey = 'visited' | 'order' | 'payment' | 'complaint' | 'sample' | 'closed_now' | 'closed';
 
+/* Short on purpose: these are chips that wrap three to a row, read at a
+   shop counter. A long label pushed them into a two-column grid of tall boxes
+   that ate a whole screen of a form with plenty below it. */
 export const OUTCOMES: { k: OutcomeKey; label: string }[] = [
-  { k: 'visited', label: 'Visited' },
-  { k: 'order', label: 'Order taken' },
-  { k: 'payment', label: 'Payment collected' },
+  { k: 'visited', label: 'Just a visit' },
+  { k: 'order', label: 'Order' },
+  { k: 'payment', label: 'Payment' },
+  { k: 'sample', label: 'Sample' },
   { k: 'complaint', label: 'Complaint' },
-  { k: 'sample', label: 'Sample required' },
-  { k: 'closed_now', label: 'Not available' },
+  { k: 'closed_now', label: 'Owner away' },
   { k: 'closed', label: 'Shop closed' },
+];
+
+/** How the next contact happens. The visit form asks it beside the date, and
+ *  it decides what the follow-up task says: "Call Sharma Paints" is a job
+ *  somebody can do from a desk, "Follow up with" was not. */
+export type FollowUpMode = 'visit' | 'call' | 'whatsapp';
+
+export const FOLLOW_UP_MODES: { k: FollowUpMode; label: string; task: string }[] = [
+  { k: 'visit', label: 'Visit', task: 'Visit' },
+  { k: 'call', label: 'Call', task: 'Call' },
+  { k: 'whatsapp', label: 'WhatsApp', task: 'WhatsApp' },
 ];
 
 /**
