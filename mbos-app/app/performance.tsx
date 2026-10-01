@@ -233,10 +233,36 @@ export default function PerformanceScreen() {
           {current.categories.length ? (
             <Card style={{ marginTop: 12 }}>
               <T s="label">Product mix</T>
-              <T s="micro" style={{ marginTop: 2 }}>
-                Share of what you sold, by value.
-              </T>
-              {current.categories.map((c) => (
+              {current.revenueActualPaise === 0 ? (
+                /* An empty month is said in words rather than drawn as four
+                   empty tracks. Bars at 0.0% under "share of what you sold"
+                   read as a salesman selling none of what was asked, on the
+                   2nd of the month, when the truth is nothing has been
+                   approved yet. The target is what is worth reading then. */
+                <T s="small" style={{ marginTop: 6, color: C.body }}>
+                  {'Nothing sold yet this month.' +
+                    (current.categories.some((c) => c.targetBp > 0)
+                      ? ' Your target: ' +
+                        current.categories
+                          .filter((c) => c.targetBp > 0)
+                          .map((c) => (c.targetBp / 100).toFixed(0) + '% ' + c.name)
+                          .join(', ') +
+                        '.'
+                      : '')}
+                </T>
+              ) : (
+                <T s="micro" style={{ marginTop: 2 }}>
+                  Share of what you sold, by value.
+                </T>
+              )}
+              {(current.revenueActualPaise === 0
+                ? []
+                : /* A share nobody asked for and nothing has landed in is a
+                     row with nothing to say — "Other 0.0% of 0%" with a
+                     tick at the edge looked like a stray mark. It comes
+                     back the moment something sells into it. */
+                  current.categories.filter((c) => c.targetBp > 0 || c.actualBp > 0)
+              ).map((c) => (
                 <View key={c.name} style={{ marginTop: 14 }}>
                   <View
                     style={{
@@ -273,7 +299,10 @@ export default function PerformanceScreen() {
                       }}
                     />
                     {/* The target share as a rule across the track, not a second
-                        bar: the question is which side of it he is on. */}
+                        bar: the question is which side of it he is on. No rule
+                        where nothing was asked — a tick pinned to the left
+                        edge is a target of nought drawn as a mark. */}
+                    {c.targetBp > 0 ? (
                     <View
                       style={{
                         position: 'absolute',
@@ -284,6 +313,7 @@ export default function PerformanceScreen() {
                         backgroundColor: C.ink,
                       }}
                     />
+                    ) : null}
                   </View>
                 </View>
               ))}
