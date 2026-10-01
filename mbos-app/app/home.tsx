@@ -23,7 +23,7 @@ import {
 } from '../src/data/attendance';
 import { useTicker } from '../src/components/ui/use-ticker';
 import { collectionDue } from '../src/data/customers';
-import { listPerformance, shortfalls, type PerformanceMonth } from '../src/data/performance';
+import { listPerformance, shortfalls, type SyncedMonth } from '../src/data/performance';
 import { getConfig } from '../src/data/config';
 import { mayOpenDay } from '../src/data/day-gate';
 import { ordersToday } from '../src/data/orders';
@@ -180,7 +180,7 @@ export default function Home() {
   /* `undefined` is still reading, `null` is read and there is nothing. Two
      different sentences, and collapsing them shows "no target" for a frame to
      somebody who has one. */
-  const [month, setMonth] = React.useState<PerformanceMonth | null | undefined>(undefined);
+  const [month, setMonth] = React.useState<SyncedMonth | null | undefined>(undefined);
   /*
    * Nothing has ever come down from the office onto this handset.
    *

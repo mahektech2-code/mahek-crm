@@ -1,13 +1,25 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Card, T } from '../src/components/ui/primitives';
+import { Card, Choice, PrimaryButton, T } from '../src/components/ui/primitives';
+import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { color as C, radius, weight, tabular } from '../src/theme/tokens';
-import { inrFromPaise, plural } from '../src/lib/format';
-import { activitySub, collectionSub } from '../src/engines/performance-labels';
+import { dmy, inrFromPaise, isoDate, plural } from '../src/lib/format';
+import { activitySub, collectionLine } from '../src/engines/performance-labels';
 import {
+  PRESETS,
+  customPeriod,
+  periodFor,
+  rangeWords,
+  wholeMonth,
+  type Period,
+  type PeriodKey,
+} from '../src/engines/periods';
+import {
+  collectionShareBp,
+  fetchPerformance,
   listPerformance,
   litres,
   priceNotVolume,
@@ -34,37 +46,137 @@ import {
  * recalculation of the score: the number a man is appraised on is the office's
  * and a second implementation of it on a phone is how the two come to
  * disagree.
+ *
+ * ANY PERIOD, NOT ONLY THIS MONTH. This month, last month, either quarter,
+ * either financial year, or two days he picks. The two months the sync
+ * carries draw at once and with no signal; anything else is asked of the
+ * office, which reads it off the ledger with the SAME scoring the monthly
+ * cache uses — so September picked as a range and September off the sync are
+ * one figure. Whose figures is the device token's answer, never a choice on
+ * this screen: it is his, and only his.
  */
+
+type Live =
+  | { key: string; ok: true; month: PerformanceMonth }
+  | { key: string; ok: false; error: string };
 
 export default function PerformanceScreen() {
   const back = useCameFrom('more');
+  const [today] = React.useState(() => isoDate(new Date()));
   const [months, setMonths] = React.useState<PerformanceMonth[] | null>(null);
+  const [key, setKey] = React.useState<PeriodKey>('this-month');
+  const [custom, setCustom] = React.useState<Period | null>(null);
+  const [picking, setPicking] = React.useState(false);
+  const [live, setLive] = React.useState<Live | null>(null);
+  /* Bumped on every focus, so coming back to the screen reads again. */
+  const [visit, setVisit] = React.useState(0);
 
   const load = React.useCallback(() => {
-    let live = true;
+    let alive = true;
     void listPerformance().then((rows) => {
-      if (live) setMonths(rows);
+      if (!alive) return;
+      setMonths(rows);
+      setVisit((v) => v + 1);
     });
     return () => {
-      live = false;
+      alive = false;
     };
   }, []);
 
   useFocusEffect(load);
 
-  const current = months?.[0] ?? null;
-  const previous = months?.[1] ?? null;
+  const period: Period =
+    key === 'custom' && custom ? custom : periodFor(key === 'custom' ? 'this-month' : key, today);
+  const rangeKey = `${period.from}..${period.to}`;
+  const monthKey = wholeMonth(period);
+  const synced = monthKey ? (months?.find((m) => m.period === monthKey) ?? null) : null;
+
+  /*
+   * Ask the office for the range, every time it changes and every visit.
+   *
+   * Even a month the sync carries is asked again: the cache is rebuilt hourly
+   * and this answers as of now. If it cannot answer, the synced month stands
+   * and nothing is said — that copy is already labelled with when it was
+   * worked out. A range the sync does not carry has no such fallback, and the
+   * screen says why rather than drawing an empty period.
+   */
+  React.useEffect(() => {
+    if (!visit) return;
+    let alive = true;
+    void fetchPerformance(period.from, period.to).then((out) => {
+      if (!alive) return;
+      setLive(out.ok ? { key: rangeKey, ok: true, month: out.month } : { key: rangeKey, ok: false, error: out.error });
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rangeKey IS the period
+  }, [rangeKey, visit]);
+
+  const answered = live?.key === rangeKey ? live : null;
+  const current = answered?.ok ? answered.month : synced;
+  const waiting = !current && !answered && months !== null;
+  const failed = !current && answered && !answered.ok ? answered.error : null;
+
+  /* "August was 72" is only a comparison where the period IS a month. */
+  const previous =
+    monthKey && months
+      ? (months.find((m) => m.period === previousMonth(monthKey)) ?? null)
+      : null;
   const dropped = current ? untargetedLine(current) : null;
+  const collectedBp = current ? collectionShareBp(current) : null;
 
   return (
     <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Performance</T>
 
-      {months === null ? (
-        <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+      {/* The periods. A row that scrolls sideways rather than a menu: which
+          window he is looking at is the first thing on the screen, and a
+          choice hidden behind a tap is one people forget they made. */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ marginTop: 10, marginHorizontal: -16 }}
+        contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}>
+        {PRESETS.map((p) => (
+          <Choice
+            key={p.key}
+            label={p.label}
+            selected={key === p.key}
+            onPress={() => setKey(p.key)}
+            style={{ minHeight: 40 }}
+          />
+        ))}
+        <Choice
+          label={key === 'custom' && custom ? rangeWords(custom) : 'Pick dates'}
+          selected={key === 'custom'}
+          onPress={() => setPicking(true)}
+          style={{ minHeight: 40 }}
+        />
+      </ScrollView>
+
+      <T s="small" style={{ color: C.muted, marginTop: 8 }}>
+        {rangeWords(period)}
+        {current?.computedAt
+          ? ` · ${current.source === 'live' ? 'worked out' : 'synced'} ${asAt(current.computedAt)}`
+          : ''}
+      </T>
+
+      {months === null || waiting ? (
+        <T s="small" style={{ color: C.muted, marginTop: 12 }}>
           Reading…
         </T>
+      ) : failed ? (
+        <Card style={{ marginTop: 12 }}>
+          <T style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
+            This period is worked out by the office, and it could not be reached.
+          </T>
+          <T s="small" style={{ color: C.muted, marginTop: 6 }}>
+            {failed}. This month and last month are kept on the phone and open without
+            signal — any other period needs a connection.
+          </T>
+        </Card>
       ) : !current ? (
         <Card style={{ marginTop: 12 }}>
           <T style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
@@ -78,10 +190,6 @@ export default function PerformanceScreen() {
         </Card>
       ) : (
         <>
-          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            {monthName(current.period)}
-            {current.computedAt ? ` · as at ${asAt(current.computedAt)}` : ''}
-          </T>
 
           {current.hasTarget && current.totalScoreBp !== null ? (
             <Card style={{ marginTop: 12, alignItems: 'flex-start' }}>
@@ -104,9 +212,18 @@ export default function PerformanceScreen() {
                   {current.rating}
                 </T>
               ) : null}
-              {previous?.totalScoreBp != null ? (
+              {previous?.period && previous.totalScoreBp != null ? (
                 <T s="micro" style={{ marginTop: 4 }}>
                   {monthName(previous.period)} was {(previous.totalScoreBp / 100).toFixed(0)}
+                </T>
+              ) : null}
+              {/* A range over several months is scored against the targets
+                  those months carried, added up — and it has to say how many
+                  that was. A year scored on three targeted months out of
+                  twelve is a different statement from one scored on twelve. */}
+              {current.monthsInRange > 1 || current.prorated ? (
+                <T s="micro" style={{ marginTop: 6 }}>
+                  {rangeTargetLine(current)}
                 </T>
               ) : null}
               {/* WHAT WAS LEFT OUT IS PART OF THE NUMBER, not a footnote to it.
@@ -123,7 +240,7 @@ export default function PerformanceScreen() {
           ) : (
             <Card style={{ marginTop: 12 }}>
               <T style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
-                No target has been set for you this month.
+                No target has been set for you {monthKey ? 'this month' : 'in this period'}.
               </T>
               <T s="small" style={{ color: C.muted, marginTop: 6 }}>
                 What is below is what you have actually done. There is no score,
@@ -182,14 +299,22 @@ export default function PerformanceScreen() {
               target={current.newCustomerTarget ? String(current.newCustomerTarget) : null}
               bp={null}
             />
+            {/* COLLECTION IS A PERCENTAGE, because that is what is asked of
+                him: the office sets "collect half of what was overdue", not a
+                rupee figure, and the rupees drawn here used to make the target
+                look like an amount somebody had picked. The share leads; the
+                money it is a share of sits underneath. No overdue book is a
+                dash and a sentence, never 0% — nothing owed is nothing to fail
+                at, and the score leaves it out for exactly that reason. */}
             <Figure
               half
               label="Collected"
-              value={inrFromPaise(current.collectionActualPaise)}
-              target={
-                current.collectionTargetPaise ? inrFromPaise(current.collectionTargetPaise) : null
-              }
-              base={collectionBaseLine(current)}
+              value={collectedBp === null ? '—' : pct(collectedBp)}
+              target={current.collectionTargetBp ? pct(current.collectionTargetBp) : null}
+              base={collectionLine(
+                { done: current.collectionActualPaise, base: current.collectionBasePaise },
+                inrFromPaise,
+              )}
               bp={null}
             />
             <Figure
@@ -342,12 +467,134 @@ export default function PerformanceScreen() {
           <T s="caption" style={{ marginTop: 12 }}>
             Revenue counts orders the office has accepted, and collection counts money
             accounts have found in the bank — so both move after you have logged them,
-            not as you log them.
+            not as you log them. Collection is the share of what was already overdue
+            when the period began that has since been paid.
           </T>
         </>
       )}
+
+      <RangeSheet
+        key={picking ? 'open' : 'shut'}
+        open={picking}
+        today={today}
+        initial={custom}
+        onClose={() => setPicking(false)}
+        onPick={(p) => {
+          setCustom(p);
+          setKey('custom');
+          setPicking(false);
+        }}
+      />
     </AppFrame>
   );
+}
+
+/**
+ * Two days, picked one after the other on one calendar.
+ *
+ * The leave screen's calendar, with the future refused: there are no figures
+ * in it, and a range ending next week reads as a period half failed.
+ */
+function RangeSheet({
+  open,
+  today,
+  initial,
+  onClose,
+  onPick,
+}: {
+  open: boolean;
+  today: string;
+  initial: Period | null;
+  onClose: () => void;
+  onPick: (p: Period) => void;
+}) {
+  const [from, setFrom] = React.useState(initial?.from ?? '');
+  const [to, setTo] = React.useState(initial?.to ?? '');
+  const [end, setEnd] = React.useState<'from' | 'to'>('from');
+
+  const dateBtn = (which: 'from' | 'to', value: string) => (
+    <Pressable
+      accessibilityRole="button"
+      onPress={() => setEnd(which)}
+      style={{
+        flex: 1,
+        minHeight: 48,
+        justifyContent: 'center',
+        paddingHorizontal: 12,
+        borderRadius: radius.md,
+        borderWidth: 1,
+        borderColor: end === which ? C.primary : C.border,
+        backgroundColor: end === which ? C.primaryTint : C.surface,
+      }}>
+      <T s="micro">{which === 'from' ? 'From' : 'To'}</T>
+      <T style={{ fontSize: 15, color: value ? C.ink : C.muted }}>{value ? dmy(value) : 'Pick a date'}</T>
+    </Pressable>
+  );
+
+  return (
+    <BottomSheet open={open} onClose={onClose}>
+      <T s="h3" style={{ marginBottom: 10 }}>
+        Pick the dates
+      </T>
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+        {dateBtn('from', from)}
+        {dateBtn('to', to)}
+      </View>
+      <Calendar
+        key={end}
+        selected={end === 'from' ? from : to}
+        rangeFrom={from}
+        rangeTo={to}
+        disabledReason={(iso) =>
+          iso > today
+            ? 'There are no figures for days that have not happened.'
+            : end === 'to' && from && iso < from
+              ? 'The end comes after the start.'
+              : null
+        }
+        onPick={(iso) => {
+          if (end === 'from') {
+            setFrom(iso);
+            /* A start after the end is not a range — carry the end with it. */
+            if (to && iso > to) setTo(iso);
+            setEnd('to');
+          } else {
+            setTo(iso);
+          }
+        }}
+      />
+      <PrimaryButton
+        label="Show this period"
+        disabled={!from || !to}
+        whyDisabled="Pick both dates."
+        onPress={() => onPick(customPeriod(from, to))}
+        style={{ marginTop: 12 }}
+      />
+    </BottomSheet>
+  );
+}
+
+/** How a range's score was put together, in one sentence. */
+function rangeTargetLine(m: PerformanceMonth): string {
+  if (!m.hasTarget) return '';
+  const months =
+    m.monthsInRange === 1
+      ? "Scored against that month's target."
+      : m.monthsTargeted === m.monthsInRange
+      ? `Scored against your targets for all ${plural(m.monthsInRange, 'month')} in this period, added up.`
+      : `Only ${m.monthsTargeted} of the ${plural(m.monthsInRange, 'month')} in this period had a target, so the score is against those alone.`;
+  return m.prorated
+    ? `${months} A month only partly inside the period counts for its days inside it.`
+    : months;
+}
+
+function pct(bp: number): string {
+  return `${(bp / 100).toFixed(0)}%`;
+}
+
+function previousMonth(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
 }
 
 /**
@@ -417,13 +664,6 @@ function Figure({
  * money through whatever the caller passes, which is why it can be shared at
  * all: `inrFromPaise` here, `money` there.
  */
-function collectionBaseLine(month: PerformanceMonth): string {
-  return collectionSub(
-    { done: month.collectionActualPaise, base: month.collectionBasePaise },
-    inrFromPaise,
-  );
-}
-
 function activityBaseLine(month: PerformanceMonth): string {
   return activitySub({ done: month.activityActual, base: month.activityAssigned });
 }
