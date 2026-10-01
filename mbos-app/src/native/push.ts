@@ -58,8 +58,30 @@ async function projectId(): Promise<string> {
  *
  * Safe to call repeatedly: creating a channel that exists updates it.
  */
+/**
+ * The channel for "you walked out without checking out". Its own channel, and
+ * at MAX, because it is the one notification here that is about something he
+ * is doing right now and can still fix in a tap — it has to be heard over
+ * traffic, and on Android only a channel's importance decides whether it
+ * pops up over the screen and sounds. Its own also means a salesman who
+ * silences decisions and tasks does not silence this with them.
+ */
+export const VISIT_REMINDER_CHANNEL = 'visit-reminders';
+
+export async function ensureVisitReminderChannel(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync(VISIT_REMINDER_CHANNEL, {
+    name: 'Check-out reminders',
+    importance: AndroidImportance.MAX,
+    sound: 'default',
+    vibrationPattern: [0, 400, 200, 400, 200, 400],
+    enableVibrate: true,
+  });
+}
+
 async function ensureChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
+  await ensureVisitReminderChannel();
   await Notifications.setNotificationChannelAsync('default', {
     name: 'Decisions and tasks',
     importance: AndroidImportance.HIGH,
@@ -93,7 +115,7 @@ export async function pushStatus(): Promise<PushReadiness> {
       return {
         ok: false,
         reason: 'not-configured',
-        why: 'The office has not finished setting push up. Nothing is lost — messages wait in the app.',
+        why: 'The office has not finished setting up notifications. Nothing is lost. Messages wait in the app.',
       };
     }
     type PermissionState = { granted: boolean };
@@ -107,7 +129,7 @@ export async function pushStatus(): Promise<PushReadiness> {
     }
     return { ok: true };
   } catch {
-    return { ok: false, reason: 'unsupported', why: 'This handset cannot be registered for push.' };
+    return { ok: false, reason: 'unsupported', why: 'This phone cannot get notifications.' };
   }
 }
 
@@ -152,7 +174,7 @@ export async function registerForPush(): Promise<PushReadiness> {
       return {
         ok: false,
         reason: 'permission',
-        why: 'Notifications are switched off for MBOS. Turn them on in your phone’s Settings.',
+        why: 'Notifications are off for MBOS. Turn them on in your phone Settings.',
       };
     }
 
@@ -161,7 +183,7 @@ export async function registerForPush(): Promise<PushReadiness> {
       return {
         ok: false,
         reason: 'not-configured',
-        why: 'The office has not finished setting push up yet. Nothing is lost — messages are waiting in the app.',
+        why: 'The office has not finished setting up notifications. Nothing is lost. Messages are waiting in the app.',
       };
     }
 
@@ -175,7 +197,7 @@ export async function registerForPush(): Promise<PushReadiness> {
     return {
       ok: false,
       reason: 'unsupported',
-      why: 'This handset could not be registered for push. Messages still arrive in the app.',
+      why: 'This phone could not be set up for notifications. Messages still come in the app.',
     };
   }
 }

@@ -93,7 +93,7 @@ export const SALES_TYPES: readonly {
   {
     code: "direct",
     label: "Direct customer",
-    hint: "We sell to them and we invoice them.",
+    hint: "We sell to them and send them the bill.",
   },
   {
     /**
@@ -123,12 +123,12 @@ export const SALES_TYPES: readonly {
     retired: true,
     code: "distributor",
     label: "Distributor",
-    hint: "They buy from us and sell it on. The job is to appoint them.",
+    hint: "They buy from us and sell to shops. Your job is to make them our distributor.",
   },
   {
     code: "third_party",
     label: "Third-party customer",
-    hint: "The goods go to them, a distributor gets the invoice.",
+    hint: "The goods go to them. A distributor gets the bill.",
   },
 ] as const;
 
@@ -178,81 +178,81 @@ export function salesTypeIsOffered(t: LeadSalesType): boolean {
  */
 const STAGE_TEXT: Record<LeadStage, { short: string; long: string }> = {
   /* the original six */
-  new: { short: "New", long: "Raised, and nobody has been to see them yet." },
-  contacted: { short: "Contacted", long: "Somebody has spoken to them." },
-  qualified: { short: "Qualified", long: "There is a real opportunity here." },
+  new: { short: "New", long: "New lead. Nobody has visited yet." },
+  contacted: { short: "Contacted", long: "We have spoken to them." },
+  qualified: { short: "Qualified", long: "There is real business here." },
   negotiation: { short: "Negotiation", long: "Talking about quantity, price and terms." },
-  won: { short: "Won", long: "They became an account." },
-  lost: { short: "Lost", long: "Closed, with the reason recorded." },
+  won: { short: "Won", long: "They became our customer." },
+  lost: { short: "Lost", long: "Closed. The reason is written down." },
   on_hold: {
     short: "On hold",
-    long: "Still live, but not moving — and the reason is on the record.",
+    long: "Still open, but not moving now. The reason is written down.",
   },
 
   /* the customer ladders */
   suspect: {
     short: "Suspect",
-    long: "Worth a look. Two visits to find out whether there is anything here, three at the outside.",
+    long: "Worth a look. Visit 2 times to see if there is business. 3 visits at most.",
   },
   prospect: {
     short: "Prospect",
-    long: "A genuine opportunity, and the sales manager is now on it too.",
+    long: "A real chance of business. Your sales manager is working on it too.",
   },
   qualification: {
     short: "Qualification",
-    long: "Answering what has to be known before we give anybody a sample.",
+    long: "Get the answers we need before we give a sample.",
   },
   sample_trial: {
     short: "Sample / trial",
-    long: "A sample has been asked for. Approval, dispatch and delivery all sit here.",
+    long: "A sample is asked for. It stays here for approval, dispatch and delivery.",
   },
   sample_received: {
     short: "Sample received",
-    long: "It reached them. Now they have to actually try it.",
+    long: "They got the sample. Now they must try it.",
   },
   sample_review: {
     short: "Sample review",
-    long: "Chasing what they thought of it, and writing down the answer.",
+    long: "Ask what they thought of it. Write down the answer.",
   },
   first_order: {
     short: "1st order",
-    long: "They have ordered. From here they are an account on the book.",
+    long: "They have ordered. They are now our customer.",
   },
-  delivery: { short: "Delivery", long: "Following the material until they have it." },
-  payment: { short: "Payment", long: "Following the money on the agreed terms." },
+  delivery: { short: "Delivery", long: "Follow the goods until they reach them." },
+  payment: { short: "Payment", long: "Follow up the payment on the agreed terms." },
   second_order: {
     short: "2nd order",
-    long: "They have come back. The relationship is real rather than a trial.",
+    long: "They ordered again. This is real business now, not a trial.",
   },
   customer: {
     short: "Customer",
-    long: "A repeat buyer. Retention, upselling and satisfaction from here.",
+    long: "They buy again and again. Keep them happy and sell them more.",
   },
 
   /* the distributor ladder */
   management_review: {
     short: "Management review",
-    long: "The sales manager has put them up for appointment.",
+    long: "Your sales manager has sent them to management to become a distributor.",
   },
   commercial_discussion: {
     short: "Commercial discussion",
-    long: "Discount, credit limit, territory and what they commit to.",
+    long: "Talk about discount, credit limit, area and what they promise to buy.",
   },
   distributor_approval: {
     short: "Approval",
-    long: "Management has appointed them. They are billable from here.",
+    long: "Management has made them a distributor. We can bill them now.",
   },
   distributor_agreement: {
     short: "Agreement",
-    long: "The paperwork is signed and on file.",
+    long: "The agreement is signed and kept on file.",
   },
   initial_stock_order: {
     short: "Initial stock",
-    long: "The first stock order they committed to.",
+    long: "The first stock order they promised.",
   },
   active_distributor: {
     short: "Active distributor",
-    long: "Appointed, stocked and selling.",
+    long: "Appointed, has stock, and is selling.",
   },
 };
 
@@ -287,16 +287,16 @@ export function stageSentence(stage: LeadStage): string {
  * time, which is not an answer and cannot be counted.
  */
 export const PROSPECT_REASONS: readonly CodedOption[] = [
-  { code: "regular_requirement", label: "Confirmed regular requirement" },
-  { code: "high_consumption", label: "High monthly consumption or potential" },
-  { code: "agreed_trial", label: "Customer agreed to a product trial" },
-  { code: "switching_competitor", label: "Interested in switching from a competitor" },
-  { code: "specific_requirement", label: "Specific product or application requirement" },
-  { code: "price_interest", label: "Price or commercial interest" },
-  { code: "quality_interest", label: "Quality or performance interest" },
-  { code: "significant_potential", label: "New customer with significant potential" },
+  { code: "regular_requirement", label: "They need it regularly (confirmed)" },
+  { code: "high_consumption", label: "High monthly usage, or can buy a lot" },
+  { code: "agreed_trial", label: "Customer agreed to try the product" },
+  { code: "switching_competitor", label: "Wants to switch from another brand" },
+  { code: "specific_requirement", label: "Needs a specific product or use" },
+  { code: "price_interest", label: "Interested in our price or terms" },
+  { code: "quality_interest", label: "Interested in our quality or performance" },
+  { code: "significant_potential", label: "New customer who can buy a lot" },
   { code: "requested_quotation", label: "Asked for a price or a quotation" },
-  { code: "other_genuine", label: "Other genuine business opportunity" },
+  { code: "other_genuine", label: "Other real chance of business" },
 ] as const;
 
 /* ------------------------------------------------------- §10 why a sample */
@@ -304,15 +304,15 @@ export const PROSPECT_REASONS: readonly CodedOption[] = [
 /** §10 — the ten answers to "why does this customer want a trial?" */
 export const SAMPLE_REASONS: readonly CodedOption[] = [
   { code: "requested", label: "Customer asked for a sample" },
-  { code: "compare_competitor", label: "Wants to compare it with a competitor" },
+  { code: "compare_competitor", label: "Wants to compare it with another brand" },
   { code: "validate_quality", label: "Wants to check quality and performance" },
-  { code: "considering_switch", label: "Considering switching from a competitor" },
-  { code: "specific_application", label: "Has a specific product or application need" },
+  { code: "considering_switch", label: "Thinking of switching from another brand" },
+  { code: "specific_application", label: "Needs a specific product or use" },
   { code: "test_before_order", label: "Wants to test before a first order" },
-  { code: "immediate_requirement", label: "Has an immediate requirement" },
-  { code: "commercial_evaluation", label: "Commercial or product evaluation" },
+  { code: "immediate_requirement", label: "Needs it now" },
+  { code: "commercial_evaluation", label: "Wants to check the product or the price" },
   { code: "agreed_after_explanation", label: "Agreed to a trial after we explained it" },
-  { code: "other_genuine", label: "Other genuine trial opportunity" },
+  { code: "other_genuine", label: "Other real reason for a trial" },
 ] as const;
 
 /* ---------------------------------------------------------- §26 why lost */
@@ -328,12 +328,12 @@ export const SAMPLE_REASONS: readonly CodedOption[] = [
 export const LOST_REASONS: readonly CodedOption[] = [
   { code: "price", label: "Price" },
   { code: "quality", label: "Quality or performance" },
-  { code: "competitor", label: "Stayed with a competitor" },
-  { code: "no_requirement", label: "No requirement" },
+  { code: "competitor", label: "Stayed with another brand" },
+  { code: "no_requirement", label: "They do not need it" },
   { code: "credit_terms", label: "Credit terms" },
   { code: "delivery_service", label: "Delivery or service" },
   { code: "not_interested", label: "Customer not interested" },
-  { code: "wrong_lead", label: "Wrong lead — should not have been raised" },
+  { code: "wrong_lead", label: "Wrong lead. Should not have been made" },
   /**
    * §8 — ITS OWN CODE, AND DELIBERATELY NOT `wrong_lead`.
    *
@@ -347,8 +347,8 @@ export const LOST_REASONS: readonly CodedOption[] = [
    * could not be asked, and the answer to "how many leads should never have
    * been raised" would silently include every shop that denied a visit.
    */
-  { code: "verification_failed", label: "Verification failed" },
-  { code: "territory_conflict", label: "Distributor or territory conflict" },
+  { code: "verification_failed", label: "Check call failed" },
+  { code: "territory_conflict", label: "Clash with a distributor or area" },
   { code: "other", label: "Other" },
 ] as const;
 
@@ -375,12 +375,12 @@ export const LOST_REASONS: readonly CodedOption[] = [
 export const VERIFICATION_FAILED_CODE = "verification_failed";
 
 export const VERIFICATION_FAILURE_REASONS: readonly CodedOption[] = [
-  { code: "denies_visit", label: "Customer denies the visit" },
-  { code: "denies_enquiry", label: "Customer denies the enquiry" },
+  { code: "denies_visit", label: "Customer says nobody visited" },
+  { code: "denies_enquiry", label: "Customer says they never asked" },
   { code: "no_such_business", label: "Business or shop does not exist" },
   { code: "wrong_contact", label: "Wrong contact or wrong business" },
-  { code: "duplicate", label: "Duplicate lead" },
-  { code: "false_information", label: "False or inaccurate information" },
+  { code: "duplicate", label: "Same lead entered twice" },
+  { code: "false_information", label: "Wrong or false details" },
   { code: "other", label: "Other" },
 ] as const;
 
@@ -398,11 +398,11 @@ export const VERIFICATION_FAILURE_REASONS: readonly CodedOption[] = [
  * for when a list does not fit — so it has to cost a sentence.
  */
 export const HOLD_REASONS: readonly CodedOption[] = [
-  { code: "customer_decision_delayed", label: "Customer decision delayed" },
-  { code: "budget_issue", label: "Budget or financial issue" },
-  { code: "shutdown", label: "Plant or business shutdown" },
-  { code: "decision_maker_away", label: "Decision maker unavailable" },
-  { code: "requirement_inactive", label: "Requirement temporarily not active" },
+  { code: "customer_decision_delayed", label: "Customer is slow to decide" },
+  { code: "budget_issue", label: "Money or budget problem" },
+  { code: "shutdown", label: "Factory or shop is shut" },
+  { code: "decision_maker_away", label: "Person who decides is not available" },
+  { code: "requirement_inactive", label: "They do not need it for now" },
   { code: "other", label: "Other" },
 ] as const;
 
@@ -417,11 +417,11 @@ export const HOLD_REASONS: readonly CodedOption[] = [
  * the picker goes on offering it.
  */
 export const REOPEN_REASONS: readonly CodedOption[] = [
-  { code: "customer_responded", label: "Customer responded again" },
-  { code: "ready_to_purchase", label: "Customer ready to purchase" },
-  { code: "new_requirement", label: "New requirement received" },
-  { code: "order_opportunity", label: "Order opportunity reopened" },
-  { code: "followup_requested", label: "Customer requested follow-up" },
+  { code: "customer_responded", label: "Customer replied again" },
+  { code: "ready_to_purchase", label: "Customer is ready to buy" },
+  { code: "new_requirement", label: "They have a new need" },
+  { code: "order_opportunity", label: "Chance of an order again" },
+  { code: "followup_requested", label: "Customer asked us to follow up" },
   { code: "other", label: "Other" },
 ] as const;
 
@@ -448,11 +448,11 @@ export const REOPEN_REASONS: readonly CodedOption[] = [
  * would count into one number four problems with four owners.
  */
 export const ORDER_BLOCKERS: readonly CodedOption[] = [
-  { code: "no_blocker", label: "No blocker" },
+  { code: "no_blocker", label: "Nothing stopping it" },
   { code: "price_not_agreed", label: "Price not agreed" },
-  { code: "credit_terms", label: "Credit terms not settled" },
-  { code: "stock_availability", label: "Stock or availability" },
-  { code: "customer_approval_pending", label: "Waiting on their own approval" },
+  { code: "credit_terms", label: "Credit terms not agreed" },
+  { code: "stock_availability", label: "Stock not available" },
+  { code: "customer_approval_pending", label: "Waiting for their own approval" },
 ] as const;
 
 /**
@@ -469,12 +469,12 @@ export const ORDER_BLOCKERS: readonly CodedOption[] = [
  */
 export const SAMPLE_CANCEL_REASONS: readonly CodedOption[] = [
   { code: "product_unavailable", label: "Product not available" },
-  { code: "requirement_cancelled", label: "Customer cancelled the requirement" },
+  { code: "requirement_cancelled", label: "Customer no longer needs the product" },
   { code: "customer_delayed", label: "Customer delayed the trial" },
-  { code: "not_required", label: "Sample not required any more" },
-  { code: "wrong_product", label: "Wrong product or wrong requirement" },
-  { code: "commercial", label: "Commercial or price issue" },
-  { code: "no_response", label: "Customer not responding" },
+  { code: "not_required", label: "Sample not needed any more" },
+  { code: "wrong_product", label: "Wrong product or wrong need" },
+  { code: "commercial", label: "Price or terms problem" },
+  { code: "no_response", label: "Customer not replying" },
   { code: "other", label: "Other" },
 ] as const;
 
@@ -522,15 +522,15 @@ export const SAMPLE_CANCEL_PROBLEM_LABELS: Readonly<
 > = {
   supply: {
     label: "Supply",
-    whose: "We could not put the right stock in their hands.",
+    whose: "We could not give them the right stock.",
   },
   customer: {
     label: "Customer",
-    whose: "The shop went quiet, delayed it, or no longer wants it.",
+    whose: "The shop stopped replying, delayed it, or does not want it now.",
   },
   sales: {
     label: "Sales",
-    whose: "The commercial conversation is what stopped it.",
+    whose: "The talk about price and terms stopped it.",
   },
 };
 
@@ -553,11 +553,11 @@ export function sampleCancelProblemOf(
  * offered, it is a manager's alone, and it stores what was still missing.
  */
 export const OVERRIDE_REASONS: readonly CodedOption[] = [
-  { code: "recorded_late", label: "It was done — recorded after the event" },
-  { code: "known_account", label: "We already know this account well" },
+  { code: "recorded_late", label: "It was done. Written down later" },
+  { code: "known_account", label: "We already know this customer well" },
   { code: "customer_urgency", label: "Customer will not wait" },
-  { code: "not_applicable", label: "The condition does not apply to this account" },
-  { code: "management_instruction", label: "Instructed by management" },
+  { code: "not_applicable", label: "This step does not apply to this customer" },
+  { code: "management_instruction", label: "Management told us to" },
   { code: "other", label: "Other" },
 ] as const;
 
@@ -609,12 +609,12 @@ export const VERIFICATION_FINDINGS: readonly {
   label: string;
   lands: string | null;
 }[] = [
-  { id: "competitor", label: "Whose product they use now", lands: "competitor" },
+  { id: "competitor", label: "Which brand they use now", lands: "competitor" },
   { id: "monthly_litres", label: "What they use in a month", lands: "monthly_requirement" },
-  { id: "potential", label: "What they could be worth in a month", lands: "potential" },
-  { id: "required_product", label: "Which of ours they need", lands: null },
-  { id: "contact_person", label: "Who we ask for when we ring", lands: null },
-  { id: "decision_maker", label: "Who signs off a purchase", lands: null },
+  { id: "potential", label: "How much they can buy in a month", lands: "potential" },
+  { id: "required_product", label: "Which of our products they need", lands: null },
+  { id: "contact_person", label: "Who to ask for when we call", lands: null },
+  { id: "decision_maker", label: "Who decides to buy", lands: null },
   { id: "credit_days", label: "The credit they want", lands: null },
   { id: "application", label: "What they will use it on", lands: null },
   { id: "customer_type", label: "What kind of business this is", lands: null },
@@ -656,26 +656,26 @@ export const VERIFICATION_SECTIONS: readonly {
 }[] = [
   {
     id: "salesman",
-    title: "About our man — this is why the call exists",
+    title: "About our salesman. This is why we call",
     says:
-      "No amount of GPS proves that Mahek was explained properly. These are the questions a check on the salesman's own work cannot be performed by the salesman.",
+      "GPS cannot show that Mahek was explained well. Only the customer can tell you. The salesman cannot check his own work.",
   },
   {
     id: "opportunity",
-    title: "About the opportunity",
-    says: "Whether the requirement the salesman reported is real, and whose product it would replace.",
+    title: "About the business",
+    says: "Is the need the salesman reported real? Which brand would we replace?",
   },
   {
     id: "objections",
-    title: "What is in the way",
+    title: "What is stopping them",
     says:
-      "Every one of these is a separate answer. “Fine on price, the credit is the problem” is the sentence that decides what we offer next, and it is unreadable where the only place it can land is a free-text impression.",
+      "Ask each one on its own. “Price is fine, credit is the problem” tells us what to offer next. Write each answer in its own box.",
   },
   {
     id: "readiness",
     title: "What they are ready for",
     says:
-      "The half the call exists to hand on. §5.4 decides whether a sample goes out, and it decides it on whether the SHOP said it was ready for a trial — which this call had no box for at all.",
+      "This decides if a sample goes out. Ask if the shop is ready for a trial.",
   },
 ] as const;
 
@@ -719,26 +719,26 @@ export const VERIFICATION_QUESTIONS: readonly {
   ask: string;
   section: VerificationSection;
 }[] = [
-  { id: "visited", ask: "Did our salesman actually visit?", section: "salesman" },
-  { id: "explained", ask: "Did he explain Mahek properly?", section: "salesman" },
-  { id: "impression", ask: "How did you find our man?", section: "salesman" },
+  { id: "visited", ask: "Did our salesman really visit?", section: "salesman" },
+  { id: "explained", ask: "Did he explain Mahek well?", section: "salesman" },
+  { id: "impression", ask: "What did you think of our salesman?", section: "salesman" },
   { id: "understood", ask: "Did you understand what the product does?", section: "opportunity" },
-  { id: "current_product", ask: "What are you using at the moment?", section: "opportunity" },
-  { id: "competitor", ask: "Whose product is it?", section: "opportunity" },
+  { id: "current_product", ask: "What are you using now?", section: "opportunity" },
+  { id: "competitor", ask: "Which brand is it?", section: "opportunity" },
   { id: "monthly_requirement", ask: "How much do you use in a month?", section: "opportunity" },
   { id: "potential", ask: "Could that grow?", section: "opportunity" },
   {
     id: "genuine_interest",
-    ask: "Are you genuinely interested in trying it?",
+    ask: "Do you really want to try it?",
     section: "opportunity",
   },
-  { id: "price_issue", ask: "Any concern about price?", section: "objections" },
-  { id: "quality_issue", ask: "Any concern about quality?", section: "objections" },
-  { id: "service_issue", ask: "Any concern about delivery or service?", section: "objections" },
-  { id: "credit_concern", ask: "Any concern about the credit terms?", section: "objections" },
+  { id: "price_issue", ask: "Any problem with the price?", section: "objections" },
+  { id: "quality_issue", ask: "Any problem with quality?", section: "objections" },
+  { id: "service_issue", ask: "Any problem with delivery or service?", section: "objections" },
+  { id: "credit_concern", ask: "Any problem with the credit terms?", section: "objections" },
   {
     id: "competitor_concern",
-    ask: "Anything holding them to whoever supplies them now?",
+    ask: "Anything keeping them with their current supplier?",
     section: "objections",
   },
   { id: "ready_for_trial", ask: "Are they ready to take a trial?", section: "readiness" },
@@ -881,20 +881,20 @@ export const VERIFICATION_OUTCOMES: readonly {
 }[] = [
   {
     code: "verified",
-    label: "Verified — the visit happened and Mahek was explained",
-    says: "Opens the gate to qualification. Nothing else on this page does.",
+    label: "Checked. The visit happened and Mahek was explained",
+    says: "This lets the lead move to Qualification. Nothing else on this page does.",
   },
   {
     code: "follow_up",
-    label: "Follow-up required — this call could not confirm the visit",
+    label: "Follow-up needed. This call could not confirm the visit",
     says:
-      "NOT a failure of the lead. What could not be confirmed is our salesman's visit, so this raises a task back on him with your own words on it and leaves the lead exactly where it is.",
+      "This does NOT mean the lead failed. Only the salesman's visit is not confirmed. A task goes back to him with your words. The lead stays where it is.",
   },
   {
     code: "not_qualified",
-    label: "Verification failed — there is no opportunity here",
+    label: "Check failed. There is no business here",
     says:
-      "For a false opportunity ONLY: the shop denies any such visit or requirement, the business does not exist, the contact is fabricated, or this was raised in error. It CLOSES the lead as lost and asks you to say in writing what the shop said. A call that merely went badly, or a salesman you could not reach, is the answer above this one.",
+      "Use this ONLY for a false lead. The shop says nobody visited, or they need nothing. Or the business does not exist, the contact is fake, or the lead was made by mistake. This CLOSES the lead as Lost. Write down what the shop said. If the call just went badly, or you could not reach the salesman, pick the answer above.",
   },
 ] as const;
 
@@ -989,7 +989,7 @@ export function verificationResultOf(
  * than in one of two places — the drift this file exists to prevent.
  */
 export function verificationResultLabel(result: VerificationResult): string {
-  if (result === "verified_with_corrections") return "Verified with corrections";
+  if (result === "verified_with_corrections") return "Checked, with corrections";
   return VERIFICATION_OUTCOMES.find((o) => o.code === result)?.label ?? result;
 }
 
@@ -1001,7 +1001,7 @@ export const FEEDBACK_FIELDS: readonly { id: string; label: string }[] = [
   { id: "performance", label: "Performance" },
   { id: "application", label: "Application" },
   { id: "drying", label: "Drying" },
-  { id: "competitorComparison", label: "Against what they use now" },
+  { id: "competitorComparison", label: "Compared with what they use now" },
   { id: "priceFeedback", label: "Price" },
   { id: "otherComments", label: "Anything else" },
 ] as const;
@@ -1060,50 +1060,50 @@ export const NURTURE_SEQUENCE: readonly {
     trigger: "prospect_created",
     after: 0,
     owner: "lead_manager",
-    title: "Verify the customer and the salesman",
-    detail: "Ring them and go through the twelve questions before anything else happens.",
+    title: "Check the customer and the salesman",
+    detail: "Call them. Ask the twelve questions before anything else.",
   },
   {
     trigger: "prospect_created",
     after: 0,
     owner: "salesman",
-    title: "Collect and verify GST",
+    title: "Get and check GST",
     detail: "No sample goes out without it.",
   },
   {
     trigger: "salesman_visit",
     after: 1,
     owner: "lead_manager",
-    title: "Verification call after the visit",
-    detail: "Check what was discussed while it is fresh.",
+    title: "Check call after the visit",
+    detail: "Check what was discussed while they still remember.",
   },
   {
     trigger: "prospect_created",
     after: 2,
     owner: "lead_manager",
     title: "Send the company profile",
-    detail: "Who Mahek is, before they are asked to try anything.",
+    detail: "Tell them who Mahek is before they try anything.",
   },
   {
     trigger: "prospect_created",
     after: 4,
     owner: "lead_manager",
     title: "Send the product brochure and video",
-    detail: "What it does, in their hands, ahead of the trial.",
+    detail: "Show them what it does before the trial.",
   },
   {
     trigger: "sample_requested",
     after: 0,
     owner: "lead_manager",
     title: "Check the sample request",
-    detail: "The right product, the right quantity, for the application they named.",
+    detail: "Right product and right quantity for the use they told us.",
   },
   {
     trigger: "sample_dispatched",
     after: 2,
     owner: "lead_manager",
     title: "Check it is moving",
-    detail: "A docket with no movement on it is a sample nobody will ever review.",
+    detail: "Check the courier docket. A sample stuck on the way never gets reviewed.",
   },
   {
     trigger: "sample_received",
@@ -1124,7 +1124,7 @@ export const NURTURE_SEQUENCE: readonly {
     after: 3,
     owner: "lead_manager",
     title: "Follow up the negotiation",
-    detail: "What is still in the way?",
+    detail: "What is still stopping them?",
   },
   {
     trigger: "expected_order_date",
@@ -1138,14 +1138,14 @@ export const NURTURE_SEQUENCE: readonly {
     after: 1,
     owner: "lead_manager",
     title: "Follow the delivery",
-    detail: "Until the material is with them.",
+    detail: "Until the goods reach them.",
   },
   {
     trigger: "delivery_completed",
     after: 2,
     owner: "lead_manager",
     title: "Satisfaction call",
-    detail: "Did it arrive right, and did it do what we said?",
+    detail: "Did it arrive in good shape? Did it work as we said?",
   },
   {
     trigger: "payment_due",
@@ -1159,7 +1159,7 @@ export const NURTURE_SEQUENCE: readonly {
     after: 0,
     owner: "lead_manager",
     title: "Repeat-order call",
-    detail: "Their own cycle says they are about due. Ask what they need.",
+    detail: "They usually order around now. Ask what they need.",
   },
 ] as const;
 
@@ -1208,6 +1208,6 @@ export const FIRST_ORDER_QUESTIONS: readonly { id: string; ask: string }[] = [
   { id: "blocker", ask: "What is stopping it today?" },
   { id: "price_issue", ask: "Is price an issue?" },
   { id: "credit_issue", ask: "Is credit an issue?" },
-  { id: "competitor_issue", ask: "Is a competitor in the way?" },
+  { id: "competitor_issue", ask: "Is another brand stopping it?" },
   { id: "delivery_issue", ask: "Is delivery an issue?" },
 ] as const;

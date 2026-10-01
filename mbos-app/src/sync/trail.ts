@@ -4,6 +4,7 @@ import { all, getKv, run, setKv } from '../db';
 import { getConfig } from '../data/config';
 import { getFix, fixOf, rememberFix } from '../native/location';
 import { shouldKeepFix } from '../engines/cadence';
+import { watchForLeftShop } from './left-shop';
 import { trailVerdict } from '../engines/trail-watchdog';
 import { mayRetryBackground, type Demotion } from '../engines/trail-retry';
 import { decideFlush } from '../engines/flush-answer';
@@ -207,6 +208,18 @@ TaskManager.defineTask<{ locations: Location.LocationObject[] }>(TASK_NAME, asyn
     rememberFix({ lat: loc.coords.latitude, lng: loc.coords.longitude, accuracyM: accuracyM ?? 9999, at: loc.timestamp });
     if (!(await keep(loc.timestamp, gap))) continue;
     await store(loc.coords.latitude, loc.coords.longitude, accuracyM, loc.timestamp);
+  }
+  /* Did he walk out of a visit without checking out? Asked of the newest
+     reading only — the batch is a queue catching up, and the newest is where
+     he is. Before the flush, which can wait on the network. */
+  const newest = data.locations[data.locations.length - 1];
+  if (newest) {
+    await watchForLeftShop({
+      lat: newest.coords.latitude,
+      lng: newest.coords.longitude,
+      accuracyM: newest.coords.accuracy ?? null,
+      at: newest.timestamp,
+    });
   }
   /*
    * Pushed here rather than left for the sync engine's own timer, which is a
@@ -503,8 +516,8 @@ async function startBackground(everyMs: number): Promise<BackgroundStart> {
       showsBackgroundLocationIndicator: true,
       pausesUpdatesAutomatically: false,
       foregroundService: {
-        notificationTitle: 'MahekOne is following your route',
-        notificationBody: 'Recording where the day takes you. Stops the moment you punch out.',
+        notificationTitle: 'MahekOne is saving your route',
+        notificationBody: 'Saving where you go today. Stops when you punch out.',
         killServiceOnDestroy: false,
       },
     });
@@ -684,6 +697,9 @@ async function drainService(): Promise<number> {
     }
     await forgetFixes(kept);
     moved += kept.length;
+
+    const newest = rows[rows.length - 1];
+    if (newest) await watchForLeftShop(newest);
 
     if (rows.length < DRAIN_BATCH) return moved;
   }

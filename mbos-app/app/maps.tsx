@@ -187,7 +187,7 @@ export default function MapsScreen() {
           forget([id]);
           load();
         })
-        .catch(() => notify('That download would not stop. Try again in a moment.'));
+        .catch(() => notify('The download did not stop. Try again in a minute.'));
     },
     [forget, load, notify],
   );
@@ -220,7 +220,7 @@ export default function MapsScreen() {
            rather than in a toast he has already looked away from. */
         () => setFailed((f) => ({ ...f, [area.id]: true })),
       );
-      notify(`Saving ${area.label} — you can leave this screen.`);
+      notify(`Saving ${area.label}. You can leave this screen.`);
       load();
     } catch {
       /* A refusal from MapLibre, a style that would not load, storage that is
@@ -284,8 +284,8 @@ export default function MapsScreen() {
         if (!alive || !state.isConnected || state.type === 'wifi') return;
         const ids = downloadingRef.current;
         if (!ids.length) return;
-        setBlocked('Map downloads are set to Wi-Fi only, and this phone is on mobile data.');
-        notify('Paused the map download — this phone is on mobile data.');
+        setBlocked('Map downloads are set to Wi-Fi only. This phone is on mobile data.');
+        notify('Map download paused. This phone is on mobile data.');
         /* `network`, not the salesman: this one is meant to pick up again the
            moment there is Wi-Fi, and a pause recorded as his own would never be
            resumed by anything. */
@@ -313,11 +313,11 @@ export default function MapsScreen() {
 
       <Card>
         <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-          Save the streets before you need them
+          Save maps before you need them
         </T>
         <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-          A saved map draws with no signal at all. Save the places you work once,
-          on Wi-Fi, and the market lanes are there when the phone has nothing.
+          A saved map works with no signal. Save the places you work once, on Wi-Fi.
+          Then the streets show even when there is no signal.
         </T>
         {blocked ? (
           <View
@@ -340,7 +340,7 @@ export default function MapsScreen() {
 
       {listing === null ? (
         <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
-          Working out what is worth saving…
+          Finding places to save…
         </T>
       ) : null}
 
@@ -348,8 +348,8 @@ export default function MapsScreen() {
         <Card style={{ marginTop: 12 }}>
           <T s="small" style={{ color: C.muted }}>
             {listing.unpinned
-              ? `None of your ${listing.unpinned} shops has a location on it yet, so there is nowhere to save a map of. Capture a location while you are standing in one and its area appears here.`
-              : 'There are no shops on this phone yet. Sync, and the places you work appear here.'}
+              ? `None of your ${listing.unpinned} shops has a location yet. So there is no map to save. Save a location while you stand in a shop. Its area will show here.`
+              : 'There are no shops on this phone yet. Connect to the internet. Your places will show here.'}
           </T>
         </Card>
       ) : null}
@@ -383,7 +383,7 @@ export default function MapsScreen() {
                 onRefresh={() => {
                   if (!area.saved) return;
                   void refreshMap(area.saved.id).then(() => {
-                    notify('Checking the saved map against the server');
+                    notify('Checking for map changes');
                     load();
                   });
                 }}
@@ -403,14 +403,14 @@ export default function MapsScreen() {
           explanation reads as a broken list. */}
       {listing?.unpinned ? (
         <T s="caption" style={{ marginTop: 10 }}>
-          {`${plural(listing.unpinned, 'shop')} in your book has no location on it, so it is in none of these areas.`}
+          {`No location yet: ${plural(listing.unpinned, 'shop')}. These shops are not in any area above.`}
         </T>
       ) : null}
 
       {listing?.orphans.length ? (
         <>
           <SectionLabel style={{ marginTop: 24, marginBottom: 8 }}>
-            Saved, but not for anywhere you work now
+            Saved, but you do not work here now
           </SectionLabel>
           <ListCard>
             {listing.orphans.map((pack, i) => (
@@ -441,22 +441,22 @@ export default function MapsScreen() {
             ))}
           </ListCard>
           <T s="caption" style={{ marginTop: 8 }}>
-            No shop in your book is inside these any more. Nothing has been
-            deleted — the space comes back when you remove one.
+            None of your shops are in these places now. Nothing is deleted.
+            Remove one to free the space.
           </T>
         </>
       ) : null}
 
       {settings ? (
         <T s="caption" style={{ marginTop: 24, textAlign: 'center' }}>
-          {`Saved down to zoom ${settings.maxZoom} — close enough to read a lane name. Sizes are estimates.`}
+          {`Maps are saved to zoom ${settings.maxZoom}. You can read lane names. Sizes are about right, not exact.`}
         </T>
       ) : null}
 
       <ConfirmSheet
         open={confirm !== null}
         title={`Remove ${confirm?.label ?? ''}?`}
-        body="The streets stop drawing there without signal. Nothing else changes — your shops, visits and orders are untouched, and you can save it again on Wi-Fi."
+        body="The map of this place will not show without signal. Your shops, visits and orders stay safe. You can save it again on Wi-Fi."
         confirmLabel="Remove"
         reason=""
         onReason={() => {}}
@@ -620,10 +620,10 @@ function AreaRow({
                    a market — the same judgement `start` makes. What is worth
                    saying is that it stopped, that the part already saved is
                    still there, and that trying again costs only what is left. */
-                'The download stopped before it finished. What it has already saved is kept — try again on a better connection.'
+                'The download stopped before it finished. The part already saved is kept. Try again on a better connection.'
               : running
-                ? 'Saving now. Removing it stops the download and gives the space back.'
-                : 'Paused. It picks up where it stopped.'
+                ? 'Saving now. Remove it to stop the download and free the space.'
+                : 'Paused. It will continue from where it stopped.'
           }
           label="Remove"
           note={stopped ? 'warn' : 'plain'}
@@ -636,7 +636,7 @@ function AreaRow({
           somebody would otherwise discover by finding a blank patch. */}
       {complete && area.coverage.state === 'partial' ? (
         <Secondary
-          sentence={`${plural(area.coverage.outside, 'shop')} here fell outside what was saved — the book has grown since.`}
+          sentence={`Not in the saved map: ${plural(area.coverage.outside, 'shop')}. You got new shops after you saved it.`}
           label="Save again"
           tone="primary"
           note="warn"
@@ -650,7 +650,7 @@ function AreaRow({
           worth offering at all. */}
       {complete && stale ? (
         <Secondary
-          sentence="Roads change slowly, and a refresh only fetches what actually changed."
+          sentence="Roads change slowly. Refresh downloads only what changed."
           label="Refresh"
           onPress={onRefresh}
         />
@@ -693,7 +693,7 @@ function describe(
  */
 function tooBigSentence(area: OfflineArea, listing: AreaListing | null): string {
   const ceiling = listing ? dataSize(listing.settings.maxPackBytes) : null;
-  return `About ${dataSize(area.estimatedBytes)}, which is over the ${ceiling ?? 'limit'} a map may take on this phone. Ask the office to split this area or to save one zoom level less.`;
+  return `About ${dataSize(area.estimatedBytes)}. This is over the ${ceiling ?? 'limit'} allowed for one map on this phone. Ask the office to make this area smaller.`;
 }
 
 /**

@@ -7,7 +7,14 @@ import {
   salesPerformanceCategories,
 } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
-import { APP_TIMEZONE, addDays, endOfMonth, isWorkingDay } from "@/lib/business-date";
+import {
+  APP_TIMEZONE,
+  addDays,
+  addMonths,
+  daysInMonth,
+  endOfMonth,
+  isWorkingDay,
+} from "@/lib/business-date";
 import type { BusinessDate } from "@/lib/business-date";
 import { matchKey } from "@/lib/catalogue";
 import { billCreditDaysSql } from "@/lib/bill-terms";
@@ -42,6 +49,8 @@ import {
  * ------------------------------------------------------------------------- */
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** `YYYY-MM` to the first and last day of that month. */
 function monthWindow(period: string): { from: string; to: string } {
@@ -275,6 +284,29 @@ export async function actualsForPeriod(
   period: string,
 ): Promise<Map<string, PersonActuals>> {
   const { from, to } = monthWindow(period);
+  return actualsForWindow(from, to);
+}
+
+/**
+ * The same figures over ANY run of days — a quarter, a financial year, a
+ * fortnight somebody picked on the handset.
+ *
+ * `actualsForPeriod` is this with a month's two ends, so a month asked for as
+ * a range and the same month read off the cache are one computation and
+ * cannot disagree. Every component already measures a window rather than a
+ * month: collection is the debt overdue when the window OPENS and worked down
+ * inside it, activity is the tasks that fell due inside it.
+ *
+ * The two ends are interpolated into SQL, so they are checked here rather than
+ * trusted to every caller: a range arrives from a phone.
+ */
+export async function actualsForWindow(
+  from: string,
+  to: string,
+): Promise<Map<string, PersonActuals>> {
+  if (!ISO_DAY.test(from) || !ISO_DAY.test(to)) {
+    throw new Error(`Not a pair of days: ${from} to ${to}`);
+  }
   const catalogue = await loadCatalogue();
   const config = await getConfig();
   const people = new Map<string, PersonActuals>();
@@ -717,67 +749,20 @@ export async function readingsForPeriod(
     const target = targetByUser.get(userId) ?? null;
     const a = actuals.get(userId) ?? emptyActuals(userId);
     const targetBands = target ? bands.get(target.id) : undefined;
-    const mixBands = targetBands?.bands ?? [];
-
-    /* The bucket matching what the bands are about. Never both: `scoreMix`
-       totals whatever it is handed to work out each share. */
-    const bucket = targetBands?.isFormulation ? a.byFormulation : a.byCategory;
-    const mixActuals: MixActual[] = [...bucket.entries()].map(
-      ([categoryId, v]) => ({
-        categoryId,
-        valuePaise: v.valuePaise,
-        millilitres: v.millilitres,
-      }),
+    const { score, mix } = scoreActuals(
+      a,
+      target
+        ? {
+            revenuePaise: num(target.revenue_target_paise),
+            millilitres: num(target.volume_target_ml),
+            newCustomers: num(target.new_customer_target),
+            collectionBp: num(target.collection_target_bp),
+            activityBp: num(target.activity_target_bp),
+          }
+        : null,
+      targetBands,
+      config,
     );
-    const mix = scoreMix(mixBands, mixActuals, config);
-
-    const inputs: ComponentInput[] = [
-      {
-        key: "revenue",
-        actual: a.revenuePaise,
-        target: num(target?.revenue_target_paise),
-      },
-      { key: "volume", actual: a.millilitres, target: num(target?.volume_target_ml) },
-      { key: "mix", actual: 0, target: 0, achievementBp: mix.achievementBp },
-      {
-        key: "newCustomers",
-        actual: a.newCustomers,
-        target: num(target?.new_customer_target),
-      },
-      {
-        // The target is a PERCENTAGE of what was already overdue at the
-        // start of the month, not a rupee figure — so it is converted to an
-        // implied rupee target here, against this person's own overdue
-        // book, and scored the same way every other rupee-vs-rupee
-        // component is. Where nothing was overdue, the implied target is
-        // zero, which `achievementBp` already treats as "not asked" and
-        // drops from the score — a book with no old debt has nothing to be
-        // measured on here, not a failing score.
-        key: "collection",
-        actual: a.collectionPaise,
-        target: Math.round((a.overdueAtStartPaise * num(target?.collection_target_bp)) / 10_000),
-      },
-      {
-        // A PERCENTAGE OF WHAT WAS ASKED, not a count of tasks — the same
-        // move `collection` makes one entry up, and for the same reason: ten
-        // tasks done means nothing without knowing whether ten or a hundred
-        // were set, and a target somebody meets by being given fewer tasks is
-        // not a target.
-        //
-        // Where nobody was given any, the implied target is zero, which
-        // `achievementBp` already treats as "not asked" and drops from the
-        // score — having no tasks is not the same as failing them.
-        //
-        // `activity_target` is the retired count and is deliberately not read:
-        // 10 was never a percentage, and reinterpreting it as one would mark
-        // somebody at 10% of their tasks.
-        key: "activity",
-        actual: a.activity,
-        target: Math.round((a.activityAssigned * num(target?.activity_target_bp)) / 10_000),
-      },
-    ];
-
-    const score = weightedScore(inputs, config);
     const by = (k: string) => score.components.find((c) => c.key === k);
 
     readings.push({
@@ -824,6 +809,94 @@ export async function readingsForPeriod(
   }
 
   return readings.sort((x, y) => y.score.totalBp - x.score.totalBp);
+}
+
+/** What was asked of somebody, in the units the actuals are in. */
+type AskedFor = {
+  revenuePaise: number;
+  millilitres: number;
+  newCustomers: number;
+  /** Collection and activity are SHARES — of the overdue book, of the tasks set. */
+  collectionBp: number;
+  activityBp: number;
+};
+
+/**
+ * Actuals against what was asked, scored — the ONE place the six components
+ * are assembled.
+ *
+ * The monthly cache and a range picked on the handset both come through here,
+ * so a month asked for as a range scores exactly as the cache scored it. A
+ * second copy of this list is how the phone and the office come to disagree
+ * about one person's month.
+ */
+function scoreActuals(
+  a: PersonActuals,
+  target: AskedFor | null,
+  targetBands: TargetBands | undefined,
+  config: Awaited<ReturnType<typeof getConfig>>,
+): { score: ScoreResult; mix: MixResult } {
+  const mixBands = targetBands?.bands ?? [];
+
+  /* The bucket matching what the bands are about. Never both: `scoreMix`
+     totals whatever it is handed to work out each share. */
+  const bucket = targetBands?.isFormulation ? a.byFormulation : a.byCategory;
+  const mixActuals: MixActual[] = [...bucket.entries()].map(
+    ([categoryId, v]) => ({
+      categoryId,
+      valuePaise: v.valuePaise,
+      millilitres: v.millilitres,
+    }),
+  );
+  const mix = scoreMix(mixBands, mixActuals, config);
+
+  const inputs: ComponentInput[] = [
+    {
+      key: "revenue",
+      actual: a.revenuePaise,
+      target: target?.revenuePaise ?? 0,
+    },
+    { key: "volume", actual: a.millilitres, target: target?.millilitres ?? 0 },
+    { key: "mix", actual: 0, target: 0, achievementBp: mix.achievementBp },
+    {
+      key: "newCustomers",
+      actual: a.newCustomers,
+      target: target?.newCustomers ?? 0,
+    },
+    {
+      // The target is a PERCENTAGE of what was already overdue at the
+      // start of the month, not a rupee figure — so it is converted to an
+      // implied rupee target here, against this person's own overdue
+      // book, and scored the same way every other rupee-vs-rupee
+      // component is. Where nothing was overdue, the implied target is
+      // zero, which `achievementBp` already treats as "not asked" and
+      // drops from the score — a book with no old debt has nothing to be
+      // measured on here, not a failing score.
+      key: "collection",
+      actual: a.collectionPaise,
+      target: Math.round((a.overdueAtStartPaise * (target?.collectionBp ?? 0)) / 10_000),
+    },
+    {
+      // A PERCENTAGE OF WHAT WAS ASKED, not a count of tasks — the same
+      // move `collection` makes one entry up, and for the same reason: ten
+      // tasks done means nothing without knowing whether ten or a hundred
+      // were set, and a target somebody meets by being given fewer tasks is
+      // not a target.
+      //
+      // Where nobody was given any, the implied target is zero, which
+      // `achievementBp` already treats as "not asked" and drops from the
+      // score — having no tasks is not the same as failing them.
+      //
+      // `activity_target` is the retired count and is deliberately not read:
+      // 10 was never a percentage, and reinterpreting it as one would mark
+      // somebody at 10% of their tasks.
+      key: "activity",
+      actual: a.activity,
+      target: Math.round((a.activityAssigned * (target?.activityBp ?? 0)) / 10_000),
+    },
+  ];
+
+  return { score: weightedScore(inputs, config), mix };
 }
 
 type TargetBands = {
@@ -901,6 +974,192 @@ async function namesFor(ids: string[]): Promise<Map<string, string>> {
     )})`}
   `);
   return new Map(rows.map((r) => [r.id, r.name]));
+}
+
+/* ------------------------------------------------------- one person, any range */
+
+/**
+ * One person's figures over any range of days, in the shape the handset's
+ * `performance` row already has — the screen draws a picked range with the
+ * same code it draws a cached month with.
+ *
+ * WHAT WAS ASKED OVER A RANGE is the monthly targets the range covers, added
+ * up. A month only partly inside it contributes the share of its days that
+ * are: a target is set for a month, and asking somebody for all of September's
+ * revenue by the 10th would mark him down for twenty days that had not
+ * happened. The two shares — collection and activity — are not added, they
+ * are averaged over the days, because 50% in July and 50% in August is 50%
+ * over both, not 100%. The mix is held to the bands of the latest target in
+ * the range: a band is a share of value and has no sum.
+ *
+ * `prorated` and the month counts come back so the screen can SAY all of
+ * this. A yearly figure built from three targeted months out of twelve is a
+ * different statement from one built from twelve, and the screen is the only
+ * place anybody would find out which it was.
+ */
+export type HandsetRangeReading = {
+  from: string;
+  to: string;
+  revenueTargetPaise: number | null;
+  revenueActualPaise: number;
+  revenueAchievementBp: number | null;
+  volumeTargetMl: number | null;
+  volumeActualMl: number;
+  volumeAchievementBp: number | null;
+  mixAchievementBp: number | null;
+  newCustomerTarget: number | null;
+  newCustomerActual: number;
+  collectionTargetPaise: number | null;
+  collectionActualPaise: number;
+  collectionBasePaise: number;
+  /** The collection target AS A SHARE — what the office actually set. */
+  collectionTargetBp: number | null;
+  collectionAchievementBp: number | null;
+  activityTarget: number | null;
+  activityActual: number;
+  activityAssigned: number;
+  totalScoreBp: number | null;
+  rating: string | null;
+  untargeted: string[];
+  unmatchedRevenuePaise: number;
+  categories: {
+    name: string;
+    targetBp: number;
+    minimumBp: number;
+    actualBp: number;
+    actualMl: number;
+    status: string;
+  }[];
+  computedAt: string;
+  hasTarget: boolean;
+  /** Calendar months the range touches, and how many carried a published target. */
+  monthsInRange: number;
+  monthsTargeted: number;
+  /** True where a month only partly inside the range contributed part of its target. */
+  prorated: boolean;
+};
+
+/** Whole days from `a` to `b`, both `YYYY-MM-DD`. Calendar arithmetic, no zone. */
+function dayCount(a: string, b: string): number {
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000) + 1;
+}
+
+export async function handsetReadingForRange(
+  userId: string,
+  from: string,
+  to: string,
+): Promise<HandsetRangeReading> {
+  const config = await getConfig();
+  const firstMonth = from.slice(0, 7);
+  const lastMonth = to.slice(0, 7);
+
+  const [actuals, targets] = await Promise.all([
+    actualsForWindow(from, to),
+    db.execute<TargetRow & { period: string }>(sql`
+      select t.id, t.user_id, u.name as user_name, t.period,
+             t.revenue_target_paise, t.volume_target_ml,
+             t.new_customer_target, t.collection_target_bp, t.activity_target_bp
+        from sales_targets t
+        join users u on u.id = t.user_id
+       where t.user_id = ${userId}
+         and t.status = 'published'
+         and t.period >= ${firstMonth}
+         and t.period <= ${lastMonth}
+       order by t.period
+    `),
+  ]);
+  const a = actuals.get(userId) ?? emptyActuals(userId);
+
+  let monthsInRange = 0;
+  for (let m = firstMonth; m <= lastMonth; m = addMonths(m, 1)) monthsInRange++;
+
+  /* Each month's target, weighted by how much of that month the range holds. */
+  let prorated = false;
+  const sum = { revenue: 0, volume: 0, newCustomers: 0 };
+  const share = { collection: 0, collectionDays: 0, activity: 0, activityDays: 0 };
+  for (const t of targets) {
+    const monthStart = `${t.period}-01`;
+    const monthEnd = endOfMonth(t.period);
+    const start = from > monthStart ? from : monthStart;
+    const end = to < monthEnd ? to : monthEnd;
+    const inside = dayCount(start, end);
+    const whole = daysInMonth(monthStart);
+    if (inside < whole) prorated = true;
+    const f = inside / whole;
+    sum.revenue += num(t.revenue_target_paise) * f;
+    sum.volume += num(t.volume_target_ml) * f;
+    sum.newCustomers += num(t.new_customer_target) * f;
+    if (t.collection_target_bp) {
+      share.collection += t.collection_target_bp * inside;
+      share.collectionDays += inside;
+    }
+    if (t.activity_target_bp) {
+      share.activity += t.activity_target_bp * inside;
+      share.activityDays += inside;
+    }
+  }
+  const asked: AskedFor | null = targets.length
+    ? {
+        revenuePaise: Math.round(sum.revenue),
+        millilitres: Math.round(sum.volume),
+        newCustomers: Math.round(sum.newCustomers),
+        collectionBp: share.collectionDays
+          ? Math.round(share.collection / share.collectionDays)
+          : 0,
+        activityBp: share.activityDays ? Math.round(share.activity / share.activityDays) : 0,
+      }
+    : null;
+
+  /* The mix is held to the LATEST target in the range that set bands. */
+  const bands = await bandsForTargets(targets.map((t) => t.id));
+  const latestWithBands = [...targets].reverse().find((t) => bands.has(t.id));
+  const targetBands = latestWithBands ? bands.get(latestWithBands.id) : undefined;
+
+  const { score, mix } = scoreActuals(a, asked, targetBands, config);
+  const by = (k: string) => score.components.find((c) => c.key === k);
+  /* Zero is "nothing asked" to every reader of these; null says it outright. */
+  const asTarget = (k: string) => by(k)?.target || null;
+
+  return {
+    from,
+    to,
+    revenueTargetPaise: asTarget("revenue"),
+    revenueActualPaise: a.revenuePaise,
+    revenueAchievementBp: by("revenue")?.achievementBp ?? null,
+    volumeTargetMl: asTarget("volume"),
+    volumeActualMl: a.millilitres,
+    volumeAchievementBp: by("volume")?.achievementBp ?? null,
+    mixAchievementBp: mix.achievementBp,
+    newCustomerTarget: asTarget("newCustomers"),
+    newCustomerActual: a.newCustomers,
+    collectionTargetPaise: asTarget("collection"),
+    collectionActualPaise: a.collectionPaise,
+    collectionBasePaise: a.overdueAtStartPaise,
+    collectionTargetBp: asked?.collectionBp || null,
+    collectionAchievementBp: by("collection")?.achievementBp ?? null,
+    activityTarget: asTarget("activity"),
+    activityActual: a.activity,
+    activityAssigned: a.activityAssigned,
+    totalScoreBp: targets.length ? score.totalBp : null,
+    rating: targets.length ? ratingFor(score.totalBp, config) : null,
+    untargeted: score.untargeted,
+    unmatchedRevenuePaise: a.unmatchedPaise,
+    categories: mix.categories.map((c) => ({
+      name: c.name,
+      targetBp: c.targetBp,
+      minimumBp: c.minimumBp,
+      actualBp: c.actualBp,
+      actualMl: c.millilitres,
+      status: c.status,
+    })),
+    computedAt: new Date().toISOString(),
+    hasTarget: targets.length > 0,
+    monthsInRange,
+    monthsTargeted: targets.length,
+    prorated,
+  };
 }
 
 /* ----------------------------------------------------------- the rebuild */

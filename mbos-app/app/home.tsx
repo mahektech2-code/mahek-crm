@@ -23,7 +23,7 @@ import {
 } from '../src/data/attendance';
 import { useTicker } from '../src/components/ui/use-ticker';
 import { collectionDue } from '../src/data/customers';
-import { listPerformance, shortfalls, type PerformanceMonth } from '../src/data/performance';
+import { listPerformance, shortfalls, type SyncedMonth } from '../src/data/performance';
 import { getConfig } from '../src/data/config';
 import { mayOpenDay } from '../src/data/day-gate';
 import { ordersToday } from '../src/data/orders';
@@ -180,7 +180,7 @@ export default function Home() {
   /* `undefined` is still reading, `null` is read and there is nothing. Two
      different sentences, and collapsing them shows "no target" for a frame to
      somebody who has one. */
-  const [month, setMonth] = React.useState<PerformanceMonth | null | undefined>(undefined);
+  const [month, setMonth] = React.useState<SyncedMonth | null | undefined>(undefined);
   /*
    * Nothing has ever come down from the office onto this handset.
    *
@@ -369,7 +369,7 @@ export default function Home() {
          stale list of leads under a sentence saying the read failed is the
          screen arguing with itself. */
       setLeads(undefined);
-      setReadErr('Your day could not be read on this phone. Close MBOS and open it again.');
+      setReadErr('Your day did not load. Close MBOS and open it again.');
     });
   }, [userId]);
 
@@ -396,7 +396,7 @@ export default function Home() {
      book either, so its three figures are empty rather than nought. */
   const leadsPending = !leads || neverPulled;
   const dashValues: { v: string; s: string; small?: boolean }[] = !day
-    ? DASH_CARDS.map(() => ({ v: '—', s: readErr ? 'Not read' : 'Reading…' }))
+    ? DASH_CARDS.map(() => ({ v: '—', s: readErr ? 'Did not load' : 'Loading…' }))
     : neverPulled
       ? DASH_CARDS.map(() => ({ v: '—', s: 'Nothing here yet' }))
       : [
@@ -419,7 +419,7 @@ export default function Home() {
          here; they are the subtitle now. With no plan at all there is no
          denominator to print, so the count stands on its own. */
       v: day.stops ? `${day.stopsDone} of ${day.stops}` : String(day.visits),
-      s: day.stops ? plural(day.visits, 'visit') + ' logged' : 'No plan today',
+      s: day.stops ? plural(day.visits, 'visit') + ' done' : 'No plan today',
     },
     { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer') },
     { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit' },
@@ -445,7 +445,7 @@ export default function Home() {
   const [selfieOpen, setSelfieOpen] = React.useState(false);
   const [selfieWords, setSelfieWords] = React.useState({
     title: 'Punch in',
-    subtitle: 'A photo of you goes with the punch-in.',
+    subtitle: 'Take a photo of yourself to punch in.',
     cancelLabel: 'Cancel the punch-in',
   });
   const answerSelfie = React.useRef<((r: SelfieResult) => void) | null>(null);
@@ -544,7 +544,7 @@ export default function Home() {
     try {
       return { km: shot.km, photoId: await queueOdometerPhoto(shot.uri, 'pending') };
     } catch {
-      notify('The photo could not be saved on this phone, so nothing was recorded. Try again.');
+      notify('Photo not saved. Nothing was recorded. Try again.');
       return false;
     }
   };
@@ -576,7 +576,7 @@ export default function Home() {
         odometer: meter,
       });
     } catch {
-      notify('Punched in. The travel for this session could not be started — add it on Travel.');
+      notify('Punched in. Travel did not start. Add it on Travel.');
     }
   };
 
@@ -601,7 +601,7 @@ export default function Home() {
     } catch {
       return {
         ok: false,
-        why: 'The photo could not be saved on this phone, so nothing was recorded. Try again.',
+        why: 'Photo not saved. Nothing was recorded. Try again.',
       };
     }
   };
@@ -656,7 +656,7 @@ export default function Home() {
          write, and not the other way round. */
       const selfie = await captureSelfie({
         title: 'Punch in',
-        subtitle: 'A photo of you goes with the punch-in.',
+        subtitle: 'Take a photo of yourself to punch in.',
         cancelLabel: 'Cancel the punch-in',
       });
       if (!selfie.ok) {
@@ -681,7 +681,7 @@ export default function Home() {
       const mode = answer.mode;
       const meter = mode ? await meterFor(mode, {
         title: 'Photograph the meter',
-        subtitle: 'Before you set off — this is where the day is measured from.',
+        subtitle: 'Before you start. Today’s km are counted from this reading.',
         cancelLabel: 'Cancel the punch-in',
       }, null) : null;
       if (meter === false) return;
@@ -710,16 +710,16 @@ export default function Home() {
       if (geo && !geo.inside) {
         askConfirm({
           title: 'You are not at base',
-          body: 'The day has started. Your manager sees the reason you give.',
-          reasonLabel: 'Why · required',
-          confirmLabel: 'Send the reason',
+          body: 'Your day has started. Your manager will see your reason.',
+          reasonLabel: 'Why · needed',
+          confirmLabel: 'Send reason',
           run: (reason) => {
             void setOverrideReason(row.id, reason);
             notify('Sent to your manager');
           },
         });
       } else {
-        notify('Day started' + (fix ? ' · GPS locked' : ' · saved without a location'));
+        notify('Day started' + (fix ? ' · GPS found' : ' · saved without location'));
       }
     } finally {
       setStarting(false);
@@ -746,8 +746,8 @@ export default function Home() {
          they stopped, which is the half that decides the hours. */
       const selfie = await captureSelfie({
         title: 'Punch out',
-        subtitle: 'A photo of you goes with the punch-out.',
-        cancelLabel: 'Stay on the clock',
+        subtitle: 'Take a photo of yourself to punch out.',
+        cancelLabel: 'Stay punched in',
       });
       if (!selfie.ok) {
         if (selfie.why) notify(selfie.why);
@@ -775,8 +775,8 @@ export default function Home() {
               sessionMode,
               {
                 title: 'Photograph the meter',
-                subtitle: 'Before you punch out — this is where the day is measured to.',
-                cancelLabel: 'Stay on the clock',
+                subtitle: 'Before you punch out. Today’s km are counted up to this reading.',
+                cancelLabel: 'Stay punched in',
               },
               session.odometerStartKm,
             )
@@ -795,14 +795,14 @@ export default function Home() {
             odometer: closing,
           });
         } catch {
-          notify('Punched out. The travel for this session could not be closed — check Travel.');
+          notify('Punched out. Travel did not close. Check Travel.');
         }
       }
       load();
       notify(
         out.ok
           ? `Punched out · ${durationLabel(out.workedMinutes)} worked`
-          : (out.reason ?? 'The day was already closed.'),
+          : (out.reason ?? 'Your day was already closed.'),
       );
       /* Not on a meter day — the readings are the claim. On every other day
          the fares only reach the office if he raises them, so he is asked
@@ -851,8 +851,8 @@ export default function Home() {
          the same act. */
       const selfie = await captureSelfie({
         title: 'Punch in again',
-        subtitle: 'A photo of you goes with every punch-in.',
-        cancelLabel: 'Stay off the clock',
+        subtitle: 'Take a photo of yourself to punch in.',
+        cancelLabel: 'Stay punched out',
       });
       if (!selfie.ok) {
         if (selfie.why) notify(selfie.why);
@@ -873,7 +873,7 @@ export default function Home() {
       const mode = answer.mode;
       const meter = mode ? await meterFor(mode, {
         title: 'Photograph the meter',
-        subtitle: 'Before you set off — this is where the day is measured from.',
+        subtitle: 'Before you start. Today’s km are counted from this reading.',
         cancelLabel: 'Cancel the punch-in',
       }, null) : null;
       if (meter === false) return;
@@ -949,7 +949,7 @@ export default function Home() {
         <Card style={{ marginTop: 14, padding: 14 }}>
           <Text style={type.label}>Your day</Text>
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 4 }}>
-            {readErr ?? 'Reading…'}
+            {readErr ?? 'Loading…'}
           </Text>
         </Card>
       ) : !checkedIn ? (
@@ -966,7 +966,7 @@ export default function Home() {
                 {starting ? 'Punching in…' : 'Punch in'}
               </Text>
               <Text style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.82)', marginTop: 2 }}>
-                Takes your photo, marks attendance, starts the timer
+                Takes your photo, marks attendance, starts timer
               </Text>
             </View>
             <Text style={{ fontSize: 20, color: 'rgba(255,255,255,0.6)' }}>›</Text>
@@ -994,7 +994,7 @@ export default function Home() {
               {/* Two stretches of work is a fact about the day, and this is the
                   only place it is visible before payroll asks about it. */}
               {day.sessionCount > 1 ? (
-                <Text style={[type.caption, { marginTop: 2 }]}>{plural(day.sessionCount, 'session')} today</Text>
+                <Text style={[type.caption, { marginTop: 2 }]}>{plural(day.sessionCount, 'punch-in')} today</Text>
               ) : null}
             </View>
             {/* NAMED FOR WHERE IT GOES. It read "Navigate", which is the word
@@ -1083,7 +1083,7 @@ export default function Home() {
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Keep tracking on</Text>
             <T s="caption" style={{ color: C.muted }}>
-              Two settings on your phone decide whether your route is recorded. Takes a minute.
+              Two phone settings decide if your route is saved. Takes a minute.
             </T>
           </View>
           <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
@@ -1154,11 +1154,11 @@ export default function Home() {
       */}
       {day && neverPulled ? (
         <Card style={{ marginTop: 12, padding: 14 }}>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Your book has not arrived</Text>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Your customers have not come yet</Text>
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
-            Nothing has come down from the office onto this phone yet, so these figures are empty
-            rather than nought. Find some signal and leave MBOS open for a minute — your customers,
-            today&rsquo;s plan and your tasks all arrive together.
+            Nothing has come from the office to this phone yet. That is why these boxes are empty.
+            Go where there is signal. Keep MBOS open for a minute. Your customers,
+            today&rsquo;s plan and your tasks will all come together.
           </Text>
         </Card>
       ) : null}
@@ -1191,7 +1191,7 @@ export default function Home() {
       <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 22 }}>
         <Text style={[type.label, { flex: 1 }]}>Your leads</Text>
         <Pressable onPress={() => router.push('/lead-actions?from=home')} accessibilityRole="button">
-          <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(600)]}>What is owed ›</Text>
+          <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(600)]}>Pending actions ›</Text>
         </Pressable>
       </View>
 
@@ -1271,24 +1271,24 @@ export default function Home() {
       */}
       {readErr ? (
         <Card style={{ marginTop: 10, padding: 14 }}>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Not read on this phone.</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Did not load on this phone.</Text>
         </Card>
       ) : !leads ? (
         <Card style={{ marginTop: 10, padding: 14 }}>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Reading…</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Loading…</Text>
         </Card>
       ) : neverPulled ? null /* the card above already says it, in full */ : leads.counts.working === 0 ? (
         <Card style={{ marginTop: 10, padding: 14 }}>
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>
-            No leads being worked. A shop you walk past is how a new one starts.
+            No open leads. Add a new shop you see as a lead.
           </Text>
         </Card>
       ) : leads.dueToday.length === 0 ? (
         <Card style={{ marginTop: 10, padding: 14 }}>
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>
             {leads.counts.overdue
-              ? 'Nothing owed today — but ' + plural(leads.counts.overdue, 'lead') + ' past its day.'
-              : 'Nothing owed on a lead today.'}
+              ? 'Nothing pending today. ' + plural(leads.counts.overdue, 'lead') + ' overdue.'
+              : 'No lead actions pending today.'}
           </Text>
         </Card>
       ) : (
@@ -1304,7 +1304,7 @@ export default function Home() {
               onPress={() => router.push('/lead-actions?view=today&from=home')}
               accessibilityRole="button">
               <Text style={[type.caption, { textAlign: 'center' }]}>
-                {'Showing ' + leads.dueToday.length + ' of ' + leads.counts.today + ' — tap for the rest'}
+                {'Showing ' + leads.dueToday.length + ' of ' + leads.counts.today + '. Tap to see all.'}
               </Text>
             </Pressable>
           ) : null}
@@ -1336,14 +1336,14 @@ export default function Home() {
             /* The read failed, and "the office has not set one" would be a
                claim about the office rather than about this phone. */
             <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
-              Not read on this phone.
+              Did not load on this phone.
             </Text>
           ) : month === undefined ? (
-            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>Reading…</Text>
+            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>Loading…</Text>
           ) : month === null || !month.hasTarget ? (
             <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
-              The office has not set one. Today&rsquo;s orders, visits and collections are in the six
-              figures above.
+              The office has not set a target yet. Today&rsquo;s orders, visits and collections
+              are in the boxes above.
             </Text>
           ) : (
             <>
@@ -1363,7 +1363,7 @@ export default function Home() {
                 ) : null}
               </View>
               <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
-                {shortfalls(month)[0] ?? 'You are at or above every target set for you.'}
+                {shortfalls(month)[0] ?? 'You have reached every target set for you.'}
               </Text>
               {/*
                 WHICH MONTH, AND WHEN IT WAS WORKED OUT.
@@ -1382,7 +1382,7 @@ export default function Home() {
               <Text style={[type.caption, { marginTop: 4 }]}>
                 {monthLabel(month.period) +
                   (month.computedAt ? ' · as at ' + asAt(month.computedAt) : '') +
-                  ' · tap for the rest'}
+                  ' · tap to see more'}
               </Text>
             </>
           )}
@@ -1422,7 +1422,7 @@ export default function Home() {
             How are you travelling today?
           </T>
           <T s="small" style={{ marginTop: 4 }}>
-            Asked once, for this session. You are not asked again at each shop.
+            Asked once for this check-in. Not asked again at each shop.
           </T>
 
           <TravelModeList
@@ -1458,7 +1458,7 @@ export default function Home() {
             {(claimPrompt?.modeLabel
               ? `You travelled by ${claimPrompt.modeLabel.toLowerCase()} today. `
               : '') +
-              'Fares, food and anything else you spent reach the office only if you add them — with a photo or PDF of each bill. It takes a minute now.'}
+              'The office pays fares, food and other costs only if you add them. Add a photo or PDF of each bill. It takes a minute.'}
           </T>
           <View style={{ marginTop: 14 }}>
             <PrimaryButton

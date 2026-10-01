@@ -43,6 +43,8 @@ const files = [
   "src/lib/journeys.test.ts",
   // A lead is raised inside the salesman's own area, and lands there.
   "src/lib/lead-territory.test.ts",
+  // Editing a field order before approval, and asking to change it after.
+  "src/lib/order-change.test.ts",
   // The ERP: access, powers, working location and the masters.
   "src/lib/erp/erp-foundation.test.ts",
   "src/lib/erp/erp-purchase.test.ts",
@@ -60,6 +62,8 @@ const files = [
   "src/lib/visit-intel.test.ts",
   "src/lib/accounts.test.ts",
   "src/lib/bill-paging.test.ts",
+  // A call's own reminder is folded onto the call in the All view.
+  "src/lib/timeline-fold.test.ts",
   "src/lib/feedback.test.ts",
   "src/lib/activity-location.test.ts",
   "src/lib/positions-endpoint.test.ts",
@@ -158,6 +162,10 @@ const files = [
   // three things a difference-based withdrawal could break — a real change
   // landing, a row that left being marked, and a row the sheet takes back.
   "src/lib/staging-idempotence.test.ts",
+  // Raw SQL returns bigint and numeric as NUMBERS (src/db/index.ts), and an
+  // account is one payroll row: the two bugs behind a Cost and return screen
+  // that concatenated salaries and listed one salesman twice.
+  "src/lib/numbers-from-sql.test.ts",
 ];
 
 let failed = 0;

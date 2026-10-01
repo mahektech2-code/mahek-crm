@@ -73,7 +73,7 @@ export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: num
   if (!granted) {
     const ok = await requestPermission();
     if (!ok) {
-      return { status: 'denied', reason: 'Location permission is off. The visit will be saved and flagged for your manager.' };
+      return { status: 'denied', reason: 'Location permission is off. The visit will be saved and marked for your manager to check.' };
     }
   }
 
@@ -87,7 +87,7 @@ export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: num
     ]);
 
     if (!position) {
-      return { status: 'unavailable', reason: 'No GPS fix. The visit will be saved and flagged for your manager to confirm.' };
+      return { status: 'unavailable', reason: 'No GPS signal. The visit will be saved and marked for your manager to check.' };
     }
 
     const fix: Fix = {
@@ -105,13 +105,13 @@ export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: num
       return {
         status: 'coarse',
         fix,
-        reason: `Only accurate to about ${fix.accuracyM} m. Recorded, and flagged for your manager.`,
+        reason: `GPS signal is weak, about ${fix.accuracyM} m. Saved and marked for your manager to check.`,
       };
     }
 
     return { status: 'ok', fix };
   } catch {
-    return { status: 'unavailable', reason: 'The phone could not get a location. Saved without one.' };
+    return { status: 'unavailable', reason: 'The phone could not get your location. Saved without a location.' };
   }
 }
 

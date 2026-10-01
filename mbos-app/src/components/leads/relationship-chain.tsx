@@ -57,7 +57,7 @@ export function RelationshipChain({
     {
       role: 'Their salesman',
       name: distributorSalesmanName,
-      missing: 'Nobody has written down who calls on them',
+      missing: 'Not written who visits them',
     },
     { role: 'Billed by', name: distributorName, missing: 'No distributor named' },
     {
@@ -101,13 +101,12 @@ export function RelationshipChain({
       </ScrollView>
 
       <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 10 }}>
-        We deliver to this shop and the distributor invoices it. Price, credit and any commercial promise stay
-        theirs — yours is the visit and what you hear in it.
+        We deliver to this shop. The distributor bills it. The distributor decides price and credit. Your job is the visit and what you learn there.
       </T>
 
       {(distributorCount ?? 0) > 1 ? (
         <T style={{ fontSize: 14, lineHeight: 20, color: C.warnInk, marginTop: 6 }}>
-          {'The office has ' + distributorCount + ' distributors invoicing this shop. Only one of them is named here.'}
+          {distributorCount + ' distributors bill this shop. Only one is shown here.'}
         </T>
       ) : null}
     </Card>

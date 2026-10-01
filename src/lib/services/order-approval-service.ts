@@ -82,10 +82,14 @@ export async function pendingOrders(): Promise<PendingOrder[]> {
            c.contact_person, c.phone, c.outstanding, c.slow_payer,
            c.credit_days, o.ordered_at, u.name as taken_by,
            o.total_amount,
-           (select count(*)::int
+           -- A CRM order's lines hang off the call; a field order's are on the
+           -- order itself. Counting only the first drew every MBOS order as
+           -- "0 lines" in the queue.
+           coalesce(nullif((select count(*)::int
               from interaction_product_lines l
               join calls ca on ca.id = l.interaction_id
-             where ca.order_id = o.id) as line_count,
+             where ca.order_id = o.id), 0),
+             case when jsonb_typeof(o.line_items) = 'array' then jsonb_array_length(o.line_items) else 0 end) as line_count,
            (select count(*)::int from bills b
              where b.customer_id = c.id
                and b.amount > b.paid_amount
@@ -137,7 +141,19 @@ export async function orderLines(orderId: string): Promise<PendingOrderLine[]> {
       join products p on p.id = l.product_id
       left join product_formulations f on f.id = p.formulation_id
      where ca.order_id = ${orderId}
-     order by p.display_order, p.name
+    union all
+    -- A field order carries its lines on the order — product ids from the
+    -- handset — and has no call behind it. Only read where the call has none,
+    -- so an order is never drawn twice.
+    select coalesce(p.name, li->>'product'), p.pack_size, f.name, (li->>'quantity')::int,
+           p.millilitres_per_can, coalesce(p.cans_per_box, 1)
+      from orders o
+      cross join lateral jsonb_array_elements(case when jsonb_typeof(o.line_items) = 'array' then o.line_items else '[]'::jsonb end) li
+      left join products p on p.id = li->>'productId'
+      left join product_formulations f on f.id = p.formulation_id
+     where o.id = ${orderId}
+       and not exists (select 1 from interaction_product_lines l2
+                         join calls c2 on c2.id = l2.interaction_id where c2.order_id = o.id)
   `);
   return rows.map((r) => ({
     productName: r.name,
@@ -168,12 +184,12 @@ export async function orderLines(orderId: string): Promise<PendingOrderLine[]> {
  * just done, so that is skipped — the same rule as a reassignment that
  * changes nothing notifying nobody.
  *
- * NO HANDSET DEEP LINK, deliberately. MBOS's `/rejections` screen reads the
- * local outbox — records the office refused BEFORE they were ever stored — and
- * an order declined here synced perfectly well days ago, so it is not on that
- * screen and never will be. A tap falls through to `/notifications`, which
- * carries the reason in the body: the honest default `notify.ts` names, rather
- * than a deep link that lands somewhere the record is not.
+ * A FIELD ORDER'S TAP OPENS `/orders` on the handset, and nothing else does.
+ * `/rejections` would be wrong — it reads the local outbox, records refused
+ * BEFORE they were stored, and an order declined here synced days ago. The
+ * Orders screen is right now that the decision reaches it (`myOrders` on the
+ * pull): the order is drawn there with its new status and the reason. An
+ * order with no handset behind it keeps the honest default, `/notifications`.
  *
  * IT NEVER FAILS THE DECISION. The order is decided and audited before this
  * runs; the courtesy is on top of a completed write, exactly as the next-step
@@ -194,6 +210,7 @@ async function tellTheAuthor(
   const who = customer?.name ?? "a customer";
   const value = money(Number(order.totalAmount));
   const href = `/crm/customers/${order.customerId}`;
+  const mbosHref = order.source === "mbos" ? "/orders" : null;
 
   await notifyUser(
     reason === null
@@ -202,6 +219,7 @@ async function tellTheAuthor(
           title: `Your order for ${who} was approved`,
           body: `${decidedBy.name} approved it — ${value}.`,
           href,
+          mbosHref,
         }
       : {
           userId: authorId,
@@ -213,6 +231,7 @@ async function tellTheAuthor(
           body: `${decidedBy.name} declined it — ${value}. You will need to ring the customer back. Reason given: ${reason}`,
           kind: "warn",
           href,
+          mbosHref,
         },
   ).catch(() => {
     /* A bell that could not be written must not undo an order decision that

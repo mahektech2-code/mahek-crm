@@ -35,31 +35,31 @@ export const FOLLOW_ON: Partial<Record<OutcomeKey, { label: string; word: string
   order: {
     label: 'Order',
     word: 'order',
-    line: 'Take the order without leaving this visit.',
-    cta: 'Punch the order',
+    line: 'Take the order here, inside this visit.',
+    cta: 'Take order',
   },
   payment: {
     label: 'Payment',
     word: 'receipt',
-    line: 'Collect it now and the receipt goes out on WhatsApp.',
+    line: 'Collect it now. The receipt goes on WhatsApp.',
     cta: 'Collect payment',
   },
   complaint: {
     label: 'Complaint',
     word: 'complaint',
-    line: 'Log what they said so the desk team picks it up today.',
-    cta: 'Log the complaint',
+    line: 'Write what they said. The desk team will see it today.',
+    cta: 'Add complaint',
   },
   sample: {
     label: 'Sample request',
     word: 'request',
-    line: 'Request the sample and set the trial follow-up.',
-    cta: 'Request a sample',
+    line: 'Ask for the sample. The trial follow-up is set too.',
+    cta: 'Ask for sample',
   },
 };
 
 export type VisitCheck = {
-  key: 'gps' | 'dwell' | 'photo' | 'followon' | 'outcome' | 'note';
+  key: 'gps' | 'dwell' | 'followon' | 'outcome' | 'note';
   ok: boolean;
   line: string;
   /** Only shown when the check has failed — the reason the rule exists at all. */
@@ -91,7 +91,6 @@ export type VisitFacts = {
    * what the office is told changes; what changes is that he is asked once.
    */
   checkInOverridden: boolean;
-  hasShopPhoto: boolean;
   outcome: OutcomeKey | null;
   followOnCaptured: boolean;
   /** How much he has written about the visit, trimmed. */
@@ -103,7 +102,7 @@ export type VisitFacts = {
 /**
  * THE QUESTIONS, as against the evidence.
  *
- * GPS, time in the shop and the photograph are EVIDENCE: a salesman may be
+ * GPS and time in the shop are EVIDENCE: a salesman may be
  * unable to produce them for reasons that are not his fault, and "save it
  * unverified with a reason" exists for exactly that. The outcome, its
  * follow-on and the note are ANSWERS — only he can give them, nothing stops
@@ -151,43 +150,41 @@ export function visitChecks(f: VisitFacts): VisitCheck[] {
       key: 'gps',
       ok: f.checkInOverridden || (f.gpsLocked && (unlocated || near)),
       line: f.checkInOverridden
-        ? `Checked in ${f.metresAway ?? '?'} m from the recorded address — you said the shop’s pin is wrong`
+        ? `Checked in ${f.metresAway ?? '?'} m from the shop address. You said the shop pin is wrong`
         : !f.gpsLocked
-          ? 'No GPS fix yet'
+          ? 'No GPS yet'
           : unlocated
-            ? 'This shop has no recorded location yet — nothing to compare against.'
+            ? 'This shop has no saved location yet. Nothing to compare.'
             : near
-              ? `At the shop · ${f.metresAway} m from the recorded address`
-              : `${f.metresAway} m from the shop — too far to count as a visit`,
-      why: 'A visit is logged against the shop’s address, not where the phone is.',
+              ? `At the shop · ${f.metresAway} m from the shop address`
+              : `${f.metresAway} m from the shop. Too far to count as a visit`,
+      why: 'A visit counts at the shop address, not where your phone is.',
     },
     {
       key: 'dwell',
       ok: dwellOk,
       line: dwellOk
         ? `In the shop ${mins}m ${secs}s`
-        : `Only ${f.dwellSeconds}s so far — a visit needs ${floor}`,
-      why: 'Two minutes is the floor agreed with your manager.',
+        : `Only ${f.dwellSeconds}s so far. A visit needs ${floor}`,
+      why: 'Your manager set two minutes as the least time.',
     },
-    {
-      key: 'photo',
-      ok: f.hasShopPhoto,
-      line: f.hasShopPhoto ? 'Shop photo taken' : 'Shop photo not taken',
-      why: 'The photo is what the office sees when nobody was there.',
-    },
+    /* No photograph check. The shop and owner photos are offered on the form
+       and never required: a visit is not refused, or saved unverified, for
+       want of a picture of a counter. The tiles do not say "optional" either —
+       they are simply there to be pressed. */
     {
       key: 'followon',
       ok: !fo || f.followOnCaptured,
-      line: !fo || f.followOnCaptured ? 'Follow-on captured' : `${fo.label} not captured yet`,
+      line: !fo || f.followOnCaptured ? 'Next step done' : `${fo.label} not done yet`,
       why: fo
-        ? `You marked this outcome — the ${fo.word} is what the office acts on.`
-        : 'You marked this outcome — the follow-on is what the office acts on.',
+        ? `You chose this result. The office works on the ${fo.word}.`
+        : 'You chose this result. The office works on the next step.',
     },
     {
       key: 'outcome',
       ok: !!f.outcome,
-      line: f.outcome ? 'Outcome recorded' : 'How it went is not recorded yet',
-      why: 'Everything after this visit depends on the outcome.',
+      line: f.outcome ? 'Result saved' : 'You have not said how it went',
+      why: 'All next steps depend on how it went.',
     },
     (() => {
       const needed = outcomeNeedsNote(f.outcome);
@@ -200,9 +197,9 @@ export function visitChecks(f: VisitFacts): VisitCheck[] {
           : ok
             ? 'Visit notes written'
             : f.noteChars === 0
-              ? 'Nothing written about the visit yet'
-              : `Say a little more about the visit — ${f.minimumNoteChars - f.noteChars} more characters`,
-        why: 'Write the points of the visit: what was discussed, what they said, and what happens next. It is all your manager and the next visit will have.',
+              ? 'No notes written yet'
+              : `Write a little more. ${f.minimumNoteChars - f.noteChars} more letters needed`,
+        why: 'Write what you talked about, what they said, and what happens next. Your manager and your next visit only have this.',
       };
     })(),
   ];
@@ -236,11 +233,11 @@ export function visitVerdict(checks: VisitCheck[], f?: { checkInOverridden?: boo
     /** …and the visit that lands is a clean one. */
     verified: complete && !overridden,
     title: !complete
-      ? 'Before you can save this'
+      ? 'Before you save'
       : overridden
-        ? 'This will save unverified'
-        : 'Everything checks out',
-    blockedLine: plural(failed.length, 'thing') + ' missing before this can be saved',
+        ? 'This will save as not checked'
+        : 'All done',
+    blockedLine: plural(failed.length, 'thing') + ' missing. Add before you save',
     firstFailure: failed[0]?.line ?? '',
     /**
      * The line the save bar carries above the button. It is the first missing
@@ -251,16 +248,16 @@ export function visitVerdict(checks: VisitCheck[], f?: { checkInOverridden?: boo
     warning:
       failed[0]?.line ??
       (overridden
-        ? 'You said the shop’s pin is wrong — this saves unverified and your manager reads your reason.'
+        ? 'You said the shop pin is wrong. This saves as not checked. Your manager will read your reason.'
         : ''),
     /* "does not meet 0 requirements" is what this said where nothing was
        outstanding, which is now a state somebody can reach — an overridden
        check-in leaves the checklist complete and the visit unverified. */
     overrideBody: complete
-      ? 'This visit will be saved, marked unverified, and sent to your manager to confirm.'
-      : 'This visit does not meet ' +
-        plural(failed.length, 'requirement') +
-        '. It will be saved, marked unverified, and sent to your manager to confirm.',
+      ? 'This visit will be saved as not checked. Your manager will check it.'
+      : 'This visit is missing ' +
+        plural(failed.length, 'thing') +
+        '. It will be saved as not checked. Your manager will check it.',
   };
 }
 

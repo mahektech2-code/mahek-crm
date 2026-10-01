@@ -135,10 +135,10 @@ export default function TasksScreen() {
 
   const snooze = (t: Task) =>
     askConfirm({
-      title: 'Push this to another day?',
+      title: 'Move this to another day?',
       body: t.title + ' · ' + nameOf(t.customerId),
-      reasonLabel: 'Why · required',
-      confirmLabel: 'Push it back',
+      reasonLabel: 'Why · needed',
+      confirmLabel: 'Move it',
       run: (reason) => {
         /* Both halves are kept: the new day and the reason for it, appended
            rather than replaced, because three snoozes is the story. */
@@ -158,9 +158,9 @@ export default function TasksScreen() {
 
       {tasks.length === 0 ? (
         <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing outstanding</T>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing pending</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Anything you promise a customer during a visit lands here.
+            What you promise a customer on a visit shows here.
           </T>
         </Card>
       ) : null}
@@ -220,7 +220,7 @@ export default function TasksScreen() {
                         of sentences people tick off without doing. */}
                     {t.sourceType === 'lead_validation' && t.customerId ? (
                       <SecondaryButton
-                        label="Make the call"
+                        label="Call now"
                         onPress={() =>
                           router.push(`/validate?id=${t.customerId}&taskId=${t.id}&from=tasks`)
                         }
@@ -229,7 +229,7 @@ export default function TasksScreen() {
                     ) : null}
                     {t.sourceType === 'requirement_visit' && t.customerId ? (
                       <SecondaryButton
-                        label="Open the shop"
+                        label="Open shop"
                         onPress={() => {
                           set({ custId: t.customerId ?? undefined, pTab: 0 });
                           router.push('/customer');
@@ -298,7 +298,7 @@ export default function TasksScreen() {
         <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>New task</T>
 
         <View style={{ marginTop: 14 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>What needs doing</SectionLabel>
+          <SectionLabel style={{ marginBottom: 6 }}>What to do</SectionLabel>
           <Input
             value={title}
             onChangeText={(v) => {
@@ -308,7 +308,7 @@ export default function TasksScreen() {
             placeholder="Take the rate list to Balaji"
             invalid={titleErr}
           />
-          {titleErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Say what needs doing.</T> : null}
+          {titleErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what needs to be done.</T> : null}
         </View>
 
         <View style={{ marginTop: 12 }}>
@@ -316,7 +316,7 @@ export default function TasksScreen() {
           <Input
             value={custQuery}
             onChangeText={setCustQuery}
-            placeholder="Search your book by name, area or phone"
+            placeholder="Search your customers by name, area or phone"
           />
           <View style={{ gap: 8, marginTop: 8 }}>
             {/* A job that belongs to nobody in particular is a real task —
@@ -324,7 +324,7 @@ export default function TasksScreen() {
                 no such row made it unrecordable. It is first because it is also
                 the only way to undo a pick. */}
             <Choice
-              label="No customer — a general job"
+              label="No customer. General work"
               selected={picked === null}
               onPress={() => setPicked(null)}
             />
@@ -343,11 +343,11 @@ export default function TasksScreen() {
               />
             ))}
             {custQuery.trim() && customers.length === 0 ? (
-              <T s="caption">No shop in your book matches that.</T>
+              <T s="caption">No customer found.</T>
             ) : null}
             {bookTotal > customers.length ? (
               <T s="caption">
-                {'Showing ' + customers.length + ' of ' + bookTotal + ' — search for the rest.'}
+                {'Showing ' + customers.length + ' of ' + bookTotal + '. Search to find more.'}
               </T>
             ) : null}
           </View>

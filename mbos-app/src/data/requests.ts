@@ -269,10 +269,25 @@ export async function claimExpense(args: {
 export type LeaveRequest = {
   id: string; kind: string; fromDate: string; toDate: string; halfDay: string | null;
   days: number; reason: string; state: string; lossOfPay: number; syncState: string;
+  clientCreatedAt: number;
+  /** Who decided it, when, and what they said — off the approval, once there is one. */
+  approverName: string | null; decidedAt: number | null; decisionNote: string | null;
 };
 
+const DECIDED = `approvals a WHERE a.subjectType = 'leave' AND a.subjectId = l.id AND a.state <> 'pending' ORDER BY a.decidedAt DESC`;
+
+/** His requests, newest first, each with the decision on it where one has been made. */
 export async function listLeave(): Promise<LeaveRequest[]> {
-  return all<LeaveRequest>('SELECT * FROM leave_requests ORDER BY fromDate DESC');
+  return all<LeaveRequest>(
+    /* Subqueries rather than a join: a request can carry more than one
+       approval row, and a join would list it once per row. */
+    `SELECT l.*,
+            (SELECT a.approverName FROM ${DECIDED} LIMIT 1) AS approverName,
+            (SELECT a.decidedAt FROM ${DECIDED} LIMIT 1) AS decidedAt,
+            (SELECT a.decisionNote FROM ${DECIDED} LIMIT 1) AS decisionNote
+       FROM leave_requests l
+      ORDER BY l.clientCreatedAt DESC`,
+  );
 }
 
 export async function leaveBalances() {
@@ -382,7 +397,7 @@ export async function requestTour(args: {
   notes?: string;
 }): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
   if (args.endDate < args.startDate) {
-    return { ok: false, message: 'That tour ends before it starts.' };
+    return { ok: false, message: 'The end date is before the start date.' };
   }
 
   const base = await stamp('tour');
@@ -513,6 +528,8 @@ export async function complaintsFor(customerId: string): Promise<Complaint[]> {
 
 export type Sample = {
   id: string; customerId: string; productName: string | null; state: string;
+  /** The SKU code, joined off the catalogue on the phone. */
+  sku?: string | null;
   requestedAt: number; followUpDate: string | null; trialOutcome: string | null; syncState: string;
   /* The three assertions, in the order they happen. See `SampleProgress`. */
   dispatchedAt: number | null;
@@ -544,13 +561,13 @@ export type Sample = {
  */
 export async function customerSamples(customerId: string): Promise<Sample[]> {
   return all<Sample>(
-    'SELECT * FROM samples WHERE customerId = ? ORDER BY requestedAt DESC, id DESC',
+    'SELECT s.*, p.sku AS sku FROM samples s LEFT JOIN products p ON p.id = s.productId WHERE s.customerId = ? ORDER BY s.requestedAt DESC, s.id DESC',
     [customerId],
   );
 }
 
 export async function listSamples(): Promise<Sample[]> {
-  return all<Sample>('SELECT * FROM samples ORDER BY requestedAt DESC');
+  return all<Sample>('SELECT s.*, p.sku AS sku FROM samples s LEFT JOIN products p ON p.id = s.productId ORDER BY s.requestedAt DESC');
 }
 
 /**

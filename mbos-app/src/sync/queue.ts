@@ -164,7 +164,7 @@ export async function readyItems(now = Date.now(), limit = 50): Promise<QueueIte
   });
 
   for (const item of verdict.blocked) {
-    await blockItem(item.id, 'A record this one depends on did not go through.');
+    await blockItem(item.id, 'Something this needs was not sent. Send that first.');
   }
 
   const byId = new Map(queued.map((q) => [q.id, q]));
@@ -224,7 +224,7 @@ export async function blockDependents(entityId: string): Promise<void> {
   for (const item of open) {
     const deps: string[] = JSON.parse(item.dependsOn);
     if (deps.includes(entityId)) {
-      await blockItem(item.id, 'A record this one depends on did not go through.');
+      await blockItem(item.id, 'Something this needs was not sent. Send that first.');
       await blockDependents(item.entityId);
     }
   }
@@ -263,6 +263,7 @@ async function unblockDependents(entityId: string, now: number): Promise<void> {
 const ENTITY_TABLE: Record<string, string> = {
   visit: 'visits',
   order: 'orders',
+  order_change_request: 'order_change_requests',
   payment: 'payments',
   attendance: 'attendance_days',
   task: 'tasks',

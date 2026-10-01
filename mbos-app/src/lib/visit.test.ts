@@ -51,7 +51,6 @@ const facts = {
   minimumDwellSeconds: 120,
   maxMetresFromShop: 100,
   checkInOverridden: false,
-  hasShopPhoto: true,
   outcome: 'visited' as const,
   followOnCaptured: false,
   noteChars: 60,
@@ -72,7 +71,7 @@ test('a few characters are not an account of the visit', () => {
   const checks = visitChecks({ ...facts, noteChars: 5 });
   const note = checks.find((c) => c.key === 'note')!;
   assert.equal(note.ok, false);
-  assert.match(note.line, /15 more characters/);
+  assert.match(note.line, /15 more letters/);
 });
 
 test('a shop found shut needs no note — there is nothing to report but the shutter', () => {
@@ -87,9 +86,9 @@ test('no outcome chosen is asked first, and the note with it', () => {
   assert.deepEqual(unansweredQuestions(checks).map((c) => c.key), ['outcome', 'note']);
 });
 
-test('the evidence is not an answer — missing GPS or photo owes no question', () => {
-  /* Those are waived by an unverified save; the answers never are. */
-  const checks = visitChecks({ ...facts, gpsLocked: false, hasShopPhoto: false });
+test('the evidence is not an answer — missing GPS owes no question', () => {
+  /* That is waived by an unverified save; the answers never are. */
+  const checks = visitChecks({ ...facts, gpsLocked: false });
   assert.equal(visitVerdict(checks).complete, false);
   assert.deepEqual(unansweredQuestions(checks), []);
 });
@@ -97,4 +96,10 @@ test('the evidence is not an answer — missing GPS or photo owes no question', 
 test('an order outcome owes the order AND the note', () => {
   const checks = visitChecks({ ...facts, outcome: 'order', followOnCaptured: false, noteChars: 0 });
   assert.deepEqual(unansweredQuestions(checks).map((c) => c.key), ['followon', 'note']);
+});
+
+test('the photographs are never asked for — no check names one', () => {
+  const checks = visitChecks(facts);
+  assert.ok(checks.every((c) => !/photo/i.test(c.line)));
+  assert.equal(visitVerdict(checks).verified, true);
 });

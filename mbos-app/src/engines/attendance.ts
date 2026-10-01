@@ -100,7 +100,7 @@ export function deriveStatus(inputs: AttendanceInputs): AttendanceResult {
       ...base,
       status: 'On Leave',
       sentence: workedMinutes > 0
-        ? `On approved ${inputs.approvedLeave.kind} leave, with work logged against the day — worth a word with your manager.`
+        ? `On approved ${inputs.approvedLeave.kind} leave, but work was saved on this day. Talk to your manager.`
         : `On approved ${inputs.approvedLeave.kind} leave.`,
     };
   }
@@ -118,8 +118,8 @@ export function deriveStatus(inputs: AttendanceInputs): AttendanceResult {
       ...base,
       status: 'Present',
       sentence: needsRegularization
-        ? `${describe(workedMinutes)} logged, and a session left open — regularize it.`
-        : `${describe(workedMinutes)} logged.`,
+        ? `${describe(workedMinutes)} worked. One check-in was not closed. Please regularize it.`
+        : `${describe(workedMinutes)} worked.`,
     };
   }
 
@@ -128,8 +128,8 @@ export function deriveStatus(inputs: AttendanceInputs): AttendanceResult {
       ...base,
       status: 'Half Day',
       sentence: needsRegularization
-        ? `${describe(workedMinutes)} logged, and a session left open — regularize it.`
-        : `${describe(workedMinutes)} logged — short of a full day.`,
+        ? `${describe(workedMinutes)} worked. One check-in was not closed. Please regularize it.`
+        : `${describe(workedMinutes)} worked. Less than a full day.`,
     };
   }
 
@@ -137,10 +137,10 @@ export function deriveStatus(inputs: AttendanceInputs): AttendanceResult {
     ...base,
     status: 'Absent',
     sentence: needsRegularization
-      ? 'A session was never closed, so nothing counts yet — regularize it and the day will recalculate.'
+      ? 'A check-in was never closed, so nothing counts yet. Regularize it and the day will be worked out again.'
       : workedMinutes > 0
-        ? `Only ${describe(workedMinutes)} logged.`
-        : 'No punch-in on record.',
+        ? `Only ${describe(workedMinutes)} worked.`
+        : 'No punch-in saved.',
   };
 }
 

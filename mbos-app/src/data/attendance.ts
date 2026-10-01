@@ -304,6 +304,7 @@ export async function checkIn(args: {
        It was stopped at the check-out, and an afternoon with no line on the map
        reads as an afternoon nobody worked. */
     void trail.start('check-in');
+    await stampClock(args.userId, day, 'in', sessions[sessions.length - 1].inAt);
     return { id: existing.id, withinRadius, needsOverride: false };
   }
 
@@ -357,6 +358,7 @@ export async function checkIn(args: {
      one second either side — a track that carried on afterwards would be
      following somebody home. */
   void trail.start('check-in');
+  await stampClock(args.userId, day, 'in', opened[0].inAt);
 
   return { id: base.id, withinRadius, needsOverride };
 }
@@ -472,8 +474,25 @@ export async function checkOut(
   /* The day is closed. Stop, and send what is held — the last stretch of the
      afternoon is the part most likely still to be on the phone. */
   void trail.stop();
+  await stampClock(userId, row.day, 'out', at);
 
   return { ok: true, workedMinutes: worked };
+}
+
+/**
+ * The punch, written onto the day the meal allowance is priced from.
+ *
+ * After the attendance write and never able to undo it: a punch that landed
+ * is a punch, and a day whose times could not be stamped is one he can still
+ * be paid for by the office reopening it.
+ */
+async function stampClock(userId: string, day: string, edge: 'in' | 'out', at: number): Promise<void> {
+  try {
+    const { stampDayClock } = await import('./travel');
+    await stampDayClock(userId, day, edge, at);
+  } catch {
+    /* Swallowed on purpose — see above. */
+  }
 }
 
 /**

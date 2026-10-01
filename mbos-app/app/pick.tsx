@@ -237,7 +237,7 @@ export default function PickScreen() {
       notify(plural(picked.length, 'shop') + ' picked. Your manager can see the day now.');
       router.back();
     } catch {
-      notify('The day could not be saved on this phone. Nothing is lost — try again.');
+      notify('The day could not be saved on this phone. Nothing is lost. Try again.');
     } finally {
       setSaving(false);
     }
@@ -245,7 +245,7 @@ export default function PickScreen() {
 
   const away = React.useCallback(
     (c: Candidate): string => {
-      if (c.gpsLat == null || c.gpsLng == null) return 'no pin';
+      if (c.gpsLat == null || c.gpsLng == null) return 'no location';
       if (!origin) return '';
       const m = haversineMetres(origin, { lat: c.gpsLat, lng: c.gpsLng });
       return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km';
@@ -265,7 +265,7 @@ export default function PickScreen() {
               : /* "The route screen" is not a thing anybody can find: the tab is
                    labelled Journey, and a sentence that names a screen by a word
                    nowhere on the app sends him looking for it. */
-                'That day is not on this handset. Pull down on the Journey tab to fetch it.'}
+                'That day is not on this phone. Pull down on the Journey tab to get it.'}
         </T>
         {dayFailed ? (
           <SecondaryButton
@@ -340,11 +340,11 @@ export default function PickScreen() {
         }}>
         <T style={[type.body, weight(600), { color: C.ink }]}>{dayLabel(day.planDate)}</T>
         <T s="small" style={{ color: C.body, marginTop: 2 }}>
-          {day.city ? day.city + ' — you agreed this day' : 'You agreed this day'}
+          {day.city ? day.city + ' · you agreed this day' : 'You agreed this day'}
         </T>
         <T s="small" style={{ color: C.muted, marginTop: 6 }}>
-          Tick them in the order you mean to walk them. You can change the order on the morning,
-          from wherever you actually are.
+          Tick them in the order you will visit them. You can change the order on the day,
+          from where you are.
         </T>
       </View>
 
@@ -455,7 +455,7 @@ export default function PickScreen() {
                 ? 'No shop matches that.'
                 : /* The Journey tab, by the name written on it — see the day
                      branch above, which named the same non-existent screen. */
-                  'There are no shops on this handset yet — pull down on the Journey tab to fetch your book.'}
+                  'No shops on this phone yet. Pull down on the Journey tab to get your shops.'}
           </T>
         ) : null}
 
@@ -545,7 +545,7 @@ export default function PickScreen() {
                   {/* `inr` takes RUPEES — see its own note. Handed paise it
                       reported ₹2,36,000 owing against a bill of ₹2,360, on a
                       row somebody decides a morning from. */}
-                  {c.outstandingPaise > 0 ? ' · ' + inrFromPaise(c.outstandingPaise) + ' owing' : ''}
+                  {c.outstandingPaise > 0 ? ' · ' + inrFromPaise(c.outstandingPaise) + ' outstanding' : ''}
                 </T>
               </View>
 
@@ -578,7 +578,7 @@ export default function PickScreen() {
       */}
       {total > rows.length ? (
         <T s="small" style={{ color: C.muted, paddingVertical: 14, textAlign: 'center' }}>
-          {rows.length + ' of ' + total + ' shops — search for one that is not here'}
+          {rows.length + ' of ' + total + ' shops. Search for one that is not here'}
         </T>
       ) : null}
     </AppFrame>

@@ -46,6 +46,22 @@ export type Arrival = {
   checkedInAt: number | null;
   /** The business day it belongs to, so a stale one can be told from today's. */
   day: string;
+  /**
+   * The reading the check-in gate accepted. Kept so that checking out never
+   * re-measures him against the shop — the gate is at the door, and a fresh
+   * fix taken after he has walked away would refuse a check-out for a visit
+   * that verified perfectly well. Also what `leftShopVerdict` measures from.
+   * Absent on arrivals written before this existed.
+   */
+  checkInFix?: { lat: number; lng: number; accuracyM: number | null } | null;
+  /**
+   * When the trail first proved he had walked away without checking out. Set
+   * once, and it is what closes the visit — the time he left, not the time he
+   * finally remembered to press the button.
+   */
+  leftShopAt?: number | null;
+  /** How far away he was when that was noticed, for the sentence that says so. */
+  leftShopMetres?: number | null;
 };
 
 function parse(raw: string | null): Arrival | null {
@@ -83,10 +99,13 @@ export async function recordArrival(args: {
   customerName: string;
   legId: string | null;
   arrivedAt: number;
+  checkInFix?: Arrival['checkInFix'];
 }): Promise<Arrival> {
   const value: Arrival = {
     ...args,
     checkedInAt: null,
+    leftShopAt: null,
+    leftShopMetres: null,
     day: isoDate(new Date(args.arrivedAt)),
   };
   await setKv(KEY, JSON.stringify(value));
@@ -108,6 +127,20 @@ export async function checkInAtShop(now: number): Promise<Arrival | null> {
   /* Unchanged means it was already stamped, so there is nothing to write and
      no reason to touch the disk over a double tap. */
   if (next === value) return value;
+  await setKv(KEY, JSON.stringify(next));
+  return next;
+}
+
+/**
+ * He walked away without checking out. Written once — a second call returns
+ * what is already there, so the instant he left is the FIRST one noticed.
+ * Returns null where there is no checked-in arrival to mark.
+ */
+export async function markLeftShop(at: number, metres: number): Promise<Arrival | null> {
+  const value = await readArrival();
+  if (!value || value.checkedInAt == null) return null;
+  if (value.leftShopAt != null) return value;
+  const next: Arrival = { ...value, leftShopAt: at, leftShopMetres: metres };
   await setKv(KEY, JSON.stringify(next));
   return next;
 }

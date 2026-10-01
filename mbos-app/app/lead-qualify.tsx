@@ -50,7 +50,7 @@ const DISTRIBUTOR_FIELDS: Record<string, { field: string; kind: FieldKind; hint?
   gst_verified: { field: 'gstVerified', kind: 'confirm' },
   pan_verified: { field: 'panVerified', kind: 'confirm' },
   address_verified: { field: 'businessAddressVerified', kind: 'confirm' },
-  business_type: { field: 'businessType', kind: 'text', hint: 'Proprietor, partnership, private limited' },
+  business_type: { field: 'businessType', kind: 'text', hint: 'Owner, partnership, private limited' },
   years_in_business: { field: 'yearsInBusiness', kind: 'number' },
   decision_maker: { field: 'decisionMaker', kind: 'text' },
 
@@ -88,10 +88,10 @@ const DISTRIBUTOR_FIELDS: Record<string, { field: string; kind: FieldKind; hint?
 
 const GROUP_TITLE: Record<string, string> = {
   legal: 'Business and legal',
-  capability: 'Distribution capability',
-  commercial: 'Commercial capability',
-  territory: 'Territory',
-  commitment: 'What they commit to',
+  capability: 'Supply and stock',
+  commercial: 'Money and buying',
+  territory: 'Area',
+  commitment: 'What they promise',
 };
 
 /**
@@ -132,10 +132,10 @@ const SHOP_COLUMNS: Record<
     where: 'GST number, on Prospect details',
     note: (v) =>
       !v.lead.gstin?.trim()
-        ? 'Add the GST number under Prospect details — the back office checks it'
+        ? 'Add the GST number in Prospect details. The back office will check it.'
         : v.lead.gstVerified === 1
           ? 'Checked by the back office'
-          : 'With the back office — they check the number against the portal',
+          : 'With the back office. They will check the number online.',
   },
   /* Both columns, for the two that have two. The capture form writes what he
      was told in the shop into `monthlyVolumeLitres`/`competitorName` and the
@@ -146,14 +146,14 @@ const SHOP_COLUMNS: Record<
     reads: (v) => (v.lead.monthlyLitres ?? v.lead.monthlyVolumeLitres) != null,
     where: 'Litres a month, on Prospect details',
   },
-  monthly_potential: { reads: (v) => v.lead.estimatedPotentialPaise != null, where: 'What they could be worth, on Prospect details' },
-  required_product: { reads: (v) => Boolean(v.lead.requiredProductId), where: 'Which of ours, on Prospect details' },
+  monthly_potential: { reads: (v) => v.lead.estimatedPotentialPaise != null, where: 'How much they can buy, on Prospect details' },
+  required_product: { reads: (v) => Boolean(v.lead.requiredProductId), where: 'Which of our products, on Prospect details' },
   competitor_identified: {
     reads: (v) => Boolean(v.lead.competitor?.trim() || v.lead.competitorName?.trim()),
-    where: 'Whose product now, on Prospect details',
+    where: 'Which brand they use now, on Prospect details',
   },
   credit_days: { reads: (v) => v.lead.creditDaysWanted != null, where: 'Credit they want, on Prospect details' },
-  decision_maker: { reads: (v) => Boolean(v.lead.decisionMaker?.trim()), where: 'Who signs off, on Prospect details' },
+  decision_maker: { reads: (v) => Boolean(v.lead.decisionMaker?.trim()), where: 'Who decides to buy, on Prospect details' },
   application_understood: { reads: (v) => Boolean(v.lead.application?.trim()), where: 'What they use it on, on Prospect details' },
 };
 
@@ -324,7 +324,7 @@ export default function QualifyScreen() {
       const r = await saveDistributorProfile(lead.id, patch);
       if (!r.ok) return notify(r.message);
       load();
-      return notify('Saved — every answer on this checklist');
+      return notify('Saved. All answers on this checklist.');
     }
 
     const answers: Record<string, boolean | string> = {};
@@ -368,9 +368,9 @@ export default function QualifyScreen() {
             checklist, not the group on the screen. */}
         <T s="caption" style={{ marginTop: 2 }}>
           {done === conditions.length
-            ? 'All of them, saved. The rung above is open from the record.'
+            ? 'All saved. You can move it to the next stage on the lead page.'
             : plural(conditions.length - done, 'question') +
-              ' still to go. This counts what is saved — press Save and it keeps the lot.'}
+              ' left. Only saved answers count. Press Save to keep them all.'}
         </T>
       </Card>
 
@@ -417,8 +417,8 @@ export default function QualifyScreen() {
                       {col.note
                         ? col.note(view)
                         : met
-                          ? 'Answered — ' + col.where
-                          : 'Answer it under ' + col.where}
+                          ? 'Answered: ' + col.where
+                          : 'Answer it at: ' + col.where}
                     </T>
                   ) : null}
                 </View>
@@ -472,15 +472,14 @@ export default function QualifyScreen() {
       {conditions.length === 0 ? (
         <Card style={{ marginTop: 16, paddingVertical: 28 }}>
           <T style={{ fontSize: 15, lineHeight: 21, color: C.muted, textAlign: 'center' }}>
-            There is no checklist on this ladder. A lead raised before the funnel existed climbs the six rungs it
-            started on.
+            No checklist for this lead. It is an old lead. It uses the old six stages.
           </T>
         </Card>
       ) : (
         /* One button, and it saves the WHOLE checklist however many groups are
            half filled in. It used to name the group it was standing on, which
            was an honest label for a save that dropped the other four. */
-        <PrimaryButton label="Save the checklist" onPress={saveGroup} style={{ marginTop: 18 }} />
+        <PrimaryButton label="Save checklist" onPress={saveGroup} style={{ marginTop: 18 }} />
       )}
 
       <SecondaryButton
@@ -491,8 +490,7 @@ export default function QualifyScreen() {
 
       <View style={{ marginTop: 14, borderRadius: radius.lg, backgroundColor: C.wash, padding: 12 }}>
         <T s="caption">
-          Everything here is saved on the phone first and goes up when there is signal. Nothing on this screen needs a
-          connection.
+          All of this is saved on the phone first. It is sent when there is signal. You do not need internet here.
         </T>
       </View>
     </AppFrame>

@@ -93,14 +93,14 @@ export function ReasonSheet({
   const codeDemandsNote = noteRequiredForCode !== undefined && code === noteRequiredForCode;
   const missing =
     codeDemandsNote && !note.trim()
-      ? 'Say what happened — “Other” with nothing behind it is the one answer nobody can act on.'
+      ? 'You chose “Other”. Write what happened.'
       : null;
 
   const confirm = () => {
-    if (!code && !nothingToPick) return setErr('Pick one — it is what gets counted afterwards.');
+    if (!code && !nothingToPick) return setErr('Choose one reason.');
     if (missing) return setErr(missing);
     if ((requireNote || nothingToPick) && !note.trim()) {
-      return setErr('A sentence, so whoever reads this next knows what happened.');
+      return setErr('Write one line about what happened.');
     }
     onConfirm(code ?? '', note.trim());
   };
@@ -113,8 +113,7 @@ export function ReasonSheet({
       {nothingToPick ? (
         <View style={{ marginTop: 14, backgroundColor: C.wash, borderRadius: radius.lg, padding: 12 }}>
           <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>
-            Your office has not set any reasons to pick from yet — tell them. Write what happened below and this will
-            still save.
+            The office has not set any reasons yet. Tell them. Write what happened below. It will still save.
           </T>
         </View>
       ) : (
@@ -133,7 +132,7 @@ export function ReasonSheet({
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>
-          {(noteLabel ?? 'Anything to add') + (codeDemandsNote ? ' · required' : '')}
+          {(noteLabel ?? 'Anything to add') + (codeDemandsNote ? ' · needed' : '')}
         </SectionLabel>
         <Input
           value={note}
@@ -141,7 +140,7 @@ export function ReasonSheet({
           placeholder={
             nothingToPick || codeDemandsNote
               ? 'What happened, in your own words'
-              : notePlaceholder ?? 'Optional — what they actually said'
+              : notePlaceholder ?? 'Optional. What they said'
           }
           multiline
         />

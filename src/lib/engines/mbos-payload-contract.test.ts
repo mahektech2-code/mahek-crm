@@ -402,13 +402,22 @@ function handsetPayloads(unresolved: string[]): Sent[] {
  * that is.
  * ------------------------------------------------------------------------- */
 
-type Route = { schema?: string; readsDirectly?: string[]; note?: string };
+type Route = {
+  schema?: string;
+  /** Where one entity/op routes to two handlers by what the payload carries. */
+  schemas?: string[];
+  readsDirectly?: string[];
+  note?: string;
+};
 
 const ROUTES: Record<string, Route> = {
   "visit/create": { schema: "visitSchema" },
   "visit/update": { schema: "visitSchema" },
   "order/create": { schema: "orderSchema" },
-  "order/update": { schema: "orderProgressSchema" },
+  /* An update carrying lines is an edit (`orderEditSchema`); anything else is
+     the order moving along (`orderProgressSchema`). `handleOrder` routes on it. */
+  "order/update": { schemas: ["orderProgressSchema", "orderEditSchema"] },
+  "order_change_request/create": { schema: "orderChangeSchema" },
   "payment/create": { schema: "paymentSchema" },
   "payment/update": { schema: "paymentUpdateSchema" },
   "complaint/create": { schema: "complaintSchema" },
@@ -572,9 +581,11 @@ test("every field the handset sends is one the server's schema accepts", () => {
     if (!accepted.has(key)) {
       accepted.set(
         key,
-        route.schema
-          ? schemaFields(actions, route.schema)
-          : new Set(route.readsDirectly ?? []),
+        route.schemas
+          ? new Set(route.schemas.flatMap((name) => [...schemaFields(actions, name)]))
+          : route.schema
+            ? schemaFields(actions, route.schema)
+            : new Set(route.readsDirectly ?? []),
       );
     }
     const takes = accepted.get(key)!;

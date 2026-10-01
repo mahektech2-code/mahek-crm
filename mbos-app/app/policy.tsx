@@ -51,22 +51,21 @@ export default function PolicyScreen() {
             No policy on this phone yet
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Either the office has not published one, or this phone has not synced since it did.
-            Everything you record is kept meanwhile — the office works out what it is worth when it
-            arrives.
+            The office has not sent one, or this phone has not got it yet. Everything you add is
+            saved. The office will work out the amount when the policy comes.
           </T>
         </Card>
       ) : (
         <>
           <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 14 }}>
-            Version {policy.versionNo}, in force since {dmy(policy.effectiveFrom)}
+            Version {policy.versionNo}, used from {dmy(policy.effectiveFrom)}
             {policy.subject.grade ? ` · your grade: ${policy.subject.grade.replace(/_/g, ' ')}` : ''}
           </T>
 
           {policy.sentences.length === 0 ? (
             <Card>
               <T s="small" style={{ color: C.muted }}>
-                This version has no rules that apply to you.
+                No rules in this version are for you.
               </T>
             </Card>
           ) : (
@@ -79,8 +78,8 @@ export default function PolicyScreen() {
 
           <View style={{ marginTop: 14 }}>
             <T s="caption">
-              These are the same rules your day is priced against — on this phone and in the office.
-              If a figure looks wrong, this is what to quote.
+              Your day is paid using these same rules, on this phone and in the office.
+              If an amount looks wrong, show these rules.
             </T>
           </View>
         </>

@@ -48,3 +48,33 @@ export function employeeJoinOn(u = "u", e = "e"): SQL {
 export function employeeLinkKindSql(u = "u"): SQL {
   return sql`case when ${sql.raw(u)}.employee_id is not null then 'linked' else 'guessed' end`;
 }
+
+/**
+ * The HRMS employee an account is, as ONE row — a `left join lateral` to put
+ * after `from users u`, exposing the employee's columns under alias `e`.
+ *
+ * `employeeJoinOn` keeps the linked and guessed halves apart, but the guess
+ * can still match two rows by itself: one employee by email and another by
+ * company mobile, or one person listed twice on the sheet. As a plain join
+ * that put the account on the screen twice — Bharat Singh appeared twice on
+ * the Sales Dashboard's Cost and return screen, each copy carrying a
+ * different salary. Asked as a lateral with `limit 1`, an account is always
+ * one row. The tie is broken in the order a person would trust: the explicit
+ * link, then an email match, then the mobile, then an ACTIVE employee over a
+ * leaver.
+ */
+export function employeeLateral(u = "u", e = "e"): SQL {
+  const U = sql.raw(u);
+  return sql`
+    left join lateral (
+      select emp.*
+        from employees emp
+       where ${employeeJoinOn(u, "emp")}
+       order by (${U}.employee_id is not null and emp.id = ${U}.employee_id) desc,
+                (emp.email is not null and lower(emp.email) = lower(${U}.email)) desc,
+                (emp.status = 'active') desc,
+                emp.id
+       limit 1
+    ) ${sql.raw(e)} on true
+  `;
+}

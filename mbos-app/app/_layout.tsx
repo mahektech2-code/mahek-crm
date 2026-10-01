@@ -1,5 +1,6 @@
 import React from 'react';
-import { Stack } from 'expo-router';
+import { View, Text, Pressable } from 'react-native';
+import { Stack, type ErrorBoundaryProps } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -25,6 +26,46 @@ import '../src/sync/background-sync-task';
 SplashScreen.preventAutoHideAsync();
 
 export const unstable_settings = { anchor: 'index' };
+
+/**
+ * A crash anywhere in the app lands HERE rather than on a white screen.
+ *
+ * There was no boundary at all, so any error React could not place — the
+ * dictation sheet's recorder read after release was the one that found this
+ * — unmounted the whole tree and left a blank page. A salesman reads a blank
+ * page as a hung phone, force-closes, and nobody ever learns what broke.
+ *
+ * Plain React Native and nothing else: a fallback that leaned on the app's
+ * own providers could fail for the same reason the screen it replaces did.
+ * The error's own message is printed, because "it went white" is the whole
+ * of the bug report otherwise.
+ */
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  return (
+    <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: color.canvas }}>
+      <Text style={{ fontSize: 20, fontWeight: '600', color: color.ink }}>Something went wrong on this screen</Text>
+      <Text style={{ fontSize: 15, lineHeight: 21, color: color.body, marginTop: 10 }}>
+        Anything you already saved is safe on the phone. Tap below to carry on. If it keeps
+        happening, send your manager a photo of this screen.
+      </Text>
+      <Text selectable style={{ fontSize: 13, color: color.muted, marginTop: 14 }}>
+        {error?.message || String(error)}
+      </Text>
+      <Pressable
+        onPress={() => void retry()}
+        style={{
+          marginTop: 24,
+          height: 48,
+          borderRadius: 12,
+          backgroundColor: color.primary,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+        <Text style={{ fontSize: 16, fontWeight: '600', color: '#FFFFFF' }}>Carry on</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 /**
  * Three weights, each registered under its own family name.

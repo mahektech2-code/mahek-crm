@@ -47,27 +47,27 @@ export function NextActionSheet({
   const [today] = React.useState(() => isoDate(new Date()));
 
   const save = () => {
-    if (!action.trim()) return setErr('Say what happens next — "ring him about the trial", not "follow up".');
-    if (!date) return setErr('Pick the day it happens on.');
-    if (!ownerId) return setErr('Say who is doing it.');
+    if (!action.trim()) return setErr('Write the next action. Example: "call him about the sample".');
+    if (!date) return setErr('Choose the day.');
+    if (!ownerId) return setErr('Choose who will do it.');
     onSave({ action: action.trim(), date, ownerId, outcome: outcome.trim() || undefined });
   };
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
       <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-        What happens next
+        Next action
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
-        Every lead being worked owes one. Nothing moves up a rung without it.
+        Every open lead needs one. The stage cannot move without it.
       </T>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>The action</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Action</SectionLabel>
         <Input
           value={action}
           onChangeText={(v) => { setAction(v); setErr(null); }}
-          placeholder="Take the sample round and show him the finish"
+          placeholder="Take the sample and show him the finish"
           multiline
         />
       </View>
@@ -96,7 +96,7 @@ export function NextActionSheet({
           <View style={{ marginTop: 10 }}>
             <Calendar
               selected={date ?? ''}
-              disabledReason={(iso) => (iso < today ? 'That day has gone.' : null)}
+              disabledReason={(iso) => (iso < today ? 'That day has passed.' : null)}
               onPick={(iso) => { setDate(iso); setErr(null); setCal(false); }}
             />
           </View>
@@ -104,7 +104,7 @@ export function NextActionSheet({
       </View>
 
       <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Who is doing it</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Who will do it</SectionLabel>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           <Choice
             label={meName}
@@ -126,11 +126,11 @@ export function NextActionSheet({
       </View>
 
       <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>What you expect to come back with</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>What result you expect</SectionLabel>
         <Input
           value={outcome}
           onChangeText={setOutcome}
-          placeholder="Optional — a quantity, a date, a yes or a no"
+          placeholder="Optional. A quantity, a date, a yes or no"
         />
       </View>
 
@@ -142,7 +142,7 @@ export function NextActionSheet({
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
-        <PrimaryButton label="Save it" onPress={save} style={{ flex: 1, borderRadius: radius.xl }} />
+        <PrimaryButton label="Save" onPress={save} style={{ flex: 1, borderRadius: radius.xl }} />
       </View>
     </BottomSheet>
   );

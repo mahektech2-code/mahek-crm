@@ -323,6 +323,21 @@ export async function customerBills(id: string): Promise<CustomerBill[]> {
  * word for the bill and the balance is the arithmetic, and it is the
  * arithmetic the server validates the allocation against.
  */
+/**
+ * Who owes money, most first — what the payment screen offers before anything
+ * is typed. A salesman opening "Collect payment" from the + button is almost
+ * always standing in front of one of these, and a blank list waiting for a
+ * name is a list he has to fill from memory. The office's own outstanding
+ * figure, never one worked out on the phone.
+ */
+export async function customersOwing(limit = 20): Promise<Customer[]> {
+  return all<Customer>(
+    `SELECT * FROM customers WHERE coalesce(outstandingPaise, 0) > 0
+      ORDER BY outstandingPaise DESC, name ASC LIMIT ?`,
+    [limit],
+  );
+}
+
 export async function openCustomerBills(id: string): Promise<CustomerBill[]> {
   return all<CustomerBill>(
     `SELECT * FROM customer_bills
@@ -485,28 +500,18 @@ export async function recordCompetitor(args: {
   });
 }
 
-/** Products this customer has actually bought, most-ordered first. */
-export async function frequentProducts(customerId: string, limit = 6) {
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; sellingPricePaise: number | null; n: number }>(
-    `SELECT p.*, COUNT(ol.id) AS n
-       FROM order_lines ol
-       JOIN orders o ON o.id = ol.orderId
-       JOIN products p ON p.id = ol.productId
-      WHERE o.customerId = ? AND p.active = 1
-      GROUP BY p.id
-      ORDER BY n DESC, p.name
-      LIMIT ?`,
-    [customerId, limit],
-  );
-}
 
 export async function searchProducts(query: string, limit = 20) {
   const like = `%${query.trim().toLowerCase()}%`;
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
+  /* The SKU code is searched too, and an exact code comes first: "216" typed
+     at a counter means Product 216, not every name with a 216 in it. */
+  const code = query.trim().toLowerCase();
+  return all<{ id: string; name: string; sku: string | null; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
     `SELECT * FROM products
-      WHERE active = 1 AND (lower(name) LIKE ? OR lower(COALESCE(formulation,'')) LIKE ? OR lower(COALESCE(brand,'')) LIKE ?)
-      ORDER BY name LIMIT ?`,
-    [like, like, like, limit],
+      WHERE active = 1 AND (lower(name) LIKE ? OR lower(COALESCE(formulation,'')) LIKE ? OR lower(COALESCE(brand,'')) LIKE ?
+                            OR lower(COALESCE(sku,'')) LIKE ?)
+      ORDER BY lower(COALESCE(sku,'')) = ? DESC, name LIMIT ?`,
+    [like, like, like, like, code, limit],
   );
 }
 
@@ -515,23 +520,30 @@ export async function searchProducts(query: string, limit = 20) {
  * `order_lines` keeps only a name and a quantity, never the packing a fresh
  * line needs to derive boxes and litres from.
  */
+/**
+ * The SKU code for each product id, from the catalogue on the phone. Includes
+ * retired products: an order line or a sample from last year still names the
+ * product it was, and its code is still how somebody finds it.
+ */
+export async function skusFor(ids: string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const rows = await all<{ id: string; sku: string | null }>(
+    `SELECT id, sku FROM products WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  );
+  return new Map(rows.filter((r) => r.sku).map((r) => [r.id, r.sku as string]));
+}
+
 export async function productsByIds(ids: string[]) {
   if (!ids.length) return [];
   const marks = ids.map(() => '?').join(',');
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
+  return all<{ id: string; name: string; sku: string | null; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
     // Retired since the last order is not re-offered silently.
     `SELECT * FROM products WHERE active = 1 AND id IN (${marks})`,
     ids,
   );
 }
 
-/** A short starter list, so an order form is not an empty search box mid-call. */
-export async function starterProducts(limit = 8) {
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null }>(
-    'SELECT * FROM products WHERE active = 1 ORDER BY displayOrder, name LIMIT ?'.replace('displayOrder, ', ''),
-    [limit],
-  );
-}
 
 
 /* ------------------------------------------------- who we bill for a shop */
@@ -681,7 +693,7 @@ export async function addFieldShop(args: {
      field he was never asked for is the worst way to find that out. */
   if (!city) return { ok: false, message: 'Which town is it in?' };
   if (phone.replace(/\D/g, '').length < 6) {
-    return { ok: false, message: 'A working phone number, so the office can reach them.' };
+    return { ok: false, message: 'Add a working phone number, so the office can call them.' };
   }
   if (!args.distributorCustomerId) {
     return { ok: false, message: 'Say who is billed for this shop.' };

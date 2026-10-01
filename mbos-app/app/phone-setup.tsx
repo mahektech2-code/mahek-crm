@@ -80,7 +80,7 @@ function buttonLabel(action: NonNullable<ReadinessItem['action']>): string {
     case 'location_settings':
       return 'Open location settings';
     case 'ask_permission':
-      return 'Ask for permission';
+      return 'Give permission';
     case 'app_settings':
       return 'Open app settings';
     case 'battery':
@@ -88,7 +88,7 @@ function buttonLabel(action: NonNullable<ReadinessItem['action']>): string {
     case 'autostart':
       return 'Open the setting';
     default:
-      return 'I have done it';
+      return 'I turned it on';
   }
 }
 
@@ -127,7 +127,7 @@ export default function PhoneSetupScreen() {
       switch (item.action) {
         case 'location_settings':
           if (!(await openLocationSettings())) {
-            notify('Could not open the settings. Open Settings → Location by hand.');
+            notify('Could not open the settings. Open Settings → Location yourself.');
           }
           break;
 
@@ -146,7 +146,7 @@ export default function PhoneSetupScreen() {
 
         case 'app_settings':
           if (!(await openAppSettings())) {
-            notify('Could not open the settings. Ring the office.');
+            notify('Could not open the settings. Call the office.');
           }
           break;
 
@@ -164,9 +164,9 @@ export default function PhoneSetupScreen() {
            * and names what he is hunting for.
            */
           if (opened === 'opened_app_settings') {
-            notify('Your phone’s own screen would not open. Look for: ' + item.title);
+            notify('That phone screen did not open. Look for: ' + item.title);
           } else if (opened === 'failed') {
-            notify('Could not open it. Find it by hand — the steps are on this screen.');
+            notify('Could not open it. Follow the steps on this screen yourself.');
           }
           setSent(true);
           break;
@@ -204,12 +204,11 @@ export default function PhoneSetupScreen() {
 
       <Card>
         <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-          Your phone has to be able to record the day
+          Set up your phone to record your day
         </T>
         <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-          Some phones switch MBOS off in your pocket to save battery. When that happens the office cannot
-          see a single thing you did all day — and nothing on your phone says so. These few settings stop
-          it.
+          Some phones turn MBOS off in your pocket to save battery. Then the office sees nothing
+          you did all day. Your phone will not warn you. These few settings stop this.
         </T>
         {/* THE QUESTION THIS SCREEN MADE PEOPLE RING THE OFFICE WITH.
             
@@ -244,14 +243,14 @@ export default function PhoneSetupScreen() {
           }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Icon name="lock" size={18} color={C.danger} strokeWidth={1.6} />
-            <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>Ring the office</T>
+            <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>Call the office</T>
           </View>
           {/* NO WAY PAST, and no pretending there is one. Somebody at a desk
               has to walk him through his phone's own settings, and saying that
               plainly is more use than a button that cannot work. */}
           <T s="small" style={{ color: C.danger, marginTop: 6 }}>
-            Your phone has stopped offering to ask for something MBOS needs, and MBOS cannot fix it from
-            here. Ring the office before you start the day — they will take you through it.
+            Your phone will not ask again for something MBOS needs. MBOS cannot fix this.
+            Call the office before you start the day. They will help you.
           </T>
         </View>
       ) : null}
@@ -301,13 +300,13 @@ export default function PhoneSetupScreen() {
 
       {autostartBlocked && !sent ? (
         <T s="caption" style={{ marginTop: 10 }}>
-          Open the setting first. You can tell us you have done it once you come back.
+          Open the setting first. Come back here after you turn it on.
         </T>
       ) : null}
 
       {readiness?.mayCheckIn ? (
         <PrimaryButton
-          label="All set — go back and punch in"
+          label="Done. Go and punch in"
           onPress={back.go}
           style={{ marginTop: 16, borderRadius: radius.xl }}
         />
@@ -315,7 +314,7 @@ export default function PhoneSetupScreen() {
 
       {readiness && !readiness.mayCheckIn && !readiness.deadEnd ? (
         <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
-          The day cannot be started until the rows above are done.
+          Finish all the steps above. Then you can start your day.
         </T>
       ) : null}
     </AppFrame>

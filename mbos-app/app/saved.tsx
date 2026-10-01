@@ -7,7 +7,7 @@ import { Card, PrimaryButton } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
 import { plural, pretty } from '../src/lib/format';
-import { OUTCOMES } from '../src/data/fixtures';
+import { FOLLOW_UP_MODES, OUTCOMES } from '../src/data/fixtures';
 import { pendingCount } from '../src/sync/queue';
 import { nextStop } from '../src/data/journey';
 
@@ -28,6 +28,7 @@ export default function Saved() {
   const voice = useStore((s) => s.voice);
   const gps = useStore((s) => s.gps);
   const nextDate = useStore((s) => s.nextDate);
+  const nextMode = useStore((s) => s.nextMode);
   const visitSpent = useStore((s) => s.visitSpent);
 
   const picked = OUTCOMES.find((o) => o.k === outcome) ?? OUTCOMES[0];
@@ -96,21 +97,21 @@ export default function Saved() {
 
   const items = [
     gps === 'locked'
-      ? { l: 'Location and time recorded', ok: true }
-      : { l: 'Saved without a location — flagged for your manager', ok: false },
-    shotCount ? { l: plural(shotCount, 'photo') + ' compressed and queued', ok: false } : null,
+      ? { l: 'Location and time saved', ok: true }
+      : { l: 'Saved without location. Your manager will check it', ok: false },
+    shotCount ? { l: plural(shotCount, 'photo') + ' saved, waiting to send', ok: false } : null,
     /* Two different facts, and the old code could report neither: `done` was
        never set by anything and a successful recording set `failed`, so a
        voice note that had uploaded perfectly said it was waiting for signal. */
     voice === 'dictated'
-      ? { l: 'What you said is in the note, and the recording goes with it', ok: true }
+      ? { l: 'What you said is in the note. The recording goes with it', ok: true }
       : voice === 'queued'
-        ? { l: 'Voice note kept — the office writes it out when you are back on', ok: false }
+        ? { l: 'Voice note kept. The office will type it out when you are online', ok: false }
         : null,
-    { l: 'Follow-up set for ' + pretty(nextDate), ok: true },
+    { l: (FOLLOW_UP_MODES.find((m) => m.k === nextMode)?.label ?? 'Visit') + ' set for ' + pretty(nextDate), ok: true },
     queued
-      ? { l: 'Your manager sees it the next time this phone sends', ok: false }
-      : { l: 'Your manager notified', ok: true },
+      ? { l: 'Your manager will see it when this phone sends', ok: false }
+      : { l: 'Your manager is told', ok: true },
   ].filter((x): x is { l: string; ok: boolean } => x !== null);
 
   return (

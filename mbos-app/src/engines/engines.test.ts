@@ -104,26 +104,35 @@ test('the radius includes its own edge, exactly as the geofence does', () => {
   assert.equal(checkInVerdict(at100, NAGPUR, 99, 50).accepted, false);
 });
 
-test('a fix that cannot prove he is there cannot prove he is not', () => {
+test('without a usable reading, a check-in does not start', () => {
   // No fix at all — a concrete godown in a market lane.
   const blind = checkInVerdict(null, NAGPUR, 100, 50);
-  assert.equal(blind.accepted, true);
+  assert.equal(blind.accepted, false);
   assert.equal(blind.reason, 'unmeasurable');
   assert.equal(blind.metresAway, null, 'zero would read as standing in the doorway');
 
-  // A fix wide enough that the shop is well inside its own error.
-  const wide = { lat: NAGPUR.lat + 300 / 111_320, lng: NAGPUR.lng, accuracyM: 400 };
+  // A fix wide enough that the shop is well inside its own error — even one
+  // that happens to land on the doorway proves nothing.
+  const wide = { lat: NAGPUR.lat, lng: NAGPUR.lng, accuracyM: 400 };
   const vague = checkInVerdict(wide, NAGPUR, 100, 50);
-  assert.equal(vague.accepted, true, 'refusing on a 400 m fix is refusing on nothing');
+  assert.equal(vague.accepted, false, 'a 400 m fix cannot place him within 100 m');
   assert.equal(vague.reason, 'unmeasurable');
+
+  // No accuracy at all is treated exactly like a bad one.
+  const unknown = checkInVerdict({ lat: NAGPUR.lat, lng: NAGPUR.lng, accuracyM: null }, NAGPUR, 100, 50);
+  assert.equal(unknown.accepted, false);
 });
 
-test('a shop with no pin lets the check-in through, and is pinned by it', () => {
+test('a shop with no pin asks him to confirm, and is pinned by the check-in', () => {
   const anywhere = { lat: NAGPUR.lat + 2, lng: NAGPUR.lng, accuracyM: 9 };
   const first = checkInVerdict(anywhere, null, 100, 50);
   assert.equal(first.accepted, true);
+  assert.equal(first.needsConfirmation, true, 'a pin is a claim somebody makes on purpose');
   assert.equal(first.reason, 'unpinned');
   assert.equal(first.pinsTheShop, true);
+
+  // A pinned shop inside the radius asks nothing.
+  assert.equal(checkInVerdict(anywhere, anywhere, 100, 50).needsConfirmation, false);
 });
 
 test('a poor fix never pins an unpinned shop', () => {
@@ -132,7 +141,7 @@ test('a poor fix never pins an unpinned shop', () => {
   // out and every honest visit afterwards is refused against it.
   const poor = { lat: NAGPUR.lat, lng: NAGPUR.lng, accuracyM: 400 };
   const verdict = checkInVerdict(poor, null, 100, 50);
-  assert.equal(verdict.accepted, true);
+  assert.equal(verdict.accepted, false);
   assert.equal(verdict.reason, 'unmeasurable');
   assert.equal(verdict.pinsTheShop, false);
 });
@@ -389,7 +398,7 @@ test('overdue, late-paying and complained-about all pull the score down', () => 
   assert.ok(poorly.score < 40, `${poorly.score}`);
   const recency = poorly.components.find((c) => c.key === 'recency')!;
   assert.equal(recency.score, 0);
-  assert.ok(recency.sentence.includes('overdue'));
+  assert.ok(recency.sentence.includes('Late'));
 });
 
 /* --------------------------------------------------------------- schemes */

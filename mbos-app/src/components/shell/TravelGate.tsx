@@ -97,7 +97,7 @@ export function TravelGate() {
         router.push('/visit');
       } catch {
         set({ travelTo: null });
-        notify('That visit could not be started on this phone. Nothing has been lost — try again.');
+        notify('Could not start this visit. Nothing is lost. Try again.');
       } finally {
         starting.current = false;
       }
@@ -115,8 +115,8 @@ export function TravelGate() {
           </T>
           <T s="small" style={{ marginTop: 6 }}>
             {same
-              ? 'You have arrived. All that is left is to check in when you go inside.'
-              : 'One shop at a time — check in there, or save the visit, before setting off again.'}
+              ? 'You have reached. Check in when you go inside.'
+              : 'One shop at a time. Check in there, or save that visit, before you go to the next shop.'}
           </T>
           <View style={{ marginTop: 14 }}>
             <SecondaryButton label={`Check in at ${outstanding.customerName}`} onPress={goCheckIn} />

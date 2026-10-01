@@ -7,6 +7,7 @@ import { color as C, type, weight } from '../src/theme/tokens';
 import { inrFromPaise, plural } from '../src/lib/format';
 import { searchProducts } from '../src/data/customers';
 import { useStore } from '../src/state/store';
+import { SkuChip } from '../src/components/ui/sku';
 import { productLines } from '../src/lib/product-lines';
 
 type Row = Awaited<ReturnType<typeof searchProducts>>[number];
@@ -116,6 +117,7 @@ export default function CatalogueScreen() {
             than a confident "In stock" nothing has checked; with the liquid
             headlining, that SKU is also the only thing separating two rows read
             out mid-conversation, so it is drawn rather than optional. */}
+        <SkuChip sku={x.sku} />
         <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
           {productLines({ displayName: x.name, subtitle: x.formulation ?? x.brand }).lead}
         </T>
@@ -137,16 +139,16 @@ export default function CatalogueScreen() {
   /* Nothing terminal until the read has answered, and a catalogue that never
      arrived is a different sentence from a word that matched nothing. */
   const blank = !loaded ? (
-    <Line>Reading the catalogue…</Line>
+    <Line>Loading products…</Line>
   ) : failed ? (
     <Line>
-      {'Could not read the catalogue off this phone. Leave the screen and come back, and if it keeps happening tell the office.'}
+      {'Could not load products. Go back and open it again. If this keeps happening, tell the office.'}
     </Line>
   ) : asked ? (
-    <Line>{'Nothing matches that. Try the grade, like "epoxy".'}</Line>
+    <Line>{'No product found. Try a type, like "epoxy".'}</Line>
   ) : (
     <Line>
-      {'The product list has not reached this phone yet. It arrives with a sync — open Sync from the More tab when you have signal.'}
+      {'Products have not come to this phone yet. They come with the next office update. Wait until you have signal.'}
     </Line>
   );
 
@@ -164,7 +166,7 @@ export default function CatalogueScreen() {
       <Input
         value={typed}
         onChangeText={setTyped}
-        placeholder="Search a product or pack size"
+        placeholder="Search a product, pack size or SKU code"
         style={{ marginTop: 12 }}
       />
       {/* The count is a count of what came back. Silent until the read has

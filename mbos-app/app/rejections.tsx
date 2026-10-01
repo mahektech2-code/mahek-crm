@@ -24,21 +24,21 @@ import { inrFromPaise } from '../src/lib/format';
 
 /** The machine codes from the protocol, in words the salesman can act on. */
 const WHAT_TO_DO: Record<string, string> = {
-  credit_blocked: 'Accounts have stopped this customer. Ring them before promising anything else.',
-  credit_exceeded: 'They are over their limit. Collect against the old bills, or ask your manager to approve it.',
-  product_inactive: 'That product is no longer sold. Swap the line for the current grade and send it again.',
-  price_changed: 'The rate changed after you wrote this. Check the new rate with the customer.',
-  bill_settled: 'The back office had already received this. Nothing more to do — check with them.',
-  outstanding_stale: 'The balance moved while you were offline. Open the customer and check before resending.',
+  credit_blocked: 'Accounts have stopped this customer. Call accounts before you promise anything more.',
+  credit_exceeded: 'This customer is over their credit limit. Collect old bills first, or ask your manager to approve.',
+  product_inactive: 'This product is not sold any more. Pick the new product and send again.',
+  price_changed: 'The rate changed after you wrote this. Tell the customer the new rate.',
+  bill_settled: 'The office already got this payment. You do not need to do anything. Check with them if unsure.',
+  outstanding_stale: 'The balance changed while you had no signal. Open the customer and check before you send again.',
   duplicate: 'This was already recorded. Nothing to send again.',
   /* Deliberately NOT the `validation` sentence below: there is nothing here for
      him to correct. The document he named has been taken out of the library
      since he pulled it, so the ways forward are a different document or the
      office publishing that one again — and "correct it and send it again" would
      send him looking for a mistake in an entry that was right when he made it. */
-  not_found: 'What this names is no longer in MahekOne. Send a different one, or ask the office to publish it again.',
-  validation: 'Something on this record was not accepted. Correct it and send it again.',
-  not_permitted: 'This is not yours to record. Your manager can tell you who does it.',
+  not_found: 'This item is not in MahekOne any more. Pick another one, or ask the office to add it back.',
+  validation: 'Something in this entry is wrong. Fix it and send again.',
+  not_permitted: 'You are not allowed to enter this. Ask your manager who does it.',
 };
 
 /** Only the fields this screen reads. Everything here is optional: the queue
@@ -103,12 +103,12 @@ export default function Rejections() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Not accepted</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        The office refused these. Nothing has been thrown away — correct what is wrong and send it again.
+        The office did not accept these. Nothing is lost. Fix what is wrong and send again.
       </T>
 
       {rows === null ? (
         <Text style={[type.small, { color: C.muted, marginTop: 16 }]}>
-          {readFailed ? 'Your outbox could not be read just now.' : 'Reading…'}
+          {readFailed ? 'Could not open this list. Try again in a minute.' : 'Reading…'}
         </Text>
       ) : rows.length === 0 ? (
         <Card style={{ marginTop: 16, paddingVertical: 32, alignItems: 'center' }}>
@@ -118,10 +118,10 @@ export default function Rejections() {
               after it synced never reaches this queue and never will, so a
               salesman whose order was turned down this morning was being told
               nothing he saved had been refused. */}
-          <Text style={[{ fontSize: 16, color: C.ink }, weight(600)]}>Nothing stuck in your outbox</Text>
+          <Text style={[{ fontSize: 16, color: C.ink }, weight(600)]}>Nothing is stuck</Text>
           <Text style={[type.small, { color: C.muted, marginTop: 4, textAlign: 'center' }]}>
-            This is what was refused before it reached the office. An order the office turned down
-            after it had gone is on Your orders, with the reason on the row.
+            This list shows entries the office did not accept when you sent them. If the office
+            turned down an order later, see Your orders. The reason is on the order.
           </Text>
         </Card>
       ) : null}
@@ -155,7 +155,7 @@ export default function Rejections() {
                     <Text style={[type.caption, { marginTop: 2 }]}>{valueLine}</Text>
                   ) : null}
                 </View>
-                <Badge tone="danger">Refused</Badge>
+                <Badge tone="danger">Not accepted</Badge>
               </View>
 
               {/* What the office actually said, verbatim — and where it said
@@ -169,7 +169,7 @@ export default function Rejections() {
                   {said ??
                     (guidance
                       ? 'The office did not say why.'
-                      : 'The office did not say why. Send it again, and ask your manager if it comes back.')}
+                      : 'The office did not say why. Send it again. If it comes back, ask your manager.')}
                 </Text>
               </View>
 
@@ -179,7 +179,7 @@ export default function Rejections() {
                 <SecondaryButton
                   label="Open the customer"
                   onPress={() => {
-                    if (!payload.customerId) return notify('This record does not name a customer');
+                    if (!payload.customerId) return notify('This entry has no customer on it.');
                     useStore.getState().set({ custId: payload.customerId });
                     router.push('/customer');
                   }}
@@ -193,7 +193,7 @@ export default function Rejections() {
                      happen and he tapped it several times, each tap firing a
                      fresh manual sync. */
                   <PrimaryButton
-                    label={retrying === row.id ? 'Sending…' : 'Send it again'}
+                    label={retrying === row.id ? 'Sending…' : 'Send again'}
                     disabled={retrying === row.id}
                     onPress={() => {
                       setRetrying(row.id);
@@ -201,7 +201,7 @@ export default function Rejections() {
                         try {
                           await retryItem(row.id);
                           load();
-                          notify('Queued again — it will go out when you have signal');
+                          notify('Waiting to send. It will go when you have signal.');
                           void syncNow({ manual: true });
                         } finally {
                           setRetrying(null);

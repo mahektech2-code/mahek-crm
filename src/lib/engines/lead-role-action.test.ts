@@ -73,7 +73,7 @@ describe("no rung on any ladder falls through", () => {
   for (const stage of everyRung) {
     test(stage, () => {
       const answered = VANTAGES.map((v) => roleAction(facts(stage), v).label);
-      const unwritten = answered.filter((l) => l === "No action for you on this lead");
+      const unwritten = answered.filter((l) => l === "Nothing for you on this lead");
       assert.notEqual(
         unwritten.length,
         VANTAGES.length,
@@ -137,10 +137,10 @@ describe("scope of each vantage, as §7 states it", () => {
     test("at Prospect the Telecaller WAITS and the Sales Manager makes the call", () => {
       for (const stage of ["prospect", "contacted"] as LeadStage[]) {
         const desk = roleAction(facts(stage), "calling_desk");
-        assert.equal(desk.label, "Awaiting Sales Manager verification", stage);
+        assert.equal(desk.label, "Waiting for Sales Manager to check", stage);
         assert.equal(desk.actionable, false, stage);
         const manager = roleAction(facts(stage), "sales_manager");
-        assert.equal(manager.label, "Make the verification call", stage);
+        assert.equal(manager.label, "Make the check call", stage);
         assert.equal(manager.actionable, true, stage);
       }
     });
@@ -161,7 +161,7 @@ describe("scope of each vantage, as §7 states it", () => {
       for (const stage of ["prospect", "contacted", "qualification", "qualified"] as LeadStage[]) {
         const a = roleAction(facts(stage), "salesman");
         assert.equal(a.actionable, false, stage);
-        assert.equal(a.label, "No action for you on this lead", stage);
+        assert.equal(a.label, "Nothing for you on this lead", stage);
       }
     });
 
@@ -171,7 +171,7 @@ describe("scope of each vantage, as §7 states it", () => {
       assert.deepEqual([job.label, job.actionable], ["Complete qualification", true]);
 
       const waiting = roleAction(facts(stage, { qualificationComplete: true }), "calling_desk");
-      assert.deepEqual([waiting.label, waiting.actionable], ["Awaiting Sales Manager review", false]);
+      assert.deepEqual([waiting.label, waiting.actionable], ["Waiting for Sales Manager review", false]);
 
       for (const review of ["incomplete", "clarification"] as const) {
         const back = roleAction(facts(stage, { qualificationComplete: true, qualificationReview: review }), "calling_desk");
@@ -194,7 +194,7 @@ describe("scope of each vantage, as §7 states it", () => {
 
   test("the repeat-order rung is not the calling desk's", () => {
     const a = roleAction(facts("second_order"), "calling_desk");
-    assert.equal(a.label, "No calling-desk action");
+    assert.equal(a.label, "Nothing for the calling desk");
     assert.equal(a.actionable, false);
     /* And the manager's verb on that rung is untouched, because the two cells
      * carried the same words and only one of them was wrong. */
@@ -205,7 +205,7 @@ describe("scope of each vantage, as §7 states it", () => {
     for (const stage of ["suspect", "qualification", "negotiation"] as LeadStage[]) {
       assert.equal(
         roleAction(facts(stage), "back_office").label,
-        "Nothing operational pending",
+        "Nothing pending for you",
         stage,
       );
     }
@@ -219,7 +219,7 @@ describe("scope of each vantage, as §7 states it", () => {
      * decision somebody makes here, having read why. */
     for (const stage of ["prospect", "contacted"] as LeadStage[]) {
       const a = roleAction(facts(stage), "back_office");
-      assert.equal(a.label, "Validate GST number", stage);
+      assert.equal(a.label, "Check GST number", stage);
       assert.equal(a.actionable, true, stage);
     }
   });
@@ -229,7 +229,7 @@ describe("scope of each vantage, as §7 states it", () => {
     for (const stage of ["suspect", "prospect", "qualification"] as LeadStage[]) {
       assert.equal(
         roleAction(facts(stage, { salesType: "distributor" }), "management").label,
-        "Monitor distributor track",
+        "Watch the distributor steps",
         stage,
       );
       assert.equal(
@@ -262,7 +262,7 @@ describe("closure reads the same to everybody", () => {
   test("lost", () => {
     for (const v of VANTAGES) {
       const a = roleAction(facts("lost"), v);
-      assert.equal(a.label, "Lost — no action");
+      assert.equal(a.label, "Lost. Nothing to do");
       assert.equal(a.actionable, false);
     }
   });
@@ -270,7 +270,7 @@ describe("closure reads the same to everybody", () => {
   test("on hold says parked rather than lost", () => {
     for (const v of VANTAGES) {
       const a = roleAction(facts("on_hold"), v);
-      assert.match(a.label, /parked, not lost/);
+      assert.match(a.label, /Paused, not lost/);
       assert.equal(a.actionable, false);
     }
   });

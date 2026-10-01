@@ -3,7 +3,31 @@ import { router } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 
 import { routeForNotification } from '../native/push';
+import { readArrival } from '../data/arrival';
 import { useBoot } from './boot';
+import { useStore } from './store';
+
+/**
+ * Where a tapped notification goes. The check-out reminder names a CUSTOMER as
+ * well as a screen, because `/visit` reads which shop from the store — the same
+ * two steps the in-visit bar takes when it is tapped. The arrival is re-read
+ * from disk first: the background task that raised the reminder may have run
+ * in a context whose writes the screens have not seen yet.
+ */
+async function openFrom(data: unknown): Promise<void> {
+  const d = data as { kind?: unknown; customerId?: unknown } | undefined;
+  if (d?.kind === 'forgot-checkout' && typeof d.customerId === 'string') {
+    const arrival = await readArrival();
+    useStore.setState({ arrival });
+    if (!arrival || arrival.customerId !== d.customerId || arrival.checkedInAt == null) {
+      /* Already checked out, or the day moved on — nothing left to close. */
+      router.push('/home');
+      return;
+    }
+    useStore.getState().set({ custId: d.customerId });
+  }
+  router.push(routeForNotification(data));
+}
 
 /**
  * Tapping a push opens the thing it is about.
@@ -45,7 +69,7 @@ export function PushTaps() {
       try {
         const response = await Notifications.getLastNotificationResponseAsync();
         if (!live || !response) return;
-        router.push(routeForNotification(response.notification.request.content.data));
+        await openFrom(response.notification.request.content.data);
       } catch {
         /* No response to read, or a shape this version does not have. The app
            opens on its own first screen, which is where it would have gone. */
@@ -54,7 +78,7 @@ export function PushTaps() {
 
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       try {
-        router.push(routeForNotification(response.notification.request.content.data));
+        void openFrom(response.notification.request.content.data).catch(() => {});
       } catch {
         /* A route that will not push is not worth crashing the app for. */
       }

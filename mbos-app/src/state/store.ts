@@ -8,7 +8,7 @@ import { unreadCount } from '../data/notifications';
 import { daysAwaitingAnswer } from '../data/journey';
 import { pendingCount } from '../sync/queue';
 import { isoDate } from '../lib/format';
-import type { OutcomeKey } from '../data/fixtures';
+import type { FollowUpMode, OutcomeKey } from '../data/fixtures';
 import type { ToastTone } from '../components/ui/overlays';
 
 /**
@@ -94,6 +94,8 @@ type State = {
   note: string;
   outcome: OutcomeKey | null;
   nextDate: string;
+  /** Visit, call or WhatsApp — how the next contact on `nextDate` happens. */
+  nextMode: FollowUpMode;
   visitStart: number | null;
   /**
    * The shop he has just pressed "Start visit" on, waiting for the question
@@ -369,6 +371,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   note: '',
   outcome: null,
   nextDate: NO_DATE_YET,
+  nextMode: 'visit',
   visitStart: null,
   travelTo: null,
   arrival: null,
@@ -443,6 +446,7 @@ export const useStore = create<State & Actions>((set, get) => ({
       note: '',
       outcome: null,
       nextDate: NO_DATE_YET,
+      nextMode: 'visit',
       /*
        * NOT `Date.now()` any more, and that is the whole shape of the change.
        *

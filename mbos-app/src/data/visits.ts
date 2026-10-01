@@ -5,6 +5,11 @@ import { notify } from './notifications';
 import type { Fix } from '../native/location';
 import { isoDate } from '../lib/format';
 import { wireOutcome } from '../lib/wire';
+import { FOLLOW_UP_MODES, type FollowUpMode } from './fixtures';
+
+function followUpVerb(mode: FollowUpMode | undefined): string {
+  return FOLLOW_UP_MODES.find((m) => m.k === (mode ?? 'visit'))?.task ?? 'Visit';
+}
 
 /**
  * Saving a visit.
@@ -54,6 +59,8 @@ export type SaveVisitArgs = {
   custPhotoId: string | null;
   voiceNoteId: string | null;
   nextFollowUpDate: string | null;
+  /** How the follow-up happens; it names the task. Absent reads as a visit. */
+  nextFollowUpMode?: FollowUpMode;
   journeyStopId: string | null;
   wasPlanned: boolean;
   deviationReason: string | null;
@@ -174,7 +181,7 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
     if (args.nextFollowUpDate) {
       const { createTask } = await import('./tasks');
       await createTask({
-        title: `Follow up with ${args.customerName}`,
+        title: `${followUpVerb(args.nextFollowUpMode)} ${args.customerName}`,
         customerId: args.customerId,
         priority: 'Normal',
         dueDate: args.nextFollowUpDate,
@@ -341,7 +348,7 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
 
   if (!args.verified) {
     await notify({
-      title: 'Visit saved unverified',
+      title: 'Visit saved, not checked',
       body: `${args.customerName} · your manager will see the reason you gave.`,
       kind: 'amber',
       href: '/sync',

@@ -1920,7 +1920,7 @@ export const SETTINGS = [
     category: "mbos-location",
     label: "Usable GPS accuracy",
     description:
-      "Metres. A fix the handset itself rates worse than this is not evidence of where anybody was standing — a visit captured on one is still saved, but it is not marked verified and it never counts as a location mismatch. Refusing the check-in instead would lose a real visit to a cloudy afternoon indoors.",
+      "Metres. A fix the handset itself rates worse than this is not evidence of where anybody was standing, so the handset refuses to start a check-in on one — he steps outside and tries again. A visit that arrives from an older handset on such a fix is still saved, but it is not marked verified and it never counts as a location mismatch.",
     default: 50,
     min: 5,
     max: 1000,
@@ -1934,6 +1934,17 @@ export const SETTINGS = [
       "Metres between the salesman and the shop's own pin. Inside it the check-in goes ahead; outside it the handset refuses, and he can only pass by saying in writing that the pin is wrong — which reaches you as an unverified visit. It is ALSO the distance a saved visit is flagged at, because the distance a check-in is refused at and the distance one is questioned at are one fact. Keep it comfortably larger than the accuracy above: a fix that is itself 50 m wide cannot tell a doorway from the tea shop across the road, and every refusal it produces falls on somebody standing in the right place.",
     default: 100,
     min: 20,
+    max: 5000,
+  },
+  {
+    key: "mbos.visit.forgotCheckoutMetres",
+    type: "integer",
+    category: "mbos-location",
+    label: "Remind to check out past",
+    description:
+      "Metres from where he checked in. When the trail shows a salesman this far from a shop he is still checked into, his phone asks — once, with a sound — whether he forgot to check out, and tapping it opens the check-out for that shop with no distance check. The visit closes at the time he was seen leaving. Measured after taking off the reading's own error, so a vague fix never raises it while he is still at the counter.",
+    default: 500,
+    min: 200,
     max: 5000,
   },
   {
@@ -4840,6 +4851,15 @@ export function checkConsistency(config: Config): string[] {
     );
   }
 
+  // A reminder that he has left, raised inside the distance he was allowed to
+  // check in from, would fire at the counter of the shop he is still in.
+  const forgotAt = config["mbos.visit.forgotCheckoutMetres"];
+  if (forgotAt <= mismatch * 2) {
+    problems.push(
+      `The "forgot to check out" reminder fires ${forgotAt}m from the check-in, but a check-in is allowed up to ${mismatch}m from the shop. Keep the reminder at least twice the check-in radius, or somebody still standing in the shop is asked whether he has left.`,
+    );
+  }
+
   // Two approval tiers that are one tier. The second approver would never be
   // asked, and the screen would say they were.
   const tier1 = config["mbos.orders.approvalThresholdPaise"];
@@ -5289,6 +5309,7 @@ export type Config = {
   /* ------------------------------------------------- MBOS — field sales */
   "mbos.location.gpsAccuracyThresholdM": number;
   "mbos.location.visitMismatchM": number;
+  "mbos.visit.forgotCheckoutMetres": number;
   "mbos.location.routeDeviationM": number;
   "mbos.location.unplannedVisitsPerDay": number;
   "mbos.location.trackWhileWorking": boolean;

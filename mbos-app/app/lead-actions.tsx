@@ -65,12 +65,12 @@ function headlineFor(lead: Lead, view: LeadActionView, today: string): string | 
       /* A park reading back today is not a promise falling due, and reading
          them as one sentence is how a salesman treats a lead that has just
          returned as one he had already agreed to ring. */
-      return parked(lead) ? 'Off hold today — back to be worked' : 'Owed today';
+      return parked(lead) ? 'Off hold today. Work on it again.' : 'Pending today';
 
     case 'overdue':
       return parked(lead)
-        ? 'Was due back ' + dmy(day) + ' — ' + plural(late, 'day') + ' ago'
-        : 'Was due ' + dmy(day) + ' — ' + plural(late, 'day') + ' late';
+        ? 'Was due back ' + dmy(day) + '. ' + plural(late, 'day') + ' ago'
+        : 'Was due ' + dmy(day) + '. ' + plural(late, 'day') + ' late';
 
     case 'parked': {
       /*
@@ -89,9 +89,9 @@ function headlineFor(lead: Lead, view: LeadActionView, today: string): string | 
         ? labelOf(HOLD_REASONS, lead.holdReasonCode)
         : lead.holdReason?.trim() || null;
       const when = !day
-        ? 'No day set for it to come back'
+        ? 'No return day set'
         : day < today
-          ? 'Was due back ' + dmy(day) + ' — ' + plural(late, 'day') + ' ago'
+          ? 'Was due back ' + dmy(day) + '. ' + plural(late, 'day') + ' ago'
           : day === today
             ? 'Comes back today'
             : 'Comes back ' + dmy(day);
@@ -100,8 +100,8 @@ function headlineFor(lead: Lead, view: LeadActionView, today: string): string | 
 
     case 'none':
       return lead.lastActivityDate
-        ? 'Nothing promised · last worked ' + dmy(lead.lastActivityDate)
-        : 'Nothing promised, and nothing recorded against it yet';
+        ? 'Nothing pending · last worked on ' + dmy(lead.lastActivityDate)
+        : 'Nothing pending. Nothing done on it yet.';
   }
 }
 
@@ -167,35 +167,35 @@ export default function LeadActionsScreen() {
     ? null
     : readErr
       ? {
-          head: 'Your leads could not be read',
-          body: 'Something went wrong reading this phone. Close MBOS and open it again.',
+          head: 'Could not open your leads',
+          body: 'Something went wrong on this phone. Close MBOS and open it again.',
         }
       : neverPulled
         ? {
-            head: 'Your book has not arrived',
-            body: 'Nothing has come down from the office onto this phone yet, so this is empty rather than clear. Find some signal and leave MBOS open for a minute.',
+            head: 'Your leads have not come yet',
+            body: 'Nothing has come from the office to this phone yet. Go where there is signal. Keep MBOS open for a minute.',
           }
         : counts && counts.working === 0
           ? {
-              head: 'No leads being worked',
-              body: 'Every lead you have is converted, lost or archived. A shop you walk past is the way a new one starts.',
+              head: 'No open leads',
+              body: 'All your leads are converted, lost or closed. Add a new shop you visit as a lead.',
             }
           : rows.length === 0
             ? {
                 head:
                   view === 'none'
-                    ? 'Every lead has something owed on it'
+                    ? 'Every lead has a pending action'
                     : view === 'parked'
                       ? 'Nothing is on hold'
                       : view === 'overdue'
                         ? 'Nothing is late'
-                        : 'Nothing owed today',
+                        : 'Nothing pending today',
                 body:
                   view === 'none'
-                    ? 'Each one has a day and a person against it. That is the whole of the rule.'
+                    ? 'Each one has a day and a person set. Good.'
                     : view === 'parked'
-                      ? 'Putting a lead on hold parks it until a day you name, and it comes back here by itself.'
-                      : 'The other views may still have something in them — the counts are on the chips above.',
+                      ? 'Put a lead on hold until a day you choose. It comes back here by itself.'
+                      : 'Other lists may still have work. See the counts on the buttons above.',
               }
             : null;
 
@@ -209,10 +209,9 @@ export default function LeadActionsScreen() {
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
         <BackLink label={back.label} onPress={back.go} />
 
-        <SectionLabel>What is owed</SectionLabel>
+        <SectionLabel>Pending actions</SectionLabel>
         <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-          A lead being worked always has an action, a day and somebody holding it. These are the
-          four ways that can stand.
+          Every open lead needs an action, a day and a person. Check these four lists.
         </T>
 
         <ScrollView
@@ -248,7 +247,7 @@ export default function LeadActionsScreen() {
         {!leads ? (
           <Card style={{ marginTop: 12, paddingVertical: 28 }}>
             <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
-              Reading…
+              Loading…
             </T>
           </Card>
         ) : emptiness ? (

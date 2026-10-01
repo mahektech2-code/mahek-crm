@@ -41,7 +41,7 @@ import {
   type PullDelta,
   type TerritoryState,
 } from "../mbos/types";
-import { employeeJoinOn } from "../employee-link";
+import { employeeLateral } from "../employee-link";
 /* The Accounts ledger's own read. See `customerBills` — the handset must not
    have a second opinion about what a shop owes. */
 import { listBills } from "./payment-service";
@@ -880,6 +880,10 @@ export type BootstrapPayload = {
    * a product list typed into a screen.
    */
   travelModes: unknown[];
+  /** His own field orders, as the office now stands on them. See `myOrderStates`. */
+  myOrders: unknown[];
+  /** The changes he asked for on approved orders, and their answers. */
+  orderChanges: unknown[];
   /**
    * The expense policy in force, resolved for THIS person, as rules the
    * handset's own copy of the engine reads.
@@ -1063,6 +1067,8 @@ export async function buildBootstrap(
     performance: performanceRows,
     salary: salaryRows,
     travelModes: await travelModeRows(),
+    myOrders: await myOrderStates(principal.user.id),
+    orderChanges: await myOrderChanges(principal.user.id),
     expensePolicy: await expensePolicyFor(principal.user.id, await today()),
     config,
   };
@@ -1225,25 +1231,92 @@ async function customersForDevice(ids: string[]) {
 }
 
 /**
+ * HIS OWN FIELD ORDERS, AS THE OFFICE NOW STANDS ON THEM.
+ *
+ * An accounts decision never reached the handset: the phone learned an
+ * order's fate only through `mbos_approvals`, which accounts do not write, so
+ * every field order read "Sent" or "With the office" for ever and a declined
+ * one carried no reason. This is the order's own row — status, the reason, and
+ * the lines as they now stand, because an edit or an accepted change rewrites
+ * them at the office. One function for the bootstrap and the delta; the
+ * bootstrap reaches back ninety days, the delta whatever moved since.
+ */
+async function myOrderStates(userId: string, sinceIso?: string) {
+  return db.execute<Record<string, unknown>>(sql`
+    select o.id, o.status::text as status, o.decline_reason as "declineReason",
+           o.order_no as "orderNo", o.total_amount::double precision as "totalAmountPaise",
+           o.line_items as "lineItems",
+           (extract(epoch from o.approved_at) * 1000)::double precision as "decidedAt"
+      from orders o
+     where o.user_id = ${userId}
+       and o.source = 'mbos'
+       and ${sinceIso ? sql`o.updated_at > ${sinceIso}` : sql`o.created_at > now() - interval '90 days'`}
+     order by o.updated_at asc
+     limit 500
+  `);
+}
+
+/** The changes he asked for on approved orders, and what accounts said. */
+async function myOrderChanges(userId: string, sinceIso?: string) {
+  return db.execute<Record<string, unknown>>(sql`
+    select r.id, r.order_id as "orderId", r.status::text as status, r.note,
+           r.decision_note as "decisionNote",
+           r.total_amount_paise::double precision as "totalAmountPaise",
+           r.line_items as "lineItems",
+           (extract(epoch from r.created_at) * 1000)::double precision as "requestedAt",
+           (extract(epoch from r.decided_at) * 1000)::double precision as "decidedAt"
+      from order_change_requests r
+     where r.requested_by_id = ${userId}
+       and ${sinceIso ? sql`r.updated_at > ${sinceIso}` : sql`r.created_at > now() - interval '90 days'`}
+     order by r.updated_at asc
+     limit 500
+  `);
+}
+
+/**
  * The catalogue, and only what can actually be ordered: a SKU is the only
  * level `interaction_product_lines` may point at, so offering anything above
  * it puts a line on an order that cannot be saved.
  */
 async function activeCatalogue() {
+  return catalogueRows();
+}
+
+/**
+ * THE CATALOGUE ROWS, for the bootstrap and the delta alike.
+ *
+ * Two queries until now, and they had drifted the way AGENTS.md says every
+ * pair of them does: the delta sent no brand and no formulation — the line
+ * that tells two SKUs of one liquid apart — and no status filter, so a SKU
+ * held for a duplicate decision would have reached the phone as orderable the
+ * moment it was touched. A delta row and a bootstrap row are now the same
+ * columns. On the delta, `active` is the ORDERABLE answer rather than the
+ * column, so a SKU that stops being orderable is switched off on the phone
+ * instead of being left behind.
+ */
+async function catalogueRows(sinceIso?: string) {
   return db.execute<Record<string, unknown>>(sql`
     select p.id, p.name, p.raw_name as "rawName", p.pack_size as "packSize",
            p.packing, p.millilitres_per_can as "millilitresPerCan",
-           p.cans_per_box as "cansPerBox", p.active,
+           p.cans_per_box as "cansPerBox", (p.active and p.status = 'ok') as active,
            -- brand and formulation are what the catalogue and the order
            -- form read for the subtitle under a SKU -- one liquid sells as
            -- Nano, Astar Nano and M5x4 Thinner, and that line is what tells
            -- them apart mid-call.
-           b.name as brand, f.name as formulation
+           b.name as brand, f.name as formulation,
+           -- The SKU code: the legacy Product ID, what a salesman and a
+           -- shopkeeper call a product by.
+           nullif(trim(p.external_code), '') as sku
       from products p
       left join product_brands b on b.id = p.brand_id
       left join product_formulations f on f.id = p.formulation_id
-     where p.active = true and p.status = 'ok'
-     order by p.display_order asc, p.name asc
+     where ${
+       sinceIso
+         ? sql`p.updated_at > ${sinceIso}`
+         : sql`p.active = true and p.status = 'ok'`
+     }
+     order by ${sinceIso ? sql`p.updated_at asc` : sql`p.display_order asc, p.name asc`}
+     ${sinceIso ? sql`limit 2000` : sql``}
   `);
 }
 
@@ -2583,7 +2656,7 @@ async function salaryFor(userId: string): Promise<Record<string, unknown>[]> {
          file, so the figure on a handset and the figure in the office cannot
          come from two different readings of who this person is. See
          lib/employee-link.ts. */
-      left join employees e on ${employeeJoinOn("u", "e")}
+      ${employeeLateral("u", "e")}
      order by p."from" desc
   `);
 }
@@ -2817,6 +2890,8 @@ export async function buildPull(
       transcripts: [],
       journeyStops: [],
       approvals: [],
+      myOrders: [],
+      orderChanges: [],
       performance: [],
       tasks: [],
       planDays: [],
@@ -2907,15 +2982,7 @@ export async function buildPull(
     billChanges,
   ] = await Promise.all([
       changedCustomersForDevice(ids, sinceIso),
-      db.execute<Record<string, unknown>>(sql`
-        select p.id, p.name, p.pack_size as "packSize", p.packing,
-               p.millilitres_per_can as "millilitresPerCan",
-               p.cans_per_box as "cansPerBox", p.active
-          from products p
-         where p.updated_at > ${sinceIso}
-         order by p.updated_at asc
-         limit 2000
-      `),
+      catalogueRows(sinceIso),
       idList
         ? db.execute<Record<string, unknown>>(sql`
             select t.id, t.customer_id as "customerId", t.event_type as "eventType",
@@ -3127,6 +3194,8 @@ export async function buildPull(
     documents: documentChanges as unknown[],
     courses: courseChanges as unknown[],
     deletions: deletionRows.groups,
+    myOrders: await myOrderStates(principal.user.id, sinceIso),
+    orderChanges: await myOrderChanges(principal.user.id, sinceIso),
     performance: await performanceFor(principal.user.id, sinceIso),
     tasks: taskChanges as unknown[],
     salary: salaryRows as unknown[],

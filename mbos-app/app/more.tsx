@@ -9,7 +9,7 @@ import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { signOut as signOutReal } from '../src/data/session';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
-import { leaveBalances, listExpenses, listSamples } from '../src/data/requests';
+import { listExpenses, listSamples } from '../src/data/requests';
 import { priceDay } from '../src/data/travel';
 import { cashInHand } from '../src/data/payments';
 import { overdueSamples } from '../src/data/lead-samples';
@@ -36,9 +36,7 @@ type Counts = {
   lateSamples: number;
   overdueTasks: number;
   openLeads: number;
-  leaveLeft: number;
   pendingExpenses: number;
-  dayOpen: boolean;
   daySent: boolean;
   legsToday: number;
   openSamples: number;
@@ -52,9 +50,7 @@ const EMPTY: Counts = {
   lateSamples: 0,
   overdueTasks: 0,
   openLeads: 0,
-  leaveLeft: 0,
   pendingExpenses: 0,
-  dayOpen: false,
   daySent: false,
   legsToday: 0,
   openSamples: 0,
@@ -86,7 +82,7 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
            nobody has promised anything about at all. No badge, because Home
            already carries the two figures and a third statement of them here
            is a number somebody has to reconcile rather than read. */
-        { label: 'What is owed', badge: '', route: 'lead-actions' },
+        { label: 'Pending actions', badge: '', route: 'lead-actions' },
         /* These two named a LIST and opened a capture form — the only two
            rows here that did. Punching an order and taking money both start
            at the + button, like every other capture; what was missing was
@@ -112,12 +108,8 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
       label: 'Me',
       items: [
         { label: 'Attendance', badge: '', route: 'attendance' },
-        { label: 'Leave', badge: n.leaveLeft ? n.leaveLeft + ' left' : '', route: 'leave' },
+        { label: 'Leave', badge: '', route: 'leave' },
         { label: 'Salary', badge: '', route: 'salary' },
-        /* The day comes before the claims that hang off it: the meal
-           allowance is worked out from the times on it, so a salesman who
-           never opens this screen is a salesman never paid for his food. */
-        { label: 'Your day', badge: n.dayOpen ? '' : 'not started', route: 'day' },
         { label: "Today's travel", badge: n.legsToday ? String(n.legsToday) : '', route: 'travel' },
         { label: 'Close the day', badge: n.daySent ? 'sent' : '', route: 'eod' },
         { label: 'Expenses', badge: n.pendingExpenses ? n.pendingExpenses + ' pending' : '', route: 'expenses' },
@@ -152,7 +144,7 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
         /* The Preferences card lives on the profile screen — this used to toast
          rather than open the thing it names. */
       { label: 'App preferences', badge: '', route: 'profile' },
-        { label: 'Sync', badge: n.toSend ? n.toSend + ' to send' : '', route: 'sync' },
+        { label: 'Send to office', badge: n.toSend ? n.toSend + ' to send' : '', route: 'sync' },
         /* The walkthrough opens on its own once per build; this is the way back
            to it for somebody who pressed "Do this later". */
         { label: 'Set up your phone', badge: '', route: 'setup' },
@@ -191,7 +183,6 @@ export default function MoreScreen() {
       void Promise.all([
         listOpenTasks(),
         openLeadCount(),
-        leaveBalances(),
         listExpenses(),
         listSamples(),
         pendingCount(),
@@ -202,7 +193,7 @@ export default function MoreScreen() {
            a rupee amount in a menu badge reads as something owed to him. */
         cashInHand(userId),
         overdueSamples(today),
-      ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue, today_, maps, cash, late]) => {
+      ]).then(([tasks, openLeads, expenses, samples, toSend, queue, today_, maps, cash, late]) => {
         if (!live) return;
         setCounts({
           savedMaps: maps.length,
@@ -210,12 +201,10 @@ export default function MoreScreen() {
           lateSamples: late.length,
           overdueTasks: tasks.filter((t) => bucketOf(t.dueDate, today) === 'Overdue').length,
           openLeads,
-          leaveLeft: Math.round(balances.reduce((a, b) => a + b.available, 0)),
           pendingExpenses: expenses.filter((e) => e.state === 'Pending').length,
           openSamples: samples.filter((s) => s.state !== 'Converted' && s.state !== 'Rejected').length,
           toSend,
           rejected: queue.rejected ?? 0,
-          dayOpen: today_.day != null,
           daySent: today_.day?.lockedAt != null,
           legsToday: today_.legs.length,
         });
@@ -240,7 +229,7 @@ export default function MoreScreen() {
       });
       return;
     }
-    notify(i.label + ' — next to build');
+    notify(i.label + ' is not ready yet.');
   };
 
   return (

@@ -49,12 +49,12 @@ export default function ReportsScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Reports</T>
       <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 16 }}>
-        What you actually did — read from this phone, not a claim about what will be paid.
+        What you did, as saved on this phone. This is not what you will be paid.
       </T>
 
       {!current ? null : (
         <>
-          <ReportCard title={monthName(current.from) + ' — so far'} r={current} />
+          <ReportCard title={monthName(current.from) + ' · so far'} r={current} />
           {previous ? (
             <View style={{ marginTop: 10 }}>
               <ReportCard title={monthName(previous.from)} r={previous} muted />
@@ -90,14 +90,14 @@ function ReportCard({ title, r, muted }: { title: string; r: MonthReport; muted?
           value={
             r.valuePaise == null
               ? r.ordersTaken > 0
-                ? `${plural(r.ordersUnvalued, 'order')} not priced yet`
+                ? `${plural(r.ordersUnvalued, 'order')} without price yet`
                 : '—'
               : inrFromPaise(r.valuePaise)
           }
         />
-        <Row label="Collected, reported" value={inrFromPaise(r.collectedPaise) + ' · ' + plural(r.collectedCount, 'receipt')} />
+        <Row label="Collected (as you reported)" value={inrFromPaise(r.collectedPaise) + ' · ' + plural(r.collectedCount, 'receipt')} />
         {r.ordersRejected > 0 ? (
-          <Row label="Rejected" value={plural(r.ordersRejected, 'order')} tone={C.danger} />
+          <Row label="Not accepted" value={plural(r.ordersRejected, 'order')} tone={C.danger} />
         ) : null}
       </View>
     </Card>

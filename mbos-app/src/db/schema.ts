@@ -1980,6 +1980,41 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE lead_validations ADD COLUMN readyForOrder TEXT;`,
   ],
 
+  /*
+   * THE SKU CODE, which is what a salesman and a shopkeeper both call a
+   * product by. `products.external_code` at the office — the legacy Product ID
+   * every active SKU carries — and the one thing that tells "Mahek Enamel
+   * Thinner 800Ml (Loose)" from its 44-can box at a glance. The order form
+   * prints it on every row and searches it.
+   */
+  [`ALTER TABLE products ADD COLUMN sku TEXT;`],
+
+  /*
+   * A CHANGE TO AN APPROVED ORDER, asked for rather than made. Until accounts
+   * decide an order he edits it directly; after that the change goes to them
+   * as a request, and this row is how he follows it — sent, then accepted or
+   * declined with the reason. Office-written fields arrive on `orderChanges`.
+   */
+  [
+    `CREATE TABLE IF NOT EXISTS order_change_requests (
+      id TEXT PRIMARY KEY,
+      orderId TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      note TEXT,
+      decisionNote TEXT,
+      totalAmountPaise INTEGER,
+      linesJson TEXT,
+      requestedAt INTEGER,
+      decidedAt INTEGER,
+      clientCreatedAt INTEGER,
+      serverCreatedAt INTEGER,
+      deviceId TEXT,
+      syncState TEXT NOT NULL DEFAULT 'queued',
+      syncMessage TEXT
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_order_change_requests_order ON order_change_requests(orderId);`,
+  ],
+
 ];
 
 /**
@@ -2002,7 +2037,7 @@ export const SCHEMA_VERSION = MIGRATIONS.length;
 export const OWNED_TABLES = [
   'visits', 'orders', 'order_lines', 'payments', 'attendance_days', 'tasks',
   'leads', 'samples', 'complaints', 'expenses', 'leave_requests', 'tours',
-  'competitor_records', 'approvals',
+  'competitor_records', 'approvals', 'order_change_requests',
   /* The funnel's two. A lead's timeline is written here as it happens and the
      office keeps its own — a sync never deletes a line of it, because what a
      salesman recorded about a shop is the record even where the office's own

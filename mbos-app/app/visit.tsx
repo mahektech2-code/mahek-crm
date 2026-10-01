@@ -4,6 +4,7 @@ import { router, useNavigation } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Card, Choice, Input, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
+import { skuText } from '../src/components/ui/sku';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { OdometerCamera, type OdometerResult } from '../src/components/ui/odometer-camera';
@@ -30,14 +31,14 @@ import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { hhmm, isoDate, pretty } from '../src/lib/format';
 import { elapsedLabel, FOLLOW_ON, unansweredQuestions, visitChecks, visitVerdict } from '../src/lib/visit';
-import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, OUTCOMES } from '../src/data/fixtures';
+import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, FOLLOW_UP_MODES, OUTCOMES } from '../src/data/fixtures';
 import { getConfig } from '../src/data/config';
 import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/visits';
 import { checkInAtShop, clearArrival, recordArrival } from '../src/data/arrival';
 import { logComplaint, requestSample } from '../src/data/requests';
 import { sampleReasons } from '../src/data/lead-samples';
 import { type CodedOption } from '../src/engines/funnel';
-import { starterProducts } from '../src/data/customers';
+import { rememberedSuggestions } from '../src/data/order-suggestions';
 import { todayStops } from '../src/data/journey';
 import {
   checkInVerdict,
@@ -79,14 +80,15 @@ import { NavigateButton } from '../src/components/ui/navigate';
  * turned down rather than flagged, and the arrival is the only place that can
  * honestly happen: nothing has been typed yet, so a refusal costs a walk to
  * the right door instead of a day's work, and he can press the button again.
- * `checkInVerdict` decides it and refuses only what a reading can prove — no
- * fix, a fix too wide to trust and a shop with no pin all still go through.
- * The way past a refusal is a typed sentence, which saves the visit unverified
- * and goes to his manager: the pin in this book is very often the wrong one,
- * and a salesman who cannot record being where he actually is stops recording.
+ * `checkInVerdict` decides it: no fix, or a fix too wide to trust, is refused
+ * too, and a shop with no pin goes through only once he confirms he is at it —
+ * that check-in becomes its pin. The way past a DISTANCE refusal is a typed
+ * sentence, which saves the visit unverified and goes to his manager: the pin
+ * in this book is very often the wrong one, and a salesman who cannot record
+ * being where he actually is stops recording.
  */
 
-type Product = { id: string; name: string; packSize: string | null };
+type Product = { id: string; name: string; packSize: string | null; sku?: string | null };
 
 /*
  * How often the On-your-way screen asks the radio where he is, and the range at
@@ -111,6 +113,7 @@ export default function Visit() {
   const note = useStore((s) => s.note);
   const outcome = useStore((s) => s.outcome);
   const nextDate = useStore((s) => s.nextDate);
+  const nextMode = useStore((s) => s.nextMode);
   const visitStart = useStore((s) => s.visitStart);
   const visitDone = useStore((s) => s.visitDone);
   const set = useStore((s) => s.set);
@@ -317,7 +320,7 @@ export default function Visit() {
     if (visitStart == null) return;
     return navigation.addListener('beforeRemove', () => {
       if (savedRef.current) return;
-      notify('Your visit is still running — tap the bar at the bottom to come back and check out.');
+      notify('Your visit is still on. Tap the bar at the bottom to come back and check out.');
     });
   }, [navigation, visitStart, notify]);
 
@@ -493,7 +496,11 @@ export default function Visit() {
     void Promise.all([
       getConfig<number>('mbos.visits.minimumDwellSeconds', 120),
       getConfig<number>('mbos.location.visitMismatchM', 100),
-      starterProducts(5),
+      /* This shop's usual products first, then the best sellers — the order
+         form's own list, not the first five SKUs alphabetically. */
+      custId
+        ? rememberedSuggestions(custId).then((s) => [...s.usual, ...s.starter].slice(0, 5))
+        : Promise.resolve([]),
       todayStops(),
       getConfig<number>('mbos.travel.maxLegKilometres', 400),
       sampleReasons(),
@@ -538,10 +545,25 @@ export default function Visit() {
   }, [nextDate, c, set]);
 
   /* One attempt at a fix on arrival, ten seconds at most. The salesman is
-     standing in a shop with the owner waiting; a spinner is not an option. */
+     standing in a shop with the owner waiting; a spinner is not an option.
+
+     NOT WHERE THE CHECK-IN ALREADY HAS ONE. The gate measured him at the door
+     and the arrival kept that reading; taking a fresh one here, after Android
+     reaped the app or after he tapped the "forgot to check out" reminder half
+     a kilometre down the road, would measure where he is NOW against the shop
+     and refuse to let a perfectly good visit check out. The 100 m rule is for
+     walking in, never for walking out. */
+  const keptFix =
+    arrival && arrival.customerId === custId && arrival.checkedInAt != null ? arrival.checkInFix ?? null : null;
   React.useEffect(() => {
     let live = true;
     if (gps !== 'acquiring') return;
+    if (keptFix && arrival) {
+      setFix({ lat: keptFix.lat, lng: keptFix.lng, accuracyM: keptFix.accuracyM ?? 9999, at: arrival.arrivedAt });
+      setFixReason(null);
+      set({ gps: 'locked' });
+      return;
+    }
     void (async () => {
       const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
       const result = await getFix({ accuracyThresholdM: threshold });
@@ -554,7 +576,7 @@ export default function Visit() {
     return () => {
       live = false;
     };
-  }, [gps, set]);
+  }, [gps, set, keptFix, arrival]);
 
   /* ────────────────────────────────────────────────────────── arriving */
 
@@ -582,9 +604,14 @@ export default function Visit() {
    *
    * `override` is his own sentence, given after a refusal. Passed in rather
    * than read from state because the confirm dialog hands it back and state
-   * set a line earlier is not yet readable here.
+   * set a line earlier is not yet readable here. It opens a `too_far` refusal
+   * and nothing else: it exists because a stored pin is often wrong, and a
+   * missing reading is not a wrong pin.
+   *
+   * `confirmedHere` is his answer to "are you at this shop?", asked where the
+   * shop has no pin and this fix is about to become one.
    */
-  const arriveHere = async (override?: string) => {
+  const arriveHere = async (override?: string, confirmedHere = false) => {
     if (!leg || arriving) return;
     setArriving(true);
     try {
@@ -601,7 +628,7 @@ export default function Visit() {
         radiusM,
         threshold,
       );
-      if (!gate.accepted && !override) {
+      if (!gate.accepted && !(override && gate.reason === 'too_far')) {
         /* NOTHING IS WRITTEN. The leg stays open because he is still
            travelling, the dwell clock does not start, and no meter has been
            photographed — so pressing the button again from the right place
@@ -615,6 +642,23 @@ export default function Visit() {
       }
       setRefused(null);
 
+      /* NO PIN ON THE SHOP: this reading is about to become where the shop is
+         for every check-in after it, so he says he is standing in it first.
+         Asked before the meter, so "no" costs nothing. The dialog calls back
+         in, which takes a fresh reading — the one he confirmed against. */
+      if (gate.needsConfirmation && !confirmedHere) {
+        const shopName = leg.toLabel ?? c?.name ?? 'this shop';
+        askConfirm({
+          title: `Are you at ${shopName}?`,
+          body: `${shopName} has no saved location yet. Check in only if you are standing at the shop — where you are now is saved as its location, and every check-in after this one is measured against it.`,
+          confirmLabel: 'Yes, I am at the shop',
+          run: () => {
+            void arriveHere(undefined, true);
+          },
+        });
+        return;
+      }
+
       let odometer: { km: number; photoId: string } | null = null;
       if (needsMeter) {
         const shot = await askOdometer();
@@ -624,7 +668,7 @@ export default function Visit() {
         try {
           odometer = { km: shot.km, photoId: await queueOdometerPhoto(shot.uri, leg.id) };
         } catch {
-          notify('The photo could not be saved on this phone, so the trip is still open. Try again.');
+          notify('The photo could not be saved on this phone. The trip is still open. Try again.');
           return;
         }
       }
@@ -669,6 +713,7 @@ export default function Visit() {
           customerName: leg.toLabel ?? c?.name ?? 'this shop',
           legId: leg.id,
           arrivedAt: at,
+          checkInFix: got ? { lat: got.lat, lng: got.lng, accuracyM: got.accuracyM } : null,
         }),
       );
       loadLeg();
@@ -681,7 +726,7 @@ export default function Visit() {
        */
       if (override && c?.gpsLat != null && c?.gpsLng != null) setPinAsk(true);
     } catch {
-      notify('That arrival could not be recorded on this phone. Nothing has been lost — try again.');
+      notify('Your arrival could not be saved on this phone. Nothing is lost. Try again.');
     } finally {
       setArriving(false);
     }
@@ -711,14 +756,14 @@ export default function Visit() {
            him back to the journey is the honest answer; pretending to check
            him into a shop with no arrival behind it is not. */
         setArrival(null);
-        notify('That arrival is no longer today’s. Start the visit again.');
+        notify('That arrival is from another day. Start the visit again.');
         router.replace('/journey');
         return;
       }
       setArrival(next);
       checkedIntoShop(next.checkedInAt ?? at);
     } catch {
-      notify('The check-in could not be recorded on this phone. Nothing has been lost — try again.');
+      notify('The check-in could not be saved on this phone. Nothing is lost. Try again.');
     } finally {
       setCheckingIn(false);
     }
@@ -735,8 +780,8 @@ export default function Visit() {
     askConfirm({
       title: 'Are you at the shop?',
       body:
-        'Say so and the visit is recorded from here, marked unverified, with your reason sent to your manager. The shop’s own location in MahekOne may simply be wrong — a lot of them are — and this is how that gets found out.',
-      reasonLabel: 'Where you actually are · required',
+        'Say yes and the visit is saved from here, as not checked. Your reason goes to your manager. Many shop locations in MahekOne are wrong. This is how we find them.',
+      reasonLabel: 'Where you are now · needed',
       confirmLabel: 'I am at the shop',
       run: (reason) => {
         void arriveHere(reason);
@@ -767,7 +812,7 @@ export default function Visit() {
       /* A save is never blocked by a recording. The note he read and approved
          is already in the box; losing the audio behind it costs the office a
          second copy of something it can already read. */
-      notify('That recording could not be kept, but your note is safe.');
+      notify('The recording could not be kept. Your note is safe.');
     }
   };
 
@@ -811,7 +856,7 @@ export default function Visit() {
       markVisitDone('complaint', draft.cat + ' · with the desk team');
       setForm(null);
       setDraft({});
-      notify('Complaint logged · the desk team sees it today');
+      notify('Complaint saved. The desk team will see it today.');
     } catch {
       setFormErr('save');
     } finally {
@@ -860,7 +905,7 @@ export default function Visit() {
       setLinked((l) => ({ ...l, sampleId: id }));
       markVisitDone('sample', (draft.skuName ?? '') + ' · sent for approval');
       setForm(null);
-      notify('Sample requested · follow-up set for ' + pretty(trial));
+      notify('Sample asked for. Follow-up set for ' + pretty(trial));
       setDraft({});
     } catch {
       setFormErr('save');
@@ -870,7 +915,16 @@ export default function Visit() {
     }
   };
 
-  const dwellSeconds = visitStart ? Math.max(0, Math.floor((now - visitStart) / 1000)) : 0;
+  /*
+   * WHEN THE VISIT ENDED. Ordinarily the moment he presses Check out; where the
+   * trail noticed him walk away first, the moment it did. A visit he forgot to
+   * close is closed at the time he left rather than at the time he remembered,
+   * or the ride home would be counted as time with the customer.
+   */
+  const leftAt =
+    arrival && arrival.customerId === custId && arrival.checkedInAt != null ? arrival.leftShopAt ?? null : null;
+  const endAt = leftAt != null ? Math.min(leftAt, now) : now;
+  const dwellSeconds = visitStart ? Math.max(0, Math.floor((endAt - visitStart) / 1000)) : 0;
   const gpsLocked = gps === 'locked';
 
   /* The disagreement between the phone and the book, as a disagreement — one
@@ -889,7 +943,6 @@ export default function Visit() {
     minimumDwellSeconds: minDwell,
     maxMetresFromShop: maxMetres,
     checkInOverridden: !!overrideReason,
-    hasShopPhoto: !!shots.shop,
     outcome,
     followOnCaptured: !!(outcome && visitDone[outcome]),
     noteChars: note.trim().length,
@@ -916,10 +969,10 @@ export default function Visit() {
    */
   function missingDecision(): string | null {
     if (capState === 'decide' && !decision) {
-      return 'Say which way this one goes before you close the visit.';
+      return 'Choose which way this lead goes before you close the visit.';
     }
     if (decision === 'still_suspect' && !decisionWhy.trim()) {
-      return 'Say why we are still going — somebody will ask.';
+      return 'Say why you still visit this shop. Your manager will ask.';
     }
     return null;
   }
@@ -966,7 +1019,7 @@ export default function Visit() {
     setSaving(true);
     /* The coordinates only. WHEN comes off the dwell clock below — a visit made
        where there is no signal is still a visit that happened at a time. */
-    const checkOut: Fix | null = fix ? { ...fix, at: now } : null;
+    const checkOut: Fix | null = fix ? { ...fix, at: endAt } : null;
     let visitId: string;
     try {
       visitId = await saveVisit({
@@ -992,7 +1045,7 @@ export default function Visit() {
          * duration of zero that nobody measured.
          */
         checkInAt: visitStart ?? now,
-        checkOutAt: visitStart == null ? null : now,
+        checkOutAt: visitStart == null ? null : endAt,
         outcome: outcome ?? 'visited',
         notes: note.trim() || null,
         transcript: null,
@@ -1001,6 +1054,7 @@ export default function Visit() {
         custPhotoId: shots.cust ?? null,
         voiceNoteId,
         nextFollowUpDate: nextDate || null,
+        nextFollowUpMode: nextMode,
         journeyStopId: stopId,
         wasPlanned: !!stopId,
         /*
@@ -1049,7 +1103,7 @@ export default function Visit() {
     } catch {
       savingRef.current = false;
       setSaving(false);
-      notify('The visit could not be saved on this phone. Nothing has been lost — try again.');
+      notify('The visit could not be saved on this phone. Nothing is lost. Try again.');
       return;
     }
 
@@ -1079,7 +1133,7 @@ export default function Visit() {
         /* Said rather than swallowed, and NOT as a failure of the visit: the
            journey is still on today's travel, it is simply not attached to the
            visit it was made for. */
-        notify('The visit is saved. The journey could not be attached to it — check today’s travel.');
+        notify('The visit is saved. The trip could not be added to it. Check today’s travel.');
       }
     }
 
@@ -1120,10 +1174,10 @@ export default function Visit() {
       if (Object.keys(f.patch).length) set(f.patch as Parameters<typeof set>[0]);
       notify(
         f.filled.length
-          ? 'Filled ' + f.filled.join(' and ') + (f.kept.length ? ' · kept ' + f.kept.join(' and ') : '') + ' — check it, then Save'
+          ? 'Filled ' + f.filled.join(' and ') + (f.kept.length ? ' · kept ' + f.kept.join(' and ') : '') + '. Check it, then Save'
           : f.kept.length
-            ? 'Kept ' + f.kept.join(' and ') + ' — nothing else to fill'
-            : 'Nothing to fill — answer the questions on the card',
+            ? 'Kept ' + f.kept.join(' and ') + '. Nothing else to fill'
+            : 'Nothing to fill. Answer the questions on the card',
       );
     },
     onChooseOutcome: (key) => set({ outcome: key as NonNullable<typeof outcome> }),
@@ -1138,7 +1192,7 @@ export default function Visit() {
       notify(
         r.missing
           ? `${r.added} line${r.added === 1 ? '' : 's'} added · ${r.missing} still to add by hand`
-          : `${r.added} line${r.added === 1 ? '' : 's'} added — check the quantities`,
+          : `${r.added} line${r.added === 1 ? '' : 's'} added. Check the quantities`,
       );
       router.push('/order?from=visit');
     },
@@ -1173,12 +1227,12 @@ export default function Visit() {
       if (r.what != null) setReqWhat(r.what);
       if (r.litres != null) setReqLitres(r.litres);
       if (r.cans != null) setReqCans(r.cans);
-      notify(Object.keys(r).length ? 'Requirement filled — check it below' : 'The requirement is already filled in');
+      notify(Object.keys(r).length ? 'What they need is filled. Check it below' : 'What they need is already filled in');
     },
     onDecision: (d) => {
       setDecision(d);
       setDecisionErr(null);
-      notify('Chosen on the lead card above — change it there if that is not right');
+      notify('Chosen on the lead card above. Change it there if it is wrong');
     },
     onDraft: setAiDraftId,
   };
@@ -1217,7 +1271,7 @@ export default function Visit() {
             <Text style={[type.h2, { flex: 1, minWidth: 0 }]}>{c?.name ?? arrival.customerName}</Text>
           </View>
           <Text style={[type.caption, { marginTop: 8 }]}>
-            {'Arrived ' + hhmm(arrival.arrivedAt) + ' · the journey is closed'}
+            {'Arrived ' + hhmm(arrival.arrivedAt) + ' · trip ended'}
           </Text>
 
           <Text style={{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 14 }}>
@@ -1228,8 +1282,8 @@ export default function Visit() {
               salesman who does not know the clock starts here will read his own
               dwell figures later and not recognise his day. */}
           <Text style={[type.caption, { marginTop: 4 }]}>
-            Checking in starts the clock on your time with the customer. Do it when
-            you go inside, not while you are parking.
+            Check in when you go inside the shop, not while you are parking.
+            This starts your visit time.
           </Text>
 
           <View style={{ marginTop: 16 }}>
@@ -1237,14 +1291,14 @@ export default function Visit() {
               label={checkingIn ? 'One moment…' : 'Check in at the shop'}
               onPress={() => void checkIn()}
               disabled={checkingIn}
-              whyDisabled="Recording the check-in."
+              whyDisabled="Saving your check-in."
             />
           </View>
           <View style={{ marginTop: 10 }}>
             <SecondaryButton
               label="Not yet"
               onPress={() => {
-                notify('Check in when you go in — the bar at the bottom brings you back.');
+                notify('Check in when you go inside. The bar at the bottom brings you back.');
                 router.replace('/journey');
               }}
             />
@@ -1303,7 +1357,7 @@ export default function Visit() {
           </Text>
           {leg.odometerStartKm != null ? (
             <Text style={[type.caption, { marginTop: 2 }]}>
-              {'Set off on ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'}
+              {'Meter at start: ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'}
             </Text>
           ) : null}
           {/*
@@ -1347,7 +1401,9 @@ export default function Visit() {
                 {refused.sentence}
               </Text>
               <Text style={[type.caption, { marginTop: 6 }]}>
-                Walk to the shop and press again — nothing has been recorded yet.
+                {refused.reason === 'too_far'
+                  ? 'Walk to the shop and press again. Nothing is saved yet.'
+                  : 'Nothing is saved yet.'}
               </Text>
             </View>
           ) : null}
@@ -1357,7 +1413,7 @@ export default function Visit() {
               label={arriving ? 'One moment…' : refused ? 'Check again' : prompt.button}
               onPress={() => void arriveHere()}
               disabled={arriving}
-              whyDisabled="Recording where you are."
+              whyDisabled="Saving where you are."
             />
           </View>
           {/*
@@ -1365,10 +1421,12 @@ export default function Visit() {
             would be a way round the radius that nobody had to be refused by
             first, which is a different feature.
           */}
-          {refused ? (
+          {/* And only for a refusal on DISTANCE. A missing reading is not a
+              wrong pin, and there is no way past it but a reading. */}
+          {refused?.reason === 'too_far' ? (
             <View style={{ marginTop: 10 }}>
               <SecondaryButton
-                label="I am at the shop — its location here is wrong"
+                label="I am here. Shop location is wrong"
                 onPress={overrideRefusal}
               />
             </View>
@@ -1389,16 +1447,16 @@ export default function Visit() {
               label="I am not going after all"
               onPress={() =>
                 askConfirm({
-                  title: 'Call off this trip?',
+                  title: 'Cancel this trip?',
                   body:
-                    'It stays on your record with the reason you give, measuring nothing — the meter has already moved, and a journey that vanished would leave the next one following on from a gap.',
-                  reasonLabel: 'Why · required',
-                  confirmLabel: 'Call off the trip',
+                    'The trip stays on your record, with your reason and 0 km. The meter has already moved. Removing the trip would leave a gap before your next one.',
+                  reasonLabel: 'Why · needed',
+                  confirmLabel: 'Cancel trip',
                   run: (reason) => {
                     void abandonLeg(leg.id, reason).then(() => {
                       setArrival(null);
                       void clearArrival();
-                      notify('Trip called off');
+                      notify('Trip cancelled');
                       router.replace('/journey');
                     });
                   },
@@ -1410,9 +1468,9 @@ export default function Visit() {
 
         <OdometerCamera
           open={metering}
-          title="Photograph the meter"
-          subtitle="You have arrived — this is where the trip is measured to."
-          cancelLabel="Cancel — I have not arrived yet"
+          title="Take meter photo"
+          subtitle="You have arrived. The trip is measured up to this reading."
+          cancelLabel="Cancel. I have not arrived"
           previousKm={leg.odometerStartKm}
           maxLegKilometres={maxLegKm}
           onDone={(result) => {
@@ -1467,6 +1525,80 @@ export default function Visit() {
           </View>
         </View>
       }>
+      <Text style={type.h2}>{c?.name ?? ''}</Text>
+      <Text style={[type.caption, { marginTop: 2 }]}>
+        {[c?.contactPerson, c?.city].filter(Boolean).join(' · ')}
+      </Text>
+
+      {/* ---- he walked out without checking out ----
+          Said at the top, in words, because the button below now closes the
+          visit at a time he did not press it — and he should know that before
+          he does. */}
+      {leftAt != null ? (
+        <View
+          style={{
+            borderWidth: 1,
+            borderColor: C.warnEdge,
+            backgroundColor: C.warnBg,
+            borderRadius: radius.xl,
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            marginBottom: 12,
+          }}>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>You left the shop without checking out</Text>
+          <Text style={[type.caption, { color: C.body, marginTop: 2 }]}>
+            {'Noticed at ' +
+              hhmm(leftAt) +
+              (arrival?.leftShopMetres ? ', about ' + arrival.leftShopMetres + ' m away' : '') +
+              '. Check out from here — no need to go back. The visit closes at ' +
+              hhmm(leftAt) +
+              '.'}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* ---- where you are ---- */}
+      <View
+        style={{
+          borderWidth: 1,
+          borderColor: gpsLocked ? C.primaryEdge : gps === 'off' ? C.warnEdge : C.hairline,
+          backgroundColor: gpsLocked ? C.primaryTint : gps === 'off' ? C.warnBg : C.surface,
+          borderRadius: radius.xl,
+          paddingVertical: 10,
+          paddingHorizontal: 14,
+          marginTop: 12,
+        }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: 5,
+              backgroundColor: gpsLocked ? C.success : gps === 'off' ? C.warn : C.faint,
+            }}
+          />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
+              {gpsLocked ? 'Checked in here' : gps === 'off' ? 'No GPS' : 'Finding you…'}
+            </Text>
+            <Text style={[type.caption, { color: C.body }]}>
+              {gpsLocked
+                ? fixReason ?? verdictGeo.sentence
+                : gps === 'off'
+                  ? fixReason ?? 'The visit will be saved. Your manager will check it.'
+                  : 'Inside a shop this can take a moment.'}
+            </Text>
+          </View>
+          {gps === 'off' ? (
+            <Pressable
+              onPress={() => notify('Going on without location. Save the visit as usual. Your manager will see it had no location.')}
+              style={{ height: HIT, paddingHorizontal: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: C.faint, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={[{ fontSize: 15, color: C.body }, weight(500)]}>Carry on</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+
       {/* ---- what was said last time ----
           Shown before the call, not found after it on the timeline. "Will
           pay" typed in a hurry three weeks ago reads exactly like a
@@ -1481,7 +1613,7 @@ export default function Visit() {
             borderRadius: radius.xl,
             paddingVertical: 12,
             paddingHorizontal: 16,
-            marginBottom: 12,
+            marginTop: 12,
           }}>
           <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
             <Text style={type.label}>Last time — {pretty(isoDate(new Date(lastTime.checkInAt)))}</Text>
@@ -1493,236 +1625,6 @@ export default function Visit() {
             {lastTime.note}
           </Text>
         </View>
-      ) : null}
-
-      {/* ---- where you are ---- */}
-      <View
-        style={{
-          borderWidth: 1,
-          borderColor: gpsLocked ? C.primaryEdge : gps === 'off' ? C.warnEdge : C.hairline,
-          backgroundColor: gpsLocked ? C.primaryTint : gps === 'off' ? C.warnBg : C.surface,
-          borderRadius: radius.xl,
-          paddingVertical: 14,
-          paddingHorizontal: 16,
-        }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <View
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: 5,
-              backgroundColor: gpsLocked ? C.success : gps === 'off' ? C.warn : C.faint,
-            }}
-          />
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-              {gpsLocked ? 'Checked in here' : gps === 'off' ? 'No GPS fix' : 'Finding you…'}
-            </Text>
-            <Text style={[type.caption, { color: C.body }]}>
-              {gpsLocked
-                ? fixReason ?? verdictGeo.sentence
-                : gps === 'off'
-                  ? fixReason ?? 'The visit will be saved and flagged for your manager to confirm.'
-                  : 'This takes a second indoors.'}
-            </Text>
-          </View>
-          {gps === 'off' ? (
-            <Pressable
-              onPress={() => notify('Carrying on without a location — save the visit as usual and your manager will see it was unpinned.')}
-              style={{ height: HIT, paddingHorizontal: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: C.faint, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={[{ fontSize: 15, color: C.body }, weight(500)]}>Carry on</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
-
-      <Text style={[type.h2, { marginTop: 16 }]}>{c?.name ?? ''}</Text>
-      <Text style={[type.caption, { marginTop: 2 }]}>
-        {[c?.contactPerson, c?.city].filter(Boolean).join(' · ')}
-      </Text>
-
-      {/* ---- photos ---- */}
-      <Card style={{ marginTop: 16 }}>
-        <Text style={type.label}>Photos</Text>
-        <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
-          {[
-            { k: 'shop' as const, ic: 'shop', on: 'Shop ✓', off: 'Shop photo' },
-            { k: 'cust' as const, ic: 'person', on: 'Owner ✓', off: 'Owner (optional)' },
-          ].map((b) => {
-            const has = !!shots[b.k];
-            return (
-              <Pressable
-                key={b.k}
-                onPress={() => shoot(b.k)}
-                style={{
-                  flex: 1,
-                  height: 86,
-                  borderRadius: radius.md,
-                  borderWidth: 1,
-                  borderColor: has ? C.primary : C.border,
-                  backgroundColor: has ? C.primaryTint : C.surface,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                <Icon name={b.ic} size={24} color={has ? C.primaryDeep : C.body} strokeWidth={1.5} />
-                <Text style={[{ fontSize: 14, marginTop: 6, color: has ? C.primaryDeep : C.body }, weight(500)]}>
-                  {has ? b.on : b.off}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        {shots.shop || shots.cust ? (
-          <Text style={[type.caption, { marginTop: 10 }]}>Compressed and queued — they upload when you have signal.</Text>
-        ) : null}
-      </Card>
-
-      {/* ---- §B · is this one going anywhere? ----
-          Drawn only for a Suspect, and only once the count is worth mentioning.
-          It is a QUESTION on the visit form, never a refusal of the visit: a
-          salesman whose visit is blocked stops recording visits, and the
-          company loses the GPS, the competitor note and the reason in order to
-          stop a number reaching four. */}
-      {/* `capLabel` in the guard costs nothing and buys the type: anything that
-          makes `capState` something other than `ok` is a Suspect stage, which
-          is the only thing `visitCapLabel` returns null for. */}
-      {capState !== 'ok' && suspect && capLabel ? (
-        <Card
-          style={{
-            marginTop: 12,
-            borderLeftWidth: 3,
-            borderLeftColor: capState === 'decide' ? C.warnInk : C.hairline,
-          }}>
-          {/* The engine's own wording, counting the visit being MADE. Retyped
-              here it read "Visit 2 / 3" on the third visit — one in hand,
-              under a card demanding the decision. */}
-          <Text style={type.label}>{capLabel + ' · still a Suspect'}</Text>
-          <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
-            {capState === 'decide'
-              ? 'Say which way this one goes before you close the visit. The visit is recorded either way.'
-              : 'Next time round you will be asked to decide. Worth thinking about now.'}
-          </Text>
-
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-            {[
-              { v: 'qualified', label: 'A prospect' },
-              { v: 'contacted', label: 'Keep working it' },
-              { v: 'on_hold', label: 'On hold' },
-              { v: 'still_suspect', label: 'Still a Suspect' },
-              { v: 'lost', label: 'Lost' },
-            ].map((o) => (
-              <Choice
-                key={o.v}
-                label={o.label}
-                selected={decision === o.v}
-                onPress={() => {
-                  setDecision(decision === o.v ? null : o.v);
-                  setDecisionErr(null);
-                }}
-                style={{ paddingHorizontal: 14 }}
-              />
-            ))}
-          </View>
-
-          {/* On hold and staying a Suspect both ask why, and for the same
-              reason: somebody is going to look at this lead again and the
-              sentence is what tells them when, or whether. Lost asks too —
-              that one because nobody will. */}
-          {decision === 'still_suspect' || decision === 'on_hold' || decision === 'lost' ? (
-            <TextInput
-              value={decisionWhy}
-              onChangeText={(v) => {
-                setDecisionWhy(v);
-                setDecisionErr(null);
-              }}
-              placeholder={
-                decision === 'lost'
-                  ? 'Why we are not going back'
-                  : 'What we are waiting for'
-              }
-              placeholderTextColor={C.faint}
-              multiline
-              style={{
-                marginTop: 12,
-                minHeight: 64,
-                borderWidth: 1,
-                borderColor: C.border,
-                borderRadius: radius.sm,
-                padding: 12,
-                fontSize: 15,
-                color: C.ink,
-                textAlignVertical: 'top',
-              }}
-            />
-          ) : null}
-
-          {decisionErr ? (
-            <Text style={[{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.danger }, weight(500)]}>
-              {decisionErr}
-            </Text>
-          ) : null}
-        </Card>
-      ) : null}
-
-      {/* ---- §G · what they actually need ----
-          On a lead only. These overwrite the lead's own columns deliberately,
-          unlike the validation call's answers: this is the same person asking
-          the same question better informed, not a second party's account. */}
-      {suspect ? (
-        <Card style={{ marginTop: 12 }}>
-          <Text style={type.label}>What they need</Text>
-          <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
-            Optional. Fill it in when you have taken the price list and asked properly.
-          </Text>
-
-          <TextInput
-            value={reqWhat}
-            onChangeText={setReqWhat}
-            placeholder="What they want — thinner for a spray booth"
-            placeholderTextColor={C.faint}
-            style={{
-              marginTop: 12, minHeight: 48, borderWidth: 1, borderColor: C.border,
-              borderRadius: radius.sm, paddingHorizontal: 12, fontSize: 15, color: C.ink,
-            }}
-          />
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-            <View style={{ flex: 1 }}>
-              <TextInput
-                value={reqLitres}
-                onChangeText={setReqLitres}
-                placeholder="Litres a month"
-                placeholderTextColor={C.faint}
-                keyboardType="number-pad"
-                style={{
-                  minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm,
-                  paddingHorizontal: 12, fontSize: 15, color: C.ink,
-                }}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              {/* Cans, because that is what an ORDER is counted in — the litres
-                  beside it are what the shop says its consumption is. Two
-                  different questions, and the units say which is which. */}
-              <TextInput
-                value={reqCans}
-                onChangeText={setReqCans}
-                placeholder="Cans to start"
-                placeholderTextColor={C.faint}
-                keyboardType="number-pad"
-                style={{
-                  minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm,
-                  paddingHorizontal: 12, fontSize: 15, color: C.ink,
-                }}
-              />
-            </View>
-          </View>
-
-          {/* §G's business rule, said on the screen where it applies rather
-              than only refused at the server. */}
-          <Text style={{ fontSize: 13, lineHeight: 19, marginTop: 10, color: C.muted }}>
-            No price or delivery promises at this stage. Anything commercial goes to the Lead Manager.
-          </Text>
-        </Card>
       ) : null}
 
       {/* ---- what was said ---- */}
@@ -1780,7 +1682,7 @@ export default function Visit() {
       {/* ---- how it went ---- */}
       <View style={{ marginTop: 16 }}>
         <Text style={[type.label, { marginBottom: 10 }]}>How did it go</Text>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {OUTCOMES.map((o) => {
             const on = outcome === o.k;
             return (
@@ -1790,19 +1692,16 @@ export default function Visit() {
                 accessibilityRole="radio"
                 accessibilityState={{ selected: on }}
                 style={{
-                  /* Two columns, and the odd seventh stays in its own cell —
-                     a lone full-width chip reads as a different kind of choice. */
-                  width: '48.5%',
-                  minHeight: 58,
-                  padding: 10,
-                  borderRadius: radius.md,
+                  height: HIT,
+                  paddingHorizontal: 14,
+                  borderRadius: radius.pill,
                   borderWidth: 1,
                   borderColor: on ? C.primary : C.border,
                   backgroundColor: on ? C.primaryTint : C.surface,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}>
-                <Text style={[{ fontSize: 15, lineHeight: 20, textAlign: 'center', color: on ? C.primaryDeep : C.ink }, weight(on ? 600 : 400)]}>
+                <Text style={[{ fontSize: 15, color: on ? C.primaryDeep : C.ink }, weight(on ? 600 : 500)]}>
                   {o.label}
                 </Text>
               </Pressable>
@@ -1840,40 +1739,258 @@ export default function Visit() {
         </View>
       ) : null}
 
-      {/* ---- come back on ---- */}
+      {/* ---- §B · is this one going anywhere? ----
+          Drawn only for a Suspect, and only once the count is worth mentioning.
+          It is a QUESTION on the visit form, never a refusal of the visit: a
+          salesman whose visit is blocked stops recording visits, and the
+          company loses the GPS, the competitor note and the reason in order to
+          stop a number reaching four. */}
+      {/* `capLabel` in the guard costs nothing and buys the type: anything that
+          makes `capState` something other than `ok` is a Suspect stage, which
+          is the only thing `visitCapLabel` returns null for. */}
+      {capState !== 'ok' && suspect && capLabel ? (
+        <Card
+          style={{
+            marginTop: 12,
+            borderLeftWidth: 3,
+            borderLeftColor: capState === 'decide' ? C.warnInk : C.hairline,
+          }}>
+          {/* The engine's own wording, counting the visit being MADE. Retyped
+              here it read "Visit 2 / 3" on the third visit — one in hand,
+              under a card demanding the decision. */}
+          <Text style={type.label}>{capLabel + ' · still a Suspect'}</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
+            {capState === 'decide'
+              ? 'Choose which way this lead goes before you close the visit. The visit is saved either way.'
+              : 'On the next visit you must decide. Think about it now.'}
+          </Text>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+            {[
+              { v: 'qualified', label: 'A prospect' },
+              { v: 'contacted', label: 'Keep trying' },
+              { v: 'on_hold', label: 'On hold' },
+              { v: 'still_suspect', label: 'Still a Suspect' },
+              { v: 'lost', label: 'Lost' },
+            ].map((o) => (
+              <Choice
+                key={o.v}
+                label={o.label}
+                selected={decision === o.v}
+                onPress={() => {
+                  setDecision(decision === o.v ? null : o.v);
+                  setDecisionErr(null);
+                }}
+                style={{ paddingHorizontal: 14 }}
+              />
+            ))}
+          </View>
+
+          {/* On hold and staying a Suspect both ask why, and for the same
+              reason: somebody is going to look at this lead again and the
+              sentence is what tells them when, or whether. Lost asks too —
+              that one because nobody will. */}
+          {decision === 'still_suspect' || decision === 'on_hold' || decision === 'lost' ? (
+            <TextInput
+              value={decisionWhy}
+              onChangeText={(v) => {
+                setDecisionWhy(v);
+                setDecisionErr(null);
+              }}
+              placeholder={
+                decision === 'lost'
+                  ? 'Why we will not go back'
+                  : 'What we are waiting for'
+              }
+              placeholderTextColor={C.faint}
+              multiline
+              style={{
+                marginTop: 12,
+                minHeight: 64,
+                borderWidth: 1,
+                borderColor: C.border,
+                borderRadius: radius.sm,
+                padding: 12,
+                fontSize: 15,
+                color: C.ink,
+                textAlignVertical: 'top',
+              }}
+            />
+          ) : null}
+
+          {decisionErr ? (
+            <Text style={[{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.danger }, weight(500)]}>
+              {decisionErr}
+            </Text>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {/* ---- §G · what they actually need ----
+          On a lead only. These overwrite the lead's own columns deliberately,
+          unlike the validation call's answers: this is the same person asking
+          the same question better informed, not a second party's account. */}
+      {suspect ? (
+        <Card style={{ marginTop: 12 }}>
+          <Text style={type.label}>What they need</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
+            Fill it after you show the price list and ask them.
+          </Text>
+
+          <TextInput
+            value={reqWhat}
+            onChangeText={setReqWhat}
+            placeholder="What they want, e.g. thinner for a spray booth"
+            placeholderTextColor={C.faint}
+            style={{
+              marginTop: 12, minHeight: 48, borderWidth: 1, borderColor: C.border,
+              borderRadius: radius.sm, paddingHorizontal: 12, fontSize: 15, color: C.ink,
+            }}
+          />
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+            <View style={{ flex: 1 }}>
+              <TextInput
+                value={reqLitres}
+                onChangeText={setReqLitres}
+                placeholder="Litres a month"
+                placeholderTextColor={C.faint}
+                keyboardType="number-pad"
+                style={{
+                  minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm,
+                  paddingHorizontal: 12, fontSize: 15, color: C.ink,
+                }}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              {/* Cans, because that is what an ORDER is counted in — the litres
+                  beside it are what the shop says its consumption is. Two
+                  different questions, and the units say which is which. */}
+              <TextInput
+                value={reqCans}
+                onChangeText={setReqCans}
+                placeholder="Cans to start"
+                placeholderTextColor={C.faint}
+                keyboardType="number-pad"
+                style={{
+                  minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm,
+                  paddingHorizontal: 12, fontSize: 15, color: C.ink,
+                }}
+              />
+            </View>
+          </View>
+
+          {/* §G's business rule, said on the screen where it applies rather
+              than only refused at the server. */}
+          <Text style={{ fontSize: 13, lineHeight: 19, marginTop: 10, color: C.muted }}>
+            Do not promise any price or delivery now. The Lead Manager handles price talk.
+          </Text>
+        </Card>
+      ) : null}
+
+      {/* ---- photos ---- */}
+      <Card style={{ marginTop: 16 }}>
+        <Text style={type.label}>Photos</Text>
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+          {[
+            { k: 'shop' as const, ic: 'shop', on: 'Shop ✓', off: 'Shop photo' },
+            { k: 'cust' as const, ic: 'person', on: 'Owner ✓', off: 'Owner photo' },
+          ].map((b) => {
+            const has = !!shots[b.k];
+            return (
+              <Pressable
+                key={b.k}
+                onPress={() => shoot(b.k)}
+                style={{
+                  flex: 1,
+                  height: 86,
+                  borderRadius: radius.md,
+                  borderWidth: 1,
+                  borderColor: has ? C.primary : C.border,
+                  backgroundColor: has ? C.primaryTint : C.surface,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                <Icon name={b.ic} size={24} color={has ? C.primaryDeep : C.body} strokeWidth={1.5} />
+                <Text style={[{ fontSize: 14, marginTop: 6, color: has ? C.primaryDeep : C.body }, weight(500)]}>
+                  {has ? b.on : b.off}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        {shots.shop || shots.cust ? (
+          <Text style={[type.caption, { marginTop: 10 }]}>Compressed and queued — they upload when you have signal.</Text>
+        ) : null}
+      </Card>
+
+      {/* ---- next contact: how, and when ----
+          How is asked beside when because they are one promise — "I will
+          ring you Thursday" is not "I will come by Thursday", and the task it
+          raises is named by the answer. */}
       <Card style={{ marginTop: 12 }}>
-        <Text style={[type.label, { marginBottom: 6 }]}>Come back on</Text>
-        <Pressable
-          onPress={() => setCalOpen('next')}
-          style={{ width: '100%', height: 52, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: C.surface }}>
-          <Text style={{ fontSize: 15, color: C.ink }}>{pretty(nextDate)}</Text>
-        </Pressable>
+        <Text style={[type.label, { marginBottom: 10 }]}>Next contact</Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {FOLLOW_UP_MODES.map((m) => {
+            const on = nextMode === m.k;
+            return (
+              <Pressable
+                key={m.k}
+                onPress={() => set({ nextMode: m.k })}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+                style={{
+                  flex: 1,
+                  height: HIT,
+                  borderRadius: radius.pill,
+                  borderWidth: 1,
+                  borderColor: on ? C.primary : C.border,
+                  backgroundColor: on ? C.primaryTint : C.surface,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                <Text style={[{ fontSize: 15, color: on ? C.primaryDeep : C.ink }, weight(on ? 600 : 500)]}>
+                  {m.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 }}>
+          <Text style={[{ fontSize: 15, color: C.body, flex: 1 }]}>On</Text>
+          <Pressable
+            onPress={() => setCalOpen('next')}
+            accessibilityLabel={'Next contact on ' + pretty(nextDate) + ', change'}
+            style={{ height: HIT, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.surface }}>
+            <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{pretty(nextDate)}</Text>
+            <Icon name="cal" size={16} color={C.body} strokeWidth={1.6} />
+          </Pressable>
+        </View>
         <Text style={[type.caption, { marginTop: 8 }]}>
           {c?.cycleDays
-            ? 'Suggested from their ' + c.cycleDays + '-day buying pattern. Change it if they said otherwise.'
-            : 'Change it if they said otherwise.'}
+            ? 'Set from their ' + c.cycleDays + '-day buying pattern. Change it if they said another day.'
+            : 'Change it if they said another day.'}
         </Text>
       </Card>
 
-      {/* ---- what is missing, and why the rule exists ---- */}
+      {/* ---- what is missing, and why the rule exists ----
+          Drawn only while something is outstanding, and listing only that.
+          A green checklist of everything already done repeated the save bar
+          and pushed the one line that mattered below the fold. */}
+      {verdict.verified ? null : (
       <View
         style={{
           borderWidth: 1,
-          borderColor: verdict.verified ? C.hairline : C.warnEdge,
-          backgroundColor: verdict.verified ? C.surface : C.warnBg,
+          borderColor: C.warnEdge,
+          backgroundColor: C.warnBg,
           borderRadius: radius.xl,
           paddingVertical: 14,
           paddingHorizontal: 16,
           marginTop: 16,
-          boxShadow: shadow.soft,
         }}>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{verdict.title}</Text>
-          {verdict.verified ? <Text style={[{ fontSize: 13, color: C.success }, weight(500)]}>Ready</Text> : null}
-        </View>
+        <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{verdict.title}</Text>
 
         <View style={{ marginTop: 6 }}>
-          {checks.map((k, i) => (
+          {verdict.failed.map((k, i) => (
             <View key={k.key} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', paddingVertical: 10, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
               <View style={{ width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: k.ok ? C.successBg : C.dangerBg }}>
                 {k.ok ? (
@@ -1898,8 +2015,8 @@ export default function Visit() {
               : askConfirm({
               title: 'Save anyway?',
               body: verdict.overrideBody,
-              reasonLabel: 'Why · required',
-              confirmLabel: 'Save unverified',
+              reasonLabel: 'Why · needed',
+              confirmLabel: 'Save as not checked',
               run: (reason) => {
                 set({ overrodeReason: reason });
                 saveWhenDecided(reason);
@@ -1908,10 +2025,11 @@ export default function Visit() {
           }
           style={{ width: '100%', minHeight: HIT, marginTop: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: C.faint, borderRadius: radius.md, paddingVertical: 8, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' }}>
           <Text style={{ fontSize: 13, lineHeight: 18, color: C.muted, textAlign: 'center' }}>
-            Cannot meet these? Save it unverified — your manager sees the reason.
+            Cannot do these? Save as not checked. Your manager sees your reason.
           </Text>
         </Pressable>
       </View>
+      )}
 
       <View style={{ height: 96 }} />
 
@@ -1940,7 +2058,7 @@ export default function Visit() {
         this build learned to hunt up the page for whatever the toast meant.
         This asks every question in one place, with the controls to answer it
         right there, and the button at the bottom checks him out the moment
-        the last one is answered. The evidence (GPS, time, photo) is listed but
+        the last one is answered. The evidence (GPS, time in the shop) is listed but
         cannot be typed into existence, so it offers the unverified save —
         which the answers still have to be given for.
       */}
@@ -1949,7 +2067,7 @@ export default function Visit() {
           <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>Before you check out</Text>
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
             {verdict.complete
-              ? 'Everything is answered.'
+              ? 'All answered.'
               : `${verdict.failed.length} ${verdict.failed.length === 1 ? 'thing' : 'things'} left for this visit.`}
           </Text>
 
@@ -1963,8 +2081,8 @@ export default function Visit() {
                     onPress={() => set({ outcome: o.k })}
                     accessibilityRole="radio"
                     accessibilityState={{ selected: outcome === o.k }}
-                    style={{ width: '48.5%', minHeight: 48, padding: 8, borderRadius: radius.md, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 14, textAlign: 'center', color: C.ink }}>{o.label}</Text>
+                    style={{ height: HIT, paddingHorizontal: 14, borderRadius: radius.pill, borderWidth: 1, borderColor: outcome === o.k ? C.primary : C.border, backgroundColor: outcome === o.k ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={[{ fontSize: 15, color: outcome === o.k ? C.primaryDeep : C.ink }, weight(outcome === o.k ? 600 : 500)]}>{o.label}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -1975,7 +2093,7 @@ export default function Visit() {
             <View style={{ marginTop: 16 }}>
               <Text style={type.label}>What happened in this visit</Text>
               <Text style={[type.caption, { marginTop: 2, marginBottom: 8 }]}>
-                The points of the visit — what was discussed, what they said, what happens next. Speak it if that is quicker.
+                What you talked about, what they said, what happens next. You can speak instead of typing.
               </Text>
               <VoiceField
                 value={note}
@@ -2010,7 +2128,7 @@ export default function Visit() {
           ) : null}
 
           {checks
-            .filter((k) => !k.ok && (k.key === 'gps' || k.key === 'dwell' || k.key === 'photo'))
+            .filter((k) => !k.ok && (k.key === 'gps' || k.key === 'dwell'))
             .map((k) => (
               <View key={k.key} style={{ marginTop: 14 }}>
                 <Text style={[{ fontSize: 14, color: C.danger }, weight(500)]}>{k.line}</Text>
@@ -2027,7 +2145,7 @@ export default function Visit() {
               }}
               style={{ height: 52, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.complete ? C.primary : C.hairline }}>
               <Text style={[{ fontSize: 16, color: verdict.complete ? '#FFFFFF' : C.faint }, weight(600)]}>
-                {verdict.complete ? 'Check out' : owed.length ? 'Answer the questions above' : 'Not everything is met'}
+                {verdict.complete ? 'Check out' : owed.length ? 'Answer the questions above' : 'Some things are missing'}
               </Text>
             </Pressable>
             {!verdict.complete && owed.length === 0 ? (
@@ -2037,8 +2155,8 @@ export default function Visit() {
                   askConfirm({
                     title: 'Save anyway?',
                     body: verdict.overrideBody,
-                    reasonLabel: 'Why · required',
-                    confirmLabel: 'Save unverified',
+                    reasonLabel: 'Why · needed',
+                    confirmLabel: 'Save as not checked',
                     run: (reason) => {
                       set({ overrodeReason: reason });
                       saveWhenDecided(reason);
@@ -2047,7 +2165,7 @@ export default function Visit() {
                 }}
                 style={{ minHeight: HIT, alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={{ fontSize: 14, color: C.muted, textAlign: 'center' }}>
-                  Cannot meet these? Save it unverified — your manager sees the reason.
+                  Cannot do these? Save as not checked. Your manager sees your reason.
                 </Text>
               </Pressable>
             ) : null}
@@ -2068,12 +2186,12 @@ export default function Visit() {
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
             MahekOne has {c?.name ?? 'this shop'} about {metresAway ?? refusedMetres ?? '?'} m from
             where you checked in. If the shop is here and the map is wrong, ask your manager to
-            move it — the next visit will not be questioned, and nor will anybody else&rsquo;s.
+            move it. Then no visit here will be stopped again.
           </Text>
 
           <View style={{ marginTop: 16, gap: 8 }}>
             <PrimaryButton
-              label="Yes — ask my manager to move it here"
+              label="Yes, ask my manager to move it"
               onPress={() => {
                 setPinRequested(true);
                 setPinAsk(false);
@@ -2081,7 +2199,7 @@ export default function Visit() {
               }}
             />
             <SecondaryButton
-              label="No — leave it as it is"
+              label="No, leave it as it is"
               onPress={() => {
                 setPinRequested(false);
                 setPinAsk(false);
@@ -2093,7 +2211,7 @@ export default function Visit() {
 
       {/* ---- complaint, logged without leaving the visit ---- */}
       <BottomSheet open={form === 'complaint'} onClose={() => setForm(null)} scroll>
-        <Text style={[type.h2, { letterSpacing: -0.285 }]}>Log a complaint</Text>
+        <Text style={[type.h2, { letterSpacing: -0.285 }]}>Add a complaint</Text>
         <Text style={[type.small, { color: C.muted, marginTop: 2 }]}>{(c?.name ?? '') + ' · goes to the desk team today'}</Text>
 
         <Text style={[type.label, { marginTop: 16, marginBottom: 8 }]}>What is it about</Text>
@@ -2133,7 +2251,7 @@ export default function Visit() {
           style={{ minHeight: 90 }}
         />
         {formErr === 'what' ? (
-          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what the customer actually said.</Text>
+          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what the customer said.</Text>
         ) : null}
 
         {/* Said HERE and not in a toast: this sheet is a Modal and the toast
@@ -2141,7 +2259,7 @@ export default function Visit() {
             is open is a sentence nobody ever sees. */}
         {formErr === 'save' ? (
           <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 10 }}>
-            That could not be saved on this phone. Nothing has been sent — try again.
+            That could not be saved on this phone. Nothing was sent. Try again.
           </Text>
         ) : null}
 
@@ -2158,7 +2276,7 @@ export default function Visit() {
             accessibilityState={{ disabled: formSaving }}
             style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: formSaving ? C.hairline : C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: formSaving ? undefined : shadow.primaryLift }}>
             <Text style={[{ fontSize: 16, color: formSaving ? C.faint : '#FFFFFF' }, weight(600)]}>
-              {formSaving ? 'Logging…' : 'Log it'}
+              {formSaving ? 'Saving…' : 'Save'}
             </Text>
           </Pressable>
         </View>
@@ -2166,7 +2284,7 @@ export default function Visit() {
 
       {/* ---- sample request ---- */}
       <BottomSheet open={form === 'sample'} onClose={() => setForm(null)} scroll>
-        <Text style={[type.h2, { letterSpacing: -0.285 }]}>Request a sample</Text>
+        <Text style={[type.h2, { letterSpacing: -0.285 }]}>Ask for a sample</Text>
         <Text style={[type.small, { color: C.muted, marginTop: 2 }]}>{c?.name ?? ''}</Text>
 
         <Text style={[type.label, { marginTop: 16, marginBottom: 8 }]}>Which product</Text>
@@ -2174,6 +2292,7 @@ export default function Visit() {
           <Choice
             key={x.id}
             label={x.name}
+            sub={skuText(x.sku) ?? undefined}
             selected={draft.sku === x.id}
             onPress={() => { setDraft({ ...draft, sku: x.id, skuName: x.name }); setFormErr(null); }}
             style={{ width: '100%', alignItems: 'flex-start', marginBottom: 8, paddingHorizontal: 14 }}
@@ -2211,7 +2330,7 @@ export default function Visit() {
         />
         {formErr === 'application' ? (
           <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
-            What will they use it on? Without that nobody can judge the trial.
+            What will they use it on? Without this, no one can judge the trial.
           </Text>
         ) : null}
 
@@ -2240,12 +2359,12 @@ export default function Visit() {
              under it reads as a broken screen rather than as a decision
              somebody made. */
           <Text style={[type.caption, { color: C.muted }]}>
-            Nobody has set up the trial reasons — ask the office to add them.
+            No trial reasons are set up yet. Ask the office to add them.
           </Text>
         )}
         {formErr === 'reason' ? (
           <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
-            Say why he wants a trial — your manager approves on it.
+            Say why he wants a trial. Your manager decides on this.
           </Text>
         ) : null}
 
@@ -2265,7 +2384,7 @@ export default function Visit() {
 
         {formErr === 'save' ? (
           <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 10 }}>
-            That could not be saved on this phone. Nothing has been sent — try again.
+            That could not be saved on this phone. Nothing was sent. Try again.
           </Text>
         ) : null}
 
@@ -2280,7 +2399,7 @@ export default function Visit() {
             accessibilityState={{ disabled: formSaving }}
             style={{ flex: 1, height: 52, borderRadius: radius.xl, backgroundColor: formSaving ? C.hairline : C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: formSaving ? undefined : shadow.primaryLift }}>
             <Text style={[{ fontSize: 16, color: formSaving ? C.faint : '#FFFFFF' }, weight(600)]}>
-              {formSaving ? 'Requesting…' : 'Request it'}
+              {formSaving ? 'Sending…' : 'Send request'}
             </Text>
           </Pressable>
         </View>
@@ -2289,7 +2408,7 @@ export default function Visit() {
       {/* ---- the date picker both of the above share ---- */}
       <BottomSheet open={!!calOpen} onClose={() => setCalOpen(null)}>
         <Text style={[{ fontSize: 17, color: C.ink, marginBottom: 10 }, weight(600)]}>
-          {calOpen === 'trial' ? 'Trial follow-up' : 'Come back on'}
+          {calOpen === 'trial' ? 'Trial follow-up' : 'Next contact on'}
         </Text>
         <Calendar
           selected={calOpen === 'trial' ? draft.trial ?? trialDefault : nextDate}

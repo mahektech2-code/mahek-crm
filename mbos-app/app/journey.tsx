@@ -328,7 +328,7 @@ export default function JourneyScreen() {
         title: 'Not ' + dayLabel(day.planDate) + '?',
         body:
           (day.city ?? 'That day') +
-          ' was proposed. Say why it will not work — without a reason your manager has nothing to go on, and the day stays unplanned. Name somewhere you would rather go if you have one.',
+          ' was given to you. Say why it will not work. Without a reason your manager cannot plan, and the day stays empty. If you want to go somewhere else, name it.',
         reasonLabel: 'Why, and where instead',
         confirmLabel: 'Send it back',
         run: async (reason: string) => {
@@ -388,7 +388,7 @@ export default function JourneyScreen() {
      * the screen sat there long enough for him to open it and tap again; two
      * passes then raced to rewrite the same `seq`.
      */
-    if (reordering) return notify('Still working out the order…');
+    if (reordering) return notify('Still finding the best order…');
     /* Nothing to reorder is not an empty reorder. It toasted
        "Reordered · 0 km and 0 minutes on the plan", which is a confident
        answer to a question that was never askable. */
@@ -426,7 +426,7 @@ export default function JourneyScreen() {
     await saveStopOrder([...done, ...result.ordered.map((leg) => leg.stop.id)]);
     load();
     notify(
-      'Reordered · ' +
+      'Order changed · ' +
         Math.round(result.totalDistanceMetres / 100) / 10 +
         ' km and ' +
         Math.round(result.estimatedDayMinutes) +
@@ -453,20 +453,20 @@ export default function JourneyScreen() {
    */
   const deviate = () =>
     askConfirm({
-      title: 'Add an off-plan stop?',
-      body: 'Say why, then pick the shop. The visit is recorded against today and marked off-plan, so your manager can see why the day changed.',
-      reasonLabel: 'Why this stop · required',
+      title: 'Add a stop not in the plan?',
+      body: 'Say why, then pick the shop. The visit is saved for today as off-plan. Your manager will see why the day changed.',
+      reasonLabel: 'Why this stop · needed',
       confirmLabel: 'Say why, then pick the shop',
       run: (reason) => {
         set({ offPlanReason: reason });
-        notify('Now open the shop and press Visit — your reason goes with it.');
+        notify('Now open the shop and press Visit. Your reason goes with it.');
         router.push('/customers?from=journey');
       },
     });
 
   const sendTour = async () => {
     if (!tour.from || !tour.to) return setTourErr('Pick the dates you would be away.');
-    if (!tour.purpose.trim()) return setTourErr('Say why — your manager decides on this alone.');
+    if (!tour.purpose.trim()) return setTourErr('Say why. Your manager decides only on this.');
 
     setTourBusy(true);
     setTourErr(null);
@@ -532,7 +532,7 @@ export default function JourneyScreen() {
                 {waiting ? ' · ' + waiting : ''}
               </T>
               <T s="small" style={{ color: C.muted, marginTop: 6 }}>
-                You pick the shops once you agree — you know the city.
+                You pick the shops after you agree. You know the city best.
               </T>
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
                 <View style={{ flex: 1 }}>
@@ -559,7 +559,7 @@ export default function JourneyScreen() {
       {toPick.length ? (
         <View style={{ marginBottom: 16 }}>
           <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
-            Agreed — shops to pick
+            Agreed. Pick the shops
           </T>
           {toPick
             .map((d) => (
@@ -690,7 +690,7 @@ export default function JourneyScreen() {
           <T s="small" style={{ color: C.muted, marginTop: 2 }}>
             {awaitingRoute
               ? (awaitingRoute.city ? awaitingRoute.city + ' · ' : '') +
-                'sent to the office — the stops arrive on the next sync'
+                'sent to the office. The stops come when the phone sends next'
               : routeSubline(stops.length, doneCount, areas)}
           </T>
         </View>
@@ -796,7 +796,7 @@ export default function JourneyScreen() {
                  is the honest answer: there is no departure to count from. */
               travellingFor(leg.startedAt ?? now, now) +
               (leg.odometerStartKm != null
-                ? ' · set off on ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'
+                ? ' · meter at start ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'
                 : '')}
           </T>
           {/*
@@ -821,18 +821,18 @@ export default function JourneyScreen() {
           />
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
             <SecondaryButton
-              label="Call it off"
+              label="Cancel trip"
               onPress={() =>
                 askConfirm({
                   title: 'Not going after all?',
                   body:
-                    'The trip stays on your record with the reason you give, measuring nothing — the meter has already moved, and a journey that vanished would leave the next one following on from a gap.',
-                  reasonLabel: 'Why · required',
-                  confirmLabel: 'Call off the trip',
+                    'The trip stays on your record, with your reason and 0 km. The meter has already moved. Removing the trip would leave a gap before your next one.',
+                  reasonLabel: 'Why · needed',
+                  confirmLabel: 'Cancel trip',
                   run: (reason) => {
                     void abandonLeg(leg.id, reason).then(() => {
                       setLeg(null);
-                      notify('Trip called off');
+                      notify('Trip cancelled');
                     });
                   },
                 })
@@ -847,7 +847,7 @@ export default function JourneyScreen() {
                  wrote, which always names a shop — this is the guard, not the
                  expected case. */
               disabled={!legCustomerId}
-              whyDisabled="This journey has no shop recorded against it. Call it off and set off again from the shop."
+              whyDisabled="This trip has no shop saved. Cancel it and start again from the shop."
               onPress={() => {
                 if (!legCustomerId) return;
                 beginVisit(legCustomerId);
@@ -897,7 +897,7 @@ export default function JourneyScreen() {
         <Card style={{ marginTop: 16 }}>
           <T style={[type.body, weight(600), { color: C.ink }]}>Day done</T>
           <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            {'Every stop on the plan is visited. Close the day off while it is fresh.'}
+            {'You visited every stop on the plan. Close the day now, while you remember it.'}
           </T>
           <PrimaryButton
             label="Close the day"
@@ -952,8 +952,8 @@ export default function JourneyScreen() {
           <T s="small" style={{ marginTop: 10 }}>
             {(next.plannedAt ? 'Planned ' + next.plannedAt + '. ' : '') +
               (next.outstandingPaise > 0
-                ? 'They owe ' + inrFromPaise(next.outstandingPaise) + ' — collection is the reason this stop is on the list.'
-                : 'Nothing outstanding against them.')}
+                ? 'They owe ' + inrFromPaise(next.outstandingPaise) + '. This stop is on the list to collect it.'
+                : 'Nothing outstanding for them.')}
           </T>
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
             <NavigateButton
@@ -1141,8 +1141,8 @@ export default function JourneyScreen() {
             {pickToday
               ? 'You have agreed today. Pick the shops and it becomes a route.'
               : asking.length
-                ? 'Say yes or send it back — either answer lets your manager get on with it.'
-                : 'Your manager has not proposed one. You can still walk in and log a visit — anything you do today is recorded against it.'}
+                ? 'Say yes or send it back. Either answer helps your manager plan.'
+                : 'Your manager has not given you one. You can still visit shops. All your work today is saved.'}
           </T>
           {pickToday ? (
             <View style={{ marginTop: 14, alignSelf: 'stretch' }}>
@@ -1197,21 +1197,21 @@ export default function JourneyScreen() {
             padding: 14,
           }}>
           <T s="small" style={[{ color: C.warnInk }, weight(600)]}>
-            An off-plan reason is waiting for a shop
+            Your off-plan reason needs a shop
           </T>
           <T s="small" style={{ color: C.body, marginTop: 4 }}>
             “{offPlanReason}”
           </T>
           <T s="caption" style={{ marginTop: 4 }}>
             {(offPlanReasonAt ? 'Typed at ' + hhmm(offPlanReasonAt) + '. ' : '') +
-              'It goes onto the next visit you log at a shop that is not on today’s plan.'}
+              'It goes with your next visit to a shop that is not on today’s plan.'}
           </T>
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
             <SecondaryButton
-              label="Let it go"
+              label="Remove it"
               onPress={() => {
                 set({ offPlanReason: null });
-                notify('Off-plan reason dropped.');
+                notify('Off-plan reason removed.');
               }}
               style={{ flex: 1 }}
             />
@@ -1402,7 +1402,7 @@ export default function JourneyScreen() {
               void reorder();
             },
           },
-          { glyph: 'add', label: 'Add an off-plan stop', sub: 'Needs a reason', run: deviate },
+          { glyph: 'add', label: 'Add an off-plan stop', sub: 'You must give a reason', run: deviate },
           {
             glyph: 'nav',
             label: 'Navigate the whole day',
@@ -1416,7 +1416,7 @@ export default function JourneyScreen() {
                  lunchtime is worse than one that says where it stops. */
               if (out.dropped > 0) {
                 notify(
-                  `Maps takes ten stops — the last ${out.dropped} are not in this route.`,
+                  `Maps takes only ten stops. The last ${out.dropped} are not in this route.`,
                 );
               }
             },
@@ -1442,7 +1442,7 @@ export default function JourneyScreen() {
           {
             glyph: 'cal',
             label: 'Request a tour',
-            sub: 'Working away from the usual beat for a few days',
+            sub: 'Work away from your usual beat for a few days',
             run: () => setTourOpen(true),
           },
         ]}
@@ -1453,8 +1453,8 @@ export default function JourneyScreen() {
       <BottomSheet open={tourOpen} onClose={() => setTourOpen(false)} scroll>
         <T s="h2">Request a tour</T>
         <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-          Working away from the usual beat for a few days. Your manager decides — this is not the
-          same as agreeing a day already proposed to you.
+          Work away from your usual beat for a few days. Your manager decides. This is not the
+          same as saying yes to a day given to you.
         </T>
 
         {tourErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{tourErr}</T> : null}
@@ -1493,7 +1493,7 @@ export default function JourneyScreen() {
         </View>
 
         <View style={{ marginTop: 14 }}>
-          <T s="label" style={{ marginBottom: 6 }}>Where — one or more cities</T>
+          <T s="label" style={{ marginBottom: 6 }}>Where (one or more cities)</T>
           <Input
             value={tour.cities}
             onChangeText={(v) => setTour((t) => ({ ...t, cities: v }))}
@@ -1506,12 +1506,12 @@ export default function JourneyScreen() {
           <VoiceField
             value={tour.purpose}
             onChangeText={(v) => setTour((t) => ({ ...t, purpose: v }))}
-            placeholder="A new dealer to open in Amravati, and three accounts overdue for a visit"
+            placeholder="Open a new dealer in Amravati, and visit three late accounts"
           />
         </View>
 
         <View style={{ marginTop: 14 }}>
-          <T s="label" style={{ marginBottom: 6 }}>Estimated cost (₹) — optional</T>
+          <T s="label" style={{ marginBottom: 6 }}>About how much it will cost (₹), if you know</T>
           <Input
             value={tour.cost}
             onChangeText={(v) => setTour((t) => ({ ...t, cost: v.replace(/[^0-9]/g, '') }))}
@@ -1630,5 +1630,5 @@ function recentSummary(d: PlanDay, counts: { total: number; done: number } | und
   if (d.dayState === 'agreed') return 'Agreed, no shops were ever picked';
   // 'planned' — the day was routed, so what happened is what the stops say.
   if (!counts || counts.total === 0) return 'Planned, but nothing was logged';
-  return counts.done + ' of ' + counts.total + (counts.done === counts.total ? ' visited' : ' visited — the rest skipped or missed');
+  return counts.done + ' of ' + counts.total + (counts.done === counts.total ? ' visited' : ' visited. The rest were skipped or missed');
 }

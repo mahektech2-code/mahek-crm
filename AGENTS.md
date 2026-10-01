@@ -661,6 +661,26 @@ customer's, with a category and photographs, and inventing one on their behalf
 from a delivery note would put words in their mouth on a record they can
 dispute.
 
+**A FIELD ORDER IS EDITED BY ITS AUTHOR UNTIL ACCOUNTS DECIDE IT, AND ASKED
+ABOUT AFTER.** Before approval nothing has been promised against it, so the
+salesman who took it rewrites it from the handset — an `order` update carrying
+`lines`, which `handleOrder` routes to `handleOrderEdit`, re-checked against
+the same bar as a new order (`checkOrderLines`) and the credit limit, and
+refused if accounts decided it meanwhile. After approval the order is the
+office's commitment, so a change is a row in `order_change_requests`: what it
+should become, what it was, and why. Accounts accept it on Accounts → Order
+changes, which rewrites the order, or decline it with a reason the salesman
+has to ring the shop with. Past `confirmed` neither — a request cannot
+un-dispatch a lorry. One pending request per order, held by a partial unique
+index.
+
+**AND THE HANDSET HEARS IT, which it never did.** An accounts decision reached
+the phone only through `mbos_approvals`, which accounts do not write, so every
+field order read "Sent" or "With the office" for ever and a declined one
+carried no reason. `myOrders` sends his own orders' status, reason and lines;
+`orderChanges` sends his requests and their answers. Both are applied after
+`approvals` on the pull so the order's own row wins.
+
 **A DECLINED ORDER CANNOT BE DELIVERED, whatever a stale handset believes.** The
 phone may still be showing an order accounts turned down ten minutes ago —
 rejections reach it on the next pull — and marking that delivered would
@@ -966,17 +986,25 @@ BEFORE the camera rather than beside it. Refusing the SAVE would be the old
 mistake exactly: the note, the photograph, the order and the day are already
 in the phone by then.
 
-**Three answers accept, and only one refuses.** No fix and a fix too wide to
-trust both go through — a reading that cannot show he is there cannot show he is
-not, and refusing on one would block every check-in inside a concrete godown. A
-shop with NO PIN goes through too, and this is the half nobody would guess at:
-487 of the 1,076 shops on a real handset have no coordinate, so refusing there
-would make half the book unvisitable to close a gap the salesman did not open.
-That check-in becomes the pin — guarded by `gps_lat is null` in the statement
-and not only in the branch above it, so two visits in flight cannot fight over
-it — and a POOR fix never pins a shop, because a pin dropped four hundred metres
-out would refuse every honest visit afterwards, which is this rule's own failure
-arriving by the back door.
+**Without a proper reading there is no check-in, and that is a SECOND
+reversal.** No fix, and a fix too wide to trust, used to go through on the
+reasoning that a reading which cannot show he is there cannot show he is not.
+Mahek's answer is that an unmeasured check-in is exactly the record the gate
+exists to stop. Both are refused now, at the door, where it costs a step
+outside and a second press — nothing typed, nothing lost. The written override
+below does NOT open them: it exists because a pin is often wrong, and a missing
+reading is not a wrong pin.
+
+A shop with NO PIN still goes through, and this is the half nobody would guess
+at: 487 of the 1,076 shops on a real handset have no coordinate, so refusing
+there would make half the book unvisitable to close a gap the salesman did not
+open. But he is ASKED first — "Are you at this shop?" — because that check-in
+becomes the pin every later visit is measured against, and a pin should be a
+claim somebody made on purpose. It is guarded by `gps_lat is null` in the
+statement and not only in the branch above it, so two visits in flight cannot
+fight over it — and a POOR fix never pins a shop, because a pin dropped four
+hundred metres out would refuse every honest visit afterwards, which is this
+rule's own failure arriving by the back door.
 
 **The way past a refusal costs a sentence, and it is offered only after one.**
 The pin in this book was typed by hand, dropped in an office or inherited from a
@@ -1036,6 +1064,40 @@ unverified save waives the first kind and never the second, and pressing
 Check out with anything owed opens one sheet with the controls to answer it,
 rather than a toast pointing somewhere up the page. The server does not refuse
 a noteless visit — old APKs still send them, and a refusal would lose the visit.
+
+**WALKING OUT WITHOUT CHECKING OUT IS NOTICED, and the phone asks.** A
+salesman at the end of a long day finishes the conversation, gets back on the
+bike, and the visit is still running in his pocket. The trail already knows
+where he is every few seconds, so `leftShopVerdict` (`engines/left-shop.ts`,
+pure) compares the newest reading against where he CHECKED IN — the fix the
+gate accepted, kept on the arrival as `checkInFix` — and failing that the
+shop's pin. Past `mbos.visit.forgotCheckoutMetres` (500) the phone posts ONE
+local notification, on its own MAX-importance channel with a sound, and
+tapping it opens the check-out for that shop. Local rather than a server push
+because the server does not know he is checked in until the visit is saved,
+and because it has to work with no signal.
+
+**The reading's own error is taken off before it counts.** Asking somebody
+still at the counter whether he forgot is how a reminder becomes one people
+swipe away, so a 300 m-wide fix landing 550 m out does not fire, and a fix
+with no stated accuracy proves nothing. `checkConsistency` keeps the threshold
+at least twice the check-in radius for the same reason.
+
+**It is asked wherever a reading reaches JavaScript**, which is two places:
+the background location task on each delivery, and every sync tick against
+the phone's last known position. The second is what covers a handset whose
+native service uploads its own fixes and never hands them to this side — and
+on such a handset with the app closed, the reminder is only as prompt as the
+background sync task, which Android may run as rarely as every fifteen minutes.
+
+**The 100 m rule is for walking IN, never for walking out.** The visit screen
+used to take a fresh fix whenever it was reopened, so after a reap — or after
+tapping this reminder half a kilometre down the road — it measured where he is
+now against the shop and refused a perfectly good visit its check-out. It
+restores the check-in fix instead. And a visit he forgot to close is closed at
+the moment the trail saw him leave (`leftShopAt`), not at the moment he
+remembered: counting the ride home as time with the customer is the error the
+dwell figure exists to avoid.
 
 **A SUSPECT CANNOT BE VISITED FOR EVER, and the cap ASKS rather than refuses.**
 §B of the brief wants a maximum of three visits "enforced", and enforced as a
@@ -5185,6 +5247,26 @@ is a reading of the present, so a rebuild is a correction rather than a
 destruction. The handset is sent the cache with its `computed_at` and prints
 it, because a screen that implied it was live would be believed.
 
+**THE HANDSET READS ANY PERIOD, and a month read as a range IS the cached
+month.** The sync carries two months, which is what opens with no signal;
+this month, last month, either financial-year quarter, either financial year
+or two picked days are asked of `/api/mbos/performance`, which takes no user —
+the device token decides whose figures, as on `crm.performance`.
+`handsetReadingForRange` runs the same `actualsForWindow` and the same
+`scoreActuals` the cache is built from, so September picked as a range and
+September off the sync cannot disagree; a test asserts it. Over several months
+the targets are ADDED, a month only partly inside the range asks for its share
+of days, the collection and activity SHARES are averaged over the days rather
+than summed (40% then 60% is about 50%, not 100%), and the mix is held to the
+latest target's bands. The screen says how many months carried a target. A
+year is April to March, because that is the year the bills carry.
+
+**Collection is drawn as the SHARE it is asked as.** The office sets "collect
+half of what was overdue"; the handset showed the rupees, which made the
+target read as an amount somebody had picked. The share leads, the money it is
+a share of sits under it, and no overdue book is a dash and a sentence, never
+0%.
+
 **Working days, never dates.** A month with four Sundays left is not two thirds
 gone because twenty of thirty dates have passed, and a forecast built on dates
 tells a salesman on the 20th that he is further behind than he is. Holidays
@@ -5244,6 +5326,18 @@ rule and answered 404 to everybody; `canReadExpenseAttachment` reads them as
 his mileage evidence is read — him, or a Sales Dashboard holder with him in
 scope. The Decide dialog on `/sales/expenses` now shows each claim with its
 files; before, a manager decided a day's money from two totals.
+
+**TODAY'S TRAVEL READS; IT NO LONGER ASKS.** `/travel` (More → Today's travel)
+outlived that reversal with an "Add a leg" sheet of its own — mode, from and
+to, both meter readings, a photograph, a ticket fare and its PNR — which made
+it a third door for exactly the two questions the punch and Expenses were
+built to be the only ones asking, and a fare typed there was a second claim
+for a ticket Expenses could not see. It lists the legs the day recorded on its
+own, with what each is worth and why a visit's leg pays nothing inside a meter
+day, and sends every cost to Expenses with the claim sheet up. Removing a leg
+went with it: the legs are the app's record now, and a wrong one is a
+manager's to correct. Nothing writes `origin = 'day_log'` any more; the column
+value stays because legs already on the server carry it.
 
 **HOW HE GOT TO THE SHOP IS ASKED WHEN HE SETS OFF, and "Start visit" now
 means "I am setting off".** Pressing it opens `TravelGate` — the modes from

@@ -1,9 +1,10 @@
 import React from 'react';
-import { View, Pressable, ScrollView, FlatList, type ListRenderItemInfo } from 'react-native';
+import { View, Pressable, ScrollView, FlatList, TextInput, type ListRenderItemInfo } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
 import { BottomSheet, Calendar } from '../ui/overlays';
-import { color as C, radius, weight, type BadgeTone } from '../../theme/tokens';
+import { color as C, HIT, radius, weight, type BadgeTone } from '../../theme/tokens';
+import { Icon } from '../ui/Icon';
 import {
   createLead,
   leadThresholds,
@@ -218,7 +219,7 @@ function LeadRow({
 
   const marks = [
     leadPriorityLabel(lead.priority),
-    lead.hasOrder === 1 ? 'Order placed' : lead.hasCommitment === 1 ? 'Committed' : null,
+    lead.hasOrder === 1 ? 'Order placed' : lead.hasCommitment === 1 ? 'Promised' : null,
     lead.leadManagerName ? 'Lead manager ' + lead.leadManagerName : null,
   ].filter(Boolean);
 
@@ -265,7 +266,7 @@ function LeadRow({
             {[
               stageLabel(rung),
               age && age > 0 ? plural(age, 'day') + ' old' : null,
-              held && held > 0 ? plural(held, 'day') + ' on this rung' : null,
+              held && held > 0 ? plural(held, 'day') + ' at this stage' : null,
             ]
               .filter(Boolean)
               .join(' \u00b7 ')}
@@ -274,12 +275,12 @@ function LeadRow({
 
         <T style={[{ fontSize: 15, marginTop: 10, color: lead.estimatedPotentialPaise ? C.ink : C.muted }, weight(500)]}>
           {lead.estimatedPotentialPaise
-            ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month, he reckons'
-            : 'Worth not estimated yet'}
+            ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month (guess)'
+            : 'Can buy: not guessed yet'}
         </T>
 
         <T style={{ fontSize: 14, lineHeight: 20, marginTop: 4, color: overdue ? C.danger : C.muted }}>
-          {owedLine ?? 'Nobody is waiting on anything'}
+          {owedLine ?? 'Nothing pending'}
         </T>
 
         {quiet ? (
@@ -302,7 +303,7 @@ function LeadRow({
               weight(500),
             ]}>
             {visitCapLabel(lead.stage, lead.visitCount, capCfg)}
-            {visitCapState(lead.stage, lead.visitCount, capCfg) === 'decide' ? ' \u00b7 a decision is due' : ''}
+            {visitCapState(lead.stage, lead.visitCount, capCfg) === 'decide' ? ' \u00b7 decide now' : ''}
           </T>
         ) : null}
 
@@ -314,7 +315,7 @@ function LeadRow({
 
         {backOfficeGap ? (
           <T style={[{ fontSize: 14, lineHeight: 20, marginTop: 4, color: C.warnInk }, weight(500)]}>
-            No back office person named — the office half of this will land on your lead manager
+            No back office person set. Office work will go to your lead manager.
           </T>
         ) : null}
 
@@ -327,12 +328,15 @@ function LeadRow({
         ) : null}
 
         {lead.archived ? (
-          <T s="caption" style={{ marginTop: 4 }}>Archived — still here, just out of the way</T>
+          <T s="caption" style={{ marginTop: 4 }}>Closed. Hidden from the main list.</T>
         ) : null}
       </Card>
     </Pressable>
   );
 }
+
+/** How long a typed name waits before it becomes a query — the customers list's own pause. */
+const SEARCH_PAUSE_MS = 250;
 
 /**
  * The lead book, drawn the same wherever it is opened.
@@ -348,8 +352,12 @@ function LeadRow({
  * doors pass `scroll={false}`: a frame that scrolls around a component that
  * scrolls is the one way to get two scroll positions and neither of them
  * working.
+ *
+ * `seedQuery` is what he had typed on the Customers half. That half's empty
+ * search says "3 leads match — open Leads", and a tab that then opened on the
+ * whole unsearched book would be the line lying about where the answer went.
  */
-export function LeadsBook() {
+export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
   const notify = useStore((s) => s.notify);
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
@@ -369,6 +377,23 @@ export function LeadsBook() {
   const [rung, setRung] = React.useState<string | null>(null);
   const [rungs, setRungs] = React.useState<{ rung: string; count: number }[]>([]);
   const [rows, setRows] = React.useState<Lead[]>([]);
+  /*
+   * THE SEARCH, the same box the customers half has. Eight stage chips and the
+   * owed-when row were the only narrowing here, so finding one named shop in a
+   * few hundred leads meant scrolling past all of them. `listLeads` has taken a
+   * query all along — it reaches the shop, the person, the number and the town
+   * — and nothing on the screen ever sent it one.
+   *
+   * What he has TYPED and what has been ASKED are kept apart for the reason the
+   * customers list gives: every ask is a `LIKE '%…%'` scan that no index can
+   * serve, and a pause turns a name into one query instead of one per letter.
+   */
+  const [typed, setTyped] = React.useState(seedQuery);
+  const [asked, setAsked] = React.useState(seedQuery.trim());
+  React.useEffect(() => {
+    const t = setTimeout(() => setAsked(typed.trim()), SEARCH_PAUSE_MS);
+    return () => clearTimeout(t);
+  }, [typed]);
   /* Null until the thresholds arrive from configuration. A default written in
      here would be a business rule living in a screen, and the sentence it
      produced would be wrong on any handset whose office had changed it. */
@@ -449,12 +474,12 @@ export function LeadsBook() {
   const load = React.useCallback(() => {
     let live = true;
     void Promise.all([
-      listLeads(filter),
+      listLeads(filter, asked),
       /* The rungs under the picked band, counted in SQLite over the same
          narrowing. A separate grouped query rather than a pass over `rows`,
          because picking a rung shortens `rows` and counting from it would make
          every other rung read zero the moment one was chosen. */
-      rungsInBook(filter),
+      rungsInBook(filter, asked),
       leadThresholds(),
       visitCapThresholds(),
       leadSources(),
@@ -469,7 +494,7 @@ export function LeadsBook() {
     return () => {
       live = false;
     };
-  }, [filter]);
+  }, [filter, asked]);
 
   useFocusEffect(load);
 
@@ -545,22 +570,22 @@ export function LeadsBook() {
     /* The ladder is asked FIRST and refused first, in that order, so the
        message somebody reads names the question at the top of the form rather
        than the one they have just finished typing. */
-    if (!salesType) return setErr('Which kind of sale is this? It decides what the rest of the funnel asks.');
-    if (!name.trim()) return setErr('Say who this is — a name or the shop.');
-    if (mobile.replace(/\D/g, '').length < 10) return setErr('A ten-digit mobile, so somebody can ring them.');
-    if (!source) return setErr('Say how you found them. It is the one question only you can answer.');
+    if (!salesType) return setErr('Choose the kind of sale first.');
+    if (!name.trim()) return setErr('Write a name or the shop name.');
+    if (mobile.replace(/\D/g, '').length < 10) return setErr('Write a 10-digit mobile number.');
+    if (!source) return setErr('Choose how you found them.');
     /* Mahek's rule: a lead is raised inside his own area. Asked here so it is
        never refused in the office after the shop, the photograph and the pin
        are already behind it. */
     if (areas.kind === 'none') {
-      return setErr('No area has been allocated to you yet, so a lead cannot be raised. Ask the office to set one.');
+      return setErr('No area is set for you yet. You cannot add a lead. Ask the office to set one.');
     }
-    if (areas.kind === 'pick' && !pickedArea) return setErr('Pick the area this shop is in — a lead can only be raised inside yours.');
+    if (areas.kind === 'pick' && !pickedArea) return setErr('Choose the area this shop is in. It must be in your area.');
     if (pickedArea && !pickedArea.city && !city.trim()) return setErr('Which town in ' + pickedArea.label + '?');
     /* Refused on the phone as well as in the office, because being told after
        the fact loses the sentence he had in mind while he was standing there. */
     if (source === OTHER_SOURCE && !sourceDetail.trim()) {
-      return setErr('Say where this one actually came from — "Other" with nothing behind it is a source nobody can count later.');
+      return setErr('You chose "Other". Write where this lead came from.');
     }
 
     saving.current = true;
@@ -656,6 +681,44 @@ export function LeadsBook() {
   const header = React.useMemo(
     () => (
       <View>
+        <View style={{ position: 'relative', marginBottom: 12 }}>
+          <View style={{ position: 'absolute', left: 14, top: 16, zIndex: 1 }}>
+            <Icon name="search" size={20} color={C.muted} strokeWidth={1.5} />
+          </View>
+          <TextInput
+            value={typed}
+            onChangeText={setTyped}
+            placeholder="Name, shop, phone or city"
+            placeholderTextColor={C.faint}
+            style={{
+              width: '100%',
+              height: 52,
+              paddingLeft: 42,
+              paddingRight: 56,
+              borderWidth: 1,
+              borderColor: C.border,
+              borderRadius: radius.sm,
+              fontSize: 15,
+              color: C.ink,
+              backgroundColor: C.surface,
+            }}
+          />
+          {/* The way out of a search — without it the book stays narrowed to a
+              word typed an hour ago with nothing on the screen that undoes it. */}
+          {typed ? (
+            <Pressable
+              onPress={() => {
+                setTyped('');
+                setAsked('');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Clear the search"
+              style={{ position: 'absolute', right: 2, top: 2, width: HIT, height: HIT, alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name="close" size={18} color={C.muted} strokeWidth={1.5} />
+            </Pressable>
+          ) : null}
+        </View>
+
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -726,10 +789,16 @@ export function LeadsBook() {
 
         <DashedButton label="+ Add lead" tone="primary" onPress={openForm} style={{ marginTop: 12 }} />
 
-        {rows.length ? <T s="caption" style={{ marginTop: 12, marginBottom: 8 }}>{plural(rows.length, 'lead')}</T> : null}
+        {/* A count under a search is a count of the MATCHES, and says so — "3
+            leads" read on its own claims the book has shrunk. */}
+        {rows.length ? (
+          <T s="caption" style={{ marginTop: 12, marginBottom: 8 }}>
+            {plural(rows.length, 'lead') + (asked ? ` matching “${asked}”` : '')}
+          </T>
+        ) : null}
       </View>
     ),
-    [view, when, rung, rungs, rows.length, openForm],
+    [view, when, rung, rungs, rows.length, openForm, typed, asked],
   );
 
   /*
@@ -745,22 +814,26 @@ export function LeadsBook() {
     () => (
       <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
         <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-          {when !== 'any'
+          {asked
+            ? `No lead matches “${asked}”`
+            : when !== 'any'
             ? 'Nothing ' + LEAD_WHENS.find((w) => w.value === when)!.label.toLowerCase()
             : view === 'all'
               ? 'No leads yet'
               : 'Nothing at ' + VIEW_LABEL[view]}
         </T>
         <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-          {when !== 'any'
-            ? 'Every lead is still here — this is only what you owe somebody.'
+          {asked
+            ? 'Search looks at the shop, the person, the number and the town. Clear it to see all leads.'
+            : when !== 'any'
+            ? 'All leads are still here. This shows only pending work.'
             : view === 'all'
-              ? 'A shop you walk past and a name somebody gives you both start here.'
-              : 'Every lead is still on All — nothing has been deleted.'}
+              ? 'Add a shop you visit or a name someone gives you.'
+              : 'All leads are still under All. Nothing is deleted.'}
         </T>
       </Card>
     ),
-    [view, when],
+    [view, when, asked],
   );
 
   return (
@@ -786,6 +859,7 @@ export function LeadsBook() {
         maxToRenderPerBatch={8}
         windowSize={7}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
       />
 
@@ -793,7 +867,7 @@ export function LeadsBook() {
       <BottomSheet open={formOpen} onClose={() => setFormOpen(false)} scroll>
         <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>New lead</T>
         <T s="caption" style={{ marginTop: 2 }}>
-          The number is checked against your book before this saves.
+          We check the number in your list before saving.
         </T>
 
         {/* --------------------------------------------------- §2 the ladder
@@ -845,8 +919,7 @@ export function LeadsBook() {
         <View style={{ marginTop: 12 }}>
           {areas.kind === 'none' ? (
             <T style={{ color: C.warnInk }}>
-              No area has been allocated to you yet. A lead can only be raised inside your own area — ask the office to
-              set one.
+              No area is set for you yet. You can add leads only in your own area. Ask the office to set one.
             </T>
           ) : (
             <>
@@ -910,24 +983,24 @@ export function LeadsBook() {
             <Input
               value={sourceDetail}
               onChangeText={(v) => { setSourceDetail(v); setErr(null); }}
-              placeholder="A builder on the site next door sent him"
+              placeholder="A builder nearby sent him"
             />
           </View>
         ) : null}
 
         <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>What they might buy a month</SectionLabel>
+          <SectionLabel style={{ marginBottom: 6 }}>How much they can buy a month</SectionLabel>
           <Input
             value={potential}
             onChangeText={setPotential}
             placeholder="40000"
             keyboardType="number-pad"
           />
-          <T s="caption" style={{ marginTop: 6 }}>In rupees, roughly. Leave it empty if you would only be guessing.</T>
+          <T s="caption" style={{ marginTop: 6 }}>In rupees, about. Leave it empty if you do not know.</T>
         </View>
 
         <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>Go back to them on</SectionLabel>
+          <SectionLabel style={{ marginBottom: 6 }}>Next follow-up on</SectionLabel>
           <Pressable
             onPress={() => setCal(true)}
             accessibilityRole="button"
@@ -941,15 +1014,15 @@ export function LeadsBook() {
               paddingHorizontal: 14,
             }}>
             <T style={{ fontSize: 16, color: followUp ? C.ink : C.faint }}>
-              {followUp ? dmy(followUp) : 'Pick a day'}
+              {followUp ? dmy(followUp) : 'Choose a day'}
             </T>
           </Pressable>
         </View>
 
         <Divider style={{ marginTop: 20, marginBottom: 4 }} />
-        <SectionLabel style={{ marginTop: 12 }}>What you learned in the shop</SectionLabel>
+        <SectionLabel style={{ marginTop: 12 }}>What you found in the shop</SectionLabel>
         <T s="caption" style={{ marginTop: 4 }}>
-          All optional. Save what you have — you can add the rest from the lead later.
+          All optional. Save what you have. Add the rest later.
         </T>
 
         <View style={{ marginTop: 12 }}>
@@ -988,7 +1061,7 @@ export function LeadsBook() {
 
         <View style={{ marginTop: 12 }}>
           <SectionLabel style={{ marginBottom: 6 }}>Who decides</SectionLabel>
-          <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="The proprietor, Mr Patil" />
+          <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="The owner, Mr Patil" />
           <T s="caption" style={{ marginTop: 6 }}>If that is not the person you spoke to.</T>
         </View>
 
@@ -998,7 +1071,7 @@ export function LeadsBook() {
         </View>
 
         <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>The shop front</SectionLabel>
+          <SectionLabel style={{ marginBottom: 6 }}>Shop photo</SectionLabel>
           <DashedButton
             label={shopPhotoId ? 'Photo taken \u2713 \u00b7 retake' : 'Take a photo'}
             onPress={shootShop}
@@ -1022,7 +1095,7 @@ export function LeadsBook() {
             keeps what he typed and brings it straight back. Cancel is the one
             gesture that means throw it away, so it is the one that clears. */}
         <T s="caption" style={{ marginTop: 18 }}>
-          Close this by mistake and what you have typed will still be here. Cancel throws it away.
+          If you close this by mistake, your typing is kept. Cancel deletes it.
         </T>
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
           <SecondaryButton
@@ -1042,7 +1115,7 @@ export function LeadsBook() {
         <Calendar
           key={cal ? 'open' : 'shut'}
           selected={followUp ?? ''}
-          disabledReason={(iso) => (iso < today ? 'That day has gone.' : null)}
+          disabledReason={(iso) => (iso < today ? 'That day has passed.' : null)}
           onPick={(iso) => {
             setFollowUp(iso);
             setCal(false);

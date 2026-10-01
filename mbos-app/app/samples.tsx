@@ -3,6 +3,7 @@ import { View, Pressable } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { skuText } from '../src/components/ui/sku';
 import { BottomSheet } from '../src/components/ui/overlays';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
@@ -186,7 +187,7 @@ export default function SamplesScreen() {
       {rows.length > 0 ? (
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
           <Choice
-            label={'Needs chasing · ' + open.length}
+            label={'Needs follow-up · ' + open.length}
             selected={view === 'open'}
             onPress={() => setView('open')}
             style={{ flex: 1 }}
@@ -202,26 +203,26 @@ export default function SamplesScreen() {
 
       {status === 'reading' ? (
         <Card style={{ marginTop: 16, paddingVertical: 32 }}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Reading…</T>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Loading…</T>
         </Card>
       ) : status === 'failed' ? (
         <Card style={{ marginTop: 16, paddingVertical: 32 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-            The samples could not be read off this phone
+            Could not open samples on this phone
           </T>
         </Card>
       ) : rows.length === 0 ? (
         <Card style={{ marginTop: 16, paddingVertical: 32 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>No samples out</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            A trial is asked for from a lead once its twelve questions are answered.
+            You can ask for a sample after all 12 lead questions are answered.
           </T>
         </Card>
       ) : shown.length === 0 ? (
         <Card style={{ marginTop: 16, paddingVertical: 32 }}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing waiting on you</T>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing pending for you</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            {plural(rows.length, 'sample') + ' here, all of them finished. Tap All to read them.'}
+            {plural(rows.length, 'sample') + ' here. All are finished. Tap All to see them.'}
           </T>
         </Card>
       ) : null}
@@ -256,7 +257,7 @@ export default function SamplesScreen() {
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{name}</T>
                     <T s="caption" style={{ marginTop: 2 }}>
-                      {[x.productName, x.cans ? plural(x.cans, 'can') : null].filter(Boolean).join(' · ')}
+                      {[skuText(x.sku), x.productName, x.cans ? plural(x.cans, 'can') : null].filter(Boolean).join(' · ')}
                     </T>
                   </View>
                   <Badge tone={toneFor(x.state)}>{x.state}</Badge>
@@ -299,7 +300,7 @@ export default function SamplesScreen() {
 
                 {isSampleOverdue(x, today) ? (
                   <T style={[{ fontSize: 14, color: C.warnInk, marginTop: 4 }, weight(500)]}>
-                    Feedback is late — worth a call
+                    Feedback is late. Call them.
                   </T>
                 ) : null}
               </Card>
@@ -332,7 +333,7 @@ export default function SamplesScreen() {
           if (!r.ok) return notify(r.message);
           setAskOpen(false);
           load();
-          notify('Asked for · the office approves it before it goes out');
+          notify('Requested. The office will approve it before it is sent.');
         }}
       />
     </AppFrame>
@@ -382,7 +383,7 @@ function RequestSheet({
   const [book, setBook] = React.useState<Customer[]>([]);
   const [bookTotal, setBookTotal] = React.useState(0);
   const [query, setQuery] = React.useState('');
-  const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null }[]>([]);
+  const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null; sku: string | null }[]>([]);
   const [product, setProduct] = React.useState<{ id: string; name: string } | null>(null);
   const [cans, setCans] = React.useState('1');
   const [application, setApplication] = React.useState('');
@@ -397,7 +398,7 @@ function RequestSheet({
       return;
     }
     void searchProducts(query, 8).then((r) => {
-      if (live) setHits(r.map((p) => ({ id: p.id, name: p.name, formulation: p.formulation })));
+      if (live) setHits(r.map((p) => ({ id: p.id, name: p.name, formulation: p.formulation, sku: p.sku })));
     });
     return () => {
       live = false;
@@ -426,9 +427,9 @@ function RequestSheet({
        for one trial. Only one of the two would ever be chased. */
     if (saving) return;
     if (!shop) return setErr('Which shop is the trial for?');
-    if (!product) return setErr('Which product is the trial of?');
+    if (!product) return setErr('Which product is the sample for?');
     if (!(Number(cans) > 0)) return setErr('How many cans?');
-    if (!application.trim()) return setErr('What will they use it on? Without that nobody can judge the trial.');
+    if (!application.trim()) return setErr('What will they use it on? This is needed.');
     if (!reasonCode) return setErr('Say why they want a trial.');
     setSaving(true);
     try {
@@ -454,10 +455,10 @@ function RequestSheet({
           once named the shop — so there was nothing on any screen that could
           have told him the trial was going out to the wrong one. */}
       <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 4 }, weight(500)]}>
-        {shop ? 'For ' + (shop.name || 'this shop') : 'Pick the shop below'}
+        {shop ? 'For ' + (shop.name || 'this shop') : 'Choose the shop below'}
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
-        The office approves it, then it is dispatched. You will be asked what they thought.
+        The office approves it, then it is sent. Later you will write their feedback.
       </T>
 
       {locked ? null : (
@@ -475,7 +476,7 @@ function RequestSheet({
               <Input
                 value={shopQuery}
                 onChangeText={(v) => { setShopQuery(v); setErr(null); }}
-                placeholder="Search your book by name, area or phone"
+                placeholder="Search your shops by name, area or phone"
               />
               <View style={{ gap: 8, marginTop: 8 }}>
                 {book.map((c) => (
@@ -489,11 +490,11 @@ function RequestSheet({
                   />
                 ))}
                 {shopQuery.trim() && book.length === 0 ? (
-                  <T s="caption">No shop in your book matches that.</T>
+                  <T s="caption">No shop matches that.</T>
                 ) : null}
                 {bookTotal > book.length ? (
                   <T s="caption">
-                    {'Showing ' + book.length + ' of ' + bookTotal + ' — search for the rest.'}
+                    {'Showing ' + book.length + ' of ' + bookTotal + '. Search to find more.'}
                   </T>
                 ) : null}
               </View>
@@ -523,13 +524,13 @@ function RequestSheet({
                      What is PICKED is unchanged: the id and the product's own
                      name, never the liquid's. */
                   label={productLines({ displayName: p.name, subtitle: p.formulation }).lead}
-                  sub={productLines({ displayName: p.name, subtitle: p.formulation }).detail ?? undefined}
+                  sub={[skuText(p.sku), productLines({ displayName: p.name, subtitle: p.formulation }).detail].filter(Boolean).join(' · ') || undefined}
                   selected={false}
                   onPress={() => { setProduct({ id: p.id, name: p.name }); setQuery(''); }}
                   style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
                 />
               ))}
-              {query.trim() && hits.length === 0 ? <T s="caption">Nothing in the catalogue matches that.</T> : null}
+              {query.trim() && hits.length === 0 ? <T s="caption">No product matches that.</T> : null}
             </View>
           </>
         )}
@@ -576,7 +577,7 @@ function RequestSheet({
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
         <PrimaryButton
-          label={saving ? 'Asking…' : 'Ask for it'}
+          label={saving ? 'Sending…' : 'Request sample'}
           disabled={saving}
           onPress={submit}
           style={{ flex: 1, borderRadius: radius.xl }}
