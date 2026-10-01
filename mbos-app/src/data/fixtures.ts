@@ -31,8 +31,8 @@ export const OUTCOMES: { k: OutcomeKey; label: string }[] = [
   { k: 'visited', label: 'Just a visit' },
   { k: 'order', label: 'Order' },
   { k: 'payment', label: 'Payment' },
-  { k: 'sample', label: 'Sample' },
   { k: 'complaint', label: 'Complaint' },
+  { k: 'sample', label: 'Sample' },
   { k: 'closed_now', label: 'Owner away' },
   { k: 'closed', label: 'Shop closed' },
 ];
