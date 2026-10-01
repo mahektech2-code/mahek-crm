@@ -38,7 +38,12 @@ export function ProductField({
   disabled,
   onPick,
 }: {
-  customerId: string;
+  /**
+   * Whose "bought before" ranking the search uses. Absent where there is nobody
+   * yet — a lead being raised has no record — and the search then simply does
+   * not rank by purchase history.
+   */
+  customerId?: string;
   productId: string | null;
   productName: string | null;
   disabled: boolean;
@@ -81,7 +86,9 @@ export function ProductField({
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(
-          `/api/product-search?q=${encodeURIComponent(q)}&customerId=${encodeURIComponent(customerId)}`,
+          `/api/product-search?q=${encodeURIComponent(q)}${
+            customerId ? `&customerId=${encodeURIComponent(customerId)}` : ""
+          }`,
         );
         const body = (await res.json()) as {
           products?: Array<{ productId: string; displayName: string; subtitle: string | null }>;

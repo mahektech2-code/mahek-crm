@@ -11,6 +11,7 @@ import { offeredSalesTypes, salesTypeLabel, type LeadSalesType } from "@/lib/lea
 import { captureLead } from "@/lib/actions/lead-intake";
 import type { NextActionOwner } from "@/lib/services/lead-intake-service";
 import { Banner, Button, Pill, ScreenHeader } from "@/components/console/parts";
+import { ProductField } from "@/components/products/product-field";
 
 /* ---------------------------------------------------------------------------
  * Screen 5's form.
@@ -68,6 +69,7 @@ export function IntakeForm({
   canPrioritise,
   distributors,
   defaultOwnerId = "",
+  productSearchEnabled = true,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -90,6 +92,12 @@ export function IntakeForm({
    * select, not a typeahead.
    */
   distributors: { id: string; name: string; city: string | null }[];
+  /**
+   * `products.searchOnOrderForms`, read by the page. When it is off the
+   * catalogue endpoint answers an empty list for everything, which would read as
+   * "we do not sell that" — so the picker is not drawn and the box says so.
+   */
+  productSearchEnabled?: boolean;
 }) {
   const router = useRouter();
   const { push } = useToast();
@@ -122,6 +130,14 @@ export function IntakeForm({
 
   const set = (k: keyof typeof f) => (v: string) => setF((s) => ({ ...s, [k]: v }));
 
+  /* "What they want" is EITHER words OR a product chosen from the catalogue,
+     never both: the server stores whichever it is in the one text column, and
+     two answers on one request would leave it guessing which was meant. The
+     picker keeps its own chosen name, so it is remounted (`pickerKey`) when the
+     form is cleared for the next lead. */
+  const [requirementProductId, setRequirementProductId] = React.useState<string | null>(null);
+  const [pickerKey, setPickerKey] = React.useState(0);
+
   async function submit(allowDuplicate: boolean) {
     setBusy(true);
     setErrors({});
@@ -143,7 +159,10 @@ export function IntakeForm({
         customerType: CUSTOMER_TYPE_CODES.find((c) => c === f.customerType) ?? null,
         monthlyLitres: litres ? Number(litres) : null,
         competitor: f.competitor || undefined,
-        requirement: f.requirement || undefined,
+        requirement: requirementProductId ? undefined : f.requirement || undefined,
+        /* Sent as an id only: the server checks it is a live product and
+           writes the catalogue's own name, never one the browser typed. */
+        requirementProductId: requirementProductId ?? undefined,
         application: f.application || undefined,
         ownerId: f.ownerId || null,
         notes: f.notes || undefined,
@@ -203,6 +222,8 @@ export function IntakeForm({
               onClick={() => {
                 setDone(null);
                 setAnswer(null);
+                setRequirementProductId(null);
+                setPickerKey((k) => k + 1);
                 setF((s) => ({
                   ...s,
                   name: "",
@@ -547,12 +568,54 @@ export function IntakeForm({
                   />
                 </Field>
 
-                <Field label="What they want (optional)" error={errors.requirement} className="lg:col-span-6">
+                <Field
+                  label="What they want (optional)"
+                  error={errors.requirement ?? errors.requirementProductId}
+                  className="lg:col-span-6"
+                >
+                  {/*
+                    * WORDS, OR A PRODUCT FROM THE CATALOGUE, and neither is required.
+                    * The box keeps its old meaning — what the shop said, in its own
+                    * words — and the picker beneath it is the same searchable
+                    * catalogue the order form and the sample request use, so the
+                    * products are searched a keystroke at a time rather than shipped
+                    * to the browser. Choosing one stores its name in the same column
+                    * the words go in; it is not the Calling Desk's Product answer and
+                    * does not stand in for it.
+                    */}
                   <Input
                     value={f.requirement}
+                    disabled={Boolean(requirementProductId)}
                     onChange={(e) => set("requirement")(e.target.value)}
                     placeholder="e.g. Thinner for a spray booth"
                   />
+                  <div className="mt-2">
+                    {productSearchEnabled ? (
+                      <div className="mb-1 text-[12px] text-muted">
+                        {requirementProductId
+                          ? "Using this product. Press change to type your own words instead."
+                          : "Or choose one of Mahek’s products:"}
+                      </div>
+                    ) : null}
+                    {productSearchEnabled ? (
+                      <ProductField
+                        key={pickerKey}
+                        productId={requirementProductId}
+                        productName={null}
+                        disabled={false}
+                        onPick={(id) => {
+                          setRequirementProductId(id);
+                          /* The words are dropped when a product is chosen: it
+                             replaces them, and a leftover would be sent nowhere. */
+                          if (id) set("requirement")("");
+                        }}
+                      />
+                    ) : (
+                      <div className="text-[12px] text-muted">
+                        Product search is switched off, so type what they want in your own words.
+                      </div>
+                    )}
+                  </div>
                 </Field>
                 <Field
                   label="What they'll use it on (optional)"

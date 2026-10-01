@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, customerDistributors, customers, notifications, users } from "@/db/schema";
+import { auditLog, customerDistributors, customers, notifications, products, users } from "@/db/schema";
 import { canFor, requireCapability } from "@/lib/access-control";
 import { canOpenModule } from "@/lib/access";
 import { LEAD_PRIORITIES } from "@/lib/lead-priority";
@@ -176,6 +176,16 @@ const captureSchema = z.object({
    * nothing saying so. `leadRequirement` is the column for this.
    */
   requirement: z.string().trim().max(500).optional(),
+  /**
+   * A product the person CHOSE from the catalogue to say what they want, rather
+   * than typing it. It changes nothing about where the answer lives: the server
+   * checks the product is real and active and writes ITS NAME into
+   * `leadRequirement` — the browser's own spelling is never trusted — and it
+   * is never written to `lead_required_product_id`, which is the Calling Desk's
+   * and Qualification's own Product answer and has to stay independent of it.
+   * Where this is sent it replaces any `requirement` text on the same request.
+   */
+  requirementProductId: z.string().min(1).nullable().optional(),
   application: z.string().trim().max(200).optional(),
 
   /** Who it belongs to. Absent means UNASSIGNED, which is a real answer. */
@@ -434,6 +444,32 @@ export async function captureLead(
           [{ field: "distributorCustomerId", message: "Deactivated." }],
         );
       }
+    }
+
+    /*
+     * A CATALOGUE CHOICE IS CHECKED, AND ITS NAME COMES FROM THE CATALOGUE.
+     * The picker only ever offers active products, but a server action is a
+     * URL — a stale tab or a hand-built request can name a retired SKU or one
+     * that never existed — so the product is read here and refused if it is not
+     * a live one. What is stored is `products.name`, the same text a
+     * telecaller would have typed, in the same `lead_requirement` column; no id
+     * is kept, which is what stops this answering the Calling Desk's Product
+     * question on that desk's behalf.
+     */
+    if (v.requirementProductId) {
+      const [p] = await db
+        .select({ id: products.id, name: products.name, active: products.active })
+        .from(products)
+        .where(eq(products.id, v.requirementProductId))
+        .limit(1);
+      if (!p || !p.active) {
+        return err(
+          "That product is not in the active catalogue. Pick another, or type what they want in your own words.",
+          "validation",
+          [{ field: "requirementProductId", message: "Not in the active catalogue." }],
+        );
+      }
+      v = { ...v, requirement: p.name };
     }
 
     let existing: ExistingAccount | null = null;
