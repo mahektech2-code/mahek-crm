@@ -1785,6 +1785,33 @@ export const SETTINGS = [
       "The OpenAI model that reads the call. Where OpenAI cannot answer, Sarvam is asked instead, and where neither can, the assistant still points at a form using what it has learned from past calls — and asks rather than fills.",
     default: "gpt-5-mini",
   },
+  /*
+   * THE LEAD CALLING DESK'S OWN ASSISTANT — Call 1/2/3's counterpart to the
+   * call assistant above. Its own switch, because a team may want the ordinary
+   * call assistant without this one: this reads a QUALIFICATION conversation
+   * into whichever of the twelve desk answers the current call is asking for,
+   * never an outcome. It shares the call assistant's own confidence floor
+   * (`callIntel.confirmBelowPercent`) rather than a second number — how often
+   * a person should be asked is one judgement, not two per feature.
+   */
+  {
+    key: "leadCallIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the lead calling desk's call",
+    description:
+      "After a telecaller speaks or types about a Call 1/2/3 qualification call, suggest answers for whichever of the twelve desk questions that call is currently asking. Suggestions fill the call's own form for the telecaller to check — nothing is saved without them. Off removes the button everywhere immediately.",
+    default: true,
+  },
+  {
+    key: "leadCallIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Lead calling desk assistant model",
+    description:
+      "The OpenAI model that reads a Call 1/2/3 conversation. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the telecaller fills the call as usual.",
+    default: "gpt-5-mini",
+  },
   {
     key: "callIntel.confirmBelowPercent",
     type: "integer",
@@ -5205,6 +5232,8 @@ export type Config = {
   "callIntel.duplicateWindowDays": number;
   "callIntel.exampleCalls": number;
   "callIntel.trainingMonths": number;
+  "leadCallIntel.enabled": boolean;
+  "leadCallIntel.model": string;
   "visitIntel.enabled": boolean;
   "visitIntel.model": string;
 

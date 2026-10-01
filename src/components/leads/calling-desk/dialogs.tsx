@@ -35,6 +35,7 @@ import {
 } from "@/lib/actions/lead-calling-desk";
 import { assignDeskLead } from "@/lib/actions/lead-desk-assignment";
 import type { DeskLeadRecord } from "@/lib/services/lead-calling-desk-service";
+import { LeadCallAssistant } from "@/components/leads/calling-desk/lead-call-assistant";
 
 type Coded = { code: string; label: string };
 
@@ -186,6 +187,17 @@ function QuestionCell({
       <span className={cx("block", isProduct ? "w-full" : "w-full sm:w-[230px] sm:flex-none")}>
         {field.kind === "product" ? (
           <ProductField
+            /* Keyed on `productName`, never on `productId`. `ProductField`
+               reads `productName` only once, at mount, to seed its own
+               display — fine for a manual pick, which never changes this
+               PROP (only its own internal state), but wrong for the voice
+               assistant, which sets a resolved match from OUTSIDE the field
+               and has no other way to make it show. Keying on `productId`
+               would also remount on every manual pick and wipe out the name
+               `ProductField` had just set for itself; keying on `productName`
+               remounts only when this prop itself changes, which happens for
+               the voice path and never for a pick made inside the field. */
+            key={productName ?? "none"}
             customerId={customerId}
             productId={productId}
             productName={productName}
@@ -261,6 +273,10 @@ export function LogCallDialog({
   const [noAnswerReason, setNoAnswerReason] = React.useState("no_response");
   const [text, setText] = React.useState<Partial<Record<DeskFieldKey, string>>>({});
   const [productId, setProductId] = React.useState<string | null>(null);
+  /* Set only by the voice assistant applying a resolved product match — see
+     the comment on `ProductField`'s `key` in `QuestionCell` for why this
+     exists rather than reusing `lead.productName`. */
+  const [voiceProductName, setVoiceProductName] = React.useState<string | null>(null);
   const [showLater, setShowLater] = React.useState(false);
   const [notes, setNotes] = React.useState("");
   const [nextKind, setNextKind] = React.useState<NextActionKind>("call");
@@ -432,6 +448,19 @@ export function LogCallDialog({
             )}
           </div>
 
+          <LeadCallAssistant
+            customerId={lead.id}
+            notes={notes}
+            onNotes={setNotes}
+            currentText={text}
+            currentProductId={productId}
+            onFillText={set}
+            onFillProduct={(match) => {
+              setProductId(match.productId);
+              setVoiceProductName(match.name);
+            }}
+          />
+
           <div className="mb-2 flex items-center justify-between">
             <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
               {exhausted ? "Last call — ask what is still missing" : "Ask on this call"}
@@ -457,7 +486,7 @@ export function LogCallDialog({
                     customerId={lead.id}
                     text={text}
                     productId={productId}
-                    productName={lead.productName}
+                    productName={voiceProductName ?? lead.productName}
                     onText={set}
                     onProduct={setProductId}
                   />
@@ -478,7 +507,7 @@ export function LogCallDialog({
                     customerId={lead.id}
                     text={text}
                     productId={productId}
-                    productName={lead.productName}
+                    productName={voiceProductName ?? lead.productName}
                     onText={set}
                     onProduct={setProductId}
                   />
@@ -504,7 +533,7 @@ export function LogCallDialog({
                     customerId={lead.id}
                     text={text}
                     productId={productId}
-                    productName={lead.productName}
+                    productName={voiceProductName ?? lead.productName}
                     onText={set}
                     onProduct={setProductId}
                   />
