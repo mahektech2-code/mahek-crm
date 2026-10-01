@@ -66,6 +66,7 @@ export async function Body({
         canWork={canWork}
         canPrioritise={canPrioritise}
         distributors={distributors}
+        productSearchEnabled={config["products.searchOnOrderForms"]}
       />
     </div>
   );
