@@ -323,6 +323,21 @@ export async function customerBills(id: string): Promise<CustomerBill[]> {
  * word for the bill and the balance is the arithmetic, and it is the
  * arithmetic the server validates the allocation against.
  */
+/**
+ * Who owes money, most first — what the payment screen offers before anything
+ * is typed. A salesman opening "Collect payment" from the + button is almost
+ * always standing in front of one of these, and a blank list waiting for a
+ * name is a list he has to fill from memory. The office's own outstanding
+ * figure, never one worked out on the phone.
+ */
+export async function customersOwing(limit = 20): Promise<Customer[]> {
+  return all<Customer>(
+    `SELECT * FROM customers WHERE coalesce(outstandingPaise, 0) > 0
+      ORDER BY outstandingPaise DESC, name ASC LIMIT ?`,
+    [limit],
+  );
+}
+
 export async function openCustomerBills(id: string): Promise<CustomerBill[]> {
   return all<CustomerBill>(
     `SELECT * FROM customer_bills
