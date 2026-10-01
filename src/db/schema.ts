@@ -5807,7 +5807,7 @@ function mbosColumns() {
 /* ------------------------------------------------------- the shared stream */
 
 /** Which app wrote the event. Deliberately not a role — apps write, people act. */
-export const timelineSourceAppEnum = pgEnum("timeline_source_app", ["crm", "mbos"]);
+export const timelineSourceAppEnum = pgEnum("timeline_source_app", ["crm", "mbos", "hrms"]);
 
 /**
  * One chronological stream per customer, written by BOTH apps (brief §1.1).

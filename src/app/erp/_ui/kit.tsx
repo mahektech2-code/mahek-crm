@@ -36,6 +36,8 @@ export type ScreenKit = {
   runTool?: (screen: string, tool: string, values?: Record<string, string>) => Promise<Result<unknown>>;
   /** Where a photo or video field posts the file it was given. */
   uploadUrl: string;
+  /** Where a pin field asks for the map key; absent, the pin is typed. */
+  mapKeyUrl?: string;
   /** Named row states and how each is labelled. */
   flags: Record<string, [string, Tone]>;
   /** The tone a status value is drawn in. */

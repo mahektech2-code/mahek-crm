@@ -48,7 +48,9 @@ export type FieldType =
   /** A CSV file, read in the browser: the field's value is the file's text. */
   | "csv"
   /** A time of day, "HH:MM". */
-  | "time";
+  | "time"
+  /** A map pin, "lat, lng": typed, picked on a map, or taken from here. */
+  | "pin";
 
 /** A condition on another field of the same form: shown only while it holds. */
 export type When =
@@ -211,6 +213,13 @@ export type ListRow = {
 export type ListSpec = {
   screen: string;
   cols: ColSpec[];
+  /**
+   * Draw the rows as image cards instead of table rows: the same rows,
+   * search, chips and paging, and a card opens the same record. `img` names
+   * the row value holding the image's URL (empty draws a placeholder),
+   * `title` the bold line, `lines` the muted ones beneath.
+   */
+  cards?: { img: string; title: string; lines: string[]; empty: string };
   /** Columns withheld by a power, named so the screen can say which. */
   hidden: { l: string; power: string }[];
   groups?: string[];

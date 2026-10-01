@@ -21,10 +21,14 @@ export function Above({ extras, rows }: { extras: HrmsExtras; rows: ListRow[] })
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
-  const withParam = (k: string, v: string | null) => {
+  const withParam = (k: string, v: string | null, also: Record<string, string | null> = {}) => {
     const q = new URLSearchParams(params.toString());
     if (v) q.set(k, v);
     else q.delete(k);
+    for (const [ak, av] of Object.entries(also)) {
+      if (av) q.set(ak, av);
+      else q.delete(ak);
+    }
     q.delete("open");
     const s = q.toString();
     return s ? `${path}?${s}` : path;
@@ -79,8 +83,63 @@ export function Above({ extras, rows }: { extras: HrmsExtras; rows: ListRow[] })
           ) : null}
         </div>
       ) : null}
+      {extras.paged ? <Paged p={extras.paged} withParam={withParam} /> : null}
       {extras.calendar ? <Calendar c={extras.calendar} rows={rows} withParam={withParam} /> : null}
       {extras.chart ? <Chart c={extras.chart} withParam={withParam} onPick={(k, v) => router.push(withParam(k, v || null))} /> : null}
+    </div>
+  );
+}
+
+/** Server-side search and paging for a list too long to send whole. */
+function Paged({ p, withParam }: { p: NonNullable<HrmsExtras["paged"]>; withParam: (k: string, v: string | null, also?: Record<string, string | null>) => string }) {
+  const router = useRouter();
+  const go = (page: number) => withParam("page", page > 1 ? String(page) : null);
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-[13px]">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const v = String(new FormData(e.currentTarget).get("q") ?? "").trim();
+          router.push(withParam("q", v || null, { page: null }));
+        }}
+        className="flex items-center gap-2"
+      >
+        <input
+          name="q"
+          defaultValue={p.q}
+          placeholder={p.placeholder}
+          className="h-8 w-[280px] rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink"
+        />
+        <button type="submit" className="h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-body hover:bg-canvas">
+          Search all
+        </button>
+        {p.q ? (
+          <Link href={withParam("q", null, { page: null })} className="text-[13px] text-muted">
+            Clear
+          </Link>
+        ) : null}
+      </form>
+      <span className="text-muted">
+        {p.total ? `${p.from.toLocaleString("en-IN")}–${p.to.toLocaleString("en-IN")} of ${p.total.toLocaleString("en-IN")}` : "None match"}
+        {p.pages > 1 ? " · the list below filters this page only" : ""}
+      </span>
+      {p.pages > 1 ? (
+        <span className="inline-flex gap-1">
+          {p.page > 1 ? (
+            <Link href={go(p.page - 1)} className="rounded-[4px] border border-line bg-surface px-2.5 py-1 text-body no-underline hover:no-underline">
+              ← Previous
+            </Link>
+          ) : null}
+          <span className="px-1.5 py-1 text-muted">
+            Page {p.page} of {p.pages}
+          </span>
+          {p.page < p.pages ? (
+            <Link href={go(p.page + 1)} className="rounded-[4px] border border-line bg-surface px-2.5 py-1 text-body no-underline hover:no-underline">
+              Next →
+            </Link>
+          ) : null}
+        </span>
+      ) : null}
     </div>
   );
 }

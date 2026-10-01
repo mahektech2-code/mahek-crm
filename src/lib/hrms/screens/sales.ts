@@ -5,6 +5,7 @@ import { customers, hrmsActivities, hrmsCalling, hrmsJourneys, hrmsUserPowers } 
 import { getConfig } from "@/lib/config/store";
 import { notifyUsers } from "@/lib/notify";
 import { recomputeInactivity } from "@/lib/recompute";
+import { HRMS_EVENT, writeTimelineEvent, writeTimelineEvents } from "@/lib/timeline";
 import type { ActionSpec, ColSpec, Contact, FieldSpec, FormSpec, ListRow, RowField } from "@/lib/erp/ui";
 import { has, type HrmsContext } from "../access";
 import {
@@ -338,6 +339,9 @@ async function editCustomerForm(c: Cust): Promise<FormSpec> {
 
 const NOT_LINKED = "Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.";
 
+/** Rows sent per page of the customers list. */
+const CUSTOMER_PAGE = 300;
+
 const customersScreen: HrmsScreenModule = {
   key: "customers",
   async load(ctx, q) {
@@ -348,7 +352,27 @@ const customersScreen: HrmsScreenModule = {
     const [all, stats, called] = await Promise.all([loadCustomers(), customerStats(), callingToday()]);
     /* Deactive customers are a decider's tab in the source (Deactive
        Customers, admin); everybody else works the live book. */
-    const rows = all.filter((c) => (!inScope || inScope(c)) && (decide || statusOf(c) !== "Deactive"));
+    const scoped = all.filter((c) => (!inScope || inScope(c)) && (decide || statusOf(c) !== "Deactive"));
+    /* The book is thousands of shops for whoever sees everybody, each row
+       carrying its actions, so the server searches and pages it. The search
+       runs over the whole book; the list below then filters the page. */
+    const needle = (q.q ?? "").trim().toLowerCase();
+    const hit = (c: Cust) =>
+      [c.name, c.phone, c.altPhone, c.city, c.area, c.externalCode, c.salesPersonName, c.backOfficeName].some((x) =>
+        String(x ?? "").toLowerCase().includes(needle),
+      );
+    const matched = (needle ? scoped.filter(hit) : scoped).sort(
+      (x, y) => areaOf(x).localeCompare(areaOf(y)) || String(x.name ?? "").localeCompare(String(y.name ?? "")),
+    );
+    const pages = Math.max(1, Math.ceil(matched.length / CUSTOMER_PAGE));
+    const page = Math.min(pages, Math.max(1, Number(q.page) || 1));
+    const start = (page - 1) * CUSTOMER_PAGE;
+    const rows = matched.slice(start, start + CUSTOMER_PAGE);
+    /* A row opened from a link (?open=) may sit on another page: send it too. */
+    if (q.open && !rows.some((c) => c.id === q.open)) {
+      const extra = matched.find((c) => c.id === q.open);
+      if (extra) rows.push(extra);
+    }
     return {
       spec: {
         screen: "customers",
@@ -358,7 +382,18 @@ const customersScreen: HrmsScreenModule = {
         chips: "status",
         sortDefault: ["name", 1],
         noDataLine: scope === "all" ? "No customers yet." : "No customer names you as their back office, sales person or tagged employee.",
-        hrms: { scope: { current: scope, options } },
+        hrms: {
+          scope: { current: scope, options },
+          paged: {
+            q: q.q ?? "",
+            page,
+            pages,
+            total: matched.length,
+            from: matched.length ? start + 1 : 0,
+            to: Math.min(start + CUSTOMER_PAGE, matched.length),
+            placeholder: "Search every customer: name, phone, area, code",
+          },
+        },
       },
       rows: rows.map((c) => customerRow(ctx, c, stats, called.today, cfg.suggestion)),
     };
@@ -382,7 +417,22 @@ const customersScreen: HrmsScreenModule = {
           called.open,
         );
         if (!pick.length) return refuse(err(`Every customer of yours in ${area} is already on a calling list.`));
-        await tx.insert(hrmsCalling).values(pick.map((customerId) => ({ id: hrmsId("hcall"), customerId, employeeId: me.id, date: t, createdById: ctx.user.id })));
+        const rows = pick.map((customerId) => ({ id: hrmsId("hcall"), customerId, employeeId: me.id, date: t, createdById: ctx.user.id }));
+        await tx.insert(hrmsCalling).values(rows);
+        /* The planned call lands in each customer's shared history in the
+           same transaction, so the list and the history cannot disagree. */
+        await writeTimelineEvents(
+          tx,
+          rows.map((r) => ({
+            customerId: r.customerId,
+            eventType: HRMS_EVENT.callPlanned,
+            sourceApp: "hrms" as const,
+            sourceRecordId: r.id,
+            occurredAt: new Date(),
+            actorUserId: ctx.user.id,
+            summary: `${first(me.name)} put them on the calling list`,
+          })),
+        );
         return okVoid(`${pick.length} customer${pick.length === 1 ? "" : "s"} in ${area} added to your calling list`);
       });
       if (res.ok) await hrmsAudit(ctx, "hrms.calling.takeFollowUp", "customer", id, null, { area });
@@ -673,19 +723,33 @@ const callingScreen: HrmsScreenModule = {
       const followUp = text(v.followUp) ?? "";
       const bad = checkCall({ status, second, followUp }, t);
       if (bad) return fieldErr(bad.field, bad.message);
-      await db
-        .update(hrmsCalling)
-        .set({
-          status,
-          secondStatus: second || null,
-          note: text(v.note),
-          followUp: followUp || null,
-          date: t,
-          misses: r.misses + (status === NOT_PICKED ? 1 : 0),
-          updatedAt: new Date(),
-          updatedById: ctx.user.id,
-        })
-        .where(eq(hrmsCalling.id, id));
+      const note = text(v.note);
+      await db.transaction(async (tx) => {
+        await tx
+          .update(hrmsCalling)
+          .set({
+            status,
+            secondStatus: second || null,
+            note,
+            followUp: followUp || null,
+            date: t,
+            misses: r.misses + (status === NOT_PICKED ? 1 : 0),
+            updatedAt: new Date(),
+            updatedById: ctx.user.id,
+          })
+          .where(eq(hrmsCalling.id, id));
+        /* One entry per outcome per day: the row is logged again on every
+           follow-up, and each of those is a call somebody made. */
+        await writeTimelineEvent(tx, {
+          customerId: r.customerId,
+          eventType: HRMS_EVENT.call,
+          sourceApp: "hrms",
+          sourceRecordId: `${id}:${t}:${status}`,
+          occurredAt: new Date(),
+          actorUserId: ctx.user.id,
+          summary: [`Back office call · ${status}`, second || null, followUp ? `follow-up ${fdShort(followUp)}` : null, note].filter(Boolean).join(" · "),
+        });
+      });
       await hrmsAudit(ctx, "hrms.calling.log", "hrms_calling", id, { status: r.status, secondStatus: r.secondStatus }, { status, secondStatus: second || null, followUp });
       return okVoid(`Call logged · ${status}${followUp ? ` · follow-up ${fdShort(followUp)}` : ""}`);
     },

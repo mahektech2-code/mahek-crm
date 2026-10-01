@@ -38,7 +38,7 @@ export default async function HrmsScreenPage({
 
   return (
     <HrmsList
-      key={`${screen.key}|${sp.open ?? ""}|${sp.f ?? ""}|${sp.scope ?? ""}|${sp.date ?? ""}|${sp.month ?? ""}|${sp.from ?? ""}|${sp.to ?? ""}|${sp.who ?? ""}`}
+      key={`${screen.key}|${sp.open ?? ""}|${sp.f ?? ""}|${sp.scope ?? ""}|${sp.date ?? ""}|${sp.month ?? ""}|${sp.from ?? ""}|${sp.to ?? ""}|${sp.who ?? ""}|${sp.q ?? ""}|${sp.page ?? ""}`}
       spec={spec}
       rows={rows}
       label={screen.label}

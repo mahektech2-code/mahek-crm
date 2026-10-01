@@ -396,6 +396,39 @@ export function ListScreen({
           />
         ) : (
           <>
+            {spec.cards ? (
+              <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                {pageRows.map((r) => {
+                  const src = String(r.v[spec.cards!.img] ?? "");
+                  return (
+                    <button
+                      key={r.id}
+                      onClick={() => setOpenId(r.id)}
+                      className="flex cursor-pointer flex-col overflow-hidden rounded-[6px] border border-line bg-surface text-left hover:border-brand"
+                    >
+                      <span className="flex aspect-[3/2] items-center justify-center bg-canvas">
+                        {src ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- a private attachment, read through the scoped endpoint
+                          <img src={src} alt={String(r.v[spec.cards!.title] ?? "")} className="h-full w-full object-cover" loading="lazy" />
+                        ) : (
+                          <span className="px-3 text-center text-[12px] text-muted">{spec.cards!.empty}</span>
+                        )}
+                      </span>
+                      <span className="grid gap-0.5 px-3 py-2">
+                        <span className="truncate text-[14px] font-semibold text-ink">{String(r.v[spec.cards!.title] ?? "")}</span>
+                        {spec.cards!.lines.map((k) =>
+                          r.v[k] ? (
+                            <span key={k} className="truncate text-[12px] text-muted">
+                              {String(r.v[k])}
+                            </span>
+                          ) : null,
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -498,6 +531,7 @@ export function ListScreen({
                 </tbody>
               </table>
             </div>
+            )}
             <Pager
               total={total}
               page={pg}
