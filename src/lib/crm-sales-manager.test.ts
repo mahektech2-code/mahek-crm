@@ -28,10 +28,12 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, customers, products, timelineEvents, users } from "@/db/schema";
+import { appAccess, appModuleAccess, customers, employeeReporting, employees, products, timelineEvents, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { canOpenModule } from "@/lib/access";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
+import { captureLead } from "@/lib/actions/lead-intake";
+import { recomputeSalesManagers } from "@/lib/recompute";
 import { setLeadNextAction } from "@/lib/actions/leads";
 import { reassignLead } from "@/lib/actions/sales";
 import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
@@ -544,5 +546,153 @@ describe("D — the desk reads the same book, by salesman", () => {
         gateKind: asManager.gate.kind,
       }).some((r) => /lead\.verify/.test(r)),
     );
+  });
+});
+
+/* ═══════════════════════════════════════════ R — a lead a Sales Manager raises */
+
+describe("R — a Sales Manager who raises a lead is its Sales Manager, at once", () => {
+  const capture = (over: Partial<Parameters<typeof captureLead>[0]> = {}) =>
+    captureLead({
+      salesType: "direct",
+      name: `Raised ${randomUUID().slice(0, 6)}`,
+      phone: String(9800000000 + Math.floor(Math.random() * 99999999)),
+      city: "Nashik",
+      source: "telecalling",
+      ...over,
+    });
+
+  test("the seat is the creator, the decision is stamped, and the lead is in their book immediately", async () => {
+    setTestUser(smA);
+    const made = await capture();
+    assert.ok(made.ok, made.ok ? "" : made.error);
+    const lead = await row(made.data.customerId);
+
+    assert.equal(lead.salesManagerId, smA.id);
+    assert.ok(lead.salesManagerDecidedAt, "stamped as a person's choice");
+    assert.equal(lead.ownerId, null, "the owner rule is unchanged: a manager raising a lead leaves it unowned");
+
+    assert.ok((await listIds()).includes(lead.id), "listed straight away");
+    assert.ok(await pipelineLead(lead.id, DAY), "the record opens");
+    assert.ok(
+      (await pipelineDesk(DAY)).rows.some((r) => r.id === lead.id),
+      "the desk the search runs over has it",
+    );
+
+    setTestUser(smB);
+    assert.ok(!(await listIds()).includes(lead.id), "another Sales Manager still cannot see it");
+  });
+
+  test("it is the CREATOR's seat even when an owner is named — never the owner's manager", async () => {
+    setTestUser(smA);
+    const made = await capture({ ownerId: salesman.id });
+    assert.ok(made.ok, made.ok ? "" : made.error);
+    const lead = await row(made.data.customerId);
+    assert.equal(lead.ownerId, salesman.id);
+    assert.equal(lead.salesManagerId, smA.id);
+  });
+
+  test("a Sales Manager at the manager level is seated the same way", async () => {
+    setTestUser(smLead);
+    const made = await capture();
+    assert.ok(made.ok, made.ok ? "" : made.error);
+    assert.equal((await row(made.data.customerId)).salesManagerId, smLead.id);
+  });
+
+  test("the nightly recompute does not wipe it", async () => {
+    const [boss, underling] = await Promise.all(
+      ["Org Boss", "Org Underling"].map(async (name, i) =>
+        (
+          await db
+            .insert(employees)
+            .values({ id: id("emp"), employeeCode: `R-${i}`, name, status: "active", rowNumber: 900 + i, raw: {}, rowHash: `r-${i}-${randomUUID()}` })
+            .returning()
+        )[0],
+      ),
+    );
+    await db.insert(employeeReporting).values({ id: id("er"), employeeId: underling.id, managerId: boss.id });
+    try {
+      setTestUser(smA);
+      const made = await capture();
+      assert.ok(made.ok, made.ok ? "" : made.error);
+
+      const changed = await recomputeSalesManagers();
+      assert.ok(changed >= 1, "the pass ran over the book (the control below was blanked)");
+
+      assert.equal((await row(made.data.customerId)).salesManagerId, smA.id, "still the creator's");
+      assert.equal((await row(mineANoOwner.id)).salesManagerId, null, "control: an undecided seat WOULD have been blanked");
+    } finally {
+      await db.delete(employeeReporting);
+      await db.delete(employees);
+    }
+  });
+
+  test("a creator who is not a Sales Manager keeps exactly the old behaviour", async () => {
+    setTestUser(noModule);
+    const made = await capture();
+    assert.ok(made.ok, made.ok ? "" : made.error);
+    const lead = await row(made.data.customerId);
+    assert.equal(lead.salesManagerId, null);
+    assert.equal(lead.salesManagerDecidedAt, null);
+
+    setTestUser(smA);
+    assert.ok(!(await listIds()).includes(lead.id), "in nobody's Sales Manager book, as before");
+  });
+
+  test("an administrator is not seated either", async () => {
+    setTestUser(admin);
+    const made = await capture();
+    assert.ok(made.ok, made.ok ? "" : made.error);
+    const lead = await row(made.data.customerId);
+    assert.equal(lead.salesManagerId, null);
+    assert.equal(lead.salesManagerDecidedAt, null);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════ Recently badge */
+
+describe("Recently — raised within the last 7 calendar days, in IST", () => {
+  /** A lead raised at this instant, in the Sales Manager's own book. */
+  const raisedAt = (iso: string, name: string) =>
+    makeLead({ name, ownerId: salesman.id, salesManagerId: smA.id, createdAt: new Date(iso) });
+  const flags = async () => new Map((await pipelineDesk(DAY)).rows.map((r) => [r.name, r.isRecent]));
+
+  test("today, yesterday and six days ago are Recently; seven days and older are not", async () => {
+    // DAY is 2026-09-24; noon IST on each day, so only the date decides it.
+    await raisedAt("2026-09-24T12:00:00+05:30", "age0");
+    await raisedAt("2026-09-23T12:00:00+05:30", "age1");
+    await raisedAt("2026-09-18T12:00:00+05:30", "age6");
+    await raisedAt("2026-09-17T12:00:00+05:30", "age7");
+    await raisedAt("2026-08-01T12:00:00+05:30", "age54");
+    const f = await flags();
+    assert.equal(f.get("age0"), true, "today");
+    assert.equal(f.get("age1"), true, "yesterday");
+    assert.equal(f.get("age6"), true, "six days ago");
+    assert.equal(f.get("age7"), false, "seven days ago is the first day of the next Age bucket");
+    assert.equal(f.get("age54"), false, "older");
+  });
+
+  test("the day is the IST day, not the UTC one", async () => {
+    // 00:30 IST on the 18th is 19:00 UTC on the 17th. By IST it is six days old (Recently);
+    // read as a UTC date it would be seven (not).
+    await raisedAt("2026-09-17T19:00:00Z", "ist-edge-in");
+    // 23:30 IST on the 17th is 18:00 UTC the same day: seven days old either way.
+    await raisedAt("2026-09-17T18:00:00Z", "ist-edge-out");
+    // 01:30 IST today is 20:00 UTC yesterday: today by IST.
+    await raisedAt("2026-09-23T20:00:00Z", "ist-today");
+    const f = await flags();
+    assert.equal(f.get("ist-edge-in"), true);
+    assert.equal(f.get("ist-edge-out"), false);
+    assert.equal(f.get("ist-today"), true);
+  });
+
+  test("the record header and the list rows agree", async () => {
+    const fresh = await raisedAt("2026-09-23T12:00:00+05:30", "rec-fresh");
+    const old = await raisedAt("2026-09-10T12:00:00+05:30", "rec-old");
+    assert.equal((await pipelineLead(fresh.id, DAY))!.lead.isRecent, true);
+    assert.equal((await pipelineLead(old.id, DAY))!.lead.isRecent, false);
+    const listed = new Map((await pipelineList(DAY, { q: "", stage: "", view: "", page: 1 })).rows.map((r) => [r.id, r.isRecent]));
+    assert.equal(listed.get(fresh.id), true);
+    assert.equal(listed.get(old.id), false);
   });
 });

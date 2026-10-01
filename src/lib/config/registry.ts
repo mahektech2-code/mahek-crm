@@ -2971,6 +2971,17 @@ export const SETTINGS = [
     max: 365,
   },
   {
+    key: "mbos.leads.recentDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "A lead is marked Recently for",
+    description:
+      "Calendar days (today counts as the first) a newly raised lead carries the Recently badge on the Sales Manager desk. 7 means a lead raised today or in the six days before it.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
     key: "mbos.leads.archiveDays",
     type: "integer",
     category: "mbos-leads",
@@ -5341,6 +5352,7 @@ export type Config = {
   "mbos.push.failureRetentionDays": number;
 
   "mbos.leads.staleDays": number;
+  "mbos.leads.recentDays": number;
   "mbos.leads.archiveDays": number;
   "mbos.leads.escalateAfterDays": number;
   "mbos.leads.visitsBeforeDecision": number;

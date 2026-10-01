@@ -55,6 +55,7 @@ export function ProtoRecordHeader({
             <PSalesTypeBadge salesType={lead.salesType} />
             {lead.lost ? <PBadge tone="danger">Lost</PBadge> : <PStageBadge stage={lead.stage} />}
             <PPriorityBadge priority={lead.priority} />
+            {lead.isRecent ? <PBadge tone="success">Recently</PBadge> : null}
           </div>
           <div className="mt-0.5 font-mono text-[11.5px] text-[#8890a0]">
             {lead.id} · created {lead.createdAt || "—"} · source: {lead.source ?? "—"}
