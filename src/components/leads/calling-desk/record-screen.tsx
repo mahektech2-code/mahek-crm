@@ -41,6 +41,7 @@ import {
 import {
   LogCallDialog,
   LostDialog,
+  ReopenDialog,
   AssignDialog,
   ConvertDialog,
   MessageDialog,
@@ -51,7 +52,7 @@ import {
 type Coded = { code: string; label: string };
 type Tab = "overview" | "calls" | "comms" | "timeline";
 type DialogState = {
-  kind: "call" | "message" | "next" | "request" | "convert" | "lost" | "assign";
+  kind: "call" | "message" | "next" | "request" | "convert" | "lost" | "assign" | "reopen";
   preset?: string | null;
 } | null;
 
@@ -77,6 +78,7 @@ export function RecordScreen({
   defaultNextDate,
   prospectReasons,
   lostReasons,
+  reopenReasons,
   sampleReasons,
   orderBlockers,
   base,
@@ -90,6 +92,8 @@ export function RecordScreen({
   defaultNextDate: string;
   prospectReasons: Coded[];
   lostReasons: Coded[];
+  /** `leads.reopenReasons` — why a Lost lead is being brought back. */
+  reopenReasons: Coded[];
   sampleReasons: Coded[];
   orderBlockers: Coded[];
   /** `/crm/leads/calling-desk`, so the breadcrumb and back links need not spell it. */
@@ -138,6 +142,9 @@ export function RecordScreen({
      the Sales Manager's verification queue it was sent back from — that button
      is gated on `canWork` alone, as it always was. */
   const canConvert = canWork && phase === "ready";
+  /* The desk may reverse a loss it can work — except one the Sales Manager closed
+     on a failed verification, which is their judgement and the server refuses it. */
+  const canReopen = canWork && Boolean(lead.lost) && lead.lost?.reopenTo.basis !== "verification_failed";
   const canClose = canWork && (working || phase === "ready" || phase === "returned" || phase === "exhausted");
   const tabs: [Tab, string][] = [
     ["overview", "Overview"],
@@ -176,6 +183,27 @@ export function RecordScreen({
             {lead.lost.detail ? (
               <div className="mt-1 text-[12.5px] opacity-90">“{lead.lost.detail}”</div>
             ) : null}
+            {canReopen ? (
+              <div className="mt-2">
+                <Button size="sm" variant="secondary" onClick={() => open("reopen")}>
+                  Reverse Lead
+                </Button>
+              </div>
+            ) : lead.lost.reopenTo.basis === "verification_failed" ? (
+              <div className="mt-1 text-[12.5px] opacity-90">
+                Closed on a failed verification — reversing it is the Sales Manager&rsquo;s call.
+              </div>
+            ) : null}
+          </div>
+        </Callout>
+      ) : null}
+      {lead.reopened && !lead.lost ? (
+        <Callout tone="brand">
+          <div>
+            <b>Reopened.</b> This lead was Lost and was reversed on {shortDay(lead.reopened.at)}
+            {lead.reopened.byName ? ` by ${lead.reopened.byName}` : ""}
+            {lead.reopened.times > 1 ? ` (${lead.reopened.times} times)` : ""}. The earlier loss and every earlier call
+            stay on the record; the three calls start again.
           </div>
         </Callout>
       ) : null}
@@ -341,12 +369,13 @@ export function RecordScreen({
       {/* ------------------------------------------------- the 3-call rule */}
       <div className="mb-1.5 flex items-center justify-between">
         <SectionLabel>The 3-call rule</SectionLabel>
-        <CallMeter phase={phase} outcomes={lead.calls.map((c) => c.outcome)} size="lg" />
+        <CallMeter phase={phase} outcomes={lead.calls.filter((c) => !c.earlier).map((c) => c.outcome)} size="lg" />
       </div>
       <Card className="mb-4 px-5 py-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {[1, 2, 3].map((n) => {
-            const call = lead.calls[n - 1];
+            /* This round's calls only — earlier ones are kept on the Call history tab. */
+            const call = lead.calls.filter((c) => !c.earlier)[n - 1];
             const isNext = next === n;
             const finished = !working;
             return (
@@ -542,6 +571,9 @@ export function RecordScreen({
         <ConvertDialog lead={lead} prospectReasons={prospectReasons} onClose={() => setDialog(null)} />
       ) : null}
       {dialog?.kind === "lost" ? <LostDialog lead={lead} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === "reopen" ? (
+        <ReopenDialog lead={lead} reopenReasons={reopenReasons} onClose={() => setDialog(null)} />
+      ) : null}
       {dialog?.kind === "assign" ? (
         <AssignDialog lead={lead} assignees={assignees} onClose={() => setDialog(null)} />
       ) : null}
@@ -1188,10 +1220,12 @@ function GateActionCard({
 
 function CallsTab({ lead }: { lead: DeskLeadRecord }) {
   const working = isWorking(lead.phase);
+  const round = lead.calls.filter((c) => !c.earlier);
+  const earlier = lead.calls.filter((c) => c.earlier);
   return (
     <div className="flex flex-col gap-4">
       {[1, 2, 3].map((n) => {
-        const call = lead.calls[n - 1];
+        const call = round[n - 1];
         if (!call) {
           return (
             <Card key={n} className="border-dashed px-5 py-4">
@@ -1269,6 +1303,29 @@ function CallsTab({ lead }: { lead: DeskLeadRecord }) {
           </Card>
         );
       })}
+      {earlier.length ? (
+        <Card className="p-5">
+          <div className="text-sm font-semibold text-ink">Before this lead was reopened</div>
+          <div className="mb-2 text-[12.5px] text-muted">
+            {earlier.length} call{earlier.length === 1 ? "" : "s"} made in the earlier round. They stay on the record; they are not counted
+            in the three above.
+          </div>
+          <div className="divide-y divide-divider rounded-[4px] border border-line">
+            {earlier.map((c, i) => (
+              <div key={`${c.at}-${i}`} className="px-3 py-2 text-[13px]">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="font-mono text-[11px] text-muted">
+                    {stamp(c.at)} · {c.byName}
+                  </span>
+                  <Badge tone="muted">{OUTCOME_LABEL[c.outcome]}</Badge>
+                </div>
+                {c.notes ? <div className="mt-1 text-body">{c.notes}</div> : null}
+                {c.finalDisposition ? <div className="mt-1 text-muted">{c.finalDisposition}</div> : null}
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
     </div>
   );
 }

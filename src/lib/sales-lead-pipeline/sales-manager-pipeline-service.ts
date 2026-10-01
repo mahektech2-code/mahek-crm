@@ -10,6 +10,7 @@ import { APP_TIMEZONE } from "@/lib/business-date";
 import { gateAction } from "@/lib/engines/lead-gate-action";
 import { gateForNext, gateTo, mustDecideSuspect, checklistFor } from "@/lib/engines/lead-gates";
 import { isParked } from "@/lib/engines/lead-ladder";
+import { isReopenTransition, reopenTarget } from "@/lib/engines/lead-reopen";
 import { isRecentLead } from "@/lib/lead-recent";
 import { stampDate } from "@/lib/format";
 import {
@@ -18,6 +19,7 @@ import {
   findingLabel as verificationFindingLabel,
   stageLabel,
   verificationAnswers,
+  type LeadStage,
 } from "@/lib/lead-labels";
 import { isConfirmedCommitment } from "@/lib/lead-commitment";
 import { retiredLadderNote, type LeadView } from "@/lib/lead-views";
@@ -143,6 +145,7 @@ export async function pipelineRefs(): Promise<PipelineRefs> {
 
   return {
     lostReasons: coded(config["leads.lostReasons"]),
+    reopenReasons: coded(config["leads.reopenReasons"]),
     failureReasons: coded(config["leads.verificationFailureReasons"]),
     prospectReasons: coded(config["leads.prospectReasons"]),
     sampleReasons: coded(config["leads.sampleReasons"]),
@@ -1046,6 +1049,7 @@ export async function pipelineLead(
     canCaptureOrder,
     canDistributorTerms,
     canApproveDistributor,
+    canReopen: canVerify,
   };
 
   const freshDays = config["leads.figuresFreshDays"];
@@ -1172,8 +1176,23 @@ export async function pipelineLead(
             by: lostTransition?.actorName ?? "",
             date: lostTransition ? stampDate(lostTransition.at) : "",
             note: clean(lostTransition?.note),
+            reopenTo: (() => {
+              const t = reopenTarget({
+                lostFrom: (lostTransition?.fromStage as LeadStage | null | undefined) ?? null,
+                salesType: record.salesType,
+                lostReason: record.lostReason,
+              });
+              return { stage: t.stage as Stage, label: STAGE_LABEL[t.stage as Stage] ?? t.stage, explains: t.explains };
+            })(),
           }
         : undefined,
+    reopened: (() => {
+      const moves = transitions.filter(isReopenTransition);
+      const latest = moves[0];
+      return latest
+        ? { date: stampDate(latest.at), by: latest.actorName ?? "", times: moves.length }
+        : undefined;
+    })(),
     nextAction: clean(record.nextAction),
     nextActionDate: record.nextActionDate ?? undefined,
     nextActionResp: clean(record.nextActionOwnerName),

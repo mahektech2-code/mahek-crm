@@ -112,6 +112,12 @@ const files = [
   // closing transition rather than guessed, and the next-action/nurture-task
   // cleanup touching only the lead and the tasks it is actually about.
   "src/lib/lead-lost.test.ts",
+  // Reversing a Lost lead, from the Sales Manager's door and the Telecaller's,
+  // over one shared implementation: the same row and id, the loss kept in the
+  // history, a failed verification asked again, a lead lost at Call 3 callable
+  // again with every call kept, one reopen from two simultaneous requests, and
+  // the ladder's gates still applying to what comes back.
+  "src/lib/lead-reopen.test.ts",
   // The Telecaller-owned Qualification workflow, Prospect to Sample/Trial.
   "src/lib/telecaller-qualification.test.ts",
   // A fresh CRM/Sales grant made through the CLI, the provisioning endpoint

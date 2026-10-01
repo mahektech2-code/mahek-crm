@@ -407,6 +407,25 @@ export const HOLD_REASONS: readonly CodedOption[] = [
 ] as const;
 
 /**
+ * §— WHY A LOST LEAD WAS REOPENED. A loss demands a code so it can be counted,
+ * and so does taking one back: "how many of the leads we closed came back, and
+ * why" is a question somebody can ask of a code and cannot ask of a sentence.
+ * `other` demands the remarks, like every list that ends in it
+ * (`REASON_CODE_NEEDING_REMARKS`). The list is configuration
+ * (`leads.reopenReasons`) and every door validates against `getConfig()`, never
+ * against this constant, so a reworded list is not refused by the action while
+ * the picker goes on offering it.
+ */
+export const REOPEN_REASONS: readonly CodedOption[] = [
+  { code: "customer_responded", label: "Customer responded again" },
+  { code: "ready_to_purchase", label: "Customer ready to purchase" },
+  { code: "new_requirement", label: "New requirement received" },
+  { code: "order_opportunity", label: "Order opportunity reopened" },
+  { code: "followup_requested", label: "Customer requested follow-up" },
+  { code: "other", label: "Other" },
+] as const;
+
+/**
  * §5.5 §9 — WHAT IS STOPPING THE FIRST ORDER, asked as the commitment is taken.
  *
  * A commitment is a day and a size and the one thing that would stop it, and

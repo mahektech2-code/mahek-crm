@@ -14,6 +14,7 @@ import { COMPLAINT_CATEGORIES } from "../constants";
 import {
   LOST_REASONS,
   HOLD_REASONS,
+  REOPEN_REASONS,
   SAMPLE_CANCEL_REASONS,
   VERIFICATION_FAILURE_REASONS,
   OVERRIDE_REASONS,
@@ -3320,6 +3321,15 @@ export const SETTINGS = [
     default: LOST_REASONS.map((r) => ({ ...r })),
   },
   {
+    key: "leads.reopenReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a lost lead was reopened",
+    description:
+      "Reversing a Lost lead puts the same record back on its ladder and demands a code, for the reason a loss does: 'how many of the leads we closed came back, and what brought them back' is a question somebody can ask of a code and not of a sentence. Picking 'Other' makes the note mandatory.",
+    default: REOPEN_REASONS.map((r) => ({ ...r })),
+  },
+  {
     key: "leads.verificationFailureReasons",
     type: "structured",
     category: "mbos-leads",
@@ -5388,6 +5398,7 @@ export type Config = {
   "leads.lostReasons": { code: string; label: string }[];
   "leads.verificationFailureReasons": { code: string; label: string }[];
   "leads.holdReasons": { code: string; label: string }[];
+  "leads.reopenReasons": { code: string; label: string }[];
   "leads.sampleCancelReasons": { code: string; label: string }[];
   "leads.overrideReasons": { code: string; label: string }[];
   "leads.orderBlockers": { code: string; label: string }[];

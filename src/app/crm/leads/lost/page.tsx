@@ -5,9 +5,14 @@
  * machinery — `lead_stage = 'lost'`, `lead_lost_reason`, and the closing row in
  * `lead_stage_transitions` — already carries everything this screen shows.
  * Nothing here writes a lead lost; that stays where it is, on the record's own
- * form, through the same gate every other stage move runs.
+ * form, through the same gate every other stage move runs. The one write on this
+ * page is Reverse, offered only to somebody holding one of its two doors.
  */
 import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
+import { canOpenModule } from "@/lib/access";
+import { getConfig } from "@/lib/config/store";
+import type { ReopenOffer } from "@/components/leads/lost/reopen-lost-dialog";
 import { today } from "@/lib/recompute";
 import {
   lostLeadOwnerOptions,
@@ -26,8 +31,29 @@ export default async function Page({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requireUser();
+  const user = await requireUser();
   const params = await searchParams;
+
+  /* Reading this list is not a permission to reverse anything. The column is
+     drawn only for somebody holding one of the two doors, and each door is a
+     server action that asks its own question again:
+       - the Sales Manager's `lead.verify`, or
+       - the Calling desk grant with `lead.work` (the Telecaller's).
+     A manager who also holds the desk is offered the Sales Manager's door, the
+     wider of the two. */
+  const [isSalesManager, holdsDesk, canWork, config] = await Promise.all([
+    canFor(user, "lead.verify"),
+    canOpenModule(user.id, "crm.lead-calling-desk"),
+    canFor(user, "lead.work"),
+    getConfig(),
+  ]);
+  const reopen: ReopenOffer | null =
+    isSalesManager || (holdsDesk && canWork)
+      ? {
+          seat: isSalesManager ? "sales_manager" : "calling_desk",
+          reasons: config["leads.reopenReasons"].map((r) => ({ code: r.code, label: r.label })),
+        }
+      : null;
 
   const filters: LostLeadFilters = {
     /* Capped, like every search box in this workspace — a search box is a
@@ -73,6 +99,7 @@ export default async function Page({
       }}
       ownerOptions={owners}
       tiles={tiles}
+      reopen={reopen}
     />
   );
 }

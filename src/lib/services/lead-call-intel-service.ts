@@ -27,6 +27,7 @@ import {
 import { err, ok, type Result } from "@/lib/result";
 import { readStructured } from "@/lib/structured-read";
 import { searchProducts } from "./product-service";
+import { reopenedAtOf } from "./lead-reopen-service";
 
 /* ---------------------------------------------------------------------------
  * THE LEAD CALLING DESK'S VOICE ASSISTANT, wired to data.
@@ -137,6 +138,8 @@ async function callsMade(customerId: string): Promise<number> {
       and(
         eq(calls.customerId, customerId),
         sql`${calls.outcomeDetail}->>${sql.raw(`'${CALL_MARK}'`)} is not null`,
+        /* This round's calls — a reopened lead starts its three again. */
+        sql`${calls.startedAt} >= ${reopenedAtOf(customerId)}`,
       ),
     );
   return made?.n ?? 0;
