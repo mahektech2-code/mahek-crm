@@ -79,11 +79,12 @@ import { NavigateButton } from '../src/components/ui/navigate';
  * turned down rather than flagged, and the arrival is the only place that can
  * honestly happen: nothing has been typed yet, so a refusal costs a walk to
  * the right door instead of a day's work, and he can press the button again.
- * `checkInVerdict` decides it and refuses only what a reading can prove — no
- * fix, a fix too wide to trust and a shop with no pin all still go through.
- * The way past a refusal is a typed sentence, which saves the visit unverified
- * and goes to his manager: the pin in this book is very often the wrong one,
- * and a salesman who cannot record being where he actually is stops recording.
+ * `checkInVerdict` decides it: no fix, or a fix too wide to trust, is refused
+ * too, and a shop with no pin goes through only once he confirms he is at it —
+ * that check-in becomes its pin. The way past a DISTANCE refusal is a typed
+ * sentence, which saves the visit unverified and goes to his manager: the pin
+ * in this book is very often the wrong one, and a salesman who cannot record
+ * being where he actually is stops recording.
  */
 
 type Product = { id: string; name: string; packSize: string | null };
@@ -583,9 +584,14 @@ export default function Visit() {
    *
    * `override` is his own sentence, given after a refusal. Passed in rather
    * than read from state because the confirm dialog hands it back and state
-   * set a line earlier is not yet readable here.
+   * set a line earlier is not yet readable here. It opens a `too_far` refusal
+   * and nothing else: it exists because a stored pin is often wrong, and a
+   * missing reading is not a wrong pin.
+   *
+   * `confirmedHere` is his answer to "are you at this shop?", asked where the
+   * shop has no pin and this fix is about to become one.
    */
-  const arriveHere = async (override?: string) => {
+  const arriveHere = async (override?: string, confirmedHere = false) => {
     if (!leg || arriving) return;
     setArriving(true);
     try {
@@ -602,7 +608,7 @@ export default function Visit() {
         radiusM,
         threshold,
       );
-      if (!gate.accepted && !override) {
+      if (!gate.accepted && !(override && gate.reason === 'too_far')) {
         /* NOTHING IS WRITTEN. The leg stays open because he is still
            travelling, the dwell clock does not start, and no meter has been
            photographed — so pressing the button again from the right place
@@ -615,6 +621,23 @@ export default function Visit() {
         return;
       }
       setRefused(null);
+
+      /* NO PIN ON THE SHOP: this reading is about to become where the shop is
+         for every check-in after it, so he says he is standing in it first.
+         Asked before the meter, so "no" costs nothing. The dialog calls back
+         in, which takes a fresh reading — the one he confirmed against. */
+      if (gate.needsConfirmation && !confirmedHere) {
+        const shopName = leg.toLabel ?? c?.name ?? 'this shop';
+        askConfirm({
+          title: `Are you at ${shopName}?`,
+          body: `${shopName} has no saved location yet. Check in only if you are standing at the shop — where you are now is saved as its location, and every check-in after this one is measured against it.`,
+          confirmLabel: 'Yes, I am at the shop',
+          run: () => {
+            void arriveHere(undefined, true);
+          },
+        });
+        return;
+      }
 
       let odometer: { km: number; photoId: string } | null = null;
       if (needsMeter) {
@@ -1348,7 +1371,9 @@ export default function Visit() {
                 {refused.sentence}
               </Text>
               <Text style={[type.caption, { marginTop: 6 }]}>
-                Walk to the shop and press again — nothing has been recorded yet.
+                {refused.reason === 'too_far'
+                  ? 'Walk to the shop and press again — nothing has been recorded yet.'
+                  : 'Nothing has been recorded yet.'}
               </Text>
             </View>
           ) : null}
@@ -1366,7 +1391,9 @@ export default function Visit() {
             would be a way round the radius that nobody had to be refused by
             first, which is a different feature.
           */}
-          {refused ? (
+          {/* And only for a refusal on DISTANCE. A missing reading is not a
+              wrong pin, and there is no way past it but a reading. */}
+          {refused?.reason === 'too_far' ? (
             <View style={{ marginTop: 10 }}>
               <SecondaryButton
                 label="I am at the shop — its location here is wrong"

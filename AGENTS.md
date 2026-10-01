@@ -966,17 +966,25 @@ BEFORE the camera rather than beside it. Refusing the SAVE would be the old
 mistake exactly: the note, the photograph, the order and the day are already
 in the phone by then.
 
-**Three answers accept, and only one refuses.** No fix and a fix too wide to
-trust both go through — a reading that cannot show he is there cannot show he is
-not, and refusing on one would block every check-in inside a concrete godown. A
-shop with NO PIN goes through too, and this is the half nobody would guess at:
-487 of the 1,076 shops on a real handset have no coordinate, so refusing there
-would make half the book unvisitable to close a gap the salesman did not open.
-That check-in becomes the pin — guarded by `gps_lat is null` in the statement
-and not only in the branch above it, so two visits in flight cannot fight over
-it — and a POOR fix never pins a shop, because a pin dropped four hundred metres
-out would refuse every honest visit afterwards, which is this rule's own failure
-arriving by the back door.
+**Without a proper reading there is no check-in, and that is a SECOND
+reversal.** No fix, and a fix too wide to trust, used to go through on the
+reasoning that a reading which cannot show he is there cannot show he is not.
+Mahek's answer is that an unmeasured check-in is exactly the record the gate
+exists to stop. Both are refused now, at the door, where it costs a step
+outside and a second press — nothing typed, nothing lost. The written override
+below does NOT open them: it exists because a pin is often wrong, and a missing
+reading is not a wrong pin.
+
+A shop with NO PIN still goes through, and this is the half nobody would guess
+at: 487 of the 1,076 shops on a real handset have no coordinate, so refusing
+there would make half the book unvisitable to close a gap the salesman did not
+open. But he is ASKED first — "Are you at this shop?" — because that check-in
+becomes the pin every later visit is measured against, and a pin should be a
+claim somebody made on purpose. It is guarded by `gps_lat is null` in the
+statement and not only in the branch above it, so two visits in flight cannot
+fight over it — and a POOR fix never pins a shop, because a pin dropped four
+hundred metres out would refuse every honest visit afterwards, which is this
+rule's own failure arriving by the back door.
 
 **The way past a refusal costs a sentence, and it is offered only after one.**
 The pin in this book was typed by hand, dropped in an office or inherited from a

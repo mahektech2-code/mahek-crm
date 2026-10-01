@@ -1920,7 +1920,7 @@ export const SETTINGS = [
     category: "mbos-location",
     label: "Usable GPS accuracy",
     description:
-      "Metres. A fix the handset itself rates worse than this is not evidence of where anybody was standing — a visit captured on one is still saved, but it is not marked verified and it never counts as a location mismatch. Refusing the check-in instead would lose a real visit to a cloudy afternoon indoors.",
+      "Metres. A fix the handset itself rates worse than this is not evidence of where anybody was standing, so the handset refuses to start a check-in on one — he steps outside and tries again. A visit that arrives from an older handset on such a fix is still saved, but it is not marked verified and it never counts as a location mismatch.",
     default: 50,
     min: 5,
     max: 1000,
