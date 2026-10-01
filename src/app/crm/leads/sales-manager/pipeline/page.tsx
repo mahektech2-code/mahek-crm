@@ -1,11 +1,10 @@
-import { ProtoPipeline } from "@/components/sales-lead-pipeline/proto/pipeline";
-import { today } from "@/lib/recompute";
-import { pipelineFunnel } from "@/lib/sales-lead-pipeline/sales-manager-pipeline-service";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Lead Pipeline — Sales Manager — CRM — MahekOne" };
-export const dynamic = "force-dynamic";
-
-export default async function Page() {
-  const day = await today();
-  return <ProtoPipeline funnel={await pipelineFunnel(day)} />;
+/*
+ * The desk replaced the separate list views: the queues and the search are on
+ * the dashboard. This stays as a redirect because the route lives in bookmarks
+ * and in links the shared lead dialogs draw.
+ */
+export default function Page() {
+  redirect("/crm/leads/sales-manager");
 }

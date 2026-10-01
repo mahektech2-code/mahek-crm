@@ -1,12 +1,10 @@
-import { ProtoListPage } from "../list-view";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Sales Manager leads — CRM — MahekOne" };
-export const dynamic = "force-dynamic";
-
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  return <ProtoListPage viewKey="all" searchParams={await searchParams} />;
+/*
+ * The desk replaced the separate list views: the queues and the search are on
+ * the dashboard. This stays as a redirect because the route lives in bookmarks
+ * and in links the shared lead dialogs draw.
+ */
+export default function Page() {
+  redirect("/crm/leads/sales-manager");
 }
