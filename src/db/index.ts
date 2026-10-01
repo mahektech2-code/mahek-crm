@@ -39,6 +39,44 @@ const sql =
   globalForDb.__mahekSql ??
   postgres(connectionString, {
     /*
+     * WHOLE NUMBERS COME BACK AS NUMBERS, from every query.
+     *
+     * Postgres sends `bigint` (int8) and `numeric` as text, because either can
+     * hold more than a JavaScript number. postgres.js passes that text through,
+     * so every raw `db.execute` that summed money returned STRINGS where its
+     * type said `number` — and `salary + travel + food` on strings is not
+     * addition, it is concatenation. The Sales Dashboard's Cost and return
+     * screen showed a team cost of "₹1.80,00,00,00,00,25e+,112" that way: two
+     * salaries glued end to end and read back as one enormous number.
+     *
+     * The typed columns never had the problem — every `bigint` and `numeric`
+     * in the schema is `mode: "number"`, and Drizzle converted on the way out.
+     * Only raw SQL did, and raw SQL is where the aggregates are: `sum()` of a
+     * bigint is a `numeric`, and `count(*)` is a bigint. Converting here, once,
+     * is what makes the answer the same for every query in every app, instead
+     * of depending on whether somebody remembered `Number()` at each call site.
+     *
+     * It is safe because of what these columns hold: money in paise, volumes in
+     * millilitres, weights in grams, distances in metres. None comes near 2^53,
+     * the point past which a JS number stops being exact, and the schema has no
+     * bigserial ids. A `numeric` with decimals (a density, a leave balance) is
+     * read the way the schema already asked for it, as a number.
+     */
+    types: {
+      int8AsNumber: {
+        to: 20,
+        from: [20],
+        serialize: (x: number | bigint | string) => String(x),
+        parse: (x: string) => Number(x),
+      },
+      numericAsNumber: {
+        to: 1700,
+        from: [1700],
+        serialize: (x: number | string) => String(x),
+        parse: (x: string) => Number(x),
+      },
+    },
+    /*
      * TWENTY WAS A NUMBER ABOUT DISTANCE. With the database in another
      * continent every query held a connection for ~300 ms, so a small pool
      * serialised work that was written to run in parallel and the answer was

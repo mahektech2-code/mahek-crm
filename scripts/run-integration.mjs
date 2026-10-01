@@ -156,6 +156,10 @@ const files = [
   // three things a difference-based withdrawal could break — a real change
   // landing, a row that left being marked, and a row the sheet takes back.
   "src/lib/staging-idempotence.test.ts",
+  // Raw SQL returns bigint and numeric as NUMBERS (src/db/index.ts), and an
+  // account is one payroll row: the two bugs behind a Cost and return screen
+  // that concatenated salaries and listed one salesman twice.
+  "src/lib/numbers-from-sql.test.ts",
 ];
 
 let failed = 0;

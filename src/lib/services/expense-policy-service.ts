@@ -1,4 +1,5 @@
 import "server-only";
+import { employeeLateral } from "@/lib/employee-link";
 import { asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -336,9 +337,7 @@ export async function resolveSubject(
     select g.key as "gradeKey", e.position as "positionRaw",
            (select key from expense_grades where is_residual limit 1) as "residualKey"
       from users u
-      left join employees e
-             on lower(e.email) = lower(u.email)
-             or (e.company_mobile is not null and e.company_mobile = u.phone)
+      ${employeeLateral("u", "e")}
       left join expense_grade_map m
              on m.position_normalised = lower(regexp_replace(coalesce(e.position, ''), '\\s+', ' ', 'g'))
       left join expense_grades g on g.id = m.grade_id
