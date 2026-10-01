@@ -429,26 +429,17 @@ describe("the Sales Manager screens are workspace-aware", () => {
     }
   });
 
-  it("only ONE bar is drawn under /crm/leads/sales-manager and no sidebar: the workspace's own", () => {
+  it("the workspace draws NO bar of its own: the CRM's header and sidebar are the only chrome", () => {
     const crmLayout = readFileSync("src/app/crm/layout.tsx", "utf8");
-    /* The CRM layout still runs its checks, then returns a bare frame for this
-       route — before the AppShell (header + sidebar) is ever built. */
-    const bare = crmLayout.indexOf("if (ownFrame)");
-    const shell = crmLayout.indexOf("<AppShell");
-    assert.ok(bare > -1 && shell > -1 && bare < shell, "the workspace branch must return before the CRM shell is built");
-    assert.match(crmLayout, /inCrmSalesManagerWorkspace\(\)/);
-    assert.match(crmLayout.slice(bare, shell), /<AppFrame header=\{null\}/, "no CRM header in the workspace frame");
-    /* Access checks come first, so the workspace cannot be reached around them. */
-    assert.ok(crmLayout.indexOf('redirect("/apps")') < bare);
+    assert.match(crmLayout, /<AppShell/, "the CRM shell frames this route like every other");
+    assert.doesNotMatch(crmLayout, /ownFrame|inCrmSalesManagerWorkspace/, "no workspace branch around the CRM shell");
 
-    /* And the workspace frame carries exactly one of each thing it replaces. */
-    const shellSrc = readFileSync("src/components/sales-lead-pipeline/desk/shell.tsx", "utf8");
-    assert.equal((shellSrc.match(/<NotificationBell/g) ?? []).length, 1, "one bell");
-    assert.equal((shellSrc.match(/<AccountMenu/g) ?? []).length, 1, "one account menu");
-    assert.equal((shellSrc.match(/<aside/g) ?? []).length, 0, "the workspace draws no sidebar of its own");
+    /* The module layout is a guard and nothing else. */
     const layout = readFileSync("src/app/crm/leads/sales-manager/layout.tsx", "utf8");
-    assert.equal((layout.match(/<SalesManagerShell/g) ?? []).length, 1);
-    /* Nothing under this route draws a shell of its own a second time. */
+    assert.match(layout, /requireModule\(user\.id, "crm\.sales-manager"\)/);
+    assert.doesNotMatch(layout, /Shell|NotificationBell|AccountMenu|<aside/);
+    assert.equal(existsSync("src/components/sales-lead-pipeline/desk/shell.tsx"), false, "the duplicate bar is gone");
+    /* Nothing under this route draws a shell of its own. */
     for (const page of ["page.tsx", "pipeline/page.tsx", "[id]/page.tsx"]) {
       assert.doesNotMatch(readFileSync(`src/app/crm/leads/sales-manager/${page}`, "utf8"), /SalesManagerShell|AppShell|<Header/, page);
     }
