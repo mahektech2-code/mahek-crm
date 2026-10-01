@@ -485,6 +485,7 @@ export const APP_MODULES: AppModule[] = [
     exact: true,
   },
   accounts("approvals", "Order approvals", "Decisions", "Approving or declining an order somebody took on a call."),
+  accounts("order-changes", "Order changes", "Decisions", "Accepting or declining a change a salesman asked for on an order already approved."),
   accounts("payments", "Payments to confirm", "Decisions", "Confirming that money a telecaller reported actually arrived."),
   accounts("credits", "Credit notes", "Decisions"),
   accounts("customers", "Customers", "Accounts", "Where an account manager is changed. Accounts' and admin's alone."),

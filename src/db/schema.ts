@@ -3231,6 +3231,54 @@ export const orders = pgTable(
   ],
 );
 
+/**
+ * A CHANGE TO AN ORDER ACCOUNTS HAS ALREADY APPROVED, asked for rather than made.
+ *
+ * Until accounts decide an order its author edits it directly — nothing has
+ * been promised against it yet. Once approved it is the office's commitment:
+ * stock is allotted, the credit check passed on THAT value, and a salesman
+ * rewriting it from a handset would move a figure somebody signed off without
+ * them knowing. So the change becomes a request, accounts accept or decline it
+ * with a reason, and the request's own row is how anybody follows it.
+ *
+ * `previous_*` is the order as it stood when the change was asked for, so a
+ * decision is read against what the salesman saw — and so the history still
+ * says what the order was after it has been changed. At most one request per
+ * order is pending, held by a partial unique index rather than by a check a
+ * second writer would not know about.
+ */
+export const orderChangeStatusEnum = pgEnum("order_change_status", ["pending", "accepted", "declined"]);
+
+export const orderChangeRequests = pgTable(
+  "order_change_requests",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => orders.id),
+    customerId: text("customer_id").notNull().references(() => customers.id),
+    requestedById: text("requested_by_id").notNull().references(() => users.id),
+    /** What the order should become. */
+    lineItems: jsonb("line_items").$type<OrderLine[]>().notNull(),
+    totalAmountPaise: bigint("total_amount_paise", { mode: "number" }).notNull(),
+    /** What it was when the change was asked for. */
+    previousLineItems: jsonb("previous_line_items").$type<OrderLine[]>(),
+    previousTotalPaise: bigint("previous_total_paise", { mode: "number" }),
+    /** Why — required: accounts decide on the reason as much as the lines. */
+    note: text("note").notNull(),
+    status: orderChangeStatusEnum("status").notNull().default("pending"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** Required on a decline; the salesman has to tell the shop something. */
+    decisionNote: text("decision_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("order_change_requests_one_pending").on(t.orderId).where(sql`${t.status} = 'pending'`),
+    index("order_change_requests_status_idx").on(t.status, t.createdAt),
+    index("order_change_requests_requester_idx").on(t.requestedById, t.updatedAt),
+  ],
+);
+
 export type OrderLine = {
   product: string;
   quantity: number;

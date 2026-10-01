@@ -1,4 +1,4 @@
-import { all, getKv, run, setKv, tx } from '../db';
+import { all, getKv, one, run, setKv, tx } from '../db';
 import { deviceId, type PullPayload, type TerritoryState } from './api';
 
 /** Where `storeTerritory` files it, and where `territoryState` reads it back. */
@@ -53,6 +53,10 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertTravelModes(pull.travelModes, now);
     touched += await replaceExpensePolicy(pull.expensePolicy, now);
     touched += await applyApprovals(pull.approvals);
+    /* AFTER the approvals: an order's own row is the office's word on it, and
+       a manager approval nobody can decide must not read it back to pending. */
+    touched += await applyMyOrders(pull.myOrders);
+    touched += await applyOrderChanges(pull.orderChanges);
     touched += await restoreAttendance(pull.attendanceToday);
     touched += await applyDeletions(pull.deletions);
     /* AFTER the tombstones and after the customer upsert, because it is the
@@ -1064,6 +1068,93 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
  * own — so an order becomes approved because its approval says so, not because
  * something wrote a flag onto the order.
  */
+/** The office's status for each of his field orders — see `myOrderStates`. */
+const ORDER_STATUS: Record<string, string> = {
+  captured: 'submitted',
+  pending_approval: 'pending_approval',
+  confirmed: 'approved',
+  declined: 'rejected',
+  cancelled: 'cancelled',
+  dispatched: 'dispatched',
+  in_transit: 'in_transit',
+  delivered: 'delivered',
+};
+
+/**
+ * HIS ORDERS, AS THE OFFICE NOW STANDS ON THEM.
+ *
+ * Status, the reason a declined one was declined, the number, and the LINES —
+ * an edit before approval or a change accounts accepted after it rewrites them
+ * at the office, and the phone has to show what the order now is. Only a row
+ * the phone has nothing queued for is touched: a queued edit is the newer fact
+ * until it is sent, the rule `leads` and `samples` already follow.
+ */
+async function applyMyOrders(rows: unknown[] | undefined): Promise<number> {
+  if (!rows?.length) return 0;
+  let n = 0;
+  for (const raw of rows) {
+    const o = raw as {
+      id: string; status: string; declineReason?: string | null; orderNo?: string | null;
+      totalAmountPaise?: number | null;
+      lineItems?: { product: string; productId?: string; quantity: number; unitPrice?: number; amount?: number }[] | null;
+    };
+    const status = ORDER_STATUS[o.status] ?? o.status;
+    const local = await one<{ syncState: string }>('SELECT syncState FROM orders WHERE id = ?', [o.id]);
+    if (!local || local.syncState !== 'synced') continue;
+    await run(
+      `UPDATE orders SET status = ?, cancelReason = COALESCE(?, cancelReason),
+              orderNumber = COALESCE(orderNumber, ?), netTotalPaise = COALESCE(?, netTotalPaise)
+        WHERE id = ?`,
+      [status, o.declineReason ?? null, o.orderNo ?? null, o.totalAmountPaise ?? null, o.id],
+    );
+    if (Array.isArray(o.lineItems) && o.lineItems.length) {
+      await run('DELETE FROM order_lines WHERE orderId = ?', [o.id]);
+      for (const [i, l] of o.lineItems.entries()) {
+        const p = l.productId
+          ? await one<{ millilitresPerCan: number | null; cansPerBox: number | null }>(
+              'SELECT millilitresPerCan, cansPerBox FROM products WHERE id = ?',
+              [l.productId],
+            )
+          : null;
+        await run(
+          `INSERT INTO order_lines (id, orderId, productId, productName, cans, boxes, litres, ratePaise, lineTotalPaise)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            `${o.id}:${i}`, o.id, l.productId ?? '', l.product, l.quantity,
+            p?.cansPerBox ? Math.floor(l.quantity / p.cansPerBox) : 0,
+            p?.millilitresPerCan ? (l.quantity * p.millilitresPerCan) / 1000 : null,
+            l.unitPrice ?? null, l.amount ?? null,
+          ],
+        );
+      }
+    }
+    n += 1;
+  }
+  return n;
+}
+
+/** The changes he asked for, as accounts answered them. */
+async function applyOrderChanges(rows: unknown[] | undefined): Promise<number> {
+  if (!rows?.length) return 0;
+  for (const raw of rows) {
+    const r = raw as {
+      id: string; orderId: string; status: string; note?: string | null; decisionNote?: string | null;
+      totalAmountPaise?: number | null; lineItems?: unknown; requestedAt?: number | null; decidedAt?: number | null;
+    };
+    await run(
+      `INSERT INTO order_change_requests (id, orderId, status, note, decisionNote, totalAmountPaise, linesJson,
+                                          requestedAt, decidedAt, deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+       ON CONFLICT(id) DO UPDATE SET status = excluded.status, decisionNote = excluded.decisionNote,
+         decidedAt = excluded.decidedAt, totalAmountPaise = excluded.totalAmountPaise
+       WHERE order_change_requests.syncState = 'synced'`,
+      [r.id, r.orderId, r.status, r.note ?? null, r.decisionNote ?? null, r.totalAmountPaise ?? null,
+       r.lineItems ? JSON.stringify(r.lineItems) : null, r.requestedAt ?? null, r.decidedAt ?? null],
+    );
+  }
+  return rows.length;
+}
+
 async function applyApprovals(rows: unknown[] | undefined): Promise<number> {
   if (!rows?.length) return 0;
   for (const raw of rows) {

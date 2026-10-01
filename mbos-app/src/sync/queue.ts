@@ -263,6 +263,7 @@ async function unblockDependents(entityId: string, now: number): Promise<void> {
 const ENTITY_TABLE: Record<string, string> = {
   visit: 'visits',
   order: 'orders',
+  order_change_request: 'order_change_requests',
   payment: 'payments',
   attendance: 'attendance_days',
   task: 'tasks',

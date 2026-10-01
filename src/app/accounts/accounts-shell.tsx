@@ -43,6 +43,7 @@ export type NavCounts = {
   payments: number;
   paymentsUrgent: boolean;
   credits: number;
+  orderChanges: number;
 };
 
 const SHORTCUTS = [
@@ -114,6 +115,12 @@ export function AccountsShell({
           icon: "approve",
           badge: counts.orders,
           urgent: counts.ordersUrgent,
+        },
+        {
+          href: "/accounts/order-changes",
+          label: "Order changes",
+          icon: "approve",
+          badge: counts.orderChanges,
         },
         {
           href: "/accounts/payments",

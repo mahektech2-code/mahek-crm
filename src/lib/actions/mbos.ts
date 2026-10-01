@@ -39,6 +39,8 @@ import {
   mbosVisits,
   notifications,
   orders,
+  orderChangeRequests,
+  appAccess,
   paymentReceipts,
   payments,
   products,
@@ -785,6 +787,8 @@ async function dispatchItem(
       return handleVisit(principal, item);
     case "order":
       return handleOrder(principal, item);
+    case "order_change_request":
+      return handleOrderChangeRequest(principal, item);
     case "payment":
       return handlePayment(principal, item);
     case "complaint":
@@ -1541,6 +1545,291 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
  * `deliveryConfirmedAt` is the shop saying the goods came. They are routinely
  * days apart and either confirmation can precede the other.
  */
+/* ------------------------------------------- changing an order once taken */
+
+const orderLinesSchema = z
+  .array(
+    z.object({
+      productId: z.string(),
+      quantityCans: z.number().int().positive(),
+      ratePaise: z.number().int().nonnegative().nullish(),
+    }),
+  )
+  .min(1);
+
+const orderEditSchema = z.object({
+  lines: orderLinesSchema,
+  totalAmountPaise: z.number().int().nonnegative(),
+});
+
+/** The order as the rest of MahekOne reads its lines. */
+function orderLineItems(
+  lines: z.infer<typeof orderLinesSchema>,
+  byId: Map<string, { name: string }>,
+): Array<OrderLine & { productId: string }> {
+  return lines.map((l) => ({
+    product: byId.get(l.productId)?.name ?? l.productId,
+    productId: l.productId,
+    quantity: l.quantityCans,
+    unitPrice: l.ratePaise ?? 0,
+    amount: (l.ratePaise ?? 0) * l.quantityCans,
+  }));
+}
+
+/** The order a salesman is changing, and whether it is his to change. */
+async function authoredOrder(principal: MbosPrincipal, orderId: string) {
+  const [order] = await db
+    .select({
+      id: orders.id,
+      customerId: orders.customerId,
+      userId: orders.userId,
+      status: orders.status,
+      orderNo: orders.orderNo,
+      approvedAt: orders.approvedAt,
+      totalAmount: orders.totalAmount,
+      lineItems: orders.lineItems,
+    })
+    .from(orders)
+    .where(eq(orders.id, orderId))
+    .limit(1);
+  return order ?? null;
+}
+
+const STATUS_WORDS: Record<string, string> = {
+  confirmed: "approved by accounts",
+  declined: "declined by accounts",
+  cancelled: "cancelled",
+  dispatched: "dispatched",
+  in_transit: "on its way",
+  delivered: "delivered",
+};
+
+/**
+ * AN ORDER IS EDITED BY ITS AUTHOR UNTIL ACCOUNTS DECIDE IT, and not after.
+ *
+ * Before the decision nothing has been promised against it — no stock allotted,
+ * no credit signed off — so the salesman who took it corrects it directly, the
+ * way he would have if the shop had rung him back before he pressed Submit.
+ * After it, the order is the office's commitment and changing it is a REQUEST
+ * (`handleOrderChangeRequest`). The lines clear the same bar as a new order's,
+ * and the credit limit is asked again: creating a small order and editing it
+ * large would otherwise be a way round the limit the create path enforces.
+ */
+async function handleOrderEdit(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = orderEditSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const order = await authoredOrder(principal, item.entityId);
+  if (!order) {
+    return {
+      kind: "retry",
+      message: "That order has not reached the office yet. The change will be sent once it has.",
+    };
+  }
+  const found = await scopedCustomer(principal, order.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+  const customer = found.customer;
+
+  if (order.userId !== principal.user.id) {
+    return {
+      kind: "rejected",
+      value: reject("not_permitted", `Only the person who took order ${order.orderNo ?? ""} for ${customer.name} can edit it.`),
+    };
+  }
+  if (order.status !== "pending_approval" && order.status !== "captured") {
+    return {
+      kind: "rejected",
+      value: reject(
+        "not_permitted",
+        `Order ${order.orderNo ?? ""} for ${customer.name} was ${STATUS_WORDS[order.status] ?? order.status} before this edit arrived, so it was not changed. ${
+          order.status === "confirmed"
+            ? "Send a change request from the order instead — accounts will accept or decline it."
+            : "Ring accounts if it still needs to change."
+        }`,
+      ),
+    };
+  }
+
+  const config = await getConfig();
+  const checked = await checkOrderLines(p.lines, customer.name, config);
+  if (!checked.ok) return { kind: "rejected", value: checked.value };
+
+  if (
+    config["mbos.credit.blockOnLimitExceeded"] &&
+    customer.creditLimitPaise != null &&
+    p.totalAmountPaise > Number(order.totalAmount) &&
+    customer.outstanding + p.totalAmountPaise > customer.creditLimitPaise
+  ) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "credit_exceeded",
+        `${customer.name} owes ${rupees(customer.outstanding)}, and the edited order of ${rupees(p.totalAmountPaise)} would take them past their ${rupees(customer.creditLimitPaise)} limit. The order was left as it was.`,
+      ),
+    };
+  }
+
+  const lines = orderLineItems(p.lines, checked.byId);
+  let decidedMeanwhile = false;
+  await db.transaction(async (tx) => {
+    /* Guarded on the status in the statement itself, so an approval landing
+       between the read above and this write cannot be edited past. */
+    const changed = await tx
+      .update(orders)
+      .set({
+        lineItems: lines,
+        totalAmount: p.totalAmountPaise,
+        updatedAt: new Date(),
+        updatedById: principal.user.id,
+      })
+      .where(and(eq(orders.id, order.id), inArray(orders.status, ["pending_approval", "captured"])))
+      .returning({ id: orders.id });
+    if (!changed.length) {
+      decidedMeanwhile = true;
+      return;
+    }
+
+    await writeTimeline(tx, {
+      customerId: customer.id,
+      eventType: MBOS_EVENT.order,
+      /* One order, several events: the stage goes in the source id. */
+      sourceRecordId: `${order.id}:edit:${item.idempotencyKey}`,
+      occurredAt: new Date(item.clientCreatedAt),
+      actorUserId: principal.user.id,
+      summary: `Order ${order.orderNo ?? ""} edited before approval — ${lines.length} line${lines.length === 1 ? "" : "s"}, ${rupees(p.totalAmountPaise)}`,
+    });
+  });
+
+  if (decidedMeanwhile) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "not_permitted",
+        `Accounts decided order ${order.orderNo ?? ""} for ${customer.name} while the edit was on its way, so it was not changed. Send a change request instead.`,
+      ),
+    };
+  }
+  return { kind: "accepted", value: { serverId: order.id } };
+}
+
+const orderChangeSchema = z.object({
+  orderId: z.string(),
+  lines: orderLinesSchema,
+  totalAmountPaise: z.number().int().nonnegative(),
+  note: z.string().trim().min(3).max(1000),
+});
+
+/**
+ * A CHANGE TO AN APPROVED ORDER, sent to accounts rather than made.
+ *
+ * Only on an order accounts approved and the godown has not yet sent: before
+ * approval the salesman edits it himself, and once it is on a lorry a request
+ * cannot un-send it — that is a phone call, and the refusal says so. One
+ * request at a time per order; a second while the first waits would leave
+ * accounts deciding between two versions of one change.
+ */
+async function handleOrderChangeRequest(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = orderChangeSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const order = await authoredOrder(principal, p.orderId);
+  if (!order) {
+    return {
+      kind: "retry",
+      message: "That order has not reached the office yet. The change request will be sent once it has.",
+    };
+  }
+  const found = await scopedCustomer(principal, order.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+  const customer = found.customer;
+  const label = `order ${order.orderNo ?? ""} for ${customer.name}`;
+
+  if (order.userId !== principal.user.id) {
+    return {
+      kind: "rejected",
+      value: reject("not_permitted", `Only the person who took ${label} can ask for it to be changed.`),
+    };
+  }
+  if (order.status === "pending_approval" || order.status === "captured") {
+    return {
+      kind: "rejected",
+      value: reject("validation", `Accounts have not decided ${label} yet, so it can still be edited directly — open it and change it.`),
+    };
+  }
+  if (order.status !== "confirmed") {
+    return {
+      kind: "rejected",
+      value: reject(
+        "not_permitted",
+        `${label[0].toUpperCase() + label.slice(1)} was ${STATUS_WORDS[order.status] ?? order.status}, so a change cannot be requested. Ring accounts if something still needs to happen.`,
+      ),
+    };
+  }
+
+  const config = await getConfig();
+  const checked = await checkOrderLines(p.lines, customer.name, config);
+  if (!checked.ok) return { kind: "rejected", value: checked.value };
+
+  const [waiting] = await db
+    .select({ id: orderChangeRequests.id })
+    .from(orderChangeRequests)
+    .where(and(eq(orderChangeRequests.orderId, order.id), eq(orderChangeRequests.status, "pending")))
+    .limit(1);
+  if (waiting && waiting.id !== item.entityId) {
+    return {
+      kind: "rejected",
+      value: reject("duplicate", `A change to ${label} is already waiting for accounts. Wait for their answer before asking for another.`),
+    };
+  }
+
+  const lines = orderLineItems(p.lines, checked.byId);
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(orderChangeRequests)
+      .values({
+        id: item.entityId,
+        orderId: order.id,
+        customerId: customer.id,
+        requestedById: principal.user.id,
+        lineItems: lines,
+        totalAmountPaise: p.totalAmountPaise,
+        previousLineItems: order.lineItems ?? null,
+        previousTotalPaise: Number(order.totalAmount),
+        note: p.note,
+      })
+      .onConflictDoNothing();
+
+    await writeTimeline(tx, {
+      customerId: customer.id,
+      eventType: MBOS_EVENT.order,
+      sourceRecordId: `${order.id}:change:${item.entityId}`,
+      occurredAt: new Date(item.clientCreatedAt),
+      actorUserId: principal.user.id,
+      summary: `Change requested on approved order ${order.orderNo ?? ""} — ${p.note}`,
+    });
+  });
+
+  /* Whoever can decide it is told — the Accounts desk's managers. A request
+     nobody hears about is one the salesman ends up ringing about anyway. */
+  const deciders = await db
+    .selectDistinct({ id: users.id })
+    .from(users)
+    .innerJoin(appAccess, eq(appAccess.userId, users.id))
+    .where(and(eq(appAccess.app, "accounts"), inArray(appAccess.role, ["manager", "admin"]), eq(users.active, true)));
+  await notifyUsers(
+    deciders.map((d) => ({
+      userId: d.id,
+      title: `Change requested on ${order.orderNo ?? "an approved order"}`,
+      body: `${principal.user.name} asks to change ${label}: ${p.note}`,
+      href: "/accounts/order-changes",
+    })),
+  ).catch(() => {});
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
 const orderProgressSchema = z.object({
   /** Ours. `captured`/`pending_approval` are not settable from a handset. */
   status: z.enum(["dispatched", "in_transit", "delivered"]).nullish(),
@@ -1657,6 +1946,72 @@ async function handleOrderProgress(
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
 
+
+/**
+ * THE BAR EVERY LINE ON AN ORDER HAS TO CLEAR, whichever door it came in by —
+ * a new order, an edit before approval, or a change request after it. A
+ * discontinued SKU cannot go on an order, and no line may be below the
+ * configured minimum. Returned rather than thrown, so each caller words its
+ * own refusal around the same answer.
+ */
+async function checkOrderLines(
+  lines: { productId: string; quantityCans: number }[],
+  customerName: string,
+  config: Awaited<ReturnType<typeof getConfig>>,
+): Promise<
+  | { ok: true; byId: Map<string, { id: string; name: string; active: boolean; status: string }>; productIds: string[] }
+  | { ok: false; value: Rejection }
+> {
+  const productIds = [...new Set(lines.map((l) => l.productId))];
+  const productRows = await db
+    .select({
+      id: products.id,
+      name: products.name,
+      active: products.active,
+      status: products.status,
+    })
+    .from(products)
+    .where(inArray(products.id, productIds));
+
+  const byId = new Map(productRows.map((r) => [r.id, r]));
+  for (const id of productIds) {
+    const product = byId.get(id);
+    if (!product) {
+      return {
+        ok: false,
+        value: reject(
+          "product_inactive",
+          `A product on this order for ${customerName} is no longer in the catalogue. Ring the shop and take the order again with what we stock.`,
+        ),
+      };
+    }
+    if (!product.active || product.status !== "ok") {
+      return {
+        ok: false,
+        value: reject(
+          "product_inactive",
+          `${product.name} has been discontinued, so the order for ${customerName} was not accepted. Ring the shop and offer a replacement.`,
+        ),
+      };
+    }
+  }
+
+  const minimum = config["mbos.orders.minimumQuantityCans"];
+  if (minimum > 0) {
+    const short = lines.find((l) => l.quantityCans < minimum);
+    if (short) {
+      return {
+        ok: false,
+        value: reject(
+          "validation",
+          `${byId.get(short.productId)?.name ?? "A line"} on ${customerName}'s order is ${short.quantityCans} cans, below the ${minimum}-can minimum. Take the order again at or above it.`,
+        ),
+      };
+    }
+  }
+  return { ok: true, byId, productIds };
+}
+
 const orderSchema = z.object({
   customerId: z.string(),
   orderedAt: z.number().nullish(),
@@ -1693,7 +2048,12 @@ const orderSchema = z.object({
 });
 
 async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
-  if (item.op === "update") return handleOrderProgress(principal, item);
+  /* An update carrying LINES is an edit; anything else is the order moving
+     along — dispatched, delivered, confirmed by the shop. */
+  if (item.op === "update") {
+    const lines = (item.payload as { lines?: unknown } | null)?.lines;
+    return Array.isArray(lines) ? handleOrderEdit(principal, item) : handleOrderProgress(principal, item);
+  }
 
   const parsed = orderSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
@@ -1792,56 +2152,12 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     };
   }
 
-  /* --- the products. A discontinued SKU cannot go on an order. --- */
-  const productIds = [...new Set(p.lines.map((l) => l.productId))];
-  const productRows = await db
-    .select({
-      id: products.id,
-      name: products.name,
-      active: products.active,
-      status: products.status,
-    })
-    .from(products)
-    .where(inArray(products.id, productIds));
-
-  const byId = new Map(productRows.map((r) => [r.id, r]));
-  for (const id of productIds) {
-    const product = byId.get(id);
-    if (!product) {
-      return {
-        kind: "rejected",
-        value: reject(
-          "product_inactive",
-          `A product on this order for ${customer.name} is no longer in the catalogue. Ring the shop and take the order again with what we stock.`,
-        ),
-      };
-    }
-    if (!product.active || product.status !== "ok") {
-      return {
-        kind: "rejected",
-        value: reject(
-          "product_inactive",
-          `${product.name} has been discontinued, so the order for ${customer.name} was not accepted. Ring the shop and offer a replacement.`,
-        ),
-      };
-    }
-  }
-
-  /* --- minimum quantity, which is configuration and not a constant. --- */
-  const minimum = config["mbos.orders.minimumQuantityCans"];
-  if (minimum > 0) {
-    const short = p.lines.find((l) => l.quantityCans < minimum);
-    if (short) {
-      const product = byId.get(short.productId);
-      return {
-        kind: "rejected",
-        value: reject(
-          "validation",
-          `${product?.name ?? "A line"} on ${customer.name}'s order is ${short.quantityCans} cans, below the ${minimum}-can minimum. Take the order again at or above it.`,
-        ),
-      };
-    }
-  }
+  /* --- the products and the minimum. Shared with an edit and a change
+     request, which put lines on the same order and must pass the same bar. --- */
+  const checked = await checkOrderLines(p.lines, customer.name, config);
+  if (!checked.ok) return { kind: "rejected", value: checked.value };
+  const byId = checked.byId;
+  const productIds = checked.productIds;
 
   /* --- the price the handset quoted, against the price list today. --- */
   if (p.priceTag) {

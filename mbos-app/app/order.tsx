@@ -17,7 +17,15 @@ import {
   type Customer,
 } from '../src/data/customers';
 import { freshSuggestions, rememberedSuggestions, type OrderSuggestions } from '../src/data/order-suggestions';
-import { assessCart, saveOrder, type CartLine, type OrderAssessment } from '../src/data/orders';
+import {
+  assessCart,
+  editOrder,
+  orderForChange,
+  requestOrderChange,
+  saveOrder,
+  type CartLine,
+  type OrderAssessment,
+} from '../src/data/orders';
 import { lastOrderLines, ratesForTag, type ReorderLine } from '../src/data/pricing';
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
@@ -99,16 +107,28 @@ export default function OrderScreen() {
    * shop. From anywhere else he says which, and the shop is drawn large enough
    * to be noticed and changed.
    */
-  const params = useLocalSearchParams<{ from?: string }>();
+  const params = useLocalSearchParams<{ from?: string; edit?: string; change?: string }>();
   const arrival = useStore((s) => s.arrival);
   const inVisit = arrival?.checkedInAt != null ? arrival : null;
-  const shopIsGiven = params.from === 'customer' || params.from === 'visit' || !!inVisit;
+  /*
+   * CHANGING AN ORDER ALREADY TAKEN. `edit` is one accounts have not decided —
+   * he rewrites it himself. `change` is one they approved — what he builds here
+   * goes to them as a request, with his reason, and the order stays as approved
+   * until they answer. Either way the shop is the order's and is not changed.
+   */
+  const editId = params.edit ?? null;
+  const changeId = params.change ?? null;
+  const changingId = editId ?? changeId;
+  const [changing, setChanging] = React.useState<Awaited<ReturnType<typeof orderForChange>>>(null);
+  const [changeNote, setChangeNote] = React.useState('');
+  const shopIsGiven = params.from === 'customer' || params.from === 'visit' || !!inVisit || !!changingId;
   const [picking, setPicking] = React.useState(!shopIsGiven);
   React.useEffect(() => {
+    if (changingId) return;
     if (inVisit && params.from !== 'customer' && useStore.getState().custId !== inVisit.customerId) {
       set({ custId: inVisit.customerId });
     }
-  }, [inVisit, params.from, set]);
+  }, [inVisit, params.from, set, changingId]);
   const [results, setResults] = React.useState<Product[]>([]);
   /** Which query the rows in `results` answer. Anything else is stale. */
   const [resultsFor, setResultsFor] = React.useState<string | null>(null);
@@ -154,6 +174,25 @@ export default function OrderScreen() {
 
   const custId = c?.id ?? null;
 
+  /* The order being changed: its shop, and its lines back in the cart. */
+  React.useEffect(() => {
+    if (!changingId) return;
+    let live = true;
+    void orderForChange(changingId).then(async (o) => {
+      if (!live || !o) return;
+      /* The shop the goods go to — the billing choice below picks the biller. */
+      set({ custId: o.deliveryCustomerId ?? o.customerId });
+      const found = await productsByIds(o.lines.map((l) => l.productId));
+      if (!live) return;
+      remember(found);
+      set({ cart: Object.fromEntries(o.lines.map((l) => [l.productId, String(l.cans)])) });
+      setChanging(o);
+    });
+    return () => {
+      live = false;
+    };
+  }, [changingId, set, remember]);
+
   /* The arrangement, read once per customer. It came down with the pull, so
      this is a local read and works with no signal. */
   React.useEffect(() => {
@@ -176,6 +215,11 @@ export default function OrderScreen() {
       live = false;
     };
   }, [c]);
+
+  /* An order being changed keeps the biller it was taken against. */
+  React.useEffect(() => {
+    if (changing && billingOptions?.some((o) => o.id === changing.customerId)) setBilling(changing.customerId);
+  }, [changing, billingOptions]);
 
   /** Who is being invoiced. Every credit figure on this screen is theirs. */
   const biller = billingOptions?.find((o) => o.id === billing) ?? null;
@@ -377,6 +421,28 @@ export default function OrderScreen() {
       );
     }
 
+    if (changingId) {
+      if (!changing) return notify('Still reading the order…');
+      if (changeId && changeNote.trim().length < 3) return notify('Say why it needs to change — accounts decide on that.');
+      setBusy(true);
+      try {
+        const r = editId
+          ? await editOrder({ orderId: changing.id, lines: inCart, assessment })
+          : await requestOrderChange({ orderId: changing.id, lines: inCart, assessment, note: changeNote });
+        if (!r.ok) return notify(r.message);
+        set({ cart: {} });
+        notify(
+          editId
+            ? 'Order updated · syncs when you have signal'
+            : 'Change sent to accounts · you will see their answer on Your orders',
+        );
+        back.go();
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     setBusy(true);
     try {
       const { needsApproval: sentForApproval } = await saveOrder({
@@ -415,7 +481,15 @@ export default function OrderScreen() {
       <Card style={{ marginTop: 4 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <T s="micro" style={{ color: C.muted }}>{inVisit ? 'ORDER FOR THIS VISIT' : 'ORDER FOR'}</T>
+            <T s="micro" style={{ color: changingId ? C.warnInk : C.muted }}>
+              {editId
+                ? 'EDITING ORDER ' + (changing?.orderNumber ?? '')
+                : changeId
+                  ? 'CHANGE REQUEST · ORDER ' + (changing?.orderNumber ?? '')
+                  : inVisit
+                    ? 'ORDER FOR THIS VISIT'
+                    : 'ORDER FOR'}
+            </T>
             <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink, marginTop: 2 }, weight(600)]} numberOfLines={2}>
               {c.name}
             </T>
@@ -426,7 +500,7 @@ export default function OrderScreen() {
           </View>
           {/* A visit's order belongs to the visit's shop; anywhere else the
               shop can be changed, and changing it clears the draft. */}
-          {inVisit || params.from === 'visit' ? null : (
+          {inVisit || params.from === 'visit' || changingId ? null : (
             <Pressable
               onPress={() => setPicking(true)}
               accessibilityRole="button"
@@ -456,6 +530,28 @@ export default function OrderScreen() {
                 : 'Nothing owing')}
         </T>
       </Card>
+
+      {changeId ? (
+        <View
+          style={{
+            marginTop: 12,
+            borderWidth: 1,
+            borderColor: C.warnEdge,
+            backgroundColor: C.warnBg,
+            borderRadius: radius.card,
+            paddingHorizontal: 14,
+            paddingVertical: 12,
+          }}>
+          <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk }}>
+            Accounts approved this order, so it is not changed directly. Build it as it should be and say why — accounts
+            accept or decline, and you will see their answer on Your orders.
+          </T>
+        </View>
+      ) : editId ? (
+        <T s="caption" style={{ marginTop: 10 }}>
+          Accounts have not decided this order yet, so your changes replace it.
+        </T>
+      ) : null}
 
       {/* --------------------------------------------- who pays, who receives
           Drawn ONLY where the two differ or there is somebody else in the
@@ -589,7 +685,7 @@ export default function OrderScreen() {
               being built would silently overwrite what he just typed, and
               there is no honest way to merge "put the last order back" with
               "add three more of these" as one tap. */}
-          {lastOrder.length > 0 && inCart.length === 0 ? (
+          {lastOrder.length > 0 && inCart.length === 0 && !changingId ? (
             <Pressable
               onPress={() => void reorder()}
               accessibilityRole="button"
@@ -934,6 +1030,19 @@ export default function OrderScreen() {
             ) : null}
           </Card>
 
+          {changeId ? (
+            <View style={{ marginTop: 16 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>Why it needs to change</SectionLabel>
+              <Input
+                value={changeNote}
+                onChangeText={setChangeNote}
+                placeholder="Shop wants 10 more cans of the 20 L — rang this morning"
+                multiline
+                style={{ minHeight: 72, textAlignVertical: 'top', borderRadius: radius.md, fontSize: 15 }}
+              />
+            </View>
+          ) : null}
+
           {inCart.length ? (
             <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
               {plural(inCart.length, 'product') + ' · ' + plural(totalCans, 'can') + ' · for ' + c.name}
@@ -941,7 +1050,17 @@ export default function OrderScreen() {
           ) : null}
 
           <PrimaryButton
-            label={busy ? 'Sending…' : needsApproval ? 'Send for approval' : 'Submit order'}
+            label={
+              busy
+                ? 'Sending…'
+                : editId
+                  ? 'Save changes'
+                  : changeId
+                    ? 'Send change request to accounts'
+                    : needsApproval
+                      ? 'Send for approval'
+                      : 'Submit order'
+            }
             onPress={submit}
             disabled={!canSubmit || busy}
             whyDisabled={
