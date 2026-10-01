@@ -62,6 +62,8 @@ const files = [
   "src/lib/visit-intel.test.ts",
   "src/lib/accounts.test.ts",
   "src/lib/bill-paging.test.ts",
+  // A call's own reminder is folded onto the call in the All view.
+  "src/lib/timeline-fold.test.ts",
   "src/lib/feedback.test.ts",
   "src/lib/activity-location.test.ts",
   "src/lib/positions-endpoint.test.ts",
