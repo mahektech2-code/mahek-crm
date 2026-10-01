@@ -646,6 +646,39 @@ export async function visitAssist(args: {
   }
 }
 
+/* ------------------------------------------------------------- performance */
+
+/**
+ * His own performance over a range the sync does not carry — a quarter, a
+ * financial year, days he picked.
+ *
+ * NOT QUEUED and not cached: it is a reading, the answer is only wanted while
+ * he is looking at it, and the two months the sync does carry are what the
+ * screen falls back on without signal. The server decides WHOSE figures from
+ * the device token, so there is no user to pass.
+ */
+export async function performanceForRange(
+  from: string,
+  to: string,
+): Promise<{ ok: true; reading: unknown } | { ok: false; error: string }> {
+  try {
+    return await request(
+      `/api/mbos/performance?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      /* A year of the ledger is read on the far side. */
+      { method: 'GET', timeoutMs: 45_000 },
+    );
+  } catch (e) {
+    /* A server from before this route answers 404 with a page, not a sentence. */
+    if (e instanceof ApiError && e.status === 404) {
+      return { ok: false, error: 'MahekOne has not been updated for this yet.' };
+    }
+    return {
+      ok: false,
+      error: e instanceof Error && e.message ? e.message : 'No connection to MahekOne',
+    };
+  }
+}
+
 /* --------------------------------------------------------------- last seen */
 
 export async function lastPullAt(): Promise<number> {

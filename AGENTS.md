@@ -5185,6 +5185,26 @@ is a reading of the present, so a rebuild is a correction rather than a
 destruction. The handset is sent the cache with its `computed_at` and prints
 it, because a screen that implied it was live would be believed.
 
+**THE HANDSET READS ANY PERIOD, and a month read as a range IS the cached
+month.** The sync carries two months, which is what opens with no signal;
+this month, last month, either financial-year quarter, either financial year
+or two picked days are asked of `/api/mbos/performance`, which takes no user —
+the device token decides whose figures, as on `crm.performance`.
+`handsetReadingForRange` runs the same `actualsForWindow` and the same
+`scoreActuals` the cache is built from, so September picked as a range and
+September off the sync cannot disagree; a test asserts it. Over several months
+the targets are ADDED, a month only partly inside the range asks for its share
+of days, the collection and activity SHARES are averaged over the days rather
+than summed (40% then 60% is about 50%, not 100%), and the mix is held to the
+latest target's bands. The screen says how many months carried a target. A
+year is April to March, because that is the year the bills carry.
+
+**Collection is drawn as the SHARE it is asked as.** The office sets "collect
+half of what was overdue"; the handset showed the rupees, which made the
+target read as an amount somebody had picked. The share leads, the money it is
+a share of sits under it, and no overdue book is a dash and a sentence, never
+0%.
+
 **Working days, never dates.** A month with four Sundays left is not two thirds
 gone because twenty of thirty dates have passed, and a forecast built on dates
 tells a salesman on the 20th that he is further behind than he is. Holidays
