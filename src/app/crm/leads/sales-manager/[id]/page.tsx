@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { LeadRecordScreen } from "@/components/sales-lead-pipeline/lead-record-screen";
+import { SalesManagerRecordScreen } from "@/components/sales-lead-pipeline/desk/record-screen";
 import { LeadModals } from "@/components/sales-lead-pipeline/modals";
 import { LeadPipelineProvider } from "@/components/sales-lead-pipeline/provider";
 import { today } from "@/lib/recompute";
@@ -44,7 +44,7 @@ export default async function Page({
 
   return (
     <LeadPipelineProvider lead={found.lead} refs={refs} today={day} workspace="crm">
-      <LeadRecordScreen
+      <SalesManagerRecordScreen
         initialTab={cursor ? "timeline" : single(sp.tab)}
         timeline={{
           total: found.timeline.total,

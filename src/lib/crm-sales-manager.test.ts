@@ -37,8 +37,11 @@ import { reassignLead } from "@/lib/actions/sales";
 import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
 import { CRM_SALES_MANAGER_WORKSPACE } from "@/proxy";
 import { setTestWorkspace } from "@/lib/services/crm-sales-manager-scope";
+import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
+import { NO_SALESMAN, disabledReasons, groupBySalesman } from "@/lib/sales-lead-pipeline/desk";
 import {
   pipelineDashboard,
+  pipelineDesk,
   pipelineFunnel,
   pipelineLead,
   pipelineList,
@@ -454,5 +457,92 @@ describe("V — the prototype's views read the same book, narrowed", () => {
   test("the dashboard's focus rows say whether a commitment is on file", async () => {
     const dash = await pipelineDashboard(DAY);
     assert.ok(dash.focus.every((r) => typeof r.hasCommitment === "boolean"));
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════════
+ * D — the Sales Manager desk: the book, grouped by the salesman who owns it
+ * ════════════════════════════════════════════════════════════════════════ */
+
+describe("D — the desk reads the same book, by salesman", () => {
+  test("the desk is this manager's book — each lead carries its salesman, and an unowned one says so", async () => {
+    const desk = await pipelineDesk(DAY);
+    assert.deepEqual(desk.rows.map((r) => r.id).sort(), [mineA.id, mineANoOwner.id].sort());
+    const a = desk.rows.find((r) => r.id === mineA.id)!;
+    assert.equal(a.ownerId, salesman.id);
+    assert.equal(a.owner, "Salesman One");
+    assert.equal(desk.rows.find((r) => r.id === mineANoOwner.id)!.ownerId, null);
+
+    setTestUser(admin);
+    assert.equal((await pipelineDesk(DAY)).rows.length, 5, "an administrator's desk is every lead");
+  });
+
+  test("lost leads are counted and left off the desk, never silently dropped", async () => {
+    await makeLead({ name: "Gone", salesManagerId: smA.id, ownerId: salesman.id, leadStage: "lost" });
+    const desk = await pipelineDesk(DAY);
+    assert.equal(desk.lostHidden, 1);
+    assert.ok(!desk.rows.some((r) => r.name === "Gone"));
+  });
+
+  test("overdue and qualification-review queues are read off the lead's own facts", async () => {
+    await db
+      .update(customers)
+      .set({ leadNextAction: "Call the owner", leadNextActionDate: YESTERDAY, leadNextActionOwnerId: salesman.id })
+      .where(eq(customers.id, mineA.id));
+    const review = await makeLead({
+      name: "Awaiting review",
+      salesManagerId: smA.id,
+      ownerId: salesman.id,
+      leadStage: "qualification",
+      leadNextAction: QUAL_NEXT.review,
+      leadNextActionDate: NEXT_WEEK,
+    });
+    const desk = await pipelineDesk(DAY);
+    assert.ok(desk.rows.find((r) => r.id === mineA.id)!.queues.includes("overdue"));
+    assert.ok(desk.rows.find((r) => r.id === review.id)!.queues.includes("review"));
+    assert.ok(!desk.rows.find((r) => r.id === mineANoOwner.id)!.queues.includes("review"));
+  });
+
+  test("grouping is by salesman, the unowned come last, and a section's counts are its own", async () => {
+    await makeLead({ name: "Two", salesManagerId: smA.id, ownerId: salesman2.id });
+    const desk = await pipelineDesk(DAY);
+    const groups = groupBySalesman(desk.rows, { view: "all", q: "", salesmanId: "" });
+    assert.deepEqual(groups.map((g) => g.name), ["Salesman One", "Salesman Two", "No salesman yet"]);
+    assert.equal(groups.at(-1)!.id, NO_SALESMAN);
+    assert.equal(groups.reduce((n, g) => n + g.rows.length, 0), desk.rows.length);
+    const only = groupBySalesman(desk.rows, { view: "all", q: "", salesmanId: salesman2.id });
+    assert.deepEqual(only.map((g) => g.name), ["Salesman Two"]);
+    const searched = groupBySalesman(desk.rows, { view: "all", q: "salesman one", salesmanId: "" });
+    assert.deepEqual(searched.flatMap((g) => g.rows.map((r) => r.id)), [mineA.id], "the search reads the salesman's name too");
+  });
+
+  test("a manager without lead.verify is told, in words, that Verify is off — and the grants are untouched", async () => {
+    const prospect = await makeLead({ name: "A prospect", salesManagerId: smA.id, ownerId: salesman.id, leadStage: "prospect" });
+    const asAssociate = (await pipelineLead(prospect.id, DAY))!.lead;
+    assert.equal(asAssociate.caps.canVerify, false, "the production shape: an associate Sales Manager");
+    const reasons = disabledReasons(asAssociate.caps, {
+      stage: asAssociate.stage,
+      lost: Boolean(asAssociate.lost),
+      deskRequest: Boolean(asAssociate.deskRequest),
+      verified: asAssociate.verification.done,
+      sampleState: asAssociate.sample?.state ?? null,
+      gateKind: asAssociate.gate.kind,
+    });
+    assert.ok(reasons.some((r) => /lead\.verify/.test(r)), reasons.join(" | "));
+
+    const owned = await makeLead({ name: "Led prospect", salesManagerId: smLead.id, ownerId: salesman.id, leadStage: "prospect" });
+    setTestUser(smLead);
+    const asManager = (await pipelineLead(owned.id, DAY))!.lead;
+    assert.equal(asManager.caps.canVerify, true);
+    assert.ok(
+      !disabledReasons(asManager.caps, {
+        stage: asManager.stage,
+        lost: false,
+        deskRequest: false,
+        verified: asManager.verification.done,
+        sampleState: null,
+        gateKind: asManager.gate.kind,
+      }).some((r) => /lead\.verify/.test(r)),
+    );
   });
 });

@@ -8,7 +8,7 @@ import { AccountMenu } from "@/components/shell/account-menu";
 import { Icon } from "@/components/shell/icons";
 import { NotificationBell } from "@/components/shell/notification-bell";
 import { pipelineLinks } from "@/lib/sales-lead-pipeline/workspace";
-import { PROTO_FONT } from "./ui";
+import { PROTO_FONT } from "../proto/ui";
 
 /* ---------------------------------------------------------------------------
  * THE SALES MANAGER WORKSPACE'S OWN BAR — and nothing beside it.
@@ -56,7 +56,7 @@ export function SalesManagerShell({
           onSubmit={(e) => {
             e.preventDefault();
             const term = q.trim();
-            router.push(term ? `${base}/list?q=${encodeURIComponent(term)}` : `${base}/list`);
+            router.push(term ? `${base}?q=${encodeURIComponent(term)}` : base);
           }}
         >
           <Icon name="search" size={15} />

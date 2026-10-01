@@ -410,14 +410,16 @@ describe("the Sales Manager screens are workspace-aware", () => {
     }
   });
 
-  it("the CRM pages draw the prototype's screens, and the record is handed the CRM workspace", () => {
+  it("the CRM pages draw the Sales Manager desk, and the record is handed the CRM workspace", () => {
     const at = (page: string) => readFileSync(`src/app/crm/leads/sales-manager/${page}`, "utf8");
-    assert.match(at("page.tsx"), /ProtoDashboard/);
-    assert.match(at("pipeline/page.tsx"), /ProtoPipeline/);
-    for (const view of ["list", "mine", "today", "overdue", "distributors"]) {
-      assert.match(at(`${view}/page.tsx`), /ProtoListPage/, `${view} must draw the prototype list`);
-    }
+    assert.match(at("page.tsx"), /pipelineDesk/);
+    assert.match(at("page.tsx"), /<Dashboard/);
+    assert.match(at("[id]/page.tsx"), /SalesManagerRecordScreen/);
     assert.match(at("[id]/page.tsx"), /workspace="crm"/, "the record must be handed the CRM workspace");
+    /* The old separate views are redirects into the desk, never a second screen. */
+    for (const view of ["list", "mine", "today", "overdue", "distributors", "pipeline"]) {
+      assert.match(at(`${view}/page.tsx`), /redirect\("\/crm\/leads\/sales-manager/,`${view} must redirect into the desk`);
+    }
   });
 
   it("the Sales Dashboard's pages still draw the shared screens, untouched", () => {
@@ -440,19 +442,19 @@ describe("the Sales Manager screens are workspace-aware", () => {
     assert.ok(crmLayout.indexOf('redirect("/apps")') < bare);
 
     /* And the workspace frame carries exactly one of each thing it replaces. */
-    const shellSrc = readFileSync("src/components/sales-lead-pipeline/proto/shell.tsx", "utf8");
+    const shellSrc = readFileSync("src/components/sales-lead-pipeline/desk/shell.tsx", "utf8");
     assert.equal((shellSrc.match(/<NotificationBell/g) ?? []).length, 1, "one bell");
     assert.equal((shellSrc.match(/<AccountMenu/g) ?? []).length, 1, "one account menu");
     assert.equal((shellSrc.match(/<aside/g) ?? []).length, 0, "the workspace draws no sidebar of its own");
     const layout = readFileSync("src/app/crm/leads/sales-manager/layout.tsx", "utf8");
     assert.equal((layout.match(/<SalesManagerShell/g) ?? []).length, 1);
     /* Nothing under this route draws a shell of its own a second time. */
-    for (const page of ["page.tsx", "pipeline/page.tsx", "list-view.tsx", "[id]/page.tsx"]) {
+    for (const page of ["page.tsx", "pipeline/page.tsx", "[id]/page.tsx"]) {
       assert.doesNotMatch(readFileSync(`src/app/crm/leads/sales-manager/${page}`, "utf8"), /SalesManagerShell|AppShell|<Header/, page);
     }
   });
 
-  it("the prototype's frame links to seven views that each have a page", () => {
+  it("every old view address still has a page, so no link the shared dialogs draw is dead", () => {
     for (const view of ["pipeline", "list", "today", "overdue", "mine", "distributors"]) {
       assert.ok(existsSync(`src/app/crm/leads/sales-manager/${view}/page.tsx`), `${view} has no page`);
     }

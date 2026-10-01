@@ -460,3 +460,29 @@ export type PipelineRefs = {
   /** The viewer, for the greeting and default owners. */
   me: Person;
 };
+
+/* ------------------------------------------------------------ the desk */
+
+/**
+ * THE FIVE QUEUES OF THE SALES MANAGER DESK. A lead can sit in several at once
+ * (a verified Prospect that is also overdue), and each is a fact read off an
+ * existing screen's own query — never a status somebody set here.
+ */
+export type DeskQueue = "verify" | "review" | "sample" | "order" | "overdue";
+
+/** A pipeline row plus the salesman it answers to and the queues it is in. */
+export type DeskRow = PipelineRow & {
+  ownerId: string | null;
+  queues: DeskQueue[];
+};
+
+export type DeskData = {
+  today: string;
+  greeting: string;
+  /** Every live lead in this Sales Manager's book, lean. The tiles and groups are computed from these in the browser. */
+  rows: DeskRow[];
+  /** Lost leads in the book, which the desk does not list (they are history, not work). */
+  lostHidden: number;
+  /** True when the book is larger than the desk's cap and the tail was not loaded. */
+  truncated: boolean;
+};

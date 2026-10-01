@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { requireModule } from "@/lib/access";
 import { listNotifications } from "@/lib/queries";
 import { hatForHeader } from "@/lib/hat-for-header";
-import { SalesManagerShell } from "@/components/sales-lead-pipeline/proto/shell";
+import { SalesManagerShell } from "@/components/sales-lead-pipeline/desk/shell";
 
 /**
  * The route guard for this module, and the workspace's frame.

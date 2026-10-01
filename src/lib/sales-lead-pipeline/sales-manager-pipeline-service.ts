@@ -47,6 +47,7 @@ import {
   type LeadSampleRow,
   type TimelineCursor,
 } from "@/lib/services/lead-record-service";
+import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
 import { leadTileCounts } from "@/lib/services/lead-views-service";
 import { fieldTeam, leadsPage, leadsVisible, managerScope } from "@/lib/services/sales-service";
 
@@ -57,6 +58,9 @@ import type {
   Caps,
   Coded,
   DashboardData,
+  DeskData,
+  DeskQueue,
+  DeskRow,
   DistributorProfile,
   FunnelBar,
   GateAction,
@@ -1197,5 +1201,81 @@ export async function pipelineLead(
       kind: options.kind ?? null,
       kinds: timeline.byKind,
     },
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE SALES MANAGER DESK — the whole live book once, with the queues each lead
+ * is in, for the screen that groups it by salesman.
+ *
+ * Nothing here is a second opinion. The book is `leadsPage` (the same scoped
+ * read every list uses, narrowed by `managerScope()` + `leadsVisible` and so by
+ * the workspace's `sales_manager_id` seat), and each queue is the answer the
+ * existing queue reader gives: `verificationQueue`, `sampleDesk`,
+ * `commitments` and the `overdue` view. The review queue is the qualification
+ * workflow's own next action, `QUAL_NEXT.review`, which is how that workflow
+ * recognises its own work.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/** Pages of 200, five of them. A Sales Manager's seat is a few hundred leads; past this the desk says so rather than loading on. */
+const DESK_PAGES = 5;
+
+async function everyPage(day: string, view: LeadView): Promise<{ rows: PageRow[]; truncated: boolean }> {
+  const rows: PageRow[] = [];
+  let truncated = false;
+  for (let page = 1; page <= DESK_PAGES; page += 1) {
+    const got = await leadsPage(day, { view, page, perPage: 200 });
+    rows.push(...got.rows);
+    if (page >= got.pageCount) break;
+    if (page === DESK_PAGES) truncated = true;
+  }
+  return { rows, truncated };
+}
+
+export async function pipelineDesk(day: string): Promise<DeskData> {
+  const user = await requireUser();
+
+  const [book, overdue, verify, samples, open, slipped] = await Promise.all([
+    everyPage(day, "all"),
+    everyPage(day, "overdue"),
+    verificationQueue(day, { limit: 500 }),
+    sampleDesk(day, { limit: 500 }),
+    commitments(day, "open", { limit: 500 }),
+    commitments(day, "slipped", { limit: 500 }),
+  ]);
+
+  const live = book.rows.filter((r) => r.stage !== "lost");
+  const extras = await rowExtras(live.map((r) => r.id));
+
+  const sets: Record<Exclude<DeskQueue, "review">, Set<string>> = {
+    verify: new Set(verify.rows.map((r) => r.customerId)),
+    /* Waiting on the manager's approval, or in the shop's hands with nobody's
+       verdict on it — the two halves of "a sample needs you". */
+    sample: new Set(
+      samples
+        .filter((s) => s.state === "requested" || ((s.state === "received" || s.state === "trial_done") && !s.feedbackRecorded))
+        .map((s) => s.customerId),
+    ),
+    order: new Set([...open.rows, ...slipped.rows].map((r) => r.customerId)),
+    overdue: new Set(overdue.rows.map((r) => r.id)),
+  };
+
+  const rows: DeskRow[] = live.map((r) => {
+    const extra = extras.get(r.id);
+    const queues: DeskQueue[] = [];
+    if (sets.verify.has(r.id)) queues.push("verify");
+    if ((r.stage === "qualification" || r.stage === "qualified") && extra?.nextAction === QUAL_NEXT.review) queues.push("review");
+    if (sets.sample.has(r.id)) queues.push("sample");
+    if (sets.order.has(r.id)) queues.push("order");
+    if (sets.overdue.has(r.id)) queues.push("overdue");
+    return { ...toRow(r, extra), ownerId: r.salesmanId, queues };
+  });
+
+  return {
+    today: day,
+    greeting: greetingFor(user.name),
+    rows,
+    lostHidden: book.rows.length - live.length,
+    truncated: book.truncated,
   };
 }

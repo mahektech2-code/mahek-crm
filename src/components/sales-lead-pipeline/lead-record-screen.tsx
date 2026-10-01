@@ -24,12 +24,12 @@ import {
 
 const money = (paise?: number) => (paise ? "₹" + Math.round(paise / 100).toLocaleString("en-IN") : "—");
 
-type Tab = "overview" | "sample" | "negotiation" | "profile" | "approval" | "order" | "comms" | "timeline";
+export type Tab = "overview" | "sample" | "negotiation" | "profile" | "approval" | "order" | "comms" | "timeline";
 
 const SAMPLE_STAGES = ["qualification", "sample_trial", "sample_received", "sample_review", "negotiation", "first_order", "delivery", "payment", "second_order", "customer"];
 const NEGOTIATION_STAGES = ["negotiation", "first_order", "delivery", "payment", "second_order", "customer"];
 
-function tabsFor(lead: Lead, proto = false): { key: Tab; label: string }[] {
+export function tabsFor(lead: Lead, proto = false): { key: Tab; label: string }[] {
   const tabs: { key: Tab; label: string }[] = [{ key: "overview", label: "Overview" }];
   if (lead.salesType === "distributor") {
     tabs.push({ key: "profile", label: "Distributor Profile" }, { key: "approval", label: "Management Approval" });
@@ -318,7 +318,7 @@ function RelNode({ role, name, sub, highlight }: { role: string; name: string; s
  * the engine's own missing list beneath it; the action behind the button asks
  * the engine again, because a button is not a permission.
  */
-function GateActionCard({ lead }: { lead: Lead }) {
+export function GateActionCard({ lead }: { lead: Lead }) {
   const { openModal, busy, doMoveTo, doMarkSampleReceived, doSubmitManagement, doConfirmAgreement } = useLeadPipeline();
   const gate = lead.gate;
   const note = (text?: string) => (text ? <div className="mt-2 text-[12.5px] text-muted">{text}</div> : null);
@@ -486,7 +486,7 @@ function OverviewTab({ lead, proto = false }: { lead: Lead; proto?: boolean }) {
 }
 
 /** Up to `leads.suspectMaxVisits` visit chips, a cap-reached warning, and the conversion decision. */
-function SuspectVisitTracker({ lead }: { lead: Lead }) {
+export function SuspectVisitTracker({ lead }: { lead: Lead }) {
   const { openModal, links } = useLeadPipeline();
   const cap = lead.suspectCap;
   const canDecide = lead.caps.canWork && !lead.lost && Boolean(lead.salesType);
@@ -543,7 +543,7 @@ const OBJECTIONS: [key: "priceConcern" | "qualityConcern" | "creditConcern" | "s
 ];
 
 /** Pending / failed callout with an inline action, or the full summary once a call has been made. */
-function VerificationSummary({ lead }: { lead: Lead }) {
+export function VerificationSummary({ lead }: { lead: Lead }) {
   const { openModal } = useLeadPipeline();
   const v = lead.verification;
   const canVerifyNow = lead.caps.canVerify && !lead.lost && lead.gate.kind === "verify";
@@ -626,7 +626,7 @@ function KvRow({ k, v, last }: { k: string; v: React.ReactNode; last?: boolean }
   );
 }
 
-function SampleTab({ lead }: { lead: Lead }) {
+export function SampleTab({ lead }: { lead: Lead }) {
   const s = lead.sample;
   if (!s) {
     return (
@@ -713,7 +713,7 @@ function OutcomeBadge({ outcome }: { outcome: TrialOutcome }) {
   return <span className={cx("text-[11px] font-semibold normal-case", tone)}>{label}</span>;
 }
 
-function NegotiationTab({ lead }: { lead: Lead }) {
+export function NegotiationTab({ lead }: { lead: Lead }) {
   const { openModal } = useLeadPipeline();
   const c = lead.commitment;
   const counting = lead.orders.some((o) => !["declined", "cancelled"].includes(o.status));
@@ -775,7 +775,7 @@ function NegotiationTab({ lead }: { lead: Lead }) {
   );
 }
 
-function DistributorProfileTab({ lead }: { lead: Lead }) {
+export function DistributorProfileTab({ lead }: { lead: Lead }) {
   const p = lead.distributorProfile;
   if (!p) return <Card className="px-6 py-10 text-center text-sm text-muted">No distributor profile on file.</Card>;
   const rows: [string, string][] = [
@@ -827,7 +827,7 @@ function DistributorProfileTab({ lead }: { lead: Lead }) {
 const STEP_LABEL: Record<number, string> = { 0: "Sales manager recommends", 1: "Management appoints" };
 const STATE_TONE: Record<string, Tone> = { pending: "warn", approved: "success", rejected: "danger" };
 
-function ApprovalTab({ lead }: { lead: Lead }) {
+export function ApprovalTab({ lead }: { lead: Lead }) {
   const { openModal } = useLeadPipeline();
   const t = lead.approvalThresholds;
   const p = lead.distributorProfile;
