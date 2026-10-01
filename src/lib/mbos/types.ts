@@ -117,6 +117,8 @@ export const LEAVE_LABELS: Record<LeaveType, string> = {
 export const SYNC_ENTITY_TYPES = [
   "visit",
   "order",
+  /* A change to an order accounts have already approved — asked for, not made. */
+  "order_change_request",
   "payment",
   "complaint",
   "sample",
@@ -415,6 +417,10 @@ export type PullDelta = {
    * there was nothing to send until the Sales Dashboard existed to decide them.
    */
   approvals: unknown[];
+  /** His own field orders as the office stands on them — status, reason, lines. */
+  myOrders: unknown[];
+  /** Changes he asked for on approved orders, and their answers. */
+  orderChanges: unknown[];
   /**
    * His own month, scored: the six figures, what was asked for each, and the
    * product mix behind the third of them.

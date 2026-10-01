@@ -880,6 +880,10 @@ export type BootstrapPayload = {
    * a product list typed into a screen.
    */
   travelModes: unknown[];
+  /** His own field orders, as the office now stands on them. See `myOrderStates`. */
+  myOrders: unknown[];
+  /** The changes he asked for on approved orders, and their answers. */
+  orderChanges: unknown[];
   /**
    * The expense policy in force, resolved for THIS person, as rules the
    * handset's own copy of the engine reads.
@@ -1063,6 +1067,8 @@ export async function buildBootstrap(
     performance: performanceRows,
     salary: salaryRows,
     travelModes: await travelModeRows(),
+    myOrders: await myOrderStates(principal.user.id),
+    orderChanges: await myOrderChanges(principal.user.id),
     expensePolicy: await expensePolicyFor(principal.user.id, await today()),
     config,
   };
@@ -1222,6 +1228,49 @@ async function customersForDevice(ids: string[]) {
         config,
       )?.band ?? null,
   }));
+}
+
+/**
+ * HIS OWN FIELD ORDERS, AS THE OFFICE NOW STANDS ON THEM.
+ *
+ * An accounts decision never reached the handset: the phone learned an
+ * order's fate only through `mbos_approvals`, which accounts do not write, so
+ * every field order read "Sent" or "With the office" for ever and a declined
+ * one carried no reason. This is the order's own row — status, the reason, and
+ * the lines as they now stand, because an edit or an accepted change rewrites
+ * them at the office. One function for the bootstrap and the delta; the
+ * bootstrap reaches back ninety days, the delta whatever moved since.
+ */
+async function myOrderStates(userId: string, sinceIso?: string) {
+  return db.execute<Record<string, unknown>>(sql`
+    select o.id, o.status::text as status, o.decline_reason as "declineReason",
+           o.order_no as "orderNo", o.total_amount::double precision as "totalAmountPaise",
+           o.line_items as "lineItems",
+           (extract(epoch from o.approved_at) * 1000)::double precision as "decidedAt"
+      from orders o
+     where o.user_id = ${userId}
+       and o.source = 'mbos'
+       and ${sinceIso ? sql`o.updated_at > ${sinceIso}` : sql`o.created_at > now() - interval '90 days'`}
+     order by o.updated_at asc
+     limit 500
+  `);
+}
+
+/** The changes he asked for on approved orders, and what accounts said. */
+async function myOrderChanges(userId: string, sinceIso?: string) {
+  return db.execute<Record<string, unknown>>(sql`
+    select r.id, r.order_id as "orderId", r.status::text as status, r.note,
+           r.decision_note as "decisionNote",
+           r.total_amount_paise::double precision as "totalAmountPaise",
+           r.line_items as "lineItems",
+           (extract(epoch from r.created_at) * 1000)::double precision as "requestedAt",
+           (extract(epoch from r.decided_at) * 1000)::double precision as "decidedAt"
+      from order_change_requests r
+     where r.requested_by_id = ${userId}
+       and ${sinceIso ? sql`r.updated_at > ${sinceIso}` : sql`r.created_at > now() - interval '90 days'`}
+     order by r.updated_at asc
+     limit 500
+  `);
 }
 
 /**
@@ -2841,6 +2890,8 @@ export async function buildPull(
       transcripts: [],
       journeyStops: [],
       approvals: [],
+      myOrders: [],
+      orderChanges: [],
       performance: [],
       tasks: [],
       planDays: [],
@@ -3143,6 +3194,8 @@ export async function buildPull(
     documents: documentChanges as unknown[],
     courses: courseChanges as unknown[],
     deletions: deletionRows.groups,
+    myOrders: await myOrderStates(principal.user.id, sinceIso),
+    orderChanges: await myOrderChanges(principal.user.id, sinceIso),
     performance: await performanceFor(principal.user.id, sinceIso),
     tasks: taskChanges as unknown[],
     salary: salaryRows as unknown[],

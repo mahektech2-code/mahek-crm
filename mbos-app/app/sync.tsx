@@ -91,6 +91,7 @@ const KIND: Record<string, string> = {
   leave: 'Leave',
   lead: 'Lead',
   approval: 'Approval',
+  order_change_request: 'Order change request',
   competitor: 'Competitor note',
 };
 

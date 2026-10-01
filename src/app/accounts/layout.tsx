@@ -11,6 +11,7 @@ import { hatForHeader } from "@/lib/hat-for-header";
 import { pendingOrderCount } from "@/lib/services/order-approval-service";
 import { pendingReceiptCount } from "@/lib/services/receipt-service";
 import { pendingCreditNoteCount } from "@/lib/services/credit-note-service";
+import { pendingOrderChangeCount } from "@/lib/services/order-change-service";
 import { queueUrgency } from "@/lib/services/accounts-queue-service";
 import { AccountsShell } from "./accounts-shell";
 
@@ -40,12 +41,13 @@ export default async function OrdersLayout({
   const modules = await listUserModules(user.id, "accounts");
   if (modules.length === 0) redirect("/apps");
 
-  const [orderCount, paymentCount, creditCount, urgency, config] = await Promise.all([
+  const [orderCount, paymentCount, creditCount, urgency, config, changeCount] = await Promise.all([
     pendingOrderCount(),
     pendingReceiptCount(),
     pendingCreditNoteCount(),
     queueUrgency(),
     getConfig(),
+    pendingOrderChangeCount(),
   ]);
   const staleHours = config["payments.confirmationAgeWarningHours"];
   const hat = await hatForHeader(user, "accounts");
@@ -71,6 +73,7 @@ export default async function OrdersLayout({
           payments: paymentCount,
           paymentsUrgent: urgency.oldestReceiptHours > staleHours,
           credits: creditCount,
+          orderChanges: changeCount,
         }}
         allowed={modules.map((m) => m.href)}
         switcher={

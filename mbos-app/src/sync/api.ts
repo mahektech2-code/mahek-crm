@@ -401,6 +401,10 @@ export type PullPayload = {
    */
   holidays?: unknown[];
   approvals?: unknown[];
+  /** His own field orders as the office stands on them — status, reason, lines. */
+  myOrders?: unknown[];
+  /** Changes he asked for on approved orders, and their answers. */
+  orderChanges?: unknown[];
   /** His own month, scored by the office. Reference only — nothing here writes it. */
   performance?: unknown[];
   /** His own pay, current month and last. Reference only, same as performance. */

@@ -661,6 +661,26 @@ customer's, with a category and photographs, and inventing one on their behalf
 from a delivery note would put words in their mouth on a record they can
 dispute.
 
+**A FIELD ORDER IS EDITED BY ITS AUTHOR UNTIL ACCOUNTS DECIDE IT, AND ASKED
+ABOUT AFTER.** Before approval nothing has been promised against it, so the
+salesman who took it rewrites it from the handset — an `order` update carrying
+`lines`, which `handleOrder` routes to `handleOrderEdit`, re-checked against
+the same bar as a new order (`checkOrderLines`) and the credit limit, and
+refused if accounts decided it meanwhile. After approval the order is the
+office's commitment, so a change is a row in `order_change_requests`: what it
+should become, what it was, and why. Accounts accept it on Accounts → Order
+changes, which rewrites the order, or decline it with a reason the salesman
+has to ring the shop with. Past `confirmed` neither — a request cannot
+un-dispatch a lorry. One pending request per order, held by a partial unique
+index.
+
+**AND THE HANDSET HEARS IT, which it never did.** An accounts decision reached
+the phone only through `mbos_approvals`, which accounts do not write, so every
+field order read "Sent" or "With the office" for ever and a declined one
+carried no reason. `myOrders` sends his own orders' status, reason and lines;
+`orderChanges` sends his requests and their answers. Both are applied after
+`approvals` on the pull so the order's own row wins.
+
 **A DECLINED ORDER CANNOT BE DELIVERED, whatever a stale handset believes.** The
 phone may still be showing an order accounts turned down ten minutes ago —
 rejections reach it on the next pull — and marking that delivered would
