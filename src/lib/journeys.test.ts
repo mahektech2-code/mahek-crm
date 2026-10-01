@@ -224,6 +224,18 @@ let priya: typeof users.$inferSelect;
 let rakesh: typeof users.$inferSelect;
 let deepa: typeof users.$inferSelect;
 
+/*
+ * A fixture's work number is UNIQUE BY CONSTRUCTION, not by luck.
+ *
+ * It was a fresh random draw from a million per user, and `users.phone` is
+ * unique — so every so often two users in one test drew the same number and
+ * the whole test failed in its setup with `users_phone_key`, on a change that
+ * had nothing to do with users. A counter from a random start cannot repeat
+ * inside a run, and the start still keeps two processes from lining up.
+ */
+let phoneSeq = Math.floor(Math.random() * 900_000);
+const nextPhone = () => String(9820000000 + (phoneSeq++ % 1_000_000));
+
 async function makeUser(
   name: string,
   role: "associate" | "manager" | "admin",
@@ -242,7 +254,7 @@ async function makeUser(
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: nextPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
