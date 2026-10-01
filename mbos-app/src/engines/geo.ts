@@ -15,22 +15,30 @@
  * reasoning above is the argument against it rather than a rule that outranks
  * it: a visit logged from a tea shop across the road is a record of work
  * nobody did, and the flag it used to raise was read after the fact by
- * somebody who could no longer tell. What keeps the reversal from costing what
- * the paragraph above warns of is that it refuses ONLY the case it can
- * actually prove, and every other case it lets through:
+ * somebody who could no longer tell.
  *
- *   - no fix, or one too wide to trust — ACCEPTED. A reading that cannot show
- *     he is there cannot show he is not, and refusing on it would block every
- *     check-in inside a godown.
- *   - no pin on the shop — ACCEPTED, and this fix becomes the pin. Roughly
- *     half the book has never been pinned, so refusing here would make half
- *     the book unvisitable to close a gap the salesman did not open.
+ * **AND IT NOW REFUSES WHAT IT CANNOT MEASURE, which is a second reversal.**
+ * It used to let a missing or vague fix through, on the reasoning that a
+ * reading which cannot show he is there cannot show he is not. Mahek's answer
+ * is that a check-in nobody measured is exactly the record the gate exists to
+ * stop: without a proper reading, a check-in does not start. The cost is real
+ * and is paid at the door, where it is cheapest — he steps outside, waits for
+ * the fix, and presses again, with nothing typed and nothing lost.
+ *
+ *   - no fix, or one too wide to trust — REFUSED, and the sentence says what
+ *     to do about it rather than how far he is, because there is no distance.
+ *   - no pin on the shop, on a fix good enough to be one — ACCEPTED, but only
+ *     once he CONFIRMS he is at that shop (`needsConfirmation`), and this fix
+ *     becomes its pin. Roughly half the book has never been pinned, so
+ *     refusing here would make half the book unvisitable; asking is what makes
+ *     the pin something a person stood behind rather than a side effect.
  *   - measurably outside the radius — REFUSED, and the screen offers a way
  *     past it that costs a typed sentence and tells his manager, because the
- *     stored pin is very often the wrong one.
+ *     stored pin is very often the wrong one. That way past is for a WRONG
+ *     PIN only; it never opens a refusal for want of a reading.
  *
- * The refusal it returns is therefore a statement about ONE measurement, not
- * a verdict on the salesman, and the sentence it carries says so.
+ * Each refusal is a statement about a measurement, not a verdict on the
+ * salesman, and the sentence it carries says so.
  *
  * Pure on purpose — no `expo-location`, no clock, no store. A fix arrives as an
  * argument, and so does every threshold, so the rules can be tested on a laptop
@@ -267,6 +275,12 @@ export type CheckInReason = 'ok' | 'unpinned' | 'unmeasurable' | 'too_far';
 export type CheckInVerdict = {
   /** Whether the check-in may go ahead. The one gate in this file. */
   accepted: boolean;
+  /**
+   * Accepted, but only once he has said he is at this shop. True exactly where
+   * the fix is about to become the shop's pin — a pin is a claim about where a
+   * shop IS, and it should be one somebody made on purpose.
+   */
+  needsConfirmation: boolean;
   reason: CheckInReason;
   /** Null wherever nothing could be measured — never 0, which reads as "at the door". */
   metresAway: number | null;
@@ -285,8 +299,8 @@ export type CheckInVerdict = {
 /**
  * May this check-in go ahead?
  *
- * The ladder is ordered so that the only REFUSAL is the one case the reading
- * actually proves, and the order of the first two rungs is load-bearing rather
+ * Nothing goes ahead without a usable reading, and the order of the first two
+ * rungs is load-bearing rather
  * than incidental: the fix is judged BEFORE the shop's pin is looked for, so a
  * shop with no pin is never pinned from a fix too wide to trust. Reversed, the
  * first check-in on a bad afternoon would drop the pin four hundred metres
@@ -307,24 +321,26 @@ export function checkInVerdict(
   const assessment = assessFix(fix, accuracyThresholdM);
   if (!assessment.usable || !fix) {
     return {
-      accepted: true,
+      accepted: false,
+      needsConfirmation: false,
       reason: 'unmeasurable',
       metresAway: null,
       pinsTheShop: false,
       sentence:
         assessment.reason === 'no_fix'
-          ? 'No GPS fix — checked in without one, and your manager sees that.'
-          : `The phone can only place you to about ${assessment.accuracyM == null ? 'an unknown' : Math.round(assessment.accuracyM) + ' m'} — too wide to check against the shop, so the check-in stands and is flagged.`,
+          ? 'No GPS fix yet — a check-in needs one. Step outside or near a window and press again.'
+          : `The phone can only place you to about ${assessment.accuracyM == null ? 'an unknown distance' : Math.round(assessment.accuracyM) + ' m'} — too wide to check against the shop. Step outside or near a window and press again.`,
     };
   }
 
   if (!customerCoords) {
     return {
       accepted: true,
+      needsConfirmation: true,
       reason: 'unpinned',
       metresAway: null,
       pinsTheShop: true,
-      sentence: 'This shop has no recorded location yet — checking in here is what pins it.',
+      sentence: 'This shop has no recorded location yet — checking in here saves it.',
     };
   }
 
@@ -332,6 +348,7 @@ export function checkInVerdict(
   if (metresAway > radiusM) {
     return {
       accepted: false,
+      needsConfirmation: false,
       reason: 'too_far',
       metresAway,
       pinsTheShop: false,
@@ -341,6 +358,7 @@ export function checkInVerdict(
 
   return {
     accepted: true,
+    needsConfirmation: false,
     reason: 'ok',
     metresAway,
     pinsTheShop: false,
