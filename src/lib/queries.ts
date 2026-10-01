@@ -1417,14 +1417,55 @@ export type TimelinePage = {
  * well. Composed instead, `kind: "Bill"` is a query against `bills` and
  * nothing else.
  */
-function timelineBranch(kind: TimelineKind, customerId: string): SQL {
+/**
+ * A REMINDER A CALL SET IS PART OF THAT CALL, and the full history says so on
+ * one row.
+ *
+ * Saving a call with a callback writes two records — the call, and the
+ * reminder it raised — and the reminder's note is the call's note copied
+ * across. Listed as two entries a minute apart, the same sentence appeared
+ * twice and read as a call saved twice. So in the unfiltered timeline the
+ * reminder is FOLDED into its call: the call's line carries "callback 03 Oct,
+ * pending", and its own row is left out. `reminders.call_id` is what ties
+ * them, and only a reminder whose call exists is folded — one set on its own,
+ * from the reminders screen or a payment promise, keeps its own row.
+ *
+ * Filtering by Reminder still lists every reminder, because that view is the
+ * question "what have we promised to come back about" and a callback set on a
+ * call is the commonest answer to it. Folding is the All view only.
+ *
+ * The reminder's note is repeated beside it only where it SAYS SOMETHING the
+ * call does not — "Promised ₹40,000." in front of the call's own words is
+ * exactly the figure somebody needs before ringing back.
+ */
+const FOLDED_REMINDER_SQL = sql`
+  exists (select 1 from calls fc where fc.id = r.call_id and fc.customer_id = r.customer_id)`;
+
+function timelineBranch(
+  kind: TimelineKind,
+  customerId: string,
+  fold: boolean,
+): SQL {
   switch (kind) {
     case "Call":
       return sql`
         select c.id, 'Call' as kind, c.started_at as at, u.name as actor,
                coalesce(c.notes, c.outcome::text, 'Call logged') as content,
-               nullif(concat_ws(' · ', c.connection_status, c.outcome), '') as meta
+               nullif(concat_ws(' · ', c.connection_status, c.outcome, rr.reminders_set), '') as meta
           from calls c join users u on u.id = c.user_id
+          left join lateral (
+            select string_agg(
+                     concat(
+                       case r.type when 'payment_promise' then 'payment check ' else 'callback ' end,
+                       to_char(r.due_date, 'DD Mon'), ', ', r.status,
+                       case when r.note is distinct from coalesce(c.notes, '')
+                            then concat(' (', r.note, ')') end
+                     ),
+                     ' · ' order by r.due_date, r.id
+                   ) as reminders_set
+              from reminders r
+             where r.customer_id = c.customer_id and r.call_id = c.id
+          ) rr on ${fold ? sql`true` : sql`false`}
          where c.customer_id = ${customerId}`;
     case "Opportunity":
       return sql`
@@ -1473,7 +1514,8 @@ function timelineBranch(kind: TimelineKind, customerId: string): SQL {
         select r.id, 'Reminder', r.created_at, u.name, r.note,
                concat('Due ', to_char(r.due_date, 'DD Mon'), ' · ', r.status)
           from reminders r join users u on u.id = r.assigned_user_id
-         where r.customer_id = ${customerId}`;
+         where r.customer_id = ${customerId}
+           ${fold ? sql`and not ${FOLDED_REMINDER_SQL}` : sql``}`;
     case "Complaint":
       return sql`
         select cm.id, 'Complaint', cm.created_at, u.name, cm.description,
@@ -1565,7 +1607,9 @@ export async function customerTimeline(
   const limit = opts.limit ?? TIMELINE_PAGE;
   const kinds = opts.kind ? [opts.kind] : [...TIMELINE_KINDS];
 
-  const branches = kinds.map((k) => timelineBranch(k, customerId));
+  // Folded only where both halves are on the page — see FOLDED_REMINDER_SQL.
+  const fold = !opts.kind;
+  const branches = kinds.map((k) => timelineBranch(k, customerId, fold));
   const union = sql.join(branches, sql` union all `);
   const keyset = opts.before
     ? sql`where (t.at, t.id) < (${opts.before.at}::timestamptz, ${opts.before.id})`
@@ -1629,7 +1673,9 @@ export async function customerTimelineCounts(
       (select count(*)::int from reminders where customer_id = ${customerId}) as "Reminder",
       (select count(*)::int from complaints where customer_id = ${customerId}) as "Complaint",
       (select count(*)::int from payment_receipts where customer_id = ${customerId}) as "Payment",
-      (select count(*)::int from bills where customer_id = ${customerId}) as "Bill"
+      (select count(*)::int from bills where customer_id = ${customerId}) as "Bill",
+      (select count(*)::int from reminders r
+        where r.customer_id = ${customerId} and ${FOLDED_REMINDER_SQL}) as "folded"
   `);
 
   const counts = Object.fromEntries(
@@ -1638,7 +1684,12 @@ export async function customerTimelineCounts(
 
   return {
     ...counts,
-    all: TIMELINE_KINDS.reduce((n, k) => n + counts[k], 0),
+    // The All pill counts the rows the All view lists: a reminder folded into
+    // its call is on that call's line, not a row of its own. The Reminder pill
+    // still counts every reminder, because its filter still lists every one.
+    all:
+      TIMELINE_KINDS.reduce((n, k) => n + counts[k], 0) -
+      Number(row?.folded ?? 0),
   };
 }
 
