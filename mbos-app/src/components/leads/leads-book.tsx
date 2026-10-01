@@ -1,9 +1,10 @@
 import React from 'react';
-import { View, Pressable, ScrollView, FlatList, type ListRenderItemInfo } from 'react-native';
+import { View, Pressable, ScrollView, FlatList, TextInput, type ListRenderItemInfo } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
 import { BottomSheet, Calendar } from '../ui/overlays';
-import { color as C, radius, weight, type BadgeTone } from '../../theme/tokens';
+import { color as C, HIT, radius, weight, type BadgeTone } from '../../theme/tokens';
+import { Icon } from '../ui/Icon';
 import {
   createLead,
   leadThresholds,
@@ -334,6 +335,9 @@ function LeadRow({
   );
 }
 
+/** How long a typed name waits before it becomes a query — the customers list's own pause. */
+const SEARCH_PAUSE_MS = 250;
+
 /**
  * The lead book, drawn the same wherever it is opened.
  *
@@ -348,8 +352,12 @@ function LeadRow({
  * doors pass `scroll={false}`: a frame that scrolls around a component that
  * scrolls is the one way to get two scroll positions and neither of them
  * working.
+ *
+ * `seedQuery` is what he had typed on the Customers half. That half's empty
+ * search says "3 leads match — open Leads", and a tab that then opened on the
+ * whole unsearched book would be the line lying about where the answer went.
  */
-export function LeadsBook() {
+export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
   const notify = useStore((s) => s.notify);
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
@@ -369,6 +377,23 @@ export function LeadsBook() {
   const [rung, setRung] = React.useState<string | null>(null);
   const [rungs, setRungs] = React.useState<{ rung: string; count: number }[]>([]);
   const [rows, setRows] = React.useState<Lead[]>([]);
+  /*
+   * THE SEARCH, the same box the customers half has. Eight stage chips and the
+   * owed-when row were the only narrowing here, so finding one named shop in a
+   * few hundred leads meant scrolling past all of them. `listLeads` has taken a
+   * query all along — it reaches the shop, the person, the number and the town
+   * — and nothing on the screen ever sent it one.
+   *
+   * What he has TYPED and what has been ASKED are kept apart for the reason the
+   * customers list gives: every ask is a `LIKE '%…%'` scan that no index can
+   * serve, and a pause turns a name into one query instead of one per letter.
+   */
+  const [typed, setTyped] = React.useState(seedQuery);
+  const [asked, setAsked] = React.useState(seedQuery.trim());
+  React.useEffect(() => {
+    const t = setTimeout(() => setAsked(typed.trim()), SEARCH_PAUSE_MS);
+    return () => clearTimeout(t);
+  }, [typed]);
   /* Null until the thresholds arrive from configuration. A default written in
      here would be a business rule living in a screen, and the sentence it
      produced would be wrong on any handset whose office had changed it. */
@@ -449,12 +474,12 @@ export function LeadsBook() {
   const load = React.useCallback(() => {
     let live = true;
     void Promise.all([
-      listLeads(filter),
+      listLeads(filter, asked),
       /* The rungs under the picked band, counted in SQLite over the same
          narrowing. A separate grouped query rather than a pass over `rows`,
          because picking a rung shortens `rows` and counting from it would make
          every other rung read zero the moment one was chosen. */
-      rungsInBook(filter),
+      rungsInBook(filter, asked),
       leadThresholds(),
       visitCapThresholds(),
       leadSources(),
@@ -469,7 +494,7 @@ export function LeadsBook() {
     return () => {
       live = false;
     };
-  }, [filter]);
+  }, [filter, asked]);
 
   useFocusEffect(load);
 
@@ -656,6 +681,44 @@ export function LeadsBook() {
   const header = React.useMemo(
     () => (
       <View>
+        <View style={{ position: 'relative', marginBottom: 12 }}>
+          <View style={{ position: 'absolute', left: 14, top: 16, zIndex: 1 }}>
+            <Icon name="search" size={20} color={C.muted} strokeWidth={1.5} />
+          </View>
+          <TextInput
+            value={typed}
+            onChangeText={setTyped}
+            placeholder="Name, shop, phone or city"
+            placeholderTextColor={C.faint}
+            style={{
+              width: '100%',
+              height: 52,
+              paddingLeft: 42,
+              paddingRight: 56,
+              borderWidth: 1,
+              borderColor: C.border,
+              borderRadius: radius.sm,
+              fontSize: 15,
+              color: C.ink,
+              backgroundColor: C.surface,
+            }}
+          />
+          {/* The way out of a search — without it the book stays narrowed to a
+              word typed an hour ago with nothing on the screen that undoes it. */}
+          {typed ? (
+            <Pressable
+              onPress={() => {
+                setTyped('');
+                setAsked('');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Clear the search"
+              style={{ position: 'absolute', right: 2, top: 2, width: HIT, height: HIT, alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name="close" size={18} color={C.muted} strokeWidth={1.5} />
+            </Pressable>
+          ) : null}
+        </View>
+
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -726,10 +789,16 @@ export function LeadsBook() {
 
         <DashedButton label="+ Add lead" tone="primary" onPress={openForm} style={{ marginTop: 12 }} />
 
-        {rows.length ? <T s="caption" style={{ marginTop: 12, marginBottom: 8 }}>{plural(rows.length, 'lead')}</T> : null}
+        {/* A count under a search is a count of the MATCHES, and says so — "3
+            leads" read on its own claims the book has shrunk. */}
+        {rows.length ? (
+          <T s="caption" style={{ marginTop: 12, marginBottom: 8 }}>
+            {plural(rows.length, 'lead') + (asked ? ` matching “${asked}”` : '')}
+          </T>
+        ) : null}
       </View>
     ),
-    [view, when, rung, rungs, rows.length, openForm],
+    [view, when, rung, rungs, rows.length, openForm, typed, asked],
   );
 
   /*
@@ -745,14 +814,18 @@ export function LeadsBook() {
     () => (
       <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
         <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-          {when !== 'any'
+          {asked
+            ? `No lead matches “${asked}”`
+            : when !== 'any'
             ? 'Nothing ' + LEAD_WHENS.find((w) => w.value === when)!.label.toLowerCase()
             : view === 'all'
               ? 'No leads yet'
               : 'Nothing at ' + VIEW_LABEL[view]}
         </T>
         <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-          {when !== 'any'
+          {asked
+            ? 'The search reaches the shop, the person, the number and the town. Clear it to see every lead.'
+            : when !== 'any'
             ? 'Every lead is still here — this is only what you owe somebody.'
             : view === 'all'
               ? 'A shop you walk past and a name somebody gives you both start here.'
@@ -760,7 +833,7 @@ export function LeadsBook() {
         </T>
       </Card>
     ),
-    [view, when],
+    [view, when, asked],
   );
 
   return (
@@ -786,6 +859,7 @@ export function LeadsBook() {
         maxToRenderPerBatch={8}
         windowSize={7}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
       />
 

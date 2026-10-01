@@ -1141,7 +1141,7 @@ export default function Customers() {
       {/* The lead book is a component and not a second copy of this screen —
           the More screen's own Leads row opens the same one. See its header. */}
       {half === 'leads' ? (
-        <LeadsBook />
+        <LeadsBook seedQuery={custQ} />
       ) : (
       <FlatList
         style={{ flex: 1 }}
