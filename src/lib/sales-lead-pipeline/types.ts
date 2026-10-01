@@ -271,6 +271,8 @@ export type Lead = {
   address?: string;
   source?: string;
   createdAt: string;
+  /** Raised within `mbos.leads.recentDays` calendar days, IST — worked out on the server from the real `created_at`. */
+  isRecent?: boolean;
   /** Null is a lead raised before a ladder was chosen — drawn on the legacy ladder, never guessed. */
   salesType: SalesType | null;
   stage: Stage;
@@ -382,6 +384,8 @@ export type PipelineRow = {
   gateLabel?: string;
   /** A commitment is on file (a forecast). The CRM workspace's focus wording turns on it. */
   hasCommitment?: boolean;
+  /** Raised within `mbos.leads.recentDays` calendar days, IST — worked out on the server from the real `created_at`. */
+  isRecent?: boolean;
 };
 
 export type BookTiles = {
