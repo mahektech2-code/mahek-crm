@@ -108,8 +108,8 @@ export default function CollectionsScreen() {
     askConfirm({
       title: 'Banked ' + inrFromPaise(p.amountPaise) + '?',
       body:
-        'This says you have paid it in. The office still checks it against the bank statement — ' +
-        'you are recording your half of it, not closing it.',
+        'This says you have put it in the bank. The office will still check it with the bank. ' +
+        'This does not close it.',
       confirmLabel: 'Yes, I banked it',
       run: () => {
         void (async () => {
@@ -126,8 +126,8 @@ export default function CollectionsScreen() {
             load();
             notify(
               proofId
-                ? 'Banked · slip attached'
-                : 'Banked · no slip attached, so the office has only your word for it',
+                ? 'Banked · slip photo added'
+                : 'Banked · no slip photo. The office has only your word.',
             );
           } finally {
             setBusy(null);
@@ -153,8 +153,8 @@ export default function CollectionsScreen() {
         inrFromPaise(p.amountPaise) +
         ' goes back onto ' +
         (p.customerName ?? 'the customer') +
-        ", and you get a task to ring them. They believe they have already paid, so this is a call worth preparing for.",
-      reasonLabel: 'What the bank said · required',
+        ". You will get a task to call them. They think they have paid, so be ready for that call.",
+      reasonLabel: 'What the bank said · needed',
       confirmLabel: 'Yes, it bounced',
       run: (reason) => {
         void (async () => {
@@ -162,7 +162,7 @@ export default function CollectionsScreen() {
           try {
             await markBounced(p.id, reason);
             load();
-            notify('Recorded · ' + inrFromPaise(p.amountPaise) + ' is back on their account');
+            notify('Saved · ' + inrFromPaise(p.amountPaise) + ' is back on their account');
           } finally {
             setBusy(null);
           }
@@ -178,7 +178,7 @@ export default function CollectionsScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Money you collected</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        What you wrote down at the counter. The office confirms it against the bank separately.
+        What you noted at the shop. The office will check it with the bank.
       </T>
 
       {/* ---- what he is carrying ----
@@ -198,13 +198,13 @@ export default function CollectionsScreen() {
           {inrFromPaise(cash?.totalPaise ?? 0)}
         </T>
         <T s="small" style={{ color: cash?.totalPaise ? C.warnInk : C.muted, marginTop: 2 }}>
-          {cash?.sentence ?? 'Reading…'}
+          {cash?.sentence ?? 'Loading…'}
         </T>
       </Card>
 
       {rows === null ? (
         <T s="small" style={{ color: C.muted, marginTop: 16 }}>
-          Reading…
+          Loading…
         </T>
       ) : rows.length === 0 ? (
         <Card style={{ marginTop: 16, paddingVertical: 28 }}>
@@ -212,7 +212,7 @@ export default function CollectionsScreen() {
             You have not collected anything yet.
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6 }}>
-            Money you take shows up here, and this is where you say you have banked it.
+            Money you collect shows here. Mark it here when you bank it.
           </T>
         </Card>
       ) : (
@@ -263,21 +263,21 @@ export default function CollectionsScreen() {
 
                 {late ? (
                   <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
-                    Past the deposit deadline — bank it today.
+                    Bank deadline is over. Bank it today.
                   </T>
                 ) : null}
 
                 {p.bounced ? (
                   <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
-                    Came back{p.bouncedAt ? ' on ' + dmy(isoDate(new Date(p.bouncedAt))) : ''} · the amount is back on
+                    Bounced{p.bouncedAt ? ' on ' + dmy(isoDate(new Date(p.bouncedAt))) : ''} · the amount is back on
                     their account
                   </T>
                 ) : null}
 
                 {p.deposited ? (
                   <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>
-                    Banked{p.depositedAt ? ' on ' + dmy(isoDate(new Date(p.depositedAt))) : ''} · the office checks the
-                    statement
+                    Banked{p.depositedAt ? ' on ' + dmy(isoDate(new Date(p.depositedAt))) : ''} · the office will check it
+                    with the bank
                   </T>
                 ) : null}
 
@@ -334,7 +334,7 @@ export default function CollectionsScreen() {
       )}
 
       <T s="caption" style={{ marginTop: 12 }}>
-        {'Showing what you have collected, newest first, as at ' + dmy(today) + '.'}
+        {'Your collections, newest first, as on ' + dmy(today) + '.'}
       </T>
     </AppFrame>
   );

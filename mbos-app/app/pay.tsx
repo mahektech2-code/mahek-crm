@@ -46,7 +46,7 @@ const MODES: { label: PaymentMode; glyph: IconName }[] = [
   { label: 'Bank transfer', glyph: 'route' },
 ];
 
-const CHEQUE_PHOTO_LINE = 'Photograph the cheque before you hand it back.';
+const CHEQUE_PHOTO_LINE = 'Take a photo of the cheque before you give it back.';
 
 /**
  * How many bills are drawn before the rest are folded away.
@@ -66,7 +66,7 @@ const BILLS_SHOWN = 5;
  * own drawer. It is asked of everybody, because the man asking is holding the
  * cheque and can read it off the paper.
  */
-const CHEQUE_DATE_LINE = 'The date written on the cheque is needed.';
+const CHEQUE_DATE_LINE = 'Pick the date written on the cheque.';
 
 export default function PayScreen() {
   const back = useCameFrom('more');
@@ -198,7 +198,7 @@ export default function PayScreen() {
     /* `whyDisabled` keeps this button pressable so the handler can refuse in
        words, which means the in-flight lock has to be checked here as well as
        drawn on the button. */
-    if (busy) return notify('Still recording the last one…');
+    if (busy) return notify('Still saving the last payment…');
     if (!payMode) return notify('Pick how they are paying');
     if (!amt) return notify('Enter the amount');
     if (needsCheque && !payChq.trim()) return notify('Cheque number is needed');
@@ -211,7 +211,7 @@ export default function PayScreen() {
       body:
         `${inr(amt)} from ${c.name}, by ${payMode.toLowerCase()}` +
         (needsCheque ? ` — cheque ${payChq.trim()}, dated ${dmy(chequeDate)}` : '') +
-        '. The receipt is written the moment you say yes, and nothing on this phone can edit it afterwards.',
+        '. The receipt is made when you say yes. You cannot change it later on this phone.',
       confirmLabel: 'Yes, take it',
       run: () => void write(payMode as PaymentMode, c),
     });
@@ -282,8 +282,8 @@ export default function PayScreen() {
     askConfirm({
       title: 'Send the receipt?',
       body: phone
-        ? `${inr(amt)} recorded for ${cust.name}. Your WhatsApp opens with the receipt written — you press send.`
-        : `${inr(amt)} recorded for ${cust.name}. There is no number on this customer, so the receipt can only be copied.`,
+        ? `${inr(amt)} saved for ${cust.name}. WhatsApp will open with the receipt ready. You press send.`
+        : `${inr(amt)} saved for ${cust.name}. This customer has no number, so you can only copy the receipt.`,
       confirmLabel: phone ? 'Open WhatsApp' : 'Copy the receipt',
       run: async () => {
         const out = phone ? await openWhatsApp(phone, slip) : await copyToClipboard(slip);
@@ -323,12 +323,12 @@ export default function PayScreen() {
           {cash === null ? '—' : inrFromPaise(cash.totalPaise)}
         </T>
         <T style={{ fontSize: 15, color: C.warnInk, marginTop: 2 }}>
-          {cash?.sentence ?? (cashFailed ? 'What you are carrying could not be read just now.' : 'Reading…')}
+          {cash?.sentence ?? (cashFailed ? 'Could not load your cash right now.' : 'Loading…')}
         </T>
       </View>
 
       <T style={{ fontSize: 15, color: C.body, marginTop: 16 }}>
-        {c ? (dues ? 'They owe ' + inr(dues) : 'Nothing outstanding') : 'Open a customer first'}
+        {c ? (dues ? 'Outstanding ' + inr(dues) : 'Nothing outstanding') : 'Open a customer first'}
       </T>
 
       {/*
@@ -347,7 +347,7 @@ export default function PayScreen() {
               gap: 12,
               marginBottom: 10,
             }}>
-            <SectionLabel>What is this against</SectionLabel>
+            <SectionLabel>Which bills is this for</SectionLabel>
             <T s="caption">{plural(bills.length, 'open bill')}</T>
           </View>
           <View style={{ gap: 8 }}>
@@ -407,7 +407,7 @@ export default function PayScreen() {
                   </View>
                   {unstated ? (
                     <T style={{ fontSize: 13, color: C.muted, textAlign: 'right', maxWidth: 110 }}>
-                      Not stated either way
+                      No payment info yet
                     </T>
                   ) : (
                     <T style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
@@ -436,10 +436,10 @@ export default function PayScreen() {
               salesman will be asked about. */}
           <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 10 }}>
             {chosen.length === 0
-              ? 'Name none and it goes against their oldest bills first.'
+              ? 'Pick none and it goes to their oldest bills first.'
               : onAccountPaise > 0 && amt > 0
-                ? `${chosen.length} named · ${inrFromPaise(onAccountPaise)} more than they cover, which sits on account.`
-                : `${chosen.length} named.`}
+                ? `${chosen.length} picked · ${inrFromPaise(onAccountPaise)} extra. It is kept as advance on the account.`
+                : `${chosen.length} picked.`}
           </T>
         </View>
       ) : null}
@@ -500,7 +500,7 @@ export default function PayScreen() {
             weight(amt > 0 ? 600 : 400),
             tabular,
           ]}>
-          {amt > 0 ? inr(amt) : 'Type what they handed over.'}
+          {amt > 0 ? inr(amt) : 'Type the amount they gave you.'}
         </T>
         {needsCheque ? (
           <View style={{ marginTop: 16 }}>
@@ -555,7 +555,7 @@ export default function PayScreen() {
               onPress={photographCheque}
               hitSlop={12}>
               <T s="caption" style={{ marginTop: 8, color: chequePhotoId ? C.success : undefined }}>
-                {chequePhotoId ? 'Cheque photographed' : CHEQUE_PHOTO_LINE}
+                {chequePhotoId ? 'Cheque photo taken' : CHEQUE_PHOTO_LINE}
               </T>
             </Pressable>
           </View>
@@ -563,15 +563,15 @@ export default function PayScreen() {
       </Card>
 
       <PrimaryButton
-        label={busy ? 'Recording it…' : 'Collect and make receipt'}
+        label={busy ? 'Saving…' : 'Collect and make receipt'}
         onPress={collect}
         disabled={!payOk || busy}
         whyDisabled={
           busy
-            ? 'The last one is still being recorded.'
+            ? 'The last payment is still saving.'
             : needsCheque
-              ? 'A cheque needs its number, the date written on it, and a photograph.'
-              : 'Pick how they are paying and enter the amount first.'
+              ? 'A cheque needs its number, its date and a photo.'
+              : 'Pick how they are paying and type the amount.'
         }
         style={{ marginTop: 16 }}
       />

@@ -65,22 +65,22 @@ export function CommitmentSheet({
 
   const cansNow = Number(cans.replace(/[^\d]/g, ''));
   const missing = !date
-    ? 'Say which day they will place it.'
+    ? 'Choose the day they will order.'
     : !cansNow
-      ? 'Say how many cans. A promise with no size on it cannot be planned around.'
+      ? 'Write how many cans. A promise without cans cannot be planned.'
       : undefined;
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
       <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-        What did they say they would order?
+        What did they promise to order?
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
-        This is what you were told, not an order. Nothing moves up a rung on it — the order itself does that.
+        This is only a promise, not an order. The stage moves only when the real order comes.
       </T>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>When will they place it</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>When will they order</SectionLabel>
         {picking ? (
           <Calendar
             key="commitment-cal"
@@ -88,7 +88,7 @@ export function CommitmentSheet({
             /* A day already gone is not a forecast. Today is allowed: a
                shopkeeper saying "I will send it this evening" is the ordinary
                best case and refusing it would send somebody to type tomorrow. */
-            disabledReason={(iso) => (iso < today ? 'That day has gone.' : null)}
+            disabledReason={(iso) => (iso < today ? 'That day has passed.' : null)}
             onPick={(iso) => {
               setDate(iso);
               setPicking(false);
@@ -96,7 +96,7 @@ export function CommitmentSheet({
           />
         ) : (
           <SecondaryButton
-            label={date ? dmy(date) : 'Pick a day'}
+            label={date ? dmy(date) : 'Choose a day'}
             onPress={() => setPicking(true)}
             style={{ borderRadius: radius.lg }}
           />
@@ -112,22 +112,21 @@ export function CommitmentSheet({
             what there was not at capture, where the answer is in litres. */}
         <T s="caption" style={{ marginTop: 6 }}>
           {productName
-            ? 'Cans of ' + productName + ' — the pack they will actually buy.'
-            : 'In cans, the way they will order it. Nobody has named the product on this lead yet.'}
+            ? 'Cans of ' + productName + '. The pack they will buy.'
+            : 'In cans, the way they will order. No product is set on this lead yet.'}
         </T>
       </View>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>What it is worth, if you know</SectionLabel>
-        <Input value={rupees} onChangeText={setRupees} keyboardType="number-pad" placeholder="Rupees — optional" />
+        <SectionLabel style={{ marginBottom: 6 }}>Value in rupees, if you know</SectionLabel>
+        <Input value={rupees} onChangeText={setRupees} keyboardType="number-pad" placeholder="Rupees (optional)" />
         <T s="caption" style={{ marginTop: 6 }}>
-          Leave it empty if you have not priced it. There are no prices in the product list, so nothing here can
-          work it out for you, and a guessed figure reads later as one somebody agreed.
+          Leave it empty if you do not know the price. The app has no prices. Do not guess a figure.
         </T>
       </View>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>What is stopping it today</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>What is stopping the order today</SectionLabel>
         <View style={{ gap: 8 }}>
           {blockers.map((b) => (
             <Choice
@@ -144,7 +143,7 @@ export function CommitmentSheet({
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
         <PrimaryButton
-          label="Record it"
+          label="Save"
           disabled={Boolean(missing)}
           whyDisabled={missing}
           onPress={() => {

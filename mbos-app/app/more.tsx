@@ -86,7 +86,7 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
            nobody has promised anything about at all. No badge, because Home
            already carries the two figures and a third statement of them here
            is a number somebody has to reconcile rather than read. */
-        { label: 'What is owed', badge: '', route: 'lead-actions' },
+        { label: 'Pending actions', badge: '', route: 'lead-actions' },
         /* These two named a LIST and opened a capture form — the only two
            rows here that did. Punching an order and taking money both start
            at the + button, like every other capture; what was missing was
@@ -152,7 +152,7 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
         /* The Preferences card lives on the profile screen — this used to toast
          rather than open the thing it names. */
       { label: 'App preferences', badge: '', route: 'profile' },
-        { label: 'Sync', badge: n.toSend ? n.toSend + ' to send' : '', route: 'sync' },
+        { label: 'Send to office', badge: n.toSend ? n.toSend + ' to send' : '', route: 'sync' },
         /* The walkthrough opens on its own once per build; this is the way back
            to it for somebody who pressed "Do this later". */
         { label: 'Set up your phone', badge: '', route: 'setup' },
@@ -240,7 +240,7 @@ export default function MoreScreen() {
       });
       return;
     }
-    notify(i.label + ' — next to build');
+    notify(i.label + ' is not ready yet.');
   };
 
   return (

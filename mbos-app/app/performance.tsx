@@ -63,7 +63,7 @@ export default function PerformanceScreen() {
 
       {months === null ? (
         <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-          Reading…
+          Loading…
         </T>
       ) : !current ? (
         <Card style={{ marginTop: 12 }}>
@@ -71,16 +71,15 @@ export default function PerformanceScreen() {
             Nothing to show yet.
           </T>
           <T s="small" style={{ color: C.muted, marginTop: 6 }}>
-            Your target is set in the office and arrives on the next sync. Until
-            somebody sets one there is nothing to measure against — this screen will
-            not invent a percentage.
+            The office sets your target. It will come to this phone after that.
+            Until then there is nothing to measure against, so no percentage is shown.
           </T>
         </Card>
       ) : (
         <>
           <T s="small" style={{ color: C.muted, marginTop: 2 }}>
             {monthName(current.period)}
-            {current.computedAt ? ` · as at ${asAt(current.computedAt)}` : ''}
+            {current.computedAt ? ` · updated ${asAt(current.computedAt)}` : ''}
           </T>
 
           {current.hasTarget && current.totalScoreBp !== null ? (
@@ -126,8 +125,8 @@ export default function PerformanceScreen() {
                 No target has been set for you this month.
               </T>
               <T s="small" style={{ color: C.muted, marginTop: 6 }}>
-                What is below is what you have actually done. There is no score,
-                because a score needs something to have been asked for.
+                Below is what you have done. There is no score, because no target
+                was set.
               </T>
             </Card>
           )}
@@ -168,8 +167,8 @@ export default function PerformanceScreen() {
                 marginTop: 12,
               }}>
               <T style={{ fontSize: 14, lineHeight: 20, color: C.warnInk }}>
-                You are at target on rupees but not on litres. Prices went up more than
-                the quantity you sold — worth knowing before this reads as a good month.
+                You reached your rupee target but not your litres target. Prices went up,
+                but you sold less quantity. So this month is not as good as it looks.
               </T>
             </View>
           ) : null}
@@ -234,7 +233,7 @@ export default function PerformanceScreen() {
             <Card style={{ marginTop: 12 }}>
               <T s="label">Product mix</T>
               <T s="micro" style={{ marginTop: 2 }}>
-                Share of what you sold, by value.
+                Share of your sales, by value.
               </T>
               {current.categories.map((c) => (
                 <View key={c.name} style={{ marginTop: 14 }}>
@@ -289,8 +288,8 @@ export default function PerformanceScreen() {
               ))}
               {current.unmatchedRevenuePaise ? (
                 <T s="micro" style={{ marginTop: 12 }}>
-                  {inrFromPaise(current.unmatchedRevenuePaise)} of this month is on products the
-                  catalogue does not recognise. It counts as revenue and adds no litres.
+                  {inrFromPaise(current.unmatchedRevenuePaise)} this month is for products not in the
+                  product list. It counts as revenue, but adds no litres.
                 </T>
               ) : null}
             </Card>
@@ -298,7 +297,7 @@ export default function PerformanceScreen() {
 
           {shortfalls(current).length ? (
             <Card style={{ marginTop: 12 }}>
-              <T s="label">What is short</T>
+              <T s="label">Still to reach</T>
               {shortfalls(current).map((line) => (
                 <T
                   key={line}
@@ -310,9 +309,8 @@ export default function PerformanceScreen() {
           ) : null}
 
           <T s="caption" style={{ marginTop: 12 }}>
-            Revenue counts orders the office has accepted, and collection counts money
-            accounts have found in the bank — so both move after you have logged them,
-            not as you log them.
+            Revenue counts only orders the office has accepted. Collection counts only money
+            found in the bank. So both go up some time after you add them.
           </T>
         </>
       )}
@@ -370,7 +368,7 @@ function Figure({
         {value}
       </T>
       <T s="micro">
-        {target ? `of ${target}` : 'nothing asked'}
+        {target ? `of ${target}` : 'no target'}
         {bp === null ? '' : ` · ${(bp / 100).toFixed(0)}%`}
       </T>
       {base ? <T s="micro">{base}</T> : null}

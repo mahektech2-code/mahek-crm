@@ -181,7 +181,7 @@ export function Toast({
         onPress={warn ? leave : undefined}
         disabled={!warn}
         accessibilityRole={warn ? 'button' : undefined}
-        accessibilityLabel={warn ? showing + '. Tap to dismiss.' : undefined}
+        accessibilityLabel={warn ? showing + '. Tap to close.' : undefined}
         style={st.toastBody}>
         <View style={[st.toastChip, warn && st.toastChipWarn]}>
           <Icon name={warn ? 'alert' : 'tick'} size={14} color={warn ? C.warn : C.lime} strokeWidth={2.6} />
@@ -354,7 +354,7 @@ export function ConfirmSheet({
             placeholder="Tell your manager what happened"
             style={{ minHeight: 80, borderRadius: radius.md, fontSize: 15 }}
           />
-          {error ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>A reason is required.</Text> : null}
+          {error ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Please write a reason.</Text> : null}
         </View>
       ) : null}
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>

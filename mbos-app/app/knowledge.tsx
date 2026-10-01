@@ -42,8 +42,8 @@ export default function KnowledgeScreen() {
           says instead is what is true: this is the list, and the doing is not
           here yet. It comes back the day something writes a completion. */}
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        What the office has published, and when each is due. Reading a module and
-        marking it off are not on the phone yet.
+        Training from the office, and when each is due. You cannot open or finish
+        a module on the phone yet.
       </T>
 
       {courses === null ? (
@@ -54,7 +54,7 @@ export default function KnowledgeScreen() {
         <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing published yet</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Training appears here once the office publishes it.
+            Training will show here when the office adds it.
           </T>
         </Card>
       ) : (

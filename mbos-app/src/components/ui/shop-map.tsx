@@ -331,8 +331,8 @@ export function ShopMap({
          refusals, two ways out. */
       setLocateNote(
         result.status === 'denied'
-          ? 'Location is switched off for MBOS. Turn it on in the phone’s settings to see where you are on the map.'
-          : 'The phone could not get a location. It usually comes quicker outside, away from a roof.');
+          ? 'Location is off for MBOS. Turn it on in phone Settings to see yourself on the map.'
+          : 'Could not find your location. Go outside, away from a roof, and try again.');
       return;
     }
 
@@ -376,8 +376,8 @@ export function ShopMap({
     return (
       <Frame height={height}>
         <Note>
-          No map is set up yet. The office adds a maps key in the Admin Console,
-          and this screen starts working on the next sync.
+          The map is not set up yet. The office must set it up first.
+          Then the map will show here.
         </Note>
       </Frame>
     );
@@ -388,7 +388,7 @@ export function ShopMap({
       <Frame height={height}>
         <Note>
           {pins.length
-            ? `None of these ${pins.length} shops has been pinned yet. Capture a location while you are standing in one and it appears here.`
+            ? `None of these ${pins.length} shops has a location yet. Save a location while you stand in a shop. It will show here.`
             : 'No shops to show.'}
         </Note>
       </Frame>
@@ -402,7 +402,7 @@ export function ShopMap({
   if (!online && coverage.state === 'none') {
     return (
       <Frame height={height}>
-        <Note>No signal, and no map saved for here.</Note>
+        <Note>No signal. No map is saved for this place.</Note>
         <Pressable
           onPress={() => router.push(`/maps?from=${here}`)}
           accessibilityRole="button"
@@ -421,7 +421,7 @@ export function ShopMap({
           </Text>
         </Pressable>
         <Text style={{ fontSize: 13, lineHeight: 19, marginTop: 10, color: C.muted, textAlign: 'center' }}>
-          Do it once on Wi-Fi and the streets are there whether or not you have
+          Save once on Wi-Fi. Then the streets show even with no
           signal.
         </Text>
       </Frame>
@@ -572,7 +572,7 @@ export function ShopMap({
 
       {!online && coverage.state === 'partial' ? (
         <Text style={[{ fontSize: 13, lineHeight: 19, marginTop: 8, color: C.warnInk }]}>
-          {`No signal. ${plural(coverage.outside, 'shop')} of these are outside the maps saved on this phone, so the streets around them will be blank.`}
+          {`No signal. Outside your saved maps: ${plural(coverage.outside, 'shop')}. The streets near them will be blank.`}
         </Text>
       ) : null}
 

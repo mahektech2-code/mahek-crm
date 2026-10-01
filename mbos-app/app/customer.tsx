@@ -65,7 +65,7 @@ import { callNumber, openWhatsApp } from '../src/lib/messaging';
  * while he read the other. It is the same shape the Accounts app has for the
  * same reason — a customer account, not a payments list.
  */
-const TABS = ['Overview', 'Timeline', 'Orders', 'Account', 'Samples', 'Complaints', 'Competitors'];
+const TABS = ['Overview', 'Timeline', 'Orders', 'Account', 'Samples', 'Complaints', 'Other brands'];
 const TL_FILTERS = ['All', 'Visits', 'Orders', 'Payments', 'Calls', 'Complaints'];
 
 /** The stream's own event types, in the words the design puts on the badge. */
@@ -100,7 +100,7 @@ const TONES: Record<string, BadgeTone> = {
  * and the outstanding above it was the line lying about its own age.
  */
 function freshness(at: number, nowMs: number): string {
-  if (!at) return 'not synced yet';
+  if (!at) return 'not sent yet';
   const mins = Math.max(0, Math.round((nowMs - at) / 60_000));
   if (mins < 1) return 'just now';
   if (mins < 60) return mins + ' min ago';
@@ -257,7 +257,7 @@ export default function CustomerRecord() {
 
   const saveCompetitor = async () => {
     if (!id) return;
-    if (!comp.name.trim()) return notify('A name is enough to start — who is it?');
+    if (!comp.name.trim()) return notify('Write the brand name first.');
     setCompBusy(true);
     const rateRupees = Number(comp.rate.replace(/[^\d]/g, ''));
     await recordCompetitor({
@@ -273,7 +273,7 @@ export default function CustomerRecord() {
     setCompBusy(false);
     setComp({ name: '', rate: '', note: '', credit: '', delivery: '', strengths: '', weaknesses: '' });
     setCompForm(false);
-    notify('Noted · ' + comp.name.trim());
+    notify('Saved · ' + comp.name.trim());
     reload();
   };
 
@@ -296,7 +296,7 @@ export default function CustomerRecord() {
         <Card style={{ paddingVertical: 32, paddingHorizontal: 20, alignItems: 'center' }}>
           <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Not on this phone yet</Text>
           <Text style={[type.small, { color: C.muted, textAlign: 'center', marginTop: 6 }]}>
-            This customer arrives with the next sync.
+            This customer will come with the next update from the office.
           </Text>
         </Card>
       </AppFrame>
@@ -328,13 +328,13 @@ export default function CustomerRecord() {
    */
   const nothingYet = (head: string, body: string) => {
     if (!loaded) {
-      return <Empty head="Reading…" body="Getting this shop's history off this phone." />;
+      return <Empty head="Loading…" body="Getting this shop's history." />;
     }
     if (failed) {
       return (
         <Empty
-          head="Could not read it off this phone"
-          body="Nothing of yours is lost. Leave the screen and come back, and if it keeps happening tell the office."
+          head="Could not load it"
+          body="Nothing is lost. Go back and open it again. If this keeps happening, tell the office."
         />
       );
     }
@@ -397,7 +397,7 @@ export default function CustomerRecord() {
                 {'Lead · ' + stageLabel(stageOf(lead))}
               </Text>
               <Text style={[type.caption, { marginTop: 2 }]}>
-                Open the funnel to move it on, or see what it is waiting for
+                Tap to move it to the next stage, or see what is pending
               </Text>
             </View>
             <Text style={{ fontSize: 18, lineHeight: 18, color: C.muted }}>›</Text>
@@ -430,7 +430,7 @@ export default function CustomerRecord() {
         {/* The age of the figures above, in the caption slot the design already
             uses for exactly this kind of aside. */}
         <Text style={[type.caption, { marginTop: 6 }]}>
-          {'From the office ' + freshness(c.lastSyncedAt, nowMs)}
+          {'Updated from office ' + freshness(c.lastSyncedAt, nowMs)}
         </Text>
 
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
@@ -513,7 +513,7 @@ export default function CustomerRecord() {
                 },
                 { label: 'Credit days', value: c.creditDays != null ? c.creditDays + ' days' : '—' },
                 { label: 'Price list', value: c.priceTag ?? '—' },
-                { label: 'Potential', value: c.potential ?? '—' },
+                { label: 'Can buy', value: c.potential ?? '—' },
                 { label: 'Orders every', value: c.cycleDays != null ? c.cycleDays + ' days' : '—' },
                 { label: 'Last visit', value: pretty(c.lastVisitDate) },
                 { label: 'Last order', value: pretty(c.lastOrderDate) },
@@ -547,15 +547,15 @@ export default function CustomerRecord() {
                 phone has no copy. The screen says so rather than leaving him
                 to discover it by looking for a list that will never appear. */}
             <Card>
-              <Text style={[type.label, { marginBottom: 6 }]}>A private note for the office</Text>
+              <Text style={[type.label, { marginBottom: 6 }]}>Private note for the office</Text>
               <Text style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginBottom: 10 }}>
-                Something about this shop the customer should never see. It goes to the office and
-                is not kept on this phone, so you will not see it here afterwards.
+                Write something the customer must never see. It goes to the office only. It is not
+                kept on this phone, so you will not see it here later.
               </Text>
               <Input
                 value={note}
                 onChangeText={setNote}
-                placeholder="Pays on time but argues every rate — send the list in writing"
+                placeholder="Pays on time but fights every rate. Send the rate list in writing."
                 multiline
               />
               <Pressable
@@ -568,7 +568,7 @@ export default function CustomerRecord() {
                     .then((r) => {
                       if (!r.ok) return notify(r.message);
                       setNote('');
-                      notify('Sent to the office · not kept on this phone');
+                      notify('Sent to office · not kept on this phone');
                     })
                     .finally(() => setNoteBusy(false));
                 }}
@@ -585,7 +585,7 @@ export default function CustomerRecord() {
                 })}>
                 <Text
                   style={[{ fontSize: 15, color: note.trim() ? C.primaryDeep : C.faint }, weight(500)]}>
-                  Send it to the office
+                  Send to office
                 </Text>
               </Pressable>
             </Card>
@@ -630,8 +630,8 @@ export default function CustomerRecord() {
               ? nothingYet(
                   tlFilter === 'All' ? 'Nothing recorded yet' : 'Nothing under ' + tlFilter,
                   tlFilter === 'All'
-                    ? 'Visits, calls, orders and payments appear here as the office records them. A shop nobody has dealt with yet has nothing to show.'
-                    : 'No ' + tlFilter.toLowerCase() + ' are recorded against this shop on this phone. Tap All to see the rest.',
+                    ? 'Visits, calls, orders and payments will show here. A new shop has nothing yet.'
+                    : 'No ' + tlFilter.toLowerCase() + ' for this shop on this phone. Tap All to see everything.',
                 )
               : null}
 
@@ -670,7 +670,7 @@ export default function CustomerRecord() {
                   </View>
                   <Text style={[type.small, { color: C.ink, marginTop: 4 }]}>{e.summary}</Text>
                   {e.sourceApp !== 'mbos' ? (
-                    <Text style={[type.caption, { marginTop: 2 }]}>From the desk team</Text>
+                    <Text style={[type.caption, { marginTop: 2 }]}>From the office team</Text>
                   ) : null}
                 </View>
               );
@@ -685,13 +685,13 @@ export default function CustomerRecord() {
                 {'The newest ' +
                   TIMELINE_PAGE +
                   (tlFilter === 'All' ? ' entries' : ' under ' + tlFilter) +
-                  '. There is older history than this.'}
+                  '. Older history is not shown.'}
               </Text>
             ) : null}
 
             <Text style={[type.caption, { marginTop: 8 }]}>
-              This is a record of what happened, so nothing can be added here — every entry comes from the screen that
-              created it.
+              This is a record of what happened. You cannot add to it here. Each entry comes from the screen where
+              it was done.
             </Text>
           </View>
         ) : null}
@@ -702,8 +702,8 @@ export default function CustomerRecord() {
           <View style={{ gap: 10 }}>
             {orders.length === 0 ? (
               nothingYet(
-                'No orders on this handset',
-                "The office's order history arrives with the day's sync. If this shop has ordered and nothing is here, sign out and in once.",
+                'No orders on this phone',
+                "Orders come from the office every day. If this shop has ordered and you see nothing, sign out and sign in once.",
               )
             ) : (
               <>
@@ -750,12 +750,12 @@ export default function CustomerRecord() {
             {accountKind === 'Lead' ? (
               <Empty
                 head="Nothing billed to a lead"
-                body="A lead is a shop that has never ordered from us. When the first order is billed, it will be on this tab."
+                body="A lead has never ordered from us. When the first order is billed, it will show here."
               />
             ) : accountKind === 'Third party' ? (
               <Empty
-                head="We deliver here and do not bill it"
-                body="The goods are invoiced to the distributor, so there are no bills on this shop. What it has taken is under Orders."
+                head="We deliver here but bill the distributor"
+                body="The bill goes to the distributor, so this shop has no bills. See what it took under Orders."
               />
             ) : (
               <>
@@ -823,15 +823,15 @@ export default function CustomerRecord() {
                     )}
                   </View>
                   <Text style={type.caption}>
-                    Billed and received are for the window above. Outstanding is the office&apos;s own
-                    figure for the whole account, and only money accounts have found in the bank
-                    counts towards it.
+                    Billed and received are for the dates above. Outstanding is the office&apos;s figure
+                    for the whole account. It counts only money the accounts team has seen in the
+                    bank.
                   </Text>
                 </Card>
 
                 {statement.openingPaise !== 0 ? (
                   <Text style={type.caption}>
-                    {inrFromPaise(statement.openingPaise)} was outstanding before this window opened.
+                    {inrFromPaise(statement.openingPaise)} was outstanding before these dates.
                   </Text>
                 ) : null}
 
@@ -839,11 +839,11 @@ export default function CustomerRecord() {
                 {statement.entries.length === 0 ? (
                   nothingYet(
                     bills.length || receipts.length
-                      ? 'Nothing in this window'
-                      : 'Nothing billed on this handset',
+                      ? 'Nothing in these dates'
+                      : 'No bills on this phone',
                     bills.length || receipts.length
-                      ? 'No bill or payment falls inside these dates. Try a wider one.'
-                      : "The office's bills and receipts arrive with the day's sync. If this shop has been billed and nothing is here, sign out and in once.",
+                      ? 'No bill or payment in these dates. Pick a longer time.'
+                      : "Bills and payments come from the office every day. If this shop has a bill and you see nothing, sign out and sign in once.",
                   )
                 ) : (
                   statement.entries.map((e) =>
@@ -873,7 +873,7 @@ export default function CustomerRecord() {
                     shopkeeper that is all there was. */}
                 {reach ? (
                   <Text style={[type.caption, { marginTop: 4 }]}>
-                    This phone holds the account back to {pretty(reach)}. Anything older is in
+                    This phone has this account from {pretty(reach)}. Older records are with
                     the office.
                   </Text>
                 ) : null}
@@ -887,8 +887,8 @@ export default function CustomerRecord() {
           <View style={{ gap: 10 }}>
             {samples.length === 0 ? (
               nothingYet(
-                'No trials on this shop',
-                'Samples you raise here show up straight away. The office only sends down the ones still open, so a trial closed at a desk stays there.',
+                'No samples for this shop',
+                'Samples you ask for here show up at once. The office sends only open samples. A sample closed by the office will not show here.',
               )
             ) : (
               <>
@@ -904,7 +904,7 @@ export default function CustomerRecord() {
                       {[
                         sm.cans ? sm.cans + (sm.cans === 1 ? ' can' : ' cans') : null,
                         'given ' + pretty(isoDate(new Date(sm.requestedAt))),
-                        sm.trialOutcome && sm.trialOutcome !== 'pending' ? 'outcome: ' + sm.trialOutcome : null,
+                        sm.trialOutcome && sm.trialOutcome !== 'pending' ? 'result: ' + sm.trialOutcome : null,
                       ]
                         .filter(Boolean)
                         .join(' · ')}
@@ -941,8 +941,8 @@ export default function CustomerRecord() {
           <View>
             {gripes.length === 0 ? (
               nothingYet(
-                'Nothing logged against this shop',
-                'A complaint is raised from the visit, under the Complaint outcome.',
+                'No complaints for this shop',
+                'To add a complaint, start a visit and pick Complaint.',
               )
             ) : (
               <View style={{ gap: 10 }}>
@@ -995,7 +995,7 @@ export default function CustomerRecord() {
                 <Input
                   value={comp.name}
                   onChangeText={(v) => setComp((s) => ({ ...s, name: v }))}
-                  placeholder="Competitor's name"
+                  placeholder="Other brand's name"
                 />
                 <Input
                   value={comp.rate}
@@ -1011,7 +1011,7 @@ export default function CustomerRecord() {
                 <Input
                   value={comp.credit}
                   onChangeText={(v) => setComp((s) => ({ ...s, credit: v }))}
-                  placeholder="Credit terms they offer (optional)"
+                  placeholder="Credit days they give (optional)"
                 />
                 {/* THE BOX THAT WAS NEVER DRAWN. `delivery` is initialised in
                     this form's state, trimmed into `recordCompetitor`, carried
@@ -1048,7 +1048,7 @@ export default function CustomerRecord() {
               </Card>
             )}
             <Text style={[type.caption, { marginTop: 10 }]}>
-              Fill this in from the conversation — a name and a rate is enough to be useful.
+              Fill this in from your talk with the shop. A name and a rate is enough.
             </Text>
 
             <View style={{ gap: 12, marginTop: 12 }}>
@@ -1065,7 +1065,7 @@ export default function CustomerRecord() {
                   </Text>
                   <Text style={[type.caption, { color: C.body, marginTop: 8 }]}>{k.strengths ?? k.weaknesses ?? ''}</Text>
                   <Text style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
-                    {'Heard on the visit, ' + pretty(isoDate(new Date(k.capturedAt)))}
+                    {'Heard on visit, ' + pretty(isoDate(new Date(k.capturedAt)))}
                   </Text>
                 </Card>
               ))}
@@ -1129,8 +1129,8 @@ function PayBehaviour({ raw }: { raw: string | null }) {
       </View>
       <Text style={[type.caption, { color: C.body, marginTop: 10 }]}>
         {lateCount === 0
-          ? 'Paid on time every one of the last six bills.'
-          : lateCount + ' of the last six bills went past the due date.'}
+          ? 'Paid all of the last six bills on time.'
+          : lateCount + ' of the last six bills were paid late.'}
       </Text>
     </Card>
   );
@@ -1165,7 +1165,7 @@ function Slice({ n, noun }: { n: number; noun: string }) {
   if (n < 10) return null;
   return (
     <Text style={[type.caption, { textAlign: 'center', marginTop: 2 }]}>
-      {'The last ' + n + ' ' + noun + 's. Older ones stay in the office.'}
+      {'The last ' + n + ' ' + noun + 's. Older ones are with the office.'}
     </Text>
   );
 }
@@ -1234,9 +1234,9 @@ function BillCard({
           <Text style={type.caption}>{pretty(bill.billDate)}</Text>
           {bill.dueDate ? <Text style={type.caption}>· due {pretty(bill.dueDate)}</Text> : null}
           {settled ? (
-            <Badge tone="success">Settled</Badge>
+            <Badge tone="success">Paid</Badge>
           ) : unstated ? (
-            <Badge tone="neutral">Not stated</Badge>
+            <Badge tone="neutral">No info</Badge>
           ) : (bill.overdueDays ?? 0) > 0 ? (
             <Badge tone="danger">{bill.overdueDays} days late</Badge>
           ) : (
@@ -1247,11 +1247,11 @@ function BillCard({
 
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
           <Text style={type.caption}>
-            {count ? count + (count === 1 ? ' item' : ' items') + (open ? '' : ' · tap to see them') : 'Nothing itemised'}
+            {count ? count + (count === 1 ? ' item' : ' items') + (open ? '' : ' · tap to see them') : 'No items listed'}
           </Text>
           <Text style={type.caption}>
             {unstated
-              ? 'No payment recorded either way'
+              ? 'No payment info yet'
               : settled
                 ? 'Paid in full'
                 : inrFromPaise(bill.balancePaise ?? 0) + ' still open'}
@@ -1282,13 +1282,13 @@ function BillCard({
           </View>
         ) : (
           <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
-            Nothing itemised against this bill in the office.
+            The office has no items listed for this bill.
           </Text>
         )
       ) : null}
 
       <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
-        {inrFromPaise(balanceAfterPaise)} outstanding after this line
+        {inrFromPaise(balanceAfterPaise)} outstanding after this
       </Text>
     </Card>
   );
@@ -1344,8 +1344,8 @@ function ReceiptCard({
       </View>
       <Text style={[type.caption, { borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }]}>
         {counted
-          ? inrFromPaise(balanceAfterPaise) + ' outstanding after this line'
-          : 'Nothing has come off the balance for this one yet'}
+          ? inrFromPaise(balanceAfterPaise) + ' outstanding after this'
+          : 'Not taken off the balance yet'}
       </Text>
     </Card>
   );

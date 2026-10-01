@@ -262,7 +262,7 @@ export async function markBounced(paymentId: string, reason?: string): Promise<v
        */
       summary:
         `Cheque ${payment.chequeNumber ?? ''} bounced` +
-        (reason?.trim() ? ` — ${reason.trim()}` : ''),
+        (reason?.trim() ? `: ${reason.trim()}` : ''),
     });
   });
 
@@ -270,7 +270,7 @@ export async function markBounced(paymentId: string, reason?: string): Promise<v
 
   await createTask({
     title:
-      `Ring ${name} — the cheque bounced` +
+      `Call ${name}. The cheque bounced` +
       (reason?.trim() ? ` (${reason.trim()})` : ''),
     customerId: payment.customerId,
     priority: 'High',
@@ -279,7 +279,7 @@ export async function markBounced(paymentId: string, reason?: string): Promise<v
 
   await notify({
     title: 'Cheque bounced',
-    body: `${name} · the amount is back on their account.`,
+    body: `${name} · the amount is pending on their account again.`,
     kind: 'danger',
     priority: 1,
   });

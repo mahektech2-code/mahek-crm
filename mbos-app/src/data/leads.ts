@@ -480,7 +480,7 @@ export async function createLead(args: {
       duplicate,
       message:
         duplicate.kind === 'customer'
-          ? duplicate.name + ' already has this number — they are on your book.'
+          ? duplicate.name + ' already has this number. This customer is already in your list.'
           : duplicate.name + ' is already a lead on this number.',
     };
   }

@@ -414,7 +414,7 @@ export default function Customers() {
        to take goes against one of them. */
     if (saving) return;
     const biller = billers?.find((b) => b.id === billerId);
-    if (!biller) return notify('Say who is billed for this shop.');
+    if (!biller) return notify('Pick who gets the bill for this shop.');
     setSaving(true);
     try {
       const r = await addFieldShop({
@@ -426,7 +426,7 @@ export default function Customers() {
       });
       if (!r.ok) return notify(r.message);
       setAdding(false);
-      notify('Shop added · queued, syncs when you have signal');
+      notify('Shop added · will send when you have signal');
       /* Straight into it, because he opened it to do something — take the
          order he is holding. */
       set({ custId: r.customerId, pTab: 0 });
@@ -650,10 +650,10 @@ export default function Customers() {
             ? 'No shop matches that'
             : noArea
               ? 'No area set for you yet'
-              : 'Nothing in your book yet'
+              : 'No customers yet'
           : rows.length < total
             ? `Showing ${rows.length} of ${plural(total, counted)}` + matching
-            : plural(total, counted) + (matching || ' · your territory')}
+            : plural(total, counted) + (matching || ' · your area')}
         {origin && originMode === 'me' ? ' · nearest first' : ''}
         {origin && originMode !== 'me' && originMode !== 'name'
           ? ` · nearest ${shortPlace(originMode)} first`
@@ -674,7 +674,7 @@ export default function Customers() {
           salesman is the one who can do something about it. */}
       {noFix && originMode === 'me' ? (
         <Text style={[type.caption, { marginTop: 4, color: C.muted }]}>
-          {'No location fix yet, so this is A–Z for now. Punch in, or pick a city.'}
+          {'No GPS yet, so the list is A–Z. Punch in, or pick a city.'}
         </Text>
       ) : null}
 
@@ -722,16 +722,16 @@ export default function Customers() {
   const emptyCard =
     asMap && rows.length > 0 ? null : !loaded ? (
       <Card style={{ marginTop: 12, alignItems: 'center', paddingVertical: 28 }}>
-        <Text style={[type.caption, { textAlign: 'center' }]}>Reading your book…</Text>
+        <Text style={[type.caption, { textAlign: 'center' }]}>Loading your customers…</Text>
       </Card>
     ) : failed ? (
       <Card style={{ marginTop: 12, alignItems: 'center', paddingVertical: 28 }}>
         <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(500)]}>
-          Could not read the book on this phone
+          Could not load your customers
         </Text>
         <Text style={[type.caption, { marginTop: 4, textAlign: 'center', paddingHorizontal: 24 }]}>
-          Nothing of yours is lost. Leave the screen and come back, and if it keeps
-          happening tell the office.
+          Nothing is lost. Go back and open it again. If this keeps happening, tell
+          the office.
         </Text>
       </Card>
     ) : (
@@ -741,12 +741,12 @@ export default function Customers() {
             ? 'No shop matches that'
             : noArea
               ? 'No area set for you yet'
-              : 'Nothing in your book yet'}
+              : 'No customers yet'}
         </Text>
         <Text style={[type.caption, { marginTop: 4, textAlign: 'center', paddingHorizontal: 24 }]}>
           {noArea && !asked
-            ? 'Your customer list stays empty until the office sets the area you work. Nothing of yours is lost — ask your manager to set it on the Sales Dashboard.'
-            : 'If you are standing in a shop we deliver to on somebody else’s bill, open it here and take the order.'}
+            ? 'Your list stays empty until the office sets your area. Nothing is lost. Ask your manager to set your area.'
+            : 'Are you in a shop where we deliver but bill someone else? Add it here and take the order.'}
         </Text>
         {/*
           WHERE THE ANSWER ACTUALLY IS.
@@ -766,8 +766,8 @@ export default function Customers() {
             <PrimaryButton
               label={
                 leadsMatching === 1
-                  ? 'One lead matches — open Leads'
-                  : `${leadsMatching} leads match — open Leads`
+                  ? '1 lead matches. Open Leads'
+                  : `${leadsMatching} leads match. Open Leads`
               }
               onPress={() => setHalf('leads')}
             />
@@ -1176,11 +1176,11 @@ export default function Customers() {
           Nearest to which town?
         </Text>
         <Text style={[type.caption, { marginBottom: 12 }]}>
-          The book is sorted outwards from the middle of the town you pick.
+          Shops nearest the middle of the town come first.
         </Text>
         {cities.length === 0 ? (
           <Text style={[type.caption, { paddingVertical: 12 }]}>
-            No shop in your book has been pinned yet, so there is nowhere to measure from.
+            None of your shops has a map location yet. So there is no town to pick.
           </Text>
         ) : (
           cities.map((c) => (
@@ -1275,13 +1275,13 @@ export default function Customers() {
           Add a delivery shop
         </Text>
         <Text style={[type.caption, { marginBottom: 12 }]}>
-          Goods go here; the bill goes to whoever you pick below.
+          Goods go to this shop. The bill goes to the one you pick below.
         </Text>
 
         {/* All four are REQUIRED and the labels say so. Every one of them was
             refused after the press, one at a time, by a toast — which is how a
             form teaches somebody that it is broken. */}
-        <Field label="Shop name" required value={newShopName} onChange={setNewShopName} placeholder="As it is written on the board" />
+        <Field label="Shop name" required value={newShopName} onChange={setNewShopName} placeholder="Name on the shop board" />
         <Field
           label="Phone"
           required
@@ -1293,7 +1293,7 @@ export default function Customers() {
         <Field label="Town" required value={shopCity} onChange={setShopCity} placeholder="Nashik" />
 
         <Text style={[type.caption, { marginTop: 14, marginBottom: 6 }]}>
-          {'WHO IS BILLED FOR IT · required'}
+          {'WHO GETS THE BILL · needed'}
         </Text>
         <TextInput
           value={billerQ}
@@ -1332,10 +1332,10 @@ export default function Customers() {
           {/* Reading, nothing matched, and nothing at all are three different
               answers. Only the last one means the form cannot be finished. */}
           {billers === null ? (
-            <Text style={type.caption}>Reading your accounts…</Text>
+            <Text style={type.caption}>Loading your accounts…</Text>
           ) : billers.length === 0 ? (
             <Text style={type.caption}>
-              {billerQ.trim() ? 'No account of yours matches that.' : 'You have no accounts to bill yet.'}
+              {billerQ.trim() ? 'None of your accounts match that.' : 'You have no accounts to bill yet.'}
             </Text>
           ) : null}
         </View>
@@ -1349,8 +1349,8 @@ export default function Customers() {
               satisfy the demand. */}
           {noBook ? (
             <Text style={[type.caption, { textAlign: 'center', paddingHorizontal: 12 }]}>
-              Your book has not reached this phone yet. A delivery shop has to name one
-              of your own accounts as the one we bill, so this needs a sync first.
+              Your customers have not come to this phone yet. You must pick one of your
+              accounts to get the bill. Wait for the office update, then try again.
             </Text>
           ) : (
             <PrimaryButton
@@ -1360,7 +1360,7 @@ export default function Customers() {
                  swallows the second tap; a missing biller keeps the button
                  pressable and `saveShop` answers in words. */
               disabled={saving || !billerId}
-              whyDisabled={saving ? undefined : 'Pick who is billed for this shop, above.'}
+              whyDisabled={saving ? undefined : 'Pick who gets the bill, above.'}
             />
           )}
         </View>
@@ -1394,7 +1394,7 @@ function Field({
   return (
     <View style={{ marginBottom: 10 }}>
       <Text style={[type.caption, { marginBottom: 4 }]}>
-        {label.toUpperCase() + (required ? ' · required' : '')}
+        {label.toUpperCase() + (required ? ' · needed' : '')}
       </Text>
       <TextInput
         value={value}

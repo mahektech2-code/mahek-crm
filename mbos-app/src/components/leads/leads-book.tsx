@@ -218,7 +218,7 @@ function LeadRow({
 
   const marks = [
     leadPriorityLabel(lead.priority),
-    lead.hasOrder === 1 ? 'Order placed' : lead.hasCommitment === 1 ? 'Committed' : null,
+    lead.hasOrder === 1 ? 'Order placed' : lead.hasCommitment === 1 ? 'Promised' : null,
     lead.leadManagerName ? 'Lead manager ' + lead.leadManagerName : null,
   ].filter(Boolean);
 
@@ -265,7 +265,7 @@ function LeadRow({
             {[
               stageLabel(rung),
               age && age > 0 ? plural(age, 'day') + ' old' : null,
-              held && held > 0 ? plural(held, 'day') + ' on this rung' : null,
+              held && held > 0 ? plural(held, 'day') + ' at this stage' : null,
             ]
               .filter(Boolean)
               .join(' \u00b7 ')}
@@ -274,12 +274,12 @@ function LeadRow({
 
         <T style={[{ fontSize: 15, marginTop: 10, color: lead.estimatedPotentialPaise ? C.ink : C.muted }, weight(500)]}>
           {lead.estimatedPotentialPaise
-            ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month, he reckons'
-            : 'Worth not estimated yet'}
+            ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month (guess)'
+            : 'Can buy: not guessed yet'}
         </T>
 
         <T style={{ fontSize: 14, lineHeight: 20, marginTop: 4, color: overdue ? C.danger : C.muted }}>
-          {owedLine ?? 'Nobody is waiting on anything'}
+          {owedLine ?? 'Nothing pending'}
         </T>
 
         {quiet ? (
@@ -302,7 +302,7 @@ function LeadRow({
               weight(500),
             ]}>
             {visitCapLabel(lead.stage, lead.visitCount, capCfg)}
-            {visitCapState(lead.stage, lead.visitCount, capCfg) === 'decide' ? ' \u00b7 a decision is due' : ''}
+            {visitCapState(lead.stage, lead.visitCount, capCfg) === 'decide' ? ' \u00b7 decide now' : ''}
           </T>
         ) : null}
 
@@ -314,7 +314,7 @@ function LeadRow({
 
         {backOfficeGap ? (
           <T style={[{ fontSize: 14, lineHeight: 20, marginTop: 4, color: C.warnInk }, weight(500)]}>
-            No back office person named — the office half of this will land on your lead manager
+            No back office person set. Office work will go to your lead manager.
           </T>
         ) : null}
 
@@ -327,7 +327,7 @@ function LeadRow({
         ) : null}
 
         {lead.archived ? (
-          <T s="caption" style={{ marginTop: 4 }}>Archived — still here, just out of the way</T>
+          <T s="caption" style={{ marginTop: 4 }}>Closed. Hidden from the main list.</T>
         ) : null}
       </Card>
     </Pressable>
@@ -545,22 +545,22 @@ export function LeadsBook() {
     /* The ladder is asked FIRST and refused first, in that order, so the
        message somebody reads names the question at the top of the form rather
        than the one they have just finished typing. */
-    if (!salesType) return setErr('Which kind of sale is this? It decides what the rest of the funnel asks.');
-    if (!name.trim()) return setErr('Say who this is — a name or the shop.');
-    if (mobile.replace(/\D/g, '').length < 10) return setErr('A ten-digit mobile, so somebody can ring them.');
-    if (!source) return setErr('Say how you found them. It is the one question only you can answer.');
+    if (!salesType) return setErr('Choose the kind of sale first.');
+    if (!name.trim()) return setErr('Write a name or the shop name.');
+    if (mobile.replace(/\D/g, '').length < 10) return setErr('Write a 10-digit mobile number.');
+    if (!source) return setErr('Choose how you found them.');
     /* Mahek's rule: a lead is raised inside his own area. Asked here so it is
        never refused in the office after the shop, the photograph and the pin
        are already behind it. */
     if (areas.kind === 'none') {
-      return setErr('No area has been allocated to you yet, so a lead cannot be raised. Ask the office to set one.');
+      return setErr('No area is set for you yet. You cannot add a lead. Ask the office to set one.');
     }
-    if (areas.kind === 'pick' && !pickedArea) return setErr('Pick the area this shop is in — a lead can only be raised inside yours.');
+    if (areas.kind === 'pick' && !pickedArea) return setErr('Choose the area this shop is in. It must be in your area.');
     if (pickedArea && !pickedArea.city && !city.trim()) return setErr('Which town in ' + pickedArea.label + '?');
     /* Refused on the phone as well as in the office, because being told after
        the fact loses the sentence he had in mind while he was standing there. */
     if (source === OTHER_SOURCE && !sourceDetail.trim()) {
-      return setErr('Say where this one actually came from — "Other" with nothing behind it is a source nobody can count later.');
+      return setErr('You chose "Other". Write where this lead came from.');
     }
 
     saving.current = true;
@@ -753,10 +753,10 @@ export function LeadsBook() {
         </T>
         <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
           {when !== 'any'
-            ? 'Every lead is still here — this is only what you owe somebody.'
+            ? 'All leads are still here. This shows only pending work.'
             : view === 'all'
-              ? 'A shop you walk past and a name somebody gives you both start here.'
-              : 'Every lead is still on All — nothing has been deleted.'}
+              ? 'Add a shop you visit or a name someone gives you.'
+              : 'All leads are still under All. Nothing is deleted.'}
         </T>
       </Card>
     ),
@@ -793,7 +793,7 @@ export function LeadsBook() {
       <BottomSheet open={formOpen} onClose={() => setFormOpen(false)} scroll>
         <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>New lead</T>
         <T s="caption" style={{ marginTop: 2 }}>
-          The number is checked against your book before this saves.
+          We check the number in your list before saving.
         </T>
 
         {/* --------------------------------------------------- §2 the ladder
@@ -845,8 +845,7 @@ export function LeadsBook() {
         <View style={{ marginTop: 12 }}>
           {areas.kind === 'none' ? (
             <T style={{ color: C.warnInk }}>
-              No area has been allocated to you yet. A lead can only be raised inside your own area — ask the office to
-              set one.
+              No area is set for you yet. You can add leads only in your own area. Ask the office to set one.
             </T>
           ) : (
             <>
@@ -910,24 +909,24 @@ export function LeadsBook() {
             <Input
               value={sourceDetail}
               onChangeText={(v) => { setSourceDetail(v); setErr(null); }}
-              placeholder="A builder on the site next door sent him"
+              placeholder="A builder nearby sent him"
             />
           </View>
         ) : null}
 
         <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>What they might buy a month</SectionLabel>
+          <SectionLabel style={{ marginBottom: 6 }}>How much they can buy a month</SectionLabel>
           <Input
             value={potential}
             onChangeText={setPotential}
             placeholder="40000"
             keyboardType="number-pad"
           />
-          <T s="caption" style={{ marginTop: 6 }}>In rupees, roughly. Leave it empty if you would only be guessing.</T>
+          <T s="caption" style={{ marginTop: 6 }}>In rupees, about. Leave it empty if you do not know.</T>
         </View>
 
         <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>Go back to them on</SectionLabel>
+          <SectionLabel style={{ marginBottom: 6 }}>Next follow-up on</SectionLabel>
           <Pressable
             onPress={() => setCal(true)}
             accessibilityRole="button"
@@ -941,15 +940,15 @@ export function LeadsBook() {
               paddingHorizontal: 14,
             }}>
             <T style={{ fontSize: 16, color: followUp ? C.ink : C.faint }}>
-              {followUp ? dmy(followUp) : 'Pick a day'}
+              {followUp ? dmy(followUp) : 'Choose a day'}
             </T>
           </Pressable>
         </View>
 
         <Divider style={{ marginTop: 20, marginBottom: 4 }} />
-        <SectionLabel style={{ marginTop: 12 }}>What you learned in the shop</SectionLabel>
+        <SectionLabel style={{ marginTop: 12 }}>What you found in the shop</SectionLabel>
         <T s="caption" style={{ marginTop: 4 }}>
-          All optional. Save what you have — you can add the rest from the lead later.
+          All optional. Save what you have. Add the rest later.
         </T>
 
         <View style={{ marginTop: 12 }}>
@@ -988,7 +987,7 @@ export function LeadsBook() {
 
         <View style={{ marginTop: 12 }}>
           <SectionLabel style={{ marginBottom: 6 }}>Who decides</SectionLabel>
-          <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="The proprietor, Mr Patil" />
+          <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="The owner, Mr Patil" />
           <T s="caption" style={{ marginTop: 6 }}>If that is not the person you spoke to.</T>
         </View>
 
@@ -998,7 +997,7 @@ export function LeadsBook() {
         </View>
 
         <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>The shop front</SectionLabel>
+          <SectionLabel style={{ marginBottom: 6 }}>Shop photo</SectionLabel>
           <DashedButton
             label={shopPhotoId ? 'Photo taken \u2713 \u00b7 retake' : 'Take a photo'}
             onPress={shootShop}
@@ -1022,7 +1021,7 @@ export function LeadsBook() {
             keeps what he typed and brings it straight back. Cancel is the one
             gesture that means throw it away, so it is the one that clears. */}
         <T s="caption" style={{ marginTop: 18 }}>
-          Close this by mistake and what you have typed will still be here. Cancel throws it away.
+          If you close this by mistake, your typing is kept. Cancel deletes it.
         </T>
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
           <SecondaryButton
@@ -1042,7 +1041,7 @@ export function LeadsBook() {
         <Calendar
           key={cal ? 'open' : 'shut'}
           selected={followUp ?? ''}
-          disabledReason={(iso) => (iso < today ? 'That day has gone.' : null)}
+          disabledReason={(iso) => (iso < today ? 'That day has passed.' : null)}
           onPick={(iso) => {
             setFollowUp(iso);
             setCal(false);

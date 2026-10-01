@@ -73,11 +73,11 @@ const km = (metres: number | null) => (metres == null ? '—' : `${(metres / 100
 function kilometresFrom(typed: string): { ok: true; metres: number } | { ok: false; why: string } {
   const raw = typed.trim().replace(/,/g, '');
   if (!/^\d{1,5}(\.\d{1,2})?$/.test(raw)) {
-    return { ok: false, why: 'Type the kilometres only — 12, or 12.5.' };
+    return { ok: false, why: 'Type only the km. Like 12, or 12.5.' };
   }
   const value = Number(raw);
   if (value <= 0) {
-    return { ok: false, why: 'A journey of no distance is not a leg — leave it empty if you do not know it.' };
+    return { ok: false, why: 'Distance cannot be 0. Leave it empty if you do not know it.' };
   }
   return { ok: true, metres: Math.round(value * 1000) };
 }
@@ -182,7 +182,7 @@ export default function TravelScreen() {
   const save = async () => {
     /* The second press answers rather than doing nothing — `whyDisabled` keeps
        the button pressable for exactly this. */
-    if (adding) return notify('This leg is being added — give it a moment.');
+    if (adding) return notify('Adding this trip. Please wait.');
     if (!mode) return notify('Pick how you travelled.');
 
     let odoS: number | null = null;
@@ -251,8 +251,8 @@ export default function TravelScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Today&apos;s travel</T>
       <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 14 }}>
-        You never work out the money — say how you went and how far, and the amount is worked out
-        for you from the policy the office has published.
+        You do not need to work out the money. Say how you went and how far. The amount is worked
+        out for you from the office policy.
       </T>
 
       {priced?.reason ? (
@@ -270,8 +270,8 @@ export default function TravelScreen() {
             </T>
           </View>
           <T s="caption" style={{ marginTop: 2 }}>
-            {km(computation.totalMetres)} across {computation.legs.length}{' '}
-            {computation.legs.length === 1 ? 'leg' : 'legs'}
+            {km(computation.totalMetres)} in {computation.legs.length}{' '}
+            {computation.legs.length === 1 ? 'trip' : 'trips'}
           </T>
         </Card>
       ) : null}
@@ -297,7 +297,7 @@ export default function TravelScreen() {
         const title = where ?? [modeLabel, purposeLabel].filter(Boolean).join(' · ');
         const caption = where
           ? [modeLabel, purposeLabel].filter(Boolean).join(' · ')
-          : 'Where you went was not typed in';
+          : 'Place not added';
         return (
           <ListCard key={leg.id} style={{ marginBottom: 8 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
@@ -316,7 +316,7 @@ export default function TravelScreen() {
             </View>
             {zero ? (
               <Badge tone="neutral" style={{ alignSelf: 'flex-start', marginTop: 6 }}>
-                Recorded, pays nothing
+                Saved, pays nothing
               </Badge>
             ) : null}
             {c?.unpricedReason ? (
@@ -335,16 +335,16 @@ export default function TravelScreen() {
                 style={{ marginTop: 8 }}
                 onPress={() => {
                   if (leg.syncState === 'synced') {
-                    void removeLeg(leg.id).then((r) => notify(r.reason ?? 'That could not be removed.'));
+                    void removeLeg(leg.id).then((r) => notify(r.reason ?? 'Not removed. Try again.'));
                     return;
                   }
                   askConfirm({
-                    title: 'Remove this leg?',
-                    body: title + ' — it comes off today and so does what it is worth. This cannot be undone.',
-                    confirmLabel: 'Remove it',
+                    title: 'Remove this trip?',
+                    body: title + '. It will be removed from today, with its amount. You cannot undo this.',
+                    confirmLabel: 'Remove',
                     run: () => {
                       void removeLeg(leg.id).then((r) => {
-                        if (!r.ok) notify(r.reason ?? 'That could not be removed.');
+                        if (!r.ok) notify(r.reason ?? 'Not removed. Try again.');
                         load();
                       });
                     },
@@ -357,11 +357,11 @@ export default function TravelScreen() {
       })}
 
       {!locked ? (
-        <DashedButton label="Add a leg" onPress={() => void start()} style={{ marginTop: 6 }} />
+        <DashedButton label="Add a trip" onPress={() => void start()} style={{ marginTop: 6 }} />
       ) : (
         <Card style={{ marginTop: 6, backgroundColor: C.warnBg }}>
           <T s="small" style={{ color: C.ink }}>
-            This day has been sent in, so nothing can be added. Ask your manager to reopen it.
+            This day is already sent. You cannot add more. Ask your manager to open it again.
           </T>
         </Card>
       )}
@@ -369,14 +369,14 @@ export default function TravelScreen() {
       <SecondaryButton label="Close the day" style={{ marginTop: 14 }} onPress={() => router.push('/eod')} />
 
       <BottomSheet open={open} onClose={() => setOpen(false)} scroll>
-        <T style={[{ fontSize: 17, color: C.ink, marginBottom: 12 }, weight(600)]}>A leg of today</T>
+        <T style={[{ fontSize: 17, color: C.ink, marginBottom: 12 }, weight(600)]}>Add a trip</T>
         <Field label="How you went">
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
             {modes.map((m) => (
               <Choice
                 key={m.key}
                 label={m.label}
-                sub={m.reimbursementKind === 'zero' ? 'pays nothing' : undefined}
+                sub={m.reimbursementKind === 'zero' ? 'not paid' : undefined}
                 selected={modeKey === m.key}
                 onPress={() => setModeKey(m.key)}
               />
@@ -398,7 +398,7 @@ export default function TravelScreen() {
           <Input value={from} onChangeText={setFrom} placeholder="Where you started" />
         </Field>
         <Field label="To">
-          <Input value={to} onChangeText={setTo} placeholder="Where you got to" />
+          <Input value={to} onChangeText={setTo} placeholder="Where you reached" />
         </Field>
         <Field label="Why">
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -416,8 +416,8 @@ export default function TravelScreen() {
         {mode?.requiresOdometer ? (
           <>
             <Field
-              label="Odometer at the start"
-              hint={odoSuggested != null ? 'Filled in from where your last leg ended.' : undefined}
+              label="Meter at start"
+              hint={odoSuggested != null ? 'Filled in from where your last trip ended.' : undefined}
               error={refusalFor('odoStart')}>
               <Input
                 value={odoStart}
@@ -429,7 +429,7 @@ export default function TravelScreen() {
                 keyboardType="numeric"
               />
             </Field>
-            <Field label="Odometer at the end" error={refusalFor('odoEnd')}>
+            <Field label="Meter at end" error={refusalFor('odoEnd')}>
               <Input
                 value={odoEnd}
                 onChangeText={(v) => {
@@ -441,7 +441,7 @@ export default function TravelScreen() {
               />
             </Field>
             <SecondaryButton
-              label={photoId ? 'Odometer photographed' : 'Photograph the odometer'}
+              label={photoId ? 'Meter photo taken' : 'Take meter photo'}
               onPress={() =>
                 void takePhoto({
                   parentType: 'travel_leg',
@@ -458,7 +458,7 @@ export default function TravelScreen() {
         ) : (
           <Field
             label="Distance in kilometres"
-            hint="If you know it. The office also measures it from your day's track."
+            hint="If you know it. The office also measures it from your GPS route."
             error={refusalFor('manualKm')}
           >
             {/* `numeric` rather than `number-pad`: a decimal is a real answer
@@ -478,7 +478,7 @@ export default function TravelScreen() {
 
         {mode?.requiresTicket ? (
           <>
-            <Field label="What the ticket cost" error={refusalFor('ticket')}>
+            <Field label="Ticket price" error={refusalFor('ticket')}>
               <Input
                 value={ticket}
                 onChangeText={(v) => {
@@ -489,17 +489,17 @@ export default function TravelScreen() {
                 keyboardType="numeric"
               />
             </Field>
-            <Field label="Ticket or PNR number" hint="It is how the office tells one ticket from another.">
+            <Field label="Ticket or PNR number" hint="The office uses it to tell tickets apart.">
               <Input value={ticketRef} onChangeText={setTicketRef} />
             </Field>
           </>
         ) : null}
 
         <PrimaryButton
-          label={adding ? 'Adding…' : 'Add this leg'}
+          label={adding ? 'Adding…' : 'Add trip'}
           style={{ marginTop: 14 }}
           disabled={adding}
-          whyDisabled="This leg is being added — give it a moment."
+          whyDisabled="Adding this trip. Please wait."
           onPress={() => void save()}
         />
       </BottomSheet>

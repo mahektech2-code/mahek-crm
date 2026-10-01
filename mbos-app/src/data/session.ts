@@ -98,8 +98,8 @@ export async function signIn(args: {
         step: 'payload',
         message:
           e instanceof Error && e.message
-            ? `Signed in, but the day's data could not be saved on this phone: ${e.message}`
-            : "Signed in, but the day's data could not be saved on this phone.",
+            ? `Signed in, but your data could not be saved on this phone: ${e.message}`
+            : "Signed in, but your data could not be saved on this phone.",
       };
     }
 
@@ -187,17 +187,17 @@ async function signInOffline(mobile: string, password: string): Promise<LoginOut
   const session = await currentSession();
 
   if (!raw || !session) {
-    return { ok: false, step: 'mobile', message: 'No connection, and this phone has not signed in before.' };
+    return { ok: false, step: 'mobile', message: 'No internet. This phone has not signed in before. Connect to the internet and try again.' };
   }
 
   const stored = JSON.parse(raw) as { salt: string; hash: string; mobile: string };
   if (stored.mobile !== mobile.trim()) {
-    return { ok: false, step: 'mobile', message: 'No connection. Only the last person to sign in on this phone can sign in offline.' };
+    return { ok: false, step: 'mobile', message: 'No internet. Without internet, only the last person who signed in on this phone can sign in.' };
   }
 
   const attempt = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, stored.salt + mobile + password);
   if (attempt !== stored.hash) {
-    return { ok: false, step: 'credential', message: 'That password does not match the one used last time on this phone.' };
+    return { ok: false, step: 'credential', message: 'Wrong password. It does not match the one used last time on this phone.' };
   }
 
   const lastOnline = Number((await getKv(LAST_ONLINE_KEY)) ?? 0);
@@ -208,7 +208,7 @@ async function signInOffline(mobile: string, password: string): Promise<LoginOut
     return {
       ok: false,
       step: 'status',
-      message: `This phone has been offline for ${Math.floor(ageDays)} days. Find signal once to sign in again.`,
+      message: `This phone has had no internet for ${Math.floor(ageDays)} days. Connect once to sign in again.`,
     };
   }
 

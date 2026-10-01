@@ -97,7 +97,7 @@ export default function AttendanceScreen() {
    */
   const askCorrection = (d: AttendanceDay) => {
     if (d.regularizationId) {
-      notify('Your manager already has a correction for ' + dmy(d.day) + '. Nothing changes until they answer it.');
+      notify('You already asked your manager to fix ' + dmy(d.day) + '. Wait for their answer.');
       return;
     }
     askConfirm({
@@ -105,13 +105,13 @@ export default function AttendanceScreen() {
       body:
         'Your manager sees ' +
         dmy(d.day) +
-        ', what the app recorded, and your reason. Nothing changes until they approve it.',
-      reasonLabel: 'What happened · required',
+        ', what the app saved, and your reason. Nothing changes until they approve it.',
+      reasonLabel: 'What happened · needed',
       confirmLabel: 'Send to manager',
       run: async (r) => {
         await requestRegularisation(d.id, r);
         load();
-        notify('Sent to your manager · ' + dmy(d.day) + ' · nothing changes until they approve it');
+        notify('Sent to your manager · ' + dmy(d.day) + ' · nothing changes until they approve');
       },
     });
   };
@@ -166,9 +166,9 @@ export default function AttendanceScreen() {
           <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }}>
             {todaySessions.map((x, i) => (
               <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
-                <T s="caption">{'Session ' + (i + 1)}</T>
+                <T s="caption">{'Check-in ' + (i + 1)}</T>
                 <T style={[{ fontSize: 14, color: x.outAt == null ? C.primaryDeep : C.body }, tabular]}>
-                  {hhmm(x.inAt) + ' – ' + (x.outAt == null ? 'running' : hhmm(x.outAt))}
+                  {hhmm(x.inAt) + ' – ' + (x.outAt == null ? 'still on' : hhmm(x.outAt))}
                 </T>
               </View>
             ))}
@@ -194,20 +194,20 @@ export default function AttendanceScreen() {
       </Card>
 
       <T s="label" style={{ marginTop: 18, marginBottom: 8 }}>
-        Days recorded on this phone
+        Days saved on this phone
       </T>
 
       <ListCard>
         {!loaded ? (
           <View style={{ paddingHorizontal: 16, paddingVertical: 20 }}>
             <T s="small" style={{ color: C.muted }}>
-              Reading this phone&apos;s record…
+              Loading…
             </T>
           </View>
         ) : readFailed ? (
           <View style={{ paddingHorizontal: 16, paddingVertical: 20 }}>
             <T s="small" style={{ color: C.ink }}>
-              This phone&apos;s record could not be read. Open the screen again.
+              Could not load. Open this screen again.
             </T>
           </View>
         ) : days.length === 0 ? (
@@ -215,12 +215,12 @@ export default function AttendanceScreen() {
              the screen a salesman opens to check his own pay. */
           <View style={{ paddingHorizontal: 16, paddingVertical: 20 }}>
             <T style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(600)]}>
-              Nothing recorded on this phone yet
+              Nothing saved on this phone yet
             </T>
             <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-              This list is only what this handset marked, and a new or reinstalled phone starts empty. It is
-              not your attendance — the office holds that, and it is what your pay is read against. Ask your
-              manager if a day looks missing there.
+              This list shows only what this phone saved. A new or reset phone starts empty. This is
+              not your full attendance. The office keeps that, and your pay is based on it. Ask your
+              manager if a day is missing.
             </T>
           </View>
         ) : null}
@@ -246,7 +246,7 @@ export default function AttendanceScreen() {
               accessibilityRole="button"
               accessibilityLabel={'Ask about ' + dmy(d.day)}
               accessibilityHint={
-                asked ? 'A correction for this day is already with your manager' : 'Ask your manager to correct this day'
+                asked ? 'You already asked your manager to fix this day' : 'Ask your manager to fix this day'
               }
               onPress={() => askCorrection(d)}
               style={{
@@ -269,12 +269,12 @@ export default function AttendanceScreen() {
                 </T>
                 <T s="caption">
                   {isPresent
-                    ? hoursLabel(d.workedMinutes) + (sessionsOf(d).length > 1 ? ` · ${sessionsOf(d).length} sessions` : '')
+                    ? hoursLabel(d.workedMinutes) + (sessionsOf(d).length > 1 ? ` · punched in ${sessionsOf(d).length} times` : '')
                     : state}
                 </T>
                 {asked ? (
                   <T s="caption" style={{ color: C.warnInk, marginTop: 1 }}>
-                    Correction asked — with your manager
+                    Fix asked. Waiting for your manager.
                   </T>
                 ) : null}
               </View>

@@ -96,12 +96,12 @@ export default function Nearby() {
       </View>
 
       {busy ? (
-        <T s="caption" style={{ marginTop: 16 }}>Looking…</T>
+        <T s="caption" style={{ marginTop: 16 }}>Searching…</T>
       ) : failed ? (
         <Card style={{ marginTop: 16 }}>
-          <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>That did not come back</T>
+          <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Could not load the list</T>
           <T s="caption" style={{ marginTop: 4 }}>
-            Nothing is wrong with your book — the list could not be worked out just now.
+            Your customers are safe. The list could not be made right now.
           </T>
           <DashedButton
             label="Try again"
@@ -119,12 +119,12 @@ export default function Nearby() {
               ? 'Location permission is off'
               : answer?.reason === 'off'
                 ? 'Location is switched off'
-                : 'No position yet'}
+                : 'No GPS yet'}
           </T>
           <T s="caption" style={{ marginTop: 4 }}>
             {answer?.reason === 'denied'
-              ? 'Turn it on for MBOS in your phone settings and come back.'
-              : 'Step outside for a moment — this needs a fix to measure from.'}
+              ? 'Turn it on for MBOS in phone settings. Then come back.'
+              : 'Step outside for a minute so GPS can find you.'}
           </T>
         </Card>
       ) : (
@@ -159,7 +159,7 @@ export default function Nearby() {
                   style={{ flex: 1 }}
                 />
                 <PrimaryButton
-                  label="Open the shop"
+                  label="Open shop"
                   onPress={() => open(answer.best!.shop.id)}
                   style={{ flex: 1, borderRadius: radius.xl }}
                 />
@@ -169,14 +169,14 @@ export default function Nearby() {
 
           <T s="caption" style={{ marginTop: 16 }}>
             {answer.shops.length
-              ? answer.shops.length + ' worth stopping at within ' + metresLabel(answer.radiusMetres)
+              ? answer.shops.length + ' shops to visit within ' + metresLabel(answer.radiusMetres)
               : /* The advice only where there IS a wider circle. On the widest
                    the sentence named the one action that does not exist, which
                    is an empty state whose only instruction is a dead end. */
                 'Nothing within ' +
                 metresLabel(answer.radiusMetres) +
-                ' has anything outstanding.' +
-                (answer.radiusMetres < Math.max(...answer.options, 0) ? ' Try a wider circle.' : '')}
+                ' has anything pending.' +
+                (answer.radiusMetres < Math.max(...answer.options, 0) ? ' Try a bigger distance.' : '')}
           </T>
 
           <View style={{ gap: 12, marginTop: 8 }}>
@@ -219,7 +219,7 @@ export default function Nearby() {
               how a screen shows thirty of a hundred and says nothing. */}
           {answer.shops.length > NEARBY_PAGE ? (
             <T s="caption" style={{ marginTop: 12, textAlign: 'center' }}>
-              {`${NEARBY_PAGE} of ${answer.shops.length}, best first. Narrow the circle for the ones around you.`}
+              {`${NEARBY_PAGE} of ${answer.shops.length}, best first. Pick a smaller distance to see shops close to you.`}
             </T>
           ) : null}
         </>

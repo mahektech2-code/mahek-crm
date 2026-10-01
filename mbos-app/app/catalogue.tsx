@@ -137,16 +137,16 @@ export default function CatalogueScreen() {
   /* Nothing terminal until the read has answered, and a catalogue that never
      arrived is a different sentence from a word that matched nothing. */
   const blank = !loaded ? (
-    <Line>Reading the catalogue…</Line>
+    <Line>Loading products…</Line>
   ) : failed ? (
     <Line>
-      {'Could not read the catalogue off this phone. Leave the screen and come back, and if it keeps happening tell the office.'}
+      {'Could not load products. Go back and open it again. If this keeps happening, tell the office.'}
     </Line>
   ) : asked ? (
-    <Line>{'Nothing matches that. Try the grade, like "epoxy".'}</Line>
+    <Line>{'No product found. Try a type, like "epoxy".'}</Line>
   ) : (
     <Line>
-      {'The product list has not reached this phone yet. It arrives with a sync — open Sync from the More tab when you have signal.'}
+      {'Products have not come to this phone yet. They come with the next office update. Wait until you have signal.'}
     </Line>
   );
 

@@ -72,7 +72,7 @@ test('a few characters are not an account of the visit', () => {
   const checks = visitChecks({ ...facts, noteChars: 5 });
   const note = checks.find((c) => c.key === 'note')!;
   assert.equal(note.ok, false);
-  assert.match(note.line, /15 more characters/);
+  assert.match(note.line, /15 more letters/);
 });
 
 test('a shop found shut needs no note — there is nothing to report but the shutter', () => {

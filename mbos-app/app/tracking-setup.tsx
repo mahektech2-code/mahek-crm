@@ -123,7 +123,7 @@ export default function TrackingSetupScreen() {
       /* Every rung of the ladder failed, which on a real handset means the
          settings app itself refused an intent. Saying so beats a button that
          appears to do nothing. */
-      notify('Could not open that screen — you can reach it from Android Settings');
+      notify('Could not open that screen. Find it in your phone Settings.');
     }
   };
 
@@ -141,14 +141,14 @@ export default function TrackingSetupScreen() {
   const act = async () => {
     if (verdict.action === 'recheck') {
       reread();
-      notify('Checked — nothing has changed on this phone');
+      notify('Checked. Nothing has changed on this phone.');
       return;
     }
     if (verdict.action !== 'restart_app' || restarting) return;
     setRestarting(true);
     if (!(await restartApp())) {
       setRestarting(false);
-      notify('Could not restart it — close MahekOne completely and open it again');
+      notify('Could not restart. Close MahekOne fully and open it again.');
     }
     /* No `finally`. On the path that worked there is nothing after this: the
        reload is already posted to the main thread and no code here may assume
@@ -162,13 +162,13 @@ export default function TrackingSetupScreen() {
       <Card style={{ gap: 8 }}>
         <T style={[{ fontSize: 16, color: C.ink }, weight(600)]}>Why this matters</T>
         <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>
-          Your phone tries to save battery by stopping apps you are not looking at. When it stops
-          MahekOne, your route stops being recorded — and the office sees you standing still
-          somewhere you left hours ago.
+          Your phone saves battery by stopping apps you are not using. When it stops
+          MahekOne, your route is not recorded. Then the office sees you standing still
+          at a place you left hours ago.
         </T>
         <T style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>
-          These two settings tell your phone to leave it alone while your day is open. It still
-          stops the moment you check out.
+          These two settings keep MahekOne running during your work day. It still
+          stops when you check out.
         </T>
       </Card>
 
@@ -219,8 +219,8 @@ export default function TrackingSetupScreen() {
                 color: exemption === 'exempt' ? C.muted : C.danger,
               }}>
               {exemption === 'exempt'
-                ? 'Your phone says battery saving is off for MahekOne. That part is done.'
-                : 'Your phone still has battery saving switched on for MahekOne — it can stop your route being recorded at any time.'}
+                ? 'Battery saving is off for MahekOne. This step is done.'
+                : 'Battery saving is still on for MahekOne. It can stop your route at any time. Tap Allow it.'}
             </T>
           ) : null}
 
@@ -229,8 +229,8 @@ export default function TrackingSetupScreen() {
                own page, and a tick here would be the app asserting something
                it has no way to know. */
             <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
-              We cannot tell from here whether that switch is on — if the office says your route is
-              still going quiet, come back and check it.
+              The app cannot see if this switch is on. If the office says your route still has
+              gaps, come back and check it.
             </T>
           ) : null}
         </Card>
@@ -293,10 +293,9 @@ export default function TrackingSetupScreen() {
           disagreeing about whether a setting is compulsory is how a team
           concludes neither of them means anything. */}
       <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 14 }}>
-        Nothing here is asked of you twice, and your day is still recorded while the app is open
-        either way. What it costs to skip is the part of the day your phone is in your pocket — and
-        a day that records nothing at all can stop the next morning from starting until this is
-        sorted out.
+        You only do this once. Your day is still recorded while the app is open. If you skip it,
+        the time your phone is in your pocket is not recorded. If a whole day records nothing,
+        you may not be able to start the next day until this is fixed.
       </T>
     </AppFrame>
   );

@@ -54,8 +54,8 @@ export async function isOnline(): Promise<boolean> {
 export async function syncNow(opts: { manual?: boolean } = {}): Promise<SyncOutcome> {
   const empty: SyncOutcome = { ran: false, pushed: 0, accepted: 0, rejected: 0, failed: 0, pulled: 0 };
 
-  if (running) return { ...empty, reason: 'A sync is already running' };
-  if (!(await isOnline())) return { ...empty, reason: 'No signal — everything stays queued' };
+  if (running) return { ...empty, reason: 'Already sending. Please wait.' };
+  if (!(await isOnline())) return { ...empty, reason: 'No signal. Everything waits to send.' };
 
   running = true;
   try {
@@ -100,11 +100,11 @@ export async function syncNow(opts: { manual?: boolean } = {}): Promise<SyncOutc
         if (result.serverNumber) await stampServerNumber(item, result.serverNumber);
         accepted += 1;
       } else if (result.status === 'rejected') {
-        await markRejected(item, result.code ?? 'validation', result.message ?? 'The office refused this record.');
+        await markRejected(item, result.code ?? 'validation', result.message ?? 'The office did not accept this.');
         await onRejection(item, result.code ?? 'validation', result.message ?? '');
         rejected += 1;
       } else {
-        await markFailure(item, result.message ?? 'The office could not accept this yet.');
+        await markFailure(item, result.message ?? 'The office could not take this yet. It will try again.');
         failed += 1;
       }
     }
@@ -202,7 +202,7 @@ async function onRejection(item: QueueItem, code: string, message: string): Prom
   if (item.entityType === 'order' && payload.customerId) {
     const { createTask } = await import('../data/tasks');
     await createTask({
-      title: `Ring ${payload.customerName ?? 'the customer'} — the order was not accepted`,
+      title: `Call ${payload.customerName ?? 'the customer'}. The order was not accepted`,
       description: `${message} (${code})`,
       customerId: payload.customerId,
       priority: 'High',

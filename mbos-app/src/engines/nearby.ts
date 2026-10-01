@@ -105,7 +105,7 @@ export function nearby<T extends NearbyInput>(
     let worth = 0;
 
     if (shop.hasOpenTask) {
-      reasons.push('Something is waiting on your list');
+      reasons.push('You have a task for this shop');
       worth += WORTH.openTask;
     }
 
@@ -119,7 +119,7 @@ export function nearby<T extends NearbyInput>(
     }
 
     if (shop.outstandingPaise >= DEBT_FLOOR_PAISE) {
-      reasons.push('Money outstanding');
+      reasons.push('Payment pending');
       worth += WORTH.owesMoney;
     }
 

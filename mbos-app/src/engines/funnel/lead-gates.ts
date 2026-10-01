@@ -50,12 +50,12 @@ export type Condition = {
 export const PROSPECT_CONDITIONS: readonly Condition[] = [
   { id: "customer_type", says: "Say what kind of business this is" },
   { id: "monthly_litres", says: "How many litres a month do they use?" },
-  { id: "potential_value", says: "What could they be worth in a month, in rupees?" },
-  { id: "competitor", says: "Whose product are they using now?" },
-  { id: "required_product", says: "Which of ours do they need?" },
-  { id: "contact_person", says: "Who do we ask for when we ring?" },
+  { id: "potential_value", says: "How much can they buy in a month, in rupees?" },
+  { id: "competitor", says: "Which brand are they using now?" },
+  { id: "required_product", says: "Which of our products do they need?" },
+  { id: "contact_person", says: "Who should we ask for when we call?" },
   { id: "next_action", says: "What happens next, and when?" },
-  { id: "prospect_reason", says: "Say why this is worth pursuing" },
+  { id: "prospect_reason", says: "Say why this lead is worth following up" },
 ] as const;
 
 /**
@@ -94,13 +94,13 @@ export const PROSPECT_CONDITIONS: readonly Condition[] = [
  * `buyer_confirmed` is the eighth and it is CONDITIONAL — see its satisfier.
  */
 export const QUALIFICATION_CONDITIONS: readonly Condition[] = [
-  { id: "gst_verified", says: "Get their GST number — the back office checks it" },
-  { id: "application_understood", says: "Get the precise detail of what they will use it on" },
+  { id: "gst_verified", says: "Get their GST number for the back office to check" },
+  { id: "application_understood", says: "Find out exactly what they will use it on" },
   { id: "price_discussed", says: "Talk about price, or at least a range" },
   { id: "credit_days", says: "Ask what credit they need" },
-  { id: "delivery_discussed", says: "State how long delivery takes and check it suits them" },
-  { id: "buyer_confirmed", says: "Confirm who places the order, if that is not the decision maker" },
-  { id: "agrees_to_test", says: "Reconfirm they will try it, now price and credit are on the table" },
+  { id: "delivery_discussed", says: "Tell them how long delivery takes, and check it suits them" },
+  { id: "buyer_confirmed", says: "Find out who places the order, if not the person who decides" },
+  { id: "agrees_to_test", says: "Check again that they will try it, now they know the price and credit" },
   { id: "next_step_agreed", says: "Agree what happens if the trial goes well" },
 ] as const;
 
@@ -114,17 +114,17 @@ export const QUALIFICATION_CONDITIONS: readonly Condition[] = [
  */
 export const DISTRIBUTOR_CONDITIONS: readonly Condition[] = [
   /* business and legal */
-  { id: "gst_verified", says: "Verify their GST", group: "legal" },
-  { id: "pan_verified", says: "Verify their PAN", group: "legal" },
-  { id: "address_verified", says: "Verify the business address", group: "legal" },
-  { id: "business_type", says: "Record what kind of business it is", group: "legal" },
-  { id: "years_in_business", says: "How long have they been trading?", group: "legal" },
+  { id: "gst_verified", says: "Check their GST", group: "legal" },
+  { id: "pan_verified", says: "Check their PAN", group: "legal" },
+  { id: "address_verified", says: "Check the business address", group: "legal" },
+  { id: "business_type", says: "Write down what kind of business it is", group: "legal" },
+  { id: "years_in_business", says: "How many years have they been in business?", group: "legal" },
   { id: "decision_maker", says: "Who makes the decisions?", group: "legal" },
 
   /* distribution capability */
   { id: "dealer_network", says: "Do they have a dealer network?", group: "capability" },
-  { id: "active_dealers", says: "How many dealers are actually active?", group: "capability" },
-  { id: "territory_covered", says: "What territory do they cover?", group: "capability" },
+  { id: "active_dealers", says: "How many dealers are really active?", group: "capability" },
+  { id: "territory_covered", says: "What area do they cover?", group: "capability" },
   { id: "cities_covered", says: "Which cities and markets?", group: "capability" },
   { id: "sales_team", says: "How many people do they have selling?", group: "capability" },
   { id: "delivery_capability", says: "How do they deliver?", group: "capability" },
@@ -133,24 +133,24 @@ export const DISTRIBUTOR_CONDITIONS: readonly Condition[] = [
 
   /* commercial capability */
   { id: "product_portfolio", says: "What do they carry now?", group: "commercial" },
-  { id: "competitor_brands", says: "Which competing brands?", group: "commercial" },
+  { id: "competitor_brands", says: "Which other brands do they sell?", group: "commercial" },
   { id: "monthly_potential", says: "What could they do in a month?", group: "commercial" },
   { id: "initial_order_potential", says: "What would the first order be?", group: "commercial" },
-  { id: "investment_capacity", says: "What can they put in?", group: "commercial" },
+  { id: "investment_capacity", says: "How much money can they invest?", group: "commercial" },
   { id: "expected_monthly_purchase", says: "What will they buy each month?", group: "commercial" },
-  { id: "credit_days_required", says: "What credit period do they want?", group: "commercial" },
+  { id: "credit_days_required", says: "How many credit days do they want?", group: "commercial" },
   { id: "credit_limit_required", says: "What credit limit do they want?", group: "commercial" },
 
   /* territory */
-  { id: "proposed_territory", says: "Which territory are they asking for?", group: "territory" },
-  { id: "existing_checked", says: "Check whether we already have somebody there", group: "territory" },
-  { id: "conflict_checked", says: "Settle whether that clashes with anyone", group: "territory" },
-  { id: "exclusivity", says: "Are they asking for exclusivity?", group: "territory" },
+  { id: "proposed_territory", says: "Which area are they asking for?", group: "territory" },
+  { id: "existing_checked", says: "Check if we already have a distributor there", group: "territory" },
+  { id: "conflict_checked", says: "Check if that clashes with anyone", group: "territory" },
+  { id: "exclusivity", says: "Do they want to be our only distributor there?", group: "territory" },
 
   /* commitment */
-  { id: "initial_stock", says: "What stock will they commit to?", group: "commitment" },
-  { id: "monthly_commitment", says: "What will they commit to monthly?", group: "commitment" },
-  { id: "dealer_development", says: "What will they do about growing dealers?", group: "commitment" },
+  { id: "initial_stock", says: "How much stock will they promise to buy?", group: "commitment" },
+  { id: "monthly_commitment", says: "How much will they promise to buy each month?", group: "commitment" },
+  { id: "dealer_development", says: "How will they add more dealers?", group: "commitment" },
   { id: "expected_start", says: "When would they start?", group: "commitment" },
 ] as const;
 
@@ -308,7 +308,7 @@ function missingFrom(
  */
 const NEXT_ACTION_CONDITION: Condition = {
   id: "next_action",
-  says: "Say what happens next, on what day, and who is doing it",
+  says: "Say what happens next, on which day, and who will do it",
 };
 
 function nextActionMet(i: LeadGateInput): boolean {
@@ -361,7 +361,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       if (!has(i.verifiedAt)) {
         out.push({
           id: "manager_verified",
-          says: "Your sales manager has to verify this customer first",
+          says: "Your sales manager must check this customer first",
         });
       }
       return out;
@@ -438,7 +438,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       if (i.figuresStale) {
         out.push({
           id: "figures_fresh",
-          says: "Confirm the monthly requirement, the potential, the product and the competitor still hold",
+          says: "Check that the monthly need, how much they can buy, the product and the other brand are still correct",
         });
       }
 
@@ -466,13 +466,13 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
           id: "manager_review_open",
           says:
             i.qualificationReview === "incomplete"
-              ? "Your sales manager marked this qualification incomplete — answer the note and it goes back for review"
-              : "Your sales manager asked for a clarification — answer it and it goes back for review",
+              ? "Your sales manager marked this qualification incomplete, so answer the note to send it back for review"
+              : "Your sales manager asked for a clarification, so answer it to send it back for review",
         });
       } else if (i.qualificationReview !== "verified") {
         out.push({
           id: "manager_review_pending",
-          says: "Your sales manager has to review and verify this qualification",
+          says: "Your sales manager must review and check this qualification",
         });
       }
 
@@ -491,7 +491,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       ) {
         out.push({
           id: "distributor_named",
-          says: "Say which distributor invoices this shop",
+          says: "Say which distributor bills this shop",
         });
       }
       return out;
@@ -500,7 +500,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
     /* --------------------------------------------------------------- §15 */
     case "sample_received": {
       if (i.sample?.state !== "dispatched" && i.sample?.state !== "received") {
-        out.push({ id: "sample_dispatched", says: "The sample has to be sent first" });
+        out.push({ id: "sample_dispatched", says: "The sample must be sent first" });
       }
       return out;
     }
@@ -508,7 +508,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
     case "sample_review": {
       const s = i.sample?.state;
       if (s !== "received" && s !== "trial_done" && s !== "reviewed") {
-        out.push({ id: "sample_delivered", says: "Confirm they actually received it" });
+        out.push({ id: "sample_delivered", says: "Check that they really got it" });
       }
       return out;
     }
@@ -525,7 +525,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
          than a contradictory pair — the trial is a rung on both ladders that
          reach here, so no sample is one fact and deserves one sentence. */
       if (!i.sample) {
-        out.push({ id: "sample_sent", says: "Nothing has been sent for them to try yet" });
+        out.push({ id: "sample_sent", says: "No sample has been sent to them yet" });
         return out;
       }
       if (!i.sample.feedbackRecorded) {
@@ -534,7 +534,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       if (i.sample.trialOutcome !== "approved") {
         out.push({
           id: "sample_approved",
-          says: "They have to be happy with the trial before you negotiate",
+          says: "They must be happy with the trial before you talk price",
         });
       }
       return out;
@@ -545,18 +545,18 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       if (!has(i.expectedOrderDate)) {
         out.push({
           id: "expected_order_date",
-          says: "Ask when they will place it, and record the date",
+          says: "Ask when they will place the order, and write down the date",
         });
       }
       if (!(i.countingOrderCount && i.countingOrderCount >= 1)) {
-        out.push({ id: "order_placed", says: "There is no order on this account yet" });
+        out.push({ id: "order_placed", says: "This customer has no order yet" });
       }
       return out;
     }
 
     case "delivery": {
       if (!(i.deliveredOrderCount && i.deliveredOrderCount >= 1)) {
-        out.push({ id: "order_delivered", says: "The material has not reached them yet" });
+        out.push({ id: "order_delivered", says: "The goods have not reached them yet" });
       }
       return out;
     }
@@ -565,7 +565,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       if (!(i.confirmedPaymentCount && i.confirmedPaymentCount >= 1)) {
         out.push({
           id: "payment_confirmed",
-          says: "Accounts have not found the money in the bank yet",
+          says: "Accounts have not seen the money in the bank yet",
         });
       }
       return out;
@@ -574,7 +574,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
     /* ----------------------------------------------------------- §21 §22 */
     case "second_order": {
       if (!(i.countingOrderCount && i.countingOrderCount >= 2)) {
-        out.push({ id: "second_order_placed", says: "They have not come back with a second order" });
+        out.push({ id: "second_order_placed", says: "They have not placed a second order yet" });
       }
       return out;
     }
@@ -583,7 +583,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       if (!(i.countingOrderCount && i.countingOrderCount >= 2)) {
         out.push({
           id: "two_orders",
-          says: "A customer is somebody who came back — two orders, not one",
+          says: "A customer must order twice, not just once",
         });
       }
       return out;
@@ -642,7 +642,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       if (!i.managementReviewApproved) {
         out.push({
           id: "manager_recommended",
-          says: "Your sales manager has to put them forward first",
+          says: "Your sales manager must send them forward first",
         });
       }
       return out;
@@ -652,7 +652,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       if (!i.commercialTermsAgreed) {
         out.push({
           id: "terms_agreed",
-          says: "Settle the discount, the credit limit and the territory first",
+          says: "First agree the discount, credit limit and area",
         });
       }
       if (!i.distributorApprovalApproved) {
@@ -666,7 +666,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
 
     case "distributor_agreement": {
       if (!i.agreementOnFile) {
-        out.push({ id: "agreement_signed", says: "Put the signed agreement on file" });
+        out.push({ id: "agreement_signed", says: "Add the signed agreement to the file" });
       }
       return out;
     }
@@ -675,7 +675,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
       if (!i.initialStockOrderPlaced) {
         out.push({
           id: "stock_ordered",
-          says: "They have not placed the stock order they committed to",
+          says: "They have not placed the stock order they promised",
         });
       }
       return out;
@@ -683,7 +683,7 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
 
     case "active_distributor": {
       if (!i.initialStockOrderPlaced) {
-        out.push({ id: "stock_ordered", says: "The initial stock order has not been placed" });
+        out.push({ id: "stock_ordered", says: "The first stock order is not placed yet" });
       }
       return out;
     }

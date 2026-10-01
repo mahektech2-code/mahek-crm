@@ -51,7 +51,7 @@ export default function SalaryScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Salary</T>
       <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 16 }}>
-        Read from the office. Raise anything that looks wrong directly with them.
+        These figures come from the office. If something looks wrong, tell the office.
       </T>
 
       {/* THREE ANSWERS, NOT TWO. The read being in flight, the table being
@@ -63,25 +63,25 @@ export default function SalaryScreen() {
           all. */}
       {!months ? (
         <Card style={{ paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
-          <T s="small" style={{ color: C.muted, textAlign: 'center' }}>Reading…</T>
+          <T s="small" style={{ color: C.muted, textAlign: 'center' }}>Loading…</T>
         </Card>
       ) : months.length === 0 ? (
         <Card style={{ paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-            No payslip has reached this phone yet
+            No payslip on this phone yet
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            It arrives on the next sync once the office has published the month.
+            It will come after the office sends this month’s salary.
           </T>
         </Card>
       ) : !hasFigures ? (
         <Card style={{ paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-            Not matched to an employee record yet
+            Your employee record is not linked yet
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            The office holds your pay against your email or work number — ask them to check either
-            is set correctly on your account.
+            The office links your pay to your email or work number. Ask them to check both are
+            correct on your account.
           </T>
         </Card>
       ) : (
@@ -129,7 +129,7 @@ function SalaryCard({ m }: { m: SalaryMonth }) {
         {m.daysOnLeave ? <Row label="Days on leave" value={plural(m.daysOnLeave, 'day')} /> : null}
         {/* Beside the pay, never added to it — money owed back is not earnings. */}
         {m.reimbursedPaise ? (
-          <Row label="Reimbursed separately" value={inrFromPaise(m.reimbursedPaise)} tone={C.success} />
+          <Row label="Paid back to you separately" value={inrFromPaise(m.reimbursedPaise)} tone={C.success} />
         ) : null}
       </View>
     </Card>

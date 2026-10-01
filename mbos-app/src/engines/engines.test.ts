@@ -389,7 +389,7 @@ test('overdue, late-paying and complained-about all pull the score down', () => 
   assert.ok(poorly.score < 40, `${poorly.score}`);
   const recency = poorly.components.find((c) => c.key === 'recency')!;
   assert.equal(recency.score, 0);
-  assert.ok(recency.sentence.includes('overdue'));
+  assert.ok(recency.sentence.includes('Late'));
 });
 
 /* --------------------------------------------------------------- schemes */

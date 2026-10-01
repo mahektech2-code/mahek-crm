@@ -171,7 +171,7 @@ function locationServicesItem(i: ReadinessInput): ReadinessItem {
       state: 'unknowable',
       title: 'Could not check location',
       detail:
-        'The phone would not say whether location is on. Open your location settings and make sure it is.',
+        'Your phone did not tell us if location is on. Open location settings and switch it on.',
       action: 'location_settings',
     };
   }
@@ -181,8 +181,8 @@ function locationServicesItem(i: ReadinessInput): ReadinessItem {
     state: 'todo',
     title: 'Location is switched off',
     detail:
-      'Switch on location for the whole phone, not just for MBOS. With it off, nothing you do today ' +
-      'is recorded anywhere.',
+      'Switch on location for the whole phone, not just for MBOS. If it is off, ' +
+      'nothing you do today is saved.',
     action: 'location_settings',
   };
 }
@@ -217,7 +217,7 @@ function permissionItem(
       detail:
         key === 'foreground'
           ? 'Allowed.'
-          : 'Allowed all the time, so the trail keeps running with the phone in your pocket.',
+          : 'Allowed all the time. Your route is saved even with the phone in your pocket.',
       action: null,
     };
   }
@@ -229,10 +229,10 @@ function permissionItem(
       title: key === 'foreground' ? 'Your phone will not ask again' : 'Your phone will not ask again',
       detail:
         (key === 'foreground'
-          ? 'Location was refused for MBOS and your phone has stopped offering to ask. '
-          : 'Following your day was refused and your phone has stopped offering to ask. ') +
-        'Open Settings → Permissions → Location and set it by hand. If you cannot find it, ring the ' +
-        'office — MBOS cannot fix this from here, and the day cannot be started until it is fixed.',
+          ? 'Location was not allowed for MBOS. Your phone will not ask again. '
+          : 'Location all the time was not allowed. Your phone will not ask again. ') +
+        'Open Settings → Permissions → Location and set it yourself. If you cannot find it, ring the ' +
+        'office. MBOS cannot fix this. You cannot start the day until it is fixed.',
       action: 'app_settings',
     };
   }
@@ -244,8 +244,8 @@ function permissionItem(
     detail:
       key === 'foreground'
         ? 'Tap below and choose Allow when your phone asks.'
-        : 'Tap below and choose “Allow all the time”. Anything less and the trail stops the moment ' +
-          'you put the phone away.',
+        : 'Tap below and choose “Allow all the time”. With any other choice, your route stops ' +
+          'when you put the phone away.',
     action: 'ask_permission',
   };
 }
@@ -256,7 +256,7 @@ function batteryItem(i: ReadinessInput): ReadinessItem {
       key: 'battery',
       state: 'ok',
       title: 'The battery saver will leave MBOS alone',
-      detail: 'Your phone will let MBOS keep working while it is in your pocket.',
+      detail: 'MBOS will keep working while the phone is in your pocket.',
       action: null,
     };
   }
@@ -267,8 +267,8 @@ function batteryItem(i: ReadinessInput): ReadinessItem {
       state: 'todo',
       title: 'The battery saver will stop MBOS',
       detail:
-        'Your phone is set to switch MBOS off to save battery. It takes one tap to allow it. Without ' +
-        'it, the office stops seeing you a few minutes after you put the phone away.',
+        'Your phone switches MBOS off to save battery. One tap fixes it. If you do not, ' +
+        'the office stops seeing you a few minutes after you put the phone away.',
       action: 'battery',
     };
   }
@@ -283,7 +283,7 @@ function batteryItem(i: ReadinessInput): ReadinessItem {
     key: 'battery',
     state: 'unknowable',
     title: 'Could not check the battery saver',
-    detail: 'This phone will not tell MBOS what the battery saver is set to. Do the step below as well.',
+    detail: 'This phone does not tell MBOS how the battery saver is set. Do the step below too.',
     action: null,
   };
 }
@@ -328,8 +328,8 @@ function autostartItem(i: ReadinessInput): ReadinessItem {
       state: 'todo',
       title: oem.label,
       detail:
-        'Your last working day recorded no movement at all, which is what this setting does when it ' +
-        'is off — your phone switched MBOS off behind your back. ' +
+        'Your last working day saved no movement at all. This happens when this setting is off. ' +
+        'Your phone switched MBOS off without telling you. ' +
         where +
         ' Then tell us you have done it.',
       action: 'autostart',
@@ -341,8 +341,8 @@ function autostartItem(i: ReadinessInput): ReadinessItem {
     state: 'unknowable',
     title: oem.label,
     detail:
-      'No phone will tell MBOS whether this is switched on, so we cannot tick it for you. It is worth ' +
-      'checking once. ' +
+      'Phones do not tell MBOS if this is on, so we cannot tick it for you. ' +
+      'Check it once. ' +
       where,
     action: 'autostart',
   };

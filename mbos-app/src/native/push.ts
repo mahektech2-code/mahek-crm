@@ -93,7 +93,7 @@ export async function pushStatus(): Promise<PushReadiness> {
       return {
         ok: false,
         reason: 'not-configured',
-        why: 'The office has not finished setting push up. Nothing is lost — messages wait in the app.',
+        why: 'The office has not finished setting up notifications. Nothing is lost. Messages wait in the app.',
       };
     }
     type PermissionState = { granted: boolean };
@@ -107,7 +107,7 @@ export async function pushStatus(): Promise<PushReadiness> {
     }
     return { ok: true };
   } catch {
-    return { ok: false, reason: 'unsupported', why: 'This handset cannot be registered for push.' };
+    return { ok: false, reason: 'unsupported', why: 'This phone cannot get notifications.' };
   }
 }
 
@@ -152,7 +152,7 @@ export async function registerForPush(): Promise<PushReadiness> {
       return {
         ok: false,
         reason: 'permission',
-        why: 'Notifications are switched off for MBOS. Turn them on in your phone’s Settings.',
+        why: 'Notifications are off for MBOS. Turn them on in your phone Settings.',
       };
     }
 
@@ -161,7 +161,7 @@ export async function registerForPush(): Promise<PushReadiness> {
       return {
         ok: false,
         reason: 'not-configured',
-        why: 'The office has not finished setting push up yet. Nothing is lost — messages are waiting in the app.',
+        why: 'The office has not finished setting up notifications. Nothing is lost. Messages are waiting in the app.',
       };
     }
 
@@ -175,7 +175,7 @@ export async function registerForPush(): Promise<PushReadiness> {
     return {
       ok: false,
       reason: 'unsupported',
-      why: 'This handset could not be registered for push. Messages still arrive in the app.',
+      why: 'This phone could not be set up for notifications. Messages still come in the app.',
     };
   }
 }

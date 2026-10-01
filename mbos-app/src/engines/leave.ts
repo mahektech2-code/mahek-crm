@@ -80,7 +80,7 @@ export function leaveDays(request: LeaveRequestSpan): LeaveDaysResult {
     // are whole days whatever it says — so it is dropped and the form is told,
     // rather than being silently honoured on one end nobody chose.
     note: request.half
-      ? 'A half day only applies to a single-day request, so the whole range is counted as full days.'
+      ? 'Half day works only for one day. So all these days are counted as full days.'
       : null,
   };
 }

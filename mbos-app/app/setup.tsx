@@ -83,7 +83,7 @@ export default function SetupScreen() {
             await askPopups();
             break;
           case 'location_settings':
-            if (!(await openLocationSettings())) notify('Could not open it. Open Settings → Location by hand.');
+            if (!(await openLocationSettings())) notify('Could not open it. Open Settings → Location yourself.');
             break;
           case 'ask_background':
             await askBackgroundLocation();
@@ -92,7 +92,7 @@ export default function SetupScreen() {
             await requestBatteryExemption();
             break;
           case 'app_settings':
-            if (!(await openAppSettings())) notify('Could not open the settings. Ring the office.');
+            if (!(await openAppSettings())) notify('Could not open the settings. Call the office.');
             break;
           case 'autostart': {
             const opened = await openAutostartSettings();
@@ -100,9 +100,9 @@ export default function SetupScreen() {
                of these menus are not public, and landing on MBOS's own page
                looks like the app opened the wrong thing unless it says so. */
             if (opened === 'opened_app_settings') {
-              notify('Your phone’s own screen would not open. Look for: ' + step.title);
+              notify('That phone screen did not open. Look for: ' + step.title);
             } else if (opened === 'failed') {
-              notify('Could not open it. The steps are on this screen — find it by hand.');
+              notify('Could not open it. Follow the steps on this screen yourself.');
             }
             setSentToAutostart(true);
             break;
@@ -133,12 +133,12 @@ export default function SetupScreen() {
     <AppFrame title="Set up your phone" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <Card>
         <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-          {current ? 'A minute, once, and your day records itself' : 'Your phone is set up'}
+          {current ? 'Set this up once. It takes one minute.' : 'Your phone is set up'}
         </T>
         <T s="small" style={{ color: C.muted, marginTop: 4 }}>
           {current
-            ? 'Android makes every app ask for these one by one — MBOS cannot switch them on for you. ' +
-              'Do each step below; it takes you straight to the right place.'
+            ? 'Android asks for each of these one by one. MBOS cannot turn them on for you. ' +
+              'Do each step below. Each button opens the right place.'
             : 'Everything MBOS needs is allowed. ' + RESTART_ANSWER}
         </T>
       </Card>
@@ -205,14 +205,14 @@ export default function SetupScreen() {
                         <PrimaryButton
                           label={busy ? 'Waiting for your phone…' : step.button}
                           disabled={busy}
-                          whyDisabled="Your phone is still answering the last step."
+                          whyDisabled="Wait. Your phone is still on the last step."
                           onPress={() => void run(step)}
                           style={{ marginTop: 12, borderRadius: radius.md }}
                         />
                       ) : null}
                       {step.key === 'autostart' && sentToAutostart ? (
                         <SecondaryButton
-                          label="I have switched it on"
+                          label="I turned it on"
                           onPress={() => void confirm()}
                           style={{ marginTop: 8, borderRadius: radius.md }}
                         />
@@ -226,7 +226,7 @@ export default function SetupScreen() {
 
           {current?.key === 'autostart' && !sentToAutostart ? (
             <T s="caption" style={{ marginTop: 10 }}>
-              Open the setting first. You can tell us you have done it once you come back.
+              Open the setting first. Come back here after you turn it on.
             </T>
           ) : null}
 

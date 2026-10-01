@@ -217,7 +217,7 @@ function Cover({
         MBOS is locked
       </T>
       <T s="body" style={{ color: C.muted, marginTop: 6, textAlign: 'center' }}>
-        {finger ? 'Touch the sensor to open your day.' : `Use ${label.toLowerCase()} to open your day.`}
+        {finger ? 'Touch the fingerprint sensor to open the app.' : `Use ${label.toLowerCase()} to open the app.`}
       </T>
 
       {why ? (
@@ -240,7 +240,7 @@ function Cover({
         label={asking ? 'Waiting for your finger…' : 'Unlock'}
         onPress={onUnlock}
         disabled={asking}
-        whyDisabled="The fingerprint prompt is already open."
+        whyDisabled="The fingerprint box is already open."
         style={{ marginTop: 24, alignSelf: 'stretch' }}
       />
 
@@ -248,7 +248,7 @@ function Cover({
           own prompt carries the PIN. Saying so is what stops somebody with a
           wet thumb concluding they are shut out of their own day. */}
       <T s="caption" style={{ marginTop: 12, textAlign: 'center' }}>
-        If your finger will not read, your phone offers its PIN on the same prompt.
+        If your finger does not work, use your phone PIN in the same box.
       </T>
     </View>
   );

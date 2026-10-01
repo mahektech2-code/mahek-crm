@@ -32,8 +32,8 @@ const WHENS: ('Today' | 'Yesterday' | 'Earlier')[] = ['Today', 'Yesterday', 'Ear
  * and "Open" names nothing.
  */
 const CTA: Record<string, string> = {
-  '/customers': 'Ring the customer',
-  '/customer': 'Ring the customer',
+  '/customers': 'Call the customer',
+  '/customer': 'Call the customer',
   '/tasks': 'Open tasks',
   '/journey': 'See the route',
   '/expenses': 'Open expenses',
@@ -139,7 +139,7 @@ export default function NotificationsScreen() {
         <View style={{ marginTop: 20 }}>
           <StubCard
             title="Nothing yet"
-            body="The office reaches you here — an order it could not accept, a day it wants you to agree, a task somebody has given you."
+            body="Messages from the office show here. For example, an order not accepted, a day plan to agree, or a new task."
           />
         </View>
       ) : null}
@@ -148,7 +148,7 @@ export default function NotificationsScreen() {
         <View style={{ marginTop: 20 }}>
           <StubCard
             title="Could not read your notifications"
-            body="Nothing has been lost — they are still on this phone. Leave the screen and come back."
+            body="Nothing is lost. They are still on this phone. Go back and open this screen again."
           />
         </View>
       ) : null}

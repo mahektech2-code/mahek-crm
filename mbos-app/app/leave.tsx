@@ -57,7 +57,7 @@ const HALVES: [string, string, string][] = [
   ['Afternoon', 'Second half', '1:30 pm – 6:00 pm'],
 ];
 
-const LV_NOTE = 'A day off during the week needs 48 hours notice unless it is sick leave.';
+const LV_NOTE = 'Ask 48 hours before a weekday off. Sick leave does not need this.';
 
 /** Unpaid leave has no balance to spend, so it is never in `leave_balances`. */
 const LOSS_OF_PAY = 'Loss of pay';
@@ -147,12 +147,12 @@ export default function LeaveScreen() {
   const afterLine =
     left == null
       ? balancesMissing
-        ? 'Unpaid — it would come off this month’s salary. Your paid balance has not reached this phone, so ask the office before you send this as unpaid.'
-        : 'Unpaid. It comes off this month’s salary.'
+        ? 'Unpaid. It will be cut from this month’s salary. Your paid leave balance is not on this phone yet. Ask the office before you send this as unpaid.'
+        : 'Unpaid. It will be cut from this month’s salary.'
       : dayCount
         ? dayCount > left
-          ? 'You have ' + left + ' left — ' + plural(dayCount - left, 'day') + ' of this goes unpaid.'
-          : left - dayCount + ' would be left after this.'
+          ? 'You have ' + left + ' left. ' + plural(dayCount - left, 'day') + ' of this will be unpaid.'
+          : left - dayCount + ' will be left after this.'
         : left + ' available.';
 
   const afterWarn = (left != null && dayCount > left) || left == null;
@@ -169,14 +169,14 @@ export default function LeaveScreen() {
    * something he has done, in words telling him to do it again.
    */
   const refuseTo = (iso: string) =>
-    pick === 'to' && !!lv.from && iso < lv.from ? 'Leave cannot end before it starts' : null;
+    pick === 'to' && !!lv.from && iso < lv.from ? 'Last day cannot be before the first day' : null;
 
   const send = async () => {
     /* The second press ANSWERS rather than doing nothing — `whyDisabled` keeps
        the button pressable for exactly this. A leave request written twice is
        a deduction taken twice, and the overlap guard cannot catch it: it reads
        the table before the first insert has committed. */
-    if (sending) return notify('This request is on its way — give it a moment.');
+    if (sending) return notify('Sending this request. Please wait.');
     if (!lv.from || (span === 'many' && (!lv.to || dayCount < 1))) return setErr('dates');
     if (!lv.reason.trim()) return setErr('reason');
 
@@ -244,18 +244,18 @@ export default function LeaveScreen() {
       {!loaded ? (
         <Card style={{ marginTop: 12 }}>
           <T s="small" style={{ color: C.muted }}>
-            Reading your balance…
+            Loading your balance…
           </T>
         </Card>
       ) : balancesMissing ? (
         <Card style={{ marginTop: 12, backgroundColor: C.warnBg }}>
           <T style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(600)]}>
-            Your leave balance has not reached this phone yet
+            Your leave balance is not on this phone yet
           </T>
           <T s="small" style={{ color: C.ink, marginTop: 4 }}>
-            Either the office has not sent it, or this phone has not synced since it did. It does not mean you
-            have no leave left. You can still ask for leave — but only unpaid can be picked here until the
-            balance arrives, so ask the office first if you have paid days to use.
+            The office has not sent it, or this phone has not got it yet. It does not mean you have no leave
+            left. You can still ask for leave. But you can only pick unpaid leave until the balance comes.
+            If you have paid leave to use, ask the office first.
           </T>
         </Card>
       ) : (
@@ -314,19 +314,19 @@ export default function LeaveScreen() {
                   accessibilityRole="button"
                   onPress={() =>
                     askConfirm({
-                      title: 'Withdraw this request?',
-                      body: l.kind + ' · ' + whenOf(l) + '. Your manager is told it is no longer needed.',
-                      confirmLabel: 'Withdraw it',
+                      title: 'Take back this request?',
+                      body: l.kind + ' · ' + whenOf(l) + '. Your manager will be told you do not need it now.',
+                      confirmLabel: 'Take back',
                       run: () => {
                         void withdrawLeave(l.id).then(() => {
                           load();
-                          notify('Withdrawn · ' + whenOf(l));
+                          notify('Taken back · ' + whenOf(l));
                         });
                       },
                     })
                   }
                   style={{ minHeight: 48, justifyContent: 'center', marginTop: 6 }}>
-                  <T style={[{ fontSize: 14, color: C.danger }, weight(500)]}>Withdraw</T>
+                  <T style={[{ fontSize: 14, color: C.danger }, weight(500)]}>Take back</T>
                 </Pressable>
               ) : null}
             </View>
@@ -338,7 +338,7 @@ export default function LeaveScreen() {
       <BottomSheet open={open} onClose={() => setOpen(false)} scroll>
         <T s="h2">Apply for leave</T>
         <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-          Your manager sees this straight away.
+          Your manager will see this now.
         </T>
 
         <View style={{ marginTop: 16 }}>
@@ -349,8 +349,8 @@ export default function LeaveScreen() {
               pay" chip reads as the whole of what he is entitled to ask for. */}
           {balancesMissing ? (
             <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk, marginBottom: 8 }}>
-              Your leave balance has not reached this phone, so only unpaid leave can be picked here. If you
-              have paid days left, ask the office to put this in for you instead.
+              Your leave balance is not on this phone yet. So you can only pick unpaid leave here. If you
+              have paid leave left, ask the office to apply for you.
             </T>
           ) : null}
           {/* WRAPPED, not N equal columns. With three balance kinds beside
@@ -451,7 +451,7 @@ export default function LeaveScreen() {
           />
           {err === 'reason' ? (
             <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
-              Your manager approves on the reason — say what it is.
+              Your manager approves based on the reason. Please write it.
             </T>
           ) : null}
         </View>
@@ -462,7 +462,7 @@ export default function LeaveScreen() {
             label={sending ? 'Sending…' : 'Send request'}
             onPress={send}
             disabled={sending}
-            whyDisabled="This request is on its way — give it a moment."
+            whyDisabled="Sending this request. Please wait."
             style={{ flex: 1 }}
           />
         </View>

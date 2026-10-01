@@ -341,7 +341,7 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
 
   if (!args.verified) {
     await notify({
-      title: 'Visit saved unverified',
+      title: 'Visit saved, not checked',
       body: `${args.customerName} · your manager will see the reason you gave.`,
       kind: 'amber',
       href: '/sync',

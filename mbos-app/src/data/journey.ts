@@ -167,10 +167,10 @@ export async function createDay(
 ): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
   const where = city.trim();
   if (!where) {
-    return { ok: false, message: 'Which city are you working? The shop list is filtered by it.' };
+    return { ok: false, message: 'Which city are you working in? The shop list shows only that city.' };
   }
   if (planDate < today()) {
-    return { ok: false, message: 'That day has already gone. Pick today or a day ahead.' };
+    return { ok: false, message: 'That day is over. Pick today or a later day.' };
   }
 
   /* One row per day, here as well as on the server's unique index: a second
@@ -230,7 +230,7 @@ export async function refuseDay(
   if (!said) {
     return {
       ok: false,
-      message: 'Say why it will not work — without it your manager has nothing to go on.',
+      message: 'Say why it will not work. Your manager needs a reason.',
     };
   }
   await answer(id, { answer: 'refused', reason: said, counterCity: counterCity?.trim() || null });
@@ -538,7 +538,7 @@ export async function pickShops(
   if (!customerIds.length) {
     return {
       ok: false,
-      message: 'Pick at least one shop. A day with nothing on it is not a route.',
+      message: 'Pick at least one shop for the day.',
     };
   }
 

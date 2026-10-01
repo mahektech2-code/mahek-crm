@@ -103,9 +103,9 @@ function typedClock(raw: string): string {
 
 /** Said next to the controls, because the warning card is at the top of a screen
     somebody reads from the bottom. */
-const LOCKED_HINT = 'Sent in — this cannot be changed here.';
+const LOCKED_HINT = 'Already sent. You cannot change it here.';
 const LOCKED_WHY =
-  'You have sent this day in, so it cannot be changed. Ask your manager to reopen it.';
+  'You already sent this day. You cannot change it. Ask your manager to open it again.';
 
 export default function DayScreen() {
   const back = useCameFrom('more');
@@ -174,8 +174,8 @@ export default function DayScreen() {
   const locked = row?.lockedAt != null;
 
   const save = async () => {
-    if (left && !HHMM.test(left.trim())) return notify('The time you left should look like 08:15.');
-    if (back_ && !HHMM.test(back_.trim())) return notify('The time you got back should look like 19:30.');
+    if (left && !HHMM.test(left.trim())) return notify('Type the time you left like this: 08:15.');
+    if (back_ && !HHMM.test(back_.trim())) return notify('Type the time you got back like this: 19:30.');
 
     const id = row?.id ?? (await openDay({ userId, day }));
     const num = (v: string) => (v.trim() === '' ? null : Number(v.replace(/[^0-9]/g, '')) || null);
@@ -191,7 +191,7 @@ export default function DayScreen() {
       openingOdometerKm: num(odoOpen),
       closingOdometerKm: num(odoClose),
     });
-    if (!result.ok) return notify(result.reason ?? 'That did not save.');
+    if (!result.ok) return notify(result.reason ?? 'Not saved. Try again.');
     /* Saved, so what is on the screen and what is in the database agree again
        and the next focus may refresh the fields freely. */
     dirty.current = null;
@@ -208,15 +208,15 @@ export default function DayScreen() {
     <AppFrame title="Your day" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 32 }}>
       <BackLink label={back.label} onPress={back.go} />
       <T s="small" style={{ color: C.muted, marginTop: 6, marginBottom: 16 }}>
-        When you left and when you got back is all the meal allowance needs — it is worked out from
-        these two times, so you never have to claim food.
+        Your food allowance is worked out from these two times. Add when you left and when you
+        got back. You do not need to claim food.
       </T>
 
       {locked ? (
         <Card style={{ marginBottom: 12, backgroundColor: C.warnBg }}>
           <T s="small" style={{ color: C.ink }}>
-            You have sent this day in, so it cannot be changed here. Ask your manager to reopen it —
-            what you sent stays exactly as you sent it.
+            You already sent this day. You cannot change it here. Ask your manager to open it again.
+            What you sent stays the same.
           </T>
         </Card>
       ) : null}
@@ -263,7 +263,7 @@ export default function DayScreen() {
 
       <T style={[{ fontSize: 15, color: C.ink, marginBottom: 8 }, weight(600)]}>Where you went</T>
       <Card>
-        <Field label="Town or city" hint="The hotel and food limits can differ by place.">
+        <Field label="Town or city" hint="Hotel and food limits can be different for each place.">
           <Input
             value={city}
             onChangeText={(v) => {
@@ -300,7 +300,7 @@ export default function DayScreen() {
             {!hotel ? (
               <Field
                 label="Time you reached"
-                hint="If you travelled overnight and arrived early without taking a room, there is an allowance for the morning. This is the time it is worked out from."
+                hint="Travelled overnight and reached early, with no hotel room? You get a morning allowance. It is worked out from this time."
               >
                 <Input
                   value={arrived}
@@ -320,10 +320,10 @@ export default function DayScreen() {
 
       <Divider style={{ marginVertical: 14 }} />
 
-      <T style={[{ fontSize: 15, color: C.ink, marginBottom: 8 }, weight(600)]}>Odometer</T>
+      <T style={[{ fontSize: 15, color: C.ink, marginBottom: 8 }, weight(600)]}>Meter</T>
       <T s="small" style={{ color: C.muted, marginBottom: 8 }}>
-        Only if you used your own bike or car. Each leg starts from where the last one ended, so the
-        day reads as one chain and a gap in it is easy to see.
+        Only if you used your own bike or car. Each trip starts where the last one ended. So a gap
+        is easy to see.
       </T>
       <Card>
         <Field label="Reading at the start of the day">

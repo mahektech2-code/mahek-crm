@@ -201,7 +201,7 @@ export function oemWords(oem: Oem): OemWords {
     OEM_WORDS[oem] ?? {
       label: `Let ${APP_LABEL} run in the background`,
       path:
-        'Open your phone Settings and look for Battery, then for anything about background apps, ' +
+        'Open your phone Settings and look for Battery. Then look for background apps, ' +
         `app launch or autostart. Set ${APP_LABEL} so the phone never stops it.`,
       also: null,
     }
@@ -228,8 +228,8 @@ export function keepAliveSteps(oem: Oem): KeepAliveStep[] {
       key: 'battery',
       title: `Let ${APP_LABEL} run in the background`,
       detail:
-        'Android stops apps it thinks are using battery. This one has to keep recording while your ' +
-        'day is open. Tap Allow on the box that appears.',
+        'Android stops apps to save battery. This app must keep working while your ' +
+        'day is open. Tap Allow on the box that comes up.',
       grantable: true,
     },
     {
@@ -326,8 +326,8 @@ export function shouldOfferSetup(args: {
  * twice this week needs to be told it was never the step.
  */
 export const RESTART_ANSWER =
-  'You do not need to restart your phone. The battery setting works the moment you allow it, and ' +
-  'the autostart one is read the next time your day starts.';
+  'You do not need to restart your phone. The battery setting works as soon as you allow it. ' +
+  'The autostart setting works from the next time you start your day.';
 
 
 /**
@@ -371,9 +371,9 @@ export function trackingVerdict(i: {
   if (i.capture === 'service' || i.capture === 'background') {
     return {
       tone: 'good',
-      title: 'Your route is being recorded',
+      title: 'Your route is being saved',
       detail:
-        'It keeps going with the phone in your pocket, and it stops the moment you check out. ' +
+        'It keeps going with the phone in your pocket. It stops when you check out. ' +
         'Nothing else to do.',
       action: null,
     };
@@ -388,15 +388,15 @@ export function trackingVerdict(i: {
   if (i.capture === 'floor') {
     return {
       tone: 'act',
-      title: 'Only recording while the app is open',
+      title: 'Route saved only when the app is open',
       detail:
         (i.exemption === 'optimised'
-          ? 'Your phone is still stopping MahekOne in the background — do the battery step above first. '
-          : 'Your phone stopped MahekOne in the background earlier today. ') +
+          ? 'Your phone still stops MahekOne when the app is closed. Do the battery step above first. '
+          : 'Your phone stopped MahekOne earlier today when the app was closed. ') +
         (i.canRestart
-          ? 'Restart MahekOne and it will try again. Nothing saved on this phone is lost by that.'
-          : 'Close MahekOne completely and open it again, and it will try again. Nothing saved on ' +
-            'this phone is lost by that.'),
+          ? 'Restart MahekOne and it will try again. You will not lose anything saved on this phone.'
+          : 'Close MahekOne completely and open it again. It will try again. You will not lose ' +
+            'anything saved on this phone.'),
       action: i.canRestart ? 'restart_app' : null,
     };
   }
@@ -410,13 +410,13 @@ export function trackingVerdict(i: {
    */
   return {
     tone: 'idle',
-    title: 'Nothing to record yet',
+    title: 'Nothing to save yet',
     detail:
       (i.exemption === 'optimised'
-        ? 'Battery saving is still switched on for MahekOne — do the step above, or your route will ' +
-          'have holes in it. '
+        ? 'Battery saver is still on for MahekOne. Do the step above, or your route will ' +
+          'have gaps. '
         : '') +
-      'Recording starts when you start your day and stops when you check out.',
+      'Your route is saved from when you start your day until you check out.',
     action: 'recheck',
   };
 }

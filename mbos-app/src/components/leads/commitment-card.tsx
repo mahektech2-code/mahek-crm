@@ -74,7 +74,7 @@ export function CommitmentCard({
     <Card>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <T style={[{ flex: 1, minWidth: 0, fontSize: 16, color: C.ink }, weight(600)]}>
-          {date ? 'They said they would order' : 'Nobody has asked for the order yet'}
+          {date ? 'They promised to order' : 'Order not asked for yet'}
         </T>
         {date ? (
           <Badge tone={ordered ? 'success' : blocked ? 'amber' : 'teal'}>
@@ -100,7 +100,7 @@ export function CommitmentCard({
               agreed it. */}
           {quantityCans ? null : (
             <T s="caption" style={{ marginTop: 4 }}>
-              No size was recorded against this one. Record it again to say how many cans.
+              Number of cans was not saved. Save it again with the cans.
             </T>
           )}
 
@@ -115,19 +115,17 @@ export function CommitmentCard({
                been overtaken by a real order, so an old date left standing
                alone reads as something still owed. */
             <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
-              An order has since been placed on this account, so what they promised has been overtaken. The
-              order is what counts from here.
+              An order has now been placed. The real order counts now, not the promise.
             </T>
           ) : date < today ? (
             <T style={{ fontSize: 14, lineHeight: 20, color: C.warnInk, marginTop: 6 }}>
-              {'That day has gone and no order has come. Go back to them, and record what they say now.'}
+              {'That day has passed and no order came. Visit them again. Save what they say now.'}
             </T>
           ) : null}
         </>
       ) : (
         <T style={{ fontSize: 15, lineHeight: 21, color: C.muted, marginTop: 8 }}>
-          Ask when they will place the first order and how much of it. It is what you were told, not an order —
-          nothing climbs a rung on it.
+          Ask when they will give the first order, and how much. This is only a promise, not an order. The stage does not change with it.
         </T>
       )}
 
@@ -137,18 +135,18 @@ export function CommitmentCard({
         {ordered
           ? 'The office has the order on this account.'
           : countingOrderCount === null
-            ? 'Your sales manager confirms the actual order once it is placed. This phone has not heard the order count yet.'
-            : 'Your sales manager confirms the actual order once it is placed, with its value and its reference. There is none on this account yet.'}
+            ? 'Your sales manager confirms the real order after it is placed. This phone does not have the order count yet.'
+            : 'Your sales manager confirms the real order after it is placed, with its value and number. No order yet.'}
       </T>
 
       {date ? (
         <SecondaryButton
-          label="They have changed what they said"
+          label="Change the promise"
           onPress={onRecord}
           style={{ marginTop: 12 }}
         />
       ) : (
-        <PrimaryButton label="Record what they promised" onPress={onRecord} style={{ marginTop: 12 }} />
+        <PrimaryButton label="Save their promise" onPress={onRecord} style={{ marginTop: 12 }} />
       )}
     </Card>
   );
