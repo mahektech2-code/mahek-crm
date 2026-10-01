@@ -194,6 +194,9 @@ export function SalesManagerRecordScreen({ initialTab, timeline }: { initialTab?
       {!lead.lost ? <ProtoNextAction lead={lead} today={todayDate} canWork={canWork} onEdit={() => openModal("nextaction", lead.id)} /> : null}
       {lead.salesType === "third_party" ? <ProtoRelationship lead={lead} /> : null}
 
+      {/* The whole ladder, straight under the next-action band — every rung, done / current / upcoming. */}
+      <ProtoStanding lead={lead} ladder={ladder} currentIdx={currentIdx} />
+
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1.5fr_1fr]">
         <div>
           <SalesmanCard lead={lead} today={todayDate} />
@@ -217,7 +220,6 @@ export function SalesManagerRecordScreen({ initialTab, timeline }: { initialTab?
         </div>
       </div>
 
-      <ProtoStanding lead={lead} ladder={ladder} currentIdx={currentIdx} />
       <ProtoTabs tabs={tabs} active={active} onChange={setTab} />
 
       <div>
