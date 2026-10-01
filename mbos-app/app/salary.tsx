@@ -126,7 +126,6 @@ function SalaryCard({ m }: { m: SalaryMonth }) {
           label="Days worked"
           value={m.daysWorked != null ? plural(m.daysWorked, 'day') : '—'}
         />
-        {m.daysOnLeave ? <Row label="Days on leave" value={plural(m.daysOnLeave, 'day')} /> : null}
         {/* Beside the pay, never added to it — money owed back is not earnings. */}
         {m.reimbursedPaise ? (
           <Row label="Reimbursed separately" value={inrFromPaise(m.reimbursedPaise)} tone={C.success} />
