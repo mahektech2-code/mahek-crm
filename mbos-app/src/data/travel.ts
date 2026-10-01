@@ -333,28 +333,6 @@ export async function legsFor(dayId: string): Promise<TravelLeg[]> {
   );
 }
 
-/**
- * The odometer reading the next leg should start from.
- *
- * Prefilled from the previous leg's end so a day is a CHAIN — and so a gap in
- * the chain is visible rather than being something nobody notices until the
- * month is closed.
- */
-export async function nextOdometerStart(dayId: string): Promise<number | null> {
-  const row = await one<{ odometerEndKm: number | null }>(
-    `SELECT odometerEndKm FROM travel_legs
-      WHERE expenseDayId = ? AND odometerEndKm IS NOT NULL
-      ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
-    [dayId],
-  );
-  if (row?.odometerEndKm != null) return row.odometerEndKm;
-  const day = await one<{ openingOdometerKm: number | null }>(
-    'SELECT openingOdometerKm FROM expense_days WHERE id = ?',
-    [dayId],
-  );
-  return day?.openingOdometerKm ?? null;
-}
-
 export async function addLeg(args: {
   userId: string;
   expenseDayId: string;
@@ -435,20 +413,6 @@ export async function addLeg(args: {
     await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.ticketPhotoId]);
   }
   return id;
-}
-
-export async function removeLeg(legId: string): Promise<{ ok: boolean; reason?: string }> {
-  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [legId]);
-  if (!leg) return { ok: false, reason: 'That leg is not on this phone.' };
-  if (leg.syncState === 'synced') {
-    return {
-      ok: false,
-      reason: 'The office already has this leg. Tell your manager rather than deleting it here — a leg that vanishes from one side and not the other is worse than a wrong one.',
-    };
-  }
-  await run('DELETE FROM travel_legs WHERE id = ?', [legId]);
-  await run(`DELETE FROM sync_queue WHERE entityId = ?`, [legId]);
-  return { ok: true };
 }
 
 /* ------------------------------------------------------------ the pricing */

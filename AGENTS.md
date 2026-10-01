@@ -5287,6 +5287,18 @@ his mileage evidence is read — him, or a Sales Dashboard holder with him in
 scope. The Decide dialog on `/sales/expenses` now shows each claim with its
 files; before, a manager decided a day's money from two totals.
 
+**TODAY'S TRAVEL READS; IT NO LONGER ASKS.** `/travel` (More → Today's travel)
+outlived that reversal with an "Add a leg" sheet of its own — mode, from and
+to, both meter readings, a photograph, a ticket fare and its PNR — which made
+it a third door for exactly the two questions the punch and Expenses were
+built to be the only ones asking, and a fare typed there was a second claim
+for a ticket Expenses could not see. It lists the legs the day recorded on its
+own, with what each is worth and why a visit's leg pays nothing inside a meter
+day, and sends every cost to Expenses with the claim sheet up. Removing a leg
+went with it: the legs are the app's record now, and a wrong one is a
+manager's to correct. Nothing writes `origin = 'day_log'` any more; the column
+value stays because legs already on the server carry it.
+
 **HOW HE GOT TO THE SHOP IS ASKED WHEN HE SETS OFF, and "Start visit" now
 means "I am setting off".** Pressing it opens `TravelGate` — the modes from
 `mbos_travel_modes`, an admin's rows rather than a list in a screen — and the
