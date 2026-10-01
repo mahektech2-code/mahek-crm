@@ -34,6 +34,8 @@ import {
 
 export type FunnelSample = {
   id: string;
+  /** The SKU code, joined off the catalogue on the phone. */
+  sku?: string | null;
   customerId: string;
   leadId: string | null;
   productId: string | null;
@@ -145,15 +147,15 @@ export type TrialVerdict = 'pending' | 'approved' | 'rejected' | 'more_testing';
 /* ------------------------------------------------------------------ reads */
 
 export async function getSample(id: string): Promise<FunnelSample | null> {
-  return one<FunnelSample>('SELECT * FROM samples WHERE id = ?', [id]);
+  return one<FunnelSample>('SELECT s.*, p.sku AS sku FROM samples s LEFT JOIN products p ON p.id = s.productId WHERE s.id = ?', [id]);
 }
 
 export async function listFunnelSamples(): Promise<FunnelSample[]> {
-  return all<FunnelSample>('SELECT * FROM samples ORDER BY requestedAt DESC');
+  return all<FunnelSample>('SELECT s.*, p.sku AS sku FROM samples s LEFT JOIN products p ON p.id = s.productId ORDER BY s.requestedAt DESC');
 }
 
 export async function samplesFor(customerId: string): Promise<FunnelSample[]> {
-  return all<FunnelSample>('SELECT * FROM samples WHERE customerId = ? ORDER BY requestedAt DESC', [customerId]);
+  return all<FunnelSample>('SELECT s.*, p.sku AS sku FROM samples s LEFT JOIN products p ON p.id = s.productId WHERE s.customerId = ? ORDER BY s.requestedAt DESC', [customerId]);
 }
 
 export async function feedbackFor(sampleId: string): Promise<SampleFeedback | null> {

@@ -3,6 +3,7 @@ import { View, Image } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { skuText } from '../src/components/ui/sku';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
@@ -195,7 +196,7 @@ export default function SampleRecord() {
           <View style={{ flex: 1, minWidth: 0 }}>
             <T style={[{ fontSize: 19, lineHeight: 25, color: C.ink }, weight(600)]}>{who || 'Unknown shop'}</T>
             <T s="caption" style={{ marginTop: 2 }}>
-              {[s.productName, s.cans ? plural(s.cans, 'can') : null].filter(Boolean).join(' · ')}
+              {[skuText(s.sku), s.productName, s.cans ? plural(s.cans, 'can') : null].filter(Boolean).join(' · ')}
             </T>
           </View>
           <Badge tone={toneFor(s.state)}>{s.state}</Badge>

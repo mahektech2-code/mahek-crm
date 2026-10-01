@@ -513,6 +513,8 @@ export async function complaintsFor(customerId: string): Promise<Complaint[]> {
 
 export type Sample = {
   id: string; customerId: string; productName: string | null; state: string;
+  /** The SKU code, joined off the catalogue on the phone. */
+  sku?: string | null;
   requestedAt: number; followUpDate: string | null; trialOutcome: string | null; syncState: string;
   /* The three assertions, in the order they happen. See `SampleProgress`. */
   dispatchedAt: number | null;
@@ -544,13 +546,13 @@ export type Sample = {
  */
 export async function customerSamples(customerId: string): Promise<Sample[]> {
   return all<Sample>(
-    'SELECT * FROM samples WHERE customerId = ? ORDER BY requestedAt DESC, id DESC',
+    'SELECT s.*, p.sku AS sku FROM samples s LEFT JOIN products p ON p.id = s.productId WHERE s.customerId = ? ORDER BY s.requestedAt DESC, s.id DESC',
     [customerId],
   );
 }
 
 export async function listSamples(): Promise<Sample[]> {
-  return all<Sample>('SELECT * FROM samples ORDER BY requestedAt DESC');
+  return all<Sample>('SELECT s.*, p.sku AS sku FROM samples s LEFT JOIN products p ON p.id = s.productId ORDER BY s.requestedAt DESC');
 }
 
 /**

@@ -1319,6 +1319,7 @@ export default function LeadRecord() {
         open={commitOpen}
         today={today}
         productName={lead.requiredProductName}
+        productId={lead.requiredProductId}
         blockers={config.orderBlockers}
         current={{
           date: lead.expectedOrderDate,

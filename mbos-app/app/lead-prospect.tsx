@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { skuText, useSkus } from '../src/components/ui/sku';
 import { NextActionSheet } from '../src/components/leads/next-action-sheet';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import {
@@ -143,8 +144,9 @@ export default function ProspectForm() {
   const [potential, setPotential] = React.useState('');
   const [competitor, setCompetitor] = React.useState('');
   const [product, setProduct] = React.useState<{ id: string; name: string } | null>(null);
+  const productSku = useSkus([product?.id]);
   const [productQuery, setProductQuery] = React.useState('');
-  const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null }[]>([]);
+  const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null; sku: string | null }[]>([]);
   const [contact, setContact] = React.useState('');
   const [decisionMaker, setDecisionMaker] = React.useState('');
   const [creditDays, setCreditDays] = React.useState('');
@@ -236,7 +238,7 @@ export default function ProspectForm() {
       return;
     }
     void searchProducts(productQuery, 8).then((r) => {
-      if (live) setHits(r.map((p) => ({ id: p.id, name: p.name, formulation: p.formulation })));
+      if (live) setHits(r.map((p) => ({ id: p.id, name: p.name, formulation: p.formulation, sku: p.sku })));
     });
     return () => {
       live = false;
@@ -394,6 +396,7 @@ export default function ProspectForm() {
     product ? (
       <Choice
         label={product.name}
+        sub={skuText(productSku.get(product.id)) ?? undefined}
         selected
         onPress={() => pickProduct(null)}
         style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
@@ -410,7 +413,7 @@ export default function ProspectForm() {
                  What is PICKED is unchanged: the id and the product's own
                  name, never the liquid's. */
               label={productLines({ displayName: p.name, subtitle: p.formulation }).lead}
-              sub={productLines({ displayName: p.name, subtitle: p.formulation }).detail ?? undefined}
+              sub={[skuText(p.sku), productLines({ displayName: p.name, subtitle: p.formulation }).detail].filter(Boolean).join(' · ') || undefined}
               selected={false}
               onPress={() => pickProduct({ id: p.id, name: p.name })}
               style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}

@@ -416,6 +416,8 @@ export async function listOrders(customerId?: string): Promise<PunchedOrder[]> {
 export type PunchedLine = {
   id: string;
   productName: string;
+  /** The SKU code, off the catalogue on the phone. */
+  sku: string | null;
   cans: number;
   litres: number | null;
   lineTotalPaise: number | null;
@@ -424,7 +426,9 @@ export type PunchedLine = {
 /** What was on it. Opened a row at a time, so the list itself stays cheap. */
 export async function orderLines(orderId: string): Promise<PunchedLine[]> {
   return all<PunchedLine>(
-    'SELECT id, productName, cans, litres, lineTotalPaise FROM order_lines WHERE orderId = ?',
+    `SELECT ol.id, ol.productName, p.sku, ol.cans, ol.litres, ol.lineTotalPaise
+       FROM order_lines ol LEFT JOIN products p ON p.id = ol.productId
+      WHERE ol.orderId = ?`,
     [orderId],
   );
 }

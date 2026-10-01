@@ -1230,20 +1230,44 @@ async function customersForDevice(ids: string[]) {
  * it puts a line on an order that cannot be saved.
  */
 async function activeCatalogue() {
+  return catalogueRows();
+}
+
+/**
+ * THE CATALOGUE ROWS, for the bootstrap and the delta alike.
+ *
+ * Two queries until now, and they had drifted the way AGENTS.md says every
+ * pair of them does: the delta sent no brand and no formulation — the line
+ * that tells two SKUs of one liquid apart — and no status filter, so a SKU
+ * held for a duplicate decision would have reached the phone as orderable the
+ * moment it was touched. A delta row and a bootstrap row are now the same
+ * columns. On the delta, `active` is the ORDERABLE answer rather than the
+ * column, so a SKU that stops being orderable is switched off on the phone
+ * instead of being left behind.
+ */
+async function catalogueRows(sinceIso?: string) {
   return db.execute<Record<string, unknown>>(sql`
     select p.id, p.name, p.raw_name as "rawName", p.pack_size as "packSize",
            p.packing, p.millilitres_per_can as "millilitresPerCan",
-           p.cans_per_box as "cansPerBox", p.active,
+           p.cans_per_box as "cansPerBox", (p.active and p.status = 'ok') as active,
            -- brand and formulation are what the catalogue and the order
            -- form read for the subtitle under a SKU -- one liquid sells as
            -- Nano, Astar Nano and M5x4 Thinner, and that line is what tells
            -- them apart mid-call.
-           b.name as brand, f.name as formulation
+           b.name as brand, f.name as formulation,
+           -- The SKU code: the legacy Product ID, what a salesman and a
+           -- shopkeeper call a product by.
+           nullif(trim(p.external_code), '') as sku
       from products p
       left join product_brands b on b.id = p.brand_id
       left join product_formulations f on f.id = p.formulation_id
-     where p.active = true and p.status = 'ok'
-     order by p.display_order asc, p.name asc
+     where ${
+       sinceIso
+         ? sql`p.updated_at > ${sinceIso}`
+         : sql`p.active = true and p.status = 'ok'`
+     }
+     order by ${sinceIso ? sql`p.updated_at asc` : sql`p.display_order asc, p.name asc`}
+     ${sinceIso ? sql`limit 2000` : sql``}
   `);
 }
 
@@ -2907,15 +2931,7 @@ export async function buildPull(
     billChanges,
   ] = await Promise.all([
       changedCustomersForDevice(ids, sinceIso),
-      db.execute<Record<string, unknown>>(sql`
-        select p.id, p.name, p.pack_size as "packSize", p.packing,
-               p.millilitres_per_can as "millilitresPerCan",
-               p.cans_per_box as "cansPerBox", p.active
-          from products p
-         where p.updated_at > ${sinceIso}
-         order by p.updated_at asc
-         limit 2000
-      `),
+      catalogueRows(sinceIso),
       idList
         ? db.execute<Record<string, unknown>>(sql`
             select t.id, t.customer_id as "customerId", t.event_type as "eventType",

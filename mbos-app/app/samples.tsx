@@ -3,6 +3,7 @@ import { View, Pressable } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { skuText } from '../src/components/ui/sku';
 import { BottomSheet } from '../src/components/ui/overlays';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
@@ -256,7 +257,7 @@ export default function SamplesScreen() {
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{name}</T>
                     <T s="caption" style={{ marginTop: 2 }}>
-                      {[x.productName, x.cans ? plural(x.cans, 'can') : null].filter(Boolean).join(' · ')}
+                      {[skuText(x.sku), x.productName, x.cans ? plural(x.cans, 'can') : null].filter(Boolean).join(' · ')}
                     </T>
                   </View>
                   <Badge tone={toneFor(x.state)}>{x.state}</Badge>
@@ -382,7 +383,7 @@ function RequestSheet({
   const [book, setBook] = React.useState<Customer[]>([]);
   const [bookTotal, setBookTotal] = React.useState(0);
   const [query, setQuery] = React.useState('');
-  const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null }[]>([]);
+  const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null; sku: string | null }[]>([]);
   const [product, setProduct] = React.useState<{ id: string; name: string } | null>(null);
   const [cans, setCans] = React.useState('1');
   const [application, setApplication] = React.useState('');
@@ -397,7 +398,7 @@ function RequestSheet({
       return;
     }
     void searchProducts(query, 8).then((r) => {
-      if (live) setHits(r.map((p) => ({ id: p.id, name: p.name, formulation: p.formulation })));
+      if (live) setHits(r.map((p) => ({ id: p.id, name: p.name, formulation: p.formulation, sku: p.sku })));
     });
     return () => {
       live = false;
@@ -523,7 +524,7 @@ function RequestSheet({
                      What is PICKED is unchanged: the id and the product's own
                      name, never the liquid's. */
                   label={productLines({ displayName: p.name, subtitle: p.formulation }).lead}
-                  sub={productLines({ displayName: p.name, subtitle: p.formulation }).detail ?? undefined}
+                  sub={[skuText(p.sku), productLines({ displayName: p.name, subtitle: p.formulation }).detail].filter(Boolean).join(' · ') || undefined}
                   selected={false}
                   onPress={() => { setProduct({ id: p.id, name: p.name }); setQuery(''); }}
                   style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}

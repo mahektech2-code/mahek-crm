@@ -214,7 +214,7 @@ function payloadColumns(source: string, fn: string): string[] {
  */
 const WIRE: { fn: string; table: string; extra?: string[] }[] = [
   { fn: "customersForDevice", table: "customers", extra: ["lastSyncedAt"] },
-  { fn: "activeCatalogue", table: "products", extra: ["lastSyncedAt"] },
+  { fn: "catalogueRows", table: "products", extra: ["lastSyncedAt"] },
   { fn: "recentTimeline", table: "timeline_events" },
   { fn: "recentOrders", table: "customer_orders", extra: ["lastSyncedAt"] },
   { fn: "recentPayments", table: "customer_payments", extra: ["lastSyncedAt"] },
@@ -296,11 +296,10 @@ test("every column MBOS sends has a column on the handset to land in", () => {
  * loudly rather than quietly stop being checked.
  */
 const DELTA: { anchor: string; table: string }[] = [
-  { anchor: 'select p.id, p.name, p.pack_size', table: "products" },
   { anchor: 'select t.id, t.customer_id as "customerId"', table: "timeline_events" },
   { anchor: "select s.id,", table: "journey_stops" },
   /*
-   * THREE ENTRIES HAVE LEFT THIS LIST, all for the same reason: the delta now
+   * FOUR ENTRIES HAVE LEFT THIS LIST, all for the same reason: the delta now
    * calls the same function the bootstrap does, so there is no second spelling
    * left to check and the WIRE entry above covers each once. That is the state
    * every remaining entry is waiting to reach.

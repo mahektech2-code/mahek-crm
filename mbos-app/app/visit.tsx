@@ -4,6 +4,7 @@ import { router, useNavigation } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Card, Choice, Input, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
+import { skuText } from '../src/components/ui/sku';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { OdometerCamera, type OdometerResult } from '../src/components/ui/odometer-camera';
@@ -37,7 +38,7 @@ import { checkInAtShop, clearArrival, recordArrival } from '../src/data/arrival'
 import { logComplaint, requestSample } from '../src/data/requests';
 import { sampleReasons } from '../src/data/lead-samples';
 import { type CodedOption } from '../src/engines/funnel';
-import { starterProducts } from '../src/data/customers';
+import { rememberedSuggestions } from '../src/data/order-suggestions';
 import { todayStops } from '../src/data/journey';
 import {
   checkInVerdict,
@@ -87,7 +88,7 @@ import { NavigateButton } from '../src/components/ui/navigate';
  * being where he actually is stops recording.
  */
 
-type Product = { id: string; name: string; packSize: string | null };
+type Product = { id: string; name: string; packSize: string | null; sku?: string | null };
 
 /*
  * How often the On-your-way screen asks the radio where he is, and the range at
@@ -495,7 +496,11 @@ export default function Visit() {
     void Promise.all([
       getConfig<number>('mbos.visits.minimumDwellSeconds', 120),
       getConfig<number>('mbos.location.visitMismatchM', 100),
-      starterProducts(5),
+      /* This shop's usual products first, then the best sellers — the order
+         form's own list, not the first five SKUs alphabetically. */
+      custId
+        ? rememberedSuggestions(custId).then((s) => [...s.usual, ...s.starter].slice(0, 5))
+        : Promise.resolve([]),
       todayStops(),
       getConfig<number>('mbos.travel.maxLegKilometres', 400),
       sampleReasons(),
@@ -2287,6 +2292,7 @@ export default function Visit() {
           <Choice
             key={x.id}
             label={x.name}
+            sub={skuText(x.sku) ?? undefined}
             selected={draft.sku === x.id}
             onPress={() => { setDraft({ ...draft, sku: x.id, skuName: x.name }); setFormErr(null); }}
             style={{ width: '100%', alignItems: 'flex-start', marginBottom: 8, paddingHorizontal: 14 }}
