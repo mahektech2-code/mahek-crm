@@ -7,6 +7,7 @@ import { color as C, type, weight } from '../src/theme/tokens';
 import { inrFromPaise, plural } from '../src/lib/format';
 import { searchProducts } from '../src/data/customers';
 import { useStore } from '../src/state/store';
+import { SkuChip } from '../src/components/ui/sku';
 import { productLines } from '../src/lib/product-lines';
 
 type Row = Awaited<ReturnType<typeof searchProducts>>[number];
@@ -116,6 +117,7 @@ export default function CatalogueScreen() {
             than a confident "In stock" nothing has checked; with the liquid
             headlining, that SKU is also the only thing separating two rows read
             out mid-conversation, so it is drawn rather than optional. */}
+        <SkuChip sku={x.sku} />
         <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
           {productLines({ displayName: x.name, subtitle: x.formulation ?? x.brand }).lead}
         </T>
@@ -164,7 +166,7 @@ export default function CatalogueScreen() {
       <Input
         value={typed}
         onChangeText={setTyped}
-        placeholder="Search a product or pack size"
+        placeholder="Search a product, pack size or SKU code"
         style={{ marginTop: 12 }}
       />
       {/* The count is a count of what came back. Silent until the read has

@@ -4,6 +4,7 @@ import { router, useNavigation } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Card, Choice, Input, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
+import { skuText } from '../src/components/ui/sku';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { OdometerCamera, type OdometerResult } from '../src/components/ui/odometer-camera';
@@ -86,7 +87,7 @@ import { NavigateButton } from '../src/components/ui/navigate';
  * and a salesman who cannot record being where he actually is stops recording.
  */
 
-type Product = { id: string; name: string; packSize: string | null };
+type Product = { id: string; name: string; packSize: string | null; sku?: string | null };
 
 /*
  * How often the On-your-way screen asks the radio where he is, and the range at
@@ -2178,6 +2179,7 @@ export default function Visit() {
           <Choice
             key={x.id}
             label={x.name}
+            sub={skuText(x.sku) ?? undefined}
             selected={draft.sku === x.id}
             onPress={() => { setDraft({ ...draft, sku: x.id, skuName: x.name }); setFormErr(null); }}
             style={{ width: '100%', alignItems: 'flex-start', marginBottom: 8, paddingHorizontal: 14 }}

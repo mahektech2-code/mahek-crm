@@ -505,6 +505,20 @@ export async function searchProducts(query: string, limit = 20) {
  * `order_lines` keeps only a name and a quantity, never the packing a fresh
  * line needs to derive boxes and litres from.
  */
+/**
+ * The SKU code for each product id, from the catalogue on the phone. Includes
+ * retired products: an order line or a sample from last year still names the
+ * product it was, and its code is still how somebody finds it.
+ */
+export async function skusFor(ids: string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const rows = await all<{ id: string; sku: string | null }>(
+    `SELECT id, sku FROM products WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  );
+  return new Map(rows.filter((r) => r.sku).map((r) => [r.id, r.sku as string]));
+}
+
 export async function productsByIds(ids: string[]) {
   if (!ids.length) return [];
   const marks = ids.map(() => '?').join(',');

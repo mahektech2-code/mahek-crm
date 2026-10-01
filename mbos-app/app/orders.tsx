@@ -5,6 +5,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
+import { SkuChip } from '../src/components/ui/sku';
 import { listOrders, orderLines, type PunchedLine, type PunchedOrder } from '../src/data/orders';
 import { dmy, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { color as C, radius, tabular, weight, type BadgeTone } from '../src/theme/tokens';
@@ -178,9 +179,10 @@ export default function OrdersScreen() {
                     ) : (
                       mine.map((l) => (
                         <View key={l.id} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-                          <T style={{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 20, color: C.body }}>
-                            {l.productName}
-                          </T>
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <SkuChip sku={l.sku} />
+                            <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>{l.productName}</T>
+                          </View>
                           {/* Cans are what he counted and what the customer
                               said. Litres come off the SKU's own packing and
                               are shown beside them, never instead. */}

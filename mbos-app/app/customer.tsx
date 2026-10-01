@@ -4,6 +4,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { color as C, HIT, radius, type, weight, tabular, type BadgeTone } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Badge, Card, HealthPill, Input, PrimaryButton } from '../src/components/ui/primitives';
+import { SkuChip } from '../src/components/ui/sku';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
 import { getLead, type Lead } from '../src/data/leads';
@@ -895,9 +896,12 @@ export default function CustomerRecord() {
                 {samples.map((sm) => (
                   <Card key={sm.id} style={{ gap: 4 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-                      <Text style={[{ fontSize: 15, color: C.ink, flexShrink: 1 }, weight(600)]}>
-                        {sm.productName ?? 'Product not recorded'}
-                      </Text>
+                      <View style={{ flexShrink: 1 }}>
+                        <SkuChip sku={sm.sku} />
+                        <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
+                          {sm.productName ?? 'Product not recorded'}
+                        </Text>
+                      </View>
                       <Badge tone={sampleTone(sm.state)}>{sm.state}</Badge>
                     </View>
                     <Text style={type.caption}>

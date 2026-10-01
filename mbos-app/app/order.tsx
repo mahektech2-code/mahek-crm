@@ -4,6 +4,7 @@ import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Input, ListCard, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
+import { SkuChip } from '../src/components/ui/sku';
 import { color as C, radius, tabular, type, weight } from '../src/theme/tokens';
 import { inr, inrFromPaise, plural } from '../src/lib/format';
 import { productLines } from '../src/lib/product-lines';
@@ -966,30 +967,6 @@ function shortDate(iso: string): string {
   return Number.isNaN(d.getTime())
     ? iso
     : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
-}
-
-/**
- * THE SKU CODE, drawn as a code. It is what the salesman and the shopkeeper
- * both call a product by, and the one thing that tells two pack sizes of one
- * liquid apart at a glance — so it leads the row rather than hiding in it.
- */
-function SkuChip({ sku }: { sku?: string | null }) {
-  if (!sku) return null;
-  return (
-    <View
-      style={{
-        alignSelf: 'flex-start',
-        paddingHorizontal: 6,
-        paddingVertical: 1,
-        borderRadius: 4,
-        backgroundColor: C.wash,
-        marginBottom: 3,
-      }}>
-      <T style={[{ fontSize: 11, lineHeight: 15, color: C.body, letterSpacing: 0.3 }, weight(600), tabular]}>
-        {'SKU ' + sku}
-      </T>
-    </View>
-  );
 }
 
 /** One product to add: the SKU, the liquid, the pack, and one tap. */

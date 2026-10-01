@@ -2,6 +2,7 @@ import React from 'react';
 import { View } from 'react-native';
 import { BottomSheet, Calendar } from '../ui/overlays';
 import { Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
+import { skuText, useSkus } from '../ui/sku';
 import { color as C, radius, weight } from '../../theme/tokens';
 import { dmy } from '../../lib/format';
 import type { CodedOption } from '../../engines/funnel';
@@ -36,6 +37,7 @@ export function CommitmentSheet({
   open,
   today,
   productName,
+  productId,
   blockers,
   current,
   onClose,
@@ -45,11 +47,14 @@ export function CommitmentSheet({
   today: string;
   /** The SKU qualification named, so the unit on the screen is never ambiguous. */
   productName: string | null;
+  /** Its id, so the sheet can print the SKU code beside the name. */
+  productId?: string | null;
   blockers: CodedOption[];
   current: { date: string | null; quantityCans: number | null; valuePaise: number | null; blockerCode: string | null };
   onClose: () => void;
   onSave: (c: { date: string; quantityCans: number; valuePaise: number | null; blockerCode: string }) => void;
 }) {
+  const sku = skuText(useSkus([productId]).get(productId ?? ''));
   const [date, setDate] = React.useState(current.date ?? '');
   const [cans, setCans] = React.useState(current.quantityCans ? String(current.quantityCans) : '');
   /* Rupees on the screen and paise in the store, the one place the two meet —
@@ -112,7 +117,7 @@ export function CommitmentSheet({
             what there was not at capture, where the answer is in litres. */}
         <T s="caption" style={{ marginTop: 6 }}>
           {productName
-            ? 'Cans of ' + productName + ' — the pack they will actually buy.'
+            ? 'Cans of ' + productName + (sku ? ' (' + sku + ')' : '') + ' — the pack they will actually buy.'
             : 'In cans, the way they will order it. Nobody has named the product on this lead yet.'}
         </T>
       </View>
