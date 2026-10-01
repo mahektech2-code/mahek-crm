@@ -1812,6 +1812,32 @@ export const SETTINGS = [
       "The OpenAI model that reads a Call 1/2/3 conversation. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the telecaller fills the call as usual.",
     default: "gpt-5-mini",
   },
+  /*
+   * THE LEAD INTAKE FORM'S OWN ASSISTANT — the Calling Desk assistant's
+   * counterpart for a lead that does not exist yet. Its own switch, because a
+   * team may want one without the other. It reads a call into the Intake form's
+   * boxes and proposes; it saves nothing, and the sales type is never one of
+   * the things it proposes. It shares the call assistant's confidence floor
+   * (`callIntel.confirmBelowPercent`) rather than a third number.
+   */
+  {
+    key: "intakeIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the lead intake call",
+    description:
+      "After a telecaller speaks or types about the call on the Lead Intake form, suggest values for the form's boxes. A person reviews and applies each one, and the existing Raise the lead button is still the only thing that creates a lead. It never suggests or changes the sales type. Needs a language model key like the other assistants; without one the form works as usual.",
+    default: true,
+  },
+  {
+    key: "intakeIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Lead intake assistant model",
+    description:
+      "The OpenAI model that reads a lead intake call. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the telecaller fills the form in as usual.",
+    default: "gpt-5-mini",
+  },
   {
     key: "callIntel.confirmBelowPercent",
     type: "integer",
@@ -5234,6 +5260,8 @@ export type Config = {
   "callIntel.trainingMonths": number;
   "leadCallIntel.enabled": boolean;
   "leadCallIntel.model": string;
+  "intakeIntel.enabled": boolean;
+  "intakeIntel.model": string;
   "visitIntel.enabled": boolean;
   "visitIntel.model": string;
 
