@@ -380,10 +380,28 @@ function DictationBody({
 
     return () => {
       cancelled = true;
-      /* A HELD recorder is neither recording nor inactive, so `=== recording`
-         would leave a paused one running with the microphone open. */
-      if (recorder.isRecording || recorder.currentTime > 0) {
-        recorder.stop().catch(() => {});
+      /*
+       * THE RECORDER IS ALREADY GONE BY NOW, and touching it blanked the app.
+       *
+       * `useAudioRecorder` releases the native recorder in an effect declared
+       * before this one, and React runs unmount cleanups in declaration order
+       * — so this runs on a released object. On Android ANY property read on
+       * one throws (`InvalidSharedObjectIdException`) synchronously, an error
+       * thrown while unmounting has no boundary to land on, and the whole app
+       * went white every time this sheet closed: Cancel, Put it in the box,
+       * Say it again, Close. It read as the microphone hanging.
+       *
+       * Nothing is lost by not stopping it here: release itself stops a
+       * running or HELD recording and frees the microphone on both platforms
+       * (`reset()` on Android, `sharedObjectWillRelease` on iOS). The guarded
+       * stop stays only for a build where the order is ever the other way.
+       */
+      try {
+        if (recorder.isRecording || recorder.currentTime > 0) {
+          recorder.stop().catch(() => {});
+        }
+      } catch {
+        /* Released — which is the ordinary case, and already stopped. */
       }
     };
     /* Once, on mount. `recorder` is stable for the life of this component and
