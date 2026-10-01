@@ -41,7 +41,7 @@ import {
   type PullDelta,
   type TerritoryState,
 } from "../mbos/types";
-import { employeeJoinOn } from "../employee-link";
+import { employeeLateral } from "../employee-link";
 /* The Accounts ledger's own read. See `customerBills` — the handset must not
    have a second opinion about what a shop owes. */
 import { listBills } from "./payment-service";
@@ -2583,7 +2583,7 @@ async function salaryFor(userId: string): Promise<Record<string, unknown>[]> {
          file, so the figure on a handset and the figure in the office cannot
          come from two different readings of who this person is. See
          lib/employee-link.ts. */
-      left join employees e on ${employeeJoinOn("u", "e")}
+      ${employeeLateral("u", "e")}
      order by p."from" desc
   `);
 }

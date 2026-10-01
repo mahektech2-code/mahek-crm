@@ -19,7 +19,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
-import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
+import { employeeLateral, employeeLinkKindSql } from "@/lib/employee-link";
 import {
   TERRITORY_BEAT_SQL,
   TERRITORY_REGION_SQL,
@@ -5211,7 +5211,7 @@ export async function payForPeriod(from: string, to: string): Promise<PayRow[]> 
          almost nobody on the real book, so this screen showed a blank salary
          for every field salesman with no way to say whether that meant unpaid
          or unknown. */
-      left join employees e on ${employeeJoinOn("u", "e")}
+      ${employeeLateral("u", "e")}
      where u.active ${onlyMine(scope, "u.id")}
      order by u.name asc
   `) as unknown as PayRow[];
