@@ -35,7 +35,7 @@ export default async function WhatsappPage({
   searchParams: Promise<{ customer?: string; tab?: string; show?: string; rq?: string }>;
 }) {
   const { customer, tab, show, rq } = await searchParams;
-  const inboxShow = show === "all" ? "all" : "open";
+  const inboxShow = show === "all" || show === "unknown" ? show : "open";
   const user = await requireUser();
   const scope = await getScope(user);
   const now = nowMs();
