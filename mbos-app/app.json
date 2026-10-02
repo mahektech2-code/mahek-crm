@@ -37,7 +37,8 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "MahekOne lets you speak a note instead of typing it — what you say is written out in English for you to read and correct before it is saved. It is used for nothing else, and every box it appears on can still be typed into."
+          "microphonePermission": "MahekOne lets you speak a note instead of typing it — what you say is written out in English for you to read and correct before it is saved. It is used for nothing else, and every box it appears on can still be typed into.",
+          "enableBackgroundPlayback": false
         }
       ],
       "expo-asset",
