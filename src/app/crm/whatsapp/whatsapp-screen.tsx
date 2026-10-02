@@ -2316,17 +2316,10 @@ function RepliesTab({
               >
                 {r.actioned ? "Mark as needing a reply" : "Mark handled"}
               </Button>
-              {r.phone || r.waId ? (
-                <a
-                  href={`https://wa.me/91${(r.phone ?? r.waId ?? "").replace(/\D/g, "").slice(-10)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  title="Opens WhatsApp on this device — the customer sees YOUR number, not the business number, and nothing is recorded here. Use Send reply for that."
-                  className="inline-flex h-7 items-center rounded-[4px] border border-line px-2.5 text-[13px] text-body no-underline hover:bg-canvas"
-                >
-                  Open in my WhatsApp ↗
-                </a>
-              ) : null}
+              {/* No "open in WhatsApp" link: the business number is on the
+                  WhatsApp Business API, so nobody can open its chats in their
+                  own WhatsApp — and their own number is not the one the
+                  customer wrote to. Answering is Send reply, above. */}
               {r.customerId ? (
                 <Link
                   href={`/crm/customers/${r.customerId}`}
