@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { placeLine } from "@/lib/place-tree";
+import type { PlaceNames } from "@/lib/place-filters";
 import { seatLabel, type AmRole } from "@/lib/seat-labels";
 import { categoryLabel } from "@/lib/complaint-labels";
 import type { CustomerRecordDetail } from "@/lib/services/customer-record-service";
@@ -223,6 +225,8 @@ export function RecordScreen({
     contactPerson: string | null;
     phone: string;
     city: string;
+    /** Where the shop is on the reviewed location tree — see `place-tree-service.ts`. */
+    place: PlaceNames | null;
     ownerName: string | null;
     kind: "lead" | "customer";
     leadSource: string | null;
@@ -488,7 +492,9 @@ export function RecordScreen({
          * the owner is only the answer for a LEAD, which is what
          * `ASSIGNED_TO_SQL` reads for one.
          */
-        subtitle={`${customer.contactPerson ?? "No contact person"} · ${phoneDisplay(customer.phone)} · ${customer.city} · ${
+        subtitle={`${customer.contactPerson ?? "No contact person"} · ${phoneDisplay(customer.phone)} · ${
+          (customer.place?.state ? placeLine(customer.place) : "") || customer.city
+        } · ${
           customer.kind === "lead"
             ? `Lead owner ${customer.ownerName ?? "unassigned"}`
             : `Sales ${customer.salesAmName ?? "unassigned"} · Sales manager ${customer.salesManagerName ?? "unassigned"} · Back office ${customer.backOfficeAmName ?? "unassigned"}`

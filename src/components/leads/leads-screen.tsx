@@ -38,7 +38,7 @@ import {
   type LeadFilterColumn,
   type LeadFilterOptions,
 } from "@/components/leads/filter-bar";
-import type { PlaceTree } from "@/lib/services/sales-service";
+import type { PlaceFilterOptions } from "@/lib/place-filters";
 import {
   LEAD_PRIORITIES,
   priorityLabel,
@@ -190,7 +190,7 @@ export function LeadsScreen({
    * this screen: a dropdown that has to reach a server before it can offer
    * anything is one that offers nothing on the first press.
    */
-  places: PlaceTree;
+  places: PlaceFilterOptions;
   /**
    * §8.4 — WHICH CUT OF THE BOOK THIS IS, off the URL.
    *

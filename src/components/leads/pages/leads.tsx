@@ -12,7 +12,7 @@ import { today } from "@/lib/recompute";
 import {
   archivedLeadsCount,
   leadFilterOptions,
-  leadPlaceTree,
+  leadPlaceOptions,
   leadsPage,
   LEADS_PER_PAGE,
 } from "@/lib/services/sales-service";
@@ -117,10 +117,12 @@ export async function Body({
     source: params.source,
     stage: params.stage,
     salesType: params.salesType,
-    /* WHERE THE SHOP IS — state, city or area, as `,`-separated paths.
-       See `lib/lead-places.ts` for why a place is a path and why each one is
-       escaped before it joins a comma-separated parameter. */
-    place: params.place,
+    /* WHERE THE SHOP IS — state, district, city and area off the reviewed
+       location tree, each a `,`-separated list of place ids. */
+    state: params.state,
+    district: params.district,
+    city: params.city,
+    area: params.area,
     potential: params.potential,
     priority: params.priority,
     next: params.next,
@@ -202,14 +204,18 @@ export async function Body({
         ? null
         : leadTileCounts(day, { archived: false, filters }),
       /*
-       * The place tree, counted over THIS list rather than over the whole
-       * book. It rides in the same `Promise.all` as everything else, so the
-       * Where picker costs the screen no round trip of its own — and it is
-       * fetched with the page rather than on the first press of the filter
-       * button, because a picker that has to reach a server before it can
-       * offer anything is one that offers nothing exactly when it is opened.
+       * The four place filters, counted over THIS list rather than over the
+       * whole book and narrowed under whatever is picked above each. Fetched
+       * with the page rather than on the first press of the filter button,
+       * because a picker that has to reach a server before it can offer
+       * anything offers nothing exactly when it is opened.
        */
-      leadPlaceTree(showArchived),
+      leadPlaceOptions(showArchived, {
+        state: filters.state,
+        district: filters.district,
+        city: filters.city,
+        area: filters.area,
+      }),
     ]);
 
   return (
@@ -234,7 +240,10 @@ export async function Body({
         source: splitFilter(filters.source),
         salesType: splitFilter(filters.salesType),
         stage: splitFilter(filters.stage),
-        place: splitFilter(filters.place),
+        state: splitFilter(filters.state),
+        district: splitFilter(filters.district),
+        city: splitFilter(filters.city),
+        area: splitFilter(filters.area),
         potential: splitFilter(filters.potential),
         priority: splitFilter(filters.priority),
         next: splitFilter(filters.next),

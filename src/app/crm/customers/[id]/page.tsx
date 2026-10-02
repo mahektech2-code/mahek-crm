@@ -235,6 +235,7 @@ export default async function CustomerRecordPage({
         contactPerson: customer.contactPerson,
         phone: customer.phone,
         city: customer.city,
+        place: customer.place ?? null,
         ownerName: customer.ownerName,
         kind: customer.kind,
         leadSource: customer.leadSource,
