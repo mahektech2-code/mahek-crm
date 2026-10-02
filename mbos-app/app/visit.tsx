@@ -424,6 +424,28 @@ export default function Visit() {
     }
   }, [custId, visitStart, arrival, checkedIntoShop]);
 
+  /*
+   * NO JOURNEY BEHIND THIS VISIT, SO THE CLOCK STARTS WHEN THE FORM OPENS.
+   *
+   * The arrival and the check-in are the only two things that start the clock,
+   * and both hang off a journey. A visit opened with no journey (the punch-in
+   * session already closed, or a journey that could not be written) never
+   * passed either, so the clock read 0s for the whole visit, the two-minute
+   * minimum could never be met, and Check out stayed grey. That is the visit
+   * form as it was before journeys existed, so it gets that rule back: opening
+   * the form is checking in.
+   *
+   * Not while he is still on the road, and not where an arrival for this shop
+   * exists: that one is either waiting for his check-in tap, or restored by
+   * the effect above.
+   */
+  React.useEffect(() => {
+    if (!custId || visitStart != null || !legLoaded) return;
+    if (leg && leg.endedAt == null) return;
+    if (arrival && arrival.customerId === custId) return;
+    checkedIntoShop(Date.now());
+  }, [custId, visitStart, legLoaded, leg, arrival, checkedIntoShop]);
+
   const legMode = leg ? modes.find((m) => m.key === leg.modeKey) ?? null : null;
   /* Not on an own-vehicle DAY: that journey set off with no reading because
      the punch-in and punch-out measure the day. See `arrivalNeedsMeter`. */
