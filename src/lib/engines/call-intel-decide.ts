@@ -26,9 +26,15 @@ import {
 } from "./call-intel-dates";
 import {
   parseAmounts,
+  readNothingFurther,
   readSignals,
   type RuleSignals,
 } from "./call-intel-signals";
+import {
+  EXCLUSIVE_ACTION,
+  nextActionsFor,
+  wantsDate,
+} from "@/lib/call-reasons";
 
 /* ---------------------------------------------------------------------------
  * THREE READERS, ONE PROPOSAL, AND THE CLIENT'S RULES IN BETWEEN.
@@ -132,6 +138,16 @@ export type FormFill = {
   followUpDate?: string;
   noOrderNextCallDate?: string;
   payDate?: string;
+  /**
+   * What the telecaller said they will do next — codes `nextActionsFor` offers
+   * for this outcome and reason, and nothing else. The form validates them a
+   * second time against the call it actually is (direction, reason picked).
+   */
+  nextActions?: string[];
+  /** Only where exactly one day was said, resolved, and not past. */
+  nextActionDate?: string;
+  /** Why the date, or the whole action, was left for the telecaller. */
+  nextActionNote?: string;
   /** Shown beside the date and carried into the note; not a form column. */
   payAmountRupees?: number;
   orderLines?: Array<{
@@ -430,6 +446,101 @@ function reminderDuplicate(
     : null;
 }
 
+/* ----------------------------------------------------------- next actions */
+
+export type NextActionProposal = {
+  actions: string[];
+  /** Only where one day was said and it resolved cleanly. */
+  date: string | null;
+  /** Why something was left for the telecaller. Null where nothing was. */
+  note: string | null;
+};
+
+/**
+ * THE MODEL SAID WHAT WAS SAID; THIS DECIDES WHAT MAY GO ON THE FORM.
+ *
+ * Every action the model named is checked against `nextActionsFor(reason,
+ * outcome)` — the same function the form draws its chips from and the server
+ * validates against — so the model cannot put a code on a call that would not
+ * offer it. A code the list does not offer is dropped silently: it describes
+ * something the form has nowhere to record, and the note already holds the
+ * words.
+ *
+ * RULES, each a client decision:
+ *   - Silence is never an action. No steps, nothing proposed.
+ *   - `no_follow_up` needs BOTH readers: the model naming it and the rules
+ *     finding "nothing further" in the words. It is also refused beside a
+ *     do-not-call, and beside any other action (it is exclusive).
+ *   - A date is proposed only when every dated action resolved to the SAME,
+ *     real, non-past day. Ambiguous, past, missing or conflicting days leave
+ *     the date empty with a note — the actions still go in, because what to do
+ *     was clear and only the day was not, and Save will ask for the day.
+ *   - An undated action ("payment already made") never gets a date.
+ */
+export function proposeNextActions(args: {
+  steps: CallReading["nextSteps"] | undefined;
+  outcome: string;
+  callReason: string | null;
+  text: string;
+  doNotCall: boolean;
+  ctx: DateContext;
+}): NextActionProposal {
+  const none: NextActionProposal = { actions: [], date: null, note: null };
+  const steps = args.steps ?? [];
+  if (!steps.length) return none;
+
+  const offered = new Set(
+    nextActionsFor(args.callReason, args.outcome).map((a) => a.code),
+  );
+  if (!offered.size) return none;
+
+  const nothingFurther =
+    !args.doNotCall && readNothingFurther(args.text).found;
+  const kept = new Map<string, (typeof steps)[number]>();
+  for (const s of steps) {
+    if (!offered.has(s.action) || kept.has(s.action)) continue;
+    if (s.action === EXCLUSIVE_ACTION && !nothingFurther) continue;
+    kept.set(s.action, s);
+  }
+  if (!kept.size) return none;
+
+  if (kept.has(EXCLUSIVE_ACTION) && kept.size > 1) {
+    return {
+      ...none,
+      note: "They seemed to say both that nothing is needed and that something is — pick the next action yourself.",
+    };
+  }
+
+  const actions = [...kept.keys()];
+  const dated = actions.filter((a) => wantsDate([a]));
+  if (!dated.length) return { actions, date: null, note: null };
+
+  const days = new Set<string>();
+  let unresolved: string | null = null;
+  for (const a of dated) {
+    const when = kept.get(a)!.when;
+    if (!when) {
+      unresolved ??= "No day was named for the next action — pick one below.";
+      continue;
+    }
+    const q: string[] = [];
+    const d = datedFrom(when, args.ctx, q, null);
+    if (d?.date) days.add(d.date);
+    else
+      unresolved ??=
+        q[0] ?? "The day for the next action was not clear — pick one below.";
+  }
+  if (unresolved) return { actions, date: null, note: unresolved };
+  if (days.size > 1) {
+    return {
+      actions,
+      date: null,
+      note: "The next actions were for different days, and the form has one day for them — pick it below.",
+    };
+  }
+  return { actions, date: [...days][0] ?? null, note: null };
+}
+
 /* ---------------------------------------------------------------- decide */
 
 type Candidate = { intent: CallIntent; confidence: number; evidence: string };
@@ -704,6 +815,28 @@ export function decideCallActions(input: DecideInput): CallAnalysis {
       door: dup ? "reschedule" : "reminder",
       reminder: { dueDate: due, note: "Try again — no answer last time" },
     });
+  }
+
+  /*
+   * ONE ERRAND, ONE PLACE. A call-back the telecaller said, now sitting in the
+   * form's Next Action, is not also offered as a button that writes a reminder
+   * on the spot. Only where the outcome has an action list of its own — those
+   * lists do not depend on which way the call went, so the chip is certain to
+   * be on the form — and only where the two name the same day (or the button
+   * names none), because a different day is a different promise.
+   */
+  const filled = primary?.fill;
+  if (
+    primary?.state === "ready" &&
+    filled?.nextActions?.includes("call_back") &&
+    nextActionsFor(null, filled.outcome).length > 0
+  ) {
+    const at = extras.findIndex(
+      (e) =>
+        e.key === "reminder-follow_up" &&
+        (!e.date?.date || e.date.date === filled.nextActionDate),
+    );
+    if (at >= 0) extras.splice(at, 1);
   }
 
   const feedback = (reading?.feedback ?? []).slice(0, 5);
@@ -1065,6 +1198,24 @@ function buildPrimary(
       break;
     }
   }
+
+  /*
+   * What they said they will do next. Deliberately NOT pushed onto `questions`:
+   * a day the telecaller has still to pick is not doubt about how the call
+   * ended, and demoting a sure outcome to "confirm" for it would stop the form
+   * filling at all. The note travels on the fill and is shown beside it.
+   */
+  const next = proposeNextActions({
+    steps: r?.nextSteps,
+    outcome,
+    callReason: fill.callReason ?? null,
+    text: input.text,
+    doNotCall: Boolean(r?.doNotCall.said) || rules.doNotCall.found,
+    ctx: input,
+  });
+  if (next.actions.length) fill.nextActions = next.actions;
+  if (next.date) fill.nextActionDate = next.date;
+  if (next.note) fill.nextActionNote = next.note;
 
   if (questions.length && base.state === "ready") base.state = "confirm";
   return base;
