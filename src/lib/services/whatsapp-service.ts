@@ -651,7 +651,7 @@ export async function cancelMessage(messageId: string): Promise<Result> {
  *   the founder's switch is on · a key is configured · the message is still
  *   unsent · it is the personal leg, unedited, of a template linked to an
  *   APPROVED Wati template · the customer is not do-not-contact · the number is
- *   a real Indian mobile and not a placeholder shared by several shops · the
+ *   a real Indian mobile and not a Mahek staff member's own number · the
  *   weekly limit is not reached · every variable the template needs has a value.
  *
  * The customer is stamped as messaged only when Wati ACCEPTS the message. A
@@ -707,17 +707,27 @@ async function sendAutomaticAs(
     );
   }
 
-  // A number on three or more shops is a placeholder somebody typed into an
-  // import, not a person. Sending a payment reminder to it tells a stranger —
-  // or every shop sharing it — what this customer owes.
+  /*
+   * ONE NUMBER, SEVERAL COMPANIES: EACH GETS ITS OWN MESSAGE. This used to
+   * refuse any number on three or more customers as a likely placeholder. On
+   * this book that is mostly one owner with several shops or branches — the
+   * same person, rightly told about each company they run — and Mahek asked for
+   * every company's reminder to go to the shared number.
+   *
+   * What still stops it is a fact rather than a count: the number belongs to
+   * somebody who WORKS here. A salesman's mobile typed onto a shop (one is on
+   * ninety-six records) means the shop has no number of its own, and the
+   * reminder would go to our own staff instead of the customer.
+   */
   const last10 = phone.slice(-10);
-  const [shared] = await db.execute<{ n: number }>(sql`
-    select count(*)::int as n from customers c
-    where right(regexp_replace(coalesce(c.whatsapp_phone, c.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
+  const [staff] = await db.execute<{ name: string }>(sql`
+    select u.name from users u
+     where right(regexp_replace(coalesce(u.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
+     limit 1
   `);
-  if (Number(shared?.n ?? 0) >= 3) {
+  if (staff) {
     return err(
-      `That number is on ${shared!.n} customers, so it looks like a placeholder rather than ${customer.name}'s own. Put the real number on the record first.`,
+      `That number is ${staff.name}'s, who works at Mahek — not ${customer.name}'s. Put the shop's own number on the record first.`,
       "rule_violation",
     );
   }

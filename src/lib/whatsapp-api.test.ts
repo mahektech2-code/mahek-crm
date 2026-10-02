@@ -284,14 +284,24 @@ test("an unlinked template is refused rather than sent as something else", async
   assert.equal(sends.length, 0);
 });
 
-test("a number shared by three shops is a placeholder and is refused", async () => {
+test("a number shared by several companies still gets each company's reminder", async () => {
   await switchOn();
+  // One owner, three shops, one mobile.
   await makeShop("Second", "9820011001");
   await makeShop("Third", "+91 9820011001");
   const r = await send();
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  assert.equal(sends.length, 1);
+});
+
+test("a number that belongs to somebody who works at Mahek is refused — it is not the customer's", async () => {
+  await switchOn();
+  const salesman = await makeUser("Rahul", "associate", [{ app: "crm", role: "associate" }]);
+  await db.update(users).set({ phone: "+91 98200 11001" }).where(eq(users.id, salesman.id));
+  const r = await send();
   assert.equal(r.ok, false);
   if (r.ok) return;
-  assert.match(r.error, /placeholder/);
+  assert.match(r.error, /Rahul's, who works at Mahek/);
   assert.equal(sends.length, 0);
 });
 
