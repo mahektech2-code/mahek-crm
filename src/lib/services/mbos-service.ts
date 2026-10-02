@@ -2281,7 +2281,7 @@ async function customerBills(
 }
 
 /** One line of a bill, as the shop would read it off the invoice. */
-type BillLine = { product: string; qty: number; amountPaise: number | null };
+export type BillLine = { product: string; qty: number; amountPaise: number | null };
 
 /**
  * WHAT WAS ACTUALLY ON EACH BILL, from the two places a line can live.
@@ -2307,7 +2307,7 @@ type BillLine = { product: string; qty: number; amountPaise: number | null };
  * product master holds no prices (`canValueOrders()` still answers no), and a
  * quantity times nothing is not a figure to put in front of a customer.
  */
-async function billLines(billIds: string[]): Promise<Map<string, BillLine[]>> {
+export async function billLines(billIds: string[]): Promise<Map<string, BillLine[]>> {
   const out = new Map<string, BillLine[]>();
   if (!billIds.length) return out;
   const ids = sql`(${sql.join(billIds.map((i) => sql`${i}`), sql`, `)})`;

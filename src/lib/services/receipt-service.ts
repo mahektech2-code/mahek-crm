@@ -1705,7 +1705,7 @@ export type CustomerLedger = {
  * is `updated_by_id`, which only that script writes; the eighteen reversals a
  * person made by hand carry somebody's user id instead and still print.
  */
-const NOT_ON_STATEMENT = sql`not (
+export const NOT_ON_STATEMENT = sql`not (
   ${paymentReceipts.source} = 'sheet_import'
   and ${paymentReceipts.status} = 'reversed'
   and ${paymentReceipts.updatedById} = 'system:tally-records'
@@ -1764,6 +1764,27 @@ export async function customerLedger(
   const [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
   if (!customer) return null;
   await assertCustomerInScope(customer);
+  return ledgerForCustomer(customer, range);
+}
+
+/**
+ * The statement itself, for a customer whose scope the CALLER has already
+ * established.
+ *
+ * Split out of `customerLedger` for the handset: MBOS authenticates a device
+ * token rather than a browser session, so `assertCustomerInScope` — which asks
+ * the session — cannot answer for it, and `scopedCustomer` asks the same
+ * question of the principal instead. What must NOT be split is the arithmetic:
+ * a salesman reading a shopkeeper his balance and an accounts clerk reading the
+ * same account have to be reading one function, or they quote two debts.
+ * Exported only for callers that have already checked; anything reached from a
+ * session goes through `customerLedger`.
+ */
+export async function ledgerForCustomer(
+  customer: { id: string; name: string; outstanding: number | null },
+  range?: { from?: string; to?: string },
+): Promise<CustomerLedger> {
+  const customerId = customer.id;
 
   const billRows = await db
     .select()

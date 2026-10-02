@@ -744,6 +744,25 @@ on a phone from thirteen months of rows is how a salesman and an accounts clerk
 quote one shopkeeper two different debts with him listening. Only `confirmed`
 money moves the balance, which is the one rule it shares with `customerLedger`.
 
+**CUSTOMER ACCOUNTS IS THE ACCOUNTS APP'S CUSTOMER ACCOUNT, on the handset, and
+it is ASKED rather than pulled.** More → Customer accounts lists his book the
+way accounts read it — who owes, who is over the limit, whose supply is
+stopped, with a search over name, owner, city, phone and GST — from the
+office's own `outstandingPaise` already on the phone, so the list needs no
+signal. Opening one asks `/api/mbos/customer-account` for the account in
+full: the statement is `ledgerForCustomer`, the body `customerLedger` was split
+into so a device token could reach it after `scopedCustomer` has answered the
+scope question the session cannot; bills are `listBills`; the aging strip is
+`bucketise`; receipt wording is `receiptStatusSentence`. Nothing is recomputed
+on the phone except cutting a window out of balances the office already ran
+(`engines/account-view.ts`). The full history of every account on every phone
+is not a thing to sync, so the last answer per shop is kept in `kv`, and an
+account never opened online falls back on the thirteen-month window above via
+`fromPhone` — with every part the pull does not carry (aging, credit notes,
+which bill a payment cleared) set to NULL and said as "needs signal", never
+drawn as zero. The banner at the top says which of the three answers is on the
+screen. It is read-only: deciding about money stays accounts'.
+
 **A STATEMENT IS FOR AN ACCOUNT WE INVOICE, and the other two say so.** A lead
 has never ordered and a third-party shop is billed to its distributor, so both
 would draw a correct empty list — and an empty list with nothing saying why

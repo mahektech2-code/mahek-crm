@@ -677,6 +677,32 @@ export async function orderProducts(customerId: string): Promise<
   }
 }
 
+/* -------------------------------------------------------- customer account */
+
+/**
+ * One customer's whole account as the Accounts app holds it — statement,
+ * bills, receipts and where they went, aging, credit notes.
+ *
+ * NOT QUEUED: it is a reading. `data/customer-account.ts` keeps the last
+ * answer per shop and falls back on the thirteen months the pull carries, so
+ * an account opened with no signal still says something true — and says which
+ * one it is.
+ */
+export async function customerAccount(
+  customerId: string,
+): Promise<{ ok: true; account: unknown } | { ok: false; error: string }> {
+  try {
+    return await request('/api/mbos/customer-account', {
+      method: 'POST',
+      body: JSON.stringify({ customerId }),
+      /* A long-standing account is a few thousand rows read on the far side. */
+      timeoutMs: 30_000,
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error && e.message ? e.message : 'No answer.' };
+  }
+}
+
 /* ------------------------------------------------------------- performance */
 
 /**
