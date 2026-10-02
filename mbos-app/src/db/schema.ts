@@ -2068,6 +2068,23 @@ export const MIGRATIONS: string[][] = [
     `CREATE INDEX IF NOT EXISTS idx_customer_targets_period ON customer_targets(period);`,
   ],
 
+  /*
+   * THE BOOK'S TWO LISTS, at ten thousand shops.
+   *
+   * `idx_customers_name` sorts by `name` under BINARY, and the Customers tab
+   * orders by `name COLLATE NOCASE, id` — a different collation, so SQLite
+   * could not walk that index and sorted the whole table on every page. With
+   * this one an A–Z page walks the index in order and stops after the page it
+   * was asked for.
+   *
+   * `idx_leads_book` serves the lead book's own narrowing, which always opens
+   * on `archived` and most often on a rung.
+   */
+  [
+    `CREATE INDEX IF NOT EXISTS idx_customers_name_nocase ON customers(name COLLATE NOCASE, id);`,
+    `CREATE INDEX IF NOT EXISTS idx_leads_book ON leads(archived, funnelStage);`,
+  ],
+
 ];
 
 /**

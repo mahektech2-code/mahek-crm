@@ -1,14 +1,16 @@
 import React from 'react';
-import { View, Pressable, ScrollView, FlatList, TextInput, type ListRenderItemInfo } from 'react-native';
+import { View, Pressable, FlatList, RefreshControl, Platform, type ListRenderItemInfo } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
 import { BottomSheet, Calendar } from '../ui/overlays';
-import { color as C, HIT, radius, weight, type BadgeTone } from '../../theme/tokens';
+import { color as C, radius, weight, type BadgeTone } from '../../theme/tokens';
+import { ChipRow, PageFooter, SearchBox, ToolButton } from '../ui/book-controls';
 import { Icon } from '../ui/Icon';
 import {
   createLead,
   leadThresholds,
-  listLeads,
+  leadViewCounts,
+  listLeadsPage,
   rungsInBook,
   visitCapThresholds,
   type Lead,
@@ -28,7 +30,6 @@ import {
   OTHER_SOURCE,
   leadAlert,
   leadPriorityLabel,
-  leadSourceLabel,
   viewOfLead,
   visitCapLabel,
   visitCapState,
@@ -48,7 +49,7 @@ import {
   type LeadSalesType,
   type LeadStage,
 } from '../../engines/funnel';
-import { dmy, inrFromPaise, isoDate, plural, pretty } from '../../lib/format';
+import { compactInrFromPaise, dmy, grouped, isoDate, pretty } from '../../lib/format';
 import { useStore } from '../../state/store';
 
 /**
@@ -104,9 +105,9 @@ const ACTION_INK: Record<LeadActionTone, string> = {
   muted: C.muted,
 };
 
-/** The gap between cards, which the wrapping `View`'s `gap: 12` used to give. */
+/** A hairline between rows, inset to the text — one list, not a stack of cards. */
 function RowGap() {
-  return <View style={{ height: 12 }} />;
+  return <View style={{ height: 1, marginLeft: 14, backgroundColor: C.hairline }} />;
 }
 
 /**
@@ -131,14 +132,12 @@ function LeadRow({
   today,
   cfg,
   capCfg,
-  sources,
   onPress,
 }: {
   lead: Lead;
   today: string;
   cfg: LeadThresholds | null;
   capCfg: VisitCapThresholds | null;
-  sources: LeadSource[] | null;
   onPress: (id: string) => void;
 }) {
   const view = viewOfLead(lead);
@@ -217,120 +216,78 @@ function LeadRow({
    */
   const backOfficeGap = !lead.backOfficeAmId && roleAction(facts, 'back_office').actionable;
 
-  const marks = [
+  /*
+   * ONE WARNING, NOT FIVE. The row used to stack every caveat it had — the
+   * lead going quiet, the visit cap, an empty back-office seat, the hold
+   * reason, the closed note — so a troubled lead was a card a screen tall and
+   * the list could not be scanned. The record still says all of them; the row
+   * says the most urgent, in this order: a decision demanded now, the lead
+   * going quiet, why it is parked, and the seat nobody holds.
+   */
+  const capLine = capCfg ? visitCapLabel(lead.stage, lead.visitCount, capCfg) : null;
+  const deciding = !!capCfg && visitCapState(lead.stage, lead.visitCount, capCfg) === 'decide';
+  const warning = deciding
+    ? `${capLine} · decide now`
+    : quiet
+      ? quiet
+      : lead.holdReason
+        ? 'Waiting: ' + lead.holdReason
+        : backOfficeGap
+          ? 'No back office person set'
+          : null;
+
+  /* What it IS, in one quiet line: the rung and how long it has sat there,
+     then the facts that tell two leads apart at a glance. */
+  const facts2 = [
+    rung ? stageLabel(rung) + (held && held > 0 ? ` ${held}d` : '') : null,
+    age && age > 0 ? `${age}d old` : null,
+    lead.salesType ? salesTypeLabel(lead.salesType as LeadSalesType) : null,
+    lead.city,
+    lead.estimatedPotentialPaise ? compactInrFromPaise(lead.estimatedPotentialPaise) + '/mo' : null,
     leadPriorityLabel(lead.priority),
     lead.hasOrder === 1 ? 'Order placed' : lead.hasCommitment === 1 ? 'Promised' : null,
-    lead.leadManagerName ? 'Lead manager ' + lead.leadManagerName : null,
+    lead.archived ? 'Closed' : null,
   ].filter(Boolean);
 
   return (
-    <Pressable onPress={() => onPress(lead.id)} accessibilityRole="button">
-      <Card style={overdue ? { borderLeftWidth: 3, borderLeftColor: C.danger } : undefined}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-              {lead.company?.trim() || lead.name}
-            </T>
-            <T s="caption" style={{ marginTop: 2 }}>
-              {/* The ladder is named on the row, because which kind of sale
-                  this is changes what the next call is about — and it is the
-                  one fact about a lead that cannot be guessed from its name. */}
-              {[
-                lead.company?.trim() ? lead.name : null,
-                lead.salesType ? salesTypeLabel(lead.salesType as LeadSalesType) : null,
-                lead.city,
-                leadSourceLabel(lead.source, sources ?? []),
-              ]
-                .filter(Boolean)
-                .join(' \u00b7 ')}
-            </T>
-            {/* What "Other" actually was. It is the sentence that tells Mahek
-                which eleventh channel is worth adding to the list, and until
-                now it reached the phone and no screen drew it. */}
-            {lead.sourceDetail ? (
-              <T s="caption" style={{ marginTop: 2 }} numberOfLines={2}>
-                {lead.sourceDetail}
-              </T>
-            ) : null}
-          </View>
-          <Badge tone={VIEW_TONE[view]}>{VIEW_LABEL[view]}</Badge>
-        </View>
-
-        {/* §7 — what he is supposed to DO, above everything the lead IS. */}
-        <T style={[{ fontSize: 15, lineHeight: 21, marginTop: 10, color: ACTION_INK[action.tone] }, weight(600)]}>
-          {action.label}
+    <Pressable
+      onPress={() => onPress(lead.id)}
+      accessibilityRole="button"
+      style={({ pressed }) => ({
+        paddingLeft: 14,
+        paddingRight: 14,
+        paddingVertical: 10,
+        backgroundColor: pressed ? C.wash : C.surface,
+        /* Late is drawn in the margin as well as in the words, so a screen of
+           them can be scanned for red without being read. */
+        borderLeftWidth: 3,
+        borderLeftColor: overdue ? C.danger : 'transparent',
+      })}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <T numberOfLines={1} style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(600)]}>
+          {lead.company?.trim() || lead.name}
         </T>
+        <Badge tone={VIEW_TONE[view]}>{VIEW_LABEL[view]}</Badge>
+      </View>
 
-        {rung ? (
-          <T s="caption" style={{ marginTop: 2 }}>
-            {[
-              stageLabel(rung),
-              age && age > 0 ? plural(age, 'day') + ' old' : null,
-              held && held > 0 ? plural(held, 'day') + ' at this stage' : null,
-            ]
-              .filter(Boolean)
-              .join(' \u00b7 ')}
-          </T>
-        ) : null}
-
-        <T style={[{ fontSize: 15, marginTop: 10, color: lead.estimatedPotentialPaise ? C.ink : C.muted }, weight(500)]}>
-          {lead.estimatedPotentialPaise
-            ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month (guess)'
-            : 'Can buy: not guessed yet'}
-        </T>
-
-        <T style={{ fontSize: 14, lineHeight: 20, marginTop: 4, color: overdue ? C.danger : C.muted }}>
+      {/* §7 — what he is supposed to DO, and when it is owed, on one line. */}
+      <T numberOfLines={1} style={{ marginTop: 2, fontSize: 13, lineHeight: 18 }}>
+        <T style={[{ fontSize: 13, color: ACTION_INK[action.tone] }, weight(600)]}>{action.label}</T>
+        <T style={{ fontSize: 13, color: C.faint }}>{'  |  '}</T>
+        <T style={[{ fontSize: 13, color: overdue ? C.danger : C.muted }, weight(overdue ? 600 : 400)]}>
           {owedLine ?? 'Nothing pending'}
         </T>
+      </T>
 
-        {quiet ? (
-          <T style={[{ fontSize: 14, lineHeight: 20, marginTop: 4, color: C.warnInk }, weight(500)]}>{quiet}</T>
-        ) : null}
+      <T s="caption" numberOfLines={1} style={{ marginTop: 2 }}>
+        {[lead.company?.trim() ? lead.name : null, ...facts2].filter(Boolean).join(' · ')}
+      </T>
 
-        {/* "Visit 2 / 3" — §B. Drawn only where it means something: a
-            qualified prospect visited a fourth time is a negotiation,
-            not a stall, and carries no counter at all. */}
-        {capCfg && visitCapLabel(lead.stage, lead.visitCount, capCfg) ? (
-          <T
-            style={[
-              {
-                fontSize: 14,
-                lineHeight: 20,
-                marginTop: 4,
-                color:
-                  visitCapState(lead.stage, lead.visitCount, capCfg) === 'decide' ? C.warnInk : C.muted,
-              },
-              weight(500),
-            ]}>
-            {visitCapLabel(lead.stage, lead.visitCount, capCfg)}
-            {visitCapState(lead.stage, lead.visitCount, capCfg) === 'decide' ? ' \u00b7 decide now' : ''}
-          </T>
-        ) : null}
-
-        {marks.length ? (
-          <T s="caption" style={{ marginTop: 4 }} numberOfLines={2}>
-            {marks.join(' \u00b7 ')}
-          </T>
-        ) : null}
-
-        {backOfficeGap ? (
-          <T style={[{ fontSize: 14, lineHeight: 20, marginTop: 4, color: C.warnInk }, weight(500)]}>
-            No back office person set. Office work will go to your lead manager.
-          </T>
-        ) : null}
-
-        {/* Why it is not moving. On a held lead this is the whole point
-            of the status — without it "On hold" reads as "forgotten". */}
-        {lead.holdReason ? (
-          <T s="caption" style={{ marginTop: 4 }} numberOfLines={2}>
-            {'Waiting: ' + lead.holdReason}
-          </T>
-        ) : null}
-
-        {lead.archived ? (
-          <T s="caption" style={{ marginTop: 4 }}>Closed. Hidden from the main list.</T>
-        ) : null}
-      </Card>
+      {warning ? (
+        <T numberOfLines={1} style={[{ marginTop: 2, fontSize: 12, lineHeight: 17, color: C.warnInk }, weight(500)]}>
+          {warning}
+        </T>
+      ) : null}
     </Pressable>
   );
 }
@@ -374,9 +331,27 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
    */
   const [view, setView] = React.useState<LeadView>('all');
   const [when, setWhen] = React.useState<LeadWhen>('any');
+  /* How many under each stage chip, and whether the "when" sheet is open. */
+  const [viewCounts, setViewCounts] = React.useState<Partial<Record<LeadView, number>> | null>(null);
+  const [pickingWhen, setPickingWhen] = React.useState(false);
   const [rung, setRung] = React.useState<string | null>(null);
   const [rungs, setRungs] = React.useState<{ rung: string; count: number }[]>([]);
   const [rows, setRows] = React.useState<Lead[]>([]);
+  /*
+   * THE BOOK IS PAGED NOW, like the customers half. It read every lead and
+   * handed the lot to the list, which on a territory where most shops are
+   * still leads is thousands of sixty-column rows in memory before the first
+   * one is drawn. `total` is SQL's count, never a loaded length.
+   */
+  const [total, setTotal] = React.useState(0);
+  const [hasMore, setHasMore] = React.useState(false);
+  const [loadingMore, setLoadingMore] = React.useState(false);
+  const [moreFailed, setMoreFailed] = React.useState(false);
+  const [loaded, setLoaded] = React.useState(false);
+  const [refreshing, setRefreshing] = React.useState(false);
+  /* Which answer is current — a chip tapped mid-read must not have the old
+     question's late answer land on top of, or append to, the new one. */
+  const asking = React.useRef(0);
   /*
    * THE SEARCH, the same box the customers half has. Eight stage chips and the
    * owed-when row were the only narrowing here, so finding one named shop in a
@@ -471,32 +446,73 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     [view, rung, when, today],
   );
 
-  const load = React.useCallback(() => {
-    let live = true;
-    void Promise.all([
-      listLeads(filter, asked),
-      /* The rungs under the picked band, counted in SQLite over the same
-         narrowing. A separate grouped query rather than a pass over `rows`,
-         because picking a rung shortens `rows` and counting from it would make
-         every other rung read zero the moment one was chosen. */
-      rungsInBook(filter, asked),
-      leadThresholds(),
-      visitCapThresholds(),
-      leadSources(),
-    ]).then(([r, g, t, c, srcs]) => {
-      if (!live) return;
-      setRows(r);
+  const load = React.useCallback(async () => {
+    const ticket = ++asking.current;
+    try {
+      const [page, g, t, c, srcs, vc] = await Promise.all([
+        listLeadsPage(filter, asked, 0),
+        /* The rungs under the picked band, counted in SQLite over the same
+           narrowing — counting from the loaded page would read zero for every
+           rung the first thirty rows happen not to reach. */
+        rungsInBook(filter, asked),
+        leadThresholds(),
+        visitCapThresholds(),
+        leadSources(),
+        leadViewCounts(
+          LEAD_VIEWS.map((v) => v.value),
+          { when: filter.when, today: filter.today },
+          asked,
+        ).catch(() => null),
+      ]);
+      if (ticket !== asking.current) return;
+      setViewCounts(vc);
+      setRows(page.rows);
+      setTotal(page.total);
+      setHasMore(page.hasMore);
+      setMoreFailed(false);
       setRungs(g);
       setCfg(t);
       setCapCfg(c);
       setSources(srcs);
-    });
-    return () => {
-      live = false;
-    };
+    } finally {
+      if (ticket === asking.current) setLoaded(true);
+    }
   }, [filter, asked]);
 
-  useFocusEffect(load);
+  useFocusEffect(
+    React.useCallback(() => {
+      void load();
+    }, [load]),
+  );
+
+  const loadMore = React.useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    const ticket = asking.current;
+    setLoadingMore(true);
+    setMoreFailed(false);
+    try {
+      const page = await listLeadsPage(filter, asked, rows.length, total);
+      if (ticket !== asking.current) return;
+      setRows((prev) => {
+        const seen = new Set(prev.map((r) => r.id));
+        return [...prev, ...page.rows.filter((r) => !seen.has(r.id))];
+      });
+      setHasMore(page.hasMore && page.rows.length > 0);
+    } catch {
+      if (ticket === asking.current) setMoreFailed(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, filter, asked, rows.length, total]);
+
+  const refresh = React.useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await load();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [load]);
 
   /*
    * WHAT HE TYPED SURVIVES A DISMISSAL, and it did not.
@@ -631,7 +647,7 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
          next "+ Add lead" is a different shop; this one is on the list behind
          the sheet. */
       clearForm();
-      load();
+      void load();
       notify('Lead added · ' + (company.trim() || name.trim()));
     } finally {
       saving.current = false;
@@ -660,145 +676,97 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
         today={today}
         cfg={cfg}
         capCfg={capCfg}
-        sources={sources}
         onPress={openLead}
       />
     ),
-    [today, cfg, capCfg, sources, openLead],
+    [today, cfg, capCfg, openLead],
   );
 
   /*
-   * AN ELEMENT AND NEVER A FUNCTION — the trap the customers list carries its
-   * own note about. An inline component would be a fresh type on every render,
-   * so the header would unmount and remount and the chips would lose their
-   * scroll position on every keystroke the parent makes.
+   * THE CONTROLS ARE FIXED ABOVE THE LIST, never its header — a header
+   * scrolls away with the first rows, and a salesman two hundred leads down
+   * could not see what he had narrowed to or reach the box to search again.
    *
-   * TWO CHIP ROWS AND NOT A MENU. Both change what the list IS rather than how
-   * it is drawn, and a list whose subject is hidden behind a menu is one people
-   * misread — the same rule the customers list follows for its Everything /
-   * Customers / Leads chips.
+   * TWO CHIP ROWS AND NOT A MENU: both change what the list IS, and a list
+   * whose subject is hidden behind a menu is one people misread. The rung row
+   * is offered only where the band holds more than one, with its counts.
    */
-  const header = React.useMemo(
-    () => (
-      <View>
-        <View style={{ position: 'relative', marginBottom: 12 }}>
-          <View style={{ position: 'absolute', left: 14, top: 16, zIndex: 1 }}>
-            <Icon name="search" size={20} color={C.muted} strokeWidth={1.5} />
-          </View>
-          <TextInput
-            value={typed}
-            onChangeText={setTyped}
-            placeholder="Name, shop, phone or city"
-            placeholderTextColor={C.faint}
-            style={{
-              width: '100%',
-              height: 52,
-              paddingLeft: 42,
-              paddingRight: 56,
-              borderWidth: 1,
-              borderColor: C.border,
-              borderRadius: radius.sm,
-              fontSize: 15,
-              color: C.ink,
-              backgroundColor: C.surface,
-            }}
-          />
-          {/* The way out of a search — without it the book stays narrowed to a
-              word typed an hour ago with nothing on the screen that undoes it. */}
-          {typed ? (
-            <Pressable
-              onPress={() => {
-                setTyped('');
-                setAsked('');
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Clear the search"
-              style={{ position: 'absolute', right: 2, top: 2, width: HIT, height: HIT, alignItems: 'center', justifyContent: 'center' }}>
-              <Icon name="close" size={18} color={C.muted} strokeWidth={1.5} />
-            </Pressable>
-          ) : null}
-        </View>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
-          style={{ marginHorizontal: -16, paddingHorizontal: 16 }}>
-          {LEAD_WHENS.map((w) => (
-            <Choice
-              key={w.value}
-              label={w.label}
-              selected={when === w.value}
-              onPress={() => setWhen(w.value)}
-              style={{ paddingHorizontal: 16 }}
-            />
-          ))}
-        </ScrollView>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
-          style={{ marginHorizontal: -16, paddingHorizontal: 16, marginTop: 8 }}>
-          {LEAD_VIEWS.map((v) => (
-            <Choice
-              key={v.value}
-              label={v.label}
-              selected={view === v.value}
-              onPress={() => {
-                setView(v.value);
-                /* The rung belongs to the band it was picked under. Carried
-                   across it would narrow the new band to a rung that band does
-                   not carry, and the list would go empty with nothing on the
-                   screen saying why. */
-                setRung(null);
-              }}
-              style={{ paddingHorizontal: 16 }}
-            />
-          ))}
-        </ScrollView>
-
-        {/* THE RUNGS UNDER THE BAND, and only where there is a choice to make.
-            Built from what is in the book rather than from the ladder — see
-            `rungsInBook`. One rung draws nothing: a single option is not a
-            choice, which is the same reason the launcher does not draw itself
-            for somebody holding one app. */}
-        {rungs.length > 1 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
-            style={{ marginHorizontal: -16, paddingHorizontal: 16, marginTop: 8 }}>
-            <Choice
-              label={'All of ' + VIEW_LABEL[view].toLowerCase()}
-              selected={rung === null}
-              onPress={() => setRung(null)}
-              style={{ paddingHorizontal: 16 }}
-            />
-            {rungs.map((r) => (
-              <Choice
-                key={r.rung}
-                label={stageLabel(r.rung as LeadStage) + ' ' + r.count}
-                selected={rung === r.rung}
-                onPress={() => setRung(r.rung)}
-                style={{ paddingHorizontal: 16 }}
-              />
-            ))}
-          </ScrollView>
-        ) : null}
-
-        <DashedButton label="+ Add lead" tone="primary" onPress={openForm} style={{ marginTop: 12 }} />
-
-        {/* A count under a search is a count of the MATCHES, and says so — "3
-            leads" read on its own claims the book has shrunk. */}
-        {rows.length ? (
-          <T s="caption" style={{ marginTop: 12, marginBottom: 8 }}>
-            {plural(rows.length, 'lead') + (asked ? ` matching “${asked}”` : '')}
-          </T>
-        ) : null}
+  const rungChips = React.useMemo(
+    () => [
+      { value: '__all', label: 'All ' + VIEW_LABEL[view].toLowerCase() },
+      ...rungs.map((r) => ({ value: r.rung, label: stageLabel(r.rung as LeadStage) })),
+    ],
+    [rungs, view],
+  );
+  const rungCounts = React.useMemo(
+    () => Object.fromEntries(rungs.map((r) => [r.rung, r.count])) as Record<string, number>,
+    [rungs],
+  );
+  const whenLabel = LEAD_WHENS.find((w) => w.value === when)!.label;
+  /*
+   * THE SAME TOOLBAR AS THE CUSTOMERS HALF: a search box and two square
+   * buttons, one row of chips with counts, one line saying what is shown.
+   *
+   * "When" was a second chip row stacked on the stage row, and two rows of
+   * identical pills read as one bank of buttons doing one kind of thing. It is
+   * a narrowing he sets once a morning, so it lives behind the clock button
+   * and is said out loud on the status line whenever it is not "Any day".
+   */
+  const controls = (
+    <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <SearchBox
+          value={typed}
+          onChange={setTyped}
+          onClear={() => {
+            setTyped('');
+            setAsked('');
+          }}
+          placeholder="Name, shop, phone or city"
+        />
+        <ToolButton
+          icon="clock"
+          label={'Due: ' + whenLabel}
+          on={when !== 'any'}
+          onPress={() => setPickingWhen(true)}
+        />
+        <ToolButton icon="add" label="Add a lead" tone="primary" onPress={openForm} />
       </View>
-    ),
-    [view, when, rung, rungs, rows.length, openForm, typed, asked],
+      <ChipRow
+        chips={LEAD_VIEWS}
+        value={view}
+        counts={viewCounts}
+        onChange={(v) => {
+          setView(v);
+          /* The rung belongs to the band it was picked under. Carried across
+             it would narrow the new band to a rung it does not carry. */
+          setRung(null);
+        }}
+      />
+      {rungs.length > 1 ? (
+        <ChipRow
+          chips={rungChips}
+          value={rung ?? '__all'}
+          onChange={(v) => setRung(v === '__all' ? null : v)}
+          counts={rungCounts}
+        />
+      ) : null}
+      {/* A count under a search is a count of the MATCHES, and says so. */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <T s="caption" numberOfLines={1} style={{ flex: 1, minWidth: 0 }}>
+          {!loaded
+            ? 'Reading your leads…'
+            : total
+              ? `${grouped(total)} ${total === 1 ? 'lead' : 'leads'}` + (asked ? ` · “${asked}”` : '')
+              : 'No leads match'}
+        </T>
+        <Pressable onPress={() => setPickingWhen(true)} accessibilityRole="button" hitSlop={8}>
+          <T numberOfLines={1} style={[{ fontSize: 13, color: when === 'any' ? C.primaryDeep : C.danger }, weight(600)]}>
+            {(when === 'any' ? 'Most urgent first' : whenLabel) + ' ▾'}
+          </T>
+        </Pressable>
+      </View>
+    </View>
   );
 
   /*
@@ -812,9 +780,11 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
    */
   const empty = React.useMemo(
     () => (
-      <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
+      <Card style={{ marginHorizontal: 16, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
         <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-          {asked
+          {!loaded
+            ? 'Loading your leads…'
+            : asked
             ? `No lead matches “${asked}”`
             : when !== 'any'
             ? 'Nothing ' + LEAD_WHENS.find((w) => w.value === when)!.label.toLowerCase()
@@ -833,7 +803,7 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
         </T>
       </Card>
     ),
-    [view, when, asked],
+    [view, when, asked, loaded],
   );
 
   return (
@@ -846,18 +816,34 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
         * hundred of those built on the JS thread is a screen that stutters
         * exactly when somebody is scrolling it looking for one shop.
         */}
+      {controls}
       <FlatList
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
+        contentContainerStyle={{ paddingTop: 8, paddingBottom: 24 }}
         data={rows}
         keyExtractor={(x) => x.id}
         renderItem={renderRow}
         ItemSeparatorComponent={RowGap}
-        ListHeaderComponent={header}
         ListEmptyComponent={empty}
-        initialNumToRender={8}
-        maxToRenderPerBatch={8}
-        windowSize={7}
+        ListFooterComponent={
+          rows.length ? (
+            <PageFooter
+              loading={loadingMore}
+              failed={moreFailed}
+              done={!hasMore}
+              total={total}
+              noun="lead"
+              onRetry={() => void loadMore()}
+            />
+          ) : null
+        }
+        onEndReached={() => void loadMore()}
+        onEndReachedThreshold={0.6}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={9}
+        removeClippedSubviews={Platform.OS === 'android'}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
@@ -1108,6 +1094,39 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
           />
           <PrimaryButton label="Add lead" onPress={save} style={{ flex: 1, borderRadius: radius.xl }} />
         </View>
+      </BottomSheet>
+
+      {/* -------------------------------------------------------- when owed */}
+      <BottomSheet open={pickingWhen} onClose={() => setPickingWhen(false)}>
+        <T style={[{ fontSize: 17, color: C.ink, marginBottom: 8 }, weight(600)]}>Show leads due</T>
+        {LEAD_WHENS.map((w) => {
+          const on = when === w.value;
+          return (
+            <Pressable
+              key={w.value}
+              onPress={() => {
+                setWhen(w.value);
+                setPickingWhen(false);
+              }}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: on }}
+              style={({ pressed }) => [
+                {
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  minHeight: 52,
+                  borderBottomWidth: 1,
+                  borderBottomColor: C.hairline,
+                },
+                pressed && { backgroundColor: C.wash },
+              ]}>
+              <T style={[{ flex: 1, fontSize: 15, color: on ? C.primaryDeep : C.ink }, weight(on ? 600 : 500)]}>
+                {w.label}
+              </T>
+              {on ? <Icon name="tick" size={18} color={C.primaryDeep} /> : null}
+            </Pressable>
+          );
+        })}
       </BottomSheet>
 
       {/* ------------------------------------------------------- follow-up */}

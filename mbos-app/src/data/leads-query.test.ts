@@ -60,7 +60,7 @@ function seed(db: DatabaseSync, rows: Row[]) {
   }
 }
 
-function ids(db: DatabaseSync, q: { sql: string; params: string[] }): string[] {
+function ids(db: DatabaseSync, q: { sql: string; params: (string | number)[] }): string[] {
   return (db.prepare(q.sql).all(...q.params) as { id: string }[]).map((r) => r.id);
 }
 
