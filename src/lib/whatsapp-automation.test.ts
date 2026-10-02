@@ -274,3 +274,57 @@ test("the tracker follows one message from send to read to reply, and says which
   assert.equal(page.funnel.replied, 1);
   assert.equal((await trackerPage({ days: 7, source: "person" })).rows.length, 0);
 });
+
+test("the collections strip counts today's and yesterday's payment reminders, by who sent them, over the reader's own book", async () => {
+  const { paymentReminderSummary, latestMessageFor } = await import("@/lib/services/whatsapp-tracker-service");
+  await serviceOn();
+  const tid = await template("payment_followup_1", "payment_followup_1_v2");
+  await rule(tid);
+  await runAutomation({ source: "schedule", now: at("10:52") });
+  // Yesterday a person pasted one by hand and confirmed it.
+  await db.insert(waMessages).values({
+    id: id("wam"), customerId: shopId, templateId: tid, userId: founder.id, destKind: "personal",
+    resolvedDestination: "9820011001", body: "Yesterday's words", status: "sent_manually", mode: "manual",
+    preparedAt: at("16:00", -1), confirmedSentAt: at("16:05", -1),
+  });
+  // An order confirmation today is not a payment reminder.
+  const orderTpl = id("tpl");
+  await db.insert(waTemplates).values({ id: orderTpl, name: "order", category: "order_confirmation", body: "x" });
+  await db.insert(waMessages).values({
+    id: id("wam"), customerId: shopId, templateId: orderTpl, userId: founder.id, destKind: "personal",
+    resolvedDestination: "9820011001", body: "x", status: "sent_manually", mode: "manual",
+    preparedAt: at("11:30"), confirmedSentAt: at("11:31"),
+  });
+
+  const grant = async (role: "admin" | "associate") => {
+    const [u] = await db.insert(users).values({
+      id: id("usr"), name: role, email: `${role}-${randomUUID().slice(0, 4)}@t.local`, passwordHash: "x", role, initials: "XX",
+    }).returning();
+    await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "crm", role });
+    return u;
+  };
+
+  setTestUser(await grant("admin"));
+  const s = await paymentReminderSummary(todayIst(), daysAgo(1));
+  assert.equal(s.today.total, 1, "the rule's send, not the order confirmation");
+  assert.equal(s.today.byRule, 1);
+  assert.equal(s.today.byPerson, 0);
+  assert.equal(s.yesterday.total, 1);
+  assert.equal(s.yesterday.byPerson, 1);
+  assert.equal(s.yesterday.customers, 1);
+  assert.ok(s.lastRun, "the runner's pass is reported");
+  assert.ok(s.lastSendingRun, "and the pass that actually sent, separately");
+
+  // The newest message carries its words and where it went.
+  const latest = (await latestMessageFor([shopId]))[shopId];
+  assert.equal(latest.destination, "9820011001");
+  assert.ok(latest.body.length > 0);
+
+  // A telecaller sees only their own book: nothing, until the shop is theirs.
+  const tc = await grant("associate");
+  setTestUser(tc);
+  assert.equal((await paymentReminderSummary(todayIst(), daysAgo(1))).today.total, 0);
+  await db.update(customers).set({ ownerId: tc.id }).where(eq(customers.id, shopId));
+  assert.equal((await paymentReminderSummary(todayIst(), daysAgo(1))).today.total, 1);
+  setTestUser(null);
+});

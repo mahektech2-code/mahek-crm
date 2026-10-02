@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/primitives";
 import { stamp } from "@/lib/format";
+import { previewOf } from "@/lib/whatsapp-status";
 import { DeliveryStatus } from "./delivery-status";
 import type { TrackerRow, RuleOutlook } from "@/lib/services/whatsapp-tracker-service";
 
@@ -32,6 +33,25 @@ export function MessageTimeline({ messages, empty = "No WhatsApp messages to thi
             ) : null}
             {m.repliedAt ? <Step label="Replied" at={m.repliedAt} /> : null}
           </div>
+          <div className="mt-1 text-[12px] text-muted">
+            To <span className="text-body">{m.destination}</span> ·{" "}
+            {m.destKind === "group" ? "WhatsApp group" : "personal number"}
+          </div>
+          {/* The words exactly as they went. Closed by default: a list of
+              twenty-five full messages is a wall nobody reads, and the first
+              line is usually enough to know which one it was. */}
+          {m.body ? (
+            <details className="group mt-1.5">
+              <summary className="cursor-pointer list-none text-[12px] text-body">
+                <span className="group-open:hidden">“{previewOf(m.body, 110)}” </span>
+                <span className="text-brand group-open:hidden">Show message</span>
+                <span className="hidden text-brand group-open:inline">Hide message</span>
+              </summary>
+              <p className="mt-1.5 rounded-[6px] bg-canvas px-3 py-2 text-[13px] whitespace-pre-wrap text-ink">
+                {m.body}
+              </p>
+            </details>
+          ) : null}
           {m.status === "failed" && m.failureReason ? (
             <div className="mt-1 text-[12px] text-danger">{m.failureReason}</div>
           ) : null}
