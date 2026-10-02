@@ -29,7 +29,8 @@ import { verifyPassword } from "../password";
 import { verifyOtp } from "./otp-service";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
-import { addDays, asDate, APP_TIMEZONE, type BusinessDate } from "../business-date";
+import { addDays, addMonths, asDate, APP_TIMEZONE, monthKey, type BusinessDate } from "../business-date";
+import { customerTargetsCreditedTo } from "./worklist-services";
 import { bandFor } from "../engines/inactivity";
 import {
   leaveBalances as computeLeaveBalances,
@@ -870,6 +871,8 @@ export type BootstrapPayload = {
    * unconditionally.
    */
   performance: unknown[];
+  /** His customers' targets, this month and last. See `customerTargetsFor`. */
+  customerTargets: unknown[];
   /** This month's and last's. See `salaryFor` — read-only, nothing here writes it. */
   salary: unknown[];
   /**
@@ -1073,6 +1076,7 @@ export async function buildBootstrap(
     courses: courseRows,
     notifications: notificationRows,
     performance: performanceRows,
+    customerTargets: await customerTargetsFor(principal.user.id),
     salary: salaryRows,
     travelModes: await travelModeRows(),
     myOrders: await myOrderStates(principal.user.id),
@@ -2655,6 +2659,41 @@ async function holidaysFor(since?: string | null) {
 }
 
 /**
+ * HIS CUSTOMERS' TARGETS, this month and last — the shops behind his number.
+ *
+ * `customerTargetsCreditedTo` is the Targets screen's own reading of the
+ * month, narrowed to the customers whose orders count towards him, so the
+ * figure on the phone and the figure on the office screen for one shop are
+ * one figure. Two months for the reason `performanceFor` sends two: on the
+ * 2nd, the month somebody is still asking about is the one that just closed.
+ *
+ * DERIVED PER PULL rather than cached, unlike the score. It reads his own
+ * book and nobody else's, and `achieved` and `pending` move the moment
+ * accounts decide an order — a cache would have him reading a shop as short
+ * an hour after the order that met it was approved.
+ */
+async function customerTargetsFor(userId: string): Promise<Record<string, unknown>[]> {
+  const current = monthKey(await today());
+  const periods = [current, addMonths(current, -1)];
+  const computedAt = new Date().toISOString();
+  const read = await Promise.all(periods.map((p) => customerTargetsCreditedTo(userId, p)));
+  /* Mapped as one object literal on purpose: mbos-wire.test.ts reads these
+     keys as the columns the handset's customer_targets table has to hold. */
+  return periods.flatMap((period, i) =>
+    read[i].map((r) => ({
+      period: period,
+      customerId: r.customerId,
+      targetPaise: r.target,
+      achievedPaise: r.achieved,
+      pendingPaise: r.pending,
+      isDefault: r.isDefault,
+      carriedForward: r.carriedForward,
+      computedAt: computedAt,
+    })),
+  );
+}
+
+/**
  * His own pay, this month and last — the channel `app/salary.tsx` on the
  * handset was built to read and never had.
  *
@@ -3253,6 +3292,11 @@ export async function buildPull(
     orderChanges: await myOrderChanges(principal.user.id, sinceIso),
     territoryRequests: await myTerritoryRequests(principal.user.id, sinceIso),
     performance: await performanceFor(principal.user.id, sinceIso),
+    /* NOT `since`-gated, and the same function the bootstrap calls. What a
+       shop has achieved moves when an order is approved, which touches no row
+       this channel could carry a cursor on — and the handset replaces the
+       table wholesale, so a shop that left his book leaves the screen too. */
+    customerTargets: await customerTargetsFor(principal.user.id),
     tasks: taskChanges as unknown[],
     salary: salaryRows as unknown[],
     travelModes: await travelModeRows(),

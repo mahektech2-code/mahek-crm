@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Choice, PrimaryButton, T } from '../src/components/ui/primitives';
@@ -27,6 +27,8 @@ import {
   untargetedLine,
   type PerformanceMonth,
 } from '../src/data/performance';
+import { CustomerTargetsCard, useCustomerTargets } from '../src/components/performance/customer-targets';
+import { useStore } from '../src/state/store';
 
 /**
  * Performance — his month, against what was actually asked for.
@@ -54,6 +56,12 @@ import {
  * cache uses — so September picked as a range and September off the sync are
  * one figure. Whose figures is the device token's answer, never a choice on
  * this screen: it is his, and only his.
+ *
+ * AND THE SHOPS BEHIND IT. Below his own figures sit his customers' monthly
+ * targets — which shops are short, by how much, and what he has taken that
+ * accounts have not approved yet. That is the half that tells him where the
+ * rest of the month comes from; the half above only tells him how much is
+ * left. They are kept for this month and last, like the score.
  */
 
 type Live =
@@ -124,6 +132,12 @@ export default function PerformanceScreen() {
       ? (months.find((m) => m.period === previousMonth(monthKey)) ?? null)
       : null;
   const dropped = current ? untargetedLine(current) : null;
+  const setStore = useStore((s) => s.set);
+  const shops = useCustomerTargets(monthKey, visit);
+  const openShop = (customerId: string) => {
+    setStore({ custId: customerId });
+    router.push('/customer?from=performance');
+  };
   const collectedBp = current ? collectionShareBp(current) : null;
 
   return (
@@ -290,6 +304,17 @@ export default function PerformanceScreen() {
             </View>
           ) : null}
 
+          {/* WHAT HE TOOK AND NOBODY HAS DECIDED YET. Revenue counts accepted
+              orders only, so on a busy morning the figure above lags what he
+              actually sold — and with nothing saying so it reads as a slow
+              day. Shown beside the revenue, never added to it. */}
+          {shops && shops.summary.waitingPaise ? (
+            <T s="small" style={{ color: C.warnInk, marginTop: 8 }}>
+              {inrFromPaise(shops.summary.waitingPaise)} more is waiting for the office to accept.
+              It is not in the revenue above yet.
+            </T>
+          ) : null}
+
           <Card padded={false} style={{ marginTop: 12, flexDirection: 'row', flexWrap: 'wrap', overflow: 'hidden' }}>
             <Figure
               half
@@ -450,7 +475,7 @@ export default function PerformanceScreen() {
             </Card>
           ) : null}
 
-          {shortfalls(current).length ? (
+          {shortfalls(current).length || shops?.summary.openPaise ? (
             <Card style={{ marginTop: 12 }}>
               <T s="label">Still to reach</T>
               {shortfalls(current).map((line) => (
@@ -460,16 +485,44 @@ export default function PerformanceScreen() {
                   {line}
                 </T>
               ))}
+              {shops?.summary.openPaise ? (
+                <T style={{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 8 }}>
+                  {inrFromPaise(shops.summary.openPaise)} still open across{' '}
+                  {shops.summary.counts.open === 1
+                    ? 'one of your customers'
+                    : `${shops.summary.counts.open} of your customers`}
+                  {' '}— the list is below.
+                </T>
+              ) : null}
             </Card>
           ) : null}
 
-          <T s="caption" style={{ marginTop: 12 }}>
-            Revenue counts only orders the office has accepted. Collection counts only money
-            found in the bank. So both go up some time after you add them. Collection is the share
-            of what was already overdue at the start of the period that has since been paid.
-          </T>
+
         </>
       )}
+
+      {/* Outside the branch above on purpose: a man with no score this month
+          can still carry customer targets, and "nothing to show yet" over a
+          list of his own shops would be the screen hiding the half that is
+          there. */}
+      {months !== null && !waiting && !failed ? (
+        <CustomerTargetsCard
+          key={monthKey ?? 'range'}
+          period={monthKey}
+          monthWords={monthKey ? monthName(monthKey) : ''}
+          data={shops}
+          today={today}
+          onOpen={openShop}
+        />
+      ) : null}
+
+      {current ? (
+        <T s="caption" style={{ marginTop: 12 }}>
+          Revenue counts only orders the office has accepted. Collection counts only money
+          found in the bank. So both go up some time after you add them. Collection is the share
+          of what was already overdue at the start of the period that has since been paid.
+        </T>
+      ) : null}
 
       <RangeSheet
         key={picking ? 'open' : 'shut'}

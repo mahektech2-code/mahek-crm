@@ -41,6 +41,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertDocuments(pull.documents, now);
     touched += await upsertCourses(pull.courses, now);
     touched += await upsertPerformance(pull.performance, now);
+    touched += await replaceCustomerTargets(pull.customerTargets, now);
     touched += await upsertTasks(pull.tasks, now);
     touched += await upsertLeads(pull.leads, now);
     /* AFTER the leads, so the record can never draw a check or a call against
@@ -362,6 +363,25 @@ function upsertHolidays(rows: unknown[] | undefined, now: number) {
  */
 function upsertPerformance(rows: unknown[] | undefined, now: number) {
   return upsert('performance', 'period', rows, { lastSyncedAt: now });
+}
+
+/**
+ * His customers' targets, REPLACED rather than upserted.
+ *
+ * A shop that left his book, or a month that rolled off the two the office
+ * sends, has no row left to say so — the price list's problem exactly. So the
+ * whole table goes and comes back. ABSENT is the opposite answer: an older
+ * server, or the cursorless reply, says nothing about targets and must leave
+ * what is here alone. An empty list is the office saying he has none.
+ */
+async function replaceCustomerTargets(rows: unknown[] | undefined, now: number) {
+  if (!rows) return 0;
+  await run('DELETE FROM customer_targets');
+  const keyed = rows.map((raw) => {
+    const r = raw as { period: string; customerId: string };
+    return { ...r, key: `${r.period}|${r.customerId}` };
+  });
+  return upsert('customer_targets', 'key', keyed, { lastSyncedAt: now });
 }
 
 function upsertSalary(rows: unknown[] | undefined, now: number) {

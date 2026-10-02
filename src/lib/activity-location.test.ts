@@ -1021,7 +1021,7 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
     for (const channel of [
       "customers", "products", "timeline", "notifications", "transcripts",
       "journeyStops", "planDays", "priceList", "schemes", "documents",
-      "courses", "approvals", "performance", "tasks", "leads", "samples",
+      "courses", "approvals", "performance", "customerTargets", "tasks", "leads", "samples",
       "leaveBalances", "holidays", "salary", "deletions",
       /* The three customer-history channels. `applyPull` walks all three and
          none of them was asserted here — `customerBills` is new, and the two
