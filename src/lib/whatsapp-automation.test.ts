@@ -360,11 +360,17 @@ test("the Replies tab shows a telecaller only their own customers' replies, with
     { id: mine, customerId: shopId, message: "Will pay Friday", receivedAt: at("10:30"), waId: "919820011001" },
     { id: theirs, customerId: leadId, message: "Send me the rate list", receivedAt: at("10:40"), waId: "919820099999" },
   ]);
+  // A number on nobody's book.
+  const stranger = id("wrp");
+  await db.insert(waReplies).values({ id: stranger, customerId: null, message: "Do you supply in Nashik?", receivedAt: at("10:50"), waId: "919811122233", senderName: "New Shop" });
 
   setTestUser(priya);
   let box = await repliesInbox({ show: "open" });
-  assert.deepEqual(box.rows.map((r) => r.id), [mine], "only her own customer's reply");
+  assert.deepEqual(box.rows.map((r) => r.id), [mine], "only her own customer's reply — not the stranger's");
   assert.equal(box.openCount, 1);
+  assert.equal(box.seesUnknown, false);
+  assert.equal((await repliesInbox({ show: "unknown" })).rows.length, 0, "a telecaller never sees unknown numbers");
+  assert.equal((await actionReply(stranger)).ok, false, "nor handles them");
   assert.equal(box.rows[0].inReplyTo?.body, "Your bill MMI/1 is overdue.", "with the message it answers");
 
   // She cannot clear somebody else's inbox by id.
@@ -383,9 +389,16 @@ test("the Replies tab shows a telecaller only their own customers' replies, with
   assert.equal(box.rows[0].kind, "lead");
   assert.equal(box.rows[0].inReplyTo, null);
 
-  // An admin sees both.
+  // An admin sees all three, the stranger marked as nobody's.
   setTestUser(boss);
-  assert.equal((await repliesInbox({ show: "all" })).rows.length, 2);
+  const everything = await repliesInbox({ show: "all" });
+  assert.equal(everything.rows.length, 3);
+  assert.equal(everything.seesUnknown, true);
+  assert.equal(everything.unknownOpenCount, 1);
+  const unknown = await repliesInbox({ show: "unknown" });
+  assert.deepEqual(unknown.rows.map((r) => [r.id, r.customerId, r.waId]), [[stranger, null, "919811122233"]]);
+  assert.equal((await repliesInbox({ show: "all", q: "New Shop" })).rows.length, 1, "search reads the sender's name");
+  assert.equal((await actionReply(stranger)).ok, true, "and the admin can handle it");
   assert.equal((await repliesInbox({ show: "all", q: "rate list" })).rows.length, 1, "search reads the reply text");
   setTestUser(null);
 });
