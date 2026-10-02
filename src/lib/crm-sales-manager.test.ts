@@ -37,6 +37,7 @@ import { recomputeSalesManagers } from "@/lib/recompute";
 import { setLeadNextAction } from "@/lib/actions/leads";
 import { reassignLead } from "@/lib/actions/sales";
 import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
+import { editLeadBasics } from "@/lib/actions/sales-manager-edit";
 import { CRM_SALES_MANAGER_WORKSPACE } from "@/proxy";
 import { setTestWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
@@ -694,5 +695,143 @@ describe("Recently — raised within the last 7 calendar days, in IST", () => {
     const listed = new Map((await pipelineList(DAY, { q: "", stage: "", view: "", page: 1 })).rows.map((r) => [r.id, r.isRecent]));
     assert.equal(listed.get(fresh.id), true);
     assert.equal(listed.get(old.id), false);
+  });
+});
+
+/* ═══════════════════════════════════════════════ E — the six-field Edit */
+
+describe("E — the Sales Manager's Edit: six fields, inside the book, and nothing else", () => {
+  const freshPhone = () => `98765${String(Math.floor(Math.random() * 99999)).padStart(5, "0")}`;
+  const audits = async (leadId: string) =>
+    (
+      await db.execute<{ action: string }>(
+        sql`select action from audit_log where entity_id = ${leadId} and action = 'lead.basics.edit'`,
+      )
+    ).length;
+
+  const sixFields = (leadId: string, over: Partial<Parameters<typeof editLeadBasics>[0]> = {}) => ({
+    customerId: leadId,
+    ownerId: salesman2.id,
+    leadManagerId: smLead.id,
+    city: "Virar",
+    contact: "Suresh Rane",
+    phone: freshPhone(),
+    productId,
+    ...over,
+  });
+
+  test("an associate-level Sales Manager edits all six on their own lead, and nothing else moves", async () => {
+    const before = await row(mineA.id);
+    const input = sixFields(mineA.id);
+    const r = await editLeadBasics(input);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const after = await row(mineA.id);
+    assert.equal(after.ownerId, salesman2.id, "owner");
+    assert.equal(after.leadManagerId, smLead.id, "sales manager");
+    assert.equal(after.city, "Virar", "city");
+    assert.equal(after.contactPerson, "Suresh Rane", "contact");
+    assert.equal(after.phone, input.phone, "phone");
+    assert.equal(after.leadRequiredProductId, productId, "product");
+
+    assert.equal(after.leadStage, before.leadStage, "stage is never touched");
+    assert.equal(after.salesManagerId, smA.id, "the seat the scope reads is never touched");
+    assert.equal(after.kind, before.kind);
+    assert.equal(await audits(mineA.id), 1, "city and phone leave an audit row");
+    assert.ok((await listIds()).includes(mineA.id), "and it is still in the book");
+  });
+
+  test("a lead outside the seat is refused and left exactly as it was", async () => {
+    for (const lead of [mineB, ownerOnly, unassigned]) {
+      const before = await row(lead.id);
+      const r = await editLeadBasics(sixFields(lead.id));
+      assert.equal(r.ok, false, `${lead.name} must be refused`);
+      const after = await row(lead.id);
+      assert.equal(after.city, before.city);
+      assert.equal(after.phone, before.phone);
+      assert.equal(after.ownerId, before.ownerId);
+      assert.equal(after.leadManagerId, before.leadManagerId);
+    }
+  });
+
+  test("an administrator can edit any lead", async () => {
+    setTestUser(admin);
+    const r = await editLeadBasics(sixFields(mineB.id, { ownerId: null, leadManagerId: null }));
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(mineB.id)).city, "Virar");
+  });
+
+  test("it is refused outside the workspace — a server action is a URL", async () => {
+    setTestWorkspace(null);
+    const r = await editLeadBasics(sixFields(mineA.id));
+    assert.equal(r.ok, false);
+    assert.equal((await row(mineA.id)).city, "Nashik", "unchanged");
+  });
+
+  test("a CRM user without the Sales Manager module cannot, even on a lead in a Sales Manager's book", async () => {
+    setTestUser(noModule);
+    const r = await editLeadBasics(sixFields(mineA.id));
+    assert.equal(r.ok, false);
+    assert.equal((await row(mineA.id)).city, "Nashik");
+  });
+
+  test("a phone already on the book is refused before anything is written", async () => {
+    const taken = (await row(mineB.id)).phone!;
+    const r = await editLeadBasics(sixFields(mineA.id, { phone: taken, city: "Pune" }));
+    assert.equal(r.ok, false);
+    assert.equal(r.ok ? "" : r.code, "duplicate");
+    assert.equal((await row(mineA.id)).city, "Nashik", "the city did not slip in ahead of the refusal");
+  });
+
+  test("its own phone number is not a duplicate, and a malformed one is a validation error", async () => {
+    const own = (await row(mineA.id)).phone!;
+    const ok1 = await editLeadBasics(sixFields(mineA.id, { phone: own, ownerId: null, leadManagerId: null, city: "Virar" }));
+    assert.equal(ok1.ok, true, ok1.ok ? "" : ok1.error);
+    const bad = await editLeadBasics(sixFields(mineA.id, { phone: "12345" }));
+    assert.equal(bad.ok, false);
+  });
+
+  test("saving what is already there changes nothing and writes no audit row", async () => {
+    const lead = await row(mineA.id);
+    const r = await editLeadBasics({
+      customerId: lead.id,
+      ownerId: lead.ownerId,
+      leadManagerId: lead.leadManagerId,
+      city: lead.city!,
+      contact: lead.contactPerson,
+      phone: lead.phone!,
+      productId: lead.leadRequiredProductId,
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.ok ? r.message : "", "Nothing to change.");
+    assert.equal(await audits(lead.id), 0);
+  });
+
+  test("the product and the contact can be cleared", async () => {
+    await db.update(customers).set({ leadRequiredProductId: productId, contactPerson: "Ganesh" }).where(eq(customers.id, mineA.id));
+    const lead = await row(mineA.id);
+    const r = await editLeadBasics({
+      customerId: lead.id,
+      ownerId: lead.ownerId,
+      leadManagerId: null,
+      city: lead.city!,
+      contact: "",
+      phone: lead.phone!,
+      productId: null,
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const after = await row(mineA.id);
+    assert.equal(after.leadRequiredProductId, null);
+    assert.equal(after.contactPerson, null);
+  });
+
+  test("a refused owner leaves the earlier fields saved and says so", async () => {
+    // noModule holds no Salesman App, so `reassignLead` refuses them.
+    const r = await editLeadBasics(sixFields(mineA.id, { ownerId: noModule.id, leadManagerId: null }));
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : r.error, /Already saved: .*city/);
+    const after = await row(mineA.id);
+    assert.equal(after.city, "Virar", "what was valid was kept");
+    assert.equal(after.ownerId, salesman.id, "the owner did not move");
   });
 });
