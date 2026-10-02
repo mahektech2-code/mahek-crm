@@ -151,9 +151,9 @@ const TONE: Record<ToastTone, { accent: string; tint: string; icon: 'tick' | 'be
   error: { accent: C.danger, tint: C.dangerBg, icon: 'alert', label: 'Not done' },
 };
 
-/* How long each tone sits there. A refusal is a sentence to read; a
-   confirmation is a word to glimpse. Every one can be closed sooner. */
-const DWELL: Record<ToastTone, number> = { success: 2600, info: 4000, warn: 6000, error: 7000 };
+/* Every notice leaves after three seconds, whatever its tone, and the ×
+   closes it sooner. One number, so no tone lingers over the screen. */
+const DWELL_MS = 3000;
 
 export function Toast({
   message,
@@ -200,7 +200,7 @@ export function Toast({
 
   React.useEffect(() => {
     if (!message) return;
-    const dwell = DWELL[tone] ?? DWELL.info;
+    const dwell = DWELL_MS;
 
     if (reduce) {
       progress.setValue(1);
