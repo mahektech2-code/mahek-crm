@@ -10,6 +10,7 @@ import { pendingCount } from '../sync/queue';
 import { isoDate } from '../lib/format';
 import type { FollowUpMode, OutcomeKey } from '../data/fixtures';
 import type { ToastTone } from '../components/ui/overlays';
+import type { UpdateOffer } from '../engines/refresh';
 
 /**
  * One store, holding what the design's single `this.state` held.
@@ -79,6 +80,8 @@ type State = {
   confirm: Confirm;
   confirmReason: string;
   confirmErr: boolean;
+  /** A new build to offer — see `components/shell/UpdatePrompt.tsx`. */
+  updateOffer: UpdateOffer | null;
 
   /* ---- customers ---- */
   custQ: string;
@@ -200,6 +203,8 @@ type Actions = {
    */
   notify: (msg: string, tone?: ToastTone) => void;
   clearToast: () => void;
+  offerUpdate: (o: UpdateOffer) => void;
+  dismissUpdate: () => void;
   signIn: () => void;
   signOut: () => void;
   startDay: () => void;
@@ -360,6 +365,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   confirm: null,
   confirmReason: '',
   confirmErr: false,
+  updateOffer: null,
 
   custQ: '',
   custId: '',
@@ -421,6 +427,8 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   notify: (msg, tone = 'success') => set({ toast: msg, toastTone: tone }),
   clearToast: () => set({ toast: null, toastTone: 'success' }),
+  offerUpdate: (o) => set({ updateOffer: o }),
+  dismissUpdate: () => set({ updateOffer: null }),
 
   signIn: () => set({ signedIn: true }),
 

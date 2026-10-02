@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { color as C, HIT, shadow, weight } from '../../theme/tokens';
 import { Icon } from '../ui/Icon';
 
@@ -18,9 +18,18 @@ export function Header({
   onBack,
   onBell,
   unread,
+  onRefresh,
+  refreshing = false,
 }: {
   title: string;
   onBack?: () => void;
+  /**
+   * Send, pull, and look for a new version — see `native/refresh.ts`. On every
+   * screen, because the moment somebody wonders whether his phone has the
+   * office's latest is never on the Sync screen.
+   */
+  onRefresh?: () => void;
+  refreshing?: boolean;
   /** Absent on the notifications screen itself — see `AppFrame`. */
   onBell?: () => void;
   unread: number;
@@ -35,6 +44,20 @@ export function Header({
       <Text numberOfLines={1} style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: C.ink }, weight(600)]}>
         {title}
       </Text>
+      {onRefresh ? (
+        <Pressable
+          onPress={refreshing ? undefined : onRefresh}
+          accessibilityLabel="Refresh"
+          accessibilityHint="Sends your work, gets the latest from the office, and checks for a new version"
+          accessibilityState={{ busy: refreshing }}
+          style={[s.iconBtn, { marginRight: -12 }]}>
+          {refreshing ? (
+            <ActivityIndicator size="small" color={C.body} />
+          ) : (
+            <Icon name="refresh" size={22} color={C.body} strokeWidth={1.5} />
+          )}
+        </Pressable>
+      ) : null}
       {/* A bell whose whole job is to bring you to the notifications screen is
           furniture once you are standing on it — and tapping it pushed a second
           copy of the page. The space is held rather than collapsed, so the title
