@@ -1821,6 +1821,59 @@ export const SETTINGS = [
    * the things it proposes. It shares the call assistant's confidence floor
    * (`callIntel.confirmBelowPercent`) rather than a third number.
    */
+  /*
+   * THE MANAGER VERIFICATION DIALOG'S OWN ASSISTANT — the Sales Manager's
+   * counterpart to the Calling Desk's. It reads what the manager says about the
+   * verification call into the dialog's answers and the shop's own figures, and
+   * proposes; it never chooses a verification result, a failure reason, a note
+   * or a correction's reason, and saves nothing. Its own switch, because a team
+   * may want one assistant without the others. It shares the call assistant's
+   * confidence floor (`callIntel.confirmBelowPercent`).
+   */
+  {
+    key: "verifyIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the verification call",
+    description:
+      "After a Sales Manager speaks or types about a verification call in the CRM Sales Manager workspace, suggest answers for the Manager verification dialog and mark where the shop's figures differ from the salesman's. The manager reviews and applies each one and still chooses the result, writes every reason and note, and presses Save verification. Needs a language model key like the other assistants; without one the dialog works as usual.",
+    default: true,
+  },
+  {
+    key: "verifyIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Verification call assistant model",
+    description:
+      "The OpenAI model that reads a verification call. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the manager fills the dialog in as usual.",
+    default: "gpt-5-mini",
+  },
+  /*
+   * THE CONVERT-TO-PROSPECT DIALOG'S OWN ASSISTANT. It reads what a Sales Manager
+   * says about a shop into the facts the dialog asks, and proposes: it fills
+   * only what the lead has nothing for, flags anything the lead already holds as
+   * a conflict for the manager to resolve, and never chooses the conversion
+   * reason or converts. Its own switch, separate from the verification
+   * assistant's, because the two do different jobs and a team may want one.
+   */
+  {
+    key: "convertIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the Convert to Prospect conversation",
+    description:
+      "After a Sales Manager speaks or types about a shop in the CRM Sales Manager workspace's Convert to Prospect dialog, suggest values for the facts it asks. It fills only what the lead has nothing for, shows anything different from the salesman's entry as a conflict for the manager to resolve, and never replaces his value, chooses the reason or converts. Needs a language model key like the other assistants; without one the dialog works as usual.",
+    default: true,
+  },
+  {
+    key: "convertIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Convert to Prospect assistant model",
+    description:
+      "The OpenAI model that reads a Convert to Prospect conversation. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the manager fills the dialog in as usual.",
+    default: "gpt-5-mini",
+  },
   {
     key: "intakeIntel.enabled",
     type: "boolean",
@@ -5301,6 +5354,10 @@ export type Config = {
   "callIntel.trainingMonths": number;
   "leadCallIntel.enabled": boolean;
   "leadCallIntel.model": string;
+  "convertIntel.enabled": boolean;
+  "convertIntel.model": string;
+  "verifyIntel.enabled": boolean;
+  "verifyIntel.model": string;
   "intakeIntel.enabled": boolean;
   "intakeIntel.model": string;
   "visitIntel.enabled": boolean;
