@@ -161,6 +161,8 @@ export async function phoneAlreadyOnTheBook(
       from customers c
       left join users u on u.id = c.owner_id
      where right(regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
+       -- A lead in the trash does not hold its number against a new one.
+       and c.deleted_at is null
      order by c.created_at asc
      limit 1
   `)) as unknown as ExistingAccount[];
@@ -202,6 +204,7 @@ export async function phonesOnTheBook(
              last10.map((d) => sql`${d}`),
              sql`, `,
            )})
+       and c.deleted_at is null
   `)) as unknown as Array<ExistingAccount & { key: string }>;
 
   const found = new Map<string, ExistingAccount>();
@@ -327,6 +330,8 @@ export async function duplicateCandidates({
     a.id < b.id
     and a.lead_archived = false
     and b.lead_archived = false
+    and a.deleted_at is null
+    and b.deleted_at is null
     and (a.kind = 'lead' or b.kind = 'lead')
     ${leadsVisible(scope, "a.owner_id")}
     ${leadsVisible(scope, "b.owner_id")}

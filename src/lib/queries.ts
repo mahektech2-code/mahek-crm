@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { and, asc, desc, eq, inArray, lte, or, sql, type Column, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type Column, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE, asDate, calendarDate } from "@/lib/business-date";
 import type { TrackedMessage } from "@/lib/whatsapp-status";
@@ -73,7 +73,9 @@ export const crmBadgeCounts = cache(async function crmBadgeCounts(): Promise<{
     select
       (select count(*) from reminders r
         where r.status = 'pending' and r.due_date <= ${day}::date
-          and (${teamWide} or r.assigned_user_id = ${user.id}))::int as reminders,
+          and (${teamWide} or r.assigned_user_id = ${user.id})
+          -- the same count the Reminders list shows: none for a trashed lead
+          and not exists (select 1 from customers x where x.id = r.customer_id and x.deleted_at is not null))::int as reminders,
       (select count(*) from complaints c
         join customers cu on cu.id = c.customer_id
         where c.status in ('open','in_progress','awaiting_customer')
@@ -823,7 +825,9 @@ export function customerFiltersOnly(
    *
    * See `NOT_A_LEAD_SQL` for why it is not `kind <> 'lead'`.
    */
-  const where: SQL[] = [NOT_A_LEAD_SQL];
+  // Nor is a lead in the trash — not in the list, its tiles, its total or
+  // anything a bulk action reaches.
+  const where: SQL[] = [NOT_A_LEAD_SQL, sql`customers.deleted_at is null`];
 
   const q = filters.query?.trim();
   if (q) {
@@ -1338,7 +1342,9 @@ export const getCustomer = cache(async function getCustomer(
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
-    .where(eq(customers.id, customerId))
+    // A lead in the trash is opened from the Admin Console's Trash and from
+    // nowhere else: here it answers as missing, like one out of scope.
+    .where(and(eq(customers.id, customerId), isNull(customers.deletedAt)))
     .limit(1);
   if (!rows[0]) return null;
   return {

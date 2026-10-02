@@ -208,6 +208,7 @@ export async function ageLeads(): Promise<Counted> {
     .where(
       and(
         eq(customers.kind, "lead"),
+        isNull(customers.deletedAt),
         isNotNull(customers.leadStage),
         eq(customers.leadArchived, false),
         lt(customers.leadLastActivityDate, sql`${TODAY} - ${archiveDays}::int`),
@@ -224,6 +225,7 @@ export async function ageLeads(): Promise<Counted> {
     .where(
       and(
         eq(customers.kind, "lead"),
+        isNull(customers.deletedAt),
         isNotNull(customers.leadStage),
         eq(customers.leadArchived, false),
         lt(customers.leadLastActivityDate, sql`${TODAY} - ${staleDays}::int`),
@@ -1054,6 +1056,8 @@ export async function runNurturePass(): Promise<Counted> {
       and(
         isNotNull(customers.leadStage),
         isNotNull(customers.leadManagerId),
+        // Nobody is nurtured from the trash.
+        isNull(customers.deletedAt),
         isNotNull(customers.lastOrderDate),
         eq(customers.cycleIsDefault, false),
       ),

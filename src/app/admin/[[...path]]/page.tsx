@@ -297,6 +297,20 @@ export default async function Page({
         enabled: config["voice.enabled"],
         canWrite: isPlatformAdmin,
       }}
+      trash={{
+        // Where the address left the Trash's filters, so the first render on
+        // the server and in the browser agree.
+        filters: {
+          q: one("tq") ?? "",
+          by: one("tby") ?? "",
+          from: one("tfrom") ?? "",
+          to: one("tto") ?? "",
+          sort: one("tsort") ?? "",
+          page: Number(one("tpage")) || 1,
+          per: Number(one("tper")) || 25,
+        },
+        canRestore: await canFor(user, "lead.restore"),
+      }}
       maps={{
         /* All five pool names, in order. The screen decides which to DRAW —
            an unset slot is not a gap to be filled, and a console that listed

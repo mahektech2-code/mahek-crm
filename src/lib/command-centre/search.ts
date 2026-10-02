@@ -25,8 +25,10 @@ export async function globalSearch(qRaw: string): Promise<(SearchHit & { rk: Sea
       select c.id, c.name, c.city, c.kind::text as kind, c.outstanding::text as outstanding, c.status::text as status,
              coalesce(u.name, c.sales_person_name) as who
         from customers c left join users u on u.id = coalesce(c.sales_am_id, c.back_office_am_id)
-       where c.name ilike ${like} or c.city ilike ${like} or c.gstin ilike ${like}
-          ${phone ? sql`or regexp_replace(coalesce(c.phone,''), '\\D', '', 'g') like ${phone} or regexp_replace(coalesce(c.alt_phone,''), '\\D', '', 'g') like ${phone}` : sql``}
+       where (c.name ilike ${like} or c.city ilike ${like} or c.gstin ilike ${like}
+          ${phone ? sql`or regexp_replace(coalesce(c.phone,''), '\\D', '', 'g') like ${phone} or regexp_replace(coalesce(c.alt_phone,''), '\\D', '', 'g') like ${phone}` : sql``})
+         -- The lead trash is listed in the Admin Console, and nowhere else.
+         and c.deleted_at is null
        order by (c.name ilike ${q.replace(/[%_]/g, "") + "%"}) desc, c.name limit 6
     `),
     db.execute<{ id: string; name: string; email: string; apps: string | null; active: boolean }>(sql`
@@ -96,7 +98,7 @@ export async function searchRecord(kind: SearchKind, id: string): Promise<Record
         left join users sa on sa.id = c.sales_am_id
         left join users bo on bo.id = c.back_office_am_id
         left join users sm on sm.id = c.sales_manager_id
-       where c.id = ${id}
+       where c.id = ${id} and c.deleted_at is null
     `);
     if (!c) throw new Error("That customer no longer exists.");
     const events = await db.execute<{ summary: string; at: string; who: string | null }>(sql`

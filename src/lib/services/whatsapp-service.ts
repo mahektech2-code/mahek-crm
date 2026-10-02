@@ -684,6 +684,7 @@ async function sendAutomaticAs(
   if (!customer) return err("That customer no longer exists.", "not_found");
   if (actor.checkScope) await assertCustomerInScope(customer);
   if (customer.doNotContact) return err(`${customer.name} is marked do not contact.`, "rule_violation");
+  if (customer.deletedAt) return err(`${customer.name} is in the lead trash.`, "rule_violation");
   if (customer.whatsappDnd) return err(`${customer.name} is on WhatsApp DND${customer.whatsappDndReason ? ` — ${customer.whatsappDndReason}` : ""}.`, "rule_violation");
 
   const [template] = message.templateId
@@ -964,8 +965,11 @@ export async function applyWatiEvent(event: WatiEvent): Promise<string> {
     const last10 = event.waId.replace(/\D/g, "").slice(-10);
     const [match] = await db.execute<{ id: string }>(sql`
       select c.id from customers c
-      where right(regexp_replace(coalesce(c.whatsapp_phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
-         or right(regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
+      where (right(regexp_replace(coalesce(c.whatsapp_phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
+         or right(regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10})
+        -- A lead in the trash is filed against nobody: the message is kept as
+        -- an unknown number's, where an administrator will see it.
+        and c.deleted_at is null
       order by (c.kind = 'customer') desc, c.updated_at desc
       limit 1
     `);
@@ -1607,7 +1611,7 @@ export async function findCustomersByName(q: string) {
   return db
     .select({ id: customers.id, name: customers.name, city: customers.city })
     .from(customers)
-    .where(sql`${customers.name} ilike ${"%" + term.replace(/[%_]/g, "") + "%"}`)
+    .where(sql`${customers.name} ilike ${"%" + term.replace(/[%_]/g, "") + "%"} and customers.deleted_at is null`)
     .orderBy(asc(customers.name))
     .limit(10);
 }
