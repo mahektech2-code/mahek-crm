@@ -14,9 +14,10 @@ import {
   type LeadThresholds,
   type VisitCapThresholds,
 } from '../engines/leads';
-import { leadBookQuery, rungCountsQuery, type LeadBookFilter } from './lead-query';
+import { LEAD_PAGE, leadBookQuery, leadCountQuery, rungCountsQuery, type LeadBookFilter } from './lead-query';
 
 export type { LeadBookFilter };
+export { LEAD_PAGE };
 
 /**
  * Leads — a shop that is not yet on the book.
@@ -251,6 +252,51 @@ export type LeadResult<T> = { ok: true; value: T } | { ok: false; message: strin
 export async function listLeads(filter: LeadBookFilter = {}, query = ''): Promise<Lead[]> {
   const q = leadBookQuery(filter, query);
   return all<Lead>(q.sql, q.params);
+}
+
+/**
+ * One page of the book, and how many match. The list asks for these; the
+ * whole-book `listLeads` above is for the callers that count or pick from it.
+ * A later page reuses the first page's total rather than counting again.
+ */
+export async function listLeadsPage(
+  filter: LeadBookFilter,
+  query: string,
+  offset: number,
+  knownTotal?: number,
+): Promise<{ rows: Lead[]; total: number; hasMore: boolean }> {
+  const page = leadBookQuery(filter, query, { limit: LEAD_PAGE, offset });
+  const rows = await all<Lead>(page.sql, page.params);
+  let total = knownTotal;
+  if (total == null) {
+    const c = leadCountQuery(filter, query);
+    total = (await one<{ n: number }>(c.sql, c.params))?.n ?? 0;
+  }
+  return { rows, total, hasMore: offset + rows.length < total };
+}
+
+/**
+ * How many leads stand under each stage chip, over the same search and the
+ * same "when". One COUNT per chip, each served by `idx_leads_book`; the counts
+ * describe the book, not the picked chip, so picking one never zeroes the rest.
+ */
+export async function leadViewCounts(
+  views: readonly LeadBookFilter['view'][],
+  base: Omit<LeadBookFilter, 'view' | 'rung'>,
+  query: string,
+): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  for (const view of views) {
+    const c = leadCountQuery({ ...base, view }, query);
+    out[view ?? 'all'] = (await one<{ n: number }>(c.sql, c.params))?.n ?? 0;
+  }
+  return out;
+}
+
+/** How many leads a search finds, without reading them. */
+export async function countLeads(filter: LeadBookFilter, query: string): Promise<number> {
+  const c = leadCountQuery(filter, query);
+  return (await one<{ n: number }>(c.sql, c.params))?.n ?? 0;
 }
 
 /** The rungs under the picked band. The statement is `rungCountsQuery`. */

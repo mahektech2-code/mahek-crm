@@ -14,11 +14,19 @@ const MONTH_NAMES = [
 ];
 
 export function inr(n: number): string {
+  return '₹' + grouped(n);
+}
+
+/**
+ * A count, grouped the way it is said — 10,234 shops reads, 10234 does not.
+ * Indian grouping, the same as `inr`, because a lakh of anything is said as one.
+ */
+export function grouped(n: number): string {
   const s = Math.round(Math.abs(n)).toString();
-  if (s.length <= 3) return '₹' + s;
+  if (s.length <= 3) return s;
   const last3 = s.slice(-3);
   const rest = s.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',');
-  return '₹' + rest + ',' + last3;
+  return rest + ',' + last3;
 }
 
 /**

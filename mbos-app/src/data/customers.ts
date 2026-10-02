@@ -3,9 +3,12 @@ import {
   CUSTOMER_PAGE,
   cityOriginsQuery,
   customerCountQuery,
+  customerFilterCountsQuery,
   customerPageQuery,
   customerTimelineQuery,
   type BookView,
+  type CustomerFilter,
+  type CustomerSort,
   type Origin,
 } from './customer-query';
 import { enqueue } from '../sync/queue';
@@ -140,14 +143,27 @@ export async function listCustomersPage(args: {
   origin?: Origin;
   /** Customers, leads, or the whole book. See `BookView`. */
   view?: BookView;
+  filter?: CustomerFilter;
+  sort?: CustomerSort;
+  /** The caller's business date — what "due" is measured against. */
+  today?: string;
   offset?: number;
   limit?: number;
+  /** Skip the COUNT where the caller already has it — every page after the first. */
+  knownTotal?: number;
 } = {}): Promise<CustomerPage> {
   const offset = args.offset ?? 0;
 
-  /* The SAME view goes to both, or the screen prints a total over a list that
-     does not match it. */
-  const count = customerCountQuery(args.query, args.view);
+  /* The SAME view and filter go to both, or the screen prints a total over a
+     list that does not match it. A later page reuses the first page's total:
+     counting ten thousand rows again to append thirty is the one cost here that
+     grows with the book and buys nothing. */
+  if (args.knownTotal != null) {
+    const page = customerPageQuery({ ...args, offset });
+    const rows = await all<Customer>(page.sql, page.params);
+    return { rows, total: args.knownTotal, hasMore: offset + rows.length < args.knownTotal };
+  }
+  const count = customerCountQuery(args.query, args.view, args.filter, args.today);
   const totalRow = await one<{ n: number }>(count.sql, count.params);
   const total = totalRow?.n ?? 0;
 
@@ -155,6 +171,27 @@ export async function listCustomersPage(args: {
   const rows = await all<Customer>(page.sql, page.params);
 
   return { rows, total, hasMore: offset + rows.length < total };
+}
+
+/** How many shops each chip on the Customers tab would show. See the query. */
+export type CustomerFilterCounts = Record<CustomerFilter, number>;
+
+export async function customerFilterCounts(args: {
+  query?: string;
+  view?: BookView;
+  today?: string;
+}): Promise<CustomerFilterCounts> {
+  const q = customerFilterCountsQuery(args.query, args.view, args.today);
+  const row = await one<Record<string, number | null>>(q.sql, q.params);
+  const n = (k: string) => Number(row?.[k] ?? 0);
+  return {
+    all: n('all'),
+    owing: n('owing'),
+    reorder: n('reorder'),
+    visitDue: n('visitDue'),
+    neverVisited: n('neverVisited'),
+    unpinned: n('unpinned'),
+  };
 }
 
 /**
