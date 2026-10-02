@@ -330,8 +330,9 @@ test("the collections strip counts today's and yesterday's payment reminders, by
   setTestUser(null);
 });
 
-test("the Replies tab shows a telecaller only their own customers' replies, with what they were answering, and records who handled one", async () => {
-  const { repliesInbox, actionReply } = await import("@/lib/services/whatsapp-service");
+test("the Chats list shows a telecaller only their own customers' conversations, both directions, and an admin the unknown numbers too", async () => {
+  const { listConversations, getThread, markThreadHandled } = await import("@/lib/services/whatsapp-chat-service");
+  const { actionReply } = await import("@/lib/services/whatsapp-service");
   const person = async (name: string, role: "admin" | "associate") => {
     const [u] = await db.insert(users).values({
       id: id("usr"), name, email: `${name.toLowerCase()}-${randomUUID().slice(0, 4)}@t.local`, passwordHash: "x", role, initials: "XX",
@@ -343,7 +344,6 @@ test("the Replies tab shows a telecaller only their own customers' replies, with
   const rakesh = await person("Rakesh", "associate");
   const boss = await person("Boss", "admin");
 
-  // Colour Camp is Priya's; a lead is Rakesh's.
   await db.update(customers).set({ ownerId: priya.id }).where(eq(customers.id, shopId));
   const leadId = id("cus");
   await db.insert(customers).values({ id: leadId, name: "Rakesh Lead", kind: "lead", ownerId: rakesh.id, contactPerson: "L", phone: "9820099999", city: "Pune" });
@@ -355,51 +355,46 @@ test("the Replies tab shows a telecaller only their own customers' replies, with
     preparedAt: at("10:00"), confirmedSentAt: at("10:01"),
   });
   const mine = id("wrp");
-  const theirs = id("wrp");
   await db.insert(waReplies).values([
     { id: mine, customerId: shopId, message: "Will pay Friday", receivedAt: at("10:30"), waId: "919820011001" },
-    { id: theirs, customerId: leadId, message: "Send me the rate list", receivedAt: at("10:40"), waId: "919820099999" },
+    { id: id("wrp"), customerId: leadId, message: "Send me the rate list", receivedAt: at("10:40"), waId: "919820099999" },
+    { id: id("wrp"), customerId: null, message: "Do you supply in Nashik?", receivedAt: at("10:50"), waId: "919811122233", senderName: "New Shop" },
   ]);
-  // A number on nobody's book.
-  const stranger = id("wrp");
-  await db.insert(waReplies).values({ id: stranger, customerId: null, message: "Do you supply in Nashik?", receivedAt: at("10:50"), waId: "919811122233", senderName: "New Shop" });
 
   setTestUser(priya);
-  let box = await repliesInbox({ show: "open" });
-  assert.deepEqual(box.rows.map((r) => r.id), [mine], "only her own customer's reply — not the stranger's");
-  assert.equal(box.openCount, 1);
-  assert.equal(box.seesUnknown, false);
-  assert.equal((await repliesInbox({ show: "unknown" })).rows.length, 0, "a telecaller never sees unknown numbers");
-  assert.equal((await actionReply(stranger)).ok, false, "nor handles them");
-  assert.equal(box.rows[0].inReplyTo?.body, "Your bill MMI/1 is overdue.", "with the message it answers");
+  let list = await listConversations({ show: "open" });
+  assert.deepEqual(list.rows.map((r) => r.key), [shopId], "only her own customer — not Rakesh's lead, not the stranger");
+  assert.equal(list.rows[0].unanswered, 1);
+  assert.equal(list.rows[0].lastText, "Will pay Friday");
+  assert.equal(list.seesUnknown, false);
 
-  // She cannot clear somebody else's inbox by id.
-  await assert.rejects(() => actionReply(theirs));
+  const thread = await getThread(shopId);
+  assert.equal(thread.ok, true);
+  if (!thread.ok) return;
+  assert.deepEqual(
+    thread.data.events.map((e) => [e.fromThem, e.text]),
+    [[false, "Your bill MMI/1 is overdue."], [true, "Will pay Friday"]],
+    "both directions, oldest first",
+  );
+  await assert.rejects(() => getThread(leadId), "nobody else's customer");
+  assert.equal((await getThread("n:9811122233")).ok, false, "nor a number on nobody's book");
 
-  assert.equal((await actionReply(mine)).ok, true);
-  box = await repliesInbox({ show: "open" });
-  assert.equal(box.rows.length, 0);
-  box = await repliesInbox({ show: "all" });
-  assert.equal(box.rows[0].actionedByName, "Priya", "who handled it is kept");
+  // Handling the thread clears it from Needs reply, and records who.
+  assert.equal((await markThreadHandled(shopId)).ok, true);
+  list = await listConversations({ show: "open" });
+  assert.equal(list.rows.length, 0);
+  const [handled] = await db.select().from(waReplies).where(eq(waReplies.id, mine));
+  assert.equal(handled.actionedById, priya.id);
+  assert.equal((await actionReply(mine, false)).ok, true, "and can be put back");
 
-  // Rakesh sees his lead's reply, and that it wrote first.
-  setTestUser(rakesh);
-  box = await repliesInbox({ show: "open" });
-  assert.deepEqual(box.rows.map((r) => r.id), [theirs]);
-  assert.equal(box.rows[0].kind, "lead");
-  assert.equal(box.rows[0].inReplyTo, null);
-
-  // An admin sees all three, the stranger marked as nobody's.
   setTestUser(boss);
-  const everything = await repliesInbox({ show: "all" });
-  assert.equal(everything.rows.length, 3);
-  assert.equal(everything.seesUnknown, true);
-  assert.equal(everything.unknownOpenCount, 1);
-  const unknown = await repliesInbox({ show: "unknown" });
-  assert.deepEqual(unknown.rows.map((r) => [r.id, r.customerId, r.waId]), [[stranger, null, "919811122233"]]);
-  assert.equal((await repliesInbox({ show: "all", q: "New Shop" })).rows.length, 1, "search reads the sender's name");
-  assert.equal((await actionReply(stranger)).ok, true, "and the admin can handle it");
-  assert.equal((await repliesInbox({ show: "all", q: "rate list" })).rows.length, 1, "search reads the reply text");
+  list = await listConversations({ show: "all" });
+  assert.equal(list.rows.length, 3);
+  assert.equal(list.seesUnknown, true);
+  const unknown = await listConversations({ show: "unknown" });
+  assert.deepEqual(unknown.rows.map((r) => [r.key, r.name]), [["n:9811122233", "New Shop"]]);
+  assert.equal((await listConversations({ show: "all", q: "Nashik" })).rows.length, 1, "search reads the messages");
+  assert.equal((await getThread("n:9811122233")).ok, true);
   setTestUser(null);
 });
 
