@@ -856,6 +856,12 @@ type ScopedCustomer = {
    * it stops being able to say where the shop is.
    */
   leadSalesType: LeadSalesType | null;
+  /**
+   * A shop a distributor bills. It is part of the salesman's customer book, not
+   * a prospect. He goes there to take orders for the distributor, so it is
+   * never asked the Suspect question, whatever stage a lead record left on it.
+   */
+  thirdParty: boolean;
   ownerId: string | null;
   salesAmId: string | null;
   creditBlocked: boolean;
@@ -891,6 +897,7 @@ export async function scopedCustomer(
       name: customers.name,
       leadStage: customers.leadStage,
       leadSalesType: customers.leadSalesType,
+      thirdParty: customers.thirdParty,
       /* Whose book it is, carried so a conversion can move the sales seat
          through `assignedUserId` rather than re-deriving a fallback. */
       ownerId: customers.ownerId,
@@ -1148,7 +1155,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
      visit is activity, so it has to move that date whichever way the decision
      went. Read once here rather than inside the transaction. */
   const day = await today();
-  if (isUndecidedSuspect(customer.leadStage)) {
+  if (!customer.thirdParty && isUndecidedSuspect(customer.leadStage)) {
     const [seen] = await db
       .select({ n: sql<number>`count(*)::int` })
       .from(mbosVisits)
@@ -1516,7 +1523,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     await qualifyLead(customer.id, principal.user.id, customer.name).catch(() => {});
   }
 
-  if (isUndecidedSuspect(customer.leadStage)) {
+  if (!customer.thirdParty && isUndecidedSuspect(customer.leadStage)) {
     const decideAt = config["mbos.leads.maxSuspectVisits"];
     const [after] = await db
       .select({ n: sql<number>`count(*)::int` })
