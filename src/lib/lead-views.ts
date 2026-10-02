@@ -61,7 +61,14 @@ export type LeadView =
   | "expected"
   | "lost30"
   | "register"
-  | "archived";
+  | "archived"
+  /* The four worklists that lived only on screens being retired from the
+     navigation. Each is a population with ONE definition (`leadViewClause`),
+     read by the page of rows and by the count beside it. */
+  | "decide"
+  | "parked"
+  | "unworked"
+  | "handover";
 
 export const LEAD_VIEWS = [
   "all",
@@ -72,6 +79,10 @@ export const LEAD_VIEWS = [
   "lost30",
   "register",
   "archived",
+  "decide",
+  "parked",
+  "unworked",
+  "handover",
 ] as const satisfies readonly LeadView[];
 
 /**
@@ -154,6 +165,26 @@ export const VIEW_TEXT: Record<LeadView, { title: string; subtitle: string }> = 
     subtitle:
       "Filed out of the way, newest first. Nothing here is deleted — restore one to put it back on the working list.",
   },
+  decide: {
+    title: "Suspect decisions",
+    subtitle:
+      "Suspects visited at least as often as the warning threshold and still undecided. Nothing is refused — an answer is demanded: Prospect, or not. Open the lead to answer it.",
+  },
+  parked: {
+    title: "On hold",
+    subtitle:
+      "Leads somebody paused, by the day each comes back — a park with no day named first, because nothing will ever make that one due. Open the lead to resume it.",
+  },
+  unworked: {
+    title: "Nobody is working these",
+    subtitle:
+      "§24 — an active lead may not sit with nothing owed by anybody. No plan at all comes first, then a plan whose day has gone with no answer beside it.",
+  },
+  handover: {
+    title: "Handovers",
+    subtitle:
+      "Converted, and still nobody named to run the relationship. A handover moves who RUNS the account and no money at all. Longest-waiting first.",
+  },
 };
 
 /**
@@ -167,8 +198,17 @@ export const VIEW_TEXT: Record<LeadView, { title: string; subtitle: string }> = 
  * book rather than a cut of this one, and it keeps the link it has always had
  * beside the export button.
  */
-export const VIEW_CHIPS = ["all", "mine", "today", "overdue", "register"] as const satisfies
-  readonly LeadView[];
+export const VIEW_CHIPS = [
+  "all",
+  "mine",
+  "today",
+  "overdue",
+  "unworked",
+  "parked",
+  "decide",
+  "handover",
+  "register",
+] as const satisfies readonly LeadView[];
 
 /* ═══════════════════════════════════════════════════ §8.2 — the nine tiles */
 

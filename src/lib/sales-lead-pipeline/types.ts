@@ -487,7 +487,7 @@ export type PipelineRefs = {
  * (a verified Prospect that is also overdue), and each is a fact read off an
  * existing screen's own query — never a status somebody set here.
  */
-export type DeskQueue = "verify" | "review" | "sample" | "order" | "overdue";
+export type DeskQueue = "verify" | "review" | "sample" | "order" | "overdue" | "nurture";
 
 /** A pipeline row plus the salesman it answers to and the queues it is in. */
 export type DeskRow = PipelineRow & {

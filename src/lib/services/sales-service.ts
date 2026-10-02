@@ -271,6 +271,40 @@ export function leadsVisible(scope: ManagerScope, column = "c.owner_id") {
 }
 
 /**
+ * WHOSE BOOK A CONVERTED ACCOUNT IS IN, spelled for the alias these queries use.
+ *
+ * `ASSIGNED_TO_SQL` is the authority and says the same thing about the table
+ * called `customers`; the lead-list reads cannot use it because they alias. It
+ * is the sales seat once somebody has decided, and the sales seat falling back
+ * to the owner before anybody did — the lead arm is deliberately absent, since a
+ * converted account is by construction no longer a lead. Exported so the
+ * Handovers screen and the `handover` view read ONE definition.
+ */
+export const BOOK_OF_ACCOUNT_SQL = `case when c.am_decided_at is not null
+                        then c.sales_am_id
+                        else coalesce(c.sales_am_id, c.owner_id) end`;
+
+/**
+ * THE SCOPE A VIEW IS NARROWED BY, which is the owner column for every view but
+ * one.
+ *
+ * `handover` is about CONVERTED ACCOUNTS, whose book is the sales seat rather
+ * than the lead's owner — the rule the Handovers screen has always applied, so
+ * the view and the screen show a manager the same accounts. Everything else is
+ * `leadsVisible` exactly as before.
+ *
+ * (A Sales Manager seat reads `sales_manager_id`, a sibling of the OWNER column
+ * only; `leadsVisible` answers false for any other column rather than guess, so
+ * the `handover` view is empty inside that seat. That is the same answer the
+ * Handovers screen gives there: the seat is released at conversion.)
+ */
+export function scopeNarrowing(scope: ManagerScope, view?: LeadView) {
+  return view === "handover"
+    ? leadsVisible(scope, BOOK_OF_ACCOUNT_SQL)
+    : leadsVisible(scope);
+}
+
+/**
  * `and <alias>.id in (…)`, or nothing at all for a national manager.
  *
  * An empty list produces `in ('')`, which matches nothing — deliberately. A
@@ -1642,6 +1676,36 @@ const LEADS_ORDER_SQL: SQL = sql`order by ${OWED_DATE_SQL} asc nulls last,
                      c.lead_last_activity_date asc nulls last, c.id desc`;
 
 /**
+ * THE ORDER A WORKLIST VIEW READS IN, which is the order the screen it replaces
+ * always had — a worklist is ordered by what is worst, not by what is owed.
+ *
+ *   - `parked`: by the day it comes back, NO DAY FIRST. A park with no day named
+ *     is the one nothing will ever make due, so it leads rather than hides.
+ *   - `unworked`: NO PLAN AT ALL before a plan whose day has gone, then oldest.
+ *   - `handover`: longest-waiting first.
+ *
+ * Every other view keeps the default. A tiebreaker closes each, or a paged list
+ * shows one row on two pages.
+ */
+function leadsOrderFor(view: LeadView | undefined): SQL {
+  switch (view) {
+    case "parked":
+      return sql`order by (c.lead_hold_resume_date is null) desc,
+                         c.lead_hold_resume_date asc, c.id asc`;
+    case "unworked":
+      return sql`order by case when c.lead_next_action is null
+                                or c.lead_next_action_date is null
+                                or c.lead_next_action_owner_id is null then 0 else 1 end,
+                         c.lead_next_action_date asc nulls first,
+                         c.lead_stage_since asc nulls first, c.id asc`;
+    case "handover":
+      return sql`order by c.lead_converted_at asc nulls last, c.id asc`;
+    default:
+      return LEADS_ORDER_SQL;
+  }
+}
+
+/**
  * WHAT THE FILTER BAR MEANS, IN SQL — one clause, built from the same option
  * values `lib/lead-filters.ts` hands the dropdowns.
  *
@@ -1978,7 +2042,7 @@ export async function leadsPage(
   const where = sql`
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
-       ${leadsVisible(scope)}
+       ${scopeNarrowing(scope, options.view)}
        ${await viewNarrowing(options.view, day)}`;
   const narrowed = leadFilterClause(filters, day, {
     atRiskBelow: config["mbos.health.atRiskBelow"],
@@ -2060,7 +2124,7 @@ export async function leadsPage(
       */
      ${archived
        ? sql`order by c.lead_archived_at desc nulls last, c.id desc`
-       : LEADS_ORDER_SQL}
+       : leadsOrderFor(options.view)}
      limit ${perPage} offset ${(page - 1) * perPage}
   `) as unknown as LeadRow[];
 
@@ -2119,7 +2183,7 @@ export async function leadIdsMatching(
       from customers c
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
-       ${leadsVisible(scope)}
+       ${scopeNarrowing(scope, options.view)}
        ${await viewNarrowing(options.view, day)}
        ${leadFilterClause(options.filters ?? {}, day, {
          atRiskBelow: config["mbos.health.atRiskBelow"],
@@ -2127,7 +2191,7 @@ export async function leadIdsMatching(
        })}
      ${archived
        ? sql`order by c.lead_archived_at desc nulls last, c.id desc`
-       : LEADS_ORDER_SQL}
+       : leadsOrderFor(options.view)}
      limit ${cap + 1}
   `);
   return { ids: rows.slice(0, cap).map((r) => r.id), capped: rows.length > cap };

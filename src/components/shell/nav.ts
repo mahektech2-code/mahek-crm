@@ -14,7 +14,25 @@ export type NavItem = {
    * and it was worth renaming: it read `deactivations` on a screen that also
    * handles reopening, which is the same half-a-name the route had.
    */
-  badge?: "reminders" | "complaints" | "statusRequests" | "leadsDueToday" | "leadsOverdue";
+  badge?:
+    | "reminders"
+    | "complaints"
+    | "statusRequests"
+    | "leadsDueToday"
+    | "leadsOverdue"
+    /** §24 as ONE number: what is past its day if anything is, otherwise what is due today. */
+    | "leadsAttention";
+  /**
+   * A screen that has left the main navigation but is still granted, routed and
+   * working — drawn ONLY for somebody who cannot reach the screen that replaced
+   * it (All Leads, where every one of these is now a view or a link).
+   *
+   * Hiding a destination from the sidebar must not strand the person whose grant
+   * is for that destination alone: with no All Leads there is no desk line to
+   * find it from, so for them the entry stays. Everybody else reaches it from
+   * All Leads, the Sales Manager desk, or the link that always led to it.
+   */
+  legacy?: boolean;
   /**
    * Hidden from anybody who is not a manager or an admin, on top of the module
    * grant.
@@ -57,13 +75,18 @@ export function navForModules(
   isManager = true,
 ): NavGroup[] {
   const set = new Set(allowed);
+  /* A `legacy` row is drawn only for somebody with no All Leads — see the flag. */
+  const hub = set.has(`${CRM_BASE}/leads`);
   return NAV.map((g) => ({
     ...g,
-    // Two filters, deliberately. The module grant answers "were they given this
+    // Three filters, deliberately. The module grant answers "were they given this
     // screen"; `managerOnly` answers "is this screen theirs to have at all" —
     // and the second is needed because an ungranted module is a HELD module,
-    // not a withheld one.
-    items: g.items.filter((i) => set.has(i.href) && (isManager || !i.managerOnly)),
+    // not a withheld one. `legacy` answers "has something else replaced it for
+    // this person".
+    items: g.items.filter(
+      (i) => set.has(i.href) && (isManager || !i.managerOnly) && !(i.legacy && hub),
+    ),
   })).filter((g) => g.items.length > 0);
 }
 
@@ -178,7 +201,7 @@ export const NAV: NavGroup[] = [
     icon: "target",
     items: [
       /*
-       * §8.1 — THE TWO LEAD BADGES, AND WHY THEY ARE NOT THE SIZE OF THE BOOK.
+       * §8.1 — THE LEAD BADGE, AND WHY IT IS NOT THE SIZE OF THE BOOK.
        *
        * A badge is a queue, never a population. The three above decide the
        * same way — Reminders counts what is pending AND due, Complaints counts
@@ -187,43 +210,49 @@ export const NAV: NavGroup[] = [
        * there every working day of the year and taught everybody to stop
        * looking at this column, taking the count beside it down too.
        *
-       * So All Leads carries what is owed TODAY, which is the first thing the
-       * nine tiles on that screen cut it by; Next actions carries what has gone
-       * PAST its day, which is the tab inside it. Both come from
-       * `lead-action-window.ts` — the same two windows the screens behind them
-       * read — because a badge is the half nobody checks: nobody presses a
-       * sidebar number and counts the rows it opened, so one derived beside its
-       * screen would be wrong for months in front of everybody.
+       * It was two badges on two rows: All Leads carried what is owed TODAY and
+       * Next actions carried what had gone PAST its day, in red. Next actions has
+       * left this list — its Due, Overdue, Nothing-scheduled and On-hold tabs are
+       * views of All Leads now — so the two numbers share the one row, as ONE
+       * number: what is past its day if anything is (red, because one lead past
+       * the day somebody promised is not a lighter version of five), otherwise
+       * what is due today. Both come from `lead-action-window.ts`, the same two
+       * windows the views behind them read, because a badge is the half nobody
+       * checks: nobody presses a sidebar number and counts the rows it opened.
+       *
+       * THE SIX THAT STAY are the funnel's own surfaces — the list, the two ways
+       * in (a desk and a form), the two managers' desks, and the one record of
+       * what was lost. The seven rows after them have left the list but not the
+       * product; see `NavItem.legacy`.
        */
       {
         href: at("/leads"),
         label: "All Leads",
         icon: "target",
         exact: true,
-        badge: "leadsDueToday",
+        badge: "leadsAttention",
       },
+      { href: at("/leads/intake"), label: "Intake", icon: "plus" },
       // role-name-ok: a display label for the Calling desk screen, not a role value.
       { href: at("/leads/calling-desk"), label: "Telecaller", icon: "phone" },
-      { href: at("/leads/funnel"), label: "Funnel & conversion", icon: "chart" },
-      { href: at("/leads/intake"), label: "Intake", icon: "plus" },
-      { href: at("/leads/qualify"), label: "Qualification", icon: "check" },
-      { href: at("/samples"), label: "Samples & trials", icon: "doc" },
-      { href: at("/leads/commercial"), label: "Commercial", icon: "rupee" },
+      { href: at("/leads/sales-manager"), label: "Sales Manager", icon: "people" },
       { href: at("/leads/appointments"), label: "Distributor appointments", icon: "people" },
+      { href: at("/leads/lost"), label: "Lost", icon: "warning" },
+      /* ---- out of the main navigation; see `NavItem.legacy` -------------- */
+      { href: at("/leads/funnel"), label: "Funnel & conversion", icon: "chart", legacy: true },
+      { href: at("/leads/qualify"), label: "Qualification", icon: "check", legacy: true },
+      { href: at("/samples"), label: "Samples & trials", icon: "doc", legacy: true },
+      { href: at("/leads/commercial"), label: "Commercial", icon: "rupee", legacy: true },
       {
         href: at("/leads/actions"),
         label: "Next actions & nurture",
         icon: "clipboard",
-        /* Red at one, like Complaints and unlike everything else on this
-           column. §24 exists because a lead sits for six weeks with everybody
-           assuming somebody else is holding it, and one of these is already
-           that — a single overdue promise is not a lighter version of five. */
-        badge: "leadsOverdue",
+        legacy: true,
       },
-      { href: at("/leads/handovers"), label: "Handovers", icon: "arrowRight" },
-      { href: at("/leads/oversight"), label: "Oversight", icon: "lock" },
-      { href: at("/leads/sales-manager"), label: "Sales Manager", icon: "people" },
-      { href: at("/leads/lost"), label: "Lost", icon: "warning" },
+      { href: at("/leads/handovers"), label: "Handovers", icon: "arrowRight", legacy: true },
+      /* Oversight is the Admin Console's now (Lead oversight, under Platform). It
+         is kept here for somebody granted nothing but it. */
+      { href: at("/leads/oversight"), label: "Oversight", icon: "lock", legacy: true },
     ],
   },
   {

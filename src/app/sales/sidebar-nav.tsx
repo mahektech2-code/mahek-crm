@@ -49,10 +49,13 @@ export function SalesSidebarNav({
 }) {
   const permitted = new Set(allowed);
 
+  /* A `legacy` row is drawn only for somebody with no All Leads — see the flag. */
+  const hub = permitted.has("/sales/leads");
+
   const pinned = SALES_PINNED.filter((i) => permitted.has(i.href));
   const groups = SALES_NAV.map((g) => ({
     ...g,
-    items: g.items.filter((i) => permitted.has(i.href)),
+    items: g.items.filter((i) => permitted.has(i.href) && !(i.legacy && hub)),
   })).filter((g) => g.items.length > 0);
 
   return (
@@ -64,9 +67,17 @@ export function SalesSidebarNav({
       countFor={(item) => counts[item.href] ?? 0}
       /* Named red, or the console's own size rule. See `DANGER_HREFS` — the
          rows it does not name keep exactly the tone they have always had. */
-      badgeToneFor={(item, count) =>
-        DANGER_HREFS.has(item.href) ? "danger" : count >= 5 ? "danger" : "warn"
-      }
+      badgeToneFor={(item, count) => {
+        /* All Leads shows ONE number for §24: what is past its day if anything
+           is, otherwise what is due today (the layout builds it). It is red
+           exactly when it is the overdue figure, which the layout also hands
+           down under the old Next-actions key — so that key is both a count for
+           the row that still carries it and the signal for this one. */
+        if (item.href === "/sales/leads") {
+          return (counts["/sales/leads/actions"] ?? 0) > 0 ? "danger" : "warn";
+        }
+        return DANGER_HREFS.has(item.href) ? "danger" : count >= 5 ? "danger" : "warn";
+      }}
       renderIcon={(name, size) => <SalesIcon name={name as SalesIconName} size={size} />}
     />
   );

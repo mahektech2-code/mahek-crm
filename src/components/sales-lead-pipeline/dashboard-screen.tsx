@@ -80,7 +80,7 @@ export function DashboardScreen({ data, workspace = "sales" }: { data: Dashboard
       <SectionLabel>Sales Manager — verification &amp; nurturing</SectionLabel>
       <MetricStrip
         metrics={[
-          { label: "Prospects Pending Verification", value: String(mgr.pendingVerification), tone: mgr.pendingVerification ? undefined : "ink", sub: "incl. calling-desk requests", onClick: () => goto(links.qualify) },
+          { label: "Prospects Pending Verification", value: String(mgr.pendingVerification), tone: mgr.pendingVerification ? undefined : "ink", sub: "incl. calling-desk requests", onClick: () => goto(`${BASE}?view=verify`) },
           { label: "Verified Prospects", value: String(mgr.verifiedProspects), tone: "success", sub: "verified, not yet qualifying", onClick: () => goto(`${BASE}/list?stage=prospect,contacted`) },
           { label: "Verification Failed", value: String(mgr.verificationFailed), tone: mgr.verificationFailed ? "danger" : "ink", sub: "closed in the last 30 days" },
           { label: "Sample Reviews Pending", value: String(mgr.sampleReviewsPending), sub: "shop has it, no verdict", onClick: () => goto(`${BASE}/list?stage=sample_received,sample_review`) },

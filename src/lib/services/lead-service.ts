@@ -30,7 +30,13 @@ import {
   type Condition,
   type LeadGateInput,
 } from "../engines/lead-gates";
-import { directionOf, isOnTheBookAt, isParked } from "../engines/lead-ladder";
+import {
+  directionOf,
+  isOnTheBookAt,
+  isParked,
+  ladderFor,
+  type MoveDirection,
+} from "../engines/lead-ladder";
 import { NURTURE_SOURCE_TYPE } from "../engines/lead-nurture";
 import {
   stageLabel,
@@ -677,6 +683,39 @@ export type LeadMoveDecision =
   | { ok: false; code: LeadMoveRefusalCode; message: string; missing: Condition[] };
 
 /**
+ * The rung a lead was parked FROM — the `from_stage` of its newest transition into
+ * `on_hold`. That transition is the only place it is recorded: the stage column
+ * is taken by On hold itself. Null where there is no such transition.
+ */
+export async function parkedFromRung(customerId: string): Promise<LeadStage | null> {
+  const [row] = await db
+    .select({ fromStage: leadStageTransitions.fromStage })
+    .from(leadStageTransitions)
+    .where(
+      and(
+        eq(leadStageTransitions.customerId, customerId),
+        eq(leadStageTransitions.toStage, "on_hold"),
+      ),
+    )
+    .orderBy(desc(leadStageTransitions.at), desc(leadStageTransitions.id))
+    .limit(1);
+  return (row?.fromStage as LeadStage | null | undefined) ?? null;
+}
+
+/** Which way a move OUT of `on_hold` goes, judged from the rung the park came from. */
+async function resumeDirection(
+  customerId: string | undefined,
+  to: LeadStage,
+  salesType: LeadSalesType | null,
+): Promise<MoveDirection> {
+  const ladder = ladderFor(salesType);
+  if (!ladder.includes(to)) return "off_ladder";
+  const parked = customerId ? await parkedFromRung(customerId) : null;
+  if (!parked || !ladder.includes(parked)) return "up";
+  return to === parked ? "same" : directionOf(parked, to, salesType);
+}
+
+/**
  * May this lead go to that rung — the whole of it, including the parts §28
  * leaves to configuration and the parts the engine deliberately does not know
  * about.
@@ -698,7 +737,12 @@ export type LeadMoveDecision =
  *     answer in.
  */
 export async function evaluateLeadStageMove(input: {
-  lead: Pick<LeadRow, "leadStage" | "leadSalesType">;
+  /**
+   * `id` is optional so a caller holding only a rung and a sales type still
+   * compiles, and it is what lets a PARKED lead be resumed: where the lead is
+   * on `on_hold` and an id is given, the rung it was parked from is read.
+   */
+  lead: Pick<LeadRow, "leadStage" | "leadSalesType"> & { id?: string };
   gate: LeadGateInput;
   to: LeadStage;
   reasonCode?: string | null;
@@ -758,7 +802,33 @@ export async function evaluateLeadStageMove(input: {
     return { ok: true, kind: "passed", overriddenConditions: [] };
   }
 
-  const direction = directionOf(from, to, salesType);
+  let direction: MoveDirection = directionOf(from, to, salesType);
+
+  /*
+   * §— RESUMING A PARKED LEAD IS NOT A MOVE FROM A RUNG THAT DOES NOT EXIST.
+   *
+   * `on_hold` is on no ladder, so `directionOf(on_hold, anything)` answers
+   * `off_ladder` and the refusal below read "Qualification is not a rung on
+   * this lead's ladder" about a rung that plainly is — every resume
+   * through this evaluator — the record, the board and the handset all share it —
+   * was refused on it. The park DOES remember where it came from: the newest transition into
+   * `on_hold` carries it as `from_stage`, and that is the only place it exists.
+   *
+   * So a resume is judged from the PARKED-FROM rung: back to it is `same`, up
+   * from it is `up`, and below it is `down` — which demands a manager and a
+   * reason like any step backwards. Everything after this block is untouched,
+   * so the target's own gate is asked exactly as for any other move (including
+   * §24's next action), and no business rule is bypassed.
+   *
+   * Where the parked-from rung is unknown (a park written before the
+   * transitions table) or is no longer on this lead's ladder (the sales type
+   * changed while it was parked) there is nothing to walk back from, so the
+   * target is treated as an ordinary move up and its gate decides. A target not
+   * on the CURRENT ladder is refused as before.
+   */
+  if (direction === "off_ladder" && isParked(from)) {
+    direction = await resumeDirection(lead.id, to, salesType);
+  }
 
   /* Walking a lead back DOWN undoes work somebody recorded, which is why the
      ladder engine's own `previousStage` says in as many words that it is for a

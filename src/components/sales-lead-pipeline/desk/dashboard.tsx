@@ -56,6 +56,7 @@ const QUEUE_TONE: Record<DeskQueue, "warn" | "danger" | "brand" | "success"> = {
   sample: "warn",
   order: "success",
   overdue: "danger",
+  nurture: "brand",
 };
 
 function dueLine(row: DeskRow, day: string): { text: string; tone: "danger" | "warn" | "body" | "muted" } {

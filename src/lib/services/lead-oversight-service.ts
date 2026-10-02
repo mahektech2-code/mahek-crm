@@ -9,7 +9,7 @@ import {
   QUALIFICATION_CONDITIONS,
 } from "../engines/lead-gates";
 import type { LeadSalesType, LeadStage } from "../lead-labels";
-import { leadsVisible, managerScope, onlyMine } from "./sales-service";
+import { BOOK_OF_ACCOUNT_SQL, leadsVisible, managerScope, onlyMine } from "./sales-service";
 
 /* ---------------------------------------------------------------------------
  * OVERSIGHT — the three questions nobody can answer from a worklist.
@@ -45,10 +45,12 @@ import { leadsVisible, managerScope, onlyMine } from "./sales-service";
  * and alias. It is the sales seat after somebody decided, and the sales seat
  * falling back to the owner before anybody did — the lead arm is deliberately
  * absent, since a converted account is by construction no longer a lead.
+ *
+ * The expression itself now lives in `sales-service.ts` as `BOOK_OF_ACCOUNT_SQL`,
+ * because the lead list's `handover` view is scoped by the same rule and two
+ * spellings of "whose book" is the failure that rule exists to prevent.
  */
-const BOOK_OF_C = `case when c.am_decided_at is not null
-                        then c.sales_am_id
-                        else coalesce(c.sales_am_id, c.owner_id) end`;
+const BOOK_OF_C = BOOK_OF_ACCOUNT_SQL;
 
 /* ═════════════════════════════════════════════════ §Q the outstanding seats */
 
