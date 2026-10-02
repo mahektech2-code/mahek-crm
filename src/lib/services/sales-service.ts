@@ -442,6 +442,21 @@ export type Salesman = {
    */
   /** Where he works. `parent` is the state a city sits in — see `PARENT_KIND`. */
   territories: { kind: string; value: string; parent: string }[];
+  /**
+   * His latest answer to that allocation, from the handset — accepted, or a
+   * request for different cities with the Approvals queue's verdict. Null
+   * where he has never answered. `signature` is the allocation he was looking
+   * at; compare it with `areasSignature(territories)` to know whether an
+   * acceptance still stands.
+   */
+  areaAnswer: {
+    kind: "accept" | "change";
+    at: string;
+    signature: string;
+    requested: string[];
+    reason: string | null;
+    state: string;
+  } | null;
 };
 
 /**
@@ -487,7 +502,18 @@ export async function fieldTeam(): Promise<Salesman[]> {
                              order by t.parent, t.kind, t.region)
                from mbos_user_territories t
               where t.user_id = u.id and t.kind <> 'region'
-           ), '[]'::json) as "territories"
+           ), '[]'::json) as "territories",
+           (select json_build_object(
+                     'kind', r.kind, 'at', r.server_created_at, 'signature', r.signature,
+                     'requested', r.requested_places, 'reason', r.reason,
+                     'state', case when r.kind = 'accept' then 'accepted' else coalesce(
+                       (select a.state::text from mbos_approvals a
+                         where a.subject_id = r.id and a.subject_type = 'territory_request'
+                         order by a.requested_at desc limit 1), 'pending') end)
+              from mbos_territory_requests r
+             where r.user_id = u.id
+             order by r.server_created_at desc
+             limit 1) as "areaAnswer"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
      where true ${onlyMine(scope, "u.id")}
@@ -872,6 +898,16 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
                  (select 'The day of ' || to_char(d.day, 'DD Mon')
                     from mbos_attendance_days d where d.id = ap.subject_id),
                  'A day the office cannot find')
+             when 'territory' then
+               coalesce(
+                 (select 'Wants to work ' ||
+                         coalesce((select string_agg(x, ', ')
+                                     from jsonb_array_elements_text(t.requested_places) x), 'elsewhere') ||
+                         coalesce(' instead of ' ||
+                                  (select string_agg(x, ', ')
+                                     from jsonb_array_elements_text(t.current_places) x), '')
+                    from mbos_territory_requests t where t.id = ap.subject_id),
+                 'A request for different cities the office cannot find')
              else ap.subject_type
            end as summary,
 

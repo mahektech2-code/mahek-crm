@@ -32,6 +32,7 @@ import {
   mbosLeadValidations,
   mbosLeaveRequests,
   mbosTours,
+  mbosTerritoryRequests,
   mbosSamples,
   sampleFeedback,
   mbosSyncReceipts,
@@ -621,6 +622,9 @@ const DEPENDENCY_TABLES: Record<string, string> = {
   approval: "mbos_approvals",
   plan: "mbos_journey_plans",
   tour: "mbos_tours",
+  /* A request for different cities, which its approval waits on —
+   * `stamp('territory')` in `data/territory.ts`. */
+  territory: "mbos_territory_requests",
   /*
    * THE TRAVEL MODULE SHIPPED WITHOUT ITS TWO PREFIXES, and the failure was a
    * permanent rejection of real work. A travel leg opened from a visit
@@ -809,6 +813,8 @@ async function dispatchItem(
       return handleLeave(principal, item);
     case "tour":
       return handleTour(principal, item);
+    case "territory_request":
+      return handleTerritoryRequest(principal, item);
     case "competitor":
       return handleCompetitor(principal, item);
     case "lead_validation":
@@ -7016,6 +7022,73 @@ async function handleTour(principal: MbosPrincipal, item: SyncItem): Promise<Han
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
 
+const territoryRequestSchema = z.object({
+  kind: z.enum(["accept", "change"]),
+  currentPlaces: z.array(z.string().max(200)).max(200).default([]),
+  requestedPlaces: z.array(z.string().trim().min(1).max(200)).max(50).default([]),
+  reason: z.string().max(2000).nullish(),
+  signature: z.string().max(20000),
+});
+
+/**
+ * A salesman's answer to where he has been allocated — accepted as it stands,
+ * or a request for different cities.
+ *
+ * A change request carries no decision: the handset raises an approval of type
+ * `territory` beside it, and the office answers on the Approvals queue. A
+ * change with no cities named, or no reason, is refused here as well as on the
+ * screen, because a manager cannot act on "somewhere else".
+ */
+async function handleTerritoryRequest(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = territoryRequestSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  if (p.kind === "change") {
+    if (!p.requestedPlaces.length) {
+      return {
+        kind: "rejected",
+        value: reject("validation", "Name at least one city or area you would rather work."),
+      };
+    }
+    if (!p.reason?.trim()) {
+      return {
+        kind: "rejected",
+        value: reject("validation", "Say why — your manager decides on the reason as much as the cities."),
+      };
+    }
+  }
+
+  await db
+    .insert(mbosTerritoryRequests)
+    .values({
+      id: item.entityId,
+      userId: principal.user.id,
+      kind: p.kind,
+      currentPlaces: p.currentPlaces,
+      requestedPlaces: p.kind === "change" ? p.requestedPlaces : [],
+      reason: p.reason?.trim() || null,
+      signature: p.signature,
+      clientCreatedAt: new Date(item.clientCreatedAt),
+      createdById: principal.user.id,
+      updatedById: principal.user.id,
+      deviceId: principal.deviceId,
+    })
+    .onConflictDoNothing({ target: mbosTerritoryRequests.id });
+
+  if (p.kind === "change") {
+    await notifyManagers(
+      principal.user.id,
+      "Asked for different cities",
+      `${principal.user.name} has asked to work ${p.requestedPlaces.join(", ")}` +
+        (p.currentPlaces.length ? ` instead of ${p.currentPlaces.join(", ")}` : "") +
+        `. ${p.reason?.trim() ?? ""} It is waiting on the Approvals queue.`,
+    );
+  }
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
 const competitorSchema = z.object({
   customerId: z.string().min(1),
   visitId: z.string().nullish(),
@@ -7495,6 +7568,7 @@ const APPROVAL_TYPES = [
   "tour",
   "sample",
   "attendance_regularisation",
+  "territory",
 ] as const;
 type ApprovalType = (typeof APPROVAL_TYPES)[number];
 

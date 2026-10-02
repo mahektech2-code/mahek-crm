@@ -405,6 +405,8 @@ export type PullPayload = {
   myOrders?: unknown[];
   /** Changes he asked for on approved orders, and their answers. */
   orderChanges?: unknown[];
+  /** What he said about his allocated areas, and the office's answer. */
+  territoryRequests?: unknown[];
   /** His own month, scored by the office. Reference only — nothing here writes it. */
   performance?: unknown[];
   /** His own pay, current month and last. Reference only, same as performance. */
