@@ -11,7 +11,7 @@ import { offeredSalesTypes, salesTypeLabel, type LeadSalesType } from "@/lib/lea
 import { captureLead } from "@/lib/actions/lead-intake";
 import type { NextActionOwner } from "@/lib/services/lead-intake-service";
 import { Banner, Button, Pill, ScreenHeader } from "@/components/console/parts";
-import { ProductField } from "@/components/products/product-field";
+import { ProductCombobox } from "@/components/products/product-combobox";
 import { IntakeAssistant } from "@/components/leads/intake/intake-assistant";
 
 /* ---------------------------------------------------------------------------
@@ -131,13 +131,11 @@ export function IntakeForm({
 
   const set = (k: keyof typeof f) => (v: string) => setF((s) => ({ ...s, [k]: v }));
 
-  /* "What they want" is EITHER words OR a product chosen from the catalogue,
-     never both: the server stores whichever it is in the one text column, and
-     two answers on one request would leave it guessing which was meant. The
-     picker keeps its own chosen name, so it is remounted (`pickerKey`) when the
-     form is cleared for the next lead. */
+  /* "What product they want" is EITHER words OR a product chosen from the
+     catalogue, never both: the server stores whichever it is in the one text
+     column. The box shows the chosen product's name, and `requirementProductId`
+     says that text is a catalogue pick rather than something typed. */
   const [requirementProductId, setRequirementProductId] = React.useState<string | null>(null);
-  const [pickerKey, setPickerKey] = React.useState(0);
 
   async function submit(allowDuplicate: boolean) {
     setBusy(true);
@@ -224,7 +222,6 @@ export function IntakeForm({
                 setDone(null);
                 setAnswer(null);
                 setRequirementProductId(null);
-                setPickerKey((k) => k + 1);
                 setF((s) => ({
                   ...s,
                   name: "",
@@ -611,53 +608,50 @@ export function IntakeForm({
                 </Field>
 
                 <Field
-                  label="What they want (optional)"
+                  label="What product they want (optional)"
                   error={errors.requirement ?? errors.requirementProductId}
                   className="lg:col-span-6"
                 >
                   {/*
-                    * WORDS, OR A PRODUCT FROM THE CATALOGUE, and neither is required.
-                    * The box keeps its old meaning — what the shop said, in its own
-                    * words — and the picker beneath it is the same searchable
-                    * catalogue the order form and the sample request use, so the
-                    * products are searched a keystroke at a time rather than shipped
-                    * to the browser. Choosing one stores its name in the same column
-                    * the words go in; it is not the Calling Desk's Product answer and
-                    * does not stand in for it.
+                    * ONE FIELD: the whole active catalogue to pick from, or words.
+                    * Click it and every active Mahek product is offered; type and it
+                    * narrows; pick one and its name is the value. Nothing forces a
+                    * choice — words that match nothing are saved as typed, which is
+                    * what this box has always meant — and editing the box after a
+                    * pick drops the pick. A chosen product is stored by NAME in the
+                    * same column the words go in (the server checks it and writes
+                    * the catalogue's own spelling); it is not the Calling Desk's
+                    * Product answer and does not stand in for it.
                     */}
-                  <Input
-                    value={f.requirement}
-                    disabled={Boolean(requirementProductId)}
-                    onChange={(e) => set("requirement")(e.target.value)}
-                    placeholder="e.g. Thinner for a spray booth"
-                  />
-                  <div className="mt-2">
-                    {productSearchEnabled ? (
-                      <div className="mb-1 text-[12px] text-muted">
-                        {requirementProductId
-                          ? "Using this product. Press change to type your own words instead."
-                          : "Or choose one of Mahek’s products:"}
-                      </div>
-                    ) : null}
-                    {productSearchEnabled ? (
-                      <ProductField
-                        key={pickerKey}
-                        productId={requirementProductId}
-                        productName={null}
-                        disabled={false}
-                        onPick={(id) => {
-                          setRequirementProductId(id);
-                          /* The words are dropped when a product is chosen: it
-                             replaces them, and a leftover would be sent nowhere. */
-                          if (id) set("requirement")("");
-                        }}
+                  {productSearchEnabled ? (
+                    <ProductCombobox
+                      text={f.requirement}
+                      productId={requirementProductId}
+                      invalid={Boolean(errors.requirement || errors.requirementProductId)}
+                      placeholder="Search Mahek products, or type what they want"
+                      onText={(t) => {
+                        // Typing is words, never a pick: it drops any product that was chosen.
+                        setRequirementProductId(null);
+                        set("requirement")(t);
+                      }}
+                      onPick={(p) => {
+                        setRequirementProductId(p ? p.productId : null);
+                        set("requirement")(p ? p.name : "");
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <Input
+                        value={f.requirement}
+                        invalid={Boolean(errors.requirement)}
+                        onChange={(e) => set("requirement")(e.target.value)}
+                        placeholder="e.g. Thinner for a spray booth"
                       />
-                    ) : (
-                      <div className="text-[12px] text-muted">
+                      <div className="mt-1 text-[12px] text-muted">
                         Product search is switched off, so type what they want in your own words.
                       </div>
-                    )}
-                  </div>
+                    </>
+                  )}
                 </Field>
                 <Field
                   label="What they'll use it on (optional)"
