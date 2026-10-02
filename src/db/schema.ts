@@ -3967,8 +3967,17 @@ export const waReplies = pgTable(
     senderName: text("sender_name"),
     /** WhatsApp's id for the incoming message. Unique, so a webhook Wati retries lands once. */
     providerMessageId: text("provider_message_id"),
+    /**
+     * Who marked it handled, and when. Null on a reply actioned before these
+     * existed — handled by somebody nobody recorded, never a guess.
+     */
+    actionedAt: timestamp("actioned_at", { withTimezone: true }),
+    actionedById: text("actioned_by_id").references(() => users.id, { onDelete: "set null" }),
   },
-  (t) => [uniqueIndex("wa_replies_provider_message_id_key").on(t.providerMessageId)],
+  (t) => [
+    uniqueIndex("wa_replies_provider_message_id_key").on(t.providerMessageId),
+    index("wa_replies_customer_received_idx").on(t.customerId, t.receivedAt.desc()),
+  ],
 );
 
 /**
