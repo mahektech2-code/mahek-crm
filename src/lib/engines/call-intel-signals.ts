@@ -95,6 +95,31 @@ const FIRM_ORDER: RegExp[] = [
   /ऑर्डर\s+(?:दिया|दे दिया|कन्फर्म|मिला)|भेज (?:दो|देना|दीजिए)/u,
 ];
 
+/**
+ * "NOTHING FURTHER IS NEEDED", said in so many words. The one next action that
+ * may never be inferred from silence — `no_follow_up` is a statement, and a
+ * call where nobody mentioned a follow-up is not it. The model may only propose
+ * it where THIS also finds the words, so one reader hallucinating it is not
+ * enough; a note in a script this list does not know falls back to the
+ * telecaller ticking it, which costs one tap.
+ */
+const NOTHING_FURTHER: RegExp[] = [
+  /* "no more calls" is a do-not-call and is deliberately NOT here: only
+     "nothing further / more / else" and no follow-up or action qualify. */
+  /\bnothing\s+(?:further|more|else)\b[^.\n]{0,30}/iu,
+  /\bno\s+(?:further\s+)?(?:follow[\s-]?up|action)\b/iu,
+  /\bnothing\s+(?:to\s+do|left\s+to\s+do)\b/iu,
+  /\b(?:abhi\s+)?kuch\s+(?:bhi\s+)?(?:nahi|nai|nhi)\s+(?:karna|karne|karni|hai|chahiye)\b/iu,
+  /\bkoi\s+(?:follow[\s-]?up|kaam|action)\s+(?:nahi|nai|nhi)\b/iu,
+  /\bkuch\s+karna\s+(?:nahi|nai|nhi)\b/iu,
+  /(?:अभी\s+)?कुछ\s+(?:भी\s+)?(?:नहीं|नही)\s+(?:करना|करने|करनी|है|चाहिए)/u,
+  /कोई\s+(?:फॉलो\s*अप|काम)\s+(?:नहीं|नही)/u,
+];
+
+export function readNothingFurther(text: string): Finding {
+  return firstMatch(text, NOTHING_FURTHER);
+}
+
 export type RuleSignals = {
   doNotCall: Finding;
   noAnswer: Finding;

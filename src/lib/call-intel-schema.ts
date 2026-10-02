@@ -9,7 +9,12 @@ import {
   NO_ORDER_REASONS,
   NOT_INTERESTED_REASONS,
 } from "@/lib/call-outcomes";
-import { CALLER_ROLES, CALL_REASON_CODES, DELIVERY_ISSUES } from "@/lib/call-reasons";
+import {
+  ALL_NEXT_ACTION_CODES,
+  CALLER_ROLES,
+  CALL_REASON_CODES,
+  DELIVERY_ISSUES,
+} from "@/lib/call-reasons";
 
 /* ---------------------------------------------------------------------------
  * WHAT THE LANGUAGE MODEL IS ALLOWED TO SAY ABOUT A CALL.
@@ -210,6 +215,35 @@ export const callReadingSchema = z.object({
       when: dateCueSchema.nullable(),
     })
     .nullable(),
+  /*
+   * WHAT THE TELECALLER SAID THEY WILL DO NEXT — "kal call karna hai", "send
+   * the price list by Friday", "nothing further needed". The model only names
+   * the act and the words the day came from. WHICH acts are valid for this
+   * outcome and reason is not its call: `nextActionsFor` decides that in
+   * `engines/call-intel-decide.ts`, and a code that list does not offer is
+   * dropped there. An empty list is the answer when nothing was said.
+   *
+   * Absent from every reading stored before this existed. Nothing reads a
+   * stored reading back through this schema, and the decide layer treats a
+   * missing list as empty.
+   */
+  nextSteps: z
+    .array(
+      z.object({
+        action: z
+          .enum(ALL_NEXT_ACTION_CODES)
+          .describe(
+            "The act the telecaller said they will do. no_follow_up ONLY when they plainly said nothing further is needed.",
+          ),
+        when: dateCueSchema
+          .nullable()
+          .describe("When they said to do it. Null if no day was named."),
+        evidence: z.string().describe("The words that show it, quoted."),
+      }),
+    )
+    .describe(
+      "Only commitments the telecaller actually stated. Silence is an empty list, never a guess.",
+    ),
   casual: z
     .object({ purpose: z.enum(codes(CASUAL_TALK_PURPOSES)).nullable() })
     .nullable(),

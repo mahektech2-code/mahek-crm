@@ -57,6 +57,7 @@ import {
   EXCLUSIVE_ACTION,
   type CallReason,
   NEXT_ACTION_LABEL,
+  nextActionCoveredByOutcome,
   nextActionsFor,
   reasonFieldsFor,
   reminderTypeFor,
@@ -987,7 +988,20 @@ export async function saveInteraction(
     }
 
     /* ---------------------------------------------------------- reminder */
+    /*
+     * What the OUTCOME wrote, kept so the Next Action below can see it. A day
+     * is compared after the same move off a non-working day the Next Action's
+     * own reminder gets, so a Sunday and the Monday it becomes are one day.
+     */
+    const workingDayOf = (d: string) =>
+      onOrAfterWorkingDay(d, {
+        timezone: config["workingDay.timezone"],
+        dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+        workingDays: config["workingDay.workingDays"],
+      });
+    const outcomeReminders: Array<{ type: string; day: string }> = [];
     if (input.outcome === "follow_up") {
+      outcomeReminders.push({ type: "call_back", day: workingDayOf(input.followUpDate!) });
       reminderId = id("rem");
       await tx.insert(reminders).values({
         id: reminderId,
@@ -1013,6 +1027,10 @@ export async function saveInteraction(
      * cooldown is left to decide — which is what it is for.
      */
     if (input.outcome === "no_order" && input.noOrderNextCallDate) {
+      outcomeReminders.push({
+        type: "call_back",
+        day: workingDayOf(input.noOrderNextCallDate),
+      });
       reminderId = id("rem");
       await tx.insert(reminders).values({
         id: reminderId,
@@ -1033,6 +1051,10 @@ export async function saveInteraction(
     }
 
     if (input.outcome === "payment_promised" && input.paymentPromiseDate) {
+      outcomeReminders.push({
+        type: "payment_promise",
+        day: workingDayOf(input.paymentPromiseDate),
+      });
       reminderId = id("rem");
       await tx.insert(reminders).values({
         id: reminderId,
@@ -1091,6 +1113,10 @@ export async function saveInteraction(
      * next gets round to them.
      */
     if (outcomeDetail.recallDate) {
+      outcomeReminders.push({
+        type: "call_back",
+        day: workingDayOf(outcomeDetail.recallDate),
+      });
       const recallId = id("rem");
       await tx.insert(reminders).values({
         id: recallId,
@@ -1127,8 +1153,21 @@ export async function saveInteraction(
      * `send_information` and `check_stock` have been in `reminderTypeEnum`
      * since the CRM shipped with nothing ever writing one. These are what they
      * were for.
+     *
+     * ONE PROMISE IS ONE REMINDER. Where this call's outcome already wrote the
+     * same call-back (or promise chase) for the same working day, the Next
+     * Action is the same errand said a second time and writes nothing —
+     * `nextActionCoveredByOutcome` is the exact condition. The action itself
+     * is still stored on the call; only the duplicate reminder is not made.
      */
-    if (nextActions.length && input.nextActionDate) {
+    const actionDay = input.nextActionDate
+      ? workingDayOf(input.nextActionDate)
+      : null;
+    if (
+      nextActions.length &&
+      input.nextActionDate &&
+      !(actionDay && nextActionCoveredByOutcome(nextActions, actionDay, outcomeReminders))
+    ) {
       const actionReminderId = id("rem");
       await tx.insert(reminders).values({
         id: actionReminderId,
@@ -1368,6 +1407,10 @@ export async function saveInteraction(
             followUpDate: input.followUpDate ?? null,
             noOrderNextCallDate: input.noOrderNextCallDate ?? null,
             paymentPromiseDate: input.paymentPromiseDate ?? null,
+            /* Added with the assistant's Next Action. Older drafts simply do
+               not carry the two keys; nothing reads them as required. */
+            nextActions,
+            nextActionDate: input.nextActionDate ?? null,
             products: Object.keys(input.productQuantities ?? {}),
             opportunity: input.opportunity ?? null,
           },
