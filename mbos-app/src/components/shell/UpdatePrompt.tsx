@@ -54,8 +54,8 @@ export function UpdatePrompt() {
     const result = await downloadAndInstall(offer.url, setProgress);
     setProgress(null);
     dismiss();
-    if (result === 'browser') notify('The download has opened. Tap it when it finishes to install.');
-    else if (result === 'failed') notify('Could not download the update. Try again on better signal.', 'warn');
+    if (result === 'browser') notify('The download has opened. Tap it when it finishes to install.', 'info');
+    else if (result === 'failed') notify('Could not download the update. Try again on better signal.', 'error');
   };
 
   const title = offer?.kind === 'install' ? `Version ${offer.version} is available` : 'A new version is ready';

@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { and, eq, isNull, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -702,10 +702,12 @@ export async function customerIdsInScope(
 
   const territory = territories.length ? territoryClause(territories) : undefined;
 
+  // A lead in the trash is in nobody's book — on top of both clauses above,
+  // because the "named by" arm can admit what the scope arm leaves out.
   const rows = await db
     .select({ id: customers.id })
     .from(customers)
-    .where(and(visible, territory));
+    .where(and(isNull(customers.deletedAt), visible, territory));
   return rows.map((r) => r.id);
 }
 
@@ -770,7 +772,7 @@ export async function bookIdsIgnoringTerritory(userId: string): Promise<string[]
   const rows = await db
     .select({ id: customers.id })
     .from(customers)
-    .where(or(scopeIn([userId]), namedByUsers([userId])));
+    .where(and(isNull(customers.deletedAt), or(scopeIn([userId]), namedByUsers([userId]))));
   return rows.map((r) => r.id);
 }
 
@@ -1943,6 +1945,9 @@ async function openLeads(userId: string, since?: string | null) {
      where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
        and c.lead_stage is not null
        and c.lead_archived = false
+       -- Not in the lead trash. A trashed lead's tombstone takes it off the
+       -- phone; this is what stops the next pull sending it straight back.
+       and c.deleted_at is null
        -- on_hold is deliberately NOT excluded. A held lead is a live
        -- prospect with a reason it is not moving, and taking it off the
        -- handset would make "on hold" mean "gone" — which is exactly the
@@ -2070,6 +2075,7 @@ async function leadValidations(userId: string, since?: string | null) {
       -- not arrive for a lead this handset does not hold, or it lands against a
       -- customerId nothing on the phone can resolve.
      where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
+       and c.deleted_at is null
        ${since ? sql`and k.updated_at > ${since}` : sql``}
      order by k.called_at desc
      limit 500
@@ -2116,6 +2122,7 @@ async function leadFieldChecks(userId: string, since?: string | null) {
       from lead_verification_corrections x
       join customers c on c.id = x.customer_id
      where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
+       and c.deleted_at is null
        ${since ? sql`and x.changed_at > ${since}` : sql``}
      order by x.changed_at desc
      limit 500

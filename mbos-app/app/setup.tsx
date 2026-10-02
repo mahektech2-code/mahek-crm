@@ -83,7 +83,7 @@ export default function SetupScreen() {
             await askPopups();
             break;
           case 'location_settings':
-            if (!(await openLocationSettings())) notify('Could not open it. Open Settings → Location yourself.');
+            if (!(await openLocationSettings())) notify('Could not open it. Open Settings → Location yourself.', 'error');
             break;
           case 'ask_background':
             await askBackgroundLocation();
@@ -92,7 +92,7 @@ export default function SetupScreen() {
             await requestBatteryExemption();
             break;
           case 'app_settings':
-            if (!(await openAppSettings())) notify('Could not open the settings. Call the office.');
+            if (!(await openAppSettings())) notify('Could not open the settings. Call the office.', 'error');
             break;
           case 'autostart': {
             const opened = await openAutostartSettings();
@@ -100,9 +100,9 @@ export default function SetupScreen() {
                of these menus are not public, and landing on MBOS's own page
                looks like the app opened the wrong thing unless it says so. */
             if (opened === 'opened_app_settings') {
-              notify('That phone screen did not open. Look for: ' + step.title);
+              notify('That phone screen did not open. Look for: ' + step.title, 'warn');
             } else if (opened === 'failed') {
-              notify('Could not open it. Follow the steps on this screen yourself.');
+              notify('Could not open it. Follow the steps on this screen yourself.', 'error');
             }
             setSentToAutostart(true);
             break;

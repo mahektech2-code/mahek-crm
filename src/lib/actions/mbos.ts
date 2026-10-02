@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -915,12 +915,25 @@ export async function scopedCustomer(
       gpsLat: customers.gpsLat,
       gpsLng: customers.gpsLng,
       updatedAt: customers.updatedAt,
+      deletedAt: customers.deletedAt,
     })
     .from(customers)
     .where(eq(customers.id, customerId))
     .limit(1);
 
   const customer = rows[0];
+  /* A lead in the office's trash takes nothing from a handset still holding
+     it — said in words, so the salesman knows it was deleted rather than
+     reading a refusal as a broken sync. */
+  if (customer?.deletedAt) {
+    return {
+      ok: false,
+      value: reject(
+        "validation",
+        `${customer.name} was deleted in the office and is in the trash. Ask your manager — an administrator can restore it.`,
+      ),
+    };
+  }
   if (!customer) {
     return {
       ok: false,
@@ -4732,7 +4745,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
     const clash = await db
       .select({ id: customers.id, name: customers.name })
       .from(customers)
-      .where(and(eq(customers.phone, p.mobile), eq(customers.leadArchived, false)))
+      .where(and(eq(customers.phone, p.mobile), eq(customers.leadArchived, false), isNull(customers.deletedAt)))
       .limit(1);
     if (clash.length && clash[0].id !== item.entityId) {
       return {

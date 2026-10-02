@@ -185,7 +185,7 @@ export default function Login() {
 
     signIn();
     boot.setSession(outcome.session);
-    if (outcome.offline) notify('Signed in without signal. Your data is from the last time you had signal.');
+    if (outcome.offline) notify('Signed in without signal. Your data is from the last time you had signal.', 'warn');
     router.replace('/home');
   }
 
@@ -460,6 +460,7 @@ export default function Login() {
                       opened
                         ? 'Opening the reset page. It sends a link to your work email.'
                         : 'Could not open the browser. Ask your manager to send you a reset link.',
+                      opened ? 'info' : 'error',
                     );
                   }}
                   style={{ width: '100%', height: HIT, marginTop: 8, alignItems: 'center', justifyContent: 'center' }}>

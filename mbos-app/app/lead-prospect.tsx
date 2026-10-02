@@ -27,7 +27,7 @@ import { currentSession } from '../src/data/session';
 import { PROSPECT_CONDITIONS, labelOf, stageLabel } from '../src/engines/funnel';
 import { pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
-import { productLines } from '../src/lib/product-lines';
+import { skuLines } from '../src/lib/sku-lines';
 
 /**
  * §5 §6 — the eight answers a Suspect owes, on ONE screen.
@@ -408,12 +408,10 @@ export default function ProspectForm() {
           {hits.map((p) => (
             <Choice
               key={p.id}
-              /* The formulation leads and the SKU sits under it — the same
-                 rule the order form runs, in `src/lib/product-lines.ts`.
-                 What is PICKED is unchanged: the id and the product's own
-                 name, never the liquid's. */
-              label={productLines({ displayName: p.name, subtitle: p.formulation }).lead}
-              sub={[skuText(p.sku), productLines({ displayName: p.name, subtitle: p.formulation }).detail].filter(Boolean).join(' · ') || undefined}
+              /* The SKU's own name leads and the formulation sits under
+                 it — the rule the order form runs, in `src/lib/sku-lines.ts`. */
+              label={skuLines({ name: p.name, formulation: p.formulation }).lead}
+              sub={[skuText(p.sku), skuLines({ name: p.name, formulation: p.formulation }).detail].filter(Boolean).join(' · ') || undefined}
               selected={false}
               onPress={() => pickProduct({ id: p.id, name: p.name })}
               style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}

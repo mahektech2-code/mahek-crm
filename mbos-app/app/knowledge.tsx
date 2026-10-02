@@ -79,7 +79,7 @@ export default function KnowledgeScreen() {
                    branch on. Until it is sent, the tap says the one thing that
                    is true of every row — which is a refusal, and better than a
                    confident wrong sentence about somebody's training. */
-                onPress={() => notify(k.title + ' cannot be opened on the phone yet.')}
+                onPress={() => notify(k.title + ' cannot be opened on the phone yet.', 'error')}
                 accessibilityRole="button"
                 style={{
                   flexDirection: 'row',

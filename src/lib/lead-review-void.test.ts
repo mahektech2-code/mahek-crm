@@ -166,6 +166,8 @@ function walk(dir: string, out: string[] = []): string[] {
  * somebody either routes it through `reviewVoidPatch` or writes down why not.
  */
 const NOT_A_REVIEW_WRITER: Record<string, string> = {
+  "src/lib/services/lead-trash-service.ts":
+    "moves a lead in and out of the trash — it writes only deleted_at/by/reason, and reads lead_sales_type to LIST the trash; no answer a review depends on is touched",
   "src/lib/actions/lead-calling-desk.ts":
     "the Calling Desk's own answers, written before a lead is a Prospect — no review exists to void",
   "src/lib/actions/lead-distributor-migration.ts":

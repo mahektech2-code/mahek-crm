@@ -128,6 +128,7 @@ export default function CollectionsScreen() {
               proofId
                 ? 'Banked · slip photo added'
                 : 'Banked · no slip photo. The office has only your word.',
+              proofId ? 'success' : 'warn',
             );
           } finally {
             setBusy(null);

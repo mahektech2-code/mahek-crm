@@ -781,7 +781,8 @@ export async function findCustomersByPhone(phone: string): Promise<Result<Custom
   const rows = await db
     .select({ id: customers.id, name: customers.name, phone: customers.phone, city: customers.city, kind: customers.kind })
     .from(customers)
-    .where(ilike(customers.phone, `%${digits}%`))
+    // A lead in the trash is not offered as the match for a new enquiry.
+    .where(and(ilike(customers.phone, `%${digits}%`), isNull(customers.deletedAt)))
     .limit(10);
   return ok(rows);
 }

@@ -1365,8 +1365,22 @@ async function applyDeletions(deletions: { entity: string; ids: string[] }[] | u
   if (!deletions?.length) return 0;
   let n = 0;
   for (const d of deletions) {
-    if (!DELETABLE.has(d.entity) || !d.ids.length) continue;
+    if (!d.ids.length) continue;
     const marks = d.ids.map(() => '?').join(',');
+    /*
+     * A LEAD MOVED TO THE OFFICE'S TRASH is ARCHIVED here, never deleted. A
+     * lead is something the salesman works and may still have changes queued
+     * in the outbox for, and nothing he authored is deleted by a sync. Every
+     * Leads screen reads `archived = 0`, so it leaves them all; if an
+     * administrator restores it, the next pull sends it back and `upsertLeads`
+     * writes `archived = 0` over it.
+     */
+    if (d.entity === 'leads') {
+      await run(`UPDATE leads SET archived = 1 WHERE id IN (${marks})`, d.ids);
+      n += d.ids.length;
+      continue;
+    }
+    if (!DELETABLE.has(d.entity)) continue;
     await run(`DELETE FROM ${d.entity} WHERE id IN (${marks})`, d.ids);
     n += d.ids.length;
   }

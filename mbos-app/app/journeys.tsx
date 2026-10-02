@@ -110,7 +110,7 @@ export default function JourneysScreen() {
 
   const accept = async () => {
     const out = await acceptAreas();
-    if (!out.ok) return notify(out.message);
+    if (!out.ok) return notify(out.message, 'error');
     notify('Accepted. Your manager can see it.');
     load();
   };

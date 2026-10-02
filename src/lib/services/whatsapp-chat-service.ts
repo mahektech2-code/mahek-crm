@@ -74,8 +74,11 @@ export async function listConversations(opts: { show: ChatShow; q?: string }): P
   // `customers` is joined unaliased on purpose: the scope clause spells its
   // columns `customers.owner_id`, and an alias would leave them pointing at
   // nothing.
+  // A thread with a customer is drawn only while that customer is not in the
+  // lead trash — the scope clause says so for everybody, and the whole-book
+  // reader is held to it explicitly.
   const scope = seesUnknown
-    ? sql`true`
+    ? sql`(th.customer_id is null or customers.deleted_at is null)`
     : sql`th.customer_id is not null and (${scopedToUsers(ids) ?? sql`true`})`;
   const q = opts.q?.trim().replace(/[%_]/g, "").slice(0, 100) ?? "";
   const like = `%${q}%`;

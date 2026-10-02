@@ -46,7 +46,7 @@ import { customerStory } from "./customers";
 const TZ = "Asia/Kolkata";
 const CLOSED_STAGES = ["lost", "won", "customer", "active_distributor"];
 const CLOSED_SQL = sql.raw(`('${CLOSED_STAGES.join("','")}')`);
-const OPEN_WHERE = sql`c.kind = 'lead' and not coalesce(c.lead_archived, false)
+const OPEN_WHERE = sql`c.kind = 'lead' and not coalesce(c.lead_archived, false) and c.deleted_at is null
   and (c.lead_stage is null or c.lead_stage::text not in ${CLOSED_SQL})`;
 const LAST_TOUCHED = sql.raw(
   `greatest(c.lead_last_activity_date, c.last_contact_date, c.last_visit_date, (c.created_at at time zone '${TZ}')::date)`,
@@ -61,7 +61,7 @@ const n = (v: unknown) => Number(v ?? 0);
 
 function stuckWhere(cap: number): SQL {
   return sql`c.lead_stage = 'suspect' and c.lead_suspect_decided_at is null
-    and not coalesce(c.lead_archived, false) and ${VISITS} >= ${cap}`;
+    and not coalesce(c.lead_archived, false) and c.deleted_at is null and ${VISITS} >= ${cap}`;
 }
 
 function sourceLabel(config: Config, code: string | null): string {

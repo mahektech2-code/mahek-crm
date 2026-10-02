@@ -334,7 +334,7 @@ export default function JourneyScreen() {
         confirmLabel: 'Send it back',
         run: async (reason: string) => {
           const out = await refuseDay(day.id, reason);
-          if (!out.ok) return notify(out.message ?? 'Say why it will not work.');
+          if (!out.ok) return notify(out.message ?? 'Say why it will not work.', 'error');
           setDays(await planDays(historyFrom));
           notify('Sent back to your manager.');
         },
@@ -389,15 +389,15 @@ export default function JourneyScreen() {
      * the screen sat there long enough for him to open it and tap again; two
      * passes then raced to rewrite the same `seq`.
      */
-    if (reordering) return notify('Still finding the best order…');
+    if (reordering) return notify('Still finding the best order…', 'info');
     /* Nothing to reorder is not an empty reorder. It toasted
        "Reordered · 0 km and 0 minutes on the plan", which is a confident
        answer to a question that was never askable. */
     if (!stops.some((x) => x.status === 'planned')) {
-      return notify('There are no stops left to reorder today.');
+      return notify('There are no stops left to reorder today.', 'info');
     }
     setReordering(true);
-    notify('Finding where you are…');
+    notify('Finding where you are…', 'info');
     try {
       await runReorder();
     } finally {
@@ -433,6 +433,7 @@ export default function JourneyScreen() {
         Math.round(result.estimatedDayMinutes) +
         ' minutes on the plan' +
         (result.unlocated.length ? ' · ' + plural(result.unlocated.length, 'stop') + ' has no location' : ''),
+      result.unlocated.length ? 'warn' : 'success',
     );
   };
 
@@ -1438,12 +1439,13 @@ export default function JourneyScreen() {
               const out = await openRoute(
                 stops.map((st) => ({ lat: st.gpsLat, lng: st.gpsLng })),
               );
-              if (out.status !== 'opened') return notify(out.reason);
+              if (out.status !== 'opened') return notify(out.reason, 'error');
               /* Said plainly rather than hidden: a route that quietly stops at
                  lunchtime is worse than one that says where it stops. */
               if (out.dropped > 0) {
                 notify(
                   `Maps takes only ten stops. The last ${out.dropped} are not in this route.`,
+                  'warn',
                 );
               }
             },
@@ -1453,7 +1455,7 @@ export default function JourneyScreen() {
             label: 'Share the plan',
             sub: 'Pick who, in the share sheet',
             run: async () => {
-              if (!stops.length) return notify('There are no stops to share yet.');
+              if (!stops.length) return notify('There are no stops to share yet.', 'info');
               const lines = stops.map(
                 (st, i) =>
                   `${i + 1}. ${st.customerName}` +
@@ -1463,7 +1465,7 @@ export default function JourneyScreen() {
               const out = await shareText(
                 [`Plan for ${today} — ${plural(stops.length, 'stop')}`, ...lines].join('\n'),
               );
-              if (out.status === 'copied') notify(out.reason);
+              if (out.status === 'copied') notify(out.reason, 'warn');
             },
           },
           {

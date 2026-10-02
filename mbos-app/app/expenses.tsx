@@ -314,12 +314,12 @@ export default function ExpensesScreen() {
     setErr([]);
   };
   const attach = async (how: 'camera' | 'gallery' | 'pdf') => {
-    if (!room) return notify(`A claim can have ${maxFiles} files. Remove one to add another.`);
+    if (!room) return notify(`A claim can have ${maxFiles} files. Remove one to add another.`, 'error');
     const parent = { parentType: 'expense', parentId: 'pending', kind: 'bill_photo' as const };
     if (how === 'camera') {
       const shot = await takePhoto({ ...parent, source: 'camera' });
       if (!shot.ok) {
-        if (shot.reason !== 'cancelled') notify(shot.reason);
+        if (shot.reason !== 'cancelled') notify(shot.reason, 'error');
         return;
       }
       return addFiles([{ mediaId: shot.mediaId, label: 'Photo', isPdf: false }]);
@@ -327,18 +327,18 @@ export default function ExpensesScreen() {
     if (how === 'gallery') {
       const got = await pickPhotos({ ...parent, max: room });
       if (!got.ok) {
-        if (got.reason !== 'cancelled') notify(got.reason);
+        if (got.reason !== 'cancelled') notify(got.reason, 'error');
         return;
       }
       return addFiles(got.picked);
     }
     const got = await pickDocuments({ ...parent, max: room, maxSizeMb });
     if (!got.ok) {
-      if (got.reason !== 'cancelled') notify(got.reason);
+      if (got.reason !== 'cancelled') notify(got.reason, 'error');
       return;
     }
     addFiles(got.picked);
-    if (got.refused.length) notify('Not added: ' + got.refused.join(', ') + '.');
+    if (got.refused.length) notify('Not added: ' + got.refused.join(', ') + '.', 'warn');
   };
   const removeFile = (mediaId: string) => {
     const f = ex.files.find((x) => x.mediaId === mediaId);
@@ -349,7 +349,7 @@ export default function ExpensesScreen() {
   const send = async () => {
     /* One claim per press, and the second press ANSWERS rather than doing
        nothing — `whyDisabled` keeps the button pressable for exactly this. */
-    if (sending) return notify('Sending this claim. Please wait.');
+    if (sending) return notify('Sending this claim. Please wait.', 'info');
 
     /* EVERY failing field at once, and a summary above the button.
        Returning on the first one meant a claim missing both a bill and a note
@@ -403,6 +403,7 @@ export default function ExpensesScreen() {
         exOver
           ? 'Claimed ' + inrFromPaise(exAmtPaise) + ' · above the limit. Your manager must allow it'
           : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · sent to your manager',
+        exOver ? 'warn' : 'success',
       );
     } finally {
       setSending(false);

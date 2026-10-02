@@ -91,7 +91,7 @@ export default function EodScreen() {
     setConfirming(false);
     try {
       const r = await submitDay(userId, day, note.trim() || null);
-      if (!r.ok) return notify(r.reason ?? 'Not sent. Try again.');
+      if (!r.ok) return notify(r.reason ?? 'Not sent. Try again.', 'error');
       notify('Sent to the office.');
       load();
     } finally {

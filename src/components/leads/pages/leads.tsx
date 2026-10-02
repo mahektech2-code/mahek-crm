@@ -6,6 +6,7 @@ import {
   type LeadWorkspace,
 } from "@/lib/lead-workspace";
 import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
 import { canOpenModule, listUserModules, requireModule } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
@@ -273,6 +274,9 @@ export async function Body({
          may not make about his own work", which is this act exactly — see the
          action for why `lead.override` and `lead.work` were the wrong two. */
       canPrioritise={await canLead(user, "lead.verify")}
+      /* Deleting moves a lead to the trash — a manager's, checked again in
+         `trashLeads`. Restoring is the Admin Console's alone. */
+      canTrash={await canFor(user, "lead.trash")}
       /* WORDS, never rights. See `lib/lead-vantage.ts` — this decides which
          instruction each row prints and nothing whatever about what may be
          done to the lead, which every action goes on checking for itself. */

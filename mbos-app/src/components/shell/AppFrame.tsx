@@ -303,14 +303,14 @@ export function AppFrame({
            shop he has arrived at is not about to set off for another, and
            letting him would leave an arrival nobody could ever close. */
         if (arrival && arrival.checkedInAt == null) {
-          return notify(`Check in at ${arrival.customerName} first. You reached there at ${hhmm(arrival.arrivedAt)}.`);
+          return notify(`Check in at ${arrival.customerName} first. You reached there at ${hhmm(arrival.arrivedAt)}.`, 'error');
         }
         /* And one visit at a time: the one he is in has to be checked out of,
            with its questions answered, before another can begin. */
         if (arrival && arrival.checkedInAt != null) {
-          return notify(`Check out of ${arrival.customerName} first. You are still in that visit.`);
+          return notify(`Check out of ${arrival.customerName} first. You are still in that visit.`, 'error');
         }
-        if (!custId) return notify('Choose the shop first, then start the visit.');
+        if (!custId) return notify('Choose the shop first, then start the visit.', 'error');
         askTravel({ customerId: custId, customerName: customer?.name ?? 'this shop' });
       },
     },

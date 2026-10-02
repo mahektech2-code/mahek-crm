@@ -90,14 +90,14 @@ export function TravelGate() {
           /* A journey that could not be written must not cost the visit: he
              is going to that shop either way. The form opens as it did before
              journeys existed, and the office flags the check-in distance. */
-          if (!out.ok) notify(out.reason);
+          if (!out.ok) notify(out.reason, 'warn');
         }
         beginVisit(to.customerId);
         set({ travelTo: null, gps });
         router.push('/visit');
       } catch {
         set({ travelTo: null });
-        notify('Could not start this visit. Nothing is lost. Try again.');
+        notify('Could not start this visit. Nothing is lost. Try again.', 'error');
       } finally {
         starting.current = false;
       }
