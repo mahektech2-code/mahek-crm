@@ -26,7 +26,11 @@ import {
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { seedMonthlyTargets } from "@/lib/recompute";
-import { listTargets, setTarget } from "@/lib/services/worklist-services";
+import {
+  customerTargetsCreditedTo,
+  listTargets,
+  setTarget,
+} from "@/lib/services/worklist-services";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -283,4 +287,87 @@ test("and an order on the LAST night of the month does not spill into the next",
   } finally {
     await db.execute(sql`set time zone 'Asia/Kolkata'`);
   }
+});
+
+/* ================================== the same month, read for the handset */
+
+/**
+ * A salesman's phone shows his customers' targets, read by
+ * `customerTargetsCreditedTo` with no session behind it. The only thing worth
+ * pinning is that it is the SAME reading the Targets screen makes — the same
+ * target, the same achieved, over the same population — narrowed to the
+ * customers credited to him, and that money still waiting for accounts is
+ * reported beside achievement and never inside it.
+ */
+
+test("the handset reads the Targets screen's own figure for a shop", async () => {
+  const c = await makeCustomer();
+  await setTarget(c.id, 150_000_00, PERIOD);
+  await makeOrderFor(c.id, { status: "confirmed", netAmountPaise: 40_000_00 });
+  await makeOrderFor(c.id, { status: "pending_approval", netAmountPaise: 20_000_00 });
+
+  const office = (await listTargets(PERIOD)).find((r) => r.customerId === c.id);
+  const phone = (await customerTargetsCreditedTo(manager.id, PERIOD)).find(
+    (r) => r.customerId === c.id,
+  );
+  assert.ok(office && phone);
+  assert.equal(phone.target, office.target);
+  assert.equal(phone.achieved, office.achieved);
+  assert.equal(phone.achieved, 40_000_00, "a pending order is not achievement");
+  assert.equal(phone.pending, 20_000_00);
+  assert.equal(phone.isDefault, false);
+});
+
+test("only shops credited to him, and only accounts we invoice", async () => {
+  const [other] = await db
+    .insert(users)
+    .values({
+      id: id("usr"),
+      name: "Someone else",
+      email: `other-${randomUUID().slice(0, 4)}@test.local`,
+      phone: String(9830000000 + Math.floor(Math.random() * 999999)),
+      passwordHash: "x",
+      role: "associate",
+      initials: "SE",
+    })
+    .returning();
+
+  const mine = await makeCustomer();
+  const theirs = await makeCustomer();
+  await db.update(customers).set({ salesAmId: other.id }).where(eq(customers.id, theirs.id));
+  /* No salesman: the back office seat is who it counts towards. */
+  const backOffice = await makeCustomer();
+  await db
+    .update(customers)
+    .set({ salesAmId: null, backOfficeAmId: manager.id })
+    .where(eq(customers.id, backOffice.id));
+  const lead = await makeCustomer();
+  await db.update(customers).set({ kind: "lead" }).where(eq(customers.id, lead.id));
+  const thirdParty = await makeCustomer();
+  await db.update(customers).set({ thirdParty: true }).where(eq(customers.id, thirdParty.id));
+  /* His, but nothing asked, nothing bought, nothing waiting. */
+  const quiet = await makeCustomer();
+
+  /* Written directly: `setTarget` checks the caller's scope, and would quietly
+     refuse the other salesman's shop — passing this test for the wrong reason. */
+  for (const c of [mine, theirs, backOffice, lead, thirdParty]) {
+    await db.insert(monthlyTargets).values({
+      id: id("mt"),
+      customerId: c.id,
+      year: 2026,
+      month: 8,
+      targetAmount: 10_000_00,
+      isDefault: false,
+    });
+  }
+
+  const ids = new Set(
+    (await customerTargetsCreditedTo(manager.id, PERIOD)).map((r) => r.customerId),
+  );
+  assert.ok(ids.has(mine.id));
+  assert.ok(ids.has(backOffice.id), "a shop with no salesman counts to its back office");
+  assert.ok(!ids.has(theirs.id), "another salesman's shop leaked onto his phone");
+  assert.ok(!ids.has(lead.id), "a lead carries no target");
+  assert.ok(!ids.has(thirdParty.id), "a third-party shop is billed to its distributor");
+  assert.ok(!ids.has(quiet.id), "a shop with nothing to say is not sent");
 });

@@ -5243,6 +5243,22 @@ which was correct while `target.set` was manager-only and silently wrong the
 moment it widened; both doors now check `can(user.role, "target.set")`
 instead, the capability itself rather than a role that used to imply it.
 
+**AND THE SALESMAN SEES BOTH GRAINS, on one screen, never added together.**
+The handset's Performance screen drew his own target and stopped, so he could
+read how far he was from his month and not where the rest of it would come
+from. `customerTargetsCreditedTo` is the Targets screen's own population and
+its own `targetAchievedSql`, narrowed to the shops CREDITED to him
+(`creditedToSql`, not `ASSIGNED_TO_SQL`) — so a manager and the salesman quote
+one shop one figure, and `monthly-targets.test.ts` reads both and asserts it.
+It rides the sync as `customerTargets`, this month and last, REPLACED wholesale
+on the phone like the price list: achievement moves when accounts approve an
+order, which gives no row an `updated_at` a delta could carry. The card says
+in words that the two targets are not meant to add up. Money taken and not yet
+approved — the office's `pending_approval` plus whatever is still in this
+phone's outbox — is drawn BESIDE achievement and never inside it, because the
+revenue above it counts accepted orders only and a busy morning otherwise
+reads as a slow one.
+
 **The score is a CACHE, and not the same kind of column as
 `calls.next_step_*`.** `sales_performance` is rebuilt by
 `recomputeSalesPerformance()` — nightly for this month and the last, hourly for

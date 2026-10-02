@@ -407,6 +407,12 @@ export type PullPayload = {
   orderChanges?: unknown[];
   /** His own month, scored by the office. Reference only — nothing here writes it. */
   performance?: unknown[];
+  /**
+   * His customers' monthly targets, this month and last — target, achieved,
+   * and what is waiting for approval. Replaced wholesale; ABSENT changes
+   * nothing, which is how an older server and the cursorless reply look.
+   */
+  customerTargets?: unknown[];
   /** His own pay, current month and last. Reference only, same as performance. */
   salary?: unknown[];
   /** The modes a leg may name. Upserted by key. */

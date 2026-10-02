@@ -233,6 +233,10 @@ const WIRE: { fn: string; table: string; extra?: string[] }[] = [
   { fn: "visibleDocuments", table: "documents", extra: ["lastSyncedAt"] },
   { fn: "coursesFor", table: "courses", extra: ["lastSyncedAt"] },
   { fn: "performanceFor", table: "performance", extra: ["lastSyncedAt"] },
+  /* Replaced wholesale by `replaceCustomerTargets` rather than upserted, but
+     inserted with exactly these keys all the same — so an extra one here
+     still throws on the phone and still takes the pull down with it. */
+  { fn: "customerTargetsFor", table: "customer_targets", extra: ["lastSyncedAt"] },
   { fn: "salaryFor", table: "salary", extra: ["lastSyncedAt"] },
   /* Not covered until `scope` was added to it, which is exactly the shape of
      column this test exists for: a field the office knows about and the

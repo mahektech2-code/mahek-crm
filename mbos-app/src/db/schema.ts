@@ -2015,6 +2015,32 @@ export const MIGRATIONS: string[][] = [
     `CREATE INDEX IF NOT EXISTS idx_order_change_requests_order ON order_change_requests(orderId);`,
   ],
 
+  /*
+   * HIS CUSTOMERS' OWN MONTHLY TARGETS, this month and last.
+   *
+   * The person target on Performance says how far he is from his month; this
+   * says which of his shops the rest would come from. Pure reference, like
+   * `performance`: nothing on the phone sets a target or adds to what a shop
+   * achieved. `key` is `period|customerId`, stamped on arrival, because a
+   * shop carries one row per month. `pendingPaise` is what is still waiting
+   * for accounts and is never part of `achievedPaise`.
+   */
+  [
+    `CREATE TABLE IF NOT EXISTS customer_targets (
+      key TEXT PRIMARY KEY,
+      period TEXT NOT NULL,
+      customerId TEXT NOT NULL,
+      targetPaise INTEGER NOT NULL DEFAULT 0,
+      achievedPaise INTEGER NOT NULL DEFAULT 0,
+      pendingPaise INTEGER NOT NULL DEFAULT 0,
+      isDefault INTEGER NOT NULL DEFAULT 1,
+      carriedForward INTEGER NOT NULL DEFAULT 0,
+      computedAt TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_customer_targets_period ON customer_targets(period);`,
+  ],
+
 ];
 
 /**
@@ -2056,7 +2082,7 @@ export const OWNED_TABLES = [
 export const REFERENCE_TABLES = [
   'customers', 'products', 'price_list', 'schemes', 'timeline_events',
   'journey_stops', 'leave_balances', 'holidays', 'documents', 'courses',
-  'notifications', 'performance', 'salary',
+  'notifications', 'performance', 'salary', 'customer_targets',
   'customer_orders', 'customer_payments', 'customer_bills',
   /* The record of who checked a finding and what came of it. Written only by
      the office — a salesman's own checks go up through the lead save and come
