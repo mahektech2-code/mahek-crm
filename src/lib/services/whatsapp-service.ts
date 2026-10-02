@@ -15,10 +15,13 @@ import {
   waTemplates,
 } from "@/db/schema";
 import {
+  ASSIGNED_TO_SQL,
   assertCustomerInScope,
   requireCapability,
   resolveScope,
   scopedUserIds, scopedToUsers,} from "../access-control";
+import { requireUser } from "../auth";
+import { asDate } from "../business-date";
 import { getConfig } from "../config/store";
 import { longDate } from "../format";
 import { recomputeLastContact, today } from "../recompute";
@@ -1122,9 +1125,184 @@ export async function apiSendCounts(days = 7): Promise<Record<string, number>> {
   return Object.fromEntries(rows.map((r) => [r.status, Number(r.n)]));
 }
 
-export async function actionReply(replyId: string): Promise<Result> {
-  await db.update(waReplies).set({ actioned: true }).where(eq(waReplies.id, replyId));
-  return okVoid("Reply actioned");
+/* ------------------------------------------------------------ the inbox */
+
+export type InboxReply = {
+  id: string;
+  customerId: string;
+  customerName: string;
+  kind: "lead" | "customer";
+  thirdParty: boolean;
+  phone: string | null;
+  /** The name on the sender's WhatsApp profile, which is often not the shop's. */
+  senderName: string | null;
+  message: string;
+  receivedAt: string;
+  actioned: boolean;
+  actionedAt: string | null;
+  actionedByName: string | null;
+  /** Whose book this customer is in — `ASSIGNED_TO_SQL`, the one definition. */
+  assignedToName: string | null;
+  /**
+   * The newest of OUR messages to them that went before this reply — what
+   * they were most likely answering. Null when nothing had gone: they wrote
+   * to us first.
+   */
+  inReplyTo: {
+    templateName: string | null;
+    body: string;
+    wentAt: string;
+    viaRule: boolean;
+    sentByName: string | null;
+  } | null;
+};
+
+export type InboxShow = "open" | "all";
+
+/** How far back "All" reaches. Open replies are listed however old they are. */
+export const INBOX_ALL_DAYS = 30;
+const INBOX_LIMIT = 200;
+
+/**
+ * WHAT CUSTOMERS WROTE BACK, over this person's book and nobody else's.
+ *
+ * Scoped by `scopedToUsers` — the same rule as every list in the CRM: a
+ * telecaller sees replies from the customers and leads in their own book,
+ * a manager their team's. A reply from a number matching no customer has no
+ * book to sit in and is left to the Founder Dashboard, which lists them.
+ *
+ * Raw SQL because of the lateral join, and `customers` is deliberately NOT
+ * aliased: the scope clause spells its columns as `customers.owner_id`, and
+ * an alias would leave them pointing at nothing.
+ */
+export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promise<{
+  rows: InboxReply[];
+  openCount: number;
+  capped: boolean;
+}> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const scope = scopedToUsers(ids) ?? sql`true`;
+  const q = opts.q?.trim().replace(/[%_]/g, "").slice(0, 100) ?? "";
+  const which =
+    opts.show === "open"
+      ? sql`r.actioned = false`
+      : sql`r.received_at > now() - make_interval(days => ${INBOX_ALL_DAYS}::int)`;
+  const search = q
+    ? sql`and (customers.name ilike ${"%" + q + "%"} or r.message ilike ${"%" + q + "%"})`
+    : sql``;
+
+  const [rows, open] = await Promise.all([
+    db.execute<{
+      id: string;
+      customer_id: string;
+      customer_name: string;
+      kind: "lead" | "customer";
+      third_party: boolean;
+      phone: string | null;
+      sender_name: string | null;
+      message: string;
+      received_at: unknown;
+      actioned: boolean;
+      actioned_at: unknown;
+      actioned_by_name: string | null;
+      assigned_to_name: string | null;
+      prev_template: string | null;
+      prev_body: string | null;
+      prev_went_at: unknown;
+      prev_trigger: string | null;
+      prev_user_name: string | null;
+    }>(sql`
+      select r.id, r.customer_id, customers.name as customer_name, customers.kind,
+             customers.third_party, customers.phone, r.sender_name, r.message,
+             r.received_at, r.actioned, r.actioned_at,
+             ab.name as actioned_by_name,
+             (select u.name from users u where u.id = ${ASSIGNED_TO_SQL}) as assigned_to_name,
+             prev.template_name as prev_template, prev.body as prev_body,
+             prev.went_at as prev_went_at, prev.trigger_id as prev_trigger,
+             prev.user_name as prev_user_name
+        from wa_replies r
+        join customers on customers.id = r.customer_id
+        left join users ab on ab.id = r.actioned_by_id
+        left join lateral (
+          select m.template_name, m.body, m.trigger_id, mu.name as user_name,
+                 coalesce(m.sent_at, m.confirmed_sent_at, m.prepared_at) as went_at
+            from wa_messages m
+            left join users mu on mu.id = m.user_id
+           where m.customer_id = r.customer_id
+             and m.status in ('sent', 'sent_manually', 'delivered', 'read')
+             and coalesce(m.sent_at, m.confirmed_sent_at, m.prepared_at) <= r.received_at
+           order by coalesce(m.sent_at, m.confirmed_sent_at, m.prepared_at) desc
+           limit 1
+        ) prev on true
+       where ${which} and (${scope}) ${search}
+       order by r.received_at desc, r.id desc
+       limit ${INBOX_LIMIT}
+    `),
+    db.execute<{ n: number }>(sql`
+      select count(*)::int as n
+        from wa_replies r join customers on customers.id = r.customer_id
+       where r.actioned = false and (${scope})
+    `),
+  ]);
+
+  const iso = (v: unknown) => (v === null || v === undefined ? null : asDate(v)?.toISOString() ?? null);
+  return {
+    rows: rows.map((r) => ({
+      id: r.id,
+      customerId: r.customer_id,
+      customerName: r.customer_name,
+      kind: r.kind,
+      thirdParty: Boolean(r.third_party),
+      phone: r.phone,
+      senderName: r.sender_name,
+      message: r.message,
+      receivedAt: iso(r.received_at)!,
+      actioned: Boolean(r.actioned),
+      actionedAt: iso(r.actioned_at),
+      actionedByName: r.actioned_by_name,
+      assignedToName: r.assigned_to_name,
+      inReplyTo:
+        r.prev_went_at === null || r.prev_went_at === undefined
+          ? null
+          : {
+              templateName: r.prev_template,
+              body: r.prev_body ?? "",
+              wentAt: iso(r.prev_went_at)!,
+              viaRule: Boolean(r.prev_trigger),
+              sentByName: r.prev_user_name,
+            },
+    })),
+    openCount: Number(open[0]?.n ?? 0),
+    capped: rows.length >= INBOX_LIMIT,
+  };
+}
+
+/**
+ * Marking a reply handled — or, with `handled: false`, putting it back.
+ *
+ * Checked against the customer's scope: this took a bare id and updated any
+ * reply in the building, so anybody could clear another telecaller's inbox.
+ * A reply with no customer has no book and is not handled from the CRM.
+ */
+export async function actionReply(replyId: string, handled = true): Promise<Result> {
+  const user = await requireUser();
+  const [row] = await db
+    .select({ reply: waReplies, customer: customers })
+    .from(waReplies)
+    .innerJoin(customers, eq(customers.id, waReplies.customerId))
+    .where(eq(waReplies.id, replyId));
+  if (!row) return err("That reply no longer exists.", "not_found");
+  await assertCustomerInScope(row.customer);
+  await db
+    .update(waReplies)
+    .set(
+      handled
+        ? { actioned: true, actionedAt: new Date(), actionedById: user.id }
+        : { actioned: false, actionedAt: null, actionedById: null },
+    )
+    .where(eq(waReplies.id, replyId));
+  return okVoid(handled ? "Marked handled" : "Back in Needs reply");
 }
 
 /* -------------------------------------------------------------- templates */

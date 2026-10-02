@@ -23,6 +23,7 @@ import {
   waAutomationRuns,
   waAutomationSettings,
   waMessages,
+  waReplies,
   waTemplates,
   waTriggers,
   whatsappServiceEvents,
@@ -326,5 +327,65 @@ test("the collections strip counts today's and yesterday's payment reminders, by
   assert.equal((await paymentReminderSummary(todayIst(), daysAgo(1))).today.total, 0);
   await db.update(customers).set({ ownerId: tc.id }).where(eq(customers.id, shopId));
   assert.equal((await paymentReminderSummary(todayIst(), daysAgo(1))).today.total, 1);
+  setTestUser(null);
+});
+
+test("the Replies tab shows a telecaller only their own customers' replies, with what they were answering, and records who handled one", async () => {
+  const { repliesInbox, actionReply } = await import("@/lib/services/whatsapp-service");
+  const person = async (name: string, role: "admin" | "associate") => {
+    const [u] = await db.insert(users).values({
+      id: id("usr"), name, email: `${name.toLowerCase()}-${randomUUID().slice(0, 4)}@t.local`, passwordHash: "x", role, initials: "XX",
+    }).returning();
+    await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "crm", role });
+    return u;
+  };
+  const priya = await person("Priya", "associate");
+  const rakesh = await person("Rakesh", "associate");
+  const boss = await person("Boss", "admin");
+
+  // Colour Camp is Priya's; a lead is Rakesh's.
+  await db.update(customers).set({ ownerId: priya.id }).where(eq(customers.id, shopId));
+  const leadId = id("cus");
+  await db.insert(customers).values({ id: leadId, name: "Rakesh Lead", kind: "lead", ownerId: rakesh.id, contactPerson: "L", phone: "9820099999", city: "Pune" });
+
+  const tid = await template("payment_followup_1", "payment_followup_1_v2");
+  await db.insert(waMessages).values({
+    id: id("wam"), customerId: shopId, templateId: tid, templateName: "Payment follow-up", userId: priya.id, destKind: "personal",
+    resolvedDestination: "9820011001", body: "Your bill MMI/1 is overdue.", status: "sent_manually", mode: "manual",
+    preparedAt: at("10:00"), confirmedSentAt: at("10:01"),
+  });
+  const mine = id("wrp");
+  const theirs = id("wrp");
+  await db.insert(waReplies).values([
+    { id: mine, customerId: shopId, message: "Will pay Friday", receivedAt: at("10:30"), waId: "919820011001" },
+    { id: theirs, customerId: leadId, message: "Send me the rate list", receivedAt: at("10:40"), waId: "919820099999" },
+  ]);
+
+  setTestUser(priya);
+  let box = await repliesInbox({ show: "open" });
+  assert.deepEqual(box.rows.map((r) => r.id), [mine], "only her own customer's reply");
+  assert.equal(box.openCount, 1);
+  assert.equal(box.rows[0].inReplyTo?.body, "Your bill MMI/1 is overdue.", "with the message it answers");
+
+  // She cannot clear somebody else's inbox by id.
+  await assert.rejects(() => actionReply(theirs));
+
+  assert.equal((await actionReply(mine)).ok, true);
+  box = await repliesInbox({ show: "open" });
+  assert.equal(box.rows.length, 0);
+  box = await repliesInbox({ show: "all" });
+  assert.equal(box.rows[0].actionedByName, "Priya", "who handled it is kept");
+
+  // Rakesh sees his lead's reply, and that it wrote first.
+  setTestUser(rakesh);
+  box = await repliesInbox({ show: "open" });
+  assert.deepEqual(box.rows.map((r) => r.id), [theirs]);
+  assert.equal(box.rows[0].kind, "lead");
+  assert.equal(box.rows[0].inReplyTo, null);
+
+  // An admin sees both.
+  setTestUser(boss);
+  assert.equal((await repliesInbox({ show: "all" })).rows.length, 2);
+  assert.equal((await repliesInbox({ show: "all", q: "rate list" })).rows.length, 1, "search reads the reply text");
   setTestUser(null);
 });

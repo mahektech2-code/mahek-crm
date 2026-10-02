@@ -1046,7 +1046,11 @@ function ReminderDayLine({ label, d }: { label: string; d: ReminderDay }) {
       <div className="mt-1 flex flex-wrap gap-1.5">
         {d.delivered ? <Badge tone="success">✓✓ {d.delivered} delivered</Badge> : null}
         {d.read ? <Badge tone="brand">{d.read} read</Badge> : null}
-        {d.replied ? <Badge tone="warn">{plural(d.replied, "customer")} replied</Badge> : null}
+        {d.replied ? (
+          <Link href="/crm/whatsapp?tab=replies&show=all" className="no-underline" title="Read what they wrote">
+            <Badge tone="warn">{plural(d.replied, "customer")} replied →</Badge>
+          </Link>
+        ) : null}
         {d.unconfirmed ? (
           <Badge tone="warn" title="Copied to paste, nobody confirmed it went">
             {d.unconfirmed} not confirmed

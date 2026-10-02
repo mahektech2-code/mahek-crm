@@ -1604,9 +1604,9 @@ export async function cancelMessage(messageId: string): Promise<Result> {
   }
 }
 
-export async function actionReply(replyId: string): Promise<Result> {
+export async function actionReply(replyId: string, handled = true): Promise<Result> {
   try {
-    const r = await actionReplyService(replyId);
+    const r = await actionReplyService(replyId, handled === true);
     refreshAll();
     return r;
   } catch (e) {
