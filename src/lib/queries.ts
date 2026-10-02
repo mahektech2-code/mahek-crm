@@ -29,6 +29,8 @@ import { today as businessToday } from "./recompute";
 import { daysBetween, monthKey, type DateRange } from "./business-date";
 import { eodMetricsFor, eodMetricsForRange } from "./services/eod-service";
 import { managerNameByEmployeeName } from "./services/org-service";
+import { placeFilterOptions, placeFilterSql } from "./services/place-filter-service";
+import type { PlaceFilterOptions, PlaceFilterValues, PlaceNames } from "./place-filters";
 
 /* ---------------------------------------------------------------------------
  * Reads for the screens. Every one resolves scope, so a missed check cannot
@@ -391,7 +393,28 @@ export type CustomerRow = typeof customers.$inferSelect & {
    * goods leave on their bill and arrive somewhere else.
    */
   servedShops: number;
+  /**
+   * Where the shop is, by name, off the reviewed location tree — see
+   * `place-tree-service.ts`. Absent on reads that do not ask for it; null
+   * rungs are rungs nobody could place.
+   */
+  place?: PlaceNames;
 };
+
+/**
+ * The four rungs of a shop's place as one JSON object, for a SELECT list.
+ *
+ * Scalar subqueries rather than four joins onto one table, for the reason the
+ * seat names beside it give: four left joins to `places` on one row is where
+ * column aliasing goes wrong quietly. `customers.` is spelled out because a
+ * bare column inside a correlated subquery binds to the inner table.
+ */
+export const PLACE_NAMES_SQL = sql<PlaceNames>`json_build_object(
+  'state', (select p.name from places p where p.id = customers.resolved_state_id),
+  'district', (select p.name from places p where p.id = customers.resolved_district_id),
+  'city', (select p.name from places p where p.id = customers.resolved_city_id),
+  'area', (select p.name from places p where p.id = customers.resolved_area_id)
+)`;
 
 /**
  * The customer status label, in SQL.
@@ -430,20 +453,14 @@ export type CustomerListFilters = {
   salesManager?: string;
   backOfficeAm?: string;
   /**
-   * WHERE THE SHOP IS, as `customers.city` literally holds it — never a
-   * cleaned or canonical place name.
+   * WHERE THE SHOP IS — state, district, city and area, each a `,`-separated
+   * list of place ids off the reviewed location tree. See `lib/place-filters.ts`.
    *
-   * The column is whatever the sheet typed, which on the real book is several
-   * hundred values, a good many of them whole postal addresses offered as a
-   * city. Matching on the stored string is the only thing that can be exactly
-   * right: normalising here would filter on a value no row contains, and a
-   * filter that quietly returns nothing is worse than one that offers an ugly
-   * option. `listCityFilterOptions` returns the same strings, so what is
-   * picked is always something the column actually says.
-   *
-   * `,`-separated for more than one, like every multi-value field here.
+   * It used to be one filter over `customers.city`, which is whatever the
+   * sheet typed: 1,165 spellings of a few hundred places, whole postal
+   * addresses among them. The tree is what those collapse into.
    */
-  city?: string;
+  places?: PlaceFilterValues;
   /**
    * "yes" for accounts marked as shops we deliver to, "no" for the rest, and
    * "delivered" for the ones the sheet shows receiving goods — whether or not
@@ -587,80 +604,24 @@ export const RELATIONSHIP_OWNER_NAME_SQL = sql<string | null>`(
  * people whose accounts they cannot see.
  */
 /**
- * The city exactly as the filter compares it: trimmed, and an empty string
- * where the column is blank.
+ * WHAT THE FOUR PLACE FILTERS OFFER, counted over the scoped book.
  *
- * One expression, read by both the clause and the options list, so a value
- * offered in the dropdown is by construction a value the WHERE can match. Two
- * spellings of this — a `btrim` on one side and a bare column on the other —
- * is a filter that silently returns nothing for every city stored with a
- * trailing space.
+ * It used to be every `customers.city` string in the book — several hundred,
+ * whole postal addresses among them. It is the reviewed tree now: a state
+ * list, then the districts, cities and areas under whatever is picked above.
+ * See `placeFilterOptions`.
  */
-const CITY_FILTER_SQL = sql<string>`coalesce(btrim(customers.city), '')`;
-
-/**
- * EVERY CITY IN THE SCOPED BOOK, read on each page load.
- *
- * Not a stored list and not a fixed one: shops arrive from the sheet with new
- * spellings constantly, so a hardcoded set of cities would be stale the first
- * time somebody imported a district. This is a `group by` over the book the
- * reader can already see — so it costs one indexed aggregate and is right at
- * the moment the page renders, which is the freshness a filter needs.
- *
- * ORDERED BY HOW MANY SHOPS, biggest first, then alphabetically. This column
- * is whatever the sheet typed — several hundred values on the real book, many
- * of them whole postal addresses offered as a city, one of them 80 characters
- * of "06, MAHADEV TOWERS CO-OP HSG SOC, LTD, LBS MARG, …" — and alphabetical
- * order buries Thane and Nagpur somewhere in the middle of that. Frequency
- * puts the places somebody actually means at the top and the long tail below,
- * which is the same reasoning `knownPlaces` follows on the handset, for the
- * same column.
- *
- * The count rides in the label because otherwise the ordering looks arbitrary:
- * a list that is neither alphabetical nor explained reads as unsorted.
- *
- * A BLANK CITY IS AN OPTION, not a gap. Shops with nothing in the column are
- * real and are exactly who somebody is looking for when they ask which of the
- * book has no address — dropping them would make a filter that cannot reach
- * them, and the count at the top of the screen would never add up.
- *
- * AND A FILTER MAY ONLY OFFER WHAT THE TABLE CAN SHOW, which is why this and
- * `listAmFilterOptions` below it are narrowed by `NOT_A_LEAD_SQL` rather than
- * by the scope alone.
- *
- * Both were a pass over the whole scoped book, which was right while the book
- * and the table were the same population. They no longer are: a city that
- * exists only on leads, or a salesperson whose accounts are all leads, would
- * be offered in the dropdown and answer zero rows — which is the failure the
- * paragraph above and `listAmFilterOptions`'s own ("a filter offering a name
- * the column does not render is a filter somebody tries once") both warn
- * about, arriving from a direction neither of them could have anticipated.
- * The shop counts would have been wrong in the same motion, and those are
- * printed in the label.
- *
- * Every caller is either the customer table itself or one of the two target
- * screens, which are direct customers and nothing else — so this can only
- * narrow, never lose an option somebody could have used.
- */
-export async function listCityFilterOptions(): Promise<
-  { value: string; label: string }[]
-> {
+export async function listPlaceFilterOptions(
+  picks: PlaceFilterValues = {},
+): Promise<PlaceFilterOptions> {
   const ctx = await resolveScope();
   const scoped = scopedToUsers(scopedUserIds(ctx.scope));
-
-  const rows = await db
-    .select({ city: CITY_FILTER_SQL, shops: sql<number>`count(*)::int` })
-    .from(customers)
-    .where(scoped ? and(scoped, NOT_A_LEAD_SQL) : NOT_A_LEAD_SQL)
-    .groupBy(CITY_FILTER_SQL)
-    .orderBy(sql`count(*) desc`, CITY_FILTER_SQL);
-
-  return rows.map((r) => ({
-    value: r.city,
-    label: r.city
-      ? `${r.city} (${r.shops})`
-      : `No city recorded (${r.shops})`,
-  }));
+  return placeFilterOptions({
+    from: sql`customers`,
+    alias: "customers",
+    where: scoped ? and(scoped, NOT_A_LEAD_SQL) : NOT_A_LEAD_SQL,
+    picks,
+  });
 }
 
 /**
@@ -732,7 +693,7 @@ export const listAmFilterOptions = cache(async function listAmFilterOptions(): P
         backOfficeName: customers.backOfficeName,
       })
       .from(customers)
-      // Narrowed for the reason stated above `listCityFilterOptions`.
+      // The book this table shows — not a lead — as `listPlaceFilterOptions` reads it.
       .where(scoped ? and(scoped, NOT_A_LEAD_SQL) : NOT_A_LEAD_SQL),
   ]);
 
@@ -872,6 +833,12 @@ export function customerFiltersOnly(
       or customers.contact_person ilike ${like}
       or customers.phone like ${like}
       or customers.city ilike ${like}
+      or exists (
+        select 1 from places p
+         where p.id in (customers.resolved_district_id, customers.resolved_city_id,
+                        customers.resolved_area_id)
+           and p.name ilike ${like}
+      )
     )`);
   }
   if (filters.status) where.push(inList(STATUS_LABEL_SQL, filters.status));
@@ -888,12 +855,8 @@ export function customerFiltersOnly(
   if (filters.backOfficeAm) {
     where.push(inListOrUnassigned(BACK_OFFICE_AM_NAME_SQL, filters.backOfficeAm));
   }
-  if (filters.city) {
-    // `inList` and not `inListOrUnassigned`: an empty city is real on this
-    // book and is offered as its own option, so it is matched by the value
-    // rather than by a null branch — see `listCityFilterOptions`.
-    where.push(inList(CITY_FILTER_SQL, filters.city));
-  }
+  const placed = placeFilterSql(filters.places ?? {}, "customers");
+  if (placed) where.push(placed);
   if (filters.thirdParty) {
     // Several of these are structurally different queries, not different
     // values of one column — "lead" excludes the mark, "delivered" is an
@@ -1084,7 +1047,10 @@ const CUSTOMER_SORT_COLUMNS = {
   status: STATUS_LABEL_SQL,
   outstanding: customers.outstanding,
   lastOrder: customers.lastOrderDate,
-  city: customers.city,
+  // The tree's city, then its area — so a sorted list reads Mumbai's suburbs
+  // together rather than scattered by however the sheet spelled each one.
+  city: sql`(select p.name from places p where p.id = customers.resolved_city_id) || ' ' ||
+            coalesce((select p.name from places p where p.id = customers.resolved_area_id), '')`,
 } satisfies Record<string, SQL | Column>;
 
 export async function listCustomersPage(
@@ -1195,6 +1161,7 @@ export async function listCustomersPage(
       // The other end of the delivery chain, and spelled out for the same
       // reason as the line above it: Drizzle renders a column reference bare,
       // and a bare `id` inside a correlated subquery binds to the inner table.
+      place: PLACE_NAMES_SQL,
       servedShops: sql<number>`(
         select count(*)::int from customer_distributors d
          where d.distributor_customer_id = customers.id
@@ -1218,6 +1185,7 @@ export async function listCustomersPage(
       deliveredOrders: Number(r.deliveredOrders),
       servedShops: Number(r.servedShops),
       nextStep: r.nextStep ?? null,
+      place: r.place,
     })),
     total,
     bookTotal: Number(book?.n ?? 0),
@@ -1366,6 +1334,7 @@ export const getCustomer = cache(async function getCustomer(
          order by c.started_at desc, c.id desc
          limit 1
       )`,
+      place: PLACE_NAMES_SQL,
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
@@ -1381,6 +1350,7 @@ export const getCustomer = cache(async function getCustomer(
     relationshipOwnerName: rows[0].relationshipOwnerName,
     grade: rows[0].grade ?? null,
     nextStep: rows[0].nextStep ?? null,
+    place: rows[0].place,
   };
 });
 

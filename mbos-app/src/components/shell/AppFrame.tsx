@@ -11,6 +11,7 @@ import { useTicker } from '../ui/use-ticker';
 import { Appear } from '../ui/motion';
 import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCount } from '../../state/store';
 import { TravelGate } from './TravelGate';
+import { refreshEverything } from '../../native/refresh';
 import { useBoot } from '../../state/boot';
 import { todayRow } from '../../data/attendance';
 import { hhmm, plural } from '../../lib/format';
@@ -212,6 +213,21 @@ export function AppFrame({
   const confirmReason = useStore((s) => s.confirmReason);
   const confirmErr = useStore((s) => s.confirmErr);
   const closeConfirm = useStore((s) => s.closeConfirm);
+  const offerUpdate = useStore((s) => s.offerUpdate);
+  const [refreshing, setRefreshing] = React.useState(false);
+
+  /* The top-bar refresh. A new version wins the screen; otherwise the toast
+     says what the sync did, so the press is never silent. */
+  const refresh = React.useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const verdict = await refreshEverything();
+      if (verdict.offer) offerUpdate(verdict.offer);
+      else notify(verdict.summary);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [notify, offerUpdate]);
 
   const strip: { key: string; label: string; tone: StripTone; onPress: () => void }[] = [
     {
@@ -338,6 +354,8 @@ export function AppFrame({
           title={title}
           onBack={onBack}
           unread={unread}
+          onRefresh={() => void refresh()}
+          refreshing={refreshing}
           /* No bell on the notifications screen. A control whose whole job is
              to bring you here is furniture once you have arrived, and tapping
              it stacked a second copy of the page. */

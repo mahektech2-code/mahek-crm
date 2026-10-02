@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { placeShopsNow } from "@/lib/services/place-tree-service";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -703,6 +704,7 @@ export async function captureLead(
       }
     }
 
+    await placeShopsNow([customerId]);
     refresh(customerId);
     return ok(
       { customerId, stage: foot },
@@ -1007,6 +1009,7 @@ export async function captureLeadBatch(
         });
     }
 
+    if (summary.created) await placeShopsNow();
     refresh();
     return ok(
       summary,

@@ -29,6 +29,15 @@ import {
   SelectionBar,
 } from "@/components/ui/overlays";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { PlaceCell, PlaceFilterSelects } from "@/components/ui/place-filter-selects";
+import {
+  PLACE_FILTER_KINDS,
+  PLACE_FILTER_LABELS,
+  placePickPatch,
+  type PlaceFilterOptions,
+  type PlaceFilterValues,
+  type PlaceNames,
+} from "@/lib/place-filters";
 import { useToast } from "@/components/ui/toast";
 import { AccountManagerDialog } from "@/components/crm/account-manager-dialog";
 import { SalesManagerDialog } from "@/components/crm/sales-manager-dialog";
@@ -68,6 +77,8 @@ export type Row = {
   contactPerson: string | null;
   phone: string;
   city: string;
+  /** Where the shop is on the reviewed location tree; null where it is not placed. */
+  place: PlaceNames | null;
   ownerId: string | null;
   /**
    * Whose book it is, for a CUSTOMER. Not the same column as the owner, and
@@ -161,7 +172,7 @@ export function CustomersScreen({
   amReasons,
   amSearchThreshold,
   amOptions,
-  cityOptions,
+  placeOptions,
   team,
   backOfficePeople,
   salesManagerPeople,
@@ -213,18 +224,10 @@ export function CustomersScreen({
   /** The names each filter offers — the ones the column actually shows. */
   amOptions: { sales: string[]; salesManager: string[]; backOffice: string[] };
   /**
-   * EVERY CITY IN THE BOOK, read on the server each time this page loads —
-   * see `listCityFilterOptions`.
-   *
-   * A list rather than a set of names like `amOptions`, because these carry
-   * their shop count in the label and are ordered by it: `customers.city` is
-   * whatever the sheet typed, several hundred values on the real book with
-   * whole postal addresses among them, and alphabetical order buries the
-   * places somebody actually means. The `MultiSelect` draws its own search
-   * box past eight options and scrolls internally, so the long tail costs
-   * nothing to carry.
+   * State, district, city and area, counted over this book and narrowed by
+   * whatever is picked above each — see `listPlaceFilterOptions`.
    */
-  cityOptions: { value: string; label: string }[];
+  placeOptions: PlaceFilterOptions;
   team: Array<{ id: string; name: string; role?: string }>;
   /** Accounts plus the current HRMS employees — the back office seat only. */
   backOfficePeople: Array<{ id: string; name: string; role?: string }>;
@@ -250,7 +253,7 @@ export function CustomersScreen({
     salesAm: string;
     salesManager: string;
     backOfficeAm: string;
-    city: string;
+    places: PlaceFilterValues;
     /** The type filter's own word, or empty for all of them. */
     accountType: string;
     /** "column:asc"/"column:desc", or empty — see lib/sort-param.ts. */
@@ -308,7 +311,7 @@ export function CustomersScreen({
   const salesAm = filters.salesAm || "";
   const salesManager = filters.salesManager || "";
   const backOfficeAm = filters.backOfficeAm || "";
-  const city = filters.city || "";
+  const places = filters.places;
   const accountTypeFilter = filters.accountType || "";
   const perPage = filters.perPage;
   const { page, pageCount, total, bookTotal } = pageInfo;
@@ -463,12 +466,14 @@ export function CustomersScreen({
           clear: () => navigate({ party: undefined }),
         }
       : null,
-    city
-      ? {
-          label: `City: ${describeMulti(city, cityOptions)}`,
-          clear: () => navigate({ city: undefined }),
-        }
-      : null,
+    ...PLACE_FILTER_KINDS.map((kind) =>
+      places[kind]
+        ? {
+            label: `${PLACE_FILTER_LABELS[kind]}: ${describeMulti(places[kind] ?? "", placeOptions[kind])}`,
+            clear: () => navigate(placePickPatch(kind, [])),
+          }
+        : null,
+    ),
     query ? { label: `Search: ${query}`, clear: () => { setDraft(""); navigate({ q: undefined }); } } : null,
   ].filter(Boolean) as Array<{ label: string; clear: () => void }>;
 
@@ -487,7 +492,10 @@ export function CustomersScreen({
       salesmanager: undefined,
       backoffice: undefined,
       party: undefined,
+      state: undefined,
+      district: undefined,
       city: undefined,
+      area: undefined,
     });
   }
 
@@ -512,7 +520,11 @@ export function CustomersScreen({
           "Customer",
           "Contact",
           "Phone",
+          "Area",
           "City",
+          "District",
+          "State",
+          "City (as typed)",
           "Type",
           "Deliveries received on another's bill",
           "Third-party customers billed for",
@@ -531,6 +543,10 @@ export function CustomersScreen({
           r.name,
           r.contactPerson,
           r.phone,
+          r.place?.area ?? "",
+          r.place?.city ?? "",
+          r.place?.district ?? "",
+          r.place?.state ?? "",
           r.city,
           accountType(r),
           r.deliveredOrders,
@@ -565,7 +581,11 @@ export function CustomersScreen({
         accountTypeFilter
           ? `Type: ${describeMulti(accountTypeFilter, accountTypeOptions)}`
           : null,
-        city ? `City: ${describeMulti(city, cityOptions)}` : null,
+        ...PLACE_FILTER_KINDS.map((kind) =>
+          places[kind]
+            ? `${PLACE_FILTER_LABELS[kind]}: ${describeMulti(places[kind] ?? "", placeOptions[kind])}`
+            : null,
+        ),
         query || null,
       ],
     );
@@ -690,7 +710,7 @@ export function CustomersScreen({
         ]}
       />
 
-      <Card className="mb-0 flex items-center gap-2.5 rounded-b-none border-b-0 px-4 py-3">
+      <Card className="mb-0 flex flex-wrap items-center gap-2.5 rounded-b-none border-b-0 px-4 py-3">
         <div className="relative w-[300px]">
           <Icon
             name="search"
@@ -778,21 +798,14 @@ export function CustomersScreen({
           onChange={(next) => navigate({ backoffice: next.join(",") || undefined })}
         />
         {/*
-          WHERE THE SHOP IS. Last in the bar because it is the widest list by a
-          long way and the one most often left alone — the four before it are
-          short, closed sets, and this is the book's own free text.
-
-          Nothing special is needed to make it usable: `MultiSelect` already
-          draws a search box past eight options and scrolls its list inside a
-          fixed panel, so a few hundred cities behave exactly like the five
-          statuses beside them.
+          WHERE THE SHOP IS — state, district, city and area off the reviewed
+          location tree. Last in the bar because they are the widest lists;
+          each narrows the ones after it.
         */}
-        <MultiSelect
-          label="City"
-          placeholder="All cities"
-          options={cityOptions}
-          selected={asList(city)}
-          onChange={(next) => navigate({ city: next.join(",") || undefined })}
+        <PlaceFilterSelects
+          options={placeOptions}
+          values={places}
+          onChange={(patch) => navigate(patch)}
         />
         {chips.length ? (
           <button
@@ -888,7 +901,7 @@ export function CustomersScreen({
                   direction={sort?.direction ?? "asc"}
                   onSort={() => sortBy("city")}
                 >
-                  City
+                  Location
                 </SortableTh>
                 <Th align="right" className={pinnedHead("right")}>
                   Actions
@@ -1146,7 +1159,9 @@ export function CustomersScreen({
                   <Td>
                     <NextCallCell step={r.nextStep} today={todayIso} />
                   </Td>
-                  <Td>{r.city}</Td>
+                  <Td>
+                    <PlaceCell place={r.place} typed={r.city} />
+                  </Td>
                   {/*
                     Pinned, because the table is wide enough to scroll and the
                     way to act on a row must not depend on where it happens to
