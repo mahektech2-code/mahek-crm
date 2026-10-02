@@ -122,9 +122,14 @@ export function flattenForTemplate(value: string): string {
 
 /* ------------------------------------------------------------ the webhooks */
 
+/**
+ * A status event names our message by `localMessageId` when we sent a template,
+ * and only by WhatsApp's id (`providerRef`) when it was a free-text session
+ * reply — at least one of the two is always present.
+ */
 export type WatiEvent =
-  | { kind: "sent" | "delivered" | "read"; localMessageId: string; providerRef: string | null }
-  | { kind: "failed"; localMessageId: string; providerRef: string | null; reason: string }
+  | { kind: "sent" | "delivered" | "read"; localMessageId: string | null; providerRef: string | null }
+  | { kind: "failed"; localMessageId: string | null; providerRef: string | null; reason: string }
   | {
       kind: "reply";
       providerMessageId: string;
@@ -168,7 +173,9 @@ export function parseWatiEvent(body: unknown): WatiEvent {
     return { kind: "reply", providerMessageId: id, waId, senderName: str(b.senderName), text };
   }
 
-  if (!local) return { kind: "ignored", why: `${type || "unknown"} without a localMessageId` };
+  // A free-text reply we sent comes back with WhatsApp's id and none of ours;
+  // with neither there is nothing to match it to.
+  if (!local && !ref) return { kind: "ignored", why: `${type || "unknown"} without a localMessageId` };
 
   // A reply is also delivered as its own `message` event, which is the one
   // acted on; the "replied" status tick carries nothing that one does not.

@@ -90,3 +90,17 @@ export function previewOf(body: string, max = 140): string {
   const flat = body.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
 }
+
+/**
+ * WhatsApp's own rule: a business may send free text only within 24 hours of
+ * the customer's last message to it. After that, an approved template is the
+ * only thing it will carry. Not configuration — it is Meta's rule, not ours.
+ */
+export const SESSION_WINDOW_HOURS = 24;
+
+/** When free-text replying to this number stops being possible. */
+export function sessionWindowEnds(lastInboundAt: string | Date | null): Date | null {
+  if (!lastInboundAt) return null;
+  const t = new Date(lastInboundAt).getTime();
+  return Number.isNaN(t) ? null : new Date(t + SESSION_WINDOW_HOURS * 3_600_000);
+}
