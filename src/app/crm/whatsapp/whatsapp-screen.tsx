@@ -27,6 +27,7 @@ import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import {
   actionReply,
+  answerReply,
   advanceRun,
   archiveTemplate,
   cancelMessage,
@@ -46,7 +47,7 @@ import {
 import { applyMerge, fieldLabel, mergeValues, missingFields, usedFields } from "@/lib/merge";
 import { deliveryRoute } from "@/lib/whatsapp-delivery";
 import type { InboxReply, InboxShow, MessagePreview } from "@/lib/services/whatsapp-service";
-import { previewOf, whenLabel } from "@/lib/whatsapp-status";
+import { previewOf, sessionWindowEnds, whenLabel } from "@/lib/whatsapp-status";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { money, phoneDisplay, stamp } from "@/lib/format";
 import { CardGrid } from "@/components/ui/card-grid";
@@ -216,6 +217,10 @@ export function WhatsappScreen(props: {
     capped: boolean;
     show: InboxShow;
     q: string;
+    /** Why nothing can be sent from the business number right now, if so. */
+    answerBlockedWhy: string | null;
+    /** The server's clock, for the 24-hour window — never read during render. */
+    now: number;
   };
 }) {
   const {
@@ -2130,6 +2135,10 @@ function RepliesTab({
     capped: boolean;
     show: InboxShow;
     q: string;
+    /** Why nothing can be sent from the business number right now, if so. */
+    answerBlockedWhy: string | null;
+    /** The server's clock, for the 24-hour window — never read during render. */
+    now: number;
   };
   today: string;
   scopeLabel: string;
@@ -2287,10 +2296,19 @@ function RepliesTab({
               )}
             </div>
 
+            <AnswerArea
+              key={`${r.id}:${r.answer?.status ?? "none"}`}
+              reply={r}
+              today={businessDay}
+              now={inbox.now}
+              blockedWhy={inbox.answerBlockedWhy}
+              onSent={onChanged}
+            />
+
             <div className="mt-2.5 flex flex-wrap gap-2">
               <Button
                 size="sm"
-                variant={r.actioned ? "secondary" : "primary"}
+                variant="secondary"
                 onClick={async () => {
                   const res = await act(actionReply(r.id, !r.actioned));
                   if (res.ok) onChanged();
@@ -2303,9 +2321,10 @@ function RepliesTab({
                   href={`https://wa.me/91${(r.phone ?? r.waId ?? "").replace(/\D/g, "").slice(-10)}`}
                   target="_blank"
                   rel="noreferrer"
+                  title="Opens WhatsApp on this device — the customer sees YOUR number, not the business number, and nothing is recorded here. Use Send reply for that."
                   className="inline-flex h-7 items-center rounded-[4px] border border-line px-2.5 text-[13px] text-body no-underline hover:bg-canvas"
                 >
-                  Reply on WhatsApp ↗
+                  Open in my WhatsApp ↗
                 </a>
               ) : null}
               {r.customerId ? (
@@ -2344,4 +2363,113 @@ function RepliesTab({
       ) : null}
     </Card>
   );
+}
+
+/**
+ * ANSWER FROM THE BUSINESS NUMBER, without leaving the CRM.
+ *
+ * What was said back is drawn under the customer's message like a chat. Before
+ * that, a box — typed or dictated — that sends a WhatsApp session message
+ * through Wati. WhatsApp allows free text only within 24 hours of the
+ * customer's last message, so the box says when that window closes, and once
+ * it has, points at an approved template instead of offering a box that would
+ * be refused. A failed answer keeps its words for another try.
+ */
+function AnswerArea({
+  reply: r,
+  today: businessDay,
+  now,
+  blockedWhy,
+  onSent,
+}: {
+  reply: InboxReply;
+  today: string;
+  now: number;
+  blockedWhy: string | null;
+  onSent: () => void;
+}) {
+  const { run: act } = useToast();
+  const [text, setText] = React.useState(r.answer?.status === "failed" ? r.answer.body : "");
+  const [busy, setBusy] = React.useState(false);
+  const ends = sessionWindowEnds(r.lastInboundAt);
+  const open = ends !== null && ends.getTime() > now;
+
+  if (r.answer && r.answer.status !== "failed") {
+    return (
+      <div className="mt-2 flex justify-end">
+        <div className="max-w-[640px] rounded-[8px] rounded-tr-[2px] border border-line bg-brand-soft px-3 py-2">
+          <p className="text-sm whitespace-pre-wrap text-ink">{r.answer.body}</p>
+          <div className="mt-1 text-[11px] text-muted">
+            {r.answer.status === "sending" ? "Sending…" : "✓ Sent from the business number"}
+            {r.answer.byName ? ` · ${r.answer.byName}` : ""}
+            {r.answer.at ? ` · ${whenLabel(r.answer.at, businessDay)}` : ""}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2.5 max-w-[760px] rounded-[6px] border border-line px-3 py-2.5">
+      {r.answer?.status === "failed" ? (
+        <div className="mb-2 text-[12px] text-danger">
+          Your reply did not go: {r.answer.failure ?? "Wati did not accept it."} Edit it and send again.
+        </div>
+      ) : null}
+      {blockedWhy ? (
+        <p className="text-[13px] text-muted">{blockedWhy}</p>
+      ) : !open ? (
+        <p className="text-[13px] text-muted">
+          WhatsApp only allows a free-text reply within 24 hours of the customer&rsquo;s last
+          message, and that closed {ends ? inline(whenLabel(ends.toISOString(), businessDay)) : "already"}.
+          {r.customerId ? (
+            <>
+              {" "}
+              <Link href={`/crm/whatsapp?customer=${r.customerId}`} className="text-brand no-underline">
+                Send an approved template instead →
+              </Link>
+            </>
+          ) : null}
+        </p>
+      ) : (
+        <>
+          <VoiceTextarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onDictate={setText}
+            maxLength={4000}
+            className="h-16"
+            placeholder="Reply from the business number…"
+          />
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={busy || !text.trim()}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const res = await act(answerReply(r.id, text));
+                  if (res.ok) onSent();
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? "Sending…" : "Send reply"}
+            </Button>
+            <span className="text-[12px] text-muted">
+              Goes from the business number on WhatsApp · you can reply freely until{" "}
+              {ends ? inline(whenLabel(ends.toISOString(), businessDay)) : "-"}
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** "Today, 9 am" mid-sentence is "today, 9 am"; "29 Sep" keeps its capital. */
+function inline(label: string): string {
+  return label.charAt(0).toLowerCase() + label.slice(1);
 }

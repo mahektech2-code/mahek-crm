@@ -3928,6 +3928,12 @@ export const waMessages = pgTable(
     providerRef: text("provider_ref"),
     /** The founder-configured rule that sent this, when a rule did. Null for a message a person sent. */
     triggerId: text("trigger_id"),
+    /**
+     * The customer's message this one answers, when it is a free-text reply
+     * typed in the Replies tab. Declared without a reference here because
+     * `wa_replies` is defined further down; the migration carries the key.
+     */
+    inReplyToId: text("in_reply_to_id"),
 
     idempotencyKey: text("idempotency_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -3945,6 +3951,7 @@ export const waMessages = pgTable(
       t.id.desc(),
     ),
     index("wa_messages_run_idx").on(t.runId),
+    index("wa_messages_provider_ref_idx").on(t.providerRef),
     uniqueIndex("wa_messages_idempotency_key").on(t.idempotencyKey),
   ],
 );
@@ -3973,6 +3980,16 @@ export const waReplies = pgTable(
      */
     actionedAt: timestamp("actioned_at", { withTimezone: true }),
     actionedById: text("actioned_by_id").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * What we said back, from the Replies tab, as a WhatsApp session message
+     * from the business number. One answer per incoming message; `answerStatus`
+     * is `sent` or `failed`, and a failed one keeps its words and its reason.
+     */
+    answerBody: text("answer_body"),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
+    answeredById: text("answered_by_id").references(() => users.id, { onDelete: "set null" }),
+    answerStatus: text("answer_status"),
+    answerFailure: text("answer_failure"),
   },
   (t) => [
     uniqueIndex("wa_replies_provider_message_id_key").on(t.providerMessageId),

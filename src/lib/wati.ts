@@ -229,6 +229,40 @@ export async function sendWatiTemplate(input: {
   return { ok: true, broadcastId: r.data?.broadcast_id ?? null };
 }
 
+/**
+ * A free-text WhatsApp message — a SESSION message — to one number.
+ *
+ * Only possible inside the 24 hours after the customer last wrote to us;
+ * outside it WhatsApp accepts nothing but an approved template, and the caller
+ * checks that window before calling here (Wati would refuse it anyway, but
+ * after the person had typed it). Wati's answer carries WhatsApp's id for the
+ * message under one of a few names depending on the version; whichever is
+ * there is returned, because the delivery webhooks for a session message are
+ * matched on it — they carry no id of ours.
+ */
+export async function sendWatiText(input: {
+  phone: string;
+  text: string;
+}): Promise<{ ok: true; providerRef: string | null } | { ok: false; error: string; uncertain: boolean }> {
+  const cfg = await watiConfig();
+  if (!cfg) return { ok: false, error: "No Wati key is configured.", uncertain: false };
+  const r = await call<Record<string, unknown> | null>(cfg, "/api/ext/v3/conversations/messages/text", {
+    method: "POST",
+    body: { target: input.phone, text: input.text },
+  });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: r.status === null };
+  const d = (r.data ?? {}) as Record<string, unknown>;
+  if (d.result === false || d.success === false) {
+    const why = typeof d.info === "string" ? d.info : typeof d.message === "string" ? d.message : null;
+    return { ok: false, error: why ?? "Wati did not accept the message.", uncertain: false };
+  }
+  const inner = (typeof d.message === "object" && d.message ? d.message : d) as Record<string, unknown>;
+  const ref = [inner.whatsappMessageId, inner.whatsapp_message_id, inner.message_id, inner.id, d.id].find(
+    (v): v is string => typeof v === "string" && v.length > 0,
+  );
+  return { ok: true, providerRef: ref ?? null };
+}
+
 /* ------------------------------------------------------ connection health */
 
 export type WatiHealth =

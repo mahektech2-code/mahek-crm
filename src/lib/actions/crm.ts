@@ -59,6 +59,7 @@ import {
 } from "@/lib/services/worklist-services";
 import {
   actionReply as actionReplyService,
+  answerReply as answerReplyService,
   advanceRun as advanceRunService,
   cancelMessage as cancelMessageService,
   confirmSent,
@@ -1602,6 +1603,16 @@ export async function sendMessageAutomatic(messageId: string): Promise<Result> {
 export async function cancelMessage(messageId: string): Promise<Result> {
   try {
     const r = await cancelMessageService(messageId);
+    refreshAll();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function answerReply(replyId: string, text: string): Promise<Result> {
+  try {
+    const r = await answerReplyService(replyId, String(text ?? ""));
     refreshAll();
     return r;
   } catch (e) {

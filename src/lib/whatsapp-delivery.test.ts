@@ -97,6 +97,15 @@ describe("reading Wati's webhooks", () => {
     assert.equal(parseWatiEvent({ eventType: "templateMessageSent_v2_bsuid", localMessageId: "wam_1" }).kind, "sent");
   });
 
+  test("a free-text reply's events carry only WhatsApp's id, and are still read", () => {
+    assert.deepEqual(
+      parseWatiEvent({ eventType: "sentMessageREAD_v2", whatsappMessageId: "wamid.T1" }),
+      { kind: "read", localMessageId: null, providerRef: "wamid.T1" },
+    );
+    // Neither id: nothing to match it to.
+    assert.equal(parseWatiEvent({ eventType: "sentMessageREAD_v2" }).kind, "ignored");
+  });
+
   test("a failure carries Wati's code and words", () => {
     const e = parseWatiEvent({
       eventType: "templateMessageFailed",

@@ -162,7 +162,19 @@ export default async function WhatsappPage({
         tab === "run" || tab === "templates" || tab === "log" || tab === "replies" ? tab : "send"
       }
       today={day}
-      inbox={{ ...inbox, show: inboxShow, q: rq?.slice(0, 100) ?? "" }}
+      inbox={{
+        ...inbox,
+        show: inboxShow,
+        q: rq?.slice(0, 100) ?? "",
+        // Answering goes through the API from the business number, so it
+        // needs exactly what every API send needs.
+        answerBlockedWhy: apiOn
+          ? null
+          : !delivery.serviceOn
+            ? "WhatsApp sending is switched off in the Founder Command Centre, so nothing can go from the business number."
+            : "No Wati key is configured, so nothing can go from the business number.",
+        now,
+      }}
       customers={customerPayload}
       templates={templates.map((t) => ({
         id: t.id,

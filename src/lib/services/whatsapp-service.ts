@@ -35,7 +35,8 @@ import {
   waNumber,
   type WatiEvent,
 } from "../whatsapp-delivery";
-import { isApproved, listWatiTemplates, sendWatiTemplate, watiConfig } from "../wati";
+import { isApproved, listWatiTemplates, sendWatiTemplate, sendWatiText, watiConfig } from "../wati";
+import { sessionWindowEnds } from "../whatsapp-status";
 import { whatsappServiceState } from "./whatsapp-switch-service";
 import { factsFor } from "./wati-facts-service";
 import {
@@ -984,11 +985,18 @@ export async function applyWatiEvent(event: WatiEvent): Promise<string> {
     return inserted.length ? `reply stored${match ? "" : " (no matching customer)"}` : "reply already stored";
   }
 
+  // Ours by id when we sent a template; by WhatsApp's id when it was a
+  // free-text reply, whose events carry no id of ours.
   const [message] = await db
     .select()
     .from(waMessages)
-    .where(eq(waMessages.id, event.localMessageId));
-  if (!message) return `no message ${event.localMessageId}`;
+    .where(
+      event.localMessageId
+        ? eq(waMessages.id, event.localMessageId)
+        : eq(waMessages.providerRef, event.providerRef as string),
+    )
+    .limit(1);
+  if (!message) return `no message ${event.localMessageId ?? event.providerRef}`;
 
   const next = advancedStatus(message.status, event.kind);
   if (!next) return `${event.kind} ignored at ${message.status}`;
@@ -1177,6 +1185,19 @@ export type InboxReply = {
   actioned: boolean;
   actionedAt: string | null;
   actionedByName: string | null;
+  /** What we said back from MahekOne, if anything — and whether it went. */
+  answer: {
+    body: string;
+    status: "sending" | "sent" | "failed";
+    at: string | null;
+    byName: string | null;
+    failure: string | null;
+  } | null;
+  /**
+   * The newest message from this NUMBER, any row — the 24-hour free-text
+   * window runs from it, not from this message.
+   */
+  lastInboundAt: string;
   /** Whose book this customer is in — `ASSIGNED_TO_SQL`, the one definition. */
   assignedToName: string | null;
   /**
@@ -1260,6 +1281,12 @@ export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promi
       actioned: boolean;
       actioned_at: unknown;
       actioned_by_name: string | null;
+      answer_body: string | null;
+      answer_status: string | null;
+      answered_at: unknown;
+      answered_by_name: string | null;
+      answer_failure: string | null;
+      last_inbound_at: unknown;
       assigned_to_name: string | null;
       prev_template: string | null;
       prev_body: string | null;
@@ -1271,6 +1298,11 @@ export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promi
              customers.third_party, customers.phone, r.wa_id, r.sender_name, r.message,
              r.received_at, r.actioned, r.actioned_at,
              ab.name as actioned_by_name,
+             r.answer_body, r.answer_status, r.answered_at, r.answer_failure,
+             nb.name as answered_by_name,
+             (select max(x.received_at) from wa_replies x
+               where right(regexp_replace(coalesce(x.wa_id, ''), '[^0-9]', '', 'g'), 10)
+                   = right(regexp_replace(coalesce(r.wa_id, ''), '[^0-9]', '', 'g'), 10)) as last_inbound_at,
              (select u.name from users u where u.id = ${ASSIGNED_TO_SQL}) as assigned_to_name,
              prev.template_name as prev_template, prev.body as prev_body,
              prev.went_at as prev_went_at, prev.trigger_id as prev_trigger,
@@ -1278,6 +1310,7 @@ export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promi
         from wa_replies r
         left join customers on customers.id = r.customer_id
         left join users ab on ab.id = r.actioned_by_id
+        left join users nb on nb.id = r.answered_by_id
         left join lateral (
           select m.template_name, m.body, m.trigger_id, mu.name as user_name,
                  coalesce(m.sent_at, m.confirmed_sent_at, m.prepared_at) as went_at
@@ -1316,6 +1349,16 @@ export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promi
       actioned: Boolean(r.actioned),
       actionedAt: iso(r.actioned_at),
       actionedByName: r.actioned_by_name,
+      answer: r.answer_body
+        ? {
+            body: r.answer_body,
+            status: (r.answer_status ?? "failed") as "sending" | "sent" | "failed",
+            at: iso(r.answered_at),
+            byName: r.answered_by_name,
+            failure: r.answer_failure,
+          }
+        : null,
+      lastInboundAt: iso(r.last_inbound_at) ?? iso(r.received_at)!,
       assignedToName: r.assigned_to_name,
       inReplyTo:
         r.prev_went_at === null || r.prev_went_at === undefined
@@ -1343,6 +1386,22 @@ export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promi
  * A reply from an unknown number has no book, so only somebody who sees the
  * whole book — the same people it is shown to — may handle it.
  */
+/**
+ * The one rule for who may act on a reply: its customer in your scope, or —
+ * for a number on nobody's book — your scope is the whole book. Throws on a
+ * customer out of scope, exactly as every other customer check does.
+ */
+async function replyOutOfScope(customer: typeof customers.$inferSelect | null): Promise<Result | null> {
+  if (customer) {
+    await assertCustomerInScope(customer);
+    return null;
+  }
+  if (scopedUserIds((await resolveScope()).scope) !== null) {
+    return err("A reply from an unknown number is handled by somebody who sees the whole book.", "not_permitted");
+  }
+  return null;
+}
+
 export async function actionReply(replyId: string, handled = true): Promise<Result> {
   const user = await requireUser();
   const [row] = await db
@@ -1351,11 +1410,8 @@ export async function actionReply(replyId: string, handled = true): Promise<Resu
     .leftJoin(customers, eq(customers.id, waReplies.customerId))
     .where(eq(waReplies.id, replyId));
   if (!row) return err("That reply no longer exists.", "not_found");
-  if (row.customer) {
-    await assertCustomerInScope(row.customer);
-  } else if (scopedUserIds((await resolveScope()).scope) !== null) {
-    return err("A reply from an unknown number is handled by somebody who sees the whole book.", "not_permitted");
-  }
+  const refused = await replyOutOfScope(row.customer);
+  if (refused) return refused;
   await db
     .update(waReplies)
     .set(
@@ -1846,4 +1902,137 @@ export async function sendForRule(input: {
     return sent;
   }
   return ok({ messageId }, sent.message);
+}
+
+/* ------------------------------------------------------- answering a reply */
+
+/**
+ * ANSWER A CUSTOMER FROM MAHEKONE, from the business number.
+ *
+ * A free-text WhatsApp session message, so it is only possible inside the 24
+ * hours after the customer last wrote — checked here against the newest
+ * message from that number, before Wati is called, so the refusal says when
+ * the window closed rather than arriving as Wati's error. The founder's switch
+ * and the key gate it like every API send; WhatsApp DND stops it.
+ *
+ * The answer is kept on the reply it answers, and the reply is marked handled
+ * by whoever answered. For a known customer it is ALSO a row in the message
+ * log — so the Log, the record and the payment page show it, its delivered and
+ * read ticks have somewhere to land, and the customer counts as messaged.
+ *
+ * Claimed before calling out (`answer_status = 'sending'`), so a double click
+ * cannot send it twice; a claim older than two minutes is treated as dead.
+ */
+export async function answerReply(replyId: string, text: string): Promise<Result> {
+  const user = await requireUser();
+  const body = text.trim();
+  if (!body) return err("Write the reply first.", "validation");
+  if (body.length > 4000) return err("Keep the reply under 4,000 characters.", "validation");
+
+  const [row] = await db
+    .select({ reply: waReplies, customer: customers })
+    .from(waReplies)
+    .leftJoin(customers, eq(customers.id, waReplies.customerId))
+    .where(eq(waReplies.id, replyId));
+  if (!row) return err("That message no longer exists.", "not_found");
+  const refused = await replyOutOfScope(row.customer);
+  if (refused) return refused;
+  if (row.reply.answerStatus === "sent") {
+    return err("This message has already been answered. When they write again, answer that one.", "conflict");
+  }
+
+  const delivery = await deliveryContext();
+  if (!delivery.serviceOn) return err("WhatsApp sending is switched off in the Founder Command Centre.", "rule_violation");
+  if (!delivery.hasToken) return err("No Wati key is configured, so nothing can be sent from the business number.", "rule_violation");
+  if (row.customer?.whatsappDnd) {
+    return err(`${row.customer.name} is on WhatsApp DND${row.customer.whatsappDndReason ? ` — ${row.customer.whatsappDndReason}` : ""}.`, "rule_violation");
+  }
+
+  const phone = waNumber(row.reply.waId);
+  if (!phone) return err("This message did not come from an Indian mobile number MahekOne can answer.", "validation");
+
+  const [last] = await db.execute<{ at: unknown }>(sql`
+    select max(x.received_at) as at from wa_replies x
+     where right(regexp_replace(coalesce(x.wa_id, ''), '[^0-9]', '', 'g'), 10) = ${phone.slice(-10)}
+  `);
+  const ends = sessionWindowEnds(asDate(last?.at ?? null));
+  if (!ends || ends.getTime() <= Date.now()) {
+    return err(
+      "WhatsApp only allows a free-text reply within 24 hours of the customer's last message, and that window has closed. Send an approved template from Send a message instead.",
+      "rule_violation",
+    );
+  }
+
+  const claimed = await db
+    .update(waReplies)
+    .set({ answerStatus: "sending", answerBody: body, answeredById: user.id, answeredAt: new Date(), answerFailure: null })
+    .where(
+      and(
+        eq(waReplies.id, replyId),
+        or(
+          isNull(waReplies.answerStatus),
+          eq(waReplies.answerStatus, "failed"),
+          and(eq(waReplies.answerStatus, "sending"), lt(waReplies.answeredAt, new Date(Date.now() - 120_000))),
+        ),
+      ),
+    )
+    .returning({ id: waReplies.id });
+  if (!claimed.length) return err("This reply is already being sent.", "conflict");
+
+  const sent = await sendWatiText({ phone, text: body });
+  const now = new Date();
+  if (!sent.ok) {
+    const reason = sent.uncertain
+      ? `${sent.error} It may or may not have gone — check the chat in Wati before sending again.`
+      : sent.error;
+    await db
+      .update(waReplies)
+      .set({ answerStatus: "failed", answerFailure: reason, answeredAt: now })
+      .where(eq(waReplies.id, replyId));
+    return err(`Not sent: ${reason}`, "rule_violation");
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(waReplies)
+      .set({
+        answerStatus: "sent",
+        answerFailure: null,
+        answeredAt: now,
+        // Answering it IS handling it.
+        actioned: true,
+        actionedAt: now,
+        actionedById: user.id,
+      })
+      .where(eq(waReplies.id, replyId));
+    if (row.customer) {
+      await tx.insert(waMessages).values({
+        id: id("wam"),
+        customerId: row.customer.id,
+        templateName: "Reply",
+        userId: user.id,
+        mode: "automatic",
+        destKind: "personal",
+        resolvedDestination: phone,
+        body,
+        status: "sent",
+        preparedAt: now,
+        sentAt: now,
+        confirmedSentAt: now,
+        providerRef: sent.providerRef,
+        inReplyToId: replyId,
+        createdById: user.id,
+      });
+    }
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: user.id,
+      action: "whatsapp.answered_reply",
+      entityType: "wa_reply",
+      entityId: replyId,
+      afterState: { customerId: row.customer?.id ?? null, providerRef: sent.providerRef } as never,
+    });
+  });
+  if (row.customer) await recomputeLastWhatsapp(row.customer.id);
+  return okVoid(row.customer ? `Sent to ${row.customer.name} from the business number` : "Sent from the business number");
 }
