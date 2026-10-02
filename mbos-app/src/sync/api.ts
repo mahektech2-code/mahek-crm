@@ -4,6 +4,7 @@ import * as Device from 'expo-device';
 import * as Application from 'expo-application';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
+import { File } from 'expo-file-system';
 import { getKv, setKv } from '../db';
 import { buildLabel } from '../native/updates';
 import { readDeviceState } from './device-state';
@@ -184,8 +185,10 @@ async function request<T>(
   try {
     const { timeoutMs: _t, auth: _a, ...rest } = init;
     res = await fetch(`${BASE}${path}`, { ...rest, headers, signal: controller.signal });
-  } catch (e) {
-    throw new Error(e instanceof Error && e.name === 'AbortError' ? 'MahekOne did not answer in time. Try again.' : 'No internet. Could not reach MahekOne.');
+  } catch {
+    /* `expo/fetch` reports an abort as a FetchError, never an AbortError, so
+       ask the signal whether it was us that gave up. */
+    throw new Error(controller.signal.aborted ? 'MahekOne did not answer in time. Try again.' : 'No internet. Could not reach MahekOne.');
   } finally {
     clearTimeout(timeout);
   }
@@ -488,6 +491,25 @@ export async function postSync(body: { cursor: string; items: WireItem[] }): Pro
 
 /* ------------------------------------------------------------------ media */
 
+/**
+ * A file on the phone, as a FormData part `expo/fetch` can send.
+ *
+ * SDK 57 replaced the global `fetch` with `expo/fetch`, and that one cannot
+ * send React Native's `{ uri, name, type }` file literal — `convertFormData`
+ * throws "Unsupported FormDataPart implementation" on it, which is what every
+ * photo and every dictation hit after the upgrade. It accepts any part with a
+ * `bytes()` and keeps its `name` and `type` as the filename and content type,
+ * so the server receives exactly what it did before. The bytes are read when
+ * the request is built, not when the form is.
+ */
+function filePart(uri: string, name: string, type: string): Blob {
+  return {
+    name,
+    type,
+    bytes: async () => new Uint8Array(await new File(uri).arrayBuffer()),
+  } as unknown as Blob;
+}
+
 export async function uploadMedia(args: {
   clientId: string;
   parentType: string;
@@ -501,12 +523,7 @@ export async function uploadMedia(args: {
   form.append('parentType', args.parentType);
   form.append('parentId', args.parentId);
   form.append('kind', args.kind);
-  /* React Native's FormData takes this shape for a file; it is not a Blob. */
-  form.append('file', {
-    uri: args.uri,
-    name: `${args.clientId}.${args.mimeType.split('/')[1] ?? 'bin'}`,
-    type: args.mimeType,
-  } as unknown as Blob);
+  form.append('file', filePart(args.uri, `${args.clientId}.${args.mimeType.split('/')[1] ?? 'bin'}`, args.mimeType));
 
   const token = await accessToken();
   const res = await fetch(`${BASE}/api/mbos/media`, {
@@ -552,13 +569,8 @@ export async function dictateTranscribe(args: {
   seconds: number;
 }): Promise<DictationHeard | { ok: false; error: string }> {
   const form = new FormData();
-  /* React Native's FormData takes this shape for a file; it is not a Blob.
-     The name is cosmetic — the server sniffs the bytes. */
-  form.append('audio', {
-    uri: args.uri,
-    name: 'dictation.m4a',
-    type: 'audio/m4a',
-  } as unknown as Blob);
+  /* The name is cosmetic — the server sniffs the bytes. */
+  form.append('audio', filePart(args.uri, 'dictation.m4a', 'audio/m4a'));
   form.append('seconds', String(Math.round(args.seconds)));
 
   const token = await accessToken();
@@ -576,11 +588,11 @@ export async function dictateTranscribe(args: {
       body: form,
       signal: controller.signal,
     });
-  } catch (e) {
+  } catch {
     return {
       ok: false,
       error:
-        e instanceof Error && e.name === 'AbortError'
+        controller.signal.aborted
           ? 'That took too long to send. Your recording is still here. Try again.'
           : 'No internet. Type the note instead.',
     };

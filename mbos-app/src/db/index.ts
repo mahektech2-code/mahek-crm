@@ -2,6 +2,7 @@ import * as SQLite from 'expo-sqlite';
 import * as Crypto from 'expo-crypto';
 import { MIGRATIONS, SCHEMA_VERSION } from './schema';
 import { createSerialiser } from './serialise';
+import { runMigrations } from './migrate';
 
 /**
  * One connection, opened once, migrated on open.
@@ -60,19 +61,13 @@ export function resetHandle() {
   opening = null;
 }
 
+/** The loop and why it is shaped the way it is live in `./migrate`. */
 async function migrate(handle: SQLite.SQLiteDatabase) {
-  const row = await handle.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
-  const current = row?.user_version ?? 0;
-  if (current >= SCHEMA_VERSION) return;
+  const userVersion = async () =>
+    (await handle.getFirstAsync<{ user_version: number }>('PRAGMA user_version'))?.user_version ?? 0;
+  if ((await userVersion()) >= SCHEMA_VERSION) return;
 
-  for (let v = current; v < MIGRATIONS.length; v++) {
-    for (const stmt of MIGRATIONS[v]) {
-      await handle.execAsync(stmt);
-    }
-  }
-  /* PRAGMA will not take a bound parameter. The value is a module constant,
-     never user input, so the interpolation is safe here and nowhere else. */
-  await handle.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  await runMigrations({ exec: (sql) => handle.execAsync(sql), userVersion }, MIGRATIONS);
 }
 
 /* ------------------------------------------------------------ identifiers */

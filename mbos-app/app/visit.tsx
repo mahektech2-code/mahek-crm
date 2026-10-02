@@ -320,7 +320,7 @@ export default function Visit() {
     if (visitStart == null) return;
     return navigation.addListener('beforeRemove', () => {
       if (savedRef.current) return;
-      notify('Your visit is still on. Tap the bar at the bottom to come back and check out.');
+      notify('Your visit is still on. Tap the bar at the bottom to come back and check out.', 'info');
     });
   }, [navigation, visitStart, notify]);
 
@@ -690,7 +690,7 @@ export default function Visit() {
         try {
           odometer = { km: shot.km, photoId: await queueOdometerPhoto(shot.uri, leg.id) };
         } catch {
-          notify('The photo could not be saved on this phone. The trip is still open. Try again.');
+          notify('The photo could not be saved on this phone. The trip is still open. Try again.', 'error');
           return;
         }
       }
@@ -748,7 +748,7 @@ export default function Visit() {
        */
       if (override && c?.gpsLat != null && c?.gpsLng != null) setPinAsk(true);
     } catch {
-      notify('Your arrival could not be saved on this phone. Nothing is lost. Try again.');
+      notify('Your arrival could not be saved on this phone. Nothing is lost. Try again.', 'error');
     } finally {
       setArriving(false);
     }
@@ -778,14 +778,14 @@ export default function Visit() {
            him back to the journey is the honest answer; pretending to check
            him into a shop with no arrival behind it is not. */
         setArrival(null);
-        notify('That arrival is from another day. Start the visit again.');
+        notify('That arrival is from another day. Start the visit again.', 'error');
         router.replace('/journey');
         return;
       }
       setArrival(next);
       checkedIntoShop(next.checkedInAt ?? at);
     } catch {
-      notify('The check-in could not be saved on this phone. Nothing is lost. Try again.');
+      notify('The check-in could not be saved on this phone. Nothing is lost. Try again.', 'error');
     } finally {
       setCheckingIn(false);
     }
@@ -834,7 +834,7 @@ export default function Visit() {
       /* A save is never blocked by a recording. The note he read and approved
          is already in the box; losing the audio behind it costs the office a
          second copy of something it can already read. */
-      notify('The recording could not be kept. Your note is safe.');
+      notify('The recording could not be kept. Your note is safe.', 'warn');
     }
   };
 
@@ -845,7 +845,7 @@ export default function Visit() {
       kind: which === 'shop' ? 'shop_photo' : 'customer_photo',
     });
     if (!shot.ok) {
-      if (shot.reason !== 'cancelled') notify(shot.reason);
+      if (shot.reason !== 'cancelled') notify(shot.reason, 'error');
       return;
     }
     set({ shots: { ...shots, [which]: shot.mediaId } });
@@ -1002,7 +1002,7 @@ export default function Visit() {
   function refuseForDecision(why: string) {
     setDecisionErr(why);
     /* The card is above the fold; the button is not. Said in both places. */
-    notify(why);
+    notify(why, 'error');
   }
 
   /**
@@ -1125,7 +1125,7 @@ export default function Visit() {
     } catch {
       savingRef.current = false;
       setSaving(false);
-      notify('The visit could not be saved on this phone. Nothing is lost. Try again.');
+      notify('The visit could not be saved on this phone. Nothing is lost. Try again.', 'error');
       return;
     }
 
@@ -1155,7 +1155,7 @@ export default function Visit() {
         /* Said rather than swallowed, and NOT as a failure of the visit: the
            journey is still on today's travel, it is simply not attached to the
            visit it was made for. */
-        notify('The visit is saved. The trip could not be added to it. Check today’s travel.');
+        notify('The visit is saved. The trip could not be added to it. Check today’s travel.', 'warn');
       }
     }
 
@@ -1200,6 +1200,7 @@ export default function Visit() {
           : f.kept.length
             ? 'Kept ' + f.kept.join(' and ') + '. Nothing else to fill'
             : 'Nothing to fill. Answer the questions on the card',
+        f.filled.length ? 'success' : 'info',
       );
     },
     onChooseOutcome: (key) => set({ outcome: key as NonNullable<typeof outcome> }),
@@ -1215,6 +1216,7 @@ export default function Visit() {
         r.missing
           ? `${r.added} line${r.added === 1 ? '' : 's'} added · ${r.missing} still to add by hand`
           : `${r.added} line${r.added === 1 ? '' : 's'} added. Check the quantities`,
+        r.missing ? 'warn' : 'success',
       );
       router.push('/order?from=visit');
     },
@@ -1249,12 +1251,12 @@ export default function Visit() {
       if (r.what != null) setReqWhat(r.what);
       if (r.litres != null) setReqLitres(r.litres);
       if (r.cans != null) setReqCans(r.cans);
-      notify(Object.keys(r).length ? 'What they need is filled. Check it below' : 'What they need is already filled in');
+      notify(Object.keys(r).length ? 'What they need is filled. Check it below' : 'What they need is already filled in', Object.keys(r).length ? 'success' : 'info');
     },
     onDecision: (d) => {
       setDecision(d);
       setDecisionErr(null);
-      notify('Chosen on the lead card above. Change it there if it is wrong');
+      notify('Chosen on the lead card above. Change it there if it is wrong', 'info');
     },
     onDraft: setAiDraftId,
   };
@@ -1320,7 +1322,7 @@ export default function Visit() {
             <SecondaryButton
               label="Not yet"
               onPress={() => {
-                notify('Check in when you go inside. The bar at the bottom brings you back.');
+                notify('Check in when you go inside. The bar at the bottom brings you back.', 'info');
                 router.replace('/journey');
               }}
             />
@@ -1613,7 +1615,7 @@ export default function Visit() {
           </View>
           {gps === 'off' ? (
             <Pressable
-              onPress={() => notify('Going on without location. Save the visit as usual. Your manager will see it had no location.')}
+              onPress={() => notify('Going on without location. Save the visit as usual. Your manager will see it had no location.', 'warn')}
               style={{ height: HIT, paddingHorizontal: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: C.faint, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
               <Text style={[{ fontSize: 15, color: C.body }, weight(500)]}>Carry on</Text>
             </Pressable>

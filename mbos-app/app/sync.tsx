@@ -232,6 +232,7 @@ export default function SyncScreen() {
               : outcome.rejected > 0
                 ? plural(outcome.rejected, 'entry', 'entries') + ' not accepted by the office'
                 : (outcome.reason ?? 'Nothing was sent. Your work is still safe on this phone.'),
+        !outcome.ran ? 'error' : outcome.pushed === 0 ? 'info' : outcome.accepted > 0 ? 'success' : outcome.rejected > 0 ? 'error' : 'warn',
       );
     } finally {
       setSending(false);
@@ -315,6 +316,7 @@ export default function SyncScreen() {
                   n === 0
                     ? 'Nothing to try again'
                     : plural(n, 'photo or recording', 'photos and recordings') + ' waiting to send again',
+                  n === 0 ? 'info' : 'success',
                 );
                 /* Media rides out on the back of a pass — see the `finally` in
                    `syncNow`. Queuing them and never asking for one would leave

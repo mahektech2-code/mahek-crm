@@ -132,17 +132,33 @@ function SheetModal({
  * touches at all, so it is never left `pointerEvents="none"` over a button the
  * person is trying to press.
  */
-export type ToastTone = 'success' | 'warn';
+export type ToastTone = 'success' | 'info' | 'warn' | 'error';
 
-/* How long each tone sits there. A refusal is a sentence to read; a
-   confirmation is a word to glimpse. */
-const DWELL: Record<ToastTone, number> = { success: 2400, warn: 5200 };
+/**
+ * WHAT EACH TONE LOOKS LIKE, in one place.
+ *
+ * The toast used to be a dark purple slab with white text, the same slab for a
+ * saved order and a refused one, and only a refusal could be closed. It is a
+ * white card now, the same surface as every other card in the app, so it reads
+ * as part of the screen rather than as a banner pasted over it — and the TONE
+ * is carried by an edge, an icon and its tint, never by flooding the whole card
+ * with colour. A red card shouts; a red edge on a white card tells.
+ */
+const TONE: Record<ToastTone, { accent: string; tint: string; icon: 'tick' | 'bell' | 'alert'; label: string }> = {
+  success: { accent: C.success, tint: C.successBg, icon: 'tick', label: 'Done' },
+  info: { accent: C.primary, tint: C.primaryTint, icon: 'bell', label: 'Note' },
+  warn: { accent: C.warn, tint: C.warnBg, icon: 'alert', label: 'Check this' },
+  error: { accent: C.danger, tint: C.dangerBg, icon: 'alert', label: 'Not done' },
+};
+
+/* Every notice leaves after three seconds, whatever its tone, and the ×
+   closes it sooner. One number, so no tone lingers over the screen. */
+const DWELL_MS = 3000;
 
 export function Toast({
   message,
   onDone,
   lift = 0,
-  /** Defaults to the confirmation this has always drawn, so no caller has to change. */
   tone = 'success',
 }: {
   message: string | null;
@@ -153,18 +169,17 @@ export function Toast({
   const insets = useSafeAreaInsets();
   const reduce = useReduceMotion();
   const progress = React.useRef(new Animated.Value(0)).current;
-  const [showing, setShowing] = React.useState<string | null>(null);
-  const warn = tone === 'warn';
+  const [showing, setShowing] = React.useState<{ message: string; tone: ToastTone } | null>(null);
 
   React.useEffect(() => {
-    if (message) setShowing(message);
-  }, [message]);
+    if (message) setShowing({ message, tone });
+  }, [message, tone]);
 
   /* ONE way out, whether it is the timer or a thumb that ends it. Held apart
      from the effect below because a tap has to be able to run it too, and two
      copies of "animate out, then tell the store" is how one of them forgets to
      clear `showing` — which is exactly what the reduce-motion path did, leaving
-     the pill on screen for good. */
+     the card on screen for good. */
   const leave = React.useCallback(() => {
     if (reduce) {
       progress.setValue(0);
@@ -185,7 +200,7 @@ export function Toast({
 
   React.useEffect(() => {
     if (!message) return;
-    const dwell = DWELL[tone];
+    const dwell = DWELL_MS;
 
     if (reduce) {
       progress.setValue(1);
@@ -212,30 +227,40 @@ export function Toast({
   }, [message, tone, leave, progress, reduce]);
 
   if (!showing) return null;
+  /* An unknown tone draws as a plain note rather than taking the screen down
+     — a toast is never worth a crash. */
+  const look = TONE[showing.tone] ?? TONE.info;
   return (
     <Animated.View
-      /* Only a refusal takes touches, and only so it can be dismissed. A
-         confirmation that could swallow a tap would be covering the next thing
-         somebody meant to press. */
-      pointerEvents={warn ? 'box-none' : 'none'}
+      /* The card takes touches only on itself, never on the space around it,
+         so it cannot swallow a tap meant for the screen underneath. */
+      pointerEvents="box-none"
+      accessibilityLiveRegion={look === TONE.error ? 'assertive' : 'polite'}
       style={[
         st.toast,
         {
-          bottom: TAB_BAR_HEIGHT + insets.bottom + 12 + lift,
+          /* 28 clears the raised + button, which sits 20 above the bar. */
+          bottom: TAB_BAR_HEIGHT + insets.bottom + 28 + lift,
           opacity: progress,
           transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
         },
       ]}>
+      <View style={[st.toastAccent, { backgroundColor: look.accent }]} />
+      <View style={[st.toastIcon, { backgroundColor: look.tint }]}>
+        <Icon name={look.icon} size={16} color={look.accent} strokeWidth={2.4} />
+      </View>
+      <Text
+        accessibilityLabel={look.label + '. ' + showing.message}
+        style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: C.ink, paddingVertical: 2 }, weight(500)]}>
+        {showing.message}
+      </Text>
       <Pressable
-        onPress={warn ? leave : undefined}
-        disabled={!warn}
-        accessibilityRole={warn ? 'button' : undefined}
-        accessibilityLabel={warn ? showing + '. Tap to close.' : undefined}
-        style={st.toastBody}>
-        <View style={[st.toastChip, warn && st.toastChipWarn]}>
-          <Icon name={warn ? 'alert' : 'tick'} size={14} color={warn ? C.warn : C.lime} strokeWidth={2.6} />
-        </View>
-        <Text style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: '#FFFFFF' }, weight(500)]}>{showing}</Text>
+        onPress={leave}
+        accessibilityRole="button"
+        accessibilityLabel="Close"
+        hitSlop={10}
+        style={st.toastClose}>
+        <Icon name="close" size={16} color={C.muted} strokeWidth={2.2} />
       </Pressable>
     </Animated.View>
   );
@@ -566,38 +591,39 @@ const st = StyleSheet.create({
     /* `bottom` is set on the element — see the note on `Toast`. */
     zIndex: 50,
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: C.primaryDark,
-    borderRadius: radius.xl,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    boxShadow: shadow.toast,
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: C.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: C.hairline,
+    paddingLeft: 18,
+    paddingRight: 8,
+    paddingVertical: 10,
+    minHeight: 56,
+    overflow: 'hidden',
+    boxShadow: '0 10px 28px -10px rgba(22,22,22,0.28), 0 2px 6px rgba(22,22,22,0.06)',
   },
-  /* The row inside the pill. It is its own element because a warn toast is
-     PRESSABLE — a refusal somebody half-read should be dismissable rather than
-     expiring on a fixed timer — and the press target has to be the whole row,
-     not the pill's padding. */
-  toastBody: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
+  /* The tone, said by an edge rather than by flooding the card. */
+  toastAccent: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
   },
-  toastChip: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: 'rgba(198,255,52,0.20)',
+  toastIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 1,
   },
-  /* A REFUSAL IS NOT A CONFIRMATION. `notify()` is the app's only error
-     channel, and every message it carried — "No number on this customer",
-     "…is billed to somebody who is not on your book" — arrived under a green
-     tick. A refusal marked with a tick reads as the opposite of itself. */
-  toastChipWarn: {
-    backgroundColor: 'rgba(183,123,8,0.22)',
+  toastClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

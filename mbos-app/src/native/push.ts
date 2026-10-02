@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { AndroidImportance } from 'expo-notifications';
 import Constants from 'expo-constants';
+import * as Device from 'expo-device';
 import { registerPushToken } from '../sync/api';
 import { getConfig } from '../data/config';
 
@@ -108,7 +109,10 @@ async function ensureChannels(): Promise<void> {
  */
 export async function pushStatus(): Promise<PushReadiness> {
   try {
-    if (!Constants.isDevice) {
+    /* `Device.isDevice`, never `Constants.isDevice`: expo-constants removed that
+       property in SDK 50, so it read `undefined` and every real handset was
+       told it had no push service. The index signature on Constants hid it. */
+    if (!Device.isDevice) {
       return { ok: false, reason: 'unsupported', why: 'A simulator has no push service.' };
     }
     if (!(await projectId())) {
@@ -150,7 +154,7 @@ export async function registerForPush(): Promise<PushReadiness> {
   try {
     await ensureChannels();
 
-    if (!Constants.isDevice) {
+    if (!Device.isDevice) {
       return {
         ok: false,
         reason: 'unsupported',

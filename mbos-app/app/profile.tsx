@@ -147,7 +147,7 @@ export default function ProfileScreen() {
       const wanted = !lockOn;
       const outcome = await promptBiometric(wanted ? 'Turn the app lock on' : 'Turn the app lock off');
       if (!outcome.ok) {
-        if (outcome.kind !== 'cancelled') notify(outcome.message);
+        if (outcome.kind !== 'cancelled') notify(outcome.message, 'error');
         return;
       }
       await rememberLockChoice(wanted);
@@ -334,7 +334,7 @@ export default function ProfileScreen() {
                 void registerForPush()
                   .then((r) => {
                     setPush(r);
-                    if (!r.ok) notify(r.why);
+                    if (!r.ok) notify(r.why, 'error');
                   })
                   .finally(() => setPushBusy(false));
               }}
@@ -388,6 +388,7 @@ export default function ProfileScreen() {
             opened
               ? 'Opening the reset page. It sends a link to your work email.'
               : 'Could not open the browser. Ask your manager to send you a reset link.',
+            opened ? 'info' : 'error',
           );
         }}
       />

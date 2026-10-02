@@ -4,6 +4,7 @@ import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Input, ListCard, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
+import { isOnline } from '../src/sync/engine';
 import { SkuChip } from '../src/components/ui/sku';
 import { color as C, radius, tabular, type, weight } from '../src/theme/tokens';
 import { inr, inrFromPaise, plural } from '../src/lib/format';
@@ -393,15 +394,16 @@ export default function OrderScreen() {
 
   const reorder = async () => {
     const found = await productsByIds(lastOrder.map((l) => l.productId));
-    if (!found.length) return notify('No product from that order is sold now.');
+    if (!found.length) return notify('No product from that order is sold now.', 'error');
     remember(found);
     const byId = new Map(lastOrder.map((l) => [l.productId, l.cans]));
-    for (const p of found) setQty(p.id, String(byId.get(p.id) ?? 1));
+    for (const p of found) setQty(p.id, String(Math.max(1, byId.get(p.id) ?? 1)));
     const dropped = lastOrder.length - found.length;
     notify(
       `${plural(found.length, 'line')} from the last order, added.` +
         (dropped ? ` ${plural(dropped, 'line')} not sold now.` : '') +
         ' Check quantities before sending.',
+      'warn',
     );
   };
 
@@ -409,27 +411,28 @@ export default function OrderScreen() {
     /* `whyDisabled` keeps this button pressable so the handler can refuse in
        words, which means the in-flight lock has to be checked here as well as
        drawn on the button. */
-    if (busy) return notify('Still sending the last order…');
-    if (!inCart.length) return notify('Add a product first');
-    if (blank) return notify('Set a quantity on every line');
-    if (!assessment || blocked) return notify(assessment?.blockReason ?? 'You cannot take an order for this customer');
+    if (busy) return notify('Still sending the last order…', 'info');
+    if (!inCart.length) return notify('Add a product first', 'error');
+    if (blank) return notify('Set a quantity on every line', 'error');
+    if (!assessment || blocked) return notify(assessment?.blockReason ?? 'You cannot take an order for this customer', 'error');
     /* Said while he is standing in the shop rather than by a refusal at sync
        hours later: the arrangement names a distributor who is not his. */
     if (!billing || !biller) {
       return notify(
         `${c.name} is billed to ${billingOptions?.[0]?.name ?? 'someone'}, who is not in your list. Ask the office to move the account, or bill the shop direct.`,
+        'error',
       );
     }
 
     if (changingId) {
-      if (!changing) return notify('Still reading the order…');
-      if (changeId && changeNote.trim().length < 3) return notify('Say why it needs to change — accounts decide on that.');
+      if (!changing) return notify('Still reading the order…', 'info');
+      if (changeId && changeNote.trim().length < 3) return notify('Say why it needs to change — accounts decide on that.', 'error');
       setBusy(true);
       try {
         const r = editId
           ? await editOrder({ orderId: changing.id, lines: inCart, assessment })
           : await requestOrderChange({ orderId: changing.id, lines: inCart, assessment, note: changeNote });
-        if (!r.ok) return notify(r.message);
+        if (!r.ok) return notify(r.message, 'error');
         set({ cart: {} });
         notify(
           editId
@@ -463,7 +466,9 @@ export default function OrderScreen() {
       notify(
         sentForApproval
           ? 'Sent to your manager · waiting for approval'
-          : 'Order saved · will send when you have signal',
+          : (await isOnline())
+            ? 'Order saved · sending to the office now'
+            : 'Order saved · will send when you have signal',
       );
       back.go();
     } finally {
@@ -915,10 +920,11 @@ export default function OrderScreen() {
                           overflow: 'hidden',
                         }}>
                         <Pressable
-                          onPress={() => setQty(line.productId, String(Math.max(0, qty - 1)))}
-                          disabled={qty === 0}
+                          /* A line is never at nought: one less than one takes it
+                             off the order, the same as the cross above it. */
+                          onPress={() => (qty <= 1 ? dropLine(line.productId) : setQty(line.productId, String(qty - 1)))}
                           accessibilityRole="button"
-                          accessibilityLabel="One less"
+                          accessibilityLabel={qty <= 1 ? 'Take off the order' : 'One less'}
                           /* 44 is under the 48 floor, on the one control that
                              changes what is ordered — and it sits flush against
                              a text field, so a thumb that misses opens a
@@ -927,11 +933,16 @@ export default function OrderScreen() {
                              stays, the thumb gets the area. */
                           hitSlop={4}
                           style={{ width: 44, height: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: C.wash }}>
-                          <T style={{ fontSize: 20, lineHeight: 20, color: qty > 0 ? C.primaryDeep : C.faint }}>−</T>
+                          <T style={{ fontSize: 20, lineHeight: 20, color: C.primaryDeep }}>−</T>
                         </Pressable>
                         <TextInput
                           value={cart[line.productId] || ''}
                           onChangeText={(v) => setQty(line.productId, v.replace(/[^0-9]/g, ''))}
+                          /* Empty is allowed while he types a new number; left at
+                             nought or empty, the line comes off the order. */
+                          onEndEditing={() => {
+                            if (!(parseInt(useStore.getState().cart[line.productId] ?? '', 10) > 0)) dropLine(line.productId);
+                          }}
                           placeholder="0"
                           placeholderTextColor={C.faint}
                           keyboardType="number-pad"

@@ -258,7 +258,7 @@ export default function CustomerRecord() {
 
   const saveCompetitor = async () => {
     if (!id) return;
-    if (!comp.name.trim()) return notify('Write the brand name first.');
+    if (!comp.name.trim()) return notify('Write the brand name first.', 'error');
     setCompBusy(true);
     const rateRupees = Number(comp.rate.replace(/[^\d]/g, ''));
     await recordCompetitor({
@@ -448,15 +448,15 @@ export default function CustomerRecord() {
             {
               g: 'call',
               l: 'Call ' + owner,
-              run: () => (c.phone ? void callNumber(c.phone) : notify('No number on this customer')),
+              run: () => (c.phone ? void callNumber(c.phone) : notify('No number on this customer', 'error')),
             },
             {
               g: 'chat',
               l: 'WhatsApp ' + owner,
               run: async () => {
-                if (!c.phone) return notify('No number on this customer');
+                if (!c.phone) return notify('No number on this customer', 'error');
                 const out = await openWhatsApp(c.phone, '');
-                if (out.status !== 'handed_off') notify(out.reason);
+                if (out.status !== 'handed_off') notify(out.reason, 'warn');
               },
             },
             { g: 'order', l: 'New order', run: () => router.push('/order?from=customer') },
@@ -567,7 +567,7 @@ export default function CustomerRecord() {
                   setNoteBusy(true);
                   void writeInternalNote({ customerId: id, body: note })
                     .then((r) => {
-                      if (!r.ok) return notify(r.message);
+                      if (!r.ok) return notify(r.message, 'error');
                       setNote('');
                       notify('Sent to office · not kept on this phone');
                     })
