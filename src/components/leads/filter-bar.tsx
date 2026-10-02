@@ -3,7 +3,6 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { MultiSelect } from "@/components/ui/multi-select";
-import { PlacePicker } from "@/components/leads/place-picker";
 import {
   AGE_BUCKETS,
   HEALTH_BUCKETS,
@@ -13,9 +12,13 @@ import {
   SALES_TYPE_BUCKETS,
   type FilterOption,
 } from "@/lib/lead-filters";
-import { decodePlace, placeLabel } from "@/lib/lead-places";
+import {
+  PLACE_FILTER_KINDS,
+  placePickPatch,
+  type PlaceFilterOptions,
+} from "@/lib/place-filters";
+import type { PlaceKind } from "@/lib/place-parse";
 import { stageLabel, type LeadStage } from "@/lib/lead-labels";
-import type { PlaceTree } from "@/lib/services/sales-service";
 
 /* ---------------------------------------------------------------------------
  * ONE FILTER BAR, FOR THE LIST AND THE BOARD, AND IT IS A BUTTON RATHER THAN
@@ -59,8 +62,12 @@ import type { PlaceTree } from "@/lib/services/sales-service";
 export const LEAD_FILTER_COLUMNS = [
   /* WHERE, FIRST, because it is the one narrowing that is about the work
      rather than about the record: a manager planning a week is choosing a
-     town before they choose anything else about a lead. */
-  "place",
+     town before they choose anything else about a lead. State, district,
+     city and area, off the reviewed location tree. */
+  "state",
+  "district",
+  "city",
+  "area",
   "owner",
   "source",
   "potential",
@@ -91,11 +98,14 @@ const COLUMN_TEXT: Record<
   LeadFilterColumn,
   { label: string; placeholder: string; hint?: string }
 > = {
-  place: {
-    label: "Where",
-    placeholder: "Everywhere",
-    hint: "State, then city, then area. It reads the same expressions a salesman's territory does, so this list and his handset cannot disagree about which shops a place has.",
+  state: {
+    label: "State",
+    placeholder: "All states",
+    hint: "Off the reviewed location tree. Picking a state narrows the districts, cities and areas below it.",
   },
+  district: { label: "District", placeholder: "All districts" },
+  city: { label: "City", placeholder: "All cities" },
+  area: { label: "Area", placeholder: "All areas" },
   owner: {
     label: "Owner",
     placeholder: "All owners",
@@ -133,7 +143,7 @@ const COLUMN_TEXT: Record<
 
 /** The panel's headings, so ten controls read as four questions. */
 const GROUPS: Array<{ title: string; columns: LeadFilterColumn[] }> = [
-  { title: "Where it is", columns: ["place"] },
+  { title: "Where it is", columns: ["state", "district", "city", "area"] },
   { title: "Who has it", columns: ["owner", "source"] },
   { title: "What it is worth", columns: ["potential", "priority"] },
   { title: "How far it has got", columns: ["salesType", "stage"] },
@@ -167,8 +177,8 @@ export function LeadFilterBar({
   columns: readonly LeadFilterColumn[];
   filters: Record<LeadFilterColumn, string[]>;
   options: LeadFilterOptions;
-  /** State → city → area, counted over the same list. Read by the Where picker. */
-  places: PlaceTree;
+  /** State, district, city and area, counted over the same list. */
+  places: PlaceFilterOptions;
   navigate: (patch: Record<string, string | number | undefined>) => void;
   onClear: () => void;
   total: number;
@@ -263,17 +273,20 @@ export function LeadFilterBar({
     filters[column].map((value) => ({
       column,
       value,
-      label: valueLabel(column, value, options),
+      label: valueLabel(column, value, options, places),
     })),
   );
 
-  const drop = (column: LeadFilterColumn, value: string) =>
-    navigate({
-      [column]: filters[column].filter((v) => v !== value).join(",") || undefined,
-    });
+  /* A place rung clears the rungs below it, which no longer apply — see
+     `placePickPatch`. Every other column is independent. */
+  const isPlace = (column: LeadFilterColumn): column is PlaceKind =>
+    (PLACE_FILTER_KINDS as readonly string[]).includes(column);
 
   const pick = (column: LeadFilterColumn) => (next: string[]) =>
-    navigate({ [column]: next.join(",") || undefined });
+    navigate(isPlace(column) ? placePickPatch(column, next) : { [column]: next.join(",") || undefined });
+
+  const drop = (column: LeadFilterColumn, value: string) =>
+    pick(column)(filters[column].filter((v) => v !== value));
 
   return (
     <div className={className}>
@@ -387,19 +400,7 @@ export function LeadFilterBar({
                       <h3 className="mb-2 border-b border-line pb-1 text-[12px] font-medium tracking-wide text-muted uppercase">
                         {group.title}
                       </h3>
-                      {inGroup.map((column) =>
-                        column === "place" ? (
-                          <div key={column}>
-                            <p className="mb-1.5 text-[12px] text-pretty text-muted">
-                              {COLUMN_TEXT.place.hint}
-                            </p>
-                            <PlacePicker
-                              tree={places}
-                              picked={filters.place}
-                              onChange={(next) => pick("place")(next)}
-                            />
-                          </div>
-                        ) : (
+                      {inGroup.map((column) => (
                           <div key={column} className="mb-2 flex items-center gap-3 last:mb-0">
                             <label
                               className="w-[92px] shrink-0 text-[13px] text-body"
@@ -412,13 +413,12 @@ export function LeadFilterBar({
                               label={COLUMN_TEXT[column].label}
                               placeholder={COLUMN_TEXT[column].placeholder}
                               title={COLUMN_TEXT[column].hint}
-                              options={optionsFor(column, options)}
+                              options={optionsFor(column, options, places)}
                               selected={filters[column]}
                               onChange={pick(column)}
                             />
                           </div>
-                        ),
-                      )}
+                      ))}
                     </section>
                   );
                 })}
@@ -460,7 +460,11 @@ export function LeadFilterBar({
 function optionsFor(
   column: LeadFilterColumn,
   options: LeadFilterOptions,
+  places: PlaceFilterOptions,
 ): FilterOption[] {
+  if ((PLACE_FILTER_KINDS as readonly string[]).includes(column)) {
+    return places[column as PlaceKind];
+  }
   /* The count goes on the LABEL rather than the value: "Pritesh Bipin Doshi
      (511)" is what tells a manager which name is worth ticking, and it is the
      one thing a dropdown of twenty names can say that a list of twenty cannot. */
@@ -486,10 +490,13 @@ function valueLabel(
   column: LeadFilterColumn,
   value: string,
   options: LeadFilterOptions,
+  places: PlaceFilterOptions,
 ): string {
-  if (column === "place") {
-    const pick = decodePlace(value);
-    return pick ? placeLabel(pick) : value;
+  if ((PLACE_FILTER_KINDS as readonly string[]).includes(column)) {
+    const label = places[column as PlaceKind].find((o) => o.value === value)?.label;
+    // The count comes off, as it does for an owner: it describes the
+    // unfiltered list and the chip sits on a filtered one.
+    return label ? label.replace(/ \(\d+\)$/, "") : value;
   }
   if (column === "owner") return options.owners.find((o) => o.value === value)?.label ?? value;
   if (column === "source")
