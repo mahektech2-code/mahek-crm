@@ -1,6 +1,7 @@
 "use client";
 
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
+import { DeleteLead } from "./delete-lead";
 import * as React from "react";
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
@@ -292,6 +293,7 @@ export function LeadRecordScreen({
   canReassign,
   canOverride,
   canPrioritise,
+  canTrash,
   canValidateGst,
   gstBlockedReason,
   figuresStale,
@@ -394,6 +396,8 @@ export function LeadRecordScreen({
    * is addressed to.
    */
   canPrioritise: boolean;
+  /** May move this lead to the trash (`lead.trash`) — checked again in the action. */
+  canTrash: boolean;
   /**
    * §11.6 — whether this person may answer the GST check on THIS lead.
    *
@@ -499,6 +503,16 @@ export function LeadRecordScreen({
                 canMigrate={canMigrate}
               />
             ) : null}
+            {/* Only a lead can be deleted: once it has reached the book it is an
+                account we invoice, and the ledger needs it. */}
+            {record.stage === "customer" || record.stage === "active_distributor" ? null : (
+              <DeleteLead
+                customerId={record.customerId}
+                name={record.name}
+                canTrash={canTrash}
+                backHref={leadHref(workspace, "leads")}
+              />
+            )}
             {CLOSED_STAGES.has(record.stage) ? null : (
               <MarkLost
                 customerId={record.customerId}

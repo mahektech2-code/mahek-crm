@@ -185,6 +185,8 @@ export const PLATFORM_SUBTITLES: Record<string, string> = {
     "Every component in every state, so a change to a token or a primitive can be checked in one place rather than hunted for across fifteen screens. A handoff artifact for whoever builds the screens.",
   feedback:
     "What the team has reported, asked for or suggested from inside the apps. Answering one tells the person who wrote it.",
+  trash:
+    "Leads deleted from Lead Management. Off every screen until restored here — with their owner, stage and every call and note intact.",
   oversight:
     "How the lead funnel is being run: the shut gates managers passed, the funnel's own audited writes, and the thresholds in force. Read-only; the screens live in the apps that own them.",
 };

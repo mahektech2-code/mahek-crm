@@ -52,7 +52,7 @@ export async function listContacts(input: { q?: string; filter?: ContactFilter; 
   const digits = q.replace(/\D/g, "");
 
   const where = sql`
-    c.status <> 'deactivated'
+    c.status <> 'deactivated' and c.deleted_at is null
     ${filter === "dnd" ? sql`and c.whatsapp_dnd` : filter === "open" ? sql`and not c.whatsapp_dnd and not c.do_not_contact` : sql``}
     ${
       q

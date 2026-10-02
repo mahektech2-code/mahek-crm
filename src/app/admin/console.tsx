@@ -56,6 +56,9 @@ import { VoiceSection, VOICE_SUBTITLE, type VoiceData } from "./voice-section";
 import { MapsSection, MAPS_SUBTITLE, type MapsData } from "./maps-section";
 import { ComponentsScreen } from "./components-section";
 import { LeadOversightSection } from "./lead-oversight-section";
+import { TrashSection, type TrashFilters as TrashUrlFilters } from "./trash-section";
+
+export type TrashData = { filters: TrashUrlFilters; canRestore: boolean };
 import type { Person } from "@/lib/services/admin-people-service";
 import type { AccessRow } from "@/lib/services/access-service";
 import { AccessSection } from "./access-section";
@@ -84,6 +87,7 @@ const PLATFORM_NAV = [
   { key: "maps", label: "Maps" },
   { key: "components", label: "Components" },
   { key: "oversight", label: "Lead oversight" },
+  { key: "trash", label: "Trash" },
   { key: "audit", label: "Audit" },
 ] as const;
 
@@ -139,6 +143,7 @@ export function AdminConsole({
   sheet,
   voice,
   maps,
+  trash,
   people,
   access,
   feedback,
@@ -155,6 +160,8 @@ export function AdminConsole({
   sheet: SheetData;
   voice: VoiceData;
   maps: MapsData;
+  /** The Trash section: where the URL left its filters, and whether this person may restore. */
+  trash: TrashData;
   people: Person[];
   /** Who opens what, and how far into it. The People section IS this. */
   access: AccessRow[];
@@ -198,6 +205,7 @@ export function AdminConsole({
           sheet={sheet}
           voice={voice}
           maps={maps}
+          trash={trash}
           access={access}
           feedback={feedback}
           platform={platform}
@@ -254,6 +262,7 @@ function ConsoleShell({
   sheet,
   voice,
   maps,
+  trash,
   access,
   feedback,
   platform,
@@ -269,6 +278,8 @@ function ConsoleShell({
   sheet: SheetData;
   voice: VoiceData;
   maps: MapsData;
+  /** The Trash section: where the URL left its filters, and whether this person may restore. */
+  trash: TrashData;
   access: AccessRow[];
   feedback: FeedbackData;
   platform: PlatformData;
@@ -700,6 +711,7 @@ function ConsoleShell({
                   sheet={sheet}
                   voice={voice}
                   maps={maps}
+                  trash={trash}
                   feedback={feedback}
                   platform={platform}
                   canWriteCatalogue={crm.canWrite}
@@ -850,6 +862,7 @@ function SectionBody({
   sheet,
   voice,
   maps,
+  trash,
   feedback,
   platform,
   canWriteCatalogue,
@@ -877,6 +890,8 @@ function SectionBody({
   sheet: SheetData;
   voice: VoiceData;
   maps: MapsData;
+  /** The Trash section: where the URL left its filters, and whether this person may restore. */
+  trash: TrashData;
   feedback: FeedbackData;
   platform: PlatformData;
   canWriteCatalogue: boolean;
@@ -930,6 +945,21 @@ function SectionBody({
      Management sidebar. A way to the screens, not a copy of them. */
   if (section === "oversight") {
     return <LeadOversightSection />;
+  }
+
+  /* Deleted leads, and the one place they come back from. Administrators
+     only — the screen says so to anybody else, and the API refuses them. */
+  if (section === "trash") {
+    return trash.canRestore ? (
+      <TrashSection initial={trash.filters} />
+    ) : (
+      <Card className="mt-5">
+        <EmptyState
+          title="The trash is an administrator's"
+          body="Restoring a deleted lead is decided by an administrator. Ask one if a lead was deleted by mistake."
+        />
+      </Card>
+    );
   }
 
   if (comingSoon) {

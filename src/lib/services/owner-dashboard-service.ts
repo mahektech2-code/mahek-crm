@@ -283,6 +283,8 @@ export async function leadsCreatedIn(
       left join users u on u.id = c.owner_id
       left join first_order f on f.customer_id = c.id
      where (c.kind = 'lead' or c.lead_stage is not null)
+       -- A lead in the trash is not one the business generated.
+       and c.deleted_at is null
        and c.created_at >= ${w.start} and c.created_at <= ${w.end}
        and not (c.created_by_id is null
                 and date_trunc('minute', c.created_at) in (select m from bulk_minute))

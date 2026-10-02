@@ -2086,6 +2086,19 @@ export const customers = pgTable(
     whatsappDndAt: timestamp("whatsapp_dnd_at", { withTimezone: true }),
     whatsappDndByName: text("whatsapp_dnd_by_name"),
 
+    /*
+     * THE LEAD TRASH. Set means this lead is in the trash: every list, count,
+     * search, queue, message and handset sync leaves it out, and the Admin
+     * Console's Trash is the one place it is listed, and restored from. The
+     * row and everything pointing at it stay, so a restore brings back the
+     * whole lead. Only a lead (`kind = 'lead'`) may be trashed. The history of
+     * moves in and out is `lead_trash_events`.
+     */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedById: text("deleted_by_id"),
+    deletedByName: text("deleted_by_name"),
+    deletedReason: text("deleted_reason"),
+
     /* ------------------------------------------------------------------
      * MBOS — field sales.
      *
@@ -4717,6 +4730,23 @@ export const customerDistributors = pgTable(
       .where(sql`${t.isPrimary}`),
     index("customer_distributors_distributor_idx").on(t.distributorCustomerId),
   ],
+);
+
+/** Every move of a lead into and out of the trash — who, when, why. */
+export const leadTrashEvents = pgTable(
+  "lead_trash_events",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    reason: text("reason"),
+    actorId: text("actor_id").references(() => users.id, { onDelete: "set null" }),
+    actorName: text("actor_name"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("lead_trash_events_customer_idx").on(t.customerId, t.createdAt.desc())],
 );
 
 export const customerAmChanges = pgTable(

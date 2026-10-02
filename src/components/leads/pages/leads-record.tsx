@@ -4,6 +4,7 @@ import { canOpenModule } from "@/lib/access";
 import { DESK_MODULE, deskHolders } from "@/lib/services/lead-desk-assignment-service";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { nowMs } from "@/lib/format";
 import { today } from "@/lib/recompute";
@@ -306,6 +307,7 @@ export async function Body({
       creditLimitThresholdPaise={config["leads.distributorCreditLimitApprovalPaise"]}
       canVerify={await canLead(user, "lead.verify")}
       canWork={await canLead(user, "lead.work")}
+      canTrash={await canFor(user, "lead.trash")}
       /* §22 — naming who RUNS the relationship, which moves no revenue and no
          target and is therefore a manager's. Moving the sales seat is the
          other act, stays accounts' and admin's under `customer.reassign`, and

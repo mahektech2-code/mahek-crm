@@ -402,8 +402,15 @@ export const RELATIONSHIP_OWNER_SQL = sql`customers.relationship_owner_id`;
  * This is only about who may SEE it.
  */
 export function scopedToUsers(ids: string[] | null): SQL | undefined {
-  if (!ids) return undefined;
-  return or(
+  /*
+   * NOT IN THE LEAD TRASH, for every reader — the whole-book one included,
+   * which is why this no longer answers `undefined` for them. Everything that
+   * narrows a customer read to a book comes through here: the calling queue,
+   * the handset's book, collections, reminders, WhatsApp. A lead an
+   * administrator has not restored is in nobody's book.
+   */
+  if (!ids) return sql`customers.deleted_at is null`;
+  return and(sql`customers.deleted_at is null`, or(
     inArray(ASSIGNED_TO_SQL, ids),
     inArray(BACK_OFFICE_SQL, ids),
     /*
@@ -420,7 +427,7 @@ export function scopedToUsers(ids: string[] | null): SQL | undefined {
      * refuse them the screen.
      */
     inArray(RELATIONSHIP_OWNER_SQL, ids),
-  );
+  ));
 }
 
 /* -------------------------------------------------------------- permissions */
@@ -430,6 +437,10 @@ export const CAPABILITIES = [
   "customer.write",
   "customer.export",
   "customer.deactivate",
+  /** Moving a lead to the trash — a manager's, like deactivating one. */
+  "lead.trash",
+  /** Listing the trash and bringing a lead back — the Admin Console's, admin only. */
+  "lead.restore",
   "call.log",
   "order.capture",
   "reminder.write",
@@ -555,6 +566,13 @@ const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "customer.export",
   "reminder.close",
   "customer.deactivate",
+  /*
+   * Deleting a lead takes it off every screen in the building, so it sits
+   * with deactivating one: a manager decides, a telecaller asks. It is not
+   * destructive — the trash keeps it whole — but a lead quietly vanishing from
+   * somebody's list is the kind of thing that should need a manager.
+   */
+  "lead.trash",
   "complaint.resolve",
   "whatsapp.bulk",
   "whatsapp.template.write",
@@ -697,6 +715,13 @@ const ACCOUNTS_ONLY: ReadonlySet<Capability> = new Set<Capability>([
  */
 const ADMIN_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "expense.policy.publish",
+  /*
+   * The trash is read and emptied back into the book from the Admin Console
+   * and nowhere else, so restoring is the administrator's. One person deciding
+   * what comes back is what stops a deleted duplicate being restored by
+   * whoever deleted the wrong one of the pair.
+   */
+  "lead.restore",
   /*
    * §12 — appointing a distributor, which is the SECOND step of that chain and
    * not the manager's own recommendation.
@@ -1415,8 +1440,19 @@ export async function assertCustomerInScope(
      * cannot show it must not pass.
      */
     salesManagerId?: string | null;
+    /**
+     * In the lead trash. A trashed lead is opened by nobody and written by
+     * nobody until an administrator restores it — the same answer as a
+     * customer out of scope, so a stale screen, a bookmark or a handset still
+     * holding it cannot act on it. Optional for the reason the seats above
+     * are: a caller that selects a narrow shape and leaves it out is checked
+     * as before, and every full-row `select()` carries it.
+     */
+    deletedAt?: Date | string | null;
   } | null,
 ) {
+  if (customer?.deletedAt) throw new NotPermittedError("customer.read");
+
   /* THE CRM SALES MANAGER WORKSPACE HAS ONE RULE, and it is the read's rule.
      A lead that `leadsVisible` drew from `sales_manager_id` is a lead this
      lets the person act on, whatever level their CRM hat happens to be. */

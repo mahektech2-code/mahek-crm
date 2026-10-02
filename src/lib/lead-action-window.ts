@@ -45,6 +45,7 @@ import { TERMINAL_STAGES } from "./engines/lead-ladder";
 export const STILL_WORKING: SQL = sql`
   c.lead_stage is not null
     and c.lead_archived = false
+    and c.deleted_at is null
     and c.lead_stage::text not in (${sql.join(
       TERMINAL_STAGES.map((s) => sql`${s}`),
       sql`, `,

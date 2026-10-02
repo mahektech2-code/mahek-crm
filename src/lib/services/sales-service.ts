@@ -252,6 +252,24 @@ export async function managerScope(): Promise<ManagerScope> {
  * It can only ADD rows, so no manager loses sight of anything they see today.
  */
 export function leadsVisible(scope: ManagerScope, column = "c.owner_id") {
+  return sql`${notTrashed(column)} ${seatVisible(scope, column)}`;
+}
+
+/**
+ * NOT IN THE TRASH, on the table the caller's column names. Every lead list,
+ * count and record loader comes through `leadsVisible`, so a deleted lead
+ * leaves all of them here — for every viewer, including the national ones the
+ * seat narrowing below says nothing to. The alias is read off the column the
+ * caller already passes: `c.owner_id`, `a.owner_id`, `customers.owner_id`, or
+ * one of the book-of-account expressions written over `c`.
+ */
+function notTrashed(column: string) {
+  const plain = /^\s*(\w+)\.owner_id\s*$/.exec(column);
+  const alias = plain ? plain[1] : /\bc\./.test(column) ? "c" : null;
+  return alias ? sql.raw(`and ${alias}.deleted_at is null`) : sql``;
+}
+
+function seatVisible(scope: ManagerScope, column: string) {
   /* The CRM Sales Manager's book: their seat, exactly. Unowned leads and leads
      with an owner but no Sales Manager are deliberately NOT included — they are
      nobody's until somebody names a Sales Manager, and `assertCustomerInScope`
@@ -1040,7 +1058,8 @@ export async function tasksList(day: string): Promise<TaskRow[]> {
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join customers c on c.id = t.customer_id
       left join users b on b.id = t.assigned_by_user_id
-     where true ${onlyMine(scope, "u.id")}
+     -- A trashed lead's tasks wait with it, and come back if it does.
+     where (c.id is null or c.deleted_at is null) ${onlyMine(scope, "u.id")}
      order by
        case t.status when 'open' then 0 when 'in_progress' then 1 else 2 end,
        t.due_date asc nulls last
@@ -4787,7 +4806,7 @@ export async function fieldBook(filter?: {
         which between them are most of what he actually walks to. Third party
         was never excluded by name; it is a MARK on a customer rather than a
         kind, and it came through already. The lead is what was missing. */
-     where c.status = 'active' and c.kind in ('customer', 'lead')
+     where c.status = 'active' and c.kind in ('customer', 'lead') and c.deleted_at is null
        ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
        ${salesman} ${beat} ${gps} ${search}
      order by c.name asc
@@ -5005,6 +5024,7 @@ export async function shopPins(options?: {
         A map that quietly omits three quarters of the pins is one somebody
         plans a day from and is wrong. */
      where coalesce(c.gps_lat, c.geocoded_lat) is not null
+       and c.deleted_at is null
        and coalesce(c.gps_lng, c.geocoded_lng) is not null
        ${box}
        ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}

@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -151,7 +151,8 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
     .from(reminders)
     .innerJoin(customers, eq(customers.id, reminders.customerId))
     .innerJoin(users, eq(users.id, reminders.assignedUserId))
-    .where(ids ? inArray(reminders.assignedUserId, ids) : undefined)
+    // A trashed lead's callbacks wait with it, and come back if it does.
+    .where(and(isNull(customers.deletedAt), ids ? inArray(reminders.assignedUserId, ids) : undefined))
     .orderBy(asc(reminders.dueDate));
 
   // Only a FUTURE pending reminder can be the thing standing between a
