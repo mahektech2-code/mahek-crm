@@ -41,6 +41,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertDocuments(pull.documents, now);
     touched += await upsertCourses(pull.courses, now);
     touched += await upsertPerformance(pull.performance, now);
+    touched += await replaceCustomerTargets(pull.customerTargets, now);
     touched += await upsertTasks(pull.tasks, now);
     touched += await upsertLeads(pull.leads, now);
     /* AFTER the leads, so the record can never draw a check or a call against
@@ -57,6 +58,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
        a manager approval nobody can decide must not read it back to pending. */
     touched += await applyMyOrders(pull.myOrders);
     touched += await applyOrderChanges(pull.orderChanges);
+    touched += await applyTerritoryRequests(pull.territoryRequests);
     touched += await restoreAttendance(pull.attendanceToday);
     touched += await applyDeletions(pull.deletions);
     /* AFTER the customer and lead upserts, so a mark set in the office today
@@ -361,6 +363,25 @@ function upsertHolidays(rows: unknown[] | undefined, now: number) {
  */
 function upsertPerformance(rows: unknown[] | undefined, now: number) {
   return upsert('performance', 'period', rows, { lastSyncedAt: now });
+}
+
+/**
+ * His customers' targets, REPLACED rather than upserted.
+ *
+ * A shop that left his book, or a month that rolled off the two the office
+ * sends, has no row left to say so — the price list's problem exactly. So the
+ * whole table goes and comes back. ABSENT is the opposite answer: an older
+ * server, or the cursorless reply, says nothing about targets and must leave
+ * what is here alone. An empty list is the office saying he has none.
+ */
+async function replaceCustomerTargets(rows: unknown[] | undefined, now: number) {
+  if (!rows) return 0;
+  await run('DELETE FROM customer_targets');
+  const keyed = rows.map((raw) => {
+    const r = raw as { period: string; customerId: string };
+    return { ...r, key: `${r.period}|${r.customerId}` };
+  });
+  return upsert('customer_targets', 'key', keyed, { lastSyncedAt: now });
 }
 
 function upsertSalary(rows: unknown[] | undefined, now: number) {
@@ -1159,6 +1180,35 @@ async function applyOrderChanges(rows: unknown[] | undefined): Promise<number> {
   return rows.length;
 }
 
+/**
+ * What he said about his areas, as the office holds it. Written only under
+ * `syncState = 'synced'`: a row still in the outbox is newer than anything
+ * the office can say about it.
+ */
+async function applyTerritoryRequests(rows: unknown[] | undefined): Promise<number> {
+  if (!rows?.length) return 0;
+  for (const raw of rows) {
+    const r = raw as {
+      id: string; kind: string; currentPlaces?: unknown; requestedPlaces?: unknown;
+      reason?: string | null; signature?: string | null; state?: string | null;
+      decisionNote?: string | null; decidedAt?: number | null;
+      clientCreatedAt?: number | null; serverCreatedAt?: number | null;
+    };
+    await run(
+      `INSERT INTO territory_requests (id, kind, currentPlaces, requestedPlaces, reason, signature, state,
+                                       decisionNote, decidedAt, clientCreatedAt, serverCreatedAt, deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+       ON CONFLICT(id) DO UPDATE SET state = excluded.state, decisionNote = excluded.decisionNote,
+         decidedAt = excluded.decidedAt, serverCreatedAt = excluded.serverCreatedAt
+       WHERE territory_requests.syncState = 'synced'`,
+      [r.id, r.kind, JSON.stringify(r.currentPlaces ?? []), JSON.stringify(r.requestedPlaces ?? []),
+       r.reason ?? null, r.signature ?? '', r.state ?? 'pending', r.decisionNote ?? null, r.decidedAt ?? null,
+       r.clientCreatedAt ?? r.serverCreatedAt ?? 0, r.serverCreatedAt ?? null],
+    );
+  }
+  return rows.length;
+}
+
 async function applyApprovals(rows: unknown[] | undefined): Promise<number> {
   if (!rows?.length) return 0;
   for (const raw of rows) {
@@ -1188,6 +1238,9 @@ async function applyApprovals(rows: unknown[] | undefined): Promise<number> {
       await run('UPDATE leave_requests SET state = ? WHERE id = ?', [state, a.subjectId]);
     } else if (a.subjectType === 'sample') {
       await run('UPDATE samples SET state = ? WHERE id = ?', [a.state === 'approved' ? 'Approved' : 'Requested', a.subjectId]);
+    } else if (a.subjectType === 'territory_request') {
+      await run('UPDATE territory_requests SET state = ?, decisionNote = ?, decidedAt = ? WHERE id = ?',
+        [a.state, a.decisionNote ?? null, a.decidedAt ?? null, a.subjectId]);
     } else if (a.subjectType === 'tour') {
       const state = a.state === 'approved' ? 'Approved' : a.state === 'rejected' ? 'Rejected' : 'Pending';
       await run('UPDATE tours SET state = ?, decisionNote = ? WHERE id = ?', [state, a.decisionNote ?? null, a.subjectId]);

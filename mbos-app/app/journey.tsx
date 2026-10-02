@@ -133,8 +133,9 @@ export default function JourneyScreen() {
   }, []);
 
   const today = isoDate(new Date(now));
-  /* A fortnight back, matching the server's own PLAN_HISTORY_DAYS — the two
-     have to agree, or this screen would ask for history the pull never sent. */
+  /* A fortnight back. The Journeys screen reads the whole of the server's
+     PLAN_HISTORY_DAYS; this one keeps its Recently list short, and links there
+     for the rest. */
   const historyFrom = isoDate(new Date(now - 15 * 86_400_000));
   /*
    * Local midnight, derived from the DATE STRING rather than from `now`.
@@ -1223,6 +1224,32 @@ export default function JourneyScreen() {
           </View>
         </View>
       ) : null}
+
+      {/* Every journey past and coming, as a list or a calendar, each day open
+          in full — and the cities and areas allocated to him, to accept or to
+          ask to change. */}
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => router.push('/journeys?from=journey')}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          backgroundColor: C.surface,
+          borderRadius: radius.card,
+          padding: 14,
+          marginTop: 16,
+          boxShadow: shadow.card,
+        }}>
+        <Icon name="cal" size={20} color={C.primary} strokeWidth={1.75} />
+        <View style={{ flex: 1 }}>
+          <T style={[type.body, weight(600), { color: C.ink }]}>All journeys and your areas</T>
+          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+            Calendar or list of past and upcoming days, and the cities you work
+          </T>
+        </View>
+        <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
+      </Pressable>
 
       {/* The last fortnight, most recent first — what was asked, what was
           said, and for a day that was actually routed, how much of it got

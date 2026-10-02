@@ -54,8 +54,10 @@ import {
   CALL_REASONS,
   CALL_REASON_LABEL,
   EXCLUSIVE_ACTION,
+  NEXT_ACTION_LABEL,
   nextActionsFor,
   reasonFieldsFor,
+  reconcileNextActions,
   showsLedger,
   unbackedBy,
   wantsDate,
@@ -626,6 +628,11 @@ function CallPanelForm({
   const [outcomeDetail, setOutcomeDetail] = React.useState<Record<string, string>>({});
   const [nextActions, setNextActions] = React.useState<string[]>([]);
   const [nextActionDate, setNextActionDate] = React.useState("");
+  /* Why the assistant left the day (or the action) for the telecaller. */
+  const [aiNextNote, setAiNextNote] = React.useState<string | null>(null);
+  /* Whether the assistant card is switched on — decides whether the Notes box
+     keeps a microphone of its own. */
+  const [assistantOn, setAssistantOn] = React.useState(false);
 
   /* §Sales opportunity. `null` is nobody asked, which is the truth on an
      outbound call; `false` is somebody asked and the answer was no, and those
@@ -919,7 +926,21 @@ function CallPanelForm({
    * exactly that reason.
    */
   const actionOptions = nextActionsFor(isInbound ? callReason : null, outcome);
-  const needsActionDate = wantsDate(nextActions);
+  /*
+   * THE CHOSEN ACTIONS THAT THIS CALL STILL OFFERS. `nextActions` is what was
+   * picked; an outcome or reason changed since can leave a code in it that the
+   * chips no longer draw and the server would refuse ("does not belong to this
+   * call"). Everything downstream — the chips, the date box, the save — reads
+   * this, so a stale code can neither be sent nor ask for a day.
+   */
+  const activeActions = nextActions.filter((c) =>
+    actionOptions.some((a) => a.code === c),
+  );
+  const needsActionDate = wantsDate(activeActions);
+  /* One microphone: the assistant's, which speaks the call AND fills the form.
+     The Notes box keeps its own only where the assistant is not on offer — it
+     is off, or this is an order received, which the assistant never reads. */
+  const micOnNotes = !(assistantOn && !isOrderReceived);
 
   /*
    * "This is the third attempt" — said, never counted here.
@@ -1429,7 +1450,7 @@ function CallPanelForm({
                   .filter(([, v]) => v),
               )
             : undefined,
-          nextActions: actionOptions.length ? nextActions : undefined,
+          nextActions: actionOptions.length ? activeActions : undefined,
           nextActionDate:
             actionOptions.length && needsActionDate
               ? nextActionDate || undefined
@@ -1515,7 +1536,32 @@ function CallPanelForm({
     setAiFilled([]);
     setAiProducts([]);
     setAiOpportunity(false);
+    // The last call's next action must not ride into the next one.
+    setNextActions([]);
+    setNextActionDate("");
+    setAiNextNote(null);
     idempotencyKey.current = crypto.randomUUID();
+  }
+
+  /**
+   * Choose (or clear) the outcome, and drop any chosen next action the new
+   * outcome no longer offers — with the day that went with it, where nothing
+   * dated is left. The reason's own click already did this; the outcome did
+   * not, which left a stale code the server refused.
+   */
+  function pickOutcome(next: string | null) {
+    setOutcome(next);
+    const r = reconcileNextActions({
+      current: nextActions,
+      currentDate: nextActionDate,
+      reason: isInbound ? callReason : null,
+      outcome: next,
+      today: today(),
+    });
+    if (r.dropped) {
+      setNextActions(r.actions);
+      setNextActionDate(r.date);
+    }
   }
 
   /**
@@ -1549,10 +1595,47 @@ function CallPanelForm({
     const inbound = nextType === "inbound_call";
 
     const allowed = nextType ? (OUTCOMES[nextType as Exclude<InteractionType, "order_received">] ?? []) : [];
-    if (!nextType || allowed.includes(fill.outcome as never)) {
+    const outcomeApplies = !nextType || allowed.includes(fill.outcome as never);
+    if (outcomeApplies) {
       setOutcome(fill.outcome);
       filled.push(`outcome: ${OUTCOME_LABEL[fill.outcome] ?? fill.outcome}`);
     }
+
+    /*
+     * NEXT ACTION, checked against the call as it is ABOUT TO BE — the
+     * outcome and reason this proposal brings — and never against `outcome`
+     * and `callReason` as they stand in state, which are still the previous
+     * answer until the next render. What the telecaller had already chosen
+     * stays (less anything the new outcome stops offering); a proposal only
+     * goes in where nothing is chosen, and only codes this call offers.
+     */
+    const na = reconcileNextActions({
+      current: nextActions,
+      currentDate: nextActionDate,
+      reason: inbound ? callReason || fill.callReason || null : null,
+      outcome: outcomeApplies ? fill.outcome : outcome,
+      proposed: fill.nextActions,
+      proposedDate: fill.nextActionDate,
+      today: today(),
+    });
+    if (na.dropped || na.filled) {
+      setNextActions(na.actions);
+      setNextActionDate(na.date);
+    }
+    if (na.filled) {
+      filled.push(
+        `next action: ${na.actions.map((a) => NEXT_ACTION_LABEL[a] ?? a).join(", ")}${
+          na.date ? ` on ${shortDate(na.date)}` : ""
+        }`,
+      );
+    }
+    /* Say why the day was left for them; the box would otherwise just be
+       empty beside a chip somebody did not pick. */
+    setAiNextNote(
+      fill.nextActionNote && (na.filled || !nextActions.length)
+        ? fill.nextActionNote
+        : null,
+    );
 
     if (inbound && fill.callReason && !callReason) {
       setCallReason(fill.callReason);
@@ -2274,9 +2357,36 @@ function CallPanelForm({
                       notes={notes}
                       onNotes={setNotes}
                       onApply={applyAssistant}
+                      onEnabled={setAssistantOn}
                       complaintCategories={complaintCategories}
                       maxComplaintImages={maxComplaintImages}
                     />
+                  ) : null}
+                  {/* THE CALL'S ONE NOTES BOX. It used to appear twice — a
+                      textarea in the assistant card and this field at the foot
+                      of the form — over the same `notes` state, and the foot
+                      one only existed once an outcome was picked. Here it is
+                      under the assistant from the first screen: speak, read the
+                      note it wrote, correct it, or just type. "Read what I
+                      typed" reads this box. */}
+                  {!saved ? (
+                    <div className="mb-4">
+                      <Field
+                        label="Notes"
+                        hint="Speak above or type here. Quick notes add to this - you can still edit or type your own."
+                        error={errors.notes ?? null}
+                      >
+                        <VoiceTextarea
+                          value={notes}
+                          onChange={(e) => setNotes(e.target.value)}
+                          onDictate={setNotes}
+                          hideMic={!micOnNotes}
+                          className="h-24"
+                          placeholder="What was said, in your own words — or type it: “Payment 50 hazar after 15 days, also wants a sample of PU sealer”"
+                        />
+                      </Field>
+                      <div id="call-log-form-start" />
+                    </div>
                   ) : null}
                   {saved ? (
                     <div className="rounded-[6px] border border-line bg-surface p-5 text-center">
@@ -2530,7 +2640,7 @@ function CallPanelForm({
                                 ? undefined
                                 : "Answer who called and why first"
                             }
-                            onClick={() => setOutcome(o)}
+                            onClick={() => pickOutcome(o)}
                             className="cursor-pointer rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left text-sm font-medium text-ink hover:border-brand disabled:cursor-not-allowed disabled:border-line disabled:bg-canvas disabled:text-muted disabled:hover:border-line"
                           >
                             {OUTCOME_LABEL[o]}
@@ -2542,7 +2652,7 @@ function CallPanelForm({
                     <>
                       <button
                         onClick={() =>
-                          isOrderReceived ? setType(null) : setOutcome(null)
+                          isOrderReceived ? setType(null) : pickOutcome(null)
                         }
                         className="mb-3 cursor-pointer text-[13px] text-brand"
                       >
@@ -3345,15 +3455,22 @@ function CallPanelForm({
                           </span>
                           <div className="mt-1.5 flex flex-wrap gap-1.5">
                             {actionOptions.map((a) => {
-                              const on = nextActions.includes(a.code);
+                              const on = activeActions.includes(a.code);
                               return (
                                 <button
                                   key={a.code}
                                   type="button"
                                   aria-pressed={on}
                                   title={on ? `Tap again to remove "${a.label}"` : undefined}
-                                  onClick={() =>
-                                    setNextActions((list) => {
+                                  onClick={() => {
+                                    /* Built from what is actually offered, so
+                                       a stale code left by an earlier outcome
+                                       is dropped on the next tap. */
+                                    setAiNextNote(null);
+                                    setNextActions((raw) => {
+                                      const list = raw.filter((c) =>
+                                        actionOptions.some((o) => o.code === c),
+                                      );
                                       if (on) return list.filter((x) => x !== a.code);
                                       /* "Nothing further is needed, and also
                                          chase the payment" is not a sentence.
@@ -3369,8 +3486,8 @@ function CallPanelForm({
                                         ...list.filter((x) => x !== EXCLUSIVE_ACTION),
                                         a.code,
                                       ];
-                                    })
-                                  }
+                                    });
+                                  }}
                                   className={cx(
                                     "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
                                     on
@@ -3383,6 +3500,11 @@ function CallPanelForm({
                               );
                             })}
                           </div>
+                          {aiNextNote ? (
+                            <p className="mt-1.5 text-[13px] text-warn-ink">
+                              {aiNextNote}
+                            </p>
+                          ) : null}
 
                           {/* A DATE IS DEMANDED WHERE THE ACTION MEANS ONE, and
                               absent where it does not. "Send the quotation" with
@@ -3518,19 +3640,8 @@ function CallPanelForm({
                         </div>
                       ) : null}
 
-                      <Field
-                        label="Notes"
-                        hint="Quick notes add to this - you can still edit or type your own."
-                        error={errors.notes ?? null}
-                      >
-                        <VoiceTextarea
-                          value={notes}
-                          onChange={(e) => setNotes(e.target.value)}
-                          onDictate={setNotes}
-                          className="h-20"
-                          placeholder="What was said, in your own words"
-                        />
-                      </Field>
+                      {/* Notes live once, under the assistant at the top of
+                          this tab — see the box above. */}
                     </>
                   )}
                 </div>
@@ -3571,7 +3682,7 @@ function CallPanelForm({
           {chosen && !saved ? (
             <button
               onClick={() =>
-                isOrderReceived ? setType(null) : setOutcome(null)
+                isOrderReceived ? setType(null) : pickOutcome(null)
               }
               className="inline-flex h-8 cursor-pointer items-center gap-1.5 px-2.5 text-[13px] text-muted hover:text-body"
             >

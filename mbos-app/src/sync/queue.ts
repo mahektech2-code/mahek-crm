@@ -273,6 +273,7 @@ const ENTITY_TABLE: Record<string, string> = {
   expense: 'expenses',
   leave: 'leave_requests',
   tour: 'tours',
+  territory_request: 'territory_requests',
   competitor: 'competitor_records',
   /* Without this the row would sync and its own syncState would stay 'queued'
      for ever — the sync screen would show a call that never landed, and the

@@ -26,8 +26,8 @@ import {
   qualify,
   stateKeySql,
 } from "@/lib/territory-sql";
-import { territoryClause, type Territory } from "@/lib/territory-rules";
-import { decodePlaces } from "@/lib/lead-places";
+import { placeFilterOptions, placeFilterSql, placeNameSql } from "@/lib/services/place-filter-service";
+import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
 import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
 import { metresBetween } from "@/lib/geo";
 import { dropInaccurateFixes } from "../engines/trail-gaps";
@@ -442,6 +442,21 @@ export type Salesman = {
    */
   /** Where he works. `parent` is the state a city sits in — see `PARENT_KIND`. */
   territories: { kind: string; value: string; parent: string }[];
+  /**
+   * His latest answer to that allocation, from the handset — accepted, or a
+   * request for different cities with the Approvals queue's verdict. Null
+   * where he has never answered. `signature` is the allocation he was looking
+   * at; compare it with `areasSignature(territories)` to know whether an
+   * acceptance still stands.
+   */
+  areaAnswer: {
+    kind: "accept" | "change";
+    at: string;
+    signature: string;
+    requested: string[];
+    reason: string | null;
+    state: string;
+  } | null;
 };
 
 /**
@@ -487,7 +502,18 @@ export async function fieldTeam(): Promise<Salesman[]> {
                              order by t.parent, t.kind, t.region)
                from mbos_user_territories t
               where t.user_id = u.id and t.kind <> 'region'
-           ), '[]'::json) as "territories"
+           ), '[]'::json) as "territories",
+           (select json_build_object(
+                     'kind', r.kind, 'at', r.server_created_at, 'signature', r.signature,
+                     'requested', r.requested_places, 'reason', r.reason,
+                     'state', case when r.kind = 'accept' then 'accepted' else coalesce(
+                       (select a.state::text from mbos_approvals a
+                         where a.subject_id = r.id and a.subject_type = 'territory_request'
+                         order by a.requested_at desc limit 1), 'pending') end)
+              from mbos_territory_requests r
+             where r.user_id = u.id
+             order by r.server_created_at desc
+             limit 1) as "areaAnswer"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
      where true ${onlyMine(scope, "u.id")}
@@ -872,6 +898,16 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
                  (select 'The day of ' || to_char(d.day, 'DD Mon')
                     from mbos_attendance_days d where d.id = ap.subject_id),
                  'A day the office cannot find')
+             when 'territory' then
+               coalesce(
+                 (select 'Wants to work ' ||
+                         coalesce((select string_agg(x, ', ')
+                                     from jsonb_array_elements_text(t.requested_places) x), 'elsewhere') ||
+                         coalesce(' instead of ' ||
+                                  (select string_agg(x, ', ')
+                                     from jsonb_array_elements_text(t.current_places) x), '')
+                    from mbos_territory_requests t where t.id = ap.subject_id),
+                 'A request for different cities the office cannot find')
              else ap.subject_type
            end as summary,
 
@@ -1308,8 +1344,11 @@ export type LeadRow = {
   name: string;
   companyName: string | null;
   mobile: string | null;
+  /** The reviewed tree's city, or what the sheet typed where the tree has none. */
   city: string | null;
   area: string | null;
+  district: string | null;
+  state: string | null;
   source: string;
   estimatedPotentialPaise: number | null;
   /**
@@ -1481,7 +1520,10 @@ export type LeadRow = {
  */
 const LEAD_ROW_SELECT = sql`
     select c.id, c.name, c.company_name as "companyName", c.phone as mobile,
-           c.city, c.area,
+           ${placeNameSql("c", "city", "city")} as city,
+           ${placeNameSql("c", "area", "area")} as area,
+           ${placeNameSql("c", "district")} as district,
+           ${placeNameSql("c", "state")} as state,
            /* COALESCED, and NO BACKTICKS in this comment: it sits inside a
             * sql template literal, and one backtick ends the literal.
             *
@@ -1841,33 +1883,15 @@ export function leadFilterClause(
   }
 
   /*
-   * WHERE THE SHOP IS, AND IT IS THE TERRITORY CLAUSE RATHER THAN A SECOND
-   * READING OF THE SAME COLUMNS.
-   *
-   * A manager narrowing the list to Nagpur and a salesman allocated Nagpur are
-   * asking one question, and answering it twice is how two screens come to
-   * disagree about one shop: the sheet spells a state twenty-four ways
-   * (Gujrat 97 beside Gujarat 31) and a city three, and every one of those
-   * folds lives in `territory-rules.ts`. Re-deriving it here would be a copy
-   * that drifts the first time somebody teaches that file a new spelling —
-   * and the half that drifts would be this one, because a filter returning
-   * slightly too few rows looks exactly like a filter that worked.
-   *
-   * A PICK IS A PATH, so a city is matched AND-ed with its state and two picks
-   * are OR-ed. `territoryClause` is told the alias because this statement
-   * selects `from customers c` while every territory caller selects it plain.
+   * WHERE THE SHOP IS — state, district, city and area off the reviewed
+   * location tree, the same clause the customer list runs. See
+   * `lib/place-filters.ts`.
    */
-  const places = decodePlaces(splitFilter(filters.place));
-  if (places.length) {
-    const territories: Territory[] = places.map((p) =>
-      p.beat
-        ? { kind: "beat", value: p.beat, parent: p.city ?? "" }
-        : p.city
-          ? { kind: "city", value: p.city, parent: p.state }
-          : { kind: "state", value: p.state },
-    );
-    parts.push(sql`and ${territoryClause(territories, "c")}`);
-  }
+  const placed = placeFilterSql(
+    { state: filters.state, district: filters.district, city: filters.city, area: filters.area },
+    "c",
+  );
+  if (placed) parts.push(sql`and ${placed}`);
 
   anyOf(splitFilter(filters.potential), (v) => {
     const p = sql`coalesce(c.lead_estimated_potential_paise, 0)`;
@@ -4739,7 +4763,10 @@ export async function fieldBook(filter?: {
     : sql``;
 
   const rows = (await db.execute<BookCustomer>(sql`
-    select c.id, c.name, c.city, c.area, c.beat, c.phone,
+    select c.id, c.name,
+           ${placeNameSql("c", "city", "city")} as city,
+           ${placeNameSql("c", "area", "area")} as area,
+           c.beat, c.phone,
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName",
            (c.gps_lat is not null and c.gps_lng is not null) as "hasGps",
@@ -4948,7 +4975,10 @@ export async function shopPins(options?: {
     : sql``;
 
   const rows = (await db.execute<ShopPin>(sql`
-    select c.id, c.name, c.city, c.area, c.beat,
+    select c.id, c.name,
+           ${placeNameSql("c", "city", "city")} as city,
+           ${placeNameSql("c", "area", "area")} as area,
+           c.beat,
            /* Both columns, because the WORD for an account is decided from
               the pair and lib/account-types.ts is the one place that
               decision lives — the mark wins over the kind. */
@@ -5419,25 +5449,25 @@ export async function knownPlaces(): Promise<PlaceTree> {
 }
 
 /**
- * THE SAME TREE, COUNTED OVER THE LEADS LIST — because a count has to describe
- * what the filter will find.
+ * THE FOUR PLACE FILTERS, COUNTED OVER THE LEADS LIST — because a count has to
+ * describe what the filter will find.
  *
- * `knownPlaces` counts the whole book, which is right for allocating a
- * territory and wrong above a list of leads: on the real book that is 5,926
- * shops against 3,777 leads, so a city offering "412" and then answering with
- * 63 rows is a number nobody can get behind. It is the same grouping through
- * the same expressions, narrowed by the same `where` the filter dropdowns
- * beside it are built from — and deliberately NOT narrowed by the filters
- * themselves, for the reason `leadFilterOptions` gives: a place that vanishes
- * as you tick a box in the dropdown next to it is a place you cannot widen a
- * search back out to.
+ * Narrowed by the same `where` the other dropdowns beside it are built from,
+ * and by the place picks above each rung (the cascade) — deliberately NOT by
+ * the other filters, for the reason `leadFilterOptions` gives: a place that
+ * vanishes as you tick a box next to it is a place you cannot widen back out to.
  */
-export async function leadPlaceTree(archived = false): Promise<PlaceTree> {
+export async function leadPlaceOptions(
+  archived = false,
+  picks: PlaceFilterValues = {},
+): Promise<PlaceFilterOptions> {
   const scope = await managerScope();
-  return placeTreeFrom(sql`
-     where c.lead_stage is not null
-       and c.lead_archived = ${archived}
-       ${leadsVisible(scope)}`);
+  return placeFilterOptions({
+    from: sql`customers c`,
+    alias: "c",
+    where: sql`c.lead_stage is not null and c.lead_archived = ${archived} ${leadsVisible(scope)}`,
+    picks,
+  });
 }
 
 /**

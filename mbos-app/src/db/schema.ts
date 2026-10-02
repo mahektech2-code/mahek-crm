@@ -2015,6 +2015,59 @@ export const MIGRATIONS: string[][] = [
     `CREATE INDEX IF NOT EXISTS idx_order_change_requests_order ON order_change_requests(orderId);`,
   ],
 
+  /*
+   * WHAT HE SAID ABOUT WHERE HE WORKS. The office allocates his cities and
+   * areas; from the Journeys screen he accepts them or asks for different
+   * ones. `signature` is the allocation he was looking at (see
+   * `lib/territory-signature.ts`), so an acceptance stops counting the moment
+   * the office changes his areas. A change request's verdict arrives on the
+   * approvals channel and on `territoryRequests`.
+   */
+  [
+    `CREATE TABLE IF NOT EXISTS territory_requests (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      currentPlaces TEXT NOT NULL DEFAULT '[]',
+      requestedPlaces TEXT NOT NULL DEFAULT '[]',
+      reason TEXT,
+      signature TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT 'pending',
+      decisionNote TEXT,
+      decidedAt INTEGER,
+      clientCreatedAt INTEGER NOT NULL,
+      serverCreatedAt INTEGER,
+      deviceId TEXT NOT NULL,
+      syncState TEXT NOT NULL DEFAULT 'local',
+      syncMessage TEXT
+    );`,
+  ],
+
+  /*
+   * HIS CUSTOMERS' OWN MONTHLY TARGETS, this month and last.
+   *
+   * The person target on Performance says how far he is from his month; this
+   * says which of his shops the rest would come from. Pure reference, like
+   * `performance`: nothing on the phone sets a target or adds to what a shop
+   * achieved. `key` is `period|customerId`, stamped on arrival, because a
+   * shop carries one row per month. `pendingPaise` is what is still waiting
+   * for accounts and is never part of `achievedPaise`.
+   */
+  [
+    `CREATE TABLE IF NOT EXISTS customer_targets (
+      key TEXT PRIMARY KEY,
+      period TEXT NOT NULL,
+      customerId TEXT NOT NULL,
+      targetPaise INTEGER NOT NULL DEFAULT 0,
+      achievedPaise INTEGER NOT NULL DEFAULT 0,
+      pendingPaise INTEGER NOT NULL DEFAULT 0,
+      isDefault INTEGER NOT NULL DEFAULT 1,
+      carriedForward INTEGER NOT NULL DEFAULT 0,
+      computedAt TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_customer_targets_period ON customer_targets(period);`,
+  ],
+
 ];
 
 /**
@@ -2037,7 +2090,7 @@ export const SCHEMA_VERSION = MIGRATIONS.length;
 export const OWNED_TABLES = [
   'visits', 'orders', 'order_lines', 'payments', 'attendance_days', 'tasks',
   'leads', 'samples', 'complaints', 'expenses', 'leave_requests', 'tours',
-  'competitor_records', 'approvals', 'order_change_requests',
+  'competitor_records', 'approvals', 'order_change_requests', 'territory_requests',
   /* The funnel's two. A lead's timeline is written here as it happens and the
      office keeps its own — a sync never deletes a line of it, because what a
      salesman recorded about a shop is the record even where the office's own
@@ -2056,7 +2109,7 @@ export const OWNED_TABLES = [
 export const REFERENCE_TABLES = [
   'customers', 'products', 'price_list', 'schemes', 'timeline_events',
   'journey_stops', 'leave_balances', 'holidays', 'documents', 'courses',
-  'notifications', 'performance', 'salary',
+  'notifications', 'performance', 'salary', 'customer_targets',
   'customer_orders', 'customer_payments', 'customer_bills',
   /* The record of who checked a finding and what came of it. Written only by
      the office — a salesman's own checks go up through the lead save and come

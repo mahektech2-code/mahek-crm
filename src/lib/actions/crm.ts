@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { placeShopsNow } from "@/lib/services/place-tree-service";
 import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -655,6 +656,7 @@ export async function createCustomer(
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
+    await placeShopsNow([customerId]);
 
     refreshAll();
     return ok({ id: customerId }, `${parsed.data.name} added`);
@@ -781,6 +783,9 @@ export async function updateCustomer(
       beforeState: { name: existing.name, phone: existing.phone } as never,
       afterState: parsed.data as never,
     });
+    // A new town re-places a shop the tree was matching from its text; a
+    // reviewed or hand-picked place is left alone by the resolver itself.
+    if (parsed.data.city) await placeShopsNow([customerId]);
 
     refreshAll();
     return okVoid("Customer updated");
@@ -1604,9 +1609,9 @@ export async function cancelMessage(messageId: string): Promise<Result> {
   }
 }
 
-export async function actionReply(replyId: string): Promise<Result> {
+export async function actionReply(replyId: string, handled = true): Promise<Result> {
   try {
-    const r = await actionReplyService(replyId);
+    const r = await actionReplyService(replyId, handled === true);
     refreshAll();
     return r;
   } catch (e) {

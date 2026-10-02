@@ -135,6 +135,12 @@ export const SYNC_ENTITY_TYPES = [
    */
   "tour",
   /**
+   * His answer to the cities and areas allocated to him: accepted as they
+   * stand, or a request for different ones — decided on the Approvals queue
+   * as type `territory`.
+   */
+  "territory_request",
+  /**
    * What was heard about a competitor at a shop — captured on the handset
    * since the app shipped, and never queued: `mbos_competitor_records` had
    * a table and a read query and no write path anywhere.
@@ -421,6 +427,8 @@ export type PullDelta = {
   myOrders: unknown[];
   /** Changes he asked for on approved orders, and their answers. */
   orderChanges: unknown[];
+  /** What he said about his allocated areas, and the office's answer. */
+  territoryRequests: unknown[];
   /**
    * His own month, scored: the six figures, what was asked for each, and the
    * product mix behind the third of them.
@@ -433,6 +441,13 @@ export type PullDelta = {
    * credit limit and the outstanding balance already follow.
    */
   performance: unknown[];
+  /**
+   * His customers' own monthly targets — target, achieved and what is still
+   * waiting for approval, per shop, this month and last. REPLACED wholesale on
+   * the handset, so it is optional: absent (the cursorless reply) changes
+   * nothing there, and an empty list says he has none.
+   */
+  customerTargets?: unknown[];
   /**
    * A task the office raised or reassigned, coming down on every pass and not
    * only at sign-in — the same reasoning `journeyStops` already carries: a

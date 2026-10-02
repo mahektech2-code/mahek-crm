@@ -141,7 +141,7 @@ export function ApprovalsScreen({
       {pending.length === 0 ? (
         <Empty
           title="Nothing is waiting"
-          body="Expenses, leave, samples and attendance corrections raised on a handset land here. An order over the credit limit is accounts' decision and waits in Accounts → Order approvals instead."
+          body="Expenses, leave, samples, attendance corrections and requests for different cities raised on a handset land here. An order over the credit limit is accounts' decision and waits in Accounts → Order approvals instead."
         />
       ) : (
         <Table

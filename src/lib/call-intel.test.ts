@@ -332,3 +332,194 @@ test("an amount that is not a number is refused at its field", async () => {
     "outcomeDetail.promisedAmount",
   );
 });
+
+/* ------------------------------------------------ one promise, one reminder
+ *
+ * An outcome's own date and a Next Action are one customer asking to be rung
+ * once, said in two boxes. `nextActionCoveredByOutcome` is the exact rule; this
+ * is the save it is wired into.
+ * ------------------------------------------------------------------------- */
+
+async function remindersOf(callId: string) {
+  return db.select().from(reminders).where(eq(reminders.callId, callId));
+}
+
+const FOLLOW_UP = {
+  interactionType: "outbound_call" as const,
+  outcome: "follow_up" as const,
+  outcomeDetail: { followUpReason: "customer_asked_later" },
+};
+
+test("a follow-up date and the same Call again on the same day make ONE reminder", async () => {
+  const day = addDays(today(), 3);
+  const r = await saveInteraction({
+    customerId,
+    ...FOLLOW_UP,
+    followUpDate: day,
+    nextActions: ["call_back"],
+    nextActionDate: day,
+    idempotencyKey: randomUUID(),
+  });
+  assert.ok(r.ok, !r.ok ? r.error : "");
+  const rems = await remindersOf(r.data.interactionId);
+  assert.equal(rems.length, 1);
+  assert.equal(rems[0].type, "call_back");
+  /* Nothing is lost: the action itself is still on the call. */
+  const [call] = await db
+    .select()
+    .from(calls)
+    .where(eq(calls.id, r.data.interactionId));
+  assert.deepEqual(call.nextActions, ["call_back"]);
+  assert.equal(call.nextActionDate, day);
+});
+
+test("the same on a No Order is one reminder too", async () => {
+  const day = addDays(today(), 2);
+  const r = await saveInteraction({
+    customerId,
+    interactionType: "outbound_call",
+    outcome: "no_order",
+    outcomeDetail: { whyNoOrder: "price_issue" },
+    noOrderNextCallDate: day,
+    nextActions: ["call_back"],
+    nextActionDate: day,
+    idempotencyKey: randomUUID(),
+  });
+  assert.ok(r.ok, !r.ok ? r.error : "");
+  assert.equal((await remindersOf(r.data.interactionId)).length, 1);
+});
+
+test("two different days are two promises, and both reminders stand", async () => {
+  const r = await saveInteraction({
+    customerId,
+    ...FOLLOW_UP,
+    followUpDate: addDays(today(), 2),
+    nextActions: ["call_back"],
+    nextActionDate: addDays(today(), 5),
+    idempotencyKey: randomUUID(),
+  });
+  assert.ok(r.ok, !r.ok ? r.error : "");
+  assert.equal((await remindersOf(r.data.interactionId)).length, 2);
+});
+
+test("an errand of its own is never swallowed by the call-back", async () => {
+  const day = addDays(today(), 3);
+  const r = await saveInteraction({
+    customerId,
+    ...FOLLOW_UP,
+    followUpDate: day,
+    nextActions: ["call_back", "salesman_visit"],
+    nextActionDate: day,
+    idempotencyKey: randomUUID(),
+  });
+  assert.ok(r.ok, !r.ok ? r.error : "");
+  assert.equal(
+    (await remindersOf(r.data.interactionId)).length,
+    2,
+    "the visit would be lost if the set were treated as the call-back",
+  );
+});
+
+test("a Next Action with no outcome reminder behind it still writes its own (unchanged)", async () => {
+  const day = addDays(today(), 3);
+  const r = await saveInteraction({
+    customerId,
+    interactionType: "outbound_call",
+    outcome: "no_order",
+    outcomeDetail: { whyNoOrder: "price_issue" },
+    noOrderNoCommitment: true,
+    nextActions: ["call_back"],
+    nextActionDate: day,
+    idempotencyKey: randomUUID(),
+  });
+  assert.ok(r.ok, !r.ok ? r.error : "");
+  const rems = await remindersOf(r.data.interactionId);
+  assert.equal(rems.length, 1);
+  assert.equal(rems[0].note, "Call again");
+});
+
+test("a payment chase on the promised day is the promise's own reminder; before it is not", async () => {
+  const promised = addDays(today(), 6);
+  const same = await saveInteraction({
+    customerId,
+    interactionType: "outbound_call",
+    outcome: "payment_promised",
+    paymentPromiseDate: promised,
+    outcomeDetail: { promisedAmount: "50,000" },
+    nextActions: ["follow_up_on_promise"],
+    nextActionDate: promised,
+    idempotencyKey: randomUUID(),
+  });
+  assert.ok(same.ok, !same.ok ? same.error : "");
+  assert.equal((await remindersOf(same.data.interactionId)).length, 1);
+
+  const before = await saveInteraction({
+    customerId,
+    interactionType: "outbound_call",
+    outcome: "payment_promised",
+    paymentPromiseDate: promised,
+    outcomeDetail: { promisedAmount: "50,000" },
+    nextActions: ["follow_up_before_promise"],
+    nextActionDate: addDays(today(), 4),
+    idempotencyKey: randomUUID(),
+  });
+  assert.ok(before.ok, !before.ok ? before.error : "");
+  assert.equal((await remindersOf(before.data.interactionId)).length, 2);
+});
+
+test("a next action not offered by the outcome is still refused by the server", async () => {
+  const r = await saveInteraction({
+    customerId,
+    ...FOLLOW_UP,
+    followUpDate: addDays(today(), 2),
+    nextActions: ["follow_up_payment"],
+    nextActionDate: addDays(today(), 2),
+    idempotencyKey: randomUUID(),
+  });
+  assert.equal(r.ok, false);
+  assert.equal(!r.ok && r.fieldErrors?.[0]?.field, "nextActions");
+  const r2 = await saveInteraction({
+    customerId,
+    interactionType: "outbound_call",
+    outcome: "no_order",
+    outcomeDetail: { whyNoOrder: "price_issue" },
+    noOrderNoCommitment: true,
+    nextActions: ["no_follow_up", "call_back"],
+    idempotencyKey: randomUUID(),
+  });
+  assert.equal(r2.ok, false, "no_follow_up stays exclusive");
+});
+
+test("the draft records the next action the call was saved with", async () => {
+  await seedHistory();
+  await trainCallClassifier();
+  const read = await analyseCall({
+    customerId,
+    spoken: "kal call karna hai",
+    english: "Will call back tomorrow",
+    typedNote: "",
+    language: "hi-IN",
+    heardBy: "sarvam",
+    interactionType: "outbound_call",
+  });
+  assert.ok(read.ok);
+  const day = addDays(today(), 2);
+  const r = await saveInteraction({
+    customerId,
+    ...FOLLOW_UP,
+    followUpDate: day,
+    nextActions: ["call_back"],
+    nextActionDate: day,
+    idempotencyKey: randomUUID(),
+    aiDraftId: read.data.draftId,
+  });
+  assert.ok(r.ok, !r.ok ? r.error : "");
+  const [draft] = await db
+    .select()
+    .from(callAiDrafts)
+    .where(eq(callAiDrafts.id, read.data.draftId));
+  const detail = draft.savedDetail as Record<string, unknown>;
+  assert.deepEqual(detail.nextActions, ["call_back"]);
+  assert.equal(detail.nextActionDate, day);
+  assert.equal(detail.followUpDate, day, "what was already recorded is still there");
+});

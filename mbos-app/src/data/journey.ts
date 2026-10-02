@@ -89,6 +89,51 @@ export async function stopCountsSince(from: string): Promise<Record<string, { to
 }
 
 
+/**
+ * How far back the Journeys screen reads. Must match `PLAN_HISTORY_DAYS` in
+ * the server's `mbos-service.ts`, or the screen asks for days the pull never
+ * sent and reads their absence as days nothing happened.
+ */
+export const JOURNEY_HISTORY_DAYS = 60;
+
+/** One day of the plan with what happened on it, for the list and the calendar. */
+export type JourneyDay = PlanDay & {
+  stops: number;
+  visited: number;
+  skipped: number;
+};
+
+/**
+ * Every day from `from` onwards — past and future — with its stop counts.
+ *
+ * Counted in SQL from the stops rather than trusted from `picked`, because
+ * `picked` is how many he chose and this is what became of them.
+ */
+export async function journeyDays(from: string): Promise<JourneyDay[]> {
+  return all<JourneyDay>(
+    `SELECT d.*,
+            (SELECT COUNT(*) FROM journey_stops s WHERE s.planDate = d.planDate) AS stops,
+            (SELECT COUNT(*) FROM journey_stops s WHERE s.planDate = d.planDate AND s.status = 'visited') AS visited,
+            (SELECT COUNT(*) FROM journey_stops s WHERE s.planDate = d.planDate AND s.status = 'skipped') AS skipped
+       FROM journey_days d
+      WHERE d.planDate >= ?
+      ORDER BY d.planDate ASC`,
+    [from],
+  );
+}
+
+/** Every stop of one day, in walking order, with its shop — the day in full. */
+export async function stopsOn(planDate: string): Promise<(JourneyStop & { city: string | null })[]> {
+  return all<JourneyStop & { city: string | null }>(
+    `SELECT j.*, COALESCE(c.name, 'Unknown customer') AS customerName, c.area, c.city,
+            c.gpsLat, c.gpsLng, COALESCE(c.outstandingPaise, 0) AS outstandingPaise
+       FROM journey_stops j LEFT JOIN customers c ON c.id = j.customerId
+      WHERE j.planDate = ?
+      ORDER BY j.seq`,
+    [planDate],
+  );
+}
+
 /* ══════════════════════════════════════════════════════ the days themselves */
 
 export type PlanDay = {

@@ -256,6 +256,7 @@ function reading(over: Partial<CallReading>): CallReading {
     sample: null,
     payment: null,
     followUp: null,
+    nextSteps: [],
     casual: null,
     inbound: null,
     doNotCall: { said: false, quote: null },

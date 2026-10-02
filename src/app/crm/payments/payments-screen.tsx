@@ -48,7 +48,8 @@ import type { PayOutcomeDefinition } from "@/lib/services/payment-followup-servi
 import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 import { Pager } from "@/components/ui/pager";
 import { DeliveryStatus } from "@/components/whatsapp/delivery-status";
-import type { TrackerRow } from "@/lib/services/whatsapp-tracker-service";
+import type { ReminderDay, ReminderSummary, TrackerRow } from "@/lib/services/whatsapp-tracker-service";
+import { previewOf, wentAt, whenLabel } from "@/lib/whatsapp-status";
 
 type Row = WorklistRow & {
   openBills: Array<{ id: string; billNo: string; balance: number; dueDate: string }>;
@@ -95,6 +96,7 @@ export function PaymentsScreen({
   outcomes,
   metrics,
   batchCount,
+  reminders,
   filters,
   pageInfo,
   counts,
@@ -122,6 +124,8 @@ export function PaymentsScreen({
   metrics: CollectionsMetrics;
   /** How many stage 1 customers a batch would actually go to today. */
   batchCount: number;
+  /** Today's and yesterday's WhatsApp payment reminders over this book. */
+  reminders: ReminderSummary;
   /**
    * WHAT IS ON SCREEN IS WHAT THE ADDRESS SAYS.
    *
@@ -385,6 +389,8 @@ export function PaymentsScreen({
         </span>
       </Card>
 
+      <RemindersStrip reminders={reminders} today={businessDay} />
+
       {monthEnd ? (
         <Callout tone="warn">
           <span className="text-sm font-medium text-warn-ink">
@@ -553,16 +559,40 @@ export function PaymentsScreen({
                         }, waiting for accounts`
                       : ""}
                   </div>
+                  {/*
+                    WHAT THE CUSTOMER HAS ALREADY BEEN TOLD, before anybody
+                    rings them: when it went (today, yesterday), how far it
+                    got, where to, who sent it, and the words themselves.
+                    "Never" is said rather than left blank — a debt nobody has
+                    messaged is the row a telecaller most needs to notice.
+                  */}
                   {r.lastWa ? (
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-muted">
-                      <span>Last WhatsApp</span>
-                      <DeliveryStatus m={r.lastWa} />
-                      <span className="truncate">
-                        {r.lastWa.templateName ?? "Message"} ·{" "}
-                        {r.lastWa.viaRule ? "sent by an automatic rule" : `by ${r.lastWa.sentBy}`}
-                      </span>
+                    <div className="mt-1.5 rounded-[6px] border border-line bg-canvas px-2.5 py-1.5">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
+                        <span className="font-medium text-ink">
+                          WhatsApp · {whenLabel(wentAt(r.lastWa), businessDay)}
+                        </span>
+                        <DeliveryStatus m={r.lastWa} showTime={false} />
+                        <span>
+                          {[
+                            r.lastWa.templateName ?? "Message",
+                            `to ${r.lastWa.destination} (${r.lastWa.destKind === "group" ? "group" : "personal"})`,
+                            r.lastWa.viaRule ? "sent by an automatic rule" : `by ${r.lastWa.sentBy}`,
+                          ].join(" · ")}
+                        </span>
+                      </div>
+                      {r.lastWa.body ? (
+                        <div
+                          className="mt-0.5 truncate text-[12px] text-body"
+                          title={r.lastWa.body}
+                        >
+                          “{previewOf(r.lastWa.body)}”
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="mt-1 text-[12px] text-muted">No WhatsApp sent to them yet</div>
+                  )}
                   {dueReason.get(r.customerId) &&
                   (tab === "calls" || tab === "messages") ? (
                     <div className="mt-0.5 text-[13px] text-brand">
@@ -950,5 +980,84 @@ function PaymentModalBody({ row, onClose, onSubmit, modes, datedModes, today: bu
         />
       </div>
     </Modal>
+  );
+}
+
+/**
+ * DID TODAY'S REMINDERS GO? The day's WhatsApp payment reminders over this
+ * book, split by who sent them — an automatic rule or a person — with how far
+ * they got, and yesterday beside it so a quiet morning reads as a quiet
+ * morning rather than a broken runner. Whether the runner ran at all is said
+ * separately, because "no rule sent anything" and "no rule was checked" are
+ * different facts and only one of them is fine.
+ */
+function RemindersStrip({ reminders, today: businessDay }: { reminders: ReminderSummary; today: string }) {
+  const { today: t, yesterday: y, lastRun, lastSendingRun } = reminders;
+  return (
+    <Card className="mb-3 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+          WhatsApp payment reminders
+        </span>
+        <span className="flex-1" />
+        <span className="text-[12px] text-muted">
+          {!lastRun
+            ? "Automatic rules have never run"
+            : lastSendingRun
+              ? `Automatic rules last sent ${inline(whenLabel(lastSendingRun.at, businessDay))}${
+                  lastSendingRun.at !== lastRun.at
+                    ? ` · checked again ${inline(whenLabel(lastRun.at, businessDay))}`
+                    : ""
+                }`
+              : `Automatic rules checked ${inline(whenLabel(lastRun.at, businessDay))} · preview only, they have never sent`}
+        </span>
+        <Link href="/crm/whatsapp" className="text-[12px] text-brand no-underline">
+          Open WhatsApp →
+        </Link>
+      </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <ReminderDayLine label="Today" d={t} />
+        <ReminderDayLine label="Yesterday" d={y} />
+      </div>
+    </Card>
+  );
+}
+
+/** "Today, 9 am" mid-sentence is "today, 9 am" — but "29 Sep" keeps its capital. */
+function inline(label: string): string {
+  return label.charAt(0).toLowerCase() + label.slice(1);
+}
+
+function ReminderDayLine({ label, d }: { label: string; d: ReminderDay }) {
+  if (!d.total) {
+    return (
+      <div className="rounded-[6px] border border-line px-3 py-2 text-[13px] text-muted">
+        <span className="font-medium text-ink">{label}</span> · no payment reminder sent
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-[6px] border border-line px-3 py-2">
+      <div className="text-[13px] text-body">
+        <span className="font-medium text-ink">{label}</span> ·{" "}
+        {plural(d.total, "reminder")} to {plural(d.customers, "customer")} ·{" "}
+        {d.byRule} by automatic rules, {d.byPerson} by the team
+      </div>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {d.delivered ? <Badge tone="success">✓✓ {d.delivered} delivered</Badge> : null}
+        {d.read ? <Badge tone="brand">{d.read} read</Badge> : null}
+        {d.replied ? (
+          <Link href="/crm/whatsapp?tab=replies&show=all" className="no-underline" title="Read what they wrote">
+            <Badge tone="warn">{plural(d.replied, "customer")} replied →</Badge>
+          </Link>
+        ) : null}
+        {d.unconfirmed ? (
+          <Badge tone="warn" title="Copied to paste, nobody confirmed it went">
+            {d.unconfirmed} not confirmed
+          </Badge>
+        ) : null}
+        {d.failed ? <Badge tone="danger">{d.failed} failed</Badge> : null}
+      </div>
+    </div>
   );
 }

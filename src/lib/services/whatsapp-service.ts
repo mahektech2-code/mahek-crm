@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -15,10 +15,13 @@ import {
   waTemplates,
 } from "@/db/schema";
 import {
+  ASSIGNED_TO_SQL,
   assertCustomerInScope,
   requireCapability,
   resolveScope,
   scopedUserIds, scopedToUsers,} from "../access-control";
+import { requireUser } from "../auth";
+import { asDate } from "../business-date";
 import { getConfig } from "../config/store";
 import { longDate } from "../format";
 import { recomputeLastContact, today } from "../recompute";
@@ -648,7 +651,7 @@ export async function cancelMessage(messageId: string): Promise<Result> {
  *   the founder's switch is on · a key is configured · the message is still
  *   unsent · it is the personal leg, unedited, of a template linked to an
  *   APPROVED Wati template · the customer is not do-not-contact · the number is
- *   a real Indian mobile and not a placeholder shared by several shops · the
+ *   a real Indian mobile and not a Mahek staff member's own number · the
  *   weekly limit is not reached · every variable the template needs has a value.
  *
  * The customer is stamped as messaged only when Wati ACCEPTS the message. A
@@ -704,17 +707,27 @@ async function sendAutomaticAs(
     );
   }
 
-  // A number on three or more shops is a placeholder somebody typed into an
-  // import, not a person. Sending a payment reminder to it tells a stranger —
-  // or every shop sharing it — what this customer owes.
+  /*
+   * ONE NUMBER, SEVERAL COMPANIES: EACH GETS ITS OWN MESSAGE. This used to
+   * refuse any number on three or more customers as a likely placeholder. On
+   * this book that is mostly one owner with several shops or branches — the
+   * same person, rightly told about each company they run — and Mahek asked for
+   * every company's reminder to go to the shared number.
+   *
+   * What still stops it is a fact rather than a count: the number belongs to
+   * somebody who WORKS here. A salesman's mobile typed onto a shop (one is on
+   * ninety-six records) means the shop has no number of its own, and the
+   * reminder would go to our own staff instead of the customer.
+   */
   const last10 = phone.slice(-10);
-  const [shared] = await db.execute<{ n: number }>(sql`
-    select count(*)::int as n from customers c
-    where right(regexp_replace(coalesce(c.whatsapp_phone, c.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
+  const [staff] = await db.execute<{ name: string }>(sql`
+    select u.name from users u
+     where right(regexp_replace(coalesce(u.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
+     limit 1
   `);
-  if (Number(shared?.n ?? 0) >= 3) {
+  if (staff) {
     return err(
-      `That number is on ${shared!.n} customers, so it looks like a placeholder rather than ${customer.name}'s own. Put the real number on the record first.`,
+      `That number is ${staff.name}'s, who works at Mahek — not ${customer.name}'s. Put the shop's own number on the record first.`,
       "rule_violation",
     );
   }
@@ -1010,10 +1023,21 @@ export const WA_MESSAGE_LIMIT = 300;
 
 type MessageFilters = { status?: string; mode?: string; customerId?: string };
 
-/** The scope and the filters, once, so the list and the count cannot disagree. */
+/**
+ * The scope and the filters, once, so the list and the count cannot disagree.
+ *
+ * WHOSE CUSTOMER, OR WHO SENT IT — not only who sent it. This read
+ * `waMessages.userId` alone, and every message an automatic rule sends is
+ * stored under whoever set the rule up. So a telecaller's Log never showed a
+ * single reminder their own customers had received: Poonam's book of 349 had
+ * 22 in a month and her Log was empty. The customer's book is the CRM's rule
+ * for every other list (`scopedToUsers`); the sender half stays so a message
+ * somebody sent to an account since moved out of their book is still theirs
+ * to see. Needs `customers` joined — both callers do.
+ */
 function messageWhere(ids: string[] | null, filters?: MessageFilters) {
   return and(
-    ids ? inArray(waMessages.userId, ids) : undefined,
+    ids ? or(scopedToUsers(ids), inArray(waMessages.userId, ids)) : undefined,
     filters?.status ? eq(waMessages.status, filters.status as never) : undefined,
     filters?.mode ? eq(waMessages.mode, filters.mode as never) : undefined,
     filters?.customerId ? eq(waMessages.customerId, filters.customerId) : undefined,
@@ -1036,6 +1060,7 @@ export async function messageCount(filters?: MessageFilters): Promise<number> {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(waMessages)
+    .innerJoin(customers, eq(customers.id, waMessages.customerId))
     .where(messageWhere(ids, filters));
 
   return Number(row?.n ?? 0);
@@ -1061,6 +1086,13 @@ export async function listMessages(filters?: MessageFilters) {
     ...message,
     customerName,
     userName,
+    /**
+     * Sent by this person (or, for a manager, their team) — what the Log
+     * showed before it widened to the customer's book. The "awaiting
+     * confirmation" banner reads this: confirming a copy is the word of the
+     * person who pasted it, never of whoever owns the customer.
+     */
+    sentInScope: ids === null || ids.includes(message.userId),
   }));
 }
 
@@ -1122,9 +1154,217 @@ export async function apiSendCounts(days = 7): Promise<Record<string, number>> {
   return Object.fromEntries(rows.map((r) => [r.status, Number(r.n)]));
 }
 
-export async function actionReply(replyId: string): Promise<Result> {
-  await db.update(waReplies).set({ actioned: true }).where(eq(waReplies.id, replyId));
-  return okVoid("Reply actioned");
+/* ------------------------------------------------------------ the inbox */
+
+export type InboxReply = {
+  id: string;
+  /**
+   * Null for a number that matches no customer — shown only to somebody who
+   * sees the whole book, and drawn as "not a customer or lead" rather than
+   * given a name it does not have.
+   */
+  customerId: string | null;
+  customerName: string | null;
+  kind: "lead" | "customer" | null;
+  /** The sender's WhatsApp number, country code first. */
+  waId: string | null;
+  thirdParty: boolean;
+  phone: string | null;
+  /** The name on the sender's WhatsApp profile, which is often not the shop's. */
+  senderName: string | null;
+  message: string;
+  receivedAt: string;
+  actioned: boolean;
+  actionedAt: string | null;
+  actionedByName: string | null;
+  /** Whose book this customer is in — `ASSIGNED_TO_SQL`, the one definition. */
+  assignedToName: string | null;
+  /**
+   * The newest of OUR messages to them that went before this reply — what
+   * they were most likely answering. Null when nothing had gone: they wrote
+   * to us first.
+   */
+  inReplyTo: {
+    templateName: string | null;
+    body: string;
+    wentAt: string;
+    viaRule: boolean;
+    sentByName: string | null;
+  } | null;
+};
+
+/** `unknown` is the unmatched numbers alone, for somebody who sees the whole book. */
+export type InboxShow = "open" | "all" | "unknown";
+
+/** How far back "All" reaches. Open replies are listed however old they are. */
+export const INBOX_ALL_DAYS = 30;
+const INBOX_LIMIT = 200;
+
+/**
+ * WHAT CUSTOMERS WROTE BACK, over this person's book and nobody else's.
+ *
+ * Scoped by `scopedToUsers` — the same rule as every list in the CRM: a
+ * telecaller sees replies from the customers and leads in their own book,
+ * a manager their team's.
+ *
+ * A reply from a number matching NO customer has no book to sit in, so it
+ * reaches only somebody whose scope is the whole book — an admin, the founder.
+ * It is listed beside the rest, marked as not a customer or lead, because a
+ * new shop writing in is exactly the message nobody else will ever see.
+ *
+ * Raw SQL because of the lateral join, and `customers` is deliberately NOT
+ * aliased: the scope clause spells its columns as `customers.owner_id`, and
+ * an alias would leave them pointing at nothing.
+ */
+export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promise<{
+  rows: InboxReply[];
+  openCount: number;
+  /** Open replies from unknown numbers. Always 0 for anybody not seeing the whole book. */
+  unknownOpenCount: number;
+  /** Whether this person may see unknown numbers at all. */
+  seesUnknown: boolean;
+  capped: boolean;
+}> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const seesUnknown = ids === null;
+  // A matched reply inside the scope — or, for the whole book, any reply.
+  const scope = seesUnknown
+    ? sql`true`
+    : sql`r.customer_id is not null and (${scopedToUsers(ids) ?? sql`true`})`;
+  const q = opts.q?.trim().replace(/[%_]/g, "").slice(0, 100) ?? "";
+  const which =
+    opts.show === "open"
+      ? sql`r.actioned = false`
+      : opts.show === "unknown"
+        ? sql`r.customer_id is null`
+        : sql`r.received_at > now() - make_interval(days => ${INBOX_ALL_DAYS}::int)`;
+  const like = "%" + q + "%";
+  const search = q
+    ? sql`and (customers.name ilike ${like} or r.message ilike ${like}
+               or r.sender_name ilike ${like} or r.wa_id like ${like})`
+    : sql``;
+
+  const [rows, open] = await Promise.all([
+    db.execute<{
+      id: string;
+      customer_id: string | null;
+      customer_name: string | null;
+      kind: "lead" | "customer" | null;
+      wa_id: string | null;
+      third_party: boolean;
+      phone: string | null;
+      sender_name: string | null;
+      message: string;
+      received_at: unknown;
+      actioned: boolean;
+      actioned_at: unknown;
+      actioned_by_name: string | null;
+      assigned_to_name: string | null;
+      prev_template: string | null;
+      prev_body: string | null;
+      prev_went_at: unknown;
+      prev_trigger: string | null;
+      prev_user_name: string | null;
+    }>(sql`
+      select r.id, r.customer_id, customers.name as customer_name, customers.kind,
+             customers.third_party, customers.phone, r.wa_id, r.sender_name, r.message,
+             r.received_at, r.actioned, r.actioned_at,
+             ab.name as actioned_by_name,
+             (select u.name from users u where u.id = ${ASSIGNED_TO_SQL}) as assigned_to_name,
+             prev.template_name as prev_template, prev.body as prev_body,
+             prev.went_at as prev_went_at, prev.trigger_id as prev_trigger,
+             prev.user_name as prev_user_name
+        from wa_replies r
+        left join customers on customers.id = r.customer_id
+        left join users ab on ab.id = r.actioned_by_id
+        left join lateral (
+          select m.template_name, m.body, m.trigger_id, mu.name as user_name,
+                 coalesce(m.sent_at, m.confirmed_sent_at, m.prepared_at) as went_at
+            from wa_messages m
+            left join users mu on mu.id = m.user_id
+           where m.customer_id = r.customer_id
+             and m.status in ('sent', 'sent_manually', 'delivered', 'read')
+             and coalesce(m.sent_at, m.confirmed_sent_at, m.prepared_at) <= r.received_at
+           order by coalesce(m.sent_at, m.confirmed_sent_at, m.prepared_at) desc
+           limit 1
+        ) prev on true
+       where ${which} and (${scope}) ${search}
+       order by r.received_at desc, r.id desc
+       limit ${INBOX_LIMIT}
+    `),
+    db.execute<{ n: number; unknown: number }>(sql`
+      select count(*)::int as n, count(*) filter (where r.customer_id is null)::int as unknown
+        from wa_replies r left join customers on customers.id = r.customer_id
+       where r.actioned = false and (${scope})
+    `),
+  ]);
+
+  const iso = (v: unknown) => (v === null || v === undefined ? null : asDate(v)?.toISOString() ?? null);
+  return {
+    rows: rows.map((r) => ({
+      id: r.id,
+      customerId: r.customer_id,
+      customerName: r.customer_name,
+      kind: r.kind,
+      waId: r.wa_id,
+      thirdParty: Boolean(r.third_party),
+      phone: r.phone,
+      senderName: r.sender_name,
+      message: r.message,
+      receivedAt: iso(r.received_at)!,
+      actioned: Boolean(r.actioned),
+      actionedAt: iso(r.actioned_at),
+      actionedByName: r.actioned_by_name,
+      assignedToName: r.assigned_to_name,
+      inReplyTo:
+        r.prev_went_at === null || r.prev_went_at === undefined
+          ? null
+          : {
+              templateName: r.prev_template,
+              body: r.prev_body ?? "",
+              wentAt: iso(r.prev_went_at)!,
+              viaRule: Boolean(r.prev_trigger),
+              sentByName: r.prev_user_name,
+            },
+    })),
+    openCount: Number(open[0]?.n ?? 0),
+    unknownOpenCount: Number(open[0]?.unknown ?? 0),
+    seesUnknown,
+    capped: rows.length >= INBOX_LIMIT,
+  };
+}
+
+/**
+ * Marking a reply handled — or, with `handled: false`, putting it back.
+ *
+ * Checked against the customer's scope: this took a bare id and updated any
+ * reply in the building, so anybody could clear another telecaller's inbox.
+ * A reply from an unknown number has no book, so only somebody who sees the
+ * whole book — the same people it is shown to — may handle it.
+ */
+export async function actionReply(replyId: string, handled = true): Promise<Result> {
+  const user = await requireUser();
+  const [row] = await db
+    .select({ reply: waReplies, customer: customers })
+    .from(waReplies)
+    .leftJoin(customers, eq(customers.id, waReplies.customerId))
+    .where(eq(waReplies.id, replyId));
+  if (!row) return err("That reply no longer exists.", "not_found");
+  if (row.customer) {
+    await assertCustomerInScope(row.customer);
+  } else if (scopedUserIds((await resolveScope()).scope) !== null) {
+    return err("A reply from an unknown number is handled by somebody who sees the whole book.", "not_permitted");
+  }
+  await db
+    .update(waReplies)
+    .set(
+      handled
+        ? { actioned: true, actionedAt: new Date(), actionedById: user.id }
+        : { actioned: false, actionedAt: null, actionedById: null },
+    )
+    .where(eq(waReplies.id, replyId));
+  return okVoid(handled ? "Marked handled" : "Back in Needs reply");
 }
 
 /* -------------------------------------------------------------- templates */

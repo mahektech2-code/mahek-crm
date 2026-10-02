@@ -6,7 +6,7 @@ import { splitFilter, type LeadFilters } from "@/lib/lead-filters";
 import { SALES_TYPES, type LeadSalesType } from "@/lib/lead-labels";
 import { leadBoard } from "@/lib/services/lead-board-service";
 import { canLead } from "@/lib/services/lead-console-service";
-import { leadFilterOptions, leadPlaceTree } from "@/lib/services/sales-service";
+import { leadFilterOptions, leadPlaceOptions } from "@/lib/services/sales-service";
 import { BoardScreen } from "@/components/leads/board/board-screen";
 
 
@@ -72,7 +72,7 @@ export async function Body({
   const asked = salesTypeFrom(params.type);
   const salesType: LeadSalesType | null = asked === undefined ? "direct" : asked;
 
-  /* THE LIST'S FILTERS, and all of them — `place` and `priority` were simply
+  /* THE LIST'S FILTERS, and all of them — the place rungs and `priority` were simply
      missing here, so two narrowings that existed on the list did not exist on
      the board with nothing on either screen saying so. Both are read by
      `leadFilterClause`, which is the one clause both screens run. */
@@ -80,7 +80,10 @@ export async function Body({
     owner: params.owner,
     source: params.source,
     stage: params.stage,
-    place: params.place,
+    state: params.state,
+    district: params.district,
+    city: params.city,
+    area: params.area,
     potential: params.potential,
     priority: params.priority,
     next: params.next,
@@ -101,7 +104,12 @@ export async function Body({
       },
     }),
     leadFilterOptions(false),
-    leadPlaceTree(false),
+    leadPlaceOptions(false, {
+      state: filters.state,
+      district: filters.district,
+      city: filters.city,
+      area: filters.area,
+    }),
   ]);
 
   return (
@@ -112,7 +120,10 @@ export async function Body({
         owner: splitFilter(filters.owner),
         source: splitFilter(filters.source),
         stage: splitFilter(filters.stage),
-        place: splitFilter(filters.place),
+        state: splitFilter(filters.state),
+        district: splitFilter(filters.district),
+        city: splitFilter(filters.city),
+        area: splitFilter(filters.area),
         /* The ladder is the SCREEN here, picked by the chips above the board
            and carried on `type`, so the list's own ladder filter is not drawn
            and has nothing ticked. It is passed rather than omitted because a

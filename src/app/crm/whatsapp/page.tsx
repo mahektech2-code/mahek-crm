@@ -10,6 +10,7 @@ import {
   messageCount,
   listReplies,
   listTemplates,
+  repliesInbox,
   listUnconfirmedCopies,
 } from "@/lib/services/whatsapp-service";
 import { clock, longDate, nowMs } from "@/lib/format";
@@ -27,9 +28,14 @@ function runMinutes(from: Date, to: Date | null): number {
 export default async function WhatsappPage({
   searchParams,
 }: {
-  searchParams: Promise<{ customer?: string; tab?: string }>;
+  /*
+   * The Replies tab's two filters ride on the URL like every list's: "these
+   * three, nobody has answered them" is a link one person sends another.
+   */
+  searchParams: Promise<{ customer?: string; tab?: string; show?: string; rq?: string }>;
 }) {
-  const { customer, tab } = await searchParams;
+  const { customer, tab, show, rq } = await searchParams;
+  const inboxShow = show === "all" || show === "unknown" ? show : "open";
   const user = await requireUser();
   const scope = await getScope(user);
   const now = nowMs();
@@ -73,6 +79,11 @@ export default async function WhatsappPage({
     messageCount(),
     deliveryContext(),
   ]);
+
+  // Read on every load, not only on the Replies tab: its count is on the tab
+  // itself, and a tab whose badge is only right once you are already on it
+  // tells nobody to go there.
+  const inbox = await repliesInbox({ show: inboxShow, q: rq });
 
   // Whether ANY message can go through the API right now. Per template it is
   // narrower still — an unlinked template is manual whatever this says — and
@@ -147,7 +158,11 @@ export default async function WhatsappPage({
         )
       }
       initialCustomerId={customer ?? customerPayload[0]?.id ?? ""}
-      initialTab={tab === "run" || tab === "templates" || tab === "log" ? tab : "send"}
+      initialTab={
+        tab === "run" || tab === "templates" || tab === "log" || tab === "replies" ? tab : "send"
+      }
+      today={day}
+      inbox={{ ...inbox, show: inboxShow, q: rq?.slice(0, 100) ?? "" }}
       customers={customerPayload}
       templates={templates.map((t) => ({
         id: t.id,
@@ -178,6 +193,7 @@ export default async function WhatsappPage({
         copiedAt: m.copiedAt?.toISOString() ?? null,
         confirmedSentAt: m.confirmedSentAt?.toISOString() ?? null,
         failureReason: m.failureReason,
+        sentInScope: m.sentInScope,
       }))}
       replies={replies.map((r) => ({
         id: r.id,

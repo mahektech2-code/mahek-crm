@@ -11,6 +11,7 @@ import { color } from '../src/theme/tokens';
 import { BootProvider } from '../src/state/boot';
 import { AppLock } from '../src/components/shell/AppLock';
 import { PushTaps } from '../src/state/push-taps';
+import { UpdatePrompt } from '../src/components/shell/UpdatePrompt';
 import { animationFor, durationFor, ROUTE_MOTION, useReduceMotion } from '../src/components/ui/motion';
 /* Side-effect only: registers the trail's background task. The OS can launch
    the app headless, with no screen ever mounted, purely to deliver a location
@@ -123,6 +124,10 @@ export default function RootLayout() {
             />
           ))}
         </Stack>
+        {/* Once, here, rather than in AppFrame: every screen in the stack has
+            its own frame, and a modal that runs a download must not open as
+            several copies, one per screen behind the one he is looking at. */}
+        <UpdatePrompt />
       </AppLock>
     </BootProvider>
   );

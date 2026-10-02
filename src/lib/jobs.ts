@@ -71,6 +71,11 @@ import {
   proposePlaces,
   resolvePlaces,
 } from "./services/place-service";
+import {
+  importPlaceTree,
+  refreshPlaceCounts,
+  resolveTypedPlaces,
+} from "./services/place-tree-service";
 import { syncCustomerMasterSheet } from "./services/customer-master-sync-service";
 import { projectCustomerMaster } from "./services/customer-master-projection-service";
 import { notifyUsers } from "./notify";
@@ -125,6 +130,10 @@ export type JobName =
   | "resolve-places-lookup"
   /** Build the master and point every shop at its leaf, from what is stored. */
   | "resolve-places"
+  /** The team's reviewed state › district › city › area file, onto every customer. */
+  | "place-tree-import"
+  /** Shops the review never saw, placed from their sheet text — runs nightly. */
+  | "resolve-typed-places"
   | "sheet-payments"
   | "taken-order-sync"
   | "taken-order-reparse"
@@ -272,6 +281,20 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     await run("recompute-sales-managers", async () => {
       const n = await recomputeSalesManagers();
       return { recordsAffected: n, detail: `${n} customers updated` };
+    }, triggeredById),
+  );
+
+  /*
+   * Where each shop is, for every account the location review never saw —
+   * matched from the sheet's own text against the reviewed tree, so a shop
+   * created today can be filtered by state, district, city and area tomorrow.
+   * A reviewed or hand-picked place is never touched.
+   */
+  results.push(
+    await run("resolve-typed-places", async () => {
+      const out = await resolveTypedPlaces();
+      await refreshPlaceCounts();
+      return { recordsAffected: out.considered, detail: out.detail };
     }, triggeredById),
   );
 
@@ -881,6 +904,35 @@ export async function runJob(
             }
             const out = await resolvePlaces();
             return { recordsAffected: out.resolved, detail: out.detail };
+          },
+          triggeredById,
+        ),
+      ];
+    case "place-tree-import":
+      /*
+       * `data/places/customer-places.csv`, the reviewed tree. Idempotent and
+       * re-runnable; `--dry-run` reports what it would create and writes
+       * nothing. Each row it writes is marked decided, so no unattended pass
+       * moves a shop a person checked.
+       */
+      return [
+        await run(
+          "place-tree-import",
+          async () => {
+            const out = await importPlaceTree({ dryRun: options.dryRun });
+            return { recordsAffected: out.customersSet, detail: out.detail };
+          },
+          triggeredById,
+        ),
+      ];
+    case "resolve-typed-places":
+      return [
+        await run(
+          "resolve-typed-places",
+          async () => {
+            const out = await resolveTypedPlaces();
+            await refreshPlaceCounts();
+            return { recordsAffected: out.considered, detail: out.detail };
           },
           triggeredById,
         ),

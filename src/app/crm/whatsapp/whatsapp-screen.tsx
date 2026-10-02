@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Badge,
   Button,
@@ -44,7 +45,8 @@ import {
 } from "@/lib/actions/crm";
 import { applyMerge, fieldLabel, mergeValues, missingFields, usedFields } from "@/lib/merge";
 import { deliveryRoute } from "@/lib/whatsapp-delivery";
-import type { MessagePreview } from "@/lib/services/whatsapp-service";
+import type { InboxReply, InboxShow, MessagePreview } from "@/lib/services/whatsapp-service";
+import { previewOf, whenLabel } from "@/lib/whatsapp-status";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { money, phoneDisplay, stamp } from "@/lib/format";
 import { CardGrid } from "@/components/ui/card-grid";
@@ -124,6 +126,8 @@ type Message = {
   copiedAt: string | null;
   confirmedSentAt: string | null;
   failureReason: string | null;
+  /** Sent by this person (or their team) — the banner's subject. See `listMessages`. */
+  sentInScope: boolean;
 };
 
 /** The message lifecycle, in the words a telecaller would use. */
@@ -175,7 +179,7 @@ type Run = {
   } | null;
 };
 
-type Tab = "send" | "run" | "templates" | "log";
+type Tab = "send" | "run" | "templates" | "log" | "replies";
 
 export function WhatsappScreen(props: {
   scopeLabel: string;
@@ -201,6 +205,18 @@ export function WhatsappScreen(props: {
   unconfirmedCount: number;
   followUpCounts: { stage1: number; slow: number; over60: number };
   followUpIds: { stage1: string[]; slow: string[]; over60: string[] };
+  /** The business date, for "Today, 10:42 am" — the clock is not read during render. */
+  today: string;
+  /** What customers in this book wrote back. */
+  inbox: {
+    rows: InboxReply[];
+    openCount: number;
+    unknownOpenCount: number;
+    seesUnknown: boolean;
+    capped: boolean;
+    show: InboxShow;
+    q: string;
+  };
 }) {
   const {
     scopeLabel,
@@ -230,8 +246,10 @@ export function WhatsappScreen(props: {
   const [editingTpl, setEditingTpl] = React.useState<Template | null>(null);
 
   // Copied but never confirmed. Counted from the server's own sweep for
-  // managers; telecallers see their own copies still sitting unconfirmed.
-  const unconfirmed = messages.filter((m) => m.status === "copied");
+  // managers; telecallers see their own copies still sitting unconfirmed —
+  // their OWN: the log now carries every message to their customers, and a
+  // copy somebody else made is not theirs to confirm.
+  const unconfirmed = messages.filter((m) => m.status === "copied" && m.sentInScope);
 
   return (
     <div className="px-6 pt-6 pb-10">
@@ -346,8 +364,19 @@ export function WhatsappScreen(props: {
           { key: "run", label: "Send run", count: run ? run.recipients.length : undefined },
           { key: "templates", label: "Templates", count: templates.length },
           { key: "log", label: "Log", count: messageTotal },
+          { key: "replies", label: "Replies", count: props.inbox.openCount },
         ]}
       />
+
+      {tab === "replies" ? (
+        <RepliesTab
+          inbox={props.inbox}
+          today={props.today}
+          scopeLabel={scopeLabel}
+          showAssignee={isManager}
+          onChanged={() => router.refresh()}
+        />
+      ) : null}
 
       {tab === "send" ? (
         <SendTab
@@ -1098,7 +1127,7 @@ function SendComposer({
                       router.refresh();
                     }}
                   >
-                    Action
+                    Mark handled
                   </Button>
                 </div>
               </div>
@@ -1590,7 +1619,7 @@ function LogTab({
 
   // Copied but never confirmed. Counted from the server's own sweep for
   // managers; telecallers see their own copies still sitting unconfirmed.
-  const unconfirmed = messages.filter((m) => m.status === "copied");
+  const unconfirmed = messages.filter((m) => m.status === "copied" && m.sentInScope);
 
   const filtered = messages.filter((m) => {
     const q = query.trim().toLowerCase();
@@ -2071,5 +2100,248 @@ function TemplateDrawerBody({
         </>
       ) : null}
     </Drawer>
+  );
+}
+
+/* ------------------------------------------------------------ replies tab */
+
+/**
+ * WHAT CUSTOMERS WROTE BACK, beside what we had sent them.
+ *
+ * Only this person's book — the server scopes it; nothing here narrows or
+ * widens it. Each reply carries the message it most likely answers, because
+ * "Will pay Friday" means nothing until you know it was the stage 2 reminder.
+ * "Needs reply" is the working list and the default; "All" is the last month,
+ * handled ones included, so a telecaller can find what a customer said
+ * without hunting through their phone.
+ */
+function RepliesTab({
+  inbox,
+  today: businessDay,
+  scopeLabel,
+  showAssignee,
+  onChanged,
+}: {
+  inbox: {
+    rows: InboxReply[];
+    openCount: number;
+    unknownOpenCount: number;
+    seesUnknown: boolean;
+    capped: boolean;
+    show: InboxShow;
+    q: string;
+  };
+  today: string;
+  scopeLabel: string;
+  showAssignee: boolean;
+  onChanged: () => void;
+}) {
+  const router = useRouter();
+  const search = useSearchParams();
+  const { run: act } = useToast();
+  const [draft, setDraft] = React.useState(inbox.q);
+  const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const navigate = (patch: Record<string, string | undefined>) => {
+    const next = new URLSearchParams(search.toString());
+    next.set("tab", "replies");
+    for (const [k, v] of Object.entries(patch)) {
+      if (v) next.set(k, v);
+      else next.delete(k);
+    }
+    router.push(`?${next.toString()}`, { scroll: false });
+  };
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2.5 border-b border-line px-4 py-2.5">
+        {[
+          { key: "open" as const, label: `Needs reply · ${inbox.openCount}` },
+          { key: "all" as const, label: "All, last 30 days" },
+          // Only for somebody who sees the whole book: nobody else is shown
+          // a number that belongs to no book.
+          ...(inbox.seesUnknown
+            ? [{ key: "unknown" as const, label: `Unknown numbers · ${inbox.unknownOpenCount} open` }]
+            : []),
+        ].map((o) => (
+          <button
+            key={o.key}
+            onClick={() => navigate({ show: o.key === "open" ? undefined : o.key })}
+            className={
+              inbox.show === o.key
+                ? "h-8 cursor-pointer rounded-[4px] border border-brand bg-brand-soft px-2.5 text-[13px] font-medium text-[#5223E0]"
+                : "h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-body hover:bg-canvas"
+            }
+          >
+            {o.label}
+          </button>
+        ))}
+        <div className="w-[260px]">
+        <Input
+          value={draft}
+          onChange={(e) => {
+            const v = e.target.value;
+            setDraft(v);
+            clearTimeout(timer.current);
+            timer.current = setTimeout(() => navigate({ rq: v || undefined }), 250);
+          }}
+          placeholder="Search customer or reply"
+          className="h-8"
+        />
+        </div>
+        <span className="flex-1" />
+        <span className="text-[13px] text-muted">
+          {scopeLabel} ·{" "}
+          {inbox.seesUnknown
+            ? "every reply, including numbers that are not a customer or lead"
+            : showAssignee
+              ? "replies from your team's customers and leads"
+              : "replies from your customers and leads only"}
+        </span>
+      </div>
+
+      {inbox.rows.length ? (
+        inbox.rows.map((r) => (
+          <div
+            key={r.id}
+            className={`border-b border-divider px-4 py-3.5 last:border-b-0 ${
+              r.actioned ? "" : "border-l-[3px] border-l-warn"
+            }`}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              {r.customerId ? (
+                <Link
+                  href={`/crm/customers/${r.customerId}`}
+                  className="text-sm font-medium text-ink no-underline"
+                >
+                  {r.customerName}
+                </Link>
+              ) : (
+                <span className="text-sm font-medium text-ink">
+                  {r.senderName ?? (r.waId ? phoneDisplay(r.waId.slice(-10)) : "Unknown sender")}
+                </span>
+              )}
+              {r.customerId ? null : (
+                <Badge tone="danger" title="This number is not on any customer or lead. Put it on the right record and their next reply files itself.">
+                  Unknown number · not a customer or lead
+                </Badge>
+              )}
+              {r.kind === "lead" ? <Badge tone="brand">Lead</Badge> : null}
+              {r.thirdParty ? <Badge tone="neutral">Third party</Badge> : null}
+              {r.actioned ? (
+                <Badge tone="success">
+                  Handled
+                  {r.actionedByName ? ` by ${r.actionedByName}` : ""}
+                  {r.actionedAt ? ` · ${whenLabel(r.actionedAt, businessDay)}` : ""}
+                </Badge>
+              ) : (
+                <Badge tone="warn">Needs reply</Badge>
+              )}
+              {showAssignee && r.customerId ? (
+                <span className="text-[12px] text-muted">
+                  · {r.assignedToName ? `${r.assignedToName}'s customer` : "Unassigned"}
+                </span>
+              ) : null}
+              <span className="flex-1" />
+              <span className="text-[12px] text-muted">{whenLabel(r.receivedAt, businessDay)}</span>
+            </div>
+
+            {/* What they wrote — the point of the row, so it is the loudest thing on it. */}
+            <div className="mt-2 max-w-[760px] rounded-[8px] rounded-tl-[2px] border border-line bg-success-soft px-3 py-2">
+              <p className="text-sm whitespace-pre-wrap text-ink">{r.message}</p>
+              <div className="mt-1 text-[11px] text-muted">
+                {r.senderName ? `${r.senderName} · ` : ""}
+                {r.phone
+                  ? phoneDisplay(r.phone)
+                  : r.waId
+                    ? phoneDisplay(r.waId.slice(-10))
+                    : "number on WhatsApp"}
+              </div>
+            </div>
+
+            <div className="mt-2 text-[12px] text-muted">
+              {r.inReplyTo ? (
+                <details className="group">
+                  <summary className="cursor-pointer list-none">
+                    In reply to{" "}
+                    <span className="text-body">{r.inReplyTo.templateName ?? "our message"}</span>
+                    {" · "}
+                    {whenLabel(r.inReplyTo.wentAt, businessDay)}
+                    {" · "}
+                    {r.inReplyTo.viaRule
+                      ? "sent by an automatic rule"
+                      : `sent by ${r.inReplyTo.sentByName ?? "the team"}`}
+                    {" · "}
+                    <span className="group-open:hidden">“{previewOf(r.inReplyTo.body, 90)}” </span>
+                    <span className="text-brand group-open:hidden">Show</span>
+                    <span className="hidden text-brand group-open:inline">Hide</span>
+                  </summary>
+                  <p className="mt-1.5 max-w-[760px] rounded-[6px] bg-canvas px-3 py-2 text-[13px] whitespace-pre-wrap text-body">
+                    {r.inReplyTo.body}
+                  </p>
+                </details>
+              ) : r.customerId ? (
+                <span>They wrote first — nothing had been sent to them before this.</span>
+              ) : (
+                <span>Nobody on the book has this number, so there is nothing of ours to show it against.</span>
+              )}
+            </div>
+
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant={r.actioned ? "secondary" : "primary"}
+                onClick={async () => {
+                  const res = await act(actionReply(r.id, !r.actioned));
+                  if (res.ok) onChanged();
+                }}
+              >
+                {r.actioned ? "Mark as needing a reply" : "Mark handled"}
+              </Button>
+              {r.phone || r.waId ? (
+                <a
+                  href={`https://wa.me/91${(r.phone ?? r.waId ?? "").replace(/\D/g, "").slice(-10)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-7 items-center rounded-[4px] border border-line px-2.5 text-[13px] text-body no-underline hover:bg-canvas"
+                >
+                  Reply on WhatsApp ↗
+                </a>
+              ) : null}
+              {r.customerId ? (
+                <Link
+                  href={`/crm/customers/${r.customerId}`}
+                  className="inline-flex h-7 items-center rounded-[4px] border border-line px-2.5 text-[13px] text-body no-underline hover:bg-canvas"
+                >
+                  Open record
+                </Link>
+              ) : null}
+            </div>
+          </div>
+        ))
+      ) : (
+        <EmptyState
+          title={
+            inbox.q
+              ? "No reply matches that search"
+              : inbox.show === "open"
+                ? "Nothing waiting for a reply"
+                : inbox.show === "unknown"
+                  ? "No replies from unknown numbers"
+                  : "No replies in the last 30 days"
+          }
+          body={
+            inbox.show === "open"
+              ? "Every reply from your customers and leads has been handled."
+              : "Replies arrive here when a customer writes back on WhatsApp."
+          }
+        />
+      )}
+      {inbox.capped ? (
+        <div className="border-t border-line px-4 py-2.5 text-[13px] text-muted">
+          Showing the newest 200 — search to find an older one.
+        </div>
+      ) : null}
+    </Card>
   );
 }

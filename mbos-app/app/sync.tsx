@@ -5,7 +5,7 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import type { UpdateVerdict } from '../src/engines/app-update';
-import { checkForUpdate, openDownload } from '../src/native/update-check';
+import { checkForUpdate } from '../src/native/update-check';
 import { backgroundStartFailure, stalledAt as trackerStalledAt } from '../src/sync/trail';
 import { batteryExemption } from '../src/native/phone-setup';
 import { trackerNotice, type StartFailure } from '../src/engines/tracker-notice';
@@ -120,6 +120,7 @@ function when(ms: number, today: string): string {
 export default function SyncScreen() {
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
+  const offerUpdate = useStore((s) => s.offerUpdate);
 
   const [rows, setRows] = React.useState<QueueItem[]>([]);
 
@@ -405,17 +406,19 @@ export default function SyncScreen() {
       </ListCard>
       ) : null}
 
-      {/* A NEWER BUILD EXISTS AND THIS PHONE CANNOT FETCH IT ITSELF.
-      
-          Android refuses an unattended install without device-owner enrolment
-          nobody here has, so the honest most this can do is say so and hand
-          the file to the browser. That is still the difference between one tap
-          and a fortnight: the field ran 1.0.0 and 1.1.0 while 1.4.0 had been
-          published for hours, and three bugs were diagnosed against builds
-          that did not contain their own fixes. */}
+      {/* A NEWER BUILD EXISTS.
+
+          The tap opens the same Update now / Update later modal the refresh
+          button raises, so there is one install path in the app — downloaded
+          in-app where the build allows it, through the browser where it does
+          not. Android still asks to confirm the install either way: an
+          unattended one needs device-owner enrolment nobody here has. It is
+          the difference between one tap and a fortnight: the field ran 1.0.0
+          and 1.1.0 while 1.4.0 had been published for hours, and three bugs
+          were diagnosed against builds that did not contain their own fixes. */}
       {update.kind === 'available' ? (
         <Pressable
-          onPress={() => void openDownload(update.url)}
+          onPress={() => offerUpdate({ kind: 'install', version: update.version, url: update.url })}
           accessibilityRole="button"
           style={{
             marginTop: 14,
@@ -429,7 +432,7 @@ export default function SyncScreen() {
             {'Update to ' + update.version}
           </T>
           <T style={{ fontSize: 13, lineHeight: 19, color: C.body, marginTop: 4 }}>
-            A new version of the app is out. Tap to download it. Then open the file to install.
+            A new version of the app is out. Tap to update.
             Nothing on this phone is lost. You stay signed in.
           </T>
         </Pressable>

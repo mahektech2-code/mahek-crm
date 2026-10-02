@@ -1095,8 +1095,32 @@ async function targetListClause(period: string | undefined, filters: TargetListF
   });
   const day = await today();
   const key = period ?? monthKey(day);
-  const [year, month] = key.split("-").map(Number);
+  const month = targetMonth(key);
 
+  return {
+    ...month,
+    where: and(
+      month.population,
+      visibility,
+      // Undefined where nothing is filtered, which `and` drops — so the
+      // unfiltered read is the query it always was, byte for byte.
+      customerClause,
+    ),
+  };
+}
+
+/**
+ * THE MONTH AND THE POPULATION, WITHOUT ANYBODY'S SCOPE.
+ *
+ * Split out of `targetListClause` so the handset's read below measures the
+ * same book the Targets screen does. That one resolves a browser session;
+ * a handset arrives on a device token and has no session to resolve, so it
+ * supplies its own narrowing — the credited seat — and takes everything else
+ * from here. Two spellings of "which accounts carry a target" is how the
+ * phone and the office would come to disagree about one shop.
+ */
+function targetMonth(key: string) {
+  const [year, month] = key.split("-").map(Number);
   return {
     key,
     year,
@@ -1106,7 +1130,7 @@ async function targetListClause(period: string | undefined, filters: TargetListF
       eq(monthlyTargets.year, year),
       eq(monthlyTargets.month, month),
     ),
-    where: and(
+    population: and(
       // A customer who has gone quiet still carries a target — that is the
       // gap the month has to explain. Only deactivation removes them.
       ne(customers.status, "deactivated"),
@@ -1131,12 +1155,73 @@ async function targetListClause(period: string | undefined, filters: TargetListF
        * target for them in the meantime.
        */
       DIRECT_CUSTOMER_SQL,
-      visibility,
-      // Undefined where nothing is filtered, which `and` drops — so the
-      // unfiltered read is the query it always was, byte for byte.
-      customerClause,
     ),
   };
+}
+
+/**
+ * ONE SALESMAN'S CUSTOMER TARGETS FOR A MONTH, for his handset.
+ *
+ * The person target on the Performance screen says how far he is from his
+ * month; this says WHERE the rest of it would come from — which of his own
+ * shops are short, by how much, and which have bought nothing yet. Read by
+ * `customerTargetsFor` in the MBOS sync, never by a browser.
+ *
+ * THE SAME POPULATION, THE SAME TARGET AND THE SAME ACHIEVED FIGURE the
+ * Targets screen shows: `targetMonth` and `targetAchievedSql` are the ones
+ * `listTargets` reads, so a manager and the salesman cannot quote one shop
+ * two different numbers. A shop with no stored target reads 0, which is what
+ * `resolveTarget` gives it on that screen too — see `targetTotals`.
+ *
+ * NARROWED BY THE CREDITED SEAT and by nothing else. `creditedToSql` is whose
+ * number a customer's orders count towards, which is the question "my
+ * customers' targets" is asking; the sales manager seat that widens the
+ * office screen drives no target and is deliberately absent.
+ *
+ * `pendingPaise` IS NOT ACHIEVEMENT and is never added to it. It is what he
+ * took this month that accounts have not decided yet — the one figure that
+ * explains why a shop he sold to this morning still reads short. Counted on
+ * `ordered_at` in the same window, at the same net-of-GST value.
+ */
+export async function customerTargetsCreditedTo(userId: string, key: string) {
+  const month = targetMonth(key);
+  const w = monthWindow(key);
+
+  const rows = await db
+    .select({
+      customerId: customers.id,
+      target: sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)::bigint`,
+      isDefault: sql<boolean>`coalesce(${monthlyTargets.isDefault}, true)`,
+      carriedForward: sql<boolean>`coalesce(${monthlyTargets.carriedForward}, false)`,
+      achieved: targetAchievedSql(key),
+      pending: sql<number>`coalesce((
+        select sum(${orderValueSql("o")}) from ${orders} o
+         where o.customer_id = customers.id
+           and o.status = 'pending_approval'
+           and o.ordered_at >= ${w.start}
+           and o.ordered_at < ${w.end}
+      ), 0)`,
+    })
+    .from(customers)
+    .leftJoin(monthlyTargets, month.joinTarget)
+    .where(and(month.population, sql`${creditedToSql("customers")} = ${userId}`));
+
+  return rows
+    .map((r) => {
+      const target = Number(r.target ?? 0);
+      const achieved = Number(r.achieved ?? 0);
+      return {
+        customerId: r.customerId,
+        target,
+        achieved,
+        pending: Number(r.pending ?? 0),
+        isDefault: Boolean(r.isDefault),
+        carriedForward: Boolean(r.carriedForward),
+      };
+    })
+    /* A shop with no target, nothing bought and nothing waiting has nothing
+       to say on this screen, and on a big book it is most of the rows. */
+    .filter((r) => r.target > 0 || r.achieved > 0 || r.pending > 0);
 }
 
 /**

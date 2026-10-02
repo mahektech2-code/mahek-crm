@@ -405,8 +405,16 @@ export type PullPayload = {
   myOrders?: unknown[];
   /** Changes he asked for on approved orders, and their answers. */
   orderChanges?: unknown[];
+  /** What he said about his allocated areas, and the office's answer. */
+  territoryRequests?: unknown[];
   /** His own month, scored by the office. Reference only — nothing here writes it. */
   performance?: unknown[];
+  /**
+   * His customers' monthly targets, this month and last — target, achieved,
+   * and what is waiting for approval. Replaced wholesale; ABSENT changes
+   * nothing, which is how an older server and the cursorless reply look.
+   */
+  customerTargets?: unknown[];
   /** His own pay, current month and last. Reference only, same as performance. */
   salary?: unknown[];
   /** The modes a leg may name. Upserted by key. */
@@ -671,6 +679,32 @@ export async function orderProducts(customerId: string): Promise<
       method: 'POST',
       body: JSON.stringify({ customerId }),
       timeoutMs: 15_000,
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error && e.message ? e.message : 'No answer.' };
+  }
+}
+
+/* -------------------------------------------------------- customer account */
+
+/**
+ * One customer's whole account as the Accounts app holds it — statement,
+ * bills, receipts and where they went, aging, credit notes.
+ *
+ * NOT QUEUED: it is a reading. `data/customer-account.ts` keeps the last
+ * answer per shop and falls back on the thirteen months the pull carries, so
+ * an account opened with no signal still says something true — and says which
+ * one it is.
+ */
+export async function customerAccount(
+  customerId: string,
+): Promise<{ ok: true; account: unknown } | { ok: false; error: string }> {
+  try {
+    return await request('/api/mbos/customer-account', {
+      method: 'POST',
+      body: JSON.stringify({ customerId }),
+      /* A long-standing account is a few thousand rows read on the far side. */
+      timeoutMs: 30_000,
     });
   } catch (e) {
     return { ok: false, error: e instanceof Error && e.message ? e.message : 'No answer.' };

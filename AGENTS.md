@@ -60,6 +60,12 @@ npm run jobs -- customer-master-sync        # the EMP 2.0 shop master -> staging
 npm run jobs -- customer-master-project --dry-run
                            # what the shop master would create, writing nothing
 npm run jobs -- customer-master-project    # publish it into customers
+npm run jobs -- place-tree-import --dry-run
+                           # the reviewed state › district › city › area file
+                           # (data/places/customer-places.csv) onto customers
+npm run jobs -- place-tree-import          # write it — idempotent
+npm run jobs -- resolve-typed-places       # place shops the review never saw,
+                           # from their sheet text (also runs nightly)
 npm run jobs:prod:sheets -- customer-master-sync
                            # the same against prod: .env.local FIRST for the
                            # Google credentials, .env.prod.local SECOND so its
@@ -737,6 +743,25 @@ the office's own, and the screen says which figure is which — a total computed
 on a phone from thirteen months of rows is how a salesman and an accounts clerk
 quote one shopkeeper two different debts with him listening. Only `confirmed`
 money moves the balance, which is the one rule it shares with `customerLedger`.
+
+**CUSTOMER ACCOUNTS IS THE ACCOUNTS APP'S CUSTOMER ACCOUNT, on the handset, and
+it is ASKED rather than pulled.** More → Customer accounts lists his book the
+way accounts read it — who owes, who is over the limit, whose supply is
+stopped, with a search over name, owner, city, phone and GST — from the
+office's own `outstandingPaise` already on the phone, so the list needs no
+signal. Opening one asks `/api/mbos/customer-account` for the account in
+full: the statement is `ledgerForCustomer`, the body `customerLedger` was split
+into so a device token could reach it after `scopedCustomer` has answered the
+scope question the session cannot; bills are `listBills`; the aging strip is
+`bucketise`; receipt wording is `receiptStatusSentence`. Nothing is recomputed
+on the phone except cutting a window out of balances the office already ran
+(`engines/account-view.ts`). The full history of every account on every phone
+is not a thing to sync, so the last answer per shop is kept in `kv`, and an
+account never opened online falls back on the thirteen-month window above via
+`fromPhone` — with every part the pull does not carry (aging, credit notes,
+which bill a payment cleared) set to NULL and said as "needs signal", never
+drawn as zero. The banner at the top says which of the three answers is on the
+screen. It is read-only: deciding about money stays accounts'.
 
 **A STATEMENT IS FOR AN ACCOUNT WE INVOICE, and the other two say so.** A lead
 has never ordered and a third-party shop is billed to its distributor, so both
@@ -4579,6 +4604,20 @@ since he picked it is dropped, counted and NOTIFIED — refusing the whole day
 over one stale id loses the nineteen he got right, and dropping it silently is
 how somebody walks a day missing a stop they chose.
 
+**A SALESMAN ANSWERS HIS ALLOCATION, as he answers a proposed day.** The
+handset's Journeys screen (`app/journeys.tsx`) lists and calendars every day
+in `PLAN_HISTORY_DAYS` (60) back and the month ahead, each open to its stops,
+and above them the cities and areas allocated to him. He accepts them, or asks
+for different ones: `mbos_territory_requests`, kind `accept` or `change`. A
+change travels as an approval of type `territory` and is decided on the
+ordinary Approvals queue — approving says yes, and the allocation itself is
+still changed by a person on the Territory screen, because what he typed is a
+town name and not a place the tree can be trusted to resolve unseen. An
+acceptance carries the allocation's SIGNATURE (`lib/territory-signature.ts`,
+mirrored byte for byte on the handset and pinned by a test), so it stops
+counting the moment somebody changes his areas and the Team screen says
+"accepted an earlier allocation" rather than vouching for cities he never saw.
+
 **THE HANDSET IS RELEASED BY A WORKFLOW, and never from somebody's laptop.**
 `.github/workflows/mbos-apk.yml` builds it, verifies the signature against the
 committed keystore with `apksigner`, and publishes to R2 under a versioned name
@@ -5236,6 +5275,22 @@ moved with it — it read `isManager(user)` to decide who may set a target,
 which was correct while `target.set` was manager-only and silently wrong the
 moment it widened; both doors now check `can(user.role, "target.set")`
 instead, the capability itself rather than a role that used to imply it.
+
+**AND THE SALESMAN SEES BOTH GRAINS, on one screen, never added together.**
+The handset's Performance screen drew his own target and stopped, so he could
+read how far he was from his month and not where the rest of it would come
+from. `customerTargetsCreditedTo` is the Targets screen's own population and
+its own `targetAchievedSql`, narrowed to the shops CREDITED to him
+(`creditedToSql`, not `ASSIGNED_TO_SQL`) — so a manager and the salesman quote
+one shop one figure, and `monthly-targets.test.ts` reads both and asserts it.
+It rides the sync as `customerTargets`, this month and last, REPLACED wholesale
+on the phone like the price list: achievement moves when accounts approve an
+order, which gives no row an `updated_at` a delta could carry. The card says
+in words that the two targets are not meant to add up. Money taken and not yet
+approved — the office's `pending_approval` plus whatever is still in this
+phone's outbox — is drawn BESIDE achievement and never inside it, because the
+revenue above it counts accepted orders only and a busy morning otherwise
+reads as a slow one.
 
 **The score is a CACHE, and not the same kind of column as
 `calls.next_step_*`.** `sales_performance` is rebuilt by
@@ -6402,6 +6457,30 @@ of `lead.verify` (candidates are filtered to it — `users.role = 'manager'` alo
 includes an Accounts-only manager), and never falls back to the Telecaller being
 verified; with no manager available the conversion is refused and the lead stays a
 Suspect.
+
+**WHERE A SHOP IS, IS THE REVIEWED TREE, and every list narrows by it.**
+`customers.city` is whatever the sheet typed — 1,165 spellings of a few hundred
+places — so it cannot be filtered on. `data/places/customer-places.csv` is the
+team's reviewed answer for every account on the book in September 2026,
+state › district › city › area, and `place-tree-import` writes it into
+`places` and the four `resolved_*_id` columns, stamping `place_decided_at`
+because a person checked it. `location-tree-reviewed.csv` beside it is the
+Tree sheet as it came back from review; the per-account file already carries
+its corrections. The customer table (CRM and Accounts) and the lead table
+(list and board) narrow by the same four through `placeFilterSql`, and the
+dropdowns cascade: a pick narrows the rungs below it and clears any pick there.
+
+**A shop the review never saw is MATCHED, never added.** `resolveTypedPlaces`
+reads the region (or the state named in the address) and finds the typed city
+as a city or an area UNDER that state; an ambiguous name leaves the shop at its
+state. It never creates a node, because a node one telecaller spelled once is
+how the 1,165 strings came about. It runs nightly, and at once when a customer
+is added or edited in the CRM or a lead is captured. Its rows carry
+`place_source = 'sheet'` and are re-read every night, so a corrected sheet
+moves them; a reviewed or hand-picked place is never touched. The sheet's own
+`city` and `region` are left alone — the projections own them — and every
+read that shows a town goes through `placeNameSql`, the tree's name falling
+back to the typed one.
 
 ## Testing
 
