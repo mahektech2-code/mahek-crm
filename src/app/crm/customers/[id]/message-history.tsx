@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Card } from "@/components/ui/primitives";
 import { stamp } from "@/lib/format";
 import { DeliveryStatus } from "@/components/whatsapp/delivery-status";
@@ -32,7 +33,10 @@ export type MessageEntry = {
 export function MessageHistory({
   messages,
   total,
+  chatHref,
 }: {
+  /** The whole conversation, both directions, live — the WhatsApp Chats tab. */
+  chatHref?: string;
   messages: MessageEntry[];
   /** Every message ever sent, not the page — the sentence has to stay true. */
   total: number;
@@ -51,6 +55,14 @@ export function MessageHistory({
               ? "1 message"
               : `${total} messages`}{" "}
           · every send is kept, whichever route it took
+          {chatHref ? (
+            <>
+              {" · "}
+              <Link href={chatHref} className="text-brand no-underline">
+                Open WhatsApp chat →
+              </Link>
+            </>
+          ) : null}
         </span>
       </div>
 

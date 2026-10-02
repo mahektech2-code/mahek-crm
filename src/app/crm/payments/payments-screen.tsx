@@ -673,6 +673,13 @@ export function PaymentsScreen({
                         title: r.held ? (r.heldReason ?? undefined) : undefined,
                       },
                       {
+                        // The whole conversation with them, live, before or
+                        // after chasing — what they last said is often the
+                        // answer to the call about to be made.
+                        label: "Open WhatsApp chat",
+                        onSelect: () => router.push(`/crm/whatsapp?tab=replies&chat=${r.customerId}`),
+                      },
+                      {
                         label: "See their bills",
                         onSelect: () => router.push(`/crm/bills?customer=${r.customerId}`),
                       },

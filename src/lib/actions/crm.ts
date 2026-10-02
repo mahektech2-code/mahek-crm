@@ -58,8 +58,11 @@ import {
   type TargetListFilters,
 } from "@/lib/services/worklist-services";
 import {
+  markThreadHandled as markThreadHandledService,
+  sendChatMessage as sendChatMessageService,
+} from "@/lib/services/whatsapp-chat-service";
+import {
   actionReply as actionReplyService,
-  answerReply as answerReplyService,
   advanceRun as advanceRunService,
   cancelMessage as cancelMessageService,
   confirmSent,
@@ -1610,11 +1613,25 @@ export async function cancelMessage(messageId: string): Promise<Result> {
   }
 }
 
-export async function answerReply(replyId: string, text: string): Promise<Result> {
+export async function sendChatMessage(input: {
+  key: string;
+  text: string;
+  idempotencyKey: string;
+}): Promise<Result> {
   try {
-    const r = await answerReplyService(replyId, String(text ?? ""));
-    refreshAll();
-    return r;
+    return await sendChatMessageService({
+      key: String(input?.key ?? ""),
+      text: String(input?.text ?? ""),
+      idempotencyKey: String(input?.idempotencyKey ?? ""),
+    });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function markThreadHandled(key: string, handled = true): Promise<Result> {
+  try {
+    return await markThreadHandledService(String(key ?? ""), handled === true);
   } catch (e) {
     return fromThrown(e);
   }

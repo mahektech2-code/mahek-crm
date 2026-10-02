@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   Badge,
   Button,
@@ -27,7 +26,6 @@ import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import {
   actionReply,
-  answerReply,
   advanceRun,
   archiveTemplate,
   cancelMessage,
@@ -46,8 +44,9 @@ import {
 } from "@/lib/actions/crm";
 import { applyMerge, fieldLabel, mergeValues, missingFields, usedFields } from "@/lib/merge";
 import { deliveryRoute } from "@/lib/whatsapp-delivery";
-import type { InboxReply, InboxShow, MessagePreview } from "@/lib/services/whatsapp-service";
-import { previewOf, sessionWindowEnds, whenLabel } from "@/lib/whatsapp-status";
+import type { MessagePreview } from "@/lib/services/whatsapp-service";
+import type { Conversation } from "@/lib/services/whatsapp-chat-service";
+import { ChatTab } from "./chat-tab";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { money, phoneDisplay, stamp } from "@/lib/format";
 import { CardGrid } from "@/components/ui/card-grid";
@@ -208,20 +207,12 @@ export function WhatsappScreen(props: {
   followUpIds: { stage1: string[]; slow: string[]; over60: string[] };
   /** The business date, for "Today, 10:42 am" — the clock is not read during render. */
   today: string;
-  /** What customers in this book wrote back. */
-  inbox: {
-    rows: InboxReply[];
-    openCount: number;
-    unknownOpenCount: number;
-    seesUnknown: boolean;
-    capped: boolean;
-    show: InboxShow;
-    q: string;
-    /** Why nothing can be sent from the business number right now, if so. */
-    answerBlockedWhy: string | null;
-    /** The server's clock, for the 24-hour window — never read during render. */
-    now: number;
-  };
+  /** The server's clock at render, for the 24-hour window. */
+  now: number;
+  /** Conversations with customers in this book, for the Chats tab's first paint. */
+  chats: { rows: Conversation[]; openCount: number; seesUnknown: boolean; capped: boolean };
+  /** A conversation named in the URL (`?chat=`), opened on arrival. */
+  initialChat: string | null;
 }) {
   const {
     scopeLabel,
@@ -246,6 +237,8 @@ export function WhatsappScreen(props: {
   const { run: act } = useToast();
 
   const [tab, setTab] = React.useState<Tab>(props.initialTab);
+  /** Conversations waiting for a reply — kept live by the Chats tab while it is open. */
+  const [chatOpen, setChatOpen] = React.useState(props.chats.openCount);
   const [connOpen, setConnOpen] = React.useState(false);
   const [groupOpen, setGroupOpen] = React.useState(false);
   const [editingTpl, setEditingTpl] = React.useState<Template | null>(null);
@@ -369,17 +362,20 @@ export function WhatsappScreen(props: {
           { key: "run", label: "Send run", count: run ? run.recipients.length : undefined },
           { key: "templates", label: "Templates", count: templates.length },
           { key: "log", label: "Log", count: messageTotal },
-          { key: "replies", label: "Replies", count: props.inbox.openCount },
+          // Still `replies` in the URL, so every link already sent keeps working.
+          { key: "replies", label: "Chats", count: chatOpen },
         ]}
       />
 
       {tab === "replies" ? (
-        <RepliesTab
-          inbox={props.inbox}
+        <ChatTab
+          initial={props.chats}
+          initialKey={props.initialChat}
           today={props.today}
+          now={props.now}
           scopeLabel={scopeLabel}
           showAssignee={isManager}
-          onChanged={() => router.refresh()}
+          onOpenCount={setChatOpen}
         />
       ) : null}
 
@@ -2106,363 +2102,4 @@ function TemplateDrawerBody({
       ) : null}
     </Drawer>
   );
-}
-
-/* ------------------------------------------------------------ replies tab */
-
-/**
- * WHAT CUSTOMERS WROTE BACK, beside what we had sent them.
- *
- * Only this person's book — the server scopes it; nothing here narrows or
- * widens it. Each reply carries the message it most likely answers, because
- * "Will pay Friday" means nothing until you know it was the stage 2 reminder.
- * "Needs reply" is the working list and the default; "All" is the last month,
- * handled ones included, so a telecaller can find what a customer said
- * without hunting through their phone.
- */
-function RepliesTab({
-  inbox,
-  today: businessDay,
-  scopeLabel,
-  showAssignee,
-  onChanged,
-}: {
-  inbox: {
-    rows: InboxReply[];
-    openCount: number;
-    unknownOpenCount: number;
-    seesUnknown: boolean;
-    capped: boolean;
-    show: InboxShow;
-    q: string;
-    /** Why nothing can be sent from the business number right now, if so. */
-    answerBlockedWhy: string | null;
-    /** The server's clock, for the 24-hour window — never read during render. */
-    now: number;
-  };
-  today: string;
-  scopeLabel: string;
-  showAssignee: boolean;
-  onChanged: () => void;
-}) {
-  const router = useRouter();
-  const search = useSearchParams();
-  const { run: act } = useToast();
-  const [draft, setDraft] = React.useState(inbox.q);
-  const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-  const navigate = (patch: Record<string, string | undefined>) => {
-    const next = new URLSearchParams(search.toString());
-    next.set("tab", "replies");
-    for (const [k, v] of Object.entries(patch)) {
-      if (v) next.set(k, v);
-      else next.delete(k);
-    }
-    router.push(`?${next.toString()}`, { scroll: false });
-  };
-
-  return (
-    <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2.5 border-b border-line px-4 py-2.5">
-        {[
-          { key: "open" as const, label: `Needs reply · ${inbox.openCount}` },
-          { key: "all" as const, label: "All, last 30 days" },
-          // Only for somebody who sees the whole book: nobody else is shown
-          // a number that belongs to no book.
-          ...(inbox.seesUnknown
-            ? [{ key: "unknown" as const, label: `Unknown numbers · ${inbox.unknownOpenCount} open` }]
-            : []),
-        ].map((o) => (
-          <button
-            key={o.key}
-            onClick={() => navigate({ show: o.key === "open" ? undefined : o.key })}
-            className={
-              inbox.show === o.key
-                ? "h-8 cursor-pointer rounded-[4px] border border-brand bg-brand-soft px-2.5 text-[13px] font-medium text-[#5223E0]"
-                : "h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-body hover:bg-canvas"
-            }
-          >
-            {o.label}
-          </button>
-        ))}
-        <div className="w-[260px]">
-        <Input
-          value={draft}
-          onChange={(e) => {
-            const v = e.target.value;
-            setDraft(v);
-            clearTimeout(timer.current);
-            timer.current = setTimeout(() => navigate({ rq: v || undefined }), 250);
-          }}
-          placeholder="Search customer or reply"
-          className="h-8"
-        />
-        </div>
-        <span className="flex-1" />
-        <span className="text-[13px] text-muted">
-          {scopeLabel} ·{" "}
-          {inbox.seesUnknown
-            ? "every reply, including numbers that are not a customer or lead"
-            : showAssignee
-              ? "replies from your team's customers and leads"
-              : "replies from your customers and leads only"}
-        </span>
-      </div>
-
-      {inbox.rows.length ? (
-        inbox.rows.map((r) => (
-          <div
-            key={r.id}
-            className={`border-b border-divider px-4 py-3.5 last:border-b-0 ${
-              r.actioned ? "" : "border-l-[3px] border-l-warn"
-            }`}
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              {r.customerId ? (
-                <Link
-                  href={`/crm/customers/${r.customerId}`}
-                  className="text-sm font-medium text-ink no-underline"
-                >
-                  {r.customerName}
-                </Link>
-              ) : (
-                <span className="text-sm font-medium text-ink">
-                  {r.senderName ?? (r.waId ? phoneDisplay(r.waId.slice(-10)) : "Unknown sender")}
-                </span>
-              )}
-              {r.customerId ? null : (
-                <Badge tone="danger" title="This number is not on any customer or lead. Put it on the right record and their next reply files itself.">
-                  Unknown number · not a customer or lead
-                </Badge>
-              )}
-              {r.kind === "lead" ? <Badge tone="brand">Lead</Badge> : null}
-              {r.thirdParty ? <Badge tone="neutral">Third party</Badge> : null}
-              {r.actioned ? (
-                <Badge tone="success">
-                  Handled
-                  {r.actionedByName ? ` by ${r.actionedByName}` : ""}
-                  {r.actionedAt ? ` · ${whenLabel(r.actionedAt, businessDay)}` : ""}
-                </Badge>
-              ) : (
-                <Badge tone="warn">Needs reply</Badge>
-              )}
-              {showAssignee && r.customerId ? (
-                <span className="text-[12px] text-muted">
-                  · {r.assignedToName ? `${r.assignedToName}'s customer` : "Unassigned"}
-                </span>
-              ) : null}
-              <span className="flex-1" />
-              <span className="text-[12px] text-muted">{whenLabel(r.receivedAt, businessDay)}</span>
-            </div>
-
-            {/* What they wrote — the point of the row, so it is the loudest thing on it. */}
-            <div className="mt-2 max-w-[760px] rounded-[8px] rounded-tl-[2px] border border-line bg-success-soft px-3 py-2">
-              <p className="text-sm whitespace-pre-wrap text-ink">{r.message}</p>
-              <div className="mt-1 text-[11px] text-muted">
-                {r.senderName ? `${r.senderName} · ` : ""}
-                {r.phone
-                  ? phoneDisplay(r.phone)
-                  : r.waId
-                    ? phoneDisplay(r.waId.slice(-10))
-                    : "number on WhatsApp"}
-              </div>
-            </div>
-
-            <div className="mt-2 text-[12px] text-muted">
-              {r.inReplyTo ? (
-                <details className="group">
-                  <summary className="cursor-pointer list-none">
-                    In reply to{" "}
-                    <span className="text-body">{r.inReplyTo.templateName ?? "our message"}</span>
-                    {" · "}
-                    {whenLabel(r.inReplyTo.wentAt, businessDay)}
-                    {" · "}
-                    {r.inReplyTo.viaRule
-                      ? "sent by an automatic rule"
-                      : `sent by ${r.inReplyTo.sentByName ?? "the team"}`}
-                    {" · "}
-                    <span className="group-open:hidden">“{previewOf(r.inReplyTo.body, 90)}” </span>
-                    <span className="text-brand group-open:hidden">Show</span>
-                    <span className="hidden text-brand group-open:inline">Hide</span>
-                  </summary>
-                  <p className="mt-1.5 max-w-[760px] rounded-[6px] bg-canvas px-3 py-2 text-[13px] whitespace-pre-wrap text-body">
-                    {r.inReplyTo.body}
-                  </p>
-                </details>
-              ) : r.customerId ? (
-                <span>They wrote first — nothing had been sent to them before this.</span>
-              ) : (
-                <span>Nobody on the book has this number, so there is nothing of ours to show it against.</span>
-              )}
-            </div>
-
-            <AnswerArea
-              key={`${r.id}:${r.answer?.status ?? "none"}`}
-              reply={r}
-              today={businessDay}
-              now={inbox.now}
-              blockedWhy={inbox.answerBlockedWhy}
-              onSent={onChanged}
-            />
-
-            <div className="mt-2.5 flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={async () => {
-                  const res = await act(actionReply(r.id, !r.actioned));
-                  if (res.ok) onChanged();
-                }}
-              >
-                {r.actioned ? "Mark as needing a reply" : "Mark handled"}
-              </Button>
-              {/* No "open in WhatsApp" link: the business number is on the
-                  WhatsApp Business API, so nobody can open its chats in their
-                  own WhatsApp — and their own number is not the one the
-                  customer wrote to. Answering is Send reply, above. */}
-              {r.customerId ? (
-                <Link
-                  href={`/crm/customers/${r.customerId}`}
-                  className="inline-flex h-7 items-center rounded-[4px] border border-line px-2.5 text-[13px] text-body no-underline hover:bg-canvas"
-                >
-                  Open record
-                </Link>
-              ) : null}
-            </div>
-          </div>
-        ))
-      ) : (
-        <EmptyState
-          title={
-            inbox.q
-              ? "No reply matches that search"
-              : inbox.show === "open"
-                ? "Nothing waiting for a reply"
-                : inbox.show === "unknown"
-                  ? "No replies from unknown numbers"
-                  : "No replies in the last 30 days"
-          }
-          body={
-            inbox.show === "open"
-              ? "Every reply from your customers and leads has been handled."
-              : "Replies arrive here when a customer writes back on WhatsApp."
-          }
-        />
-      )}
-      {inbox.capped ? (
-        <div className="border-t border-line px-4 py-2.5 text-[13px] text-muted">
-          Showing the newest 200 — search to find an older one.
-        </div>
-      ) : null}
-    </Card>
-  );
-}
-
-/**
- * ANSWER FROM THE BUSINESS NUMBER, without leaving the CRM.
- *
- * What was said back is drawn under the customer's message like a chat. Before
- * that, a box — typed or dictated — that sends a WhatsApp session message
- * through Wati. WhatsApp allows free text only within 24 hours of the
- * customer's last message, so the box says when that window closes, and once
- * it has, points at an approved template instead of offering a box that would
- * be refused. A failed answer keeps its words for another try.
- */
-function AnswerArea({
-  reply: r,
-  today: businessDay,
-  now,
-  blockedWhy,
-  onSent,
-}: {
-  reply: InboxReply;
-  today: string;
-  now: number;
-  blockedWhy: string | null;
-  onSent: () => void;
-}) {
-  const { run: act } = useToast();
-  const [text, setText] = React.useState(r.answer?.status === "failed" ? r.answer.body : "");
-  const [busy, setBusy] = React.useState(false);
-  const ends = sessionWindowEnds(r.lastInboundAt);
-  const open = ends !== null && ends.getTime() > now;
-
-  if (r.answer && r.answer.status !== "failed") {
-    return (
-      <div className="mt-2 flex justify-end">
-        <div className="max-w-[640px] rounded-[8px] rounded-tr-[2px] border border-line bg-brand-soft px-3 py-2">
-          <p className="text-sm whitespace-pre-wrap text-ink">{r.answer.body}</p>
-          <div className="mt-1 text-[11px] text-muted">
-            {r.answer.status === "sending" ? "Sending…" : "✓ Sent from the business number"}
-            {r.answer.byName ? ` · ${r.answer.byName}` : ""}
-            {r.answer.at ? ` · ${whenLabel(r.answer.at, businessDay)}` : ""}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-2.5 max-w-[760px] rounded-[6px] border border-line px-3 py-2.5">
-      {r.answer?.status === "failed" ? (
-        <div className="mb-2 text-[12px] text-danger">
-          Your reply did not go: {r.answer.failure ?? "Wati did not accept it."} Edit it and send again.
-        </div>
-      ) : null}
-      {blockedWhy ? (
-        <p className="text-[13px] text-muted">{blockedWhy}</p>
-      ) : !open ? (
-        <p className="text-[13px] text-muted">
-          WhatsApp only allows a free-text reply within 24 hours of the customer&rsquo;s last
-          message, and that closed {ends ? inline(whenLabel(ends.toISOString(), businessDay)) : "already"}.
-          {r.customerId ? (
-            <>
-              {" "}
-              <Link href={`/crm/whatsapp?customer=${r.customerId}`} className="text-brand no-underline">
-                Send an approved template instead →
-              </Link>
-            </>
-          ) : null}
-        </p>
-      ) : (
-        <>
-          <VoiceTextarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onDictate={setText}
-            maxLength={4000}
-            className="h-16"
-            placeholder="Reply from the business number…"
-          />
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={busy || !text.trim()}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  const res = await act(answerReply(r.id, text));
-                  if (res.ok) onSent();
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              {busy ? "Sending…" : "Send reply"}
-            </Button>
-            <span className="text-[12px] text-muted">
-              Goes from the business number on WhatsApp · you can reply freely until{" "}
-              {ends ? inline(whenLabel(ends.toISOString(), businessDay)) : "-"}
-            </span>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-/** "Today, 9 am" mid-sentence is "today, 9 am"; "29 Sep" keeps its capital. */
-function inline(label: string): string {
-  return label.charAt(0).toLowerCase() + label.slice(1);
 }

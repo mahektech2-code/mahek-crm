@@ -555,7 +555,11 @@ export function RecordScreen({
 
       <div className="grid grid-cols-[minmax(0,1fr)_clamp(280px,24%,380px)] items-start gap-4">
         <div className="flex flex-col gap-4">
-        <MessageHistory messages={messages} total={messageTotal} />
+        <MessageHistory
+          messages={messages}
+          total={messageTotal}
+          chatHref={`/crm/whatsapp?tab=replies&chat=${customer.id}`}
+        />
 
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-divider px-5 py-3.5">

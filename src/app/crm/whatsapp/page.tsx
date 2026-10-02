@@ -10,11 +10,11 @@ import {
   messageCount,
   listReplies,
   listTemplates,
-  repliesInbox,
   listUnconfirmedCopies,
 } from "@/lib/services/whatsapp-service";
 import { clock, longDate, nowMs } from "@/lib/format";
 import { WhatsappScreen } from "./whatsapp-screen";
+import { listConversations } from "@/lib/services/whatsapp-chat-service";
 import { specKey } from "@/lib/wati-templates";
 
 export const metadata = { title: "WhatsApp - MahekOne CRM" };
@@ -32,10 +32,9 @@ export default async function WhatsappPage({
    * The Replies tab's two filters ride on the URL like every list's: "these
    * three, nobody has answered them" is a link one person sends another.
    */
-  searchParams: Promise<{ customer?: string; tab?: string; show?: string; rq?: string }>;
+  searchParams: Promise<{ customer?: string; tab?: string; chat?: string }>;
 }) {
-  const { customer, tab, show, rq } = await searchParams;
-  const inboxShow = show === "all" || show === "unknown" ? show : "open";
+  const { customer, tab, chat } = await searchParams;
   const user = await requireUser();
   const scope = await getScope(user);
   const now = nowMs();
@@ -80,10 +79,11 @@ export default async function WhatsappPage({
     deliveryContext(),
   ]);
 
-  // Read on every load, not only on the Replies tab: its count is on the tab
+  // Read on every load, not only on the Chats tab: its count is on the tab
   // itself, and a tab whose badge is only right once you are already on it
-  // tells nobody to go there.
-  const inbox = await repliesInbox({ show: inboxShow, q: rq });
+  // tells nobody to go there. A conversation named in the URL opens on the
+  // "last 30 days" list, so it is on the list it is opened from.
+  const chats = await listConversations({ show: chat ? "all" : "open" });
 
   // Whether ANY message can go through the API right now. Per template it is
   // narrower still — an unlinked template is manual whatever this says — and
@@ -162,19 +162,9 @@ export default async function WhatsappPage({
         tab === "run" || tab === "templates" || tab === "log" || tab === "replies" ? tab : "send"
       }
       today={day}
-      inbox={{
-        ...inbox,
-        show: inboxShow,
-        q: rq?.slice(0, 100) ?? "",
-        // Answering goes through the API from the business number, so it
-        // needs exactly what every API send needs.
-        answerBlockedWhy: apiOn
-          ? null
-          : !delivery.serviceOn
-            ? "WhatsApp sending is switched off in the Founder Command Centre, so nothing can go from the business number."
-            : "No Wati key is configured, so nothing can go from the business number.",
-        now,
-      }}
+      now={now}
+      chats={chats}
+      initialChat={chat?.slice(0, 80) ?? null}
       customers={customerPayload}
       templates={templates.map((t) => ({
         id: t.id,
