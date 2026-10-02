@@ -257,6 +257,67 @@ export const NEXT_ACTION_LABEL: Record<string, string> = (() => {
 })();
 
 /**
+ * Every action code that exists anywhere, as the closed list the language
+ * model may name. It is the codes only: which of them is OFFERED for a given
+ * call is still `nextActionsFor`, asked by the decide layer and again by the
+ * form, so the model naming a code never makes it valid.
+ */
+export const ALL_NEXT_ACTION_CODES = Object.keys(NEXT_ACTION_LABEL) as [
+  string,
+  ...string[],
+];
+
+/**
+ * THE REMINDER TYPE THAT ALREADY SAYS WHAT AN ACTION SAYS.
+ *
+ * Only the two actions that are nothing more than "ring them on that day":
+ * `call_back` is the same errand as the call-back an outcome writes from its
+ * own date, and `follow_up_on_promise` is the same errand as the reminder a
+ * payment promise writes. Every other action carries an errand of its own —
+ * "send the price", "arrange a visit" — which a call-back reminder does not
+ * mean, so it is never covered.
+ */
+const COVERED_BY_REMINDER_TYPE: Record<string, string> = {
+  call_back: "call_back",
+  follow_up_on_promise: "payment_promise",
+};
+
+/**
+ * Is the reminder a Next Action would write already written by this call's
+ * outcome?
+ *
+ * ONE PROMISE IS ONE REMINDER. "Follow up on 3 Oct" and "Next action: call
+ * again, by 3 Oct" are a customer asking to be rung once, said in two boxes.
+ *
+ * The condition, exactly — every one must hold:
+ *   1. the call chose at least one action;
+ *   2. EVERY chosen action is in `COVERED_BY_REMINDER_TYPE` — a set that also
+ *      holds "send price" is not covered, because that errand would be lost;
+ *   3. for each action, the outcome wrote a reminder of the type that action
+ *      is covered by, in this same save;
+ *   4. on the same working day as the action's own (both already moved off a
+ *      non-working day by the caller, so a Sunday and the Monday it becomes
+ *      compare equal).
+ *
+ * Two reminders on different days are two promises and both stand — "call
+ * tomorrow, and again on Friday" — as are any two of different errands.
+ */
+export function nextActionCoveredByOutcome(
+  actions: string[],
+  actionDay: string,
+  outcomeReminders: Array<{ type: string; day: string }>,
+): boolean {
+  if (!actions.length) return false;
+  return actions.every((a) => {
+    const type = COVERED_BY_REMINDER_TYPE[a];
+    return (
+      type !== undefined &&
+      outcomeReminders.some((r) => r.type === type && r.day === actionDay)
+    );
+  });
+}
+
+/**
  * The actions that MEAN a date — somebody has undertaken to do a thing, and a
  * thing undertaken with no day against it is the definition of how a call gets
  * forgotten. The panel asks for one and `saveInteraction` turns it into a
@@ -301,6 +362,65 @@ const DATED_ACTIONS = new Set([
 
 export function wantsDate(actions: string[]): boolean {
   return actions.some((a) => DATED_ACTIONS.has(a));
+}
+
+/**
+ * WHAT THE NEXT ACTION BOX HOLDS AFTER ANYTHING ABOUT THE CALL CHANGES — a new
+ * outcome, a new reason, or the assistant proposing one.
+ *
+ * Pure, and asked about the INCOMING reason and outcome rather than whatever a
+ * component's state says this render, because React state read inside the
+ * handler that is about to change it is the previous call's answer.
+ *
+ *   1. What the telecaller already chose is kept, minus any code the new
+ *      outcome and reason no longer offer — and minus the day, where nothing
+ *      dated is left. They are never replaced by a proposal.
+ *   2. Only where nothing is chosen does a proposal go in, and only the codes
+ *      `nextActionsFor` offers for THIS call. `no_follow_up` beside another
+ *      code is a contradiction nobody can read back, so such a proposal is
+ *      refused whole rather than trimmed.
+ *   3. A proposed day goes in only for a dated action and only if it is not in
+ *      the past; anything else leaves the day empty for the telecaller.
+ */
+export function reconcileNextActions(args: {
+  current: string[];
+  currentDate: string;
+  reason: string | null;
+  outcome: string | null;
+  proposed?: string[];
+  proposedDate?: string;
+  today: string;
+}): { actions: string[]; date: string; filled: boolean; dropped: boolean } {
+  const offered = new Set(
+    nextActionsFor(args.reason, args.outcome).map((a) => a.code),
+  );
+  const kept = args.current.filter((c) => offered.has(c));
+  const dropped = kept.length !== args.current.length;
+  if (kept.length) {
+    return {
+      actions: kept,
+      date: wantsDate(kept) ? args.currentDate : "",
+      filled: false,
+      dropped,
+    };
+  }
+  const proposed = [...new Set(args.proposed ?? [])].filter((c) =>
+    offered.has(c),
+  );
+  const usable =
+    proposed.length > 0 &&
+    !(proposed.includes(EXCLUSIVE_ACTION) && proposed.length > 1);
+  if (!usable) return { actions: [], date: "", filled: false, dropped };
+  const dateOk =
+    Boolean(args.proposedDate) &&
+    wantsDate(proposed) &&
+    (args.proposedDate as string) >= args.today;
+  return {
+    actions: proposed,
+    date: dateOk ? (args.proposedDate as string) : "",
+    filled: true,
+    dropped,
+  };
 }
 
 /**

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Badge, Button, Textarea, cx } from "@/components/ui/primitives";
+import { Badge, Button, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -25,6 +25,7 @@ import {
   rescheduleReminder,
 } from "@/lib/actions/crm";
 import { SUGGESTION_STATE_LABEL } from "@/lib/call-intel-labels";
+import { NEXT_ACTION_LABEL } from "@/lib/call-reasons";
 import { money } from "@/lib/format";
 import type { CallAnalysis, Suggestion } from "@/lib/engines/call-intel-decide";
 import { dayLabel } from "@/lib/engines/call-intel-dates";
@@ -108,6 +109,7 @@ export function CallAssistant({
   notes,
   onNotes,
   onApply,
+  onEnabled,
   complaintCategories,
   maxComplaintImages,
 }: {
@@ -119,6 +121,12 @@ export function CallAssistant({
   /** Receives the WHOLE new note — the dictated English joined to what was there. */
   onNotes: (next: string) => void;
   onApply: (a: AssistantApply) => void;
+  /**
+   * Whether the assistant is switched on, told to the panel as soon as it is
+   * known. The panel keeps the Notes box's own microphone only where this
+   * card is NOT offering one — see `micOnNotes` there.
+   */
+  onEnabled?: (enabled: boolean) => void;
   complaintCategories: Array<{ value: string; label: string }>;
   maxComplaintImages: number;
 }) {
@@ -172,12 +180,15 @@ export function CallAssistant({
   React.useEffect(() => {
     let live = true;
     callAssistantStatus().then((s) => {
-      if (live) setEnabled(s.enabled);
+      if (!live) return;
+      setEnabled(s.enabled);
+      onEnabled?.(s.enabled);
     });
     return () => {
       live = false;
     };
-  }, []);
+    // `onEnabled` is the panel's state setter: stable, so this runs once.
+  }, [onEnabled]);
 
   if (!enabled || interactionType === "order_received") return null;
 
@@ -390,10 +401,15 @@ export function CallAssistant({
     onApply({ suggestion: s, draftId, direction });
     setAppliedKey(s.key + (s.fill?.outcome ?? ""));
     void markSuggestionAppliedAction(draftId, s.fill?.outcome ?? s.intent);
-    /* The form it just filled is under this card; take the telecaller there,
-       because checking it is the next thing they have to do. */
+    /* The form it just filled is under this card and the Notes box; take the
+       telecaller to the form's start, because checking it is the next thing
+       they have to do. The panel draws the anchor; the card's own next
+       sibling is now the Notes box and would stop one box short. */
     requestAnimationFrame(() =>
-      sectionRef.current?.nextElementSibling?.scrollIntoView({
+      (
+        document.getElementById("call-log-form-start") ??
+        sectionRef.current?.nextElementSibling
+      )?.scrollIntoView({
         behavior: "smooth",
         block: "start",
       }),
@@ -442,14 +458,10 @@ export function CallAssistant({
 
   const starter = (
     <div className="flex flex-col gap-2">
-      {/* The SAME note as the form's own box further down — one piece of state,
-          two places to write it — so typing here is typing the call's note. */}
-      <Textarea
-        rows={3}
-        value={notes}
-        onChange={(e) => onNotes(e.target.value)}
-        placeholder="Or type it: e.g. “Payment 50 hazar after 15 days, also wants a sample of PU sealer”"
-      />
+      {/* No note box here any more: the call's one Notes box sits directly
+          under this card (call-panel.tsx), and "Read what I typed" reads it.
+          A second textarea over the same state was two places to write one
+          note. */}
       <div className="flex flex-wrap items-center gap-2">
         <DictateButton
           modalTitle="Tell us about the call"
@@ -469,8 +481,8 @@ export function CallAssistant({
           disabled={!typedReady || phase.kind === "reading"}
           title={
             typedReady
-              ? "Read the note already in the box"
-              : "Type a note first, or speak"
+              ? "Read the note already in the Notes box below"
+              : "Type a note in the Notes box below first, or speak"
           }
           onClick={() => read(null, notes)}
         >
@@ -487,9 +499,9 @@ export function CallAssistant({
           Just say what happened
         </div>
         <p className="mt-0.5 mb-3 text-[13px] text-body">
-          Speak in any language. The assistant picks the outcome, works out the
-          dates and fills the form — you check it and save. It never saves
-          anything itself.
+          Speak in any language. The assistant picks the outcome, the next
+          action, works out the dates and fills the form — you check it and
+          save. It never saves anything itself.
         </p>
         {starter}
         {phase.kind === "failed" ? (
@@ -956,6 +968,7 @@ function LiveReading({
               {primary.fill?.payAmountRupees ? (
                 <li>{money(primary.fill.payAmountRupees * 100)}</li>
               ) : null}
+              <NextActionLine fill={primary.fill} />
               {primary.fill?.orderLines?.map((l) => (
                 <li key={l.productId}>
                   {l.name} —{" "}
@@ -997,6 +1010,35 @@ function LiveReading({
         </div>
       ) : null}
     </div>,
+  );
+}
+
+/**
+ * What the assistant heard them say they will do next, as one list item — the
+ * action in the form's own words and the day where one was resolved. Where the
+ * day (or the whole action) was left for the telecaller, the reason is said
+ * rather than leaving an empty box unexplained.
+ */
+function NextActionLine({ fill }: { fill: Suggestion["fill"] }) {
+  if (!fill?.nextActions?.length && !fill?.nextActionNote) return null;
+  return (
+    <li>
+      {fill.nextActions?.length ? (
+        <>
+          Next action:{" "}
+          <span className="font-medium">
+            {fill.nextActions.map((a) => NEXT_ACTION_LABEL[a] ?? a).join(", ")}
+          </span>
+          {fill.nextActionDate ? ` · ${dayLabel(fill.nextActionDate)}` : ""}
+        </>
+      ) : null}
+      {fill.nextActionNote ? (
+        <span className="text-warn-ink">
+          {fill.nextActions?.length ? " — " : ""}
+          {fill.nextActionNote}
+        </span>
+      ) : null}
+    </li>
   );
 }
 
@@ -1077,6 +1119,11 @@ function SuggestionCard({
             {money(s.fill.payAmountRupees * 100)}
           </span>
         </p>
+      ) : null}
+      {s.fill?.nextActions?.length || s.fill?.nextActionNote ? (
+        <ul className="mt-1 text-[13px] text-body">
+          <NextActionLine fill={s.fill} />
+        </ul>
       ) : null}
       {s.fill?.orderLines?.length ? (
         <ul className="mt-1 text-[13px] text-body">

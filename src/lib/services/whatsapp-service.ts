@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -1013,10 +1013,21 @@ export const WA_MESSAGE_LIMIT = 300;
 
 type MessageFilters = { status?: string; mode?: string; customerId?: string };
 
-/** The scope and the filters, once, so the list and the count cannot disagree. */
+/**
+ * The scope and the filters, once, so the list and the count cannot disagree.
+ *
+ * WHOSE CUSTOMER, OR WHO SENT IT — not only who sent it. This read
+ * `waMessages.userId` alone, and every message an automatic rule sends is
+ * stored under whoever set the rule up. So a telecaller's Log never showed a
+ * single reminder their own customers had received: Poonam's book of 349 had
+ * 22 in a month and her Log was empty. The customer's book is the CRM's rule
+ * for every other list (`scopedToUsers`); the sender half stays so a message
+ * somebody sent to an account since moved out of their book is still theirs
+ * to see. Needs `customers` joined — both callers do.
+ */
 function messageWhere(ids: string[] | null, filters?: MessageFilters) {
   return and(
-    ids ? inArray(waMessages.userId, ids) : undefined,
+    ids ? or(scopedToUsers(ids), inArray(waMessages.userId, ids)) : undefined,
     filters?.status ? eq(waMessages.status, filters.status as never) : undefined,
     filters?.mode ? eq(waMessages.mode, filters.mode as never) : undefined,
     filters?.customerId ? eq(waMessages.customerId, filters.customerId) : undefined,
@@ -1039,6 +1050,7 @@ export async function messageCount(filters?: MessageFilters): Promise<number> {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(waMessages)
+    .innerJoin(customers, eq(customers.id, waMessages.customerId))
     .where(messageWhere(ids, filters));
 
   return Number(row?.n ?? 0);
@@ -1064,6 +1076,13 @@ export async function listMessages(filters?: MessageFilters) {
     ...message,
     customerName,
     userName,
+    /**
+     * Sent by this person (or, for a manager, their team) — what the Log
+     * showed before it widened to the customer's book. The "awaiting
+     * confirmation" banner reads this: confirming a copy is the word of the
+     * person who pasted it, never of whoever owns the customer.
+     */
+    sentInScope: ids === null || ids.includes(message.userId),
   }));
 }
 

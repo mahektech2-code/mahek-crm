@@ -389,3 +389,38 @@ test("the Replies tab shows a telecaller only their own customers' replies, with
   assert.equal((await repliesInbox({ show: "all", q: "rate list" })).rows.length, 1, "search reads the reply text");
   setTestUser(null);
 });
+
+test("the Log shows a telecaller every message to their own customers, including the ones an automatic rule sent", async () => {
+  const { listMessages, messageCount } = await import("@/lib/services/whatsapp-service");
+  const person = async (name: string) => {
+    const [u] = await db.insert(users).values({
+      id: id("usr"), name, email: `${name.toLowerCase()}-${randomUUID().slice(0, 4)}@t.local`, passwordHash: "x", role: "associate", initials: "XX",
+    }).returning();
+    await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "crm", role: "associate" });
+    return u;
+  };
+  const poonam = await person("Poonam");
+  const rakesh = await person("Rakesh");
+  await db.update(customers).set({ ownerId: poonam.id }).where(eq(customers.id, shopId));
+  const rakeshShop = id("cus");
+  await db.insert(customers).values({ id: rakeshShop, name: "Rakesh Shop", ownerId: rakesh.id, contactPerson: "R", phone: "9820077777", city: "Pune" });
+
+  const msg = (customerId: string, userId: string, over: Partial<typeof waMessages.$inferInsert> = {}) => ({
+    id: id("wam"), customerId, userId, destKind: "personal" as const, resolvedDestination: "9820011001",
+    body: "x", status: "sent" as const, mode: "automatic" as const, ...over,
+  });
+  const ruleSent = msg(shopId, founder.id, { triggerId: "trg_x" });
+  const hersElsewhere = msg(rakeshShop, poonam.id, { status: "copied", mode: "manual" });
+  const rakeshs = msg(rakeshShop, rakesh.id);
+  await db.insert(waMessages).values([ruleSent, hersElsewhere, rakeshs]);
+
+  setTestUser(poonam);
+  const log = await listMessages();
+  const seen = new Map(log.map((m) => [m.id, m]));
+  assert.ok(seen.has(ruleSent.id), "the rule's reminder to her customer is in her log");
+  assert.equal(seen.get(ruleSent.id)!.sentInScope, false, "but it is not her copy to confirm");
+  assert.equal(seen.get(hersElsewhere.id)?.sentInScope, true, "what she sent stays hers");
+  assert.ok(!seen.has(rakeshs.id), "nobody else's customer");
+  assert.equal(await messageCount(), 2, "the count agrees with the list");
+  setTestUser(null);
+});
