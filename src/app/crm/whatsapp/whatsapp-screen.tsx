@@ -126,6 +126,8 @@ type Message = {
   copiedAt: string | null;
   confirmedSentAt: string | null;
   failureReason: string | null;
+  /** Sent by this person (or their team) — the banner's subject. See `listMessages`. */
+  sentInScope: boolean;
 };
 
 /** The message lifecycle, in the words a telecaller would use. */
@@ -236,8 +238,10 @@ export function WhatsappScreen(props: {
   const [editingTpl, setEditingTpl] = React.useState<Template | null>(null);
 
   // Copied but never confirmed. Counted from the server's own sweep for
-  // managers; telecallers see their own copies still sitting unconfirmed.
-  const unconfirmed = messages.filter((m) => m.status === "copied");
+  // managers; telecallers see their own copies still sitting unconfirmed —
+  // their OWN: the log now carries every message to their customers, and a
+  // copy somebody else made is not theirs to confirm.
+  const unconfirmed = messages.filter((m) => m.status === "copied" && m.sentInScope);
 
   return (
     <div className="px-6 pt-6 pb-10">
@@ -1607,7 +1611,7 @@ function LogTab({
 
   // Copied but never confirmed. Counted from the server's own sweep for
   // managers; telecallers see their own copies still sitting unconfirmed.
-  const unconfirmed = messages.filter((m) => m.status === "copied");
+  const unconfirmed = messages.filter((m) => m.status === "copied" && m.sentInScope);
 
   const filtered = messages.filter((m) => {
     const q = query.trim().toLowerCase();

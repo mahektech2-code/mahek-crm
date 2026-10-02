@@ -193,6 +193,7 @@ export default async function WhatsappPage({
         copiedAt: m.copiedAt?.toISOString() ?? null,
         confirmedSentAt: m.confirmedSentAt?.toISOString() ?? null,
         failureReason: m.failureReason,
+        sentInScope: m.sentInScope,
       }))}
       replies={replies.map((r) => ({
         id: r.id,
