@@ -442,6 +442,7 @@ const ROUTES: Record<string, Route> = {
    */
   "leave/update": { readsDirectly: ["id", "state", "cancelReason"] },
   "tour/create": { schema: "tourSchema" },
+  "territory_request/create": { schema: "territoryRequestSchema" },
   "competitor/create": { schema: "competitorSchema" },
   "lead_validation/create": { schema: "leadValidationSchema" },
   "internal_note/create": { schema: "internalNoteSchema" },
@@ -545,6 +546,14 @@ const NOT_WANTED: Record<string, string> = {
   "sample/update.customerId": "sent on every mark so one landing on the CREATE branch is not refused for want of it",
   "sample/create.leadId": "the office collapsed leads and customers into one `customers` row; `customerId` IS the lead",
   "attendance/update.approvalId": "the approval syncs as its own entity naming this day as its subject",
+
+  /*
+   * THE HANDSET'S OWN READING OF AN ANSWER IT CANNOT GIVE. A change request is
+   * decided on the Approvals queue, and a handset that could set its own
+   * verdict would be approving itself; the server derives the state from the
+   * approval instead.
+   */
+  "territory_request/create.state": "shown on the phone until the office answers; the verdict comes from mbos_approvals, never from a handset",
 };
 
 test("every field the handset sends is one the server's schema accepts", () => {

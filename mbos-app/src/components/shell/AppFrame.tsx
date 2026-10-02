@@ -89,6 +89,7 @@ export const FROM_LABEL: Record<string, string> = {
   customers: 'Customers',
   home: 'Home',
   journey: 'Journey',
+  journeys: 'Your journeys',
   customer: 'Customer',
   visit: 'Visit',
   order: 'Order',

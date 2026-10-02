@@ -8021,6 +8021,36 @@ export const mbosTours = pgTable(
   (t) => [index("mbos_tours_user_idx").on(t.userId, t.startDate)],
 );
 
+/**
+ * WHAT A SALESMAN SAID ABOUT WHERE HE WORKS.
+ *
+ * The office allocates his cities and areas in `mbos_user_territories`; this
+ * is his answer, from the handset. `accept` takes the allocation as it stands
+ * and `change` asks for different cities — decided on the Approvals queue as
+ * type `territory`, never by the handset itself.
+ *
+ * `signature` is the allocation he was looking at, so an acceptance stops
+ * counting the moment the allocation changes rather than vouching for cities
+ * he never saw. `currentPlaces` keeps it in words for a reader who comes to
+ * the request after it has moved on.
+ */
+export const mbosTerritoryRequests = pgTable(
+  "mbos_territory_requests",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** `accept` | `change` — text with a check constraint, never an enum. */
+    kind: text("kind").notNull(),
+    currentPlaces: jsonb("current_places").$type<string[]>().notNull().default([]),
+    requestedPlaces: jsonb("requested_places").$type<string[]>().notNull().default([]),
+    reason: text("reason"),
+    signature: text("signature").notNull(),
+  },
+  (t) => [index("mbos_territory_requests_user_idx").on(t.userId, t.serverCreatedAt)],
+);
+
 /* ----------------------------------------------------------------- tasks */
 
 export const mbosTaskPriorityEnum = pgEnum("mbos_task_priority", [
@@ -8530,6 +8560,13 @@ export const mbosApprovalTypeEnum = pgEnum("mbos_approval_type", [
    * step, and `routeReason` says which.
    */
   "distributor_appointment",
+  /**
+   * A salesman asking to work different cities from the ones allocated to
+   * him. The subject is an `mbos_territory_requests` row of kind `change`;
+   * approving says yes, and the allocation itself is still changed by a
+   * person on the Territory screen.
+   */
+  "territory",
 ]);
 
 export const mbosApprovalStateEnum = pgEnum("mbos_approval_state", [
