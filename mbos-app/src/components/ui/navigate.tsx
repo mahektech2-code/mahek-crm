@@ -78,7 +78,7 @@ export function NavigateButton({
     setBusy(true);
     try {
       const out = await openMaps({ lat, lng, name, city });
-      if (out.status !== 'opened') notify(out.reason);
+      if (out.status !== 'opened') notify(out.reason, 'error');
     } finally {
       setBusy(false);
     }

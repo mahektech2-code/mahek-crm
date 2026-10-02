@@ -49,18 +49,18 @@ export default function DocsScreen() {
     (d: DocumentRow) => {
       const uri = d.localUri?.trim();
       if (!uri) {
-        notify(d.title + ' is not on this phone. Ask the office to send it.');
+        notify(d.title + ' is not on this phone. Ask the office to send it.', 'error');
         return;
       }
       void (async () => {
         try {
           if (!(await Linking.canOpenURL(uri))) {
-            notify('This phone has no app to open ' + d.title + '.');
+            notify('This phone has no app to open ' + d.title + '.', 'error');
             return;
           }
           await Linking.openURL(uri);
         } catch {
-          notify(d.title + ' could not be opened.');
+          notify(d.title + ' could not be opened.', 'error');
         }
       })();
     },

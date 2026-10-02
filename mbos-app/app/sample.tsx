@@ -327,12 +327,12 @@ export default function SampleRecord() {
                        only the photograph is poorer for it. Every attachment in
                        this app follows that rule. */
                     const r = await confirmReceived(s.id, shot.ok ? shot.mediaId : null);
-                    if (!r.ok) return notify(r.message);
+                    if (!r.ok) return notify(r.message, 'error');
                     load();
                     /* "Delivered" was the carrier's word for a mark that is the
                        SHOP's. One tap cannot assert both, and the record now
                        only claims the one it is actually evidence of. */
-                    notify(shot.ok ? 'Saved. They got it. Photo taken.' : 'Saved. They got it. No photo taken.');
+                    notify(shot.ok ? 'Saved. They got it. Photo taken.' : 'Saved. They got it. No photo taken.', shot.ok ? 'success' : 'warn');
                   } finally {
                     setBusy(false);
                   }
@@ -345,7 +345,7 @@ export default function SampleRecord() {
                   setBusy(true);
                   try {
                     const r = await confirmReceived(s.id, null);
-                    if (!r.ok) return notify(r.message);
+                    if (!r.ok) return notify(r.message, 'error');
                     load();
                     notify('Saved. They got it.');
                   } finally {
@@ -372,7 +372,7 @@ export default function SampleRecord() {
                     setBusy(true);
                     try {
                       const r = await markTrialStarted(s.id);
-                      if (!r.ok) return notify(r.message);
+                      if (!r.ok) return notify(r.message, 'error');
                       load();
                       notify('Trial started. Feedback is still pending.');
                     } finally {
@@ -388,7 +388,7 @@ export default function SampleRecord() {
                   setBusy(true);
                   try {
                     const r = await markTried(s.id);
-                    if (!r.ok) return notify(r.message);
+                    if (!r.ok) return notify(r.message, 'error');
                     load();
                     notify('Tried. Feedback is pending now.');
                   } finally {
@@ -469,7 +469,7 @@ export default function SampleRecord() {
         onClose={() => setDispatchOpen(false)}
         onSave={async (d) => {
           const r = await markDispatched(s.id, d);
-          if (!r.ok) return notify(r.message);
+          if (!r.ok) return notify(r.message, 'error');
           setDispatchOpen(false);
           load();
           notify('Sent · ' + d.courierDocket);
@@ -496,7 +496,7 @@ export default function SampleRecord() {
           setCancelOpen(false);
           void cancelSample(s.id, { reasonCode: code, remarks: said })
             .then((r) => {
-              if (!r.ok) return notify(r.message);
+              if (!r.ok) return notify(r.message, 'error');
               load();
               notify('Cancelled');
             })
@@ -513,7 +513,7 @@ export default function SampleRecord() {
         onClose={() => setReviewOpen(false)}
         onSave={async (fields, outcome, photoId) => {
           const r = await recordFeedback(s.id, { customerId: s.customerId, fields, trialOutcome: outcome, photoId });
-          if (!r.ok) return notify(r.message);
+          if (!r.ok) return notify(r.message, 'error');
           setReviewOpen(false);
           load();
           notify('Saved');
@@ -521,7 +521,7 @@ export default function SampleRecord() {
         onPhoto={async () => {
           const shot = await takePhoto({ parentType: 'sample', parentId: s.id, kind: 'sample_proof' });
           if (!shot.ok) {
-            notify(shot.reason === 'cancelled' ? 'No photo taken' : shot.reason);
+            notify(shot.reason === 'cancelled' ? 'No photo taken' : shot.reason, shot.reason === 'cancelled' ? 'info' : 'error');
             return null;
           }
           return { mediaId: shot.mediaId, uri: shot.uri };

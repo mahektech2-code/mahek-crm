@@ -300,7 +300,7 @@ export default function PayScreen() {
   const photographCheque = async () => {
     const shot = await takePhoto({ parentType: 'payment', parentId: 'pending', kind: 'cheque_photo' });
     if (!shot.ok) {
-      if (shot.reason !== 'cancelled') notify(shot.reason);
+      if (shot.reason !== 'cancelled') notify(shot.reason, 'error');
       return;
     }
     setChequePhotoId(shot.mediaId);
@@ -321,14 +321,14 @@ export default function PayScreen() {
     /* `whyDisabled` keeps this button pressable so the handler can refuse in
        words, which means the in-flight lock has to be checked here as well as
        drawn on the button. */
-    if (busy) return notify('Still saving the last payment…');
-    if (!payMode) return notify('Pick how they are paying');
-    if (!amt) return notify('Enter the amount');
-    if (needsCheque && !payChq.trim()) return notify('Cheque number is needed');
-    if (needsCheque && !chequeDate) return notify(CHEQUE_DATE_LINE);
-    if (needsCheque && !chequePhotoId) return notify(CHEQUE_PHOTO_LINE);
+    if (busy) return notify('Still saving the last payment…', 'info');
+    if (!payMode) return notify('Pick how they are paying', 'error');
+    if (!amt) return notify('Enter the amount', 'error');
+    if (needsCheque && !payChq.trim()) return notify('Cheque number is needed', 'error');
+    if (needsCheque && !chequeDate) return notify(CHEQUE_DATE_LINE, 'error');
+    if (needsCheque && !chequePhotoId) return notify(CHEQUE_PHOTO_LINE, 'error');
     const c = current;
-    if (!c) return notify('Pick the customer first');
+    if (!c) return notify('Pick the customer first', 'error');
 
     askConfirm({
       title: 'Take ' + inr(amt) + '?',
@@ -413,7 +413,7 @@ export default function PayScreen() {
       confirmLabel: phone ? 'Open WhatsApp' : 'Copy the receipt',
       run: async () => {
         const out = phone ? await openWhatsApp(phone, slip) : await copyToClipboard(slip);
-        if (out.status !== 'handed_off') notify(out.reason);
+        if (out.status !== 'handed_off') notify(out.reason, phone ? 'warn' : 'success');
       },
     });
 

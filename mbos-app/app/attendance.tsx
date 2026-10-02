@@ -97,7 +97,7 @@ export default function AttendanceScreen() {
    */
   const askCorrection = (d: AttendanceDay) => {
     if (d.regularizationId) {
-      notify('You already asked your manager to fix ' + dmy(d.day) + '. Wait for their answer.');
+      notify('You already asked your manager to fix ' + dmy(d.day) + '. Wait for their answer.', 'info');
       return;
     }
     askConfirm({

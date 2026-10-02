@@ -320,7 +320,7 @@ export default function SamplesScreen() {
         onPickShop={setPicked}
         onClose={() => setAskOpen(false)}
         onSubmit={async (form) => {
-          if (!picked) return notify('Which shop is the trial for?');
+          if (!picked) return notify('Which shop is the trial for?', 'error');
           const r = await requestLeadSample({
             customerId: picked.id,
             leadId: params.lead ?? null,
@@ -330,7 +330,7 @@ export default function SamplesScreen() {
             application: form.application,
             reasonCode: form.reasonCode,
           });
-          if (!r.ok) return notify(r.message);
+          if (!r.ok) return notify(r.message, 'error');
           setAskOpen(false);
           load();
           notify('Requested. The office will approve it before it is sent.');

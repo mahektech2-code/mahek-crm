@@ -123,7 +123,7 @@ export default function TrackingSetupScreen() {
       /* Every rung of the ladder failed, which on a real handset means the
          settings app itself refused an intent. Saying so beats a button that
          appears to do nothing. */
-      notify('Could not open that screen. Find it in your phone Settings.');
+      notify('Could not open that screen. Find it in your phone Settings.', 'error');
     }
   };
 
@@ -141,14 +141,14 @@ export default function TrackingSetupScreen() {
   const act = async () => {
     if (verdict.action === 'recheck') {
       reread();
-      notify('Checked. Nothing has changed on this phone.');
+      notify('Checked. Nothing has changed on this phone.', 'info');
       return;
     }
     if (verdict.action !== 'restart_app' || restarting) return;
     setRestarting(true);
     if (!(await restartApp())) {
       setRestarting(false);
-      notify('Could not restart. Close MahekOne fully and open it again.');
+      notify('Could not restart. Close MahekOne fully and open it again.', 'error');
     }
     /* No `finally`. On the path that worked there is nothing after this: the
        reload is already posted to the main thread and no code here may assume

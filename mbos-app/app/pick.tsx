@@ -233,11 +233,11 @@ export default function PickScreen() {
     setSaving(true);
     try {
       const out = await pickShops(planDayId, picked);
-      if (!out.ok) return notify(out.message ?? 'Pick at least one shop.');
+      if (!out.ok) return notify(out.message ?? 'Pick at least one shop.', 'error');
       notify(plural(picked.length, 'shop') + ' picked. Your manager can see the day now.');
       router.back();
     } catch {
-      notify('The day could not be saved on this phone. Nothing is lost. Try again.');
+      notify('The day could not be saved on this phone. Nothing is lost. Try again.', 'error');
     } finally {
       setSaving(false);
     }

@@ -244,7 +244,7 @@ export default function MoreScreen() {
       });
       return;
     }
-    notify(i.label + ' is not ready yet.');
+    notify(i.label + ' is not ready yet.', 'error');
   };
 
   return (

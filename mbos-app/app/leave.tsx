@@ -117,7 +117,7 @@ export default function LeaveScreen() {
   const send = async () => {
     /* The second press ANSWERS rather than doing nothing — `whyDisabled` keeps
        the button pressable for exactly this. */
-    if (sending) return notify('Sending this request. Please wait.');
+    if (sending) return notify('Sending this request. Please wait.', 'info');
     if (!lv.from || (lv.span === 'many' && (!lv.to || dayCount < 1))) return setErr('dates');
     if (!lv.reason.trim()) return setErr('reason');
 
@@ -133,7 +133,7 @@ export default function LeaveScreen() {
         reason: lv.reason.trim(),
       });
       /* An overlap is refused with a sentence naming the request it clashes with. */
-      if (!outcome.ok) return notify(outcome.message);
+      if (!outcome.ok) return notify(outcome.message, 'error');
 
       setOpen(false);
       setLv(EMPTY);
@@ -342,7 +342,7 @@ export default function LeaveScreen() {
             onPress={() => {
               const iso = isoDate(new Date());
               const refusal = refuseTo(iso);
-              if (refusal) return notify(refusal + '.');
+              if (refusal) return notify(refusal + '.', 'error');
               if (pick === 'to') patch({ to: iso });
               else patch({ from: iso, to: lv.to && iso > lv.to ? iso : lv.to });
               setPick(null);

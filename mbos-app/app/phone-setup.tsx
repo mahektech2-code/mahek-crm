@@ -127,7 +127,7 @@ export default function PhoneSetupScreen() {
       switch (item.action) {
         case 'location_settings':
           if (!(await openLocationSettings())) {
-            notify('Could not open the settings. Open Settings → Location yourself.');
+            notify('Could not open the settings. Open Settings → Location yourself.', 'error');
           }
           break;
 
@@ -146,7 +146,7 @@ export default function PhoneSetupScreen() {
 
         case 'app_settings':
           if (!(await openAppSettings())) {
-            notify('Could not open the settings. Call the office.');
+            notify('Could not open the settings. Call the office.', 'error');
           }
           break;
 
@@ -164,9 +164,9 @@ export default function PhoneSetupScreen() {
            * and names what he is hunting for.
            */
           if (opened === 'opened_app_settings') {
-            notify('That phone screen did not open. Look for: ' + item.title);
+            notify('That phone screen did not open. Look for: ' + item.title, 'warn');
           } else if (opened === 'failed') {
-            notify('Could not open it. Follow the steps on this screen yourself.');
+            notify('Could not open it. Follow the steps on this screen yourself.', 'error');
           }
           setSent(true);
           break;

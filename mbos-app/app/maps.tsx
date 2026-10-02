@@ -187,7 +187,7 @@ export default function MapsScreen() {
           forget([id]);
           load();
         })
-        .catch(() => notify('The download did not stop. Try again in a minute.'));
+        .catch(() => notify('The download did not stop. Try again in a minute.', 'error'));
     },
     [forget, load, notify],
   );
@@ -201,10 +201,10 @@ export default function MapsScreen() {
     const reason = await downloadBlockedBecause(listing.settings);
     if (reason) {
       setBlocked(reason);
-      return notify(reason);
+      return notify(reason, 'error');
     }
     setBlocked(null);
-    if (area.tooBig) return notify(tooBigSentence(area, listing));
+    if (area.tooBig) return notify(tooBigSentence(area, listing), 'error');
 
     clearFailure(area.id);
     try {
@@ -220,13 +220,13 @@ export default function MapsScreen() {
            rather than in a toast he has already looked away from. */
         () => setFailed((f) => ({ ...f, [area.id]: true })),
       );
-      notify(`Saving ${area.label}. You can leave this screen.`);
+      notify(`Saving ${area.label}. You can leave this screen.`, 'info');
       load();
     } catch {
       /* A refusal from MapLibre, a style that would not load, storage that is
          full. The reason is not worth quoting at somebody in a market; what is
          worth saying is that nothing was saved and the button still works. */
-      notify('Could not start the download. Try again on a better connection.');
+      notify('Could not start the download. Try again on a better connection.', 'error');
     }
   };
 
@@ -285,7 +285,7 @@ export default function MapsScreen() {
         const ids = downloadingRef.current;
         if (!ids.length) return;
         setBlocked('Map downloads are set to Wi-Fi only. This phone is on mobile data.');
-        notify('Map download paused. This phone is on mobile data.');
+        notify('Map download paused. This phone is on mobile data.', 'warn');
         /* `network`, not the salesman: this one is meant to pick up again the
            moment there is Wi-Fi, and a pause recorded as his own would never be
            resumed by anything. */
@@ -383,7 +383,7 @@ export default function MapsScreen() {
                 onRefresh={() => {
                   if (!area.saved) return;
                   void refreshMap(area.saved.id).then(() => {
-                    notify('Checking for map changes');
+                    notify('Checking for map changes', 'info');
                     load();
                   });
                 }}

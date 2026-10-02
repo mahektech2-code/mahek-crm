@@ -187,7 +187,7 @@ export default function ValidateLead() {
             fullWidth={false}
             onPress={() => {
               void callNumber(lead.mobile ?? '').then((out) => {
-                if (out.status === 'failed') notify(out.reason);
+                if (out.status === 'failed') notify(out.reason, 'error');
               });
             }}
           />

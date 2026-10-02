@@ -544,7 +544,7 @@ export default function Home() {
     try {
       return { km: shot.km, photoId: await queueOdometerPhoto(shot.uri, 'pending') };
     } catch {
-      notify('Photo not saved. Nothing was recorded. Try again.');
+      notify('Photo not saved. Nothing was recorded. Try again.', 'error');
       return false;
     }
   };
@@ -576,7 +576,7 @@ export default function Home() {
         odometer: meter,
       });
     } catch {
-      notify('Punched in. Travel did not start. Add it on Travel.');
+      notify('Punched in. Travel did not start. Add it on Travel.', 'warn');
     }
   };
 
@@ -663,7 +663,7 @@ export default function Home() {
         /* Nothing has been written, so there is nothing to undo. The fix is
            abandoned with it — a location for a check-in that did not happen is
            a record of somewhere somebody stood while nothing happened. */
-        if (selfie.why) notify(selfie.why);
+        if (selfie.why) notify(selfie.why, 'error');
         return;
       }
 
@@ -719,7 +719,7 @@ export default function Home() {
           },
         });
       } else {
-        notify('Day started' + (fix ? ' · GPS found' : ' · saved without location'));
+        notify('Day started' + (fix ? ' · GPS found' : ' · saved without location'), fix ? 'success' : 'warn');
       }
     } finally {
       setStarting(false);
@@ -750,7 +750,7 @@ export default function Home() {
         cancelLabel: 'Stay punched in',
       });
       if (!selfie.ok) {
-        if (selfie.why) notify(selfie.why);
+        if (selfie.why) notify(selfie.why, 'error');
         return;
       }
 
@@ -795,7 +795,7 @@ export default function Home() {
             odometer: closing,
           });
         } catch {
-          notify('Punched out. Travel did not close. Check Travel.');
+          notify('Punched out. Travel did not close. Check Travel.', 'warn');
         }
       }
       load();
@@ -803,6 +803,7 @@ export default function Home() {
         out.ok
           ? `Punched out · ${durationLabel(out.workedMinutes)} worked`
           : (out.reason ?? 'Your day was already closed.'),
+        out.ok ? 'success' : 'error',
       );
       /* Not on a meter day — the readings are the claim. On every other day
          the fares only reach the office if he raises them, so he is asked
@@ -855,7 +856,7 @@ export default function Home() {
         cancelLabel: 'Stay punched out',
       });
       if (!selfie.ok) {
-        if (selfie.why) notify(selfie.why);
+        if (selfie.why) notify(selfie.why, 'error');
         return;
       }
 

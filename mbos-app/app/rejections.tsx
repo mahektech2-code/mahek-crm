@@ -179,7 +179,7 @@ export default function Rejections() {
                 <SecondaryButton
                   label="Open the customer"
                   onPress={() => {
-                    if (!payload.customerId) return notify('This entry has no customer on it.');
+                    if (!payload.customerId) return notify('This entry has no customer on it.', 'error');
                     useStore.getState().set({ custId: payload.customerId });
                     router.push('/customer');
                   }}
@@ -201,7 +201,7 @@ export default function Rejections() {
                         try {
                           await retryItem(row.id);
                           load();
-                          notify('Waiting to send. It will go when you have signal.');
+                          notify('Waiting to send. It will go when you have signal.', 'info');
                           void syncNow({ manual: true });
                         } finally {
                           setRetrying(null);
