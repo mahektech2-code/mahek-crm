@@ -6,7 +6,9 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, customers, products, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
-import { invalidateConfig, seedConfig } from "@/lib/config/store";
+import { invalidateConfig, seedConfig, updateSetting } from "@/lib/config/store";
+import { listActiveProducts } from "@/lib/services/product-service";
+import { GET as productSearchRoute } from "@/app/api/product-search/route";
 import { captureLead, captureLeadBatch } from "@/lib/actions/lead-intake";
 
 /* ---------------------------------------------------------------------------
@@ -203,14 +205,75 @@ describe("ProductField keeps working for the screens that already use it", () =>
     }
   });
 
-  test("the intake form uses the catalogue picker and never offers a list of every product", () => {
+  test("the intake form is ONE field — a combobox over the catalogue — not a text box plus a second picker", () => {
     const form = readFileSync("src/components/leads/intake/intake-form.tsx", "utf8");
-    assert.match(form, /<ProductField/);
+    assert.match(form, /<ProductCombobox/);
+    assert.doesNotMatch(form, /<ProductField/);
+    assert.ok(form.includes("What product they want (optional)"));
+    assert.equal(form.includes("What they want (optional)"), false);
+    assert.doesNotMatch(form, /Or choose one of Mahek/);
+    assert.doesNotMatch(form, /Nothing chosen/);
     assert.match(form, /requirementProductId/);
     assert.doesNotMatch(form, /lead_required_product_id|leadRequiredProductId/);
-    // The picker is hidden, and says why, when product search is switched off.
+    // With product search switched off the box is plain text, and says why.
     assert.match(form, /Product search is switched off/);
     // The voice assistant must not write words behind a chosen product.
     assert.match(form, /key === "requirement" && requirementProductId/);
+  });
+
+  test("the Telecaller and the Sales workspace both draw that same form", () => {
+    const page = readFileSync("src/components/leads/pages/leads-intake.tsx", "utf8");
+    assert.match(page, /<IntakeForm/);
+    assert.ok(page.includes('productSearchEnabled={config["products.searchOnOrderForms"]}'));
+    for (const route of ["src/app/crm/leads/intake/page.tsx", "src/app/sales/leads/intake/page.tsx"]) {
+      assert.match(readFileSync(route, "utf8"), /leads-intake/, route);
+    }
+    const form = readFileSync("src/components/leads/intake/intake-form.tsx", "utf8");
+    assert.equal((form.match(/<ProductCombobox/g) ?? []).length, 1, "one product field in the form, for every sales type");
+  });
+
+  test("the combobox is an accessible listbox that keeps free text and drops a pick when it is edited", () => {
+    const box = readFileSync("src/components/products/product-combobox.tsx", "utf8");
+    assert.match(box, /role="combobox"/);
+    assert.match(box, /role="listbox"/);
+    assert.ok(box.includes("/api/product-search?all=1"));
+    assert.match(box, /will be saved as your own words/);
+    const form = readFileSync("src/components/leads/intake/intake-form.tsx", "utf8");
+    // Typing clears any chosen product, so what is shown is what is saved.
+    const onText = form.slice(form.indexOf("onText={(t) => {"));
+    assert.ok(onText.slice(0, 300).includes("setRequirementProductId(null);"));
+  });
+});
+
+describe("the catalogue the field offers", () => {
+  const ids = (rows: Array<{ productId: string }>) => rows.map((r) => r.productId).sort();
+
+  test("listActiveProducts is every ACTIVE product and nothing retired", async () => {
+    const extra = [id("prd"), id("prd"), id("prd")];
+    await db.insert(products).values(extra.map((pid, i) => ({ id: pid, name: `Extra Thinner ${i} - 1 Liter (Loose)`, active: true })));
+    const rows = await listActiveProducts();
+    assert.deepEqual(ids(rows), [active.id, ...extra].sort());
+    assert.equal(rows.some((r) => r.productId === retired.id), false);
+    assert.equal(rows.find((r) => r.productId === active.id)?.name, active.name);
+  });
+
+  test("the endpoint returns the same list behind the login, and nothing when product search is switched off", async () => {
+    const res = await productSearchRoute(new Request("http://x.test/api/product-search?all=1"));
+    const body = (await res.json()) as { products: Array<{ productId: string }> };
+    assert.deepEqual(ids(body.products), [active.id]);
+
+    setTestUser(null);
+    assert.equal((await productSearchRoute(new Request("http://x.test/api/product-search?all=1"))).status, 401);
+
+    setTestUser(tele);
+    await updateSetting("products.searchOnOrderForms", false, tele.id);
+    const off = await productSearchRoute(new Request("http://x.test/api/product-search?all=1"));
+    assert.deepEqual(((await off.json()) as { products: unknown[] }).products, []);
+  });
+
+  test("the existing search is untouched by the new option", async () => {
+    const res = await productSearchRoute(new Request("http://x.test/api/product-search?q=thinner"));
+    const body = (await res.json()) as { products: Array<{ productId: string }> };
+    assert.deepEqual(ids(body.products), [active.id]);
   });
 });
