@@ -620,11 +620,19 @@ export async function submitDay(
  * opening a new one is ANY open leg, whatever day it began. Two open legs is a
  * state nothing in this module can make sense of, and a stale one is exactly
  * the leg that would produce it.
+ *
+ * NEVER THE PUNCH-IN. The session leg stays open from punch-in to punch-out
+ * and every journey of the day runs inside it, so it is not a journey and is
+ * read by `openSessionLeg` alone. Returned here, it was closed by the first
+ * Start visit of the day ("Set off for <shop> instead."), which zeroed the
+ * day's meter and left every later visit with no journey and a dwell clock
+ * stuck at nothing. The server allows the two to be open together since
+ * migration 0190.
  */
 export async function openLegOf(userId: string, startedSince?: number): Promise<TravelLeg | null> {
   return one<TravelLeg>(
     `SELECT * FROM travel_legs
-      WHERE userId = ? AND endedAt IS NULL` +
+      WHERE userId = ? AND endedAt IS NULL AND origin <> 'session'` +
       (startedSince == null ? '' : ' AND startedAt >= ?') +
       ` ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
     startedSince == null ? [userId] : [userId, startedSince],
@@ -647,9 +655,12 @@ export async function openLegOf(userId: string, startedSince?: number): Promise<
 export async function closeStaleLegs(userId: string, dayBoundaryMs: number): Promise<number> {
   const open = await all<TravelLeg>(
     `SELECT * FROM travel_legs
-      WHERE userId = ? AND endedAt IS NULL AND startedAt IS NOT NULL AND startedAt < ?`,
+      WHERE userId = ? AND endedAt IS NULL AND origin <> 'session'
+        AND startedAt IS NOT NULL AND startedAt < ?`,
     [userId, dayBoundaryMs],
   );
+  /* Journeys only. A punch-in left open is `closeStaleSessions`' to close,
+     with the sentence that says what was actually missing. */
   for (const leg of open) {
     await closeAbandoned(leg, 'Closed by the app at the end of the day. No arrival was saved.');
   }
