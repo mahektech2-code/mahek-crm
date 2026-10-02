@@ -11,6 +11,8 @@ import {
   recoverInterrupted,
   type QueueItem,
   autoRetryStuck,
+  anythingDue,
+  whenQueued,
 } from './queue';
 import { applyPull } from './pull';
 import { flush as flushTrail } from './trail';
@@ -220,6 +222,33 @@ async function onRejection(item: QueueItem, code: string, message: string): Prom
 /* ------------------------------------------------------------- the ticker */
 
 let timer: ReturnType<typeof setInterval> | null = null;
+let pushTimer: ReturnType<typeof setInterval> | null = null;
+let nudgeTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * HOW OFTEN THE OUTBOX IS LOOKED AT, while the app is open: every three
+ * seconds. What a salesman saves should reach the office in seconds, not on
+ * the next minute's tick — an order taken at a counter is one the office may
+ * be asked about before he has left the shop.
+ *
+ * It costs almost nothing when there is nothing to send: one local count, and
+ * no request at all. Something failing does not make it hammer either — a
+ * failed item carries its own backoff in `nextAttemptAt`, and the count only
+ * sees what is DUE. The minute's tick below still runs for everything else
+ * the sync does, pulling the office's changes above all.
+ */
+const PUSH_EVERY_MS = 3_000;
+
+/** Send whatever is due now. Quiet if a sync is already running or nothing is ready. */
+async function pushIfWaiting(): Promise<void> {
+  if (running) return;
+  if (!(await anythingDue())) return;
+  /* The count can include an item still waiting on a dependency that is not
+     due yet; asking the real rule before going to the network keeps that
+     case from sending an empty request every three seconds. */
+  if (!(await readyItems(Date.now(), 1)).length) return;
+  await syncNow();
+}
 
 /**
  * Start syncing in the background: on an interval, and immediately whenever
@@ -229,6 +258,17 @@ let timer: ReturnType<typeof setInterval> | null = null;
 export function startBackgroundSync(intervalMs = 60_000) {
   if (timer) return;
   timer = setInterval(() => void syncNow(), intervalMs);
+  pushTimer = setInterval(() => void pushIfWaiting(), PUSH_EVERY_MS);
+  /* A save sends within half a second. Debounced, because one action often
+     writes two items — a record and its approval — and they should go up in
+     one request. */
+  whenQueued(() => {
+    if (nudgeTimer) clearTimeout(nudgeTimer);
+    nudgeTimer = setTimeout(() => {
+      nudgeTimer = null;
+      void pushIfWaiting();
+    }, 500);
+  });
 
   if (!listenerAttached) {
     listenerAttached = true;
@@ -242,4 +282,9 @@ export function startBackgroundSync(intervalMs = 60_000) {
 export function stopBackgroundSync() {
   if (timer) clearInterval(timer);
   timer = null;
+  if (pushTimer) clearInterval(pushTimer);
+  pushTimer = null;
+  if (nudgeTimer) clearTimeout(nudgeTimer);
+  nudgeTimer = null;
+  whenQueued(null);
 }

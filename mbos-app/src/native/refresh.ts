@@ -1,8 +1,7 @@
 import { syncNow } from '../sync/engine';
 import { checkForUpdate } from './update-check';
 import { downloadUpdate, fetchUpdateInBackground } from './updates';
-import { useStore } from '../state/store';
-import { refreshVerdict, updateOffer, type RefreshVerdict } from '../engines/refresh';
+import { refreshVerdict, type RefreshVerdict } from '../engines/refresh';
 
 /**
  * THE REFRESH BUTTON, wired: the three questions asked side by side.
@@ -30,21 +29,16 @@ export async function refreshEverything(): Promise<RefreshVerdict> {
 }
 
 /**
- * THE SAME QUESTION, ASKED WITHOUT A PRESS — at launch, and on a resume after a
- * long absence, which is where `boot.tsx` already looked for an OTA.
+ * WITHOUT A PRESS — at launch, and on a resume after a long absence — an
+ * over-the-air bundle is fetched and NOTHING is put on the screen.
  *
- * It used to fetch the bundle and then say nothing: the bundle waited for a
- * cold start that a phone kept alive by the location service might not have
- * for days. Now a waiting bundle, or a newer APK, puts the Update now / Update
- * later modal up. `applied` is the cold-start case where the bundle is already
- * being reloaded onto, so there is nothing to offer.
+ * It used to raise the Update now / Update later modal from here too, and Mahek
+ * asked for the opposite: the prompt belongs to the reload button, pressed by
+ * somebody who has a moment, and never to an automatic sync that lands on him
+ * mid-order. So a waiting bundle simply applies on the next cold start (or at
+ * once, if it lands within seconds of the launch), and a newer APK is offered
+ * when he presses reload or opens the Sync screen.
  */
-export async function offerAnyUpdate(): Promise<void> {
-  const [ota, apk] = await Promise.all([
-    fetchUpdateInBackground().catch(() => 'failed' as const),
-    checkForUpdate().catch(() => ({ kind: 'current' as const })),
-  ]);
-  if (ota === 'applied') return;
-  const offer = updateOffer(ota, apk);
-  if (offer) useStore.getState().offerUpdate(offer);
+export async function fetchUpdateQuietly(): Promise<void> {
+  await fetchUpdateInBackground().catch(() => 'failed' as const);
 }

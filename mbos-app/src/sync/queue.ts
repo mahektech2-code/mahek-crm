@@ -122,7 +122,31 @@ export async function enqueue(args: {
       location,
     ],
   );
+  /* Tell the engine there is something to send, so a save goes up in about a
+     second rather than on the next minute's tick. A hook rather than an
+     import, because the engine imports this file. */
+  onQueued?.();
   return id;
+}
+
+let onQueued: (() => void) | null = null;
+
+/** The engine's way of hearing that something was just put in the outbox. */
+export function whenQueued(listener: (() => void) | null): void {
+  onQueued = listener;
+}
+
+/**
+ * Whether anything is due to go out now — a single indexed count, cheap enough
+ * to ask every few seconds. It can say yes for an item still waiting on a
+ * dependency; `readyItems` is the real answer and is only asked after this.
+ */
+export async function anythingDue(now = Date.now()): Promise<boolean> {
+  const row = await one<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM sync_queue WHERE state = 'queued' AND nextAttemptAt <= ?`,
+    [now],
+  );
+  return (row?.n ?? 0) > 0;
 }
 
 /* ------------------------------------------------------- dependency order */
