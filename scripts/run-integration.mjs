@@ -117,6 +117,15 @@ const files = [
   // its permission and module before reading anything, and that the form's own
   // captureLead is still the only way a lead is made.
   "src/lib/intake-intel.test.ts",
+  // The Manager verification dialog's voice assistant: that it reads and writes
+  // one audit draft only, belongs to the CRM Sales Manager workspace, asks lead.verify
+  // before reading, and that verifyProspect is still the only way a lead is verified.
+  "src/lib/verify-intel.test.ts",
+  // The Convert to Prospect dialog's voice assistant: that it reads and writes one audit
+  // draft only, belongs to the CRM Sales Manager workspace, asks lead.work before reading,
+  // never replaces a value the salesman entered, and that convertProspect is still the only
+  // writer of the converted values.
+  "src/lib/convert-intel.test.ts",
   // Lead Management → Lost: the module gate, the list narrowed by the same
   // scope every other lead list runs through, stage-at-loss read off the
   // closing transition rather than guessed, and the next-action/nurture-task
