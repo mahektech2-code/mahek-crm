@@ -7,7 +7,7 @@ import { Icon } from '../src/components/ui/Icon';
 import { SkuChip } from '../src/components/ui/sku';
 import { color as C, radius, tabular, type, weight } from '../src/theme/tokens';
 import { inr, inrFromPaise, plural } from '../src/lib/format';
-import { productLines } from '../src/lib/product-lines';
+import { skuLines } from '../src/lib/sku-lines';
 import {
   billingChoicesFor,
   listCustomersPage,
@@ -728,6 +728,9 @@ export default function OrderScreen() {
                     p={k}
                     first={i === 0}
                     on={!!cart[k.id]}
+                    qty={cart[k.id]}
+                    onQty={(v) => setQty(k.id, v)}
+                    onDrop={() => dropLine(k.id)}
                     note={
                       'Ordered ' +
                       plural(k.orderCount, 'time') +
@@ -747,7 +750,16 @@ export default function OrderScreen() {
               </SectionLabel>
               <ListCard>
                 {starter.map((k, i) => (
-                  <ProductRow key={k.id} p={k} first={i === 0} on={!!cart[k.id]} onAdd={() => setQty(k.id, '1')} />
+                  <ProductRow
+                    key={k.id}
+                    p={k}
+                    first={i === 0}
+                    on={!!cart[k.id]}
+                    qty={cart[k.id]}
+                    onQty={(v) => setQty(k.id, v)}
+                    onDrop={() => dropLine(k.id)}
+                    onAdd={() => setQty(k.id, '1')}
+                  />
                 ))}
               </ListCard>
             </View>
@@ -771,7 +783,16 @@ export default function OrderScreen() {
           {query ? (
             <ListCard style={{ marginTop: 10 }}>
               {shown.map((k, i) => (
-                <ProductRow key={k.id} p={k} first={i === 0} on={!!cart[k.id]} onAdd={() => setQty(k.id, '1')} />
+                <ProductRow
+                    key={k.id}
+                    p={k}
+                    first={i === 0}
+                    on={!!cart[k.id]}
+                    qty={cart[k.id]}
+                    onQty={(v) => setQty(k.id, v)}
+                    onDrop={() => dropLine(k.id)}
+                    onAdd={() => setQty(k.id, '1')}
+                  />
               ))}
               {/* Three different empty states, and they must never look alike:
                   still looking, nothing matched, nothing offered yet. */}
@@ -862,18 +883,18 @@ export default function OrderScreen() {
                   <Card key={line.productId} padded={false} style={{ paddingHorizontal: 16, paddingVertical: 14 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        {/* THE CART LINE LEADS ON THE FORMULATION TOO, and the
-                            SKU is drawn rather than folded away: this is the
-                            list a salesman reads back at a counter before
-                            saving, and two lines of one order can now headline
-                            the same liquid. A SCHEME NOTE still wins the caption
-                            where there is one — it is a live statement about
-                            this line's price and outranks a restatement of what
-                            the line is. */}
+                        {/* THE CART LINE LEADS ON THE SKU, as every row on
+                            this screen does — see `src/lib/sku-lines.ts`. This
+                            is the list a salesman reads back at a counter
+                            before saving, and two packs of one liquid have to
+                            read as two different lines. A SCHEME NOTE still
+                            wins the caption where there is one — it is a live
+                            statement about this line's price and outranks a
+                            restatement of what the line is. */}
                         {(() => {
-                          const row = productLines({
-                            displayName: line.productName,
-                            subtitle: known[line.productId]?.formulation,
+                          const row = skuLines({
+                            name: line.productName,
+                            formulation: known[line.productId]?.formulation,
                           });
                           const caption = priced?.schemeNote ?? row.detail ?? '';
                           return (
@@ -1094,15 +1115,23 @@ function ProductRow({
   on,
   first,
   note,
+  qty,
   onAdd,
+  onQty,
+  onDrop,
 }: {
   p: Product;
   on: boolean;
   first: boolean;
   note?: string;
+  /** What is on the order for it, as typed. Drawn as a stepper once added. */
+  qty?: string;
   onAdd: () => void;
+  onQty?: (v: string) => void;
+  onDrop?: () => void;
 }) {
-  const row = productLines({ displayName: p.name, subtitle: p.formulation ?? p.brand });
+  const n = parseInt(qty ?? '', 10) || 0;
+  const row = skuLines({ name: p.name, formulation: p.formulation ?? p.brand });
   return (
     <Pressable
       onPress={() => {
@@ -1130,17 +1159,64 @@ function ProductRow({
             .join(' · ')}
         </T>
       </View>
-      <View
-        style={{
-          minWidth: 64,
-          alignItems: 'center',
-          paddingHorizontal: 12,
-          paddingVertical: 8,
-          borderRadius: radius.md,
-          backgroundColor: on ? 'transparent' : C.primary,
-        }}>
-        <T style={[{ fontSize: 14, color: on ? C.primaryDeep : C.surface }, weight(600)]}>{on ? '✓ Added' : 'Add'}</T>
-      </View>
+      {/* THE QUANTITY ON THE ROW, once it is on the order — the CRM's order
+          form takes it on the product card itself, and sending him down to
+          the cart to say how many is a scroll per product. The cart below
+          stays the place to read the whole order back. */}
+      {on && onQty ? (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            borderWidth: 1,
+            borderColor: C.primaryEdge,
+            borderRadius: radius.md,
+            overflow: 'hidden',
+            backgroundColor: C.surface,
+          }}>
+          <Pressable
+            onPress={() => (n <= 1 ? onDrop?.() : onQty(String(n - 1)))}
+            accessibilityRole="button"
+            accessibilityLabel={n <= 1 ? 'Take it off the order' : 'One less'}
+            hitSlop={4}
+            style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: C.wash }}>
+            <T style={{ fontSize: 18, lineHeight: 18, color: C.primaryDeep }}>−</T>
+          </Pressable>
+          <TextInput
+            value={qty ?? ''}
+            onChangeText={(v) => onQty(v.replace(/[^0-9]/g, ''))}
+            placeholder="0"
+            placeholderTextColor={C.faint}
+            keyboardType="number-pad"
+            accessibilityLabel={'Cans of ' + p.name}
+            style={[
+              { width: 46, height: 40, fontSize: 15, textAlign: 'center', color: C.ink, paddingHorizontal: 2 },
+              weight(600),
+              tabular,
+            ]}
+          />
+          <Pressable
+            onPress={() => onQty(String(n + 1))}
+            accessibilityRole="button"
+            accessibilityLabel="One more"
+            hitSlop={4}
+            style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: C.wash }}>
+            <T style={{ fontSize: 18, lineHeight: 18, color: C.primaryDeep }}>+</T>
+          </Pressable>
+        </View>
+      ) : (
+        <View
+          style={{
+            minWidth: 64,
+            alignItems: 'center',
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: radius.md,
+            backgroundColor: on ? 'transparent' : C.primary,
+          }}>
+          <T style={[{ fontSize: 14, color: on ? C.primaryDeep : C.surface }, weight(600)]}>{on ? '✓ Added' : 'Add'}</T>
+        </View>
+      )}
     </Pressable>
   );
 }
