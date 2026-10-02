@@ -201,6 +201,8 @@ export const ROUTE_MOTION: Record<string, ScreenMotion> = {
   knowledge: 'deeper',
   profile: 'deeper',
   reports: 'deeper',
+  accounts: 'deeper',
+  account: 'deeper',
 
   /* Things that sit OVER the day rather than inside it. They come up from the
      bottom because that is where they go back down to. */

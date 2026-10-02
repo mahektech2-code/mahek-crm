@@ -285,3 +285,80 @@ export function cityOriginsQuery(limit = 40): Query {
     params: [limit],
   };
 }
+
+/* ------------------------------------------------------- customer accounts */
+
+/**
+ * Which accounts the Customer accounts screen lists.
+ *
+ * It is the CUSTOMERS view of the book — the same `NOT IS_LEAD` the chips on
+ * the Customers tab use — because a lead has never been billed and an account
+ * screen full of empty statements is a screen that hides the ones that matter.
+ * The chips narrow by MONEY rather than by place: who owes, who is past the
+ * limit the office set, who the office has stopped supplying, and the shops
+ * somebody else invoices.
+ */
+export type AccountFilter = 'all' | 'owing' | 'over' | 'blocked' | 'third';
+export type AccountSort = 'owed' | 'name';
+
+function accountClause(filter: AccountFilter): string | null {
+  switch (filter) {
+    case 'owing':
+      return 'COALESCE(outstandingPaise, 0) > 0';
+    case 'over':
+      return 'COALESCE(creditLimitPaise, 0) > 0 AND COALESCE(outstandingPaise, 0) > creditLimitPaise';
+    case 'blocked':
+      return 'COALESCE(creditBlocked, 0) = 1';
+    case 'third':
+      return 'COALESCE(thirdParty, 0) = 1';
+    case 'all':
+    default:
+      return null;
+  }
+}
+
+/** How many accounts match — the number the screen prints. */
+export function accountCountQuery(query: string | undefined, filter: AccountFilter): Query {
+  const q = normalise(query);
+  const where = whereOf([`NOT ${IS_LEAD}`, q ? `(${SEARCH})` : null, accountClause(filter)]);
+  return { sql: `SELECT COUNT(*) AS n FROM customers ${where}`, params: q ? searchParams(q) : [] };
+}
+
+/**
+ * One page of accounts. `name, id` breaks every tie, so a page boundary never
+ * shows one shop twice or skips another — the paging rule MahekOne's own lists
+ * learned the hard way.
+ */
+export function accountPageQuery(args: {
+  query?: string;
+  filter: AccountFilter;
+  sort: AccountSort;
+  offset: number;
+  limit: number;
+}): Query {
+  const q = normalise(args.query);
+  const where = whereOf([`NOT ${IS_LEAD}`, q ? `(${SEARCH})` : null, accountClause(args.filter)]);
+  const order =
+    args.sort === 'name'
+      ? 'lower(name) ASC, id ASC'
+      : 'COALESCE(outstandingPaise, 0) DESC, lower(name) ASC, id ASC';
+  return {
+    sql: `SELECT * FROM customers ${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
+    params: [...(q ? searchParams(q) : []), args.limit, args.offset],
+  };
+}
+
+/**
+ * The whole book's money in one row, for the strip above the list. It is the
+ * office's own `outstandingPaise` added up — never a debt worked out on the
+ * phone — and it describes the BOOK, not the filter, so it does not move as
+ * chips are tapped.
+ */
+export const ACCOUNT_SUMMARY_SQL = `SELECT
+    COUNT(*) AS accounts,
+    COALESCE(SUM(CASE WHEN COALESCE(outstandingPaise, 0) > 0 THEN outstandingPaise ELSE 0 END), 0) AS owedPaise,
+    COALESCE(SUM(CASE WHEN COALESCE(outstandingPaise, 0) > 0 THEN 1 ELSE 0 END), 0) AS owing,
+    COALESCE(SUM(CASE WHEN COALESCE(creditLimitPaise, 0) > 0 AND COALESCE(outstandingPaise, 0) > creditLimitPaise THEN 1 ELSE 0 END), 0) AS over,
+    COALESCE(SUM(CASE WHEN COALESCE(creditBlocked, 0) = 1 THEN 1 ELSE 0 END), 0) AS blocked,
+    MAX(lastSyncedAt) AS syncedAt
+  FROM customers WHERE NOT ${IS_LEAD}`;

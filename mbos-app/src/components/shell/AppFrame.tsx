@@ -115,6 +115,8 @@ export const FROM_LABEL: Record<string, string> = {
   maps: 'Offline maps',
   pick: 'Pick your shops',
   nearby: 'Near me',
+  accounts: 'Customer accounts',
+  account: 'Account',
 };
 
 /** Reads the recorded entry route, so the label and the destination agree. */

@@ -16,6 +16,7 @@ import { overdueSamples } from '../src/data/lead-samples';
 import { openLeadCount } from '../src/data/leads';
 import { pendingCount, queueCounts } from '../src/sync/queue';
 import { savedMaps } from '../src/data/offline-maps';
+import { bookMoney } from '../src/data/customer-account';
 import { isoDate, plural } from '../src/lib/format';
 
 /**
@@ -42,6 +43,7 @@ type Counts = {
   openSamples: number;
   toSend: number;
   rejected: number;
+  owing: number;
 };
 
 const EMPTY: Counts = {
@@ -56,6 +58,7 @@ const EMPTY: Counts = {
   openSamples: 0,
   toSend: 0,
   rejected: 0,
+  owing: 0,
 };
 
 function groupsFor(n: Counts): { label: string; items: Item[] }[] {
@@ -89,6 +92,16 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
            anywhere to see what he had already done. */
         { label: 'Orders', badge: '', route: 'orders' },
         { label: 'Payments', badge: n.toBank ? plural(n.toBank, 'to bank', 'to bank') : '', route: 'collections' },
+        /* The book as the Accounts app reads it: who owes what, every bill,
+           every payment and where it went. Read-only — the office decides
+           about money; this is so he can answer for it at the counter. The
+           badge is how many of his shops owe money, from the office's own
+           outstanding on the pull. */
+        {
+          label: 'Customer accounts',
+          badge: n.owing ? plural(n.owing, 'owes', 'owe') : '',
+          route: 'accounts',
+        },
         /* LATE beats OPEN. Both are true, only one is a thing to do
            today, and a badge that is lit whenever anything is open is a badge
            that stops meaning anything. */
@@ -193,7 +206,8 @@ export default function MoreScreen() {
            a rupee amount in a menu badge reads as something owed to him. */
         cashInHand(userId),
         overdueSamples(today),
-      ]).then(([tasks, openLeads, expenses, samples, toSend, queue, today_, maps, cash, late]) => {
+        bookMoney().catch(() => null),
+      ]).then(([tasks, openLeads, expenses, samples, toSend, queue, today_, maps, cash, late, money]) => {
         if (!live) return;
         setCounts({
           savedMaps: maps.length,
@@ -207,6 +221,7 @@ export default function MoreScreen() {
           rejected: queue.rejected ?? 0,
           daySent: today_.day?.lockedAt != null,
           legsToday: today_.legs.length,
+          owing: money?.owing ?? 0,
         });
       });
       return () => {
