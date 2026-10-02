@@ -12,7 +12,7 @@ import { closeStaleLegs, closeStaleSessions } from '../data/travel';
 import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
 import { registerForPush } from '../native/push';
-import { fetchUpdateInBackground } from '../native/updates';
+import { offerAnyUpdate } from '../native/refresh';
 import { restoreArrival, restoreOffPlanReason } from './store';
 
 /**
@@ -67,9 +67,10 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
         void registerForPush();
         /* Behind the app, never in front of it: `setReady(true)` has already
            run, so the salesman is looking at his day while this downloads. It
-           applies at once if it lands within seconds of the launch, otherwise
-           on the NEXT launch — see `fetchUpdateInBackground`. */
-        void fetchUpdateInBackground();
+           applies at once if it lands within seconds of the launch; otherwise
+           it waits, and the Update now / Update later modal says so — see
+           `offerAnyUpdate`. */
+        void offerAnyUpdate();
       }
     })();
 
@@ -103,7 +104,7 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
       if (state === 'active') {
         void resumeTrailIfDayOpen(userId);
         if (backgroundedAt != null && Date.now() - backgroundedAt >= 30 * 60_000) {
-          void fetchUpdateInBackground();
+          void offerAnyUpdate();
         }
         backgroundedAt = null;
       }
