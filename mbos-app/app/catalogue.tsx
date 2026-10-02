@@ -8,7 +8,7 @@ import { inrFromPaise, plural } from '../src/lib/format';
 import { searchProducts } from '../src/data/customers';
 import { useStore } from '../src/state/store';
 import { SkuChip } from '../src/components/ui/sku';
-import { productLines } from '../src/lib/product-lines';
+import { skuLines } from '../src/lib/sku-lines';
 
 type Row = Awaited<ReturnType<typeof searchProducts>>[number];
 
@@ -111,19 +111,17 @@ export default function CatalogueScreen() {
         paddingVertical: 14,
       }}>
       <View style={{ flex: 1, minWidth: 0 }}>
-        {/* THE FORMULATION LEADS, the same rule as the order form's rows —
-            `src/lib/product-lines.ts`. Depot stock is still not in the payload,
-            so what the second line carries is the SKU and its packing rather
-            than a confident "In stock" nothing has checked; with the liquid
-            headlining, that SKU is also the only thing separating two rows read
-            out mid-conversation, so it is drawn rather than optional. */}
+        {/* THE SKU LEADS, the same rule as the order form's rows —
+            `src/lib/sku-lines.ts`. Depot stock is still not in the payload,
+            so what the second line carries is the formulation and the packing
+            rather than a confident "In stock" nothing has checked. */}
         <SkuChip sku={x.sku} />
         <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-          {productLines({ displayName: x.name, subtitle: x.formulation ?? x.brand }).lead}
+          {skuLines({ name: x.name, formulation: x.formulation ?? x.brand }).lead}
         </T>
         <T style={{ fontSize: 13, color: C.muted }}>
           {[
-            productLines({ displayName: x.name, subtitle: x.formulation ?? x.brand }).detail,
+            skuLines({ name: x.name, formulation: x.formulation ?? x.brand }).detail,
             x.cansPerBox ? x.cansPerBox + ' per box' : null,
           ]
             .filter(Boolean)

@@ -12,7 +12,7 @@ import { closeStaleLegs, closeStaleSessions } from '../data/travel';
 import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
 import { registerForPush } from '../native/push';
-import { offerAnyUpdate } from '../native/refresh';
+import { fetchUpdateQuietly } from '../native/refresh';
 import { restoreArrival, restoreOffPlanReason } from './store';
 
 /**
@@ -66,11 +66,10 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
         void restoreArrival();
         void registerForPush();
         /* Behind the app, never in front of it: `setReady(true)` has already
-           run, so the salesman is looking at his day while this downloads. It
-           applies at once if it lands within seconds of the launch; otherwise
-           it waits, and the Update now / Update later modal says so — see
-           `offerAnyUpdate`. */
-        void offerAnyUpdate();
+           run, so the salesman is looking at his day while this downloads. No
+           prompt here — that is the reload button's — see
+           `fetchUpdateQuietly`. */
+        void fetchUpdateQuietly();
       }
     })();
 
@@ -104,7 +103,7 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
       if (state === 'active') {
         void resumeTrailIfDayOpen(userId);
         if (backgroundedAt != null && Date.now() - backgroundedAt >= 30 * 60_000) {
-          void offerAnyUpdate();
+          void fetchUpdateQuietly();
         }
         backgroundedAt = null;
       }
