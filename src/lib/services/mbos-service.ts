@@ -1898,6 +1898,14 @@ async function openLeads(userId: string, since?: string | null) {
        -- handset would make "on hold" mean "gone" — which is exactly the
        -- conflation the status exists to end.
        and c.lead_stage not in ('won', 'lost')
+       -- A THIRD-PARTY SHOP IS A CUSTOMER, not a lead. A distributor we bill
+       -- buys from us and sells on to it, and the salesman visits it to take
+       -- orders for that distributor. Most of them were CRM leads before they
+       -- were marked, and they kept their old stage, so without this line they
+       -- came down as leads: listed under Leads, opened on the funnel, and
+       -- asked to be qualified as Suspects. They reach the handset through the
+       -- customers channel, like every other shop in his book.
+       and not c.third_party
        ${since ? sql`and c.updated_at > ${since}` : sql``}
      order by c.lead_next_follow_up_date asc nulls last
   `);
