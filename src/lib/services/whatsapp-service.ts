@@ -1148,9 +1148,16 @@ export async function apiSendCounts(days = 7): Promise<Record<string, number>> {
 
 export type InboxReply = {
   id: string;
-  customerId: string;
-  customerName: string;
-  kind: "lead" | "customer";
+  /**
+   * Null for a number that matches no customer — shown only to somebody who
+   * sees the whole book, and drawn as "not a customer or lead" rather than
+   * given a name it does not have.
+   */
+  customerId: string | null;
+  customerName: string | null;
+  kind: "lead" | "customer" | null;
+  /** The sender's WhatsApp number, country code first. */
+  waId: string | null;
   thirdParty: boolean;
   phone: string | null;
   /** The name on the sender's WhatsApp profile, which is often not the shop's. */
@@ -1176,7 +1183,8 @@ export type InboxReply = {
   } | null;
 };
 
-export type InboxShow = "open" | "all";
+/** `unknown` is the unmatched numbers alone, for somebody who sees the whole book. */
+export type InboxShow = "open" | "all" | "unknown";
 
 /** How far back "All" reaches. Open replies are listed however old they are. */
 export const INBOX_ALL_DAYS = 30;
@@ -1187,8 +1195,12 @@ const INBOX_LIMIT = 200;
  *
  * Scoped by `scopedToUsers` — the same rule as every list in the CRM: a
  * telecaller sees replies from the customers and leads in their own book,
- * a manager their team's. A reply from a number matching no customer has no
- * book to sit in and is left to the Founder Dashboard, which lists them.
+ * a manager their team's.
+ *
+ * A reply from a number matching NO customer has no book to sit in, so it
+ * reaches only somebody whose scope is the whole book — an admin, the founder.
+ * It is listed beside the rest, marked as not a customer or lead, because a
+ * new shop writing in is exactly the message nobody else will ever see.
  *
  * Raw SQL because of the lateral join, and `customers` is deliberately NOT
  * aliased: the scope clause spells its columns as `customers.owner_id`, and
@@ -1197,26 +1209,39 @@ const INBOX_LIMIT = 200;
 export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promise<{
   rows: InboxReply[];
   openCount: number;
+  /** Open replies from unknown numbers. Always 0 for anybody not seeing the whole book. */
+  unknownOpenCount: number;
+  /** Whether this person may see unknown numbers at all. */
+  seesUnknown: boolean;
   capped: boolean;
 }> {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
-  const scope = scopedToUsers(ids) ?? sql`true`;
+  const seesUnknown = ids === null;
+  // A matched reply inside the scope — or, for the whole book, any reply.
+  const scope = seesUnknown
+    ? sql`true`
+    : sql`r.customer_id is not null and (${scopedToUsers(ids) ?? sql`true`})`;
   const q = opts.q?.trim().replace(/[%_]/g, "").slice(0, 100) ?? "";
   const which =
     opts.show === "open"
       ? sql`r.actioned = false`
-      : sql`r.received_at > now() - make_interval(days => ${INBOX_ALL_DAYS}::int)`;
+      : opts.show === "unknown"
+        ? sql`r.customer_id is null`
+        : sql`r.received_at > now() - make_interval(days => ${INBOX_ALL_DAYS}::int)`;
+  const like = "%" + q + "%";
   const search = q
-    ? sql`and (customers.name ilike ${"%" + q + "%"} or r.message ilike ${"%" + q + "%"})`
+    ? sql`and (customers.name ilike ${like} or r.message ilike ${like}
+               or r.sender_name ilike ${like} or r.wa_id like ${like})`
     : sql``;
 
   const [rows, open] = await Promise.all([
     db.execute<{
       id: string;
-      customer_id: string;
-      customer_name: string;
-      kind: "lead" | "customer";
+      customer_id: string | null;
+      customer_name: string | null;
+      kind: "lead" | "customer" | null;
+      wa_id: string | null;
       third_party: boolean;
       phone: string | null;
       sender_name: string | null;
@@ -1233,7 +1258,7 @@ export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promi
       prev_user_name: string | null;
     }>(sql`
       select r.id, r.customer_id, customers.name as customer_name, customers.kind,
-             customers.third_party, customers.phone, r.sender_name, r.message,
+             customers.third_party, customers.phone, r.wa_id, r.sender_name, r.message,
              r.received_at, r.actioned, r.actioned_at,
              ab.name as actioned_by_name,
              (select u.name from users u where u.id = ${ASSIGNED_TO_SQL}) as assigned_to_name,
@@ -1241,7 +1266,7 @@ export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promi
              prev.went_at as prev_went_at, prev.trigger_id as prev_trigger,
              prev.user_name as prev_user_name
         from wa_replies r
-        join customers on customers.id = r.customer_id
+        left join customers on customers.id = r.customer_id
         left join users ab on ab.id = r.actioned_by_id
         left join lateral (
           select m.template_name, m.body, m.trigger_id, mu.name as user_name,
@@ -1258,9 +1283,9 @@ export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promi
        order by r.received_at desc, r.id desc
        limit ${INBOX_LIMIT}
     `),
-    db.execute<{ n: number }>(sql`
-      select count(*)::int as n
-        from wa_replies r join customers on customers.id = r.customer_id
+    db.execute<{ n: number; unknown: number }>(sql`
+      select count(*)::int as n, count(*) filter (where r.customer_id is null)::int as unknown
+        from wa_replies r left join customers on customers.id = r.customer_id
        where r.actioned = false and (${scope})
     `),
   ]);
@@ -1272,6 +1297,7 @@ export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promi
       customerId: r.customer_id,
       customerName: r.customer_name,
       kind: r.kind,
+      waId: r.wa_id,
       thirdParty: Boolean(r.third_party),
       phone: r.phone,
       senderName: r.sender_name,
@@ -1293,6 +1319,8 @@ export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promi
             },
     })),
     openCount: Number(open[0]?.n ?? 0),
+    unknownOpenCount: Number(open[0]?.unknown ?? 0),
+    seesUnknown,
     capped: rows.length >= INBOX_LIMIT,
   };
 }
@@ -1302,17 +1330,22 @@ export async function repliesInbox(opts: { show: InboxShow; q?: string }): Promi
  *
  * Checked against the customer's scope: this took a bare id and updated any
  * reply in the building, so anybody could clear another telecaller's inbox.
- * A reply with no customer has no book and is not handled from the CRM.
+ * A reply from an unknown number has no book, so only somebody who sees the
+ * whole book — the same people it is shown to — may handle it.
  */
 export async function actionReply(replyId: string, handled = true): Promise<Result> {
   const user = await requireUser();
   const [row] = await db
     .select({ reply: waReplies, customer: customers })
     .from(waReplies)
-    .innerJoin(customers, eq(customers.id, waReplies.customerId))
+    .leftJoin(customers, eq(customers.id, waReplies.customerId))
     .where(eq(waReplies.id, replyId));
   if (!row) return err("That reply no longer exists.", "not_found");
-  await assertCustomerInScope(row.customer);
+  if (row.customer) {
+    await assertCustomerInScope(row.customer);
+  } else if (scopedUserIds((await resolveScope()).scope) !== null) {
+    return err("A reply from an unknown number is handled by somebody who sees the whole book.", "not_permitted");
+  }
   await db
     .update(waReplies)
     .set(

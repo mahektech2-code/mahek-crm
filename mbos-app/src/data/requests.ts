@@ -18,7 +18,8 @@ import type { ExpenseKind } from '../engines/generated/expense-policy';
 
 export type ApprovalType =
   | 'order_over_credit' | 'order_over_threshold' | 'expense_claim'
-  | 'leave' | 'tour' | 'sample' | 'attendance_regularisation' | 'out_of_territory';
+  | 'leave' | 'tour' | 'sample' | 'attendance_regularisation' | 'out_of_territory'
+  | 'territory';
 
 /**
  * Ask somebody in the office to say yes.

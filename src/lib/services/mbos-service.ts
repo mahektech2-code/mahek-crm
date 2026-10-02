@@ -887,6 +887,8 @@ export type BootstrapPayload = {
   myOrders: unknown[];
   /** The changes he asked for on approved orders, and their answers. */
   orderChanges: unknown[];
+  /** What he said about his allocated areas, and the office's answer. See `myTerritoryRequests`. */
+  territoryRequests: unknown[];
   /**
    * The expense policy in force, resolved for THIS person, as rules the
    * handset's own copy of the engine reads.
@@ -944,10 +946,16 @@ const HISTORY_PER_CUSTOMER = 10;
  * `operator does not exist: date >= integer`. The cast pins the type before
  * Postgres has to guess. Confirmed by reproducing the exact failure with a
  * plain `PREPARE` carrying no parameter types, and confirming the cast alone
- * fixes it; a literal `15` typed into the query text never hits this, because
+ * fixes it; a literal number typed into the query text never hits this, because
  * a literal is not an unresolved parameter.
  */
-const PLAN_HISTORY_DAYS = 15;
+/*
+ * Sixty days back, not fifteen: the handset's Journeys screen shows past days
+ * as a list and a calendar with every stop's outcome, and a fortnight is not
+ * enough history to see a month of work in. `JOURNEY_HISTORY_DAYS` on the
+ * handset must match it, or that screen asks for days the pull never sent.
+ */
+const PLAN_HISTORY_DAYS = 60;
 
 export async function buildBootstrap(
   principal: MbosPrincipal,
@@ -960,8 +968,8 @@ export async function buildBootstrap(
      return type to carry a screen's sentence is how a boundary picks up a
      second job. Two cheap reads of one indexed table beat that. */
   const territories = await territoriesFor(principal.user.id);
-  /* A fortnight either side of today, matching `PLAN_HISTORY_DAYS` and the
-     manager's own MAX_PLAN_DAYS (31) forward cap — so a fresh sign-in shows
+  /* `PLAN_HISTORY_DAYS` back and the manager's own MAX_PLAN_DAYS (31)
+     forward cap — so a fresh sign-in shows
      the whole relevant window immediately rather than waiting for it to
      trickle in through the delta over the following days. */
   const planFrom = addDays(day, -PLAN_HISTORY_DAYS);
@@ -1073,6 +1081,7 @@ export async function buildBootstrap(
     travelModes: await travelModeRows(),
     myOrders: await myOrderStates(principal.user.id),
     orderChanges: await myOrderChanges(principal.user.id),
+    territoryRequests: await myTerritoryRequests(principal.user.id),
     expensePolicy: await expensePolicyFor(principal.user.id, await today()),
     config,
   };
@@ -1274,6 +1283,43 @@ async function myOrderChanges(userId: string, sinceIso?: string) {
        and ${sinceIso ? sql`r.updated_at > ${sinceIso}` : sql`r.created_at > now() - interval '90 days'`}
      order by r.updated_at asc
      limit 500
+  `);
+}
+
+/**
+ * What he said about his areas, newest last, with the office's answer.
+ *
+ * An acceptance needs no answer and reads `accepted`. A change request is
+ * decided on the Approvals queue, so its state is the approval's — which is
+ * also why the delta asks whether the APPROVAL moved, not only the request:
+ * deciding one touches `mbos_approvals` and nothing here.
+ */
+async function myTerritoryRequests(userId: string, sinceIso?: string) {
+  return db.execute<Record<string, unknown>>(sql`
+    select t.id, t.kind, t.current_places as "currentPlaces",
+           t.requested_places as "requestedPlaces", t.reason, t.signature,
+           case when t.kind = 'accept' then 'accepted'
+                else coalesce(ap.state::text, 'pending') end as state,
+           ap.decision_note as "decisionNote",
+           (extract(epoch from ap.decided_at) * 1000)::double precision as "decidedAt",
+           (extract(epoch from t.client_created_at) * 1000)::double precision as "clientCreatedAt",
+           (extract(epoch from t.server_created_at) * 1000)::double precision as "serverCreatedAt"
+      from mbos_territory_requests t
+      left join lateral (
+        select a.state, a.decision_note, a.decided_at, a.updated_at
+          from mbos_approvals a
+         where a.subject_id = t.id and a.subject_type = 'territory_request'
+         order by a.requested_at desc
+         limit 1
+      ) ap on true
+     where t.user_id = ${userId}
+       and ${
+         sinceIso
+           ? sql`(t.updated_at > ${sinceIso} or ap.updated_at > ${sinceIso})`
+           : sql`t.server_created_at > now() - interval '180 days'`
+       }
+     order by t.server_created_at asc
+     limit 100
   `);
 }
 
@@ -2939,6 +2985,7 @@ export async function buildPull(
       approvals: [],
       myOrders: [],
       orderChanges: [],
+      territoryRequests: [],
       performance: [],
       tasks: [],
       planDays: [],
@@ -3243,6 +3290,7 @@ export async function buildPull(
     deletions: deletionRows.groups,
     myOrders: await myOrderStates(principal.user.id, sinceIso),
     orderChanges: await myOrderChanges(principal.user.id, sinceIso),
+    territoryRequests: await myTerritoryRequests(principal.user.id, sinceIso),
     performance: await performanceFor(principal.user.id, sinceIso),
     /* NOT `since`-gated, and the same function the bootstrap calls. What a
        shop has achieved moves when an order is approved, which touches no row

@@ -2016,6 +2016,33 @@ export const MIGRATIONS: string[][] = [
   ],
 
   /*
+   * WHAT HE SAID ABOUT WHERE HE WORKS. The office allocates his cities and
+   * areas; from the Journeys screen he accepts them or asks for different
+   * ones. `signature` is the allocation he was looking at (see
+   * `lib/territory-signature.ts`), so an acceptance stops counting the moment
+   * the office changes his areas. A change request's verdict arrives on the
+   * approvals channel and on `territoryRequests`.
+   */
+  [
+    `CREATE TABLE IF NOT EXISTS territory_requests (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      currentPlaces TEXT NOT NULL DEFAULT '[]',
+      requestedPlaces TEXT NOT NULL DEFAULT '[]',
+      reason TEXT,
+      signature TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT 'pending',
+      decisionNote TEXT,
+      decidedAt INTEGER,
+      clientCreatedAt INTEGER NOT NULL,
+      serverCreatedAt INTEGER,
+      deviceId TEXT NOT NULL,
+      syncState TEXT NOT NULL DEFAULT 'local',
+      syncMessage TEXT
+    );`,
+  ],
+
+  /*
    * HIS CUSTOMERS' OWN MONTHLY TARGETS, this month and last.
    *
    * The person target on Performance says how far he is from his month; this
@@ -2063,7 +2090,7 @@ export const SCHEMA_VERSION = MIGRATIONS.length;
 export const OWNED_TABLES = [
   'visits', 'orders', 'order_lines', 'payments', 'attendance_days', 'tasks',
   'leads', 'samples', 'complaints', 'expenses', 'leave_requests', 'tours',
-  'competitor_records', 'approvals', 'order_change_requests',
+  'competitor_records', 'approvals', 'order_change_requests', 'territory_requests',
   /* The funnel's two. A lead's timeline is written here as it happens and the
      office keeps its own — a sync never deletes a line of it, because what a
      salesman recorded about a shop is the record even where the office's own

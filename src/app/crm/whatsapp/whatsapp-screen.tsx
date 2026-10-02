@@ -208,7 +208,15 @@ export function WhatsappScreen(props: {
   /** The business date, for "Today, 10:42 am" — the clock is not read during render. */
   today: string;
   /** What customers in this book wrote back. */
-  inbox: { rows: InboxReply[]; openCount: number; capped: boolean; show: InboxShow; q: string };
+  inbox: {
+    rows: InboxReply[];
+    openCount: number;
+    unknownOpenCount: number;
+    seesUnknown: boolean;
+    capped: boolean;
+    show: InboxShow;
+    q: string;
+  };
 }) {
   const {
     scopeLabel,
@@ -2114,7 +2122,15 @@ function RepliesTab({
   showAssignee,
   onChanged,
 }: {
-  inbox: { rows: InboxReply[]; openCount: number; capped: boolean; show: InboxShow; q: string };
+  inbox: {
+    rows: InboxReply[];
+    openCount: number;
+    unknownOpenCount: number;
+    seesUnknown: boolean;
+    capped: boolean;
+    show: InboxShow;
+    q: string;
+  };
   today: string;
   scopeLabel: string;
   showAssignee: boolean;
@@ -2139,12 +2155,15 @@ function RepliesTab({
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center gap-2.5 border-b border-line px-4 py-2.5">
-        {(
-          [
-            { key: "open", label: `Needs reply · ${inbox.openCount}` },
-            { key: "all", label: "All, last 30 days" },
-          ] as const
-        ).map((o) => (
+        {[
+          { key: "open" as const, label: `Needs reply · ${inbox.openCount}` },
+          { key: "all" as const, label: "All, last 30 days" },
+          // Only for somebody who sees the whole book: nobody else is shown
+          // a number that belongs to no book.
+          ...(inbox.seesUnknown
+            ? [{ key: "unknown" as const, label: `Unknown numbers · ${inbox.unknownOpenCount} open` }]
+            : []),
+        ].map((o) => (
           <button
             key={o.key}
             onClick={() => navigate({ show: o.key === "open" ? undefined : o.key })}
@@ -2173,9 +2192,11 @@ function RepliesTab({
         <span className="flex-1" />
         <span className="text-[13px] text-muted">
           {scopeLabel} ·{" "}
-          {showAssignee
-            ? "replies from your team's customers and leads"
-            : "replies from your customers and leads only"}
+          {inbox.seesUnknown
+            ? "every reply, including numbers that are not a customer or lead"
+            : showAssignee
+              ? "replies from your team's customers and leads"
+              : "replies from your customers and leads only"}
         </span>
       </div>
 
@@ -2188,12 +2209,23 @@ function RepliesTab({
             }`}
           >
             <div className="flex flex-wrap items-center gap-2">
-              <Link
-                href={`/crm/customers/${r.customerId}`}
-                className="text-sm font-medium text-ink no-underline"
-              >
-                {r.customerName}
-              </Link>
+              {r.customerId ? (
+                <Link
+                  href={`/crm/customers/${r.customerId}`}
+                  className="text-sm font-medium text-ink no-underline"
+                >
+                  {r.customerName}
+                </Link>
+              ) : (
+                <span className="text-sm font-medium text-ink">
+                  {r.senderName ?? (r.waId ? phoneDisplay(r.waId.slice(-10)) : "Unknown sender")}
+                </span>
+              )}
+              {r.customerId ? null : (
+                <Badge tone="danger" title="This number is not on any customer or lead. Put it on the right record and their next reply files itself.">
+                  Unknown number · not a customer or lead
+                </Badge>
+              )}
               {r.kind === "lead" ? <Badge tone="brand">Lead</Badge> : null}
               {r.thirdParty ? <Badge tone="neutral">Third party</Badge> : null}
               {r.actioned ? (
@@ -2205,7 +2237,7 @@ function RepliesTab({
               ) : (
                 <Badge tone="warn">Needs reply</Badge>
               )}
-              {showAssignee ? (
+              {showAssignee && r.customerId ? (
                 <span className="text-[12px] text-muted">
                   · {r.assignedToName ? `${r.assignedToName}'s customer` : "Unassigned"}
                 </span>
@@ -2219,7 +2251,11 @@ function RepliesTab({
               <p className="text-sm whitespace-pre-wrap text-ink">{r.message}</p>
               <div className="mt-1 text-[11px] text-muted">
                 {r.senderName ? `${r.senderName} · ` : ""}
-                {r.phone ? phoneDisplay(r.phone) : "number on WhatsApp"}
+                {r.phone
+                  ? phoneDisplay(r.phone)
+                  : r.waId
+                    ? phoneDisplay(r.waId.slice(-10))
+                    : "number on WhatsApp"}
               </div>
             </div>
 
@@ -2244,8 +2280,10 @@ function RepliesTab({
                     {r.inReplyTo.body}
                   </p>
                 </details>
-              ) : (
+              ) : r.customerId ? (
                 <span>They wrote first — nothing had been sent to them before this.</span>
+              ) : (
+                <span>Nobody on the book has this number, so there is nothing of ours to show it against.</span>
               )}
             </div>
 
@@ -2260,9 +2298,9 @@ function RepliesTab({
               >
                 {r.actioned ? "Mark as needing a reply" : "Mark handled"}
               </Button>
-              {r.phone ? (
+              {r.phone || r.waId ? (
                 <a
-                  href={`https://wa.me/91${r.phone.replace(/\D/g, "").slice(-10)}`}
+                  href={`https://wa.me/91${(r.phone ?? r.waId ?? "").replace(/\D/g, "").slice(-10)}`}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex h-7 items-center rounded-[4px] border border-line px-2.5 text-[13px] text-body no-underline hover:bg-canvas"
@@ -2270,12 +2308,14 @@ function RepliesTab({
                   Reply on WhatsApp ↗
                 </a>
               ) : null}
-              <Link
-                href={`/crm/customers/${r.customerId}`}
-                className="inline-flex h-7 items-center rounded-[4px] border border-line px-2.5 text-[13px] text-body no-underline hover:bg-canvas"
-              >
-                Open record
-              </Link>
+              {r.customerId ? (
+                <Link
+                  href={`/crm/customers/${r.customerId}`}
+                  className="inline-flex h-7 items-center rounded-[4px] border border-line px-2.5 text-[13px] text-body no-underline hover:bg-canvas"
+                >
+                  Open record
+                </Link>
+              ) : null}
             </div>
           </div>
         ))
@@ -2286,7 +2326,9 @@ function RepliesTab({
               ? "No reply matches that search"
               : inbox.show === "open"
                 ? "Nothing waiting for a reply"
-                : "No replies in the last 30 days"
+                : inbox.show === "unknown"
+                  ? "No replies from unknown numbers"
+                  : "No replies in the last 30 days"
           }
           body={
             inbox.show === "open"

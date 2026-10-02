@@ -4585,6 +4585,20 @@ since he picked it is dropped, counted and NOTIFIED — refusing the whole day
 over one stale id loses the nineteen he got right, and dropping it silently is
 how somebody walks a day missing a stop they chose.
 
+**A SALESMAN ANSWERS HIS ALLOCATION, as he answers a proposed day.** The
+handset's Journeys screen (`app/journeys.tsx`) lists and calendars every day
+in `PLAN_HISTORY_DAYS` (60) back and the month ahead, each open to its stops,
+and above them the cities and areas allocated to him. He accepts them, or asks
+for different ones: `mbos_territory_requests`, kind `accept` or `change`. A
+change travels as an approval of type `territory` and is decided on the
+ordinary Approvals queue — approving says yes, and the allocation itself is
+still changed by a person on the Territory screen, because what he typed is a
+town name and not a place the tree can be trusted to resolve unseen. An
+acceptance carries the allocation's SIGNATURE (`lib/territory-signature.ts`,
+mirrored byte for byte on the handset and pinned by a test), so it stops
+counting the moment somebody changes his areas and the Team screen says
+"accepted an earlier allocation" rather than vouching for cities he never saw.
+
 **THE HANDSET IS RELEASED BY A WORKFLOW, and never from somebody's laptop.**
 `.github/workflows/mbos-apk.yml` builds it, verifies the signature against the
 committed keystore with `apksigner`, and publishes to R2 under a versioned name
