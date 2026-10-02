@@ -102,3 +102,23 @@ export function overdueWindow(day: string): SQL {
     or ${parkComesBack(sql`< ${day}::date`)}
   )`;
 }
+
+/**
+ * §24's exception, as a window: an active lead with nothing owed by anybody.
+ *
+ * Two shapes, one population, because "what is nobody working" means both. NO
+ * PLAN AT ALL — no action, no day or nobody named — and a plan whose day has
+ * gone with no answer written beside it. It is spelled here, beside the two
+ * windows it is the complement of, so the Lead Management list's `unworked`
+ * view and the screen that has always listed these (`leadsWithoutNextAction`)
+ * read ONE definition: a count on one and a list on the other that disagreed
+ * about it is the exact failure the views exist to rule out.
+ */
+export function unworkedWindow(day: string): SQL {
+  return sql`(
+    c.lead_next_action is null
+    or c.lead_next_action_date is null
+    or c.lead_next_action_owner_id is null
+    or (c.lead_next_action_date < ${day}::date and c.lead_next_action_outcome is null)
+  )`;
+}

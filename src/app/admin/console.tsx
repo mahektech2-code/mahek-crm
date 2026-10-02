@@ -55,6 +55,7 @@ import { SheetSection } from "./sheet-section";
 import { VoiceSection, VOICE_SUBTITLE, type VoiceData } from "./voice-section";
 import { MapsSection, MAPS_SUBTITLE, type MapsData } from "./maps-section";
 import { ComponentsScreen } from "./components-section";
+import { LeadOversightSection } from "./lead-oversight-section";
 import type { Person } from "@/lib/services/admin-people-service";
 import type { AccessRow } from "@/lib/services/access-service";
 import { AccessSection } from "./access-section";
@@ -82,6 +83,7 @@ const PLATFORM_NAV = [
   { key: "voice", label: "Voice" },
   { key: "maps", label: "Maps" },
   { key: "components", label: "Components" },
+  { key: "oversight", label: "Lead oversight" },
   { key: "audit", label: "Audit" },
 ] as const;
 
@@ -922,6 +924,12 @@ function SectionBody({
    */
   if (section === "components") {
     return <ComponentsScreen />;
+  }
+
+  /* The funnel's audit, reached from here now that it has left the Lead
+     Management sidebar. A way to the screens, not a copy of them. */
+  if (section === "oversight") {
+    return <LeadOversightSection />;
   }
 
   if (comingSoon) {

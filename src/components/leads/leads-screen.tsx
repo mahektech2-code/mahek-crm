@@ -219,12 +219,20 @@ export function LeadsScreen({
   /** At or above this a score reads as strong. */
   healthStrongAtOrAbove: number;
   team: Array<{ id: string; name: string }>;
-  /** What is waiting on the three desks this screen is the way in to. */
+  /** What is waiting on the desks and worklists this screen is the way in to. */
   desks: {
     verification: number;
     verificationMine: number;
     noNextAction: number;
     appointments: number;
+    /** Suspects at or past the visit warning, undecided. Opens `?view=decide`. */
+    suspectDecisions: number;
+    /** Leads on hold. Opens `?view=parked`. */
+    parked: number;
+    /** Converted accounts with nobody named to run them. Opens `?view=handover`. */
+    handovers: number;
+    /** The desks that left the sidebar, only those this person holds. */
+    otherDesks: Array<{ label: string; href: string }>;
   };
   /**
    * §4.1 — whether this person may say how hard to push a lead.
@@ -1965,6 +1973,10 @@ function DeskLine({
     verificationMine: number;
     noNextAction: number;
     appointments: number;
+    suspectDecisions: number;
+    parked: number;
+    handovers: number;
+    otherDesks: Array<{ label: string; href: string }>;
   };
 }) {
   const items = [
@@ -1978,10 +1990,28 @@ function DeskLine({
           : `Yours, of ${desks.verification} waiting on anybody.`,
     },
     {
-      href: leadHref(workspace, "leads/actions/none"),
+      href: `${leadHref(workspace, "leads")}?view=unworked`,
       label: "Nobody is working these",
       value: desks.noNextAction,
       title: "No next action, or one whose day has gone.",
+    },
+    {
+      href: `${leadHref(workspace, "leads")}?view=decide`,
+      label: "Suspect decisions",
+      value: desks.suspectDecisions,
+      title: "Suspects visited as often as the warning allows and still undecided.",
+    },
+    {
+      href: `${leadHref(workspace, "leads")}?view=parked`,
+      label: "On hold",
+      value: desks.parked,
+      title: "Paused leads, by the day each comes back.",
+    },
+    {
+      href: `${leadHref(workspace, "leads")}?view=handover`,
+      label: "Handovers",
+      value: desks.handovers,
+      title: "Converted accounts with nobody named to run them.",
     },
     {
       href: leadHref(workspace, "leads/appointments"),
@@ -2021,6 +2051,23 @@ function DeskLine({
           ) : null}
         </Link>
       ))}
+      {desks.otherDesks.length ? (
+        <span
+          className="flex flex-wrap items-center gap-x-3 border-l border-line pl-4"
+          title="Screens that have left the sidebar. Their lists are views above; the rest of each is here."
+        >
+          <span className="text-muted">Other desks</span>
+          {desks.otherDesks.map((d) => (
+            <Link
+              key={d.href}
+              href={d.href}
+              className="text-muted no-underline hover:text-ink hover:underline"
+            >
+              {d.label}
+            </Link>
+          ))}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -26,6 +26,13 @@ export type NavItem = {
   label: string;
   icon: SalesIconName;
   exact?: boolean;
+  /**
+   * Out of the main navigation but still granted, routed and working — drawn
+   * ONLY for somebody who cannot reach All Leads, whose desk line and views are
+   * where every one of these is found now. Hiding a destination must not strand
+   * the person whose grant is for that destination alone.
+   */
+  legacy?: boolean;
 };
 
 export type NavGroup = {
@@ -133,18 +140,21 @@ export const SALES_NAV: NavGroup[] = [
     icon: "spark",
     items: [
       { href: "/sales/leads", label: "All Leads", icon: "spark", exact: true },
+      { href: "/sales/leads/intake", label: "Intake", icon: "doc" },
       /* Its own route, outside `/sales`, but an ordinary module-backed link
          like every other row here — `sales.lead-pipeline`, in `lib/modules.ts`. */
       { href: "/sales-lead-pipeline", label: "Sales Manager", icon: "people" },
-      { href: "/sales/leads/funnel", label: "Funnel & conversion", icon: "chart" },
-      { href: "/sales/leads/intake", label: "Intake", icon: "doc" },
-      { href: "/sales/leads/qualify", label: "Qualification", icon: "tick" },
-      { href: "/sales/samples", label: "Samples & trials", icon: "sample" },
-      { href: "/sales/leads/commercial", label: "Commercial", icon: "order" },
       { href: "/sales/leads/appointments", label: "Distributor appointments", icon: "people" },
-      { href: "/sales/leads/actions", label: "Next actions & nurture", icon: "task" },
-      { href: "/sales/leads/handovers", label: "Handovers", icon: "route" },
-      { href: "/sales/leads/oversight", label: "Oversight", icon: "shield" },
+      /* ---- out of the main navigation; see `NavItem.legacy`. The same six the
+         CRM keeps (Telecaller and Lost are CRM-only: callers work in the CRM,
+         and the loss record has no Sales Dashboard module). ----------------- */
+      { href: "/sales/leads/funnel", label: "Funnel & conversion", icon: "chart", legacy: true },
+      { href: "/sales/leads/qualify", label: "Qualification", icon: "tick", legacy: true },
+      { href: "/sales/samples", label: "Samples & trials", icon: "sample", legacy: true },
+      { href: "/sales/leads/commercial", label: "Commercial", icon: "order", legacy: true },
+      { href: "/sales/leads/actions", label: "Next actions & nurture", icon: "task", legacy: true },
+      { href: "/sales/leads/handovers", label: "Handovers", icon: "route", legacy: true },
+      { href: "/sales/leads/oversight", label: "Oversight", icon: "shield", legacy: true },
     ],
   },
   {

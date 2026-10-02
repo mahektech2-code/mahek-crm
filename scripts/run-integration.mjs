@@ -122,6 +122,16 @@ const files = [
   // closing transition rather than guessed, and the next-action/nurture-task
   // cleanup touching only the lead and the tasks it is actually about.
   "src/lib/lead-lost.test.ts",
+  // Resuming a PARKED lead: judged from the rung the park came from rather than
+  // from a rung `on_hold` does not have — with the target's gate, §24 and the
+  // manager rules for stepping backwards all still applying, from the console
+  // and from the handset.
+  "src/lib/lead-resume-hold.test.ts",
+  // The four worklists that left the navigation as screens and live on as VIEWS
+  // of the lead list — suspect decisions, on hold, nobody working these,
+  // handovers: each one definition, the count on the desk line equal to the list
+  // it opens, parity with the old readers, and the sales-seat scope for handovers.
+  "src/lib/lead-worklist-views.test.ts",
   // Reversing a Lost lead, from the Sales Manager's door and the Telecaller's,
   // over one shared implementation: the same row and id, the loss kept in the
   // history, a failed verification asked again, a lead lost at Call 3 callable
@@ -145,6 +155,7 @@ const files = [
   // is drawn and for what may be done to it, admin sees all, owner-only and
   // unassigned leads are nobody's, and no other screen's scope moved.
   "src/lib/crm-sales-manager.test.ts",
+  "src/lib/sales-manager-desk-queues.test.ts",
   // The dashboard reads its four figures from `queueProgress`, which must stay
   // exactly equal to what `getQueue` would have said. That equivalence is only
   // checkable against a real book, so it lives here rather than in the pure set.

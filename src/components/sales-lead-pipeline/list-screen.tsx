@@ -49,6 +49,9 @@ const VIEW_OPTIONS: { value: string; label: string }[] = [
   { value: "overdue", label: "Overdue" },
   { value: "expected", label: "Expected orders" },
   { value: "lost30", label: "Lost (30 days)" },
+  { value: "unworked", label: "Nobody is working these" },
+  { value: "parked", label: "On hold" },
+  { value: "decide", label: "Suspect decisions" },
 ];
 
 function hrefFor(BASE: string, p: { q?: string; stage?: string; view?: string; page?: number }) {

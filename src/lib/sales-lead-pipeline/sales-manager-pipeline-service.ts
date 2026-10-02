@@ -30,6 +30,7 @@ import {
   leadRecord,
   leadTransitions,
   managerCalls,
+  nurtureSchedule,
   publishedDocuments,
   sampleDesk,
   verificationQueue,
@@ -421,7 +422,20 @@ export async function pipelineFunnel(day: string): Promise<PipelineFunnelData & 
 
 /* ══════════════════════════════════════════════════════════════════ list */
 
-const VIEWS = new Set<LeadView>(["all", "mine", "today", "overdue", "expected", "lost30"]);
+/* `handover` is deliberately absent: converted accounts have left the Sales Manager seat
+   (it is released at conversion), so the view would always read empty here — and an empty
+   worklist reads as "nothing is waiting", which is the wrong thing to say. */
+const VIEWS = new Set<LeadView>([
+  "all",
+  "mine",
+  "today",
+  "overdue",
+  "expected",
+  "lost30",
+  "decide",
+  "parked",
+  "unworked",
+]);
 
 export type ListParams = {
   q?: string;
@@ -1269,13 +1283,15 @@ async function everyPage(day: string, view: LeadView): Promise<{ rows: PageRow[]
 export async function pipelineDesk(day: string): Promise<DeskData> {
   const user = await requireUser();
 
-  const [book, overdue, verify, samples, open, slipped] = await Promise.all([
+  const [book, overdue, verify, samples, open, slipped, nurture] = await Promise.all([
     everyPage(day, "all"),
     everyPage(day, "overdue"),
     verificationQueue(day, { limit: 500 }),
     sampleDesk(day, { limit: 500 }),
     commitments(day, "open", { limit: 500 }),
     commitments(day, "slipped", { limit: 500 }),
+    /* The nurture sequence's own reader, already narrowed by this seat's book. */
+    nurtureSchedule(day, { limit: 500 }),
   ]);
 
   const live = book.rows.filter((r) => r.stage !== "lost");
@@ -1283,15 +1299,34 @@ export async function pipelineDesk(day: string): Promise<DeskData> {
 
   const sets: Record<Exclude<DeskQueue, "review">, Set<string>> = {
     verify: new Set(verify.rows.map((r) => r.customerId)),
-    /* Waiting on the manager's approval, or in the shop's hands with nobody's
-       verdict on it — the two halves of "a sample needs you". */
+    /* "A sample needs you", in the four places it can be waiting: a REQUEST to
+       approve, an APPROVED one nobody has dispatched, one ON THE ROAD to chase
+       (a sample stuck in transit never gets reviewed), and one in the shop's
+       hands with nobody's verdict on it. The first and last were all this queue
+       held; the middle two were the dispatch desk's, which this queue now
+       replaces — so a Sales Manager no longer has to leave the desk to find out
+       what is waiting to be sent. */
     sample: new Set(
       samples
-        .filter((s) => s.state === "requested" || ((s.state === "received" || s.state === "trial_done") && !s.feedbackRecorded))
+        .filter(
+          (s) =>
+            s.state === "requested" ||
+            s.state === "approved" ||
+            s.state === "dispatched" ||
+            ((s.state === "received" || s.state === "trial_done") && !s.feedbackRecorded),
+        )
         .map((s) => s.customerId),
     ),
     order: new Set([...open.rows, ...slipped.rows].map((r) => r.customerId)),
     overdue: new Set(overdue.rows.map((r) => r.id)),
+    /* A nurture task is a promise the sequence made on somebody's behalf. What
+       belongs on a desk is the ones that have come DUE — today, or past it — not
+       the ones weeks ahead. */
+    nurture: new Set(
+      [...nurture.overdue, ...nurture.today]
+        .map((t) => t.customerId)
+        .filter((id): id is string => Boolean(id)),
+    ),
   };
 
   const rows: DeskRow[] = live.map((r) => {
@@ -1302,6 +1337,7 @@ export async function pipelineDesk(day: string): Promise<DeskData> {
     if (sets.sample.has(r.id)) queues.push("sample");
     if (sets.order.has(r.id)) queues.push("order");
     if (sets.overdue.has(r.id)) queues.push("overdue");
+    if (sets.nurture.has(r.id)) queues.push("nurture");
     return { ...toRow(r, extra, recentDays), ownerId: r.salesmanId, queues };
   });
 

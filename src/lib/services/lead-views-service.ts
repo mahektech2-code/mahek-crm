@@ -3,12 +3,17 @@ import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 
 import { db } from "@/db";
-import { dueTodayWindow, overdueWindow, STILL_WORKING } from "../lead-action-window";
+import {
+  dueTodayWindow,
+  overdueWindow,
+  STILL_WORKING,
+  unworkedWindow,
+} from "../lead-action-window";
 import { confirmedCommitmentSql } from "../lead-commitment";
 import type { LeadFilters } from "../lead-filters";
 import { LEAD_TILES, type LeadTileId, type LeadView } from "../lead-views";
 import type { VantageSeats } from "../lead-vantage";
-import { leadFilterClause, leadsVisible, managerScope } from "./sales-service";
+import { leadFilterClause, leadsVisible, managerScope, scopeNarrowing } from "./sales-service";
 
 /* ---------------------------------------------------------------------------
  * §8.4 — A VIEW, IN SQL, AND THE NINE TILES ABOVE IT.
@@ -158,7 +163,91 @@ export async function leadViewClause(view: LeadView, day: string): Promise<SQL> 
      */
     case "register":
       return sql`c.lead_sales_type::text in ('distributor', 'third_party')`;
+
+    /*
+     * §4 — THE SUSPECTS WHO HAVE RUN OUT OF VISITS.
+     *
+     * Not every undecided suspect: the screen this replaces listed all of them,
+     * banded by how many visits each had had, and a view of thousands is not a
+     * queue. This is the population the cap ASKS about — visited at least
+     * `mbos.leads.visitsBeforeDecision` times and still undecided (the decided
+     * mark is what stops a lead being turned back into the question every
+     * morning). Nothing is refused; the answer is demanded on the record.
+     *
+     * The count is `count(*)` over `mbos_visits`, never a column, for the reason
+     * `suspectDecisions` states at length. The threshold is read here rather than
+     * passed in, so no call site can ask about a different one.
+     */
+    case "decide": {
+      const { getConfig } = await import("../config/store");
+      const warnAt = (await getConfig())["mbos.leads.visitsBeforeDecision"];
+      return sql`(${STILL_WORKING})
+                 and c.lead_stage::text in ('suspect', 'new', 'contacted')
+                 and c.lead_suspect_decided_at is null
+                 and (select count(*) from mbos_visits x where x.customer_id = c.id) >= ${warnAt}::int`;
+    }
+
+    /* A paused lead. `on_hold` is not terminal, so `STILL_WORKING` keeps it. */
+    case "parked":
+      return sql`(${STILL_WORKING}) and c.lead_stage = 'on_hold'`;
+
+    /* §24's exception — ONE definition, shared with the screen that has always
+       listed it (`leadsWithoutNextAction`), so the count and the old list
+       cannot disagree about it. */
+    case "unworked":
+      return sql`(${STILL_WORKING}) and ${unworkedWindow(day)}`;
+
+    /*
+     * CONVERTED, AND NOBODY NAMED TO RUN THE RELATIONSHIP.
+     *
+     * Deliberately NOT inside `STILL_WORKING`: a converted account has left the
+     * funnel's terminal-free set by definition. And scoped by the account's
+     * SALES SEAT rather than the lead's owner — see `scopeNarrowing`, which every
+     * reader of a view goes through, so this clause stays a pure predicate.
+     */
+    case "handover":
+      return sql`c.lead_converted_at is not null and c.handed_over_at is null`;
   }
+}
+
+/**
+ * THE FOUR WORKLISTS, COUNTED — for the line of desks above the list.
+ *
+ * Each is counted over the SAME base, the SAME scope and the SAME clause the
+ * page of rows behind it runs (`scopeNarrowing` and `leadViewClause`), so a
+ * number on the line and the list it opens cannot disagree. Unfiltered on
+ * purpose: this is the size of the queue, and a count that moved when somebody
+ * typed in the search box would read as work appearing and disappearing.
+ *
+ * Four statements rather than one because `handover` is narrowed by a DIFFERENT
+ * scope column from the other three, and one `count(*) filter` cannot carry two
+ * scopes. They ride one `Promise.all`, so the line costs a round trip, not four.
+ */
+export async function leadWorklistCounts(day: string): Promise<{
+  decide: number;
+  parked: number;
+  unworked: number;
+  handover: number;
+}> {
+  const scope = await managerScope();
+  const count = async (view: "decide" | "parked" | "unworked" | "handover") => {
+    const [row] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n
+        from customers c
+       where c.lead_stage is not null
+         and c.lead_archived = false
+         ${scopeNarrowing(scope, view)}
+         and (${await leadViewClause(view, day)})
+    `);
+    return Number(row?.n ?? 0);
+  };
+  const [decide, parked, unworked, handover] = await Promise.all([
+    count("decide"),
+    count("parked"),
+    count("unworked"),
+    count("handover"),
+  ]);
+  return { decide, parked, unworked, handover };
 }
 
 /**

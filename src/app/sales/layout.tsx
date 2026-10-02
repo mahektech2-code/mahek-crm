@@ -103,7 +103,11 @@ export default async function SalesLayout({
            * sidebar number and counts the rows it opened, so a second reading
            * of these windows would be wrong for months in front of everybody.
            */
-          "/sales/leads": leads.dueToday,
+          /* ONE number on All Leads: past its day if anything is, otherwise due
+             today. Next actions has left the navigation, so its red overdue count
+             moved onto the row everybody holds; the old key is kept for the
+             legacy row and as the signal that makes this one red. */
+          "/sales/leads": leads.overdue > 0 ? leads.overdue : leads.dueToday,
           "/sales/leads/actions": leads.overdue,
         }}
         alertCount={counts.alerts}

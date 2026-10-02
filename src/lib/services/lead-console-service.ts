@@ -11,6 +11,7 @@ import {
   type LeadStage,
 } from "../lead-labels";
 import type { LeadPriority } from "../lead-priority";
+import { unworkedWindow } from "../lead-action-window";
 import { APP_TIMEZONE, asDate } from "../business-date";
 import { orderCountsSql } from "../order-status";
 import { MBOS_EVENT, sourceIdField } from "../timeline";
@@ -387,12 +388,7 @@ export async function leadsWithoutNextAction(
 
   const where = sql`
      where ${STILL_WORKING}
-       and (
-         c.lead_next_action is null
-         or c.lead_next_action_date is null
-         or c.lead_next_action_owner_id is null
-         or (c.lead_next_action_date < ${day}::date and c.lead_next_action_outcome is null)
-       )
+       and ${unworkedWindow(day)}
        ${leadsVisible(scope)}
   `;
 

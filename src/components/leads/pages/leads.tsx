@@ -1,6 +1,12 @@
-import { type LeadWorkspace } from "@/lib/lead-workspace";
+import {
+  leadHref,
+  leadModuleKey,
+  leadSection,
+  OTHER_DESK_SLUGS,
+  type LeadWorkspace,
+} from "@/lib/lead-workspace";
 import { requireUser } from "@/lib/auth";
-import { canOpenModule, requireModule } from "@/lib/access";
+import { canOpenModule, listUserModules, requireModule } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import {
@@ -12,11 +18,10 @@ import {
 } from "@/lib/services/sales-service";
 import { splitFilter, type LeadFilters } from "@/lib/lead-filters";
 import { viewFromParam } from "@/lib/lead-views";
-import { leadTileCounts } from "@/lib/services/lead-views-service";
+import { leadTileCounts, leadWorklistCounts } from "@/lib/services/lead-views-service";
 import {
   appointmentQueue,
   canLead,
-  leadsWithoutNextAction,
   verificationQueue,
 } from "@/lib/services/lead-console-service";
 import { vantageViewer } from "@/lib/services/lead-vantage-service";
@@ -124,12 +129,32 @@ export async function Body({
   };
 
   const day = await today();
+
+  /*
+   * THE DESKS THAT HAVE LEFT THE SIDEBAR, for whoever still holds them.
+   *
+   * Six sections stopped being navigation rows and became views of this list or
+   * links from it (see `NavItem.legacy`). The views are reachable by anybody on
+   * this screen; what is not is the REST of those sections — the verification
+   * queue, the checklist desk, the sample desk, the commitment lists, the
+   * nurture schedule and the communication log. They are linked from here, and
+   * only the ones this person holds: a link to a screen they were never given
+   * reads as a broken one.
+   */
+  const heldKeys = new Set((await listUserModules(user.id, workspace)).map((m) => m.key));
+  const otherDesks = OTHER_DESK_SLUGS.flatMap((slug) => {
+    const section = leadSection(slug);
+    return section && heldKeys.has(leadModuleKey(workspace, section))
+      ? [{ label: section.label, href: leadHref(workspace, section.path) }]
+      : [];
+  });
+
   const [
     page,
     config,
     archivedCount,
     verification,
-    exceptions,
+    worklists,
     appointments,
     options,
     viewer,
@@ -146,7 +171,10 @@ export async function Body({
       getConfig(),
       archivedLeadsCount(),
       verificationQueue(day, { limit: 1 }),
-      leadsWithoutNextAction(day, { limit: 1 }),
+      /* The four worklists, counted with the SAME scope and clause the list runs
+         when one of them is opened — so "Nobody is working these 14" and the 14
+         rows behind it cannot disagree. */
+      leadWorklistCounts(day),
       appointmentQueue(),
       leadFilterOptions(showArchived),
       /*
@@ -243,8 +271,12 @@ export async function Body({
       desks={{
         verification: verification.total,
         verificationMine: verification.mine,
-        noNextAction: exceptions.total,
+        noNextAction: worklists.unworked,
         appointments: appointments.length,
+        suspectDecisions: worklists.decide,
+        parked: worklists.parked,
+        handovers: worklists.handover,
+        otherDesks,
       }}
     />
   );
