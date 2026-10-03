@@ -10,7 +10,10 @@ import {
   flattenForTemplate,
   parseWatiEvent,
   resolveWatiParams,
+  replyMedia,
+  replyText,
   waNumber,
+  watiMediaPath,
 } from "./whatsapp-delivery";
 
 const READY = {
@@ -132,8 +135,55 @@ describe("reading Wati's webhooks", () => {
       waId: "919820011001",
       senderName: "Ramesh",
       text: "Will pay Friday",
+      media: null,
     });
     assert.equal(parseWatiEvent({ eventType: "message", waId: "91", id: "x", owner: true }).kind, "ignored");
+  });
+
+  test("a photograph or a PDF keeps Wati's path to the file", () => {
+    const photo = parseWatiEvent({
+      eventType: "message",
+      waId: "919702033972",
+      whatsappMessageId: "wamid.IMG",
+      type: "image",
+      data: "data/images/fc2a9e8e-ddf1-43b2-97ac-416bbd2ad37b.jpg",
+      text: null,
+      owner: false,
+    });
+    assert.equal(photo.kind, "reply");
+    const r = photo as Extract<typeof photo, { kind: "reply" }>;
+    assert.deepEqual(r.media, { type: "image", path: "data/images/fc2a9e8e-ddf1-43b2-97ac-416bbd2ad37b.jpg" });
+    // No caption, so it reads as what it is rather than "[image]".
+    assert.equal(r.text, "Photo");
+
+    // The webhook may send the whole showFile address; only the path is kept.
+    const pdf = parseWatiEvent({
+      eventType: "message",
+      waId: "919702033972",
+      whatsappMessageId: "wamid.PDF",
+      type: "document",
+      data: "https://live-mt-server.wati.io/10225208/api/file/showFile?fileName=data/documents/statement.pdf",
+      text: "August statement",
+      owner: false,
+    });
+    const d = pdf as Extract<typeof pdf, { kind: "reply" }>;
+    assert.deepEqual(d.media, { type: "document", path: "data/documents/statement.pdf" });
+    assert.equal(d.text, "August statement");
+  });
+
+  test("a file path that is not Wati's own shape is never kept", () => {
+    for (const data of ["../../etc/passwd", "https://evil.example/x.jpg", "data/images/../../x", "/etc/hosts", null, ""]) {
+      assert.equal(watiMediaPath(data), null, String(data));
+    }
+    assert.equal(replyMedia("text", "data/images/a.jpg"), null);
+    assert.deepEqual(replyMedia("voice", "data/audios/a.ogg"), { type: "audio", path: "data/audios/a.ogg" });
+  });
+
+  test("rows written before files were kept read as the file, not a bracket", () => {
+    assert.equal(replyText("[image]", null), "Photo");
+    assert.equal(replyText("[document]", "document"), "Document");
+    assert.equal(replyText("Our payment", "image"), "Our payment");
+    assert.equal(replyText("[button]", null), "[button]");
   });
 
   test("anything else is ignored, never thrown on", () => {

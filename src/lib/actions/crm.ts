@@ -1943,6 +1943,7 @@ export async function triggerJob(
     | "sheet-payments"
     | "project-sheet"
     | "backfill-timeline"
+    | "wa-reply-media"
     | "link-delivery-parties",
   options: { owner?: string; bills?: boolean } = {},
 ): Promise<Result<{ ran: string[] }>> {

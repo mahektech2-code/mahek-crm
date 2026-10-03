@@ -27,7 +27,7 @@ import {
   seedMonthlyTargets,
   today,
 } from "./recompute";
-import { sweepUnconfirmed } from "./services/whatsapp-service";
+import { backfillReplyMedia, sweepUnconfirmed } from "./services/whatsapp-service";
 import { sweepOrphans } from "./services/attachment-service";
 import { autoGenerateEodReports } from "./services/eod-service";
 import {
@@ -155,6 +155,8 @@ export type JobName =
   | "revert-sheet-paid"
   | "provision-team"
   | "backfill-timeline"
+  /** Find the photographs and PDFs customers sent before the webhook kept them. */
+  | "wa-reply-media"
   | "mbos-nightly"
   | "mbos-hourly"
   /** Relearn the office's shorthand from logged calls, for the call assistant. */
@@ -628,6 +630,10 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
     }, triggeredById),
   );
 
+  // A file a customer sent that arrived without its path — found in Wati's
+  // history, so the chat can show it. Two days back; by hand reads everything.
+  results.push(await runReplyMedia(triggeredById, 2));
+
   results.push(
     await run("escalate-complaint-sla", async () => {
       const breached = await db
@@ -1030,6 +1036,8 @@ export async function runJob(
       return [await runTeamProvision(triggeredById, options)];
     case "backfill-timeline":
       return [await runBackfillTimeline(triggeredById)];
+    case "wa-reply-media":
+      return [await runReplyMedia(triggeredById)];
     case "hrms-sync":
     case "hrms-reparse":
       return [await runEmployeeSync(job, triggeredById)];
@@ -1510,6 +1518,25 @@ async function runTeamProvision(
  * By hand, not scheduled. Once it has run there is nothing left for it to do,
  * and the going-forward writes are in the transactions that log the calls.
  */
+/**
+ * Files customers sent on WhatsApp that MahekOne holds no path to, found in
+ * Wati's history. By hand it reads every such row; the hourly pass reads the
+ * last two days, for a file the webhook ever delivers without its path.
+ */
+async function runReplyMedia(triggeredById?: string, sinceDays?: number): Promise<JobResult> {
+  return run(
+    "wa-reply-media",
+    async () => {
+      const r = await backfillReplyMedia(sinceDays);
+      return {
+        recordsAffected: r.found,
+        detail: `${r.found} of ${r.looked} files found again, across ${r.numbers} ${r.numbers === 1 ? "number" : "numbers"}.`,
+      };
+    },
+    triggeredById,
+  );
+}
+
 async function runBackfillTimeline(triggeredById?: string): Promise<JobResult> {
   return run(
     "backfill-timeline",

@@ -19,6 +19,14 @@ import { readSecret } from "./secrets";
 const DEFAULT_BASE = "https://live-mt-server.wati.io";
 const TIMEOUT_MS = 15_000;
 
+/**
+ * Mahek's Wati ACCOUNT, for the v1 endpoints that are addressed by it. An id
+ * names an account; it does not open one — the key does, and stays a secret —
+ * so it is written here like the HR workbook's id, with `WATI_TENANT_ID` to
+ * point a staging deploy at another account.
+ */
+const WATI_TENANT = process.env.WATI_TENANT_ID?.trim() || "10225208";
+
 export type WatiConfig = { base: string; token: string };
 
 export async function watiConfig(): Promise<WatiConfig | null> {
@@ -81,6 +89,44 @@ async function call<T>(
     return { ok: false, status: res.status, error: why };
   }
   return { ok: true, data: json as T };
+}
+
+/* ------------------------------------------------------------ their files */
+
+export type WatiFile =
+  | { ok: true; bytes: ArrayBuffer; contentType: string }
+  | { ok: false; status: number | null; error: string };
+
+/**
+ * A file a customer sent, read from Wati by its path (`data/images/….jpg`).
+ *
+ * The path must be one `watiMediaPath` accepted — it is checked again here,
+ * because this is the call that would fetch whatever it was handed. Nothing is
+ * stored: the bytes go straight to the person who asked, so a payment slip
+ * lives in one place, Wati's, and MahekOne is only ever the door to it.
+ */
+export async function fetchWatiMedia(path: string): Promise<WatiFile> {
+  if (!/^data\/[a-z]+\/[A-Za-z0-9._-]+$/.test(path) || path.includes("..")) {
+    return { ok: false, status: 400, error: "Not a Wati file path." };
+  }
+  const cfg = await watiConfig();
+  if (!cfg) return { ok: false, status: null, error: "No Wati key is configured." };
+  let res: Response;
+  try {
+    res = await fetch(`${cfg.base}/${WATI_TENANT}/api/v1/getMedia?fileName=${encodeURIComponent(path)}`, {
+      headers: { Authorization: `Bearer ${cfg.token}` },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      cache: "no-store",
+    });
+  } catch {
+    return { ok: false, status: null, error: "Wati could not be reached." };
+  }
+  if (!res.ok) return { ok: false, status: res.status, error: `Wati answered ${res.status}.` };
+  return {
+    ok: true,
+    bytes: await res.arrayBuffer(),
+    contentType: res.headers.get("content-type") ?? "application/octet-stream",
+  };
 }
 
 /* -------------------------------------------------------------- templates */
@@ -265,13 +311,6 @@ export async function sendWatiText(input: {
 
 /* -------------------------------------------- reading back what happened */
 
-/**
- * Mahek's Wati ACCOUNT, for the v1 endpoints that are addressed by it. An id
- * names an account; it does not open one — the key does, and stays a secret —
- * so it is written here like the HR workbook's id, with `WATI_TENANT_ID` to
- * point a staging deploy at another account.
- */
-const WATI_TENANT = process.env.WATI_TENANT_ID?.trim() || "10225208";
 
 export type WatiContact = { waId: string; name: string | null; lastUpdated: string | null };
 
@@ -306,6 +345,8 @@ export type WatiHistoryItem = {
   created: string;
   /** WhatsApp's own id — the same one the webhook files a reply under. */
   whatsappMessageId?: string | null;
+  /** Wati's path to the file, where the message is a photograph, a PDF, a voice note. */
+  data?: string | null;
 };
 
 /** A page of one number's conversation, newest first. */

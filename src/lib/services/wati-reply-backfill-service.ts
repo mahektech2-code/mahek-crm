@@ -6,6 +6,7 @@ import { auditLog, waReplies } from "@/db/schema";
 import { err, ok, type Result } from "../result";
 import { listWatiContacts, watiHistoryPage, type WatiHistoryItem } from "../wati";
 import { announceWa } from "../wa-live";
+import { MEDIA_LABEL, replyMedia, type ReplyMedia } from "../whatsapp-delivery";
 import { customerIdForNumber } from "./whatsapp-service";
 import { requireFounderDesk } from "./whatsapp-switch-service";
 
@@ -70,6 +71,8 @@ type Found = {
   text: string;
   at: Date;
   answered: boolean;
+  /** A photograph or a PDF: kept with Wati's path, so the chat can show it. */
+  media: ReplyMedia | null;
 };
 
 /** What the customer said, from one conversation, newest first as Wati sends it. */
@@ -81,7 +84,9 @@ function customerMessages(items: WatiHistoryItem[], waId: string, name: string |
   const out: Found[] = [];
   ordered.forEach((m, idx) => {
     if (m.owner !== false) return;
-    const text = (typeof m.text === "string" && m.text.trim()) || `[${m.type ?? "message"}]`;
+    const media = replyMedia(m.type, m.data);
+    const text =
+      (typeof m.text === "string" && m.text.trim()) || (media ? MEDIA_LABEL[media.type] : `[${m.type ?? "message"}]`);
     out.push({
       providerMessageId: m.whatsappMessageId || `wati:${m.id}`,
       waId,
@@ -89,6 +94,7 @@ function customerMessages(items: WatiHistoryItem[], waId: string, name: string |
       text: text.slice(0, 4000),
       at: new Date(m.created),
       answered: ordered.slice(idx + 1).some((later) => later.owner === true),
+      media,
     });
   });
   return out;
@@ -156,6 +162,8 @@ export async function backfillWatiReplies(input: { dryRun: boolean }): Promise<R
             waId: f.waId,
             senderName: f.senderName,
             providerMessageId: f.providerMessageId,
+            mediaType: f.media?.type ?? null,
+            mediaPath: f.media?.path ?? null,
             // Answered inside Wati already: handled, and said so by nobody in
             // particular — the answer was not given by anyone in MahekOne.
             actioned: f.answered,

@@ -3998,6 +3998,14 @@ export const waReplies = pgTable(
      * from the business number. One answer per incoming message; `answerStatus`
      * is `sent` or `failed`, and a failed one keeps its words and its reason.
      */
+    /**
+     * What they sent when it was not words: `image`, `document`, `video`,
+     * `audio` or `sticker`, and Wati's path to the file (`data/images/….jpg`).
+     * Null for a text message. The bytes stay with Wati and are read through
+     * `/api/whatsapp/media/<id>`, behind the same gate as the conversation.
+     */
+    mediaType: text("media_type"),
+    mediaPath: text("media_path"),
     answerBody: text("answer_body"),
     answeredAt: timestamp("answered_at", { withTimezone: true }),
     answeredById: text("answered_by_id").references(() => users.id, { onDelete: "set null" }),
