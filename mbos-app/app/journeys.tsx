@@ -27,6 +27,7 @@ import {
 } from '../src/data/territory';
 import { dayLabel, dayLabelRelative, dmy, hhmm, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { PastDaySheet, PlannedDaySheet } from '../src/components/journey/day-sheets';
 
 /**
  * YOUR JOURNEYS — every day the office has planned with you, past and coming,
@@ -103,7 +104,15 @@ export default function JourneysScreen() {
   }, [from]);
   useFocusEffect(load);
 
+  /* A day behind him and a planned day ahead open the same sheets the
+     Journey tabs do — one with what happened at each shop, one that can
+     change the plan — so a day reads the same whichever screen it was tapped
+     on. Today and a day still being agreed keep the sheet below. */
+  const [pastOpen, setPastOpen] = React.useState<JourneyDay | null>(null);
+  const [plannedOpen, setPlannedOpen] = React.useState<JourneyDay | null>(null);
   const openDay = (d: JourneyDay) => {
+    if (d.planDate < today) return setPastOpen(d);
+    if (d.planDate > today && d.dayState === 'planned') return setPlannedOpen(d);
     setOpen(d);
     setStops([]);
     void stopsOn(d.planDate).then(setStops);
@@ -147,6 +156,14 @@ export default function JourneysScreen() {
         </>
       )}
 
+      <PastDaySheet key={pastOpen?.id ?? 'none'} day={pastOpen} today={today} onClose={() => setPastOpen(null)} />
+      <PlannedDaySheet
+        key={plannedOpen?.id ?? 'none'}
+        day={plannedOpen}
+        today={today}
+        onClose={() => setPlannedOpen(null)}
+        onChanged={() => void journeyDays(from).then(setDays)}
+      />
       <DaySheet
         day={open}
         stops={stops}
