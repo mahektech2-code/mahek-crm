@@ -60,7 +60,7 @@ export function NavigateButton({
    * of `openMaps`. That copy is how the failure message on one of them
    * eventually stops matching the other.
    */
-  variant?: 'row' | 'button';
+  variant?: 'row' | 'button' | 'icon';
   style?: { flex?: number; marginTop?: number };
 }) {
   const notify = useStore((s) => s.notify);
@@ -82,6 +82,33 @@ export function NavigateButton({
     } finally {
       setBusy(false);
     }
+  }
+
+  /* A square for a stop row. The word "Navigate" in a 104px column broke as
+     "Navigat / e" and squeezed the shop name beside it to "Vidarbha Wood …";
+     on a row the icon is the control and the label is for a screen reader. */
+  if (variant === 'icon') {
+    return (
+      <Pressable
+        onPress={() => void go()}
+        accessibilityRole="button"
+        accessibilityLabel={'Navigate to ' + (name ?? 'the shop')}
+        hitSlop={4}
+        style={({ pressed }) => [
+          {
+            width: HIT,
+            height: HIT,
+            borderRadius: radius.lg,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: pressed ? C.primaryEdge : C.primaryTint,
+            opacity: busy ? 0.6 : 1,
+          },
+          style,
+        ]}>
+        <Icon name="route" size={20} color={C.primaryDeep} strokeWidth={1.8} />
+      </Pressable>
+    );
   }
 
   if (variant === 'button') {

@@ -29,6 +29,7 @@ import {
 } from '../src/data/territory';
 import { dayLabel, dayLabelRelative, dmy, hhmm, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { PastDaySheet, PlannedDaySheet } from '../src/components/journey/day-sheets';
 
 /**
  * YOUR JOURNEYS — every day the office has planned with you, past and coming,
@@ -69,7 +70,11 @@ function dotColour(d: JourneyDay, today: string): string {
   if (d.dayState === 'refused') return C.danger;
   if (d.dayState === 'proposed') return C.warn;
   if (d.dayState === 'agreed') return C.info;
-  if (d.planDate > today) return C.primary;
+  /* TODAY IS STILL BEING WORKED, so it is not judged yet. Reading it as a
+     past day painted "2 of 6 visited" at noon amber — the colour that means a
+     day only partly done, and the colour of a day still waiting on an answer
+     beside it. A verdict belongs to a day that is over. */
+  if (d.planDate >= today) return C.primary;
   if (!d.stops) return C.faint;
   return d.visited === d.stops ? C.success : d.visited ? C.warn : C.danger;
 }
@@ -101,7 +106,15 @@ export default function JourneysScreen() {
   }, [from]);
   useFocusEffect(load);
 
+  /* A day behind him and a planned day ahead open the same sheets the
+     Journey tabs do — one with what happened at each shop, one that can
+     change the plan — so a day reads the same whichever screen it was tapped
+     on. Today and a day still being agreed keep the sheet below. */
+  const [pastOpen, setPastOpen] = React.useState<JourneyDay | null>(null);
+  const [plannedOpen, setPlannedOpen] = React.useState<JourneyDay | null>(null);
   const openDay = (d: JourneyDay) => {
+    if (d.planDate < today) return setPastOpen(d);
+    if (d.planDate > today && d.dayState === 'planned') return setPlannedOpen(d);
     setOpen(d);
     setStops([]);
     void stopsOn(d.planDate).then(setStops);
@@ -152,6 +165,14 @@ export default function JourneysScreen() {
       )}
       </Swap>
 
+      <PastDaySheet key={pastOpen?.id ?? 'none'} day={pastOpen} today={today} onClose={() => setPastOpen(null)} />
+      <PlannedDaySheet
+        key={plannedOpen?.id ?? 'none'}
+        day={plannedOpen}
+        today={today}
+        onClose={() => setPlannedOpen(null)}
+        onChanged={() => void journeyDays(from).then(setDays)}
+      />
       <DaySheet
         day={open}
         stops={stops}
@@ -551,7 +572,7 @@ function MonthCalendar({
           { c: C.success, l: 'All visited' },
           { c: C.warn, l: 'Part visited / to agree' },
           { c: C.danger, l: 'Missed / sent back' },
-          { c: C.primary, l: 'Planned ahead' },
+          { c: C.primary, l: 'Planned or today' },
           { c: C.info, l: 'Agreed, no shops' },
         ].map((k) => (
           <View key={k.l} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -673,5 +694,9 @@ function StopStatus({ stop, future }: { stop: JourneyStop; future: boolean }) {
     );
   }
   if (stop.status === 'skipped') return <Badge tone="danger">Skipped</Badge>;
-  return <Badge tone={future ? 'neutral' : 'amber'}>{future ? 'Planned' : 'Not visited'}</Badge>;
+  /* Nothing on a day still ahead: every stop on it is planned, the header
+     already says so, and seven grey "PLANNED" pills down one sheet are noise
+     the eye has to step over to read the shop names. */
+  if (future) return null;
+  return <Badge tone="amber">Not visited</Badge>;
 }

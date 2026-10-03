@@ -33,7 +33,7 @@ import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { hhmm, isoDate, pretty } from '../src/lib/format';
 import { elapsedLabel, FOLLOW_ON, unansweredQuestions, visitChecks, visitVerdict } from '../src/lib/visit';
-import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, FOLLOW_UP_MODES, OUTCOMES } from '../src/data/fixtures';
+import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, FOLLOW_UP_MODES, OUTCOMES, outcomeLabel } from '../src/data/fixtures';
 import { getConfig } from '../src/data/config';
 import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/visits';
 import { checkInAtShop, clearArrival, recordArrival } from '../src/data/arrival';
@@ -1679,7 +1679,7 @@ export default function Visit() {
             <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
               <Text style={type.label}>Last time — {pretty(isoDate(new Date(lastTime.checkInAt)))}</Text>
               {lastTime.outcome ? (
-                <Text style={[type.caption, { color: C.body }]}>{lastTime.outcome}</Text>
+                <Text style={[type.caption, { color: C.body }]}>{outcomeLabel(lastTime.outcome)}</Text>
               ) : null}
             </View>
             <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 4 }} numberOfLines={3}>

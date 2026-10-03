@@ -2,7 +2,7 @@ import React from 'react';
 import { Animated, View, Pressable, type StyleProp, type ViewStyle } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { AppFrame } from '../src/components/shell/AppFrame';
-import { abandonLeg, openLegOf, type TravelLeg } from '../src/data/travel';
+import { abandonLeg, openLegOf, travelModes, type TravelLeg } from '../src/data/travel';
 import { legLine, travellingFor } from '../src/lib/travel-leg';
 import { Badge, Card, DashedButton, Input, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { VoiceField } from '../src/components/ui/dictate';
@@ -30,6 +30,8 @@ import { dayLabel, dayLabelRelative, dmy, hhmm, inrFromPaise, isoDate, plural } 
    through `NavigateButton`, which is the one call site — see `StopMapButton`. */
 import { openRoute, shareText } from '../src/lib/messaging';
 import { NavigateButton } from '../src/components/ui/navigate';
+import { Segmented } from '../src/components/ui/book-controls';
+import { PastDaySheet, PlannedDaySheet } from '../src/components/journey/day-sheets';
 import { Pop, PressableScale, Stagger, Swap, animateLayout, usePressScale } from '../src/components/ui/motion';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
@@ -108,7 +110,13 @@ export default function JourneyScreen() {
    * to Sai Paint Depot · 14 min" is what tells him the app has not lost its
    * place.
    */
+  const [tab, setTab] = React.useState<'today' | 'ahead' | 'past'>('today');
+  const [pastOpen, setPastOpen] = React.useState<PlanDay | null>(null);
+  const [plannedOpen, setPlannedOpen] = React.useState<PlanDay | null>(null);
   const [leg, setLeg] = React.useState<TravelLeg | null>(null);
+  /* The mode's NAME, for the On-your-way line — `modeKey` is a database key
+     ("own_bike") and was printed as one. */
+  const [legModeLabel, setLegModeLabel] = React.useState<string | null>(null);
   /*
    * The shop that leg is heading for, as a RECORD rather than as a label.
    *
@@ -167,8 +175,10 @@ export default function JourneyScreen() {
        * with a "Continue" into the wrong shop. `closeStaleLegs` tidies those at
        * launch; the bound is what makes the card honest in between.
        */
-      void openLegOf(uid, dayStart).then((r) => {
-        if (live) setLeg(r);
+      void Promise.all([openLegOf(uid, dayStart), travelModes()]).then(([r, modes]) => {
+        if (!live) return;
+        setLeg(r);
+        setLegModeLabel(r ? (modes.find((m) => m.key === r.modeKey)?.label ?? null) : null);
       });
     }
     /* The whole window — past and future both — read once and sliced below,
@@ -308,6 +318,10 @@ export default function JourneyScreen() {
   const comingUp = days
     .filter((d) => d.dayState === 'planned' && d.planDate > today)
     .sort((a, b) => a.planDate.localeCompare(b.planDate));
+  /* What the Coming up tab holds, on its label: a question, a day to fill, a
+     day planned or a day sent back are all a day ahead somebody has to know
+     about. */
+  const ahead = asking.length + toPick.length + comingUp.length + sentBack.length;
 
   /* Everything before today, most recent first — what was asked, what was
      said, and for a planned day, how much of it actually happened. */
@@ -513,868 +527,982 @@ export default function JourneyScreen() {
   return (
     <AppFrame title="Today’s route" activeTab="journey" contentStyle={{ padding: 16, paddingBottom: 24 }}>
       {/*
-        The days you have been asked about, above today's route.
-        Above, because a question somebody is waiting on you to answer outranks
-        a list you already know — and because it is the only thing on this
-        screen that goes away once you deal with it.
+        THREE TABS, AND TODAY IS THE FIRST.
+
+        This was one scroll: the days to agree, the agreed days, the coming
+        days, the refusals and "Plan a day" all sat ABOVE today's route, and the
+        fortnight behind and the tour requests below it. A salesman opening
+        Journey in a market lane wants the next door, and had to scroll past a
+        week of planning to reach it. Today is what opens; what is ahead and
+        what is behind are one tap away, and a day the office is waiting on him
+        to answer is still impossible to miss — the Today tab says so in one
+        line that opens it.
       */}
-      {asking.length ? (
-        <View style={{ marginBottom: 16 }}>
-          <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
-            {asking.length === 1 ? 'A day to agree' : plural(asking.length, 'day') + ' to agree'}
-          </T>
-          {asking.map((d, i) => {
-            /* Worked out once. It used to be called twice in one expression —
-               and both calls read the clock, so the two halves of one sentence
-               could be measured against different instants. */
-            const waiting = waitingLabel(d.proposedAt, now);
-            return (
-            <Stagger key={d.id} index={i}>
-            <View
-              style={{
-                backgroundColor: C.surface,
-                borderRadius: radius.card,
-                borderLeftWidth: 3,
-                borderLeftColor: C.primary,
-                padding: 14,
-                marginBottom: 8,
-                boxShadow: shadow.card,
-              }}>
-              <T style={[type.body, weight(600), { color: C.ink }]}>
-                {dayLabelRelative(d.planDate, today)}
-              </T>
-              <T s="small" style={{ color: C.body, marginTop: 2 }}>
-                {d.city ? d.city + ' was proposed' : 'A day was proposed'}
-                {d.proposedBy ? ' by ' + d.proposedBy : ''}
-                {/* HOW LONG IT HAS BEEN SITTING. The office is waiting on this
-                    answer to plan a week, and "proposed" with no age reads as
-                    something that arrived a moment ago — so a request four days
-                    old looks identical to one from this morning, and gets the
-                    same non-answer. */}
-                {waiting ? ' · ' + waiting : ''}
-              </T>
-              <T s="small" style={{ color: C.muted, marginTop: 6 }}>
-                You pick the shops after you agree. You know the city best.
-              </T>
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-                <View style={{ flex: 1 }}>
-                  <PrimaryButton label="Yes, that works" fullWidth onPress={() => void say(d, true)} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <SecondaryButton label="Not that day" fullWidth onPress={() => void say(d, false)} />
-                </View>
-              </View>
-            </View>
-            </Stagger>
-            );
-          })}
-        </View>
-      ) : null}
+      <Segmented
+        options={[
+          { key: 'today', label: 'Today' },
+          { key: 'ahead', label: 'Coming up', badge: ahead || null },
+          { key: 'past', label: 'Past' },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
+      <View style={{ height: 16 }} />
 
-      {/*
-        Days you have agreed and not yet filled.
-
-        Between the two states there is nothing to walk: the office knows you
-        will be in Nagpur and does not know which doors. This is the only
-        prompt that gets somebody from one to the other, so it sits directly
-        under the questions rather than at the bottom of the screen.
-      */}
-      {toPick.length ? (
-        <View style={{ marginBottom: 16 }}>
-          <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
-            Agreed. Pick the shops
-          </T>
-          {toPick
-            .map((d) => (
-              <PressableScale
-                key={d.id}
-                onPress={() => router.push({ pathname: '/pick', params: { day: d.id } })}
-                outerStyle={{ marginBottom: 8 }}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                  backgroundColor: C.surface,
-                  borderRadius: radius.card,
-                  padding: 14,
-                  boxShadow: shadow.card,
-                }}>
-                <View style={{ flex: 1 }}>
-                  <T style={[type.body, weight(600), { color: C.ink }]}>
-                    {dayLabelRelative(d.planDate, today)}
-                  </T>
-                  <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-                    {(d.city ? d.city + ' · ' : '') + 'no shops picked yet'}
-                  </T>
-                  {/* A day back here because the office REFUSED the pick has
-                      to say so. Without it the card is identical to one nobody
-                      has touched, and the salesman picks the same shops again
-                      into the same refusal. */}
-                  {d.syncState === 'rejected' ? (
-                    <T s="small" style={{ color: C.warnInk, marginTop: 4 }}>
-                      {d.syncMessage ?? 'The office did not accept the shops you picked.'}
-                    </T>
-                  ) : null}
-                </View>
-                <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
-              </PressableScale>
-            ))}
-        </View>
-      ) : null}
-
-      {/* Days already routed, beyond today — a picked plan for next Tuesday
-          had nowhere to be seen again on this screen until it WAS Tuesday. */}
-      {comingUp.length ? (
-        <View style={{ marginBottom: 16 }}>
-          <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
-            Coming up
-          </T>
-          {comingUp.map((d) => (
-            <PressableScale
-              key={d.id}
-              onPress={() => router.push({ pathname: '/pick', params: { day: d.id } })}
-              outerStyle={{ marginBottom: 8 }}
-              style={{
+      {tab === 'today' ? (
+        <>
+          {asking.length ? (
+            <Pressable
+              onPress={() => setTab('ahead')}
+              accessibilityRole="button"
+              style={({ pressed }) => ({
                 flexDirection: 'row',
                 alignItems: 'center',
-                gap: 12,
-                backgroundColor: C.surface,
+                gap: 10,
+                padding: 12,
+                marginBottom: 16,
                 borderRadius: radius.card,
-                padding: 14,
-                boxShadow: shadow.card,
-              }}>
-              <View style={{ flex: 1 }}>
-                <T style={[type.body, weight(600), { color: C.ink }]}>
-                  {dayLabelRelative(d.planDate, today)}
-                </T>
-                <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-                  {(d.city ? d.city + ' · ' : '') + plural(d.picked, 'shop') + ' picked'}
-                </T>
-              </View>
-              <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
-            </PressableScale>
-          ))}
-        </View>
-      ) : null}
-
-      {/* What you have already sent back, so a refusal does not vanish. */}
-      {sentBack.length ? (
-        <View style={{ marginBottom: 16 }}>
-          {sentBack
-            .map((d) => (
-              <View
-                key={d.id}
-                style={{
-                  backgroundColor: C.warnBg,
-                  borderRadius: radius.card,
-                  padding: 12,
-                  marginBottom: 8,
-                }}>
-                <T s="small" style={{ color: C.warnInk }}>
-                  {dayLabelRelative(d.planDate, today)} — sent back
-                  {d.syncState === 'queued' ? ', waiting for signal' : ''}
-                </T>
-                {d.refusalReason ? (
-                  <T s="small" style={{ color: C.body, marginTop: 2 }}>
-                    “{d.refusalReason}”
-                  </T>
-                ) : null}
-              </View>
-            ))}
-        </View>
-      ) : null}
-
-      {/*
-        A day nobody proposed.
-
-        Under the questions and the agreed days rather than above them: what
-        the office has asked is the first thing to answer, and this is what to
-        do when it has asked nothing. It is always drawn — a salesman whose
-        manager plans nothing would otherwise find an empty tab with no way
-        forward, which is exactly the case it exists for.
-      */}
-      <DashedButton
-        label="Plan a day"
-        onPress={() => {
-          setOwn({ date: '', city: '' });
-          setOwnErr(null);
-          setOwnOpen(true);
-        }}
-        style={{ marginBottom: 16 }}
-      />
-
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
-        <View style={{ minWidth: 0, flex: 1 }}>
-          <T style={type.h1}>
-            {awaitingRoute
-              ? plural(awaitingRoute.picked, 'shop') + ' picked'
-              : doneCount + ' of ' + stops.length + ' done'}
-          </T>
-          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            {awaitingRoute
-              ? (awaitingRoute.city ? awaitingRoute.city + ' · ' : '') +
-                'sent to the office. The stops come when the phone sends next'
-              : routeSubline(stops.length, doneCount, areas)}
-          </T>
-        </View>
-        {/* `Icon name="dots"`, not the character `⋯`.
-            A text ellipsis renders at whatever weight and baseline the font
-            feels like, next to twenty controls drawn from the same stroked
-            icon set — it read as a typo rather than a button. */}
-        <Pressable
-          onPress={() => setMoreOpen(true)}
-          accessibilityRole="button"
-          accessibilityLabel="Route actions"
-          hitSlop={HIT}
-          style={({ pressed }) => ({
-            width: 44,
-            height: 44,
-            borderRadius: 22,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: pressed ? C.wash : 'transparent',
-          })}>
-          <Icon name="dots" size={22} color={C.body} strokeWidth={1.5} />
-        </Pressable>
-      </View>
-
-      {/* Drawn only where there is a day to draw. At zero stops this was an
-          empty 6pt row plus its margin — twenty points of nothing between the
-          headline and whatever came next. */}
-      {stops.length ? (
-        <View style={{ flexDirection: 'row', gap: 6, marginTop: 14 }}>
-          {stops.map((x) => (
-            <View
-              key={x.id}
-              style={{
-                flex: 1,
-                height: 6,
-                borderRadius: 3,
-                backgroundColor:
-                  x.status === 'visited' ? C.primary : next && x.id === next.id ? C.primaryEdge : C.hairline,
-              }}
-            />
-          ))}
-        </View>
-      ) : null}
-
-      {/*
-        ON THE ROAD — ITS OWN CARD, AND THAT IS THE FIX.
-
-        This block used to live INSIDE the Next stop card, in one arm of a
-        ternary that only draws when there is a planned stop left. A leg is
-        routinely open when there is not: going off the plan is exactly what
-        this screen's own dashed button pushes him into, and visiting the last
-        planned stop leaves `next` undefined too. In both cases the whole card
-        was skipped and the screen underneath said "No route for today" while he
-        was mid-journey with the meter already photographed — no "Call it off",
-        no "Continue", and if Android had reaped the app the store's `custId`
-        was gone with it, so `/visit` could not be reached from anywhere. The
-        only way out was to start a SECOND journey to the same shop from the
-        Customers list, which re-opens the odometer camera and throws the
-        reading away.
-
-        It is keyed on the leg alone now, and the Next stop card below is
-        suppressed while it is drawn: two cards each offering to start a visit
-        is how a second leg gets opened by accident, and opening one closes the
-        first.
-      */}
-      {/* ONE CARD, FOUR MOMENTS OF ONE DAY: on the road, waiting for the
-          office, every stop walked, and the next stop. Swapped rather than
-          cut, so a visit saved and the card moving on to the following shop
-          reads as the route advancing rather than as a different screen. */}
-      <Swap id={journeyMoment}>
-      {leg ? (
-        <View
-          style={{
-            backgroundColor: C.surface,
-            borderWidth: 1,
-            borderColor: C.primaryEdge,
-            borderRadius: radius.card,
-            boxShadow: shadow.nextStop,
-            padding: 16,
-            marginTop: 16,
-          }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Icon name="nav" size={18} color={C.primaryDeep} strokeWidth={1.8} />
-            <T
-              style={[
-                { fontSize: 12, lineHeight: 16, letterSpacing: 0.48, textTransform: 'uppercase', color: C.primaryDeep },
-                weight(600),
-              ]}>
-              On your way
-            </T>
-          </View>
-          <T style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.3, color: C.ink, marginTop: 10 }, weight(600)]}>
-            {leg.toLabel ?? legShop?.name ?? 'The shop'}
-          </T>
-          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            {legLine({
-              modeLabel: leg.modeKey,
-              odometerStartKm: null,
-              odometerEndKm: null,
-              ticketAmountPaise: null,
-            }) +
-              ' · ' +
-              /* `now`, not `Date.now()`. The clock is state on this screen and
-                 reading it again inside the render is what the React Compiler
-                 rules here forbid — it also meant this duration was measured
-                 against a different instant from the "waiting N days" labels
-                 above it. A leg with no start reads as nothing elapsed, which
-                 is the honest answer: there is no departure to count from. */
-              travellingFor(leg.startedAt ?? now, now) +
-              (leg.odometerStartKm != null
-                ? ' · meter at start ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'
-                : '')}
-          </T>
-          {/*
-            NAVIGATION SURVIVES THE DEPARTURE, and it goes where HE is going.
-            It was in the other arm of the old ternary — the one drawn BEFORE he
-            sets off — so pressing "Start visit" took navigation away at the one
-            moment it is for. Worse, when it was first moved in here it kept
-            reading the planned stop's coordinates under the leg's shop name,
-            and `openMaps` prefers a coordinate to a name: he pressed the one
-            button that says it will take him there and rode to the shop the
-            plan had queued. The shop's own pin answers it; with no pin at all
-            the name and the town are passed instead, which is a worse answer
-            and an honest one.
-          */}
-          <NavigateButton
-            variant="button"
-            lat={legShop?.gpsLat}
-            lng={legShop?.gpsLng}
-            name={leg.toLabel ?? legShop?.name}
-            city={legShop?.area ?? legShop?.city}
-            style={{ marginTop: 14 }}
-          />
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-            <SecondaryButton
-              label="Cancel trip"
-              onPress={() =>
-                askConfirm({
-                  title: 'Not going after all?',
-                  body:
-                    'The trip stays on your record, with your reason and 0 km. The meter has already moved. Removing the trip would leave a gap before your next one.',
-                  reasonLabel: 'Why · needed',
-                  confirmLabel: 'Cancel trip',
-                  run: (reason) => {
-                    void abandonLeg(leg.id, reason).then(() => {
-                      setLeg(null);
-                      notify('Trip cancelled');
-                    });
-                  },
-                })
-              }
-              style={{ flex: 1, borderRadius: radius.xl }}
-            />
-            <PrimaryButton
-              label="Continue"
-              /* A leg with no shop against it cannot open a visit screen, and
-                 the button says so rather than acknowledging the tap and doing
-                 nothing. Every leg this screen can draw is one `departForVisit`
-                 wrote, which always names a shop — this is the guard, not the
-                 expected case. */
-              disabled={!legCustomerId}
-              whyDisabled="This trip has no shop saved. Cancel it and start again from the shop."
-              onPress={() => {
-                if (!legCustomerId) return;
-                beginVisit(legCustomerId);
-                router.push('/visit');
-              }}
-              style={{ flex: 1, borderRadius: radius.xl }}
-            />
-          </View>
-        </View>
-      ) : null}
-
-      {/*
-        PICKED, AND NOT YET ROUTED — a headline with no way back into it.
-
-        `pickShops` moves the day to `planned` on this handset the moment he
-        saves, and the office mints the stops on the next pull. In between, the
-        twelve shops he had just chosen could not be seen or changed from
-        anywhere: the empty-state card is suppressed by `!awaitingRoute`, the
-        pips and the Next stop card by there being no stops, and today's day
-        appears in none of `toPick`, `comingUp` or `recent`. A morning without
-        signal can last hours.
-      */}
-      {awaitingRoute ? (
-        <View style={{ marginTop: 16 }}>
-          <SecondaryButton
-            label="See the shops you picked"
-            onPress={() =>
-              router.push({ pathname: '/pick', params: { day: awaitingRoute.id } })
-            }
-          />
-        </View>
-      ) : null}
-
-      {/*
-        THE DAY IS DONE, and the screen used to go quiet at exactly this point:
-        `next` is undefined so the Next stop card is gone, and the empty state
-        is suppressed because there ARE stops. Every stop walked is the one
-        moment this screen has something unambiguous to say — and closing the
-        day was reachable only from More → Your day, which is two taps and a
-        guess away from the tab he is looking at.
-
-        Not while a leg is open: "every stop is visited, close the day off" is
-        the wrong sentence to put in front of somebody who is on a bike on his
-        way to an off-plan shop.
-      */}
-      {!leg && !next && stops.length ? (
-        <Card style={{ marginTop: 16 }}>
-          <T style={[type.body, weight(600), { color: C.ink }]}>Day done</T>
-          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            {'You visited every stop on the plan. Close the day now, while you remember it.'}
-          </T>
-          <PrimaryButton
-            label="Close the day"
-            onPress={() => router.push('/eod')}
-            style={{ marginTop: 12 }}
-          />
-        </Card>
-      ) : null}
-
-      {/*
-        NOT WHILE HE IS TRAVELLING. The On-your-way card above is the same
-        journey at a later moment, and two cards on one screen each offering to
-        start a visit is how a second leg gets opened by accident — opening one
-        closes the first, and the meter photograph taken for it is thrown away.
-      */}
-      {next && !leg ? (
-        <View
-          style={{
-            backgroundColor: C.surface,
-            borderWidth: 1,
-            borderColor: C.primaryEdge,
-            borderRadius: radius.card,
-            boxShadow: shadow.nextStop,
-            padding: 16,
-            marginTop: 16,
-          }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.primary }} />
-            <T
-              style={[
-                { fontSize: 12, lineHeight: 16, letterSpacing: 0.48, textTransform: 'uppercase', color: C.primaryDeep },
-                weight(600),
-              ]}>
-              Next stop
-            </T>
-            <View style={{ flex: 1 }} />
-            <T style={[{ fontSize: 13, color: late ? C.warn : C.success }, weight(500)]}>
-              {late ? 'Running late' : 'On time'}
-            </T>
-          </View>
-          <T style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.3, color: C.ink, marginTop: 10 }, weight(600)]}>
-            {next.customerName}
-          </T>
-          {/* Only where there is one. An empty `<T>` still occupies its line
-              height, so a shop with no area left a blank gap that read as a
-              missing value rather than an absent one. */}
-          {next.area ? (
-            <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-              {next.area}
-            </T>
+                backgroundColor: pressed ? C.primaryEdge : C.primaryTint,
+              })}>
+              <Icon name="cal" size={18} color={C.primaryDeep} strokeWidth={1.8} />
+              <T style={[{ flex: 1, minWidth: 0, fontSize: 14, color: C.primaryDeep }, weight(600)]}>
+                {(asking.length === 1 ? 'A day' : plural(asking.length, 'day')) + ' to agree with the office'}
+              </T>
+              <Icon name="forward" size={16} color={C.primaryDeep} strokeWidth={1.8} />
+            </Pressable>
           ) : null}
-          <T s="small" style={{ marginTop: 10 }}>
-            {(next.plannedAt ? 'Planned ' + next.plannedAt + '. ' : '') +
-              (next.outstandingPaise > 0
-                ? 'They owe ' + inrFromPaise(next.outstandingPaise) + '. This stop is on the list to collect it.'
-                : 'Nothing outstanding for them.')}
-          </T>
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-            <NavigateButton
-              variant="button"
-              lat={next.gpsLat}
-              lng={next.gpsLng}
-              name={next.customerName}
-              city={next.area}
-              style={{ flex: 1 }}
-            />
-            <PrimaryButton
-              label="Start visit"
-              /* Asks how he is getting there and takes the meter photograph
-                 before anything opens — see `TravelGate`. */
-              onPress={() =>
-                askTravel({ customerId: next.customerId, customerName: next.customerName })
-              }
-              style={{ flex: 1, borderRadius: radius.xl }}
-            />
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
+            <View style={{ minWidth: 0, flex: 1 }}>
+              <T style={type.h1}>
+                {awaitingRoute
+                  ? plural(awaitingRoute.picked, 'shop') + ' picked'
+                  : stops.length
+                    ? doneCount + ' of ' + stops.length + ' done'
+                    : /* "0 of 0 done" over "Nothing planned for today" was
+                         a fraction of nothing; the heading says the fact. */
+                      'No route today'}
+              </T>
+              <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+                {awaitingRoute
+                  ? (awaitingRoute.city ? awaitingRoute.city + ' · ' : '') +
+                    'sent to the office. The stops come when the phone sends next'
+                  : routeSubline(stops.length, doneCount, areas)}
+              </T>
+            </View>
+            {/* `Icon name="dots"`, not the character `⋯`.
+                A text ellipsis renders at whatever weight and baseline the font
+                feels like, next to twenty controls drawn from the same stroked
+                icon set — it read as a typo rather than a button. */}
+            <Pressable
+              onPress={() => setMoreOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Route actions"
+              hitSlop={HIT}
+              style={({ pressed }) => ({
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: pressed ? C.wash : 'transparent',
+              })}>
+              <Icon name="dots" size={22} color={C.body} strokeWidth={1.5} />
+            </Pressable>
           </View>
-        </View>
-      ) : null}
-      </Swap>
 
-      {/* Guarded like the pips: an empty container still spends its top
-          margin, and this screen's commonest state has nothing in it. */}
-      {stops.length ? (
-        <View style={{ marginTop: 20 }}>
-          {stops.map((x, i) => {
-            const isNext = !!next && x.id === next.id;
-            const done = x.status === 'visited';
-            const last = i === stops.length - 1;
-            return (
-              <Stagger key={x.id} index={i} style={{ flexDirection: 'row', gap: 14, alignItems: 'stretch' }}>
-                <View style={{ width: 28, alignItems: 'center' }}>
-                  {/* The marker pops as a stop turns from a number into a
-                      tick — the one change on this list that is news. Keyed on
-                      `done`, so a stop already done when the screen opens
-                      simply sits there. */}
-                  <Pop trigger={done}>
-                  <View
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 14,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderWidth: 1,
-                      backgroundColor: done ? C.primaryTint : isNext ? C.primary : C.surface,
-                      borderColor: done ? C.primaryEdge : isNext ? C.primary : C.border,
-                    }}>
-                    {done ? (
-                      <Icon name="task" size={14} color={C.primaryDeep} strokeWidth={2.4} />
-                    ) : (
-                      <T style={[{ fontSize: 13, color: isNext ? C.surface : C.muted }, weight(600)]}>{String(i + 1)}</T>
-                    )}
-                  </View>
-                  </Pop>
-                  {last ? null : (
-                    <View style={{ width: 2, flex: 1, minHeight: 12, backgroundColor: done ? C.primaryEdge : C.hairline }} />
-                  )}
-                </View>
-
-                {/*
-                  THE ROW OPENS THE SHOP, and the glyph beside it opens maps.
-
-                  It was one unlabelled `Pressable` with no chevron and no map
-                  glyph on it, whose press threw him out of the app into Google
-                  Maps — and a stop already visited answered with a toast and
-                  nothing else, so a done stop was a dead end with no route to
-                  the record, the outstanding or the phone number. A tap on a
-                  name should open the thing it names; leaving the app is a
-                  control that says so.
-                */}
-                <PressCard
+          {/* Drawn only where there is a day to draw. At zero stops this was an
+              empty 6pt row plus its margin — twenty points of nothing between the
+              headline and whatever came next. */}
+          {stops.length ? (
+            <View style={{ flexDirection: 'row', gap: 6, marginTop: 14 }}>
+              {stops.map((x) => (
+                <View
+                  key={x.id}
                   style={{
                     flex: 1,
-                    minWidth: 0,
-                    flexDirection: 'row',
-                    alignItems: 'stretch',
-                    marginBottom: 8,
-                    borderRadius: radius.lg,
-                    borderWidth: 1,
-                    borderColor: isNext ? C.primaryEdge : C.hairline,
-                    backgroundColor: isNext ? C.primaryTint : C.surface,
-                    overflow: 'hidden',
-                  }}>
-                  {(press) => (
-                  <>
-                  <Pressable
-                    onPressIn={press.onPressIn}
-                    onPressOut={press.onPressOut}
-                    onPress={() => openStop(x)}
-                    accessibilityRole="button"
-                    accessibilityLabel={'Open ' + x.customerName}
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 10,
-                      paddingVertical: 12,
-                      paddingLeft: 14,
-                      paddingRight: 6,
-                    }}>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <T
-                        numberOfLines={1}
-                        style={[{ fontSize: 15, color: done ? C.muted : C.ink }, weight(isNext ? 600 : 500)]}>
-                        {x.customerName}
-                      </T>
-                      {/* Joined rather than concatenated. With no area recorded —
-                          which is most of an imported book — these read
-                          " · arrived 10:15", opening on a separator with nothing
-                          in front of it. */}
-                      <T s="caption" style={{ marginTop: 1 }}>
-                        {[
-                          x.area,
-                          done
-                            ? 'arrived ' + (x.actualAt ? hhmm(x.actualAt) : '—')
-                            : x.plannedAt
-                              ? 'planned ' + x.plannedAt
-                              : null,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </T>
-                    </View>
-                    {done || isNext ? (
-                      <T style={[{ fontSize: 13, color: done ? C.success : C.primaryDeep }, weight(500)]}>
-                        {done ? 'Done' : 'Now'}
-                      </T>
-                    ) : null}
-                    <Icon name="forward" size={18} color={C.muted} strokeWidth={1.5} />
-                  </Pressable>
-                  <StopMapButton lat={x.gpsLat} lng={x.gpsLng} name={x.customerName} city={x.area} />
-                  </>
-                  )}
-                </PressCard>
-              </Stagger>
-            );
-          })}
-        </View>
-      ) : null}
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor:
+                      x.status === 'visited' ? C.primary : next && x.id === next.id ? C.primaryEdge : C.hairline,
+                  }}
+                />
+              ))}
+            </View>
+          ) : null}
 
-      {/*
-        A DAY WITH NOTHING ON IT IS THE COMMONEST STATE THIS SCREEN HAS, and it
-        was drawn as nothing at all: a headline, one muted line, and then six
-        hundred points of empty canvas above a dashed button. Every other empty
-        state in this app says what to do next; this one — the tab a salesman
-        opens first every morning — said the least of any of them, on the days
-        it mattered most.
+          {/*
+            ON THE ROAD — ITS OWN CARD, AND THAT IS THE FIX.
 
-        What it says depends on which nothing it is, because they need
-        different things done: a day agreed and unfilled is HIS to fill, a day
-        proposed is his to answer, and no day at all is the office's move and
-        worth saying so rather than leaving him wondering whether the app is
-        broken.
-      */}
-      {!stops.length && !awaitingRoute ? (
-        <View
-          style={{
-            marginTop: 20,
-            backgroundColor: C.surface,
-            borderRadius: radius.card,
-            borderWidth: 1,
-            borderColor: C.hairline,
-            paddingVertical: 26,
-            paddingHorizontal: 20,
-            alignItems: 'center',
-            boxShadow: shadow.card,
-          }}>
-          <View
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: 22,
-              backgroundColor: C.primaryTint,
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 12,
-            }}>
-            <Icon name="route" size={22} color={C.primaryDeep} strokeWidth={1.6} />
-          </View>
-          {/* `pickToday`, never `toPick`. This card answers "what about TODAY",
-              and read against any agreed day from today onward it announced a
-              day agreed for next Tuesday — the same row already listed two
-              inches above — while suppressing the only sentence that says what
-              to do this morning. */}
-          <T style={[type.body, weight(600), { color: C.ink, textAlign: 'center' }]}>
-            {pickToday
-              ? 'A day is waiting for its shops'
-              : asking.length
-                ? 'A day is waiting for your answer'
-                : 'No route for today'}
-          </T>
-          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6, maxWidth: 280 }}>
-            {pickToday
-              ? 'You have agreed today. Pick the shops and it becomes a route.'
-              : asking.length
-                ? 'Say yes or send it back. Either answer helps your manager plan.'
-                : 'Your manager has not given you one. You can still visit shops. All your work today is saved.'}
-          </T>
-          {pickToday ? (
-            <View style={{ marginTop: 14, alignSelf: 'stretch' }}>
-              <PrimaryButton
-                label="Pick your shops"
-                fullWidth
+            This block used to live INSIDE the Next stop card, in one arm of a
+            ternary that only draws when there is a planned stop left. A leg is
+            routinely open when there is not: going off the plan is exactly what
+            this screen's own dashed button pushes him into, and visiting the last
+            planned stop leaves `next` undefined too. In both cases the whole card
+            was skipped and the screen underneath said "No route for today" while he
+            was mid-journey with the meter already photographed — no "Call it off",
+            no "Continue", and if Android had reaped the app the store's `custId`
+            was gone with it, so `/visit` could not be reached from anywhere. The
+            only way out was to start a SECOND journey to the same shop from the
+            Customers list, which re-opens the odometer camera and throws the
+            reading away.
+
+            It is keyed on the leg alone now, and the Next stop card below is
+            suppressed while it is drawn: two cards each offering to start a visit
+            is how a second leg gets opened by accident, and opening one closes the
+            first.
+          */}
+          {/* ONE CARD, FOUR MOMENTS OF ONE DAY: on the road, waiting for the
+              office, every stop walked, and the next stop. Swapped rather than
+              cut, so a visit saved and the card moving on to the following shop
+              reads as the route advancing rather than as a different screen. */}
+          <Swap id={journeyMoment}>
+          {leg ? (
+            <View
+              style={{
+                backgroundColor: C.surface,
+                borderWidth: 1,
+                borderColor: C.primaryEdge,
+                borderRadius: radius.card,
+                boxShadow: shadow.nextStop,
+                padding: 16,
+                marginTop: 16,
+              }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Icon name="nav" size={18} color={C.primaryDeep} strokeWidth={1.8} />
+                <T
+                  style={[
+                    { fontSize: 12, lineHeight: 16, letterSpacing: 0.48, textTransform: 'uppercase', color: C.primaryDeep },
+                    weight(600),
+                  ]}>
+                  On your way
+                </T>
+              </View>
+              <T style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.3, color: C.ink, marginTop: 10 }, weight(600)]}>
+                {leg.toLabel ?? legShop?.name ?? 'The shop'}
+              </T>
+              <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+                {legLine({
+                  modeLabel: legModeLabel ?? leg.modeKey,
+                  odometerStartKm: null,
+                  odometerEndKm: null,
+                  ticketAmountPaise: null,
+                }) +
+                  ' · ' +
+                  /* `now`, not `Date.now()`. The clock is state on this screen and
+                     reading it again inside the render is what the React Compiler
+                     rules here forbid — it also meant this duration was measured
+                     against a different instant from the "waiting N days" labels
+                     above it. A leg with no start reads as nothing elapsed, which
+                     is the honest answer: there is no departure to count from. */
+                  travellingFor(leg.startedAt ?? now, now) +
+                  (leg.odometerStartKm != null
+                    ? ' · meter at start ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'
+                    : '')}
+              </T>
+              {/*
+                NAVIGATION SURVIVES THE DEPARTURE, and it goes where HE is going.
+                It was in the other arm of the old ternary — the one drawn BEFORE he
+                sets off — so pressing "Start visit" took navigation away at the one
+                moment it is for. Worse, when it was first moved in here it kept
+                reading the planned stop's coordinates under the leg's shop name,
+                and `openMaps` prefers a coordinate to a name: he pressed the one
+                button that says it will take him there and rode to the shop the
+                plan had queued. The shop's own pin answers it; with no pin at all
+                the name and the town are passed instead, which is a worse answer
+                and an honest one.
+              */}
+              <NavigateButton
+                variant="button"
+                lat={legShop?.gpsLat}
+                lng={legShop?.gpsLng}
+                name={leg.toLabel ?? legShop?.name}
+                city={legShop?.area ?? legShop?.city}
+                style={{ marginTop: 14 }}
+              />
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                <SecondaryButton
+                  label="Cancel trip"
+                  onPress={() =>
+                    askConfirm({
+                      title: 'Not going after all?',
+                      body:
+                        'The trip stays on your record, with your reason and 0 km. The meter has already moved. Removing the trip would leave a gap before your next one.',
+                      reasonLabel: 'Why · needed',
+                      confirmLabel: 'Cancel trip',
+                      run: (reason) => {
+                        void abandonLeg(leg.id, reason).then(() => {
+                          setLeg(null);
+                          notify('Trip cancelled');
+                        });
+                      },
+                    })
+                  }
+                  style={{ flex: 1, borderRadius: radius.xl }}
+                />
+                <PrimaryButton
+                  label="Continue"
+                  /* A leg with no shop against it cannot open a visit screen, and
+                     the button says so rather than acknowledging the tap and doing
+                     nothing. Every leg this screen can draw is one `departForVisit`
+                     wrote, which always names a shop — this is the guard, not the
+                     expected case. */
+                  disabled={!legCustomerId}
+                  whyDisabled="This trip has no shop saved. Cancel it and start again from the shop."
+                  onPress={() => {
+                    if (!legCustomerId) return;
+                    beginVisit(legCustomerId);
+                    router.push('/visit');
+                  }}
+                  style={{ flex: 1, borderRadius: radius.xl }}
+                />
+              </View>
+            </View>
+          ) : null}
+
+          {/*
+            PICKED, AND NOT YET ROUTED — a headline with no way back into it.
+
+            `pickShops` moves the day to `planned` on this handset the moment he
+            saves, and the office mints the stops on the next pull. In between, the
+            twelve shops he had just chosen could not be seen or changed from
+            anywhere: the empty-state card is suppressed by `!awaitingRoute`, the
+            pips and the Next stop card by there being no stops, and today's day
+            appears in none of `toPick`, `comingUp` or `recent`. A morning without
+            signal can last hours.
+          */}
+          {awaitingRoute ? (
+            <View style={{ marginTop: 16 }}>
+              <SecondaryButton
+                label="See the shops you picked"
                 onPress={() =>
-                  router.push({ pathname: '/pick', params: { day: pickToday.id } })
+                  router.push({ pathname: '/pick', params: { day: awaitingRoute.id } })
                 }
               />
             </View>
           ) : null}
-        </View>
-      ) : null}
 
-      {/*
-        Going off the plan.
-        The label is a CONTROL now rather than a two-line sentence centred in a
-        dashed box — that read as body copy with a border round it, which is
-        exactly how somebody scrolls past the only escape hatch on the screen.
-        What it costs is said in the dialog, where the reason is typed.
-      */}
-      <DashedButton
-        label="Add a stop that is not on the plan"
-        onPress={deviate}
-        style={{ marginTop: 16 }}
-      />
+          {/*
+            THE DAY IS DONE, and the screen used to go quiet at exactly this point:
+            `next` is undefined so the Next stop card is gone, and the empty state
+            is suppressed because there ARE stops. Every stop walked is the one
+            moment this screen has something unambiguous to say — and closing the
+            day was reachable only from More → Your day, which is two taps and a
+            guess away from the tab he is looking at.
 
-      {/*
-        A REASON TYPED AND NOT YET SPENT, SAID OUT LOUD.
-
-        `deviate` above takes the sentence and sends him to the Customers list
-        to choose the shop, and nothing anywhere showed that it was still
-        waiting — so backing out without visiting left it sitting in the store,
-        to attach itself to the next unplanned visit he logged, hours later and
-        about a different shop. The manager then read a deviation reason
-        belonging to somewhere else, on a record whose own words are "your
-        manager sees the reason".
-
-        Here, under the button that took it, with the time it was typed and a
-        way to let it go. It survives the app being killed now — see
-        `restoreOffPlanReason` — and expires at the day boundary, so the other
-        half of the leak, a Tuesday sentence arriving on Wednesday, is closed by
-        the store rather than by this screen remembering to check.
-      */}
-      {offPlanReason ? (
-        <View
-          style={{
-            marginTop: 12,
-            backgroundColor: C.warnBg,
-            borderRadius: radius.card,
-            padding: 14,
-          }}>
-          <T s="small" style={[{ color: C.warnInk }, weight(600)]}>
-            Your off-plan reason needs a shop
-          </T>
-          <T s="small" style={{ color: C.body, marginTop: 4 }}>
-            “{offPlanReason}”
-          </T>
-          <T s="caption" style={{ marginTop: 4 }}>
-            {(offPlanReasonAt ? 'Typed at ' + hhmm(offPlanReasonAt) + '. ' : '') +
-              'It goes with your next visit to a shop that is not on today’s plan.'}
-          </T>
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-            <SecondaryButton
-              label="Remove it"
-              onPress={() => {
-                set({ offPlanReason: null });
-                notify('Off-plan reason removed.');
-              }}
-              style={{ flex: 1 }}
-            />
-            <PrimaryButton
-              label="Pick the shop"
-              onPress={() => router.push('/customers?from=journey')}
-              style={{ flex: 1 }}
-            />
-          </View>
-        </View>
-      ) : null}
-
-      {/* Every journey past and coming, as a list or a calendar, each day open
-          in full — and the cities and areas allocated to him, to accept or to
-          ask to change. */}
-      <PressableScale
-        accessibilityRole="button"
-        onPress={() => router.push('/journeys?from=journey')}
-        outerStyle={{ marginTop: 16 }}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 12,
-          backgroundColor: C.surface,
-          borderRadius: radius.card,
-          padding: 14,
-          boxShadow: shadow.card,
-        }}>
-        <Icon name="cal" size={20} color={C.primary} strokeWidth={1.75} />
-        <View style={{ flex: 1 }}>
-          <T style={[type.body, weight(600), { color: C.ink }]}>All journeys and your areas</T>
-          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            Calendar or list of past and upcoming days, and the cities you work
-          </T>
-        </View>
-        <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
-      </PressableScale>
-
-      {/* The last fortnight, most recent first — what was asked, what was
-          said, and for a day that was actually routed, how much of it got
-          walked. Read-only: a day that has passed is a record, not a form. */}
-      {recent.length ? (
-        <View style={{ marginTop: 24 }}>
-          <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
-            Recently
-          </T>
-          {recent.map((d) => (
-            <View
-              key={d.id}
-              style={{
-                borderBottomWidth: 1,
-                borderBottomColor: C.hairline,
-                paddingVertical: 10,
-              }}>
-              <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-                <T style={[{ fontSize: 14, color: C.ink }, weight(500)]}>{dayLabel(d.planDate)}</T>
-                <T s="caption" style={{ color: C.muted }}>{d.city ?? ''}</T>
-              </View>
+            Not while a leg is open: "every stop is visited, close the day off" is
+            the wrong sentence to put in front of somebody who is on a bike on his
+            way to an off-plan shop.
+          */}
+          {!leg && !next && stops.length ? (
+            <Card style={{ marginTop: 16 }}>
+              <T style={[type.body, weight(600), { color: C.ink }]}>Day done</T>
               <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-                {recentSummary(d, pastCounts[d.planDate])}
+                {'You visited every stop on the plan. Close the day now, while you remember it.'}
+              </T>
+              <PrimaryButton
+                label="Close the day"
+                onPress={() => router.push('/eod')}
+                style={{ marginTop: 12 }}
+              />
+            </Card>
+          ) : null}
+
+          {/*
+            NOT WHILE HE IS TRAVELLING. The On-your-way card above is the same
+            journey at a later moment, and two cards on one screen each offering to
+            start a visit is how a second leg gets opened by accident — opening one
+            closes the first, and the meter photograph taken for it is thrown away.
+          */}
+          {next && !leg ? (
+            <View
+              style={{
+                backgroundColor: C.surface,
+                borderWidth: 1,
+                borderColor: C.primaryEdge,
+                borderRadius: radius.card,
+                boxShadow: shadow.nextStop,
+                padding: 16,
+                marginTop: 16,
+              }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.primary }} />
+                <T
+                  style={[
+                    { fontSize: 12, lineHeight: 16, letterSpacing: 0.48, textTransform: 'uppercase', color: C.primaryDeep },
+                    weight(600),
+                  ]}>
+                  Next stop
+                </T>
+                <View style={{ flex: 1 }} />
+                <T style={[{ fontSize: 13, color: late ? C.warn : C.success }, weight(500)]}>
+                  {late ? 'Running late' : 'On time'}
+                </T>
+              </View>
+              <T style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.3, color: C.ink, marginTop: 10 }, weight(600)]}>
+                {next.customerName}
+              </T>
+              {/* Only where there is one. An empty `<T>` still occupies its line
+                  height, so a shop with no area left a blank gap that read as a
+                  missing value rather than an absent one. */}
+              {next.area ? (
+                <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+                  {next.area}
+                </T>
+              ) : null}
+              <T s="small" style={{ marginTop: 10 }}>
+                {(next.plannedAt ? 'Planned ' + next.plannedAt + '. ' : '') +
+                  (next.outstandingPaise > 0
+                    ? 'They owe ' + inrFromPaise(next.outstandingPaise) + '. This stop is on the list to collect it.'
+                    : 'Nothing outstanding for them.')}
+              </T>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+                <NavigateButton
+                  variant="button"
+                  lat={next.gpsLat}
+                  lng={next.gpsLng}
+                  name={next.customerName}
+                  city={next.area}
+                  style={{ flex: 1 }}
+                />
+                <PrimaryButton
+                  label="Start visit"
+                  /* Asks how he is getting there and takes the meter photograph
+                     before anything opens — see `TravelGate`. */
+                  onPress={() =>
+                    askTravel({ customerId: next.customerId, customerName: next.customerName })
+                  }
+                  style={{ flex: 1, borderRadius: radius.xl }}
+                />
+              </View>
+            </View>
+          ) : null}
+          </Swap>
+
+          {/* Guarded like the pips: an empty container still spends its top
+              margin, and this screen's commonest state has nothing in it. */}
+          {stops.length ? (
+            <View style={{ marginTop: 20 }}>
+              {stops.map((x, i) => {
+                const isNext = !!next && x.id === next.id;
+                const done = x.status === 'visited';
+                const last = i === stops.length - 1;
+                return (
+                  <Stagger key={x.id} index={i} style={{ flexDirection: 'row', gap: 14, alignItems: 'stretch' }}>
+                    <View style={{ width: 28, alignItems: 'center' }}>
+                      {/* The marker pops as a stop turns from a number into a
+                          tick — the one change on this list that is news. Keyed on
+                          `done`, so a stop already done when the screen opens
+                          simply sits there. */}
+                      <Pop trigger={done}>
+                      <View
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 14,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderWidth: 1,
+                          backgroundColor: done ? C.primaryTint : isNext ? C.primary : C.surface,
+                          borderColor: done ? C.primaryEdge : isNext ? C.primary : C.border,
+                        }}>
+                        {done ? (
+                          <Icon name="task" size={14} color={C.primaryDeep} strokeWidth={2.4} />
+                        ) : (
+                          <T style={[{ fontSize: 13, color: isNext ? C.surface : C.muted }, weight(600)]}>{String(i + 1)}</T>
+                        )}
+                      </View>
+                      </Pop>
+                      {last ? null : (
+                        <View style={{ width: 2, flex: 1, minHeight: 12, backgroundColor: done ? C.primaryEdge : C.hairline }} />
+                      )}
+                    </View>
+
+                    {/*
+                      THE ROW OPENS THE SHOP, and the glyph beside it opens maps.
+
+                      It was one unlabelled `Pressable` with no chevron and no map
+                      glyph on it, whose press threw him out of the app into Google
+                      Maps — and a stop already visited answered with a toast and
+                      nothing else, so a done stop was a dead end with no route to
+                      the record, the outstanding or the phone number. A tap on a
+                      name should open the thing it names; leaving the app is a
+                      control that says so.
+                    */}
+                    <PressCard
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        flexDirection: 'row',
+                        alignItems: 'stretch',
+                        marginBottom: 8,
+                        borderRadius: radius.lg,
+                        borderWidth: 1,
+                        borderColor: isNext ? C.primaryEdge : C.hairline,
+                        backgroundColor: isNext ? C.primaryTint : C.surface,
+                        overflow: 'hidden',
+                      }}>
+                      {(press) => (
+                      <>
+                      <Pressable
+                        onPressIn={press.onPressIn}
+                        onPressOut={press.onPressOut}
+                        onPress={() => openStop(x)}
+                        accessibilityRole="button"
+                        accessibilityLabel={'Open ' + x.customerName}
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 10,
+                          paddingVertical: 12,
+                          paddingLeft: 14,
+                          paddingRight: 6,
+                        }}>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <T
+                            numberOfLines={1}
+                            style={[{ fontSize: 15, color: done ? C.muted : C.ink }, weight(isNext ? 600 : 500)]}>
+                            {x.customerName}
+                          </T>
+                          {/* Joined rather than concatenated. With no area recorded —
+                              which is most of an imported book — these read
+                              " · arrived 10:15", opening on a separator with nothing
+                              in front of it. */}
+                          <T s="caption" style={{ marginTop: 1 }}>
+                            {[
+                              x.area,
+                              done
+                                ? 'arrived ' + (x.actualAt ? hhmm(x.actualAt) : '—')
+                                : x.plannedAt
+                                  ? 'planned ' + x.plannedAt
+                                  : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </T>
+                        </View>
+                        {done || isNext ? (
+                          <T style={[{ fontSize: 13, color: done ? C.success : C.primaryDeep }, weight(500)]}>
+                            {done ? 'Done' : 'Now'}
+                          </T>
+                        ) : null}
+                        <Icon name="forward" size={18} color={C.muted} strokeWidth={1.5} />
+                      </Pressable>
+                      <StopMapButton lat={x.gpsLat} lng={x.gpsLng} name={x.customerName} city={x.area} />
+                      </>
+                      )}
+                    </PressCard>
+                  </Stagger>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {/*
+            A DAY WITH NOTHING ON IT IS THE COMMONEST STATE THIS SCREEN HAS, and it
+            was drawn as nothing at all: a headline, one muted line, and then six
+            hundred points of empty canvas above a dashed button. Every other empty
+            state in this app says what to do next; this one — the tab a salesman
+            opens first every morning — said the least of any of them, on the days
+            it mattered most.
+
+            What it says depends on which nothing it is, because they need
+            different things done: a day agreed and unfilled is HIS to fill, a day
+            proposed is his to answer, and no day at all is the office's move and
+            worth saying so rather than leaving him wondering whether the app is
+            broken.
+          */}
+          {!stops.length && !awaitingRoute ? (
+            <View
+              style={{
+                marginTop: 20,
+                backgroundColor: C.surface,
+                borderRadius: radius.card,
+                borderWidth: 1,
+                borderColor: C.hairline,
+                paddingVertical: 26,
+                paddingHorizontal: 20,
+                alignItems: 'center',
+                boxShadow: shadow.card,
+              }}>
+              <View
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  backgroundColor: C.primaryTint,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 12,
+                }}>
+                <Icon name="route" size={22} color={C.primaryDeep} strokeWidth={1.6} />
+              </View>
+              {/* `pickToday`, never `toPick`. This card answers "what about TODAY",
+                  and read against any agreed day from today onward it announced a
+                  day agreed for next Tuesday — the same row already listed two
+                  inches above — while suppressing the only sentence that says what
+                  to do this morning. */}
+              <T style={[type.body, weight(600), { color: C.ink, textAlign: 'center' }]}>
+                {pickToday
+                  ? 'A day is waiting for its shops'
+                  : asking.length
+                    ? 'A day is waiting for your answer'
+                    : 'No route for today'}
+              </T>
+              <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6, maxWidth: 280 }}>
+                {pickToday
+                  ? 'You have agreed today. Pick the shops and it becomes a route.'
+                  : asking.length
+                    ? 'Say yes or send it back. Either answer helps your manager plan.'
+                    : 'Your manager has not given you one. You can still visit shops. All your work today is saved.'}
+              </T>
+              {pickToday ? (
+                <View style={{ marginTop: 14, alignSelf: 'stretch' }}>
+                  <PrimaryButton
+                    label="Pick your shops"
+                    fullWidth
+                    onPress={() =>
+                      router.push({ pathname: '/pick', params: { day: pickToday.id } })
+                    }
+                  />
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
+          {/*
+            Going off the plan.
+            The label is a CONTROL now rather than a two-line sentence centred in a
+            dashed box — that read as body copy with a border round it, which is
+            exactly how somebody scrolls past the only escape hatch on the screen.
+            What it costs is said in the dialog, where the reason is typed.
+          */}
+          <DashedButton
+            label="Add a stop that is not on the plan"
+            onPress={deviate}
+            style={{ marginTop: 16 }}
+          />
+
+          {/*
+            A REASON TYPED AND NOT YET SPENT, SAID OUT LOUD.
+
+            `deviate` above takes the sentence and sends him to the Customers list
+            to choose the shop, and nothing anywhere showed that it was still
+            waiting — so backing out without visiting left it sitting in the store,
+            to attach itself to the next unplanned visit he logged, hours later and
+            about a different shop. The manager then read a deviation reason
+            belonging to somewhere else, on a record whose own words are "your
+            manager sees the reason".
+
+            Here, under the button that took it, with the time it was typed and a
+            way to let it go. It survives the app being killed now — see
+            `restoreOffPlanReason` — and expires at the day boundary, so the other
+            half of the leak, a Tuesday sentence arriving on Wednesday, is closed by
+            the store rather than by this screen remembering to check.
+          */}
+          {offPlanReason ? (
+            <View
+              style={{
+                marginTop: 12,
+                backgroundColor: C.warnBg,
+                borderRadius: radius.card,
+                padding: 14,
+              }}>
+              <T s="small" style={[{ color: C.warnInk }, weight(600)]}>
+                Your off-plan reason needs a shop
+              </T>
+              <T s="small" style={{ color: C.body, marginTop: 4 }}>
+                “{offPlanReason}”
+              </T>
+              <T s="caption" style={{ marginTop: 4 }}>
+                {(offPlanReasonAt ? 'Typed at ' + hhmm(offPlanReasonAt) + '. ' : '') +
+                  'It goes with your next visit to a shop that is not on today’s plan.'}
+              </T>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                <SecondaryButton
+                  label="Remove it"
+                  onPress={() => {
+                    set({ offPlanReason: null });
+                    notify('Off-plan reason removed.');
+                  }}
+                  style={{ flex: 1 }}
+                />
+                <PrimaryButton
+                  label="Pick the shop"
+                  onPress={() => router.push('/customers?from=journey')}
+                  style={{ flex: 1 }}
+                />
+              </View>
+            </View>
+          ) : null}
+
+        </>
+      ) : tab === 'ahead' ? (
+        <>
+          {/*
+            The days you have been asked about, above today's route.
+            Above, because a question somebody is waiting on you to answer outranks
+            a list you already know — and because it is the only thing on this
+            screen that goes away once you deal with it.
+          */}
+          {asking.length ? (
+            <View style={{ marginBottom: 16 }}>
+              <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
+                {asking.length === 1 ? 'A day to agree' : plural(asking.length, 'day') + ' to agree'}
+              </T>
+              {asking.map((d, i) => {
+                /* Worked out once. It used to be called twice in one expression —
+                   and both calls read the clock, so the two halves of one sentence
+                   could be measured against different instants. */
+                const waiting = waitingLabel(d.proposedAt, now);
+                return (
+                <Stagger key={d.id} index={i}>
+                <View
+                  style={{
+                    backgroundColor: C.surface,
+                    borderRadius: radius.card,
+                    borderLeftWidth: 3,
+                    borderLeftColor: C.primary,
+                    padding: 14,
+                    marginBottom: 8,
+                    boxShadow: shadow.card,
+                  }}>
+                  <T style={[type.body, weight(600), { color: C.ink }]}>
+                    {dayLabelRelative(d.planDate, today)}
+                  </T>
+                  <T s="small" style={{ color: C.body, marginTop: 2 }}>
+                    {d.city ? d.city + ' was proposed' : 'A day was proposed'}
+                    {d.proposedBy ? ' by ' + d.proposedBy : ''}
+                    {/* HOW LONG IT HAS BEEN SITTING. The office is waiting on this
+                        answer to plan a week, and "proposed" with no age reads as
+                        something that arrived a moment ago — so a request four days
+                        old looks identical to one from this morning, and gets the
+                        same non-answer. */}
+                    {waiting ? ' · ' + waiting : ''}
+                  </T>
+                  <T s="small" style={{ color: C.muted, marginTop: 6 }}>
+                    You pick the shops after you agree. You know the city best.
+                  </T>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                    <View style={{ flex: 1 }}>
+                      <PrimaryButton label="Yes, that works" fullWidth onPress={() => void say(d, true)} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <SecondaryButton label="Not that day" fullWidth onPress={() => void say(d, false)} />
+                    </View>
+                  </View>
+                </View>
+                </Stagger>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {/*
+            Days you have agreed and not yet filled.
+
+            Between the two states there is nothing to walk: the office knows you
+            will be in Nagpur and does not know which doors. This is the only
+            prompt that gets somebody from one to the other, so it sits directly
+            under the questions rather than at the bottom of the screen.
+          */}
+          {toPick.length ? (
+            <View style={{ marginBottom: 16 }}>
+              <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
+                Agreed. Pick the shops
+              </T>
+              {toPick
+                .map((d) => (
+                  <PressableScale
+                    key={d.id}
+                    onPress={() => router.push({ pathname: '/pick', params: { day: d.id } })}
+                    outerStyle={{ marginBottom: 8 }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 12,
+                      backgroundColor: C.surface,
+                      borderRadius: radius.card,
+                      padding: 14,
+                      boxShadow: shadow.card,
+                    }}>
+                    <View style={{ flex: 1 }}>
+                      <T style={[type.body, weight(600), { color: C.ink }]}>
+                        {dayLabelRelative(d.planDate, today)}
+                      </T>
+                      <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+                        {(d.city ? d.city + ' · ' : '') + 'no shops picked yet'}
+                      </T>
+                      {/* A day back here because the office REFUSED the pick has
+                          to say so. Without it the card is identical to one nobody
+                          has touched, and the salesman picks the same shops again
+                          into the same refusal. */}
+                      {d.syncState === 'rejected' ? (
+                        <T s="small" style={{ color: C.warnInk, marginTop: 4 }}>
+                          {d.syncMessage ?? 'The office did not accept the shops you picked.'}
+                        </T>
+                      ) : null}
+                    </View>
+                    <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
+                  </PressableScale>
+                ))}
+            </View>
+          ) : null}
+
+          {/* Days already routed, beyond today — a picked plan for next Tuesday
+              had nowhere to be seen again on this screen until it WAS Tuesday. */}
+          {comingUp.length ? (
+            <View style={{ marginBottom: 16 }}>
+              <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
+                Coming up
+              </T>
+              {comingUp.map((d) => (
+                <PressableScale
+                  key={d.id}
+                  /* Opens the day's shops — to see them, take one off, add
+                     more or start over — rather than dropping him straight
+                     into the picker, which is the wrong place to READ a plan. */
+                  onPress={() => setPlannedOpen(d)}
+                  outerStyle={{ marginBottom: 8 }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    backgroundColor: C.surface,
+                    borderRadius: radius.card,
+                    padding: 14,
+                    boxShadow: shadow.card,
+                  }}>
+                  <View style={{ flex: 1 }}>
+                    <T style={[type.body, weight(600), { color: C.ink }]}>
+                      {dayLabelRelative(d.planDate, today)}
+                    </T>
+                    <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+                      {(d.city ? d.city + ' · ' : '') + plural(d.picked, 'shop') + ' picked'}
+                    </T>
+                  </View>
+                  <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
+                </PressableScale>
+              ))}
+            </View>
+          ) : null}
+
+          {/* What you have already sent back, so a refusal does not vanish. */}
+          {sentBack.length ? (
+            <View style={{ marginBottom: 16 }}>
+              {sentBack
+                .map((d) => (
+                  <View
+                    key={d.id}
+                    style={{
+                      backgroundColor: C.warnBg,
+                      borderRadius: radius.card,
+                      padding: 12,
+                      marginBottom: 8,
+                    }}>
+                    <T s="small" style={{ color: C.warnInk }}>
+                      {dayLabelRelative(d.planDate, today)} — sent back
+                      {d.syncState === 'queued' ? ', waiting for signal' : ''}
+                    </T>
+                    {d.refusalReason ? (
+                      <T s="small" style={{ color: C.body, marginTop: 2 }}>
+                        “{d.refusalReason}”
+                      </T>
+                    ) : null}
+                  </View>
+                ))}
+            </View>
+          ) : null}
+
+          {/*
+            A day nobody proposed.
+
+            Under the questions and the agreed days rather than above them: what
+            the office has asked is the first thing to answer, and this is what to
+            do when it has asked nothing. It is always drawn — a salesman whose
+            manager plans nothing would otherwise find an empty tab with no way
+            forward, which is exactly the case it exists for.
+          */}
+          <DashedButton
+            label="Plan a day"
+            onPress={() => {
+              setOwn({ date: '', city: '' });
+              setOwnErr(null);
+              setOwnOpen(true);
+            }}
+            style={{ marginBottom: 16 }}
+          />
+
+          {/* ---------------------------------------------------- tour requests --
+
+              Asking to work away for a few days was a one-way door: `requestTour`
+              wrote the row, raised the approval and sent both, the manager decided,
+              `applyApprovals` wrote the verdict and the reason onto `tours` — and
+              no screen in the app had ever selected from that table. So the answer
+              to "can I go to Nashik next week" arrived on the handset, was stored
+              correctly, and was invisible. He asked again, or he did not go. */}
+          {tours.length ? (
+            <View style={{ marginTop: 24 }}>
+              <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
+                Your tour requests
+              </T>
+              {tours.map((t) => {
+                const tone: BadgeTone =
+                  t.state === 'Approved' ? 'success' : t.state === 'Rejected' ? 'danger' : 'amber';
+                /* Stored as JSON because a tour covers several towns. A row that
+                   cannot be parsed shows the dates rather than breaking the list —
+                   this is the office's string, and the phone is the wrong place to
+                   find out it was malformed. */
+                let cities: string[] = [];
+                try {
+                  const parsed: unknown = JSON.parse(t.cities);
+                  if (Array.isArray(parsed)) cities = parsed.map(String);
+                } catch {
+                  cities = [];
+                }
+                return (
+                  <Card key={t.id} style={{ marginBottom: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <T style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(500)]}>
+                        {dmy(t.startDate) + ' to ' + dmy(t.endDate)}
+                      </T>
+                      <Badge tone={tone}>{t.syncState === 'queued' ? 'Not sent' : t.state}</Badge>
+                    </View>
+                    <T s="caption" style={{ marginTop: 3 }}>
+                      {[cities.join(', ') || null, t.purpose].filter(Boolean).join(' · ')}
+                    </T>
+                    {/* The manager's own words. A refusal with no reason is one he
+                        will simply put in again next week. */}
+                    {t.decisionNote ? (
+                      <T
+                        style={{
+                          fontSize: 13,
+                          lineHeight: 19,
+                          color: t.state === 'Rejected' ? C.danger : C.muted,
+                          marginTop: 4,
+                        }}>
+                        {t.decisionNote}
+                      </T>
+                    ) : null}
+                  </Card>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {/* Every journey past and coming, as a list or a calendar, each day open
+              in full — and the cities and areas allocated to him, to accept or to
+              ask to change. */}
+          <PressableScale
+            accessibilityRole="button"
+            onPress={() => router.push('/journeys?from=journey')}
+            outerStyle={{ marginTop: 16 }}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              backgroundColor: C.surface,
+              borderRadius: radius.card,
+              padding: 14,
+              boxShadow: shadow.card,
+            }}>
+            <Icon name="cal" size={20} color={C.primary} strokeWidth={1.75} />
+            <View style={{ flex: 1 }}>
+              <T style={[type.body, weight(600), { color: C.ink }]}>All journeys and your areas</T>
+              <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+                Calendar or list of past and upcoming days, and the cities you work
               </T>
             </View>
-          ))}
-        </View>
-      ) : null}
+            <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
+          </PressableScale>
 
-      {/* ---------------------------------------------------- tour requests --
+        </>
+      ) : (
+        <>
+          {/* The last fortnight, most recent first — what was asked, what was
+              said, and for a day that was actually routed, how much of it got
+              walked. Read-only: a day that has passed is a record, not a form. */}
+          {recent.length ? (
+            <View>
+              <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
+                Recently
+              </T>
+              {/* A row opens the day — which shops, and what each came to.
+                  It was read-only text, so the one question a manager asks
+                  about last Tuesday ("what happened at Patil's?") had no
+                  answer on the phone of the man who was there. */}
+              {recent.map((d) => (
+                <Pressable
+                  key={d.id}
+                  onPress={() => setPastOpen(d)}
+                  accessibilityRole="button"
+                  style={({ pressed }) => ({
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                    borderBottomWidth: 1,
+                    borderBottomColor: C.hairline,
+                    paddingVertical: 12,
+                    backgroundColor: pressed ? C.wash : 'transparent',
+                  })}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+                      <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{dayLabel(d.planDate)}</T>
+                      <T s="caption" style={{ color: C.muted }}>{d.city ?? ''}</T>
+                    </View>
+                    <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+                      {recentSummary(d, pastCounts[d.planDate])}
+                    </T>
+                  </View>
+                  <Icon name="forward" size={16} color={C.muted} strokeWidth={1.5} />
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
 
-          Asking to work away for a few days was a one-way door: `requestTour`
-          wrote the row, raised the approval and sent both, the manager decided,
-          `applyApprovals` wrote the verdict and the reason onto `tours` — and
-          no screen in the app had ever selected from that table. So the answer
-          to "can I go to Nashik next week" arrived on the handset, was stored
-          correctly, and was invisible. He asked again, or he did not go. */}
-      {tours.length ? (
-        <View style={{ marginTop: 24 }}>
-          <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
-            Your tour requests
-          </T>
-          {tours.map((t) => {
-            const tone: BadgeTone =
-              t.state === 'Approved' ? 'success' : t.state === 'Rejected' ? 'danger' : 'amber';
-            /* Stored as JSON because a tour covers several towns. A row that
-               cannot be parsed shows the dates rather than breaking the list —
-               this is the office's string, and the phone is the wrong place to
-               find out it was malformed. */
-            let cities: string[] = [];
-            try {
-              const parsed: unknown = JSON.parse(t.cities);
-              if (Array.isArray(parsed)) cities = parsed.map(String);
-            } catch {
-              cities = [];
-            }
-            return (
-              <Card key={t.id} style={{ marginBottom: 8 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <T style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(500)]}>
-                    {dmy(t.startDate) + ' to ' + dmy(t.endDate)}
-                  </T>
-                  <Badge tone={tone}>{t.syncState === 'queued' ? 'Not sent' : t.state}</Badge>
-                </View>
-                <T s="caption" style={{ marginTop: 3 }}>
-                  {[cities.join(', ') || null, t.purpose].filter(Boolean).join(' · ')}
-                </T>
-                {/* The manager's own words. A refusal with no reason is one he
-                    will simply put in again next week. */}
-                {t.decisionNote ? (
-                  <T
-                    style={{
-                      fontSize: 13,
-                      lineHeight: 19,
-                      color: t.state === 'Rejected' ? C.danger : C.muted,
-                      marginTop: 4,
-                    }}>
-                    {t.decisionNote}
-                  </T>
-                ) : null}
-              </Card>
-            );
-          })}
-        </View>
-      ) : null}
+          {recent.length ? null : (
+            <T s="small" style={{ color: C.muted, marginBottom: 8 }}>
+              No past journeys on this phone yet.
+            </T>
+          )}
+          {/* Every journey past and coming, as a list or a calendar, each day open
+              in full — and the cities and areas allocated to him, to accept or to
+              ask to change. */}
+          <PressableScale
+            accessibilityRole="button"
+            onPress={() => router.push('/journeys?from=journey')}
+            outerStyle={{ marginTop: 16 }}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              backgroundColor: C.surface,
+              borderRadius: radius.card,
+              padding: 14,
+              boxShadow: shadow.card,
+            }}>
+            <Icon name="cal" size={20} color={C.primary} strokeWidth={1.75} />
+            <View style={{ flex: 1 }}>
+              <T style={[type.body, weight(600), { color: C.ink }]}>All journeys and your areas</T>
+              <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+                Calendar or list of past and upcoming days, and the cities you work
+              </T>
+            </View>
+            <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
+          </PressableScale>
+
+        </>
+      )}
+
+      <PastDaySheet key={pastOpen?.id ?? 'none'} day={pastOpen} today={today} onClose={() => setPastOpen(null)} />
+      <PlannedDaySheet
+        key={plannedOpen?.id ?? 'none'}
+        day={plannedOpen}
+        today={today}
+        onClose={() => setPlannedOpen(null)}
+        onChanged={() => void planDays(historyFrom).then(setDays)}
+      />
 
       {/* ------------------------------------------------- plan your own day */}
       <BottomSheet open={ownOpen} onClose={() => setOwnOpen(false)} scroll>
@@ -1680,13 +1808,12 @@ function StopMapButton({
   return (
     <View
       style={{
-        width: 104,
         borderLeftWidth: 1,
         borderLeftColor: C.hairline,
         justifyContent: 'center',
         paddingHorizontal: 8,
       }}>
-      <NavigateButton lat={lat} lng={lng} name={name} city={city} variant="button" />
+      <NavigateButton lat={lat} lng={lng} name={name} city={city} variant="icon" />
     </View>
   );
 }

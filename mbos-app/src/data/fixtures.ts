@@ -37,6 +37,19 @@ export const OUTCOMES: { k: OutcomeKey; label: string }[] = [
   { k: 'closed', label: 'Shop closed' },
 ];
 
+/**
+ * The word for a stored outcome. The visits table keeps the KEY — `closed_now`,
+ * `order` — and two screens printed it as it was, so a salesman read
+ * "closed_now" under "Last time". Anything unrecognised (an older build's
+ * value, the office's `not_available`) is shown as it came rather than
+ * dropped: an odd word beats a missing fact.
+ */
+export function outcomeLabel(key: string | null | undefined): string | null {
+  if (!key) return null;
+  if (key === 'not_available') return 'Owner away';
+  return OUTCOMES.find((o) => o.k === key)?.label ?? key;
+}
+
 /** How the next contact happens. The visit form asks it beside the date, and
  *  it decides what the follow-up task says: "Call Sharma Paints" is a job
  *  somebody can do from a desk, "Follow up with" was not. */
