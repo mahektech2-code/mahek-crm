@@ -14,7 +14,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { weight } from '../../theme/tokens';
+import { type as typeStyles, weight } from '../../theme/tokens';
 import { DUR, staggerDelay } from './route-motion';
 import { feedback } from './feedback';
 import type { FeedbackKind } from '../../engines/feedback';
@@ -174,8 +174,12 @@ export function Stagger({
   style?: StyleProp<ViewStyle>;
 }) {
   const delay = staggerDelay(index);
+  /* Past the cap, a row is drawn as it is. In a FlatList those rows are the
+     ones scrolled into view later, and a row fading in late under a moving
+     thumb reads as the list lagging, not settling. */
+  if (delay === null) return <View style={style}>{children}</View>;
   return (
-    <Appear delay={delay ?? staggerDelay(7) ?? 0} distance={6} duration={DUR.quick + 40} style={style}>
+    <Appear delay={delay} distance={6} duration={DUR.quick + 40} style={style}>
       {children}
     </Appear>
   );
@@ -309,18 +313,32 @@ export function Swap({
   id,
   children,
   style,
+  animate = true,
+  layout = true,
 }: {
   id: string | number;
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
+  /**
+   * False for a change that is not news — data finishing loading, where the
+   * screen drew a placeholder state for a frame. The new state is simply there.
+   */
+  animate?: boolean;
+  /**
+   * False where the body can hold a long list: the box's own height change is
+   * then not animated, because `animateLayout` would move every row in it.
+   */
+  layout?: boolean;
 }) {
   const [initial] = React.useState(id);
   const [prev, setPrev] = React.useState(id);
+  const [quiet, setQuiet] = React.useState<string | number | null>(null);
   if (prev !== id) {
-    animateLayout();
+    if (animate && layout) animateLayout();
     setPrev(id);
+    setQuiet(animate ? null : id);
   }
-  const still = id === initial;
+  const still = id === initial || id === quiet;
   return (
     <Appear key={String(id)} distance={still ? 0 : 4} duration={still ? 0 : DUR.quick + 20} style={style}>
       {children}
@@ -436,8 +454,13 @@ export function PressableScale({
 export function useShake(kind: FeedbackKind | null = 'warning') {
   const x = React.useRef(new Animated.Value(0)).current;
   const reduce = useReduceMotion();
-  const shake = React.useCallback(() => {
-    if (kind) feedback(kind);
+  /* `shake('error')` overrides the hook's kind for one refusal — a sign-in
+     form refuses a short password (warning) and a dead network (error). */
+  const shake = React.useCallback((override?: FeedbackKind | null) => {
+    /* Anything but a kind or null — a press event, if `shake` is ever handed
+       straight to `onPress` — falls back to the hook's own kind. */
+    const k = typeof override === 'string' || override === null ? override : kind;
+    if (k) feedback(k);
     if (reduce) return;
     x.setValue(0);
     const step = (to: number) =>
@@ -596,7 +619,7 @@ export function CountUp({
   }, [value, reduce, duration]);
 
   return (
-    <Text style={style} numberOfLines={numberOfLines} accessibilityLabel={format(value)}>
+    <Text style={[typeStyles.body, style]} numberOfLines={numberOfLines} accessibilityLabel={format(value)}>
       {format(shown)}
     </Text>
   );
@@ -614,12 +637,15 @@ export function FillBar({
   track,
   height = 8,
   delay = 0,
+  style,
 }: {
   pct: number;
   fill: string;
   track: string;
   height?: number;
   delay?: number;
+  /** Placement. It is `flex: 1` by default, which suits a row; pass `{ flex: 0, alignSelf: 'stretch' }` in a column. */
+  style?: StyleProp<ViewStyle>;
 }) {
   const reduce = useReduceMotion();
   const target = Math.min(100, Math.max(0, Number.isFinite(pct) ? pct : 0));
@@ -636,7 +662,7 @@ export function FillBar({
   }, [target, reduce, v, delay]);
 
   return (
-    <Animated.View style={{ flex: 1, height, borderRadius: height / 2, backgroundColor: track, overflow: 'hidden' }}>
+    <Animated.View style={[{ flex: 1, height, borderRadius: height / 2, backgroundColor: track, overflow: 'hidden' }, style]}>
       <Animated.View
         style={{
           width: v.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'] }),
@@ -753,6 +779,7 @@ export function SwipeRow({
   right,
   left,
   style,
+  buzz = true,
 }: {
   children: React.ReactNode;
   /** Revealed by swiping LEFT — the row moves left, the action sits on the right. */
@@ -760,16 +787,23 @@ export function SwipeRow({
   /** Revealed by swiping RIGHT. */
   left?: SwipeAction;
   style?: StyleProp<ViewStyle>;
+  /**
+   * False when the action confirms itself with a toast, which already buzzes
+   * — one act, one buzz.
+   */
+  buzz?: boolean;
 }) {
   const reduce = useReduceMotion();
   const x = React.useRef(new Animated.Value(0)).current;
   const [width, setWidth] = React.useState(360);
   const widthRef = React.useRef(width);
   const actions = React.useRef({ left, right });
+  const buzzRef = React.useRef(buzz);
   const [side, setSide] = React.useState<'left' | 'right' | null>(null);
   React.useEffect(() => {
     widthRef.current = width;
     actions.current = { left, right };
+    buzzRef.current = buzz;
   });
 
   const pan = React.useMemo(
@@ -788,7 +822,7 @@ export function SwipeRow({
           const w = widthRef.current;
           const action = g.dx < 0 ? actions.current.right : actions.current.left;
           if (action && Math.abs(g.dx) > w * 0.4) {
-            feedback('success');
+            if (buzzRef.current) feedback('success');
             Animated.timing(x, {
               toValue: g.dx < 0 ? -w : w,
               duration: reduce ? 0 : 160,
@@ -796,10 +830,15 @@ export function SwipeRow({
               useNativeDriver: true,
             }).start(() => {
               action.run();
-              /* Back to rest, in case the caller keeps the row (an undo, a
-                 refusal) rather than removing it. */
-              x.setValue(0);
-              setSide(null);
+              /* Held off-screen while the caller removes the row — snapping
+                 back at once flashed it for a frame before it went. If the
+                 row is still here a moment later (a refusal, an undo), it
+                 slides home. */
+              setTimeout(() => {
+                Animated.spring(x, { toValue: 0, useNativeDriver: true, speed: 22, bounciness: 3 }).start(() =>
+                  setSide(null),
+                );
+              }, 450);
             });
           } else {
             Animated.spring(x, { toValue: 0, useNativeDriver: true, speed: 22, bounciness: 3 }).start(() =>

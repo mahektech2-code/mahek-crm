@@ -6,6 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color as C, HIT, radius, weight } from '../../theme/tokens';
 import { Icon } from './Icon';
 import { PrimaryButton, SecondaryButton, T } from './primitives';
+import { Appear, DUR } from './motion';
+import { feedback } from './feedback';
 import { getConfig } from '../../data/config';
 import { hoursInWords } from '../../lib/format';
 
@@ -132,6 +134,10 @@ export function SelfieCamera({
 
   const take = async () => {
     if (!ready || shooting) return;
+    /* The shutter is a physical moment, and the camera gives no sound of its
+       own here — the tap is the only sign the press was taken. Fired as the
+       press is accepted, not when the file lands, which can be a second later. */
+    feedback('tap');
     setShooting(true);
     try {
       const picture = await camera.current?.takePictureAsync({ quality: 1 });
@@ -180,7 +186,10 @@ export function SelfieCamera({
         {/* ---- the viewfinder, or what is standing in its way ---- */}
         <View style={{ flex: 1, overflow: 'hidden', borderRadius: radius.card, marginHorizontal: 12 }}>
           {shot ? (
-            <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="cover" />
+            /* The frozen frame fades up rather than snapping over the live one. */
+            <Appear distance={0} duration={DUR.quick} style={{ flex: 1 }}>
+              <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="cover" />
+            </Appear>
           ) : denied ? (
             <Refusal
               body="Camera permission is off for MBOS. Attendance needs a selfie. Turn on the camera in your phone Settings, then try again. If you cannot, tell your manager."

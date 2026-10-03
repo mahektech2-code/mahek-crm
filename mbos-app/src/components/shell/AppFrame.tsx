@@ -230,7 +230,10 @@ export function AppFrame({
     try {
       const verdict = await refreshEverything();
       if (verdict.offer) offerUpdate(verdict.offer);
-      else notify(verdict.summary);
+      /* A note, not a confirmation: the summary is as often "No signal" or
+         "3 entries were not accepted" as it is good news, and a success buzz
+         on either would say the opposite of the sentence. */
+      else notify(verdict.summary, 'info');
     } finally {
       setRefreshing(false);
     }

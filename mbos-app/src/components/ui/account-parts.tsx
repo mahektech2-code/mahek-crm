@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 
 import { T } from './primitives';
+import { feedback } from './feedback';
 import { color as C, radius, tabular, weight } from '../../theme/tokens';
 
 /**
@@ -11,9 +12,14 @@ import { color as C, radius, tabular, weight } from '../../theme/tokens';
  */
 
 export function Chip({ label, on, onPress, count }: { label: string; on: boolean; onPress: () => void; count?: number }) {
+  /* A filter moving ticks, here and not at the callers, so it is felt once.
+     Re-tapping the chip already chosen moves nothing and says nothing. */
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        if (!on) feedback('select');
+        onPress();
+      }}
       accessibilityRole="button"
       accessibilityState={{ selected: on }}
       style={{
@@ -116,7 +122,10 @@ export function Tabs({
         return (
           <Pressable
             key={t.label}
-            onPress={() => onPick(i)}
+            onPress={() => {
+              if (!on) feedback('select');
+              onPick(i);
+            }}
             accessibilityRole="tab"
             accessibilityState={{ selected: on }}
             style={{

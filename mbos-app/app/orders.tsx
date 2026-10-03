@@ -17,6 +17,7 @@ import {
 } from '../src/data/orders';
 import { dmy, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { color as C, radius, tabular, weight, type BadgeTone } from '../src/theme/tokens';
+import { Stagger, animateLayoutFor } from '../src/components/ui/motion';
 
 /**
  * Orders he has taken.
@@ -73,11 +74,18 @@ export default function OrdersScreen() {
 
   useFocusEffect(load);
 
+  /* Opening a row pushes the rows below it down; animated, the eye follows
+     the order it opened instead of losing it in a jump. Skipped on a long list
+     by `animateLayoutFor`, where moving every row costs more than it says. */
   const show = (id: string) => {
+    animateLayoutFor(rows?.length ?? 0);
     if (open === id) return setOpen(null);
     setOpen(id);
     if (!lines[id]) {
-      void orderLines(id).then((l) => setLines((m) => ({ ...m, [id]: l })));
+      void orderLines(id).then((l) => {
+        animateLayoutFor(rows?.length ?? 0);
+        setLines((m) => ({ ...m, [id]: l }));
+      });
     }
   };
 
@@ -120,7 +128,7 @@ export default function OrdersScreen() {
             const mine = lines[o.id];
 
             return (
-              <View key={o.id} style={{ borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
+              <Stagger key={o.id} index={i} style={{ borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ expanded: on }}
@@ -238,7 +246,7 @@ export default function OrdersScreen() {
                     ) : null}
                   </View>
                 ) : null}
-              </View>
+              </Stagger>
             );
           })}
         </ListCard>

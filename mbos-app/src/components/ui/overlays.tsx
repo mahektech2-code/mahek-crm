@@ -64,9 +64,11 @@ function SheetModal({
    */
   const drag = React.useRef(new Animated.Value(0)).current;
   const closeRef = React.useRef(onClose);
-  closeRef.current = onClose;
   const heightRef = React.useRef(sheetHeight);
-  heightRef.current = sheetHeight;
+  React.useEffect(() => {
+    closeRef.current = onClose;
+    heightRef.current = sheetHeight;
+  });
   const grab = React.useMemo(
     () =>
       PanResponder.create({
@@ -301,11 +303,13 @@ export function Toast({
       }),
     [swipe],
   );
-  leaveRef.current = () => {
-    progress.setValue(0);
-    setShowing(null);
-    onDone();
-  };
+  React.useEffect(() => {
+    leaveRef.current = () => {
+      progress.setValue(0);
+      setShowing(null);
+      onDone();
+    };
+  });
 
   React.useEffect(() => {
     if (!message) return;

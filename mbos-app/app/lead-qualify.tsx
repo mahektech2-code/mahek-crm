@@ -15,6 +15,7 @@ import {
 import { checklistFor, stageLabel, type Condition } from '../src/engines/funnel';
 import { plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { Pop, Stagger, animateLayout } from '../src/components/ui/motion';
 
 /**
  * §9 §11 — the checklist, and it is two different sizes of question.
@@ -322,7 +323,7 @@ export default function QualifyScreen() {
          and "saved — Territory" against a row that carried all five groups is
          a line somebody would read back as a partial save. */
       const r = await saveDistributorProfile(lead.id, patch);
-      if (!r.ok) return notify(r.message);
+      if (!r.ok) return notify(r.message, 'warn');
       load();
       return notify('Saved. All answers on this checklist.');
     }
@@ -340,7 +341,7 @@ export default function QualifyScreen() {
       if (typed) answers[c.id] = typed;
     }
     const r = await saveQualification(lead.id, answers);
-    if (!r.ok) return notify(r.message);
+    if (!r.ok) return notify(r.message, 'warn');
     load();
     notify('Qualification saved');
   };
@@ -359,10 +360,14 @@ export default function QualifyScreen() {
         </T>
         <T s="caption" style={{ marginTop: 2 }}>{stageLabel(view.stage)}</T>
         <Divider style={{ marginVertical: 12 }} />
-        {/* A count, never a bar. */}
-        <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(600)]}>
-          {done + ' of ' + conditions.length + ' answered'}
-        </T>
+        {/* A count, never a bar. It pops when a save moves it — the count
+            reads the RECORD, so this is the moment an answer actually counts,
+            not the moment a switch was flipped. */}
+        <Pop trigger={done} from={0.85} style={{ alignSelf: 'flex-start' }}>
+          <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(600)]}>
+            {done + ' of ' + conditions.length + ' answered'}
+          </T>
+        </Pop>
         {/* KEPT, not typed. The count is what the phone is holding, so it does
             not move until Save has been pressed — and Save writes the whole
             checklist, not the group on the screen. */}
@@ -389,7 +394,12 @@ export default function QualifyScreen() {
                 label={GROUP_TITLE[g]}
                 sub={got + '/' + inGroup.length}
                 selected={group === g}
-                onPress={() => setGroup(g)}
+                onPress={() => {
+                  /* A different group is a different set of cards; the old
+                     ones fade as the new ones settle in below. */
+                  if (g !== group) animateLayout();
+                  setGroup(g);
+                }}
                 style={{ paddingHorizontal: 14 }}
               />
             );
@@ -398,7 +408,7 @@ export default function QualifyScreen() {
       ) : null}
 
       <View style={{ marginTop: 16, gap: 12 }}>
-        {shown.map((c) => {
+        {shown.map((c, i) => {
           const col = isDistributor ? undefined : SHOP_COLUMNS[c.id];
           const f = isDistributor ? DISTRIBUTOR_FIELDS[c.id] : undefined;
           /* The ROW reads the boxes on the screen — a switch that did not move
@@ -407,7 +417,8 @@ export default function QualifyScreen() {
           const met = answeredIn(c, true);
 
           return (
-            <Card key={c.id}>
+            <Stagger key={c.id} index={i}>
+            <Card>
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(500)]}>{c.says}</T>
@@ -428,9 +439,13 @@ export default function QualifyScreen() {
                     that switch was the lie, because the fact the gate reads is
                     written at a desk in the office and by nobody here. */}
                 {col ? (
-                  <T style={[{ fontSize: 14, color: met ? C.success : C.muted }, weight(600)]}>
-                    {met ? 'Done' : 'Not yet'}
-                  </T>
+                  /* Pops on the change only — a row that was already Done
+                     when the screen opened is not news. */
+                  <Pop trigger={met}>
+                    <T style={[{ fontSize: 14, color: met ? C.success : C.muted }, weight(600)]}>
+                      {met ? 'Done' : 'Not yet'}
+                    </T>
+                  </Pop>
                 ) : f && (f.kind === 'text' || f.kind === 'number' || f.kind === 'money' || f.kind === 'date') ? null : f?.kind === 'yesno' ? (
                   <View style={{ flexDirection: 'row', gap: 6 }}>
                     <Choice
@@ -465,6 +480,7 @@ export default function QualifyScreen() {
                 />
               ) : null}
             </Card>
+            </Stagger>
           );
         })}
       </View>

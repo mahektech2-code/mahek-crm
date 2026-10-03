@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { Animated, View, Pressable } from 'react-native';
+import { Presence, useShake } from '../ui/motion';
 import { Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
 import { BottomSheet, Calendar } from '../ui/overlays';
 import { color as C, radius, weight } from '../../theme/tokens';
@@ -46,10 +47,17 @@ export function NextActionSheet({
   const [err, setErr] = React.useState<string | null>(null);
   const [today] = React.useState(() => isoDate(new Date()));
 
+  /* A refusal shakes the box that says it, and buzzes `warning`. */
+  const refusal = useShake('warning');
+  const refuse = (message: string) => {
+    setErr(message);
+    refusal.shake();
+  };
+
   const save = () => {
-    if (!action.trim()) return setErr('Write the next action. Example: "call him about the sample".');
-    if (!date) return setErr('Choose the day.');
-    if (!ownerId) return setErr('Choose who will do it.');
+    if (!action.trim()) return refuse('Write the next action. Example: "call him about the sample".');
+    if (!date) return refuse('Choose the day.');
+    if (!ownerId) return refuse('Choose who will do it.');
     onSave({ action: action.trim(), date, ownerId, outcome: outcome.trim() || undefined });
   };
 
@@ -92,7 +100,7 @@ export function NextActionSheet({
         {/* Opened IN the sheet rather than in a second one on top of it. A
             modal over a modal is a stack somebody has to dismiss twice, and
             the one underneath is the form they were half way through. */}
-        {cal ? (
+        <Presence show={cal}>
           <View style={{ marginTop: 10 }}>
             <Calendar
               selected={date ?? ''}
@@ -100,7 +108,7 @@ export function NextActionSheet({
               onPick={(iso) => { setDate(iso); setErr(null); setCal(false); }}
             />
           </View>
-        ) : null}
+        </Presence>
       </View>
 
       <View style={{ marginTop: 12 }}>
@@ -134,11 +142,12 @@ export function NextActionSheet({
         />
       </View>
 
-      {err ? (
-        <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }}>
+      <Presence show={!!err}>
+        <Animated.View
+          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
           <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-        </View>
-      ) : null}
+        </Animated.View>
+      </Presence>
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />

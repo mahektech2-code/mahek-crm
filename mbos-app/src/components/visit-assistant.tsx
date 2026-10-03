@@ -1,9 +1,11 @@
 import React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text } from 'react-native';
 import { color as C, radius, type, weight } from '../theme/tokens';
 import { Icon } from './ui/Icon';
 import { Card, Choice, PrimaryButton, SecondaryButton } from './ui/primitives';
 import { useOnline } from './ui/dictate';
+import { PressableScale, Presence, Stagger, Swap } from './ui/motion';
+import { feedback } from './ui/feedback';
 import { getConfig } from '../data/config';
 import { visitAssist } from '../sync/api';
 import { pretty } from '../lib/format';
@@ -142,10 +144,15 @@ export function VisitAssistant({
         language: spokenStill?.language ?? null,
         heardBy: spokenStill ? 'dictated' : 'typed',
       });
+      /* A reading takes seconds over a thin connection, and he has usually
+         looked back up at the shopkeeper by the time it answers — so the
+         answer is felt as well as drawn, either way. */
       if (!out.ok) {
         setError(out.error);
+        feedback('error');
         return;
       }
+      feedback('success');
       setResult(out.analysis);
       setReadNote(text);
       setPicked({});
@@ -168,21 +175,33 @@ export function VisitAssistant({
         <Text style={[type.h3, { flex: 1 }]}>Understand this visit</Text>
       </View>
 
-      {!result ? (
+      <Presence show={!result}>
         <Text style={[type.caption, { marginTop: 6 }]}>
           Say what happened in the shop, in any language. MahekOne fills the visit and the
           next steps. You check everything. Nothing saves until you press Save.
         </Text>
-      ) : null}
+      </Presence>
 
-      {result ? <Proposal result={result} picked={picked} setPicked={setPicked} handlers={handlers} /> : null}
+      {/* The proposal opens in place of the explanation, and a second reading
+          replaces the first in place — keyed on the note it was read from, so
+          "Read it again" visibly lands a new answer rather than a same-looking
+          card that may or may not have changed. */}
+      <Presence show={!!result}>
+        {result ? (
+          <Swap id={readNote}>
+            <Proposal result={result} picked={picked} setPicked={setPicked} handlers={handlers} />
+          </Swap>
+        ) : null}
+      </Presence>
 
-      {stale ? (
+      <Presence show={stale}>
         <Text style={[type.caption, { marginTop: 10, color: C.warnInk }]}>
           The note has changed. Read it again to add what you wrote.
         </Text>
-      ) : null}
-      {error ? <Text style={[type.caption, { marginTop: 10, color: C.warnInk }]}>{error}</Text> : null}
+      </Presence>
+      <Presence show={!!error}>
+        {error ? <Text style={[type.caption, { marginTop: 10, color: C.warnInk }]}>{error}</Text> : null}
+      </Presence>
 
       <View style={{ marginTop: 12 }}>
         {result && !stale ? (
@@ -277,7 +296,9 @@ function Proposal({
         <Section title="What comes next">
           <View style={{ gap: 12 }}>
             {result.actions.map((a, i) => (
-              <ActionRow key={a.kind + i} action={a} picked={picked} setPicked={setPicked} handlers={handlers} />
+              <Stagger key={a.kind + i} index={i}>
+                <ActionRow action={a} picked={picked} setPicked={setPicked} handlers={handlers} />
+              </Stagger>
             ))}
           </View>
         </Section>
@@ -311,11 +332,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function DoorButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
-    <Pressable
+    <PressableScale
       onPress={onPress}
       accessibilityRole="button"
+      outerStyle={{ marginTop: 8 }}
       style={{
-        marginTop: 8,
         minHeight: 44,
         borderRadius: radius.md,
         borderWidth: 1,
@@ -325,7 +346,7 @@ function DoorButton({ label, onPress }: { label: string; onPress: () => void }) 
         paddingHorizontal: 12,
       }}>
       <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(600)]}>{label}</Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 

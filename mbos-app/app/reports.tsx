@@ -3,7 +3,8 @@ import { View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, T } from '../src/components/ui/primitives';
-import { color as C, weight, tabular } from '../src/theme/tokens';
+import { CountUp, Stagger } from '../src/components/ui/motion';
+import { color as C, weight, tabular, type as typeScale } from '../src/theme/tokens';
 import { inrFromPaise, plural } from '../src/lib/format';
 import { monthReport, type MonthReport } from '../src/data/reports';
 import { useBoot } from '../src/state/boot';
@@ -54,11 +55,13 @@ export default function ReportsScreen() {
 
       {!current ? null : (
         <>
-          <ReportCard title={monthName(current.from) + ' · so far'} r={current} />
+          <Stagger index={0}>
+            <ReportCard title={monthName(current.from) + ' · so far'} r={current} />
+          </Stagger>
           {previous ? (
-            <View style={{ marginTop: 10 }}>
+            <Stagger index={1} style={{ marginTop: 10 }}>
               <ReportCard title={monthName(previous.from)} r={previous} muted />
-            </View>
+            </Stagger>
           ) : null}
         </>
       )}
@@ -72,9 +75,12 @@ function ReportCard({ title, r, muted }: { title: string; r: MonthReport; muted?
       <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{title}</T>
 
       <View style={{ flexDirection: 'row', marginTop: 14, gap: 18 }}>
-        <Stat label="Visits" value={String(r.visits)} />
-        <Stat label="Orders" value={String(r.ordersTaken)} />
-        <Stat label="Litres" value={String(r.litres)} />
+        {/* This month's three counts run up from nought — they are what the
+            screen is opened to read. Last month's are settled history and are
+            simply there. */}
+        <Stat label="Visits" value={r.visits} count={!muted} />
+        <Stat label="Orders" value={r.ordersTaken} count={!muted} />
+        <Stat label="Litres" value={r.litres} count={!muted} tenths />
       </View>
 
       <View
@@ -104,10 +110,17 @@ function ReportCard({ title, r, muted }: { title: string; r: MonthReport; muted?
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, count, tenths }: { label: string; value: number; count: boolean; tenths?: boolean }) {
   return (
     <View>
-      <T style={[{ fontSize: 20, color: C.ink }, weight(600), tabular]}>{value}</T>
+      <CountUp
+        value={value}
+        /* Litres carry one decimal; the counts are whole and must not pass
+           through 3.4 visits on their way to 7. */
+        format={(n) => String(tenths ? Math.round(n * 10) / 10 : Math.round(n))}
+        fromZero={count}
+        style={[typeScale.body, { fontSize: 20, color: C.ink }, weight(600), tabular]}
+      />
       <T s="caption" style={{ marginTop: 2 }}>{label}</T>
     </View>
   );

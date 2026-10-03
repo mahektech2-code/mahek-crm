@@ -8,6 +8,7 @@ import { listRejections, retryItem, type QueueItem } from '../src/sync/queue';
 import { syncNow } from '../src/sync/engine';
 import { useStore } from '../src/state/store';
 import { inrFromPaise } from '../src/lib/format';
+import { Stagger, animateLayoutFor } from '../src/components/ui/motion';
 
 /**
  * Records the office refused.
@@ -82,16 +83,22 @@ export default function Rejections() {
   const [retrying, setRetrying] = React.useState<string | null>(null);
   const [readFailed, setReadFailed] = React.useState(false);
 
-  const load = React.useCallback(() => {
+  /* `animate` after a re-send, which is the one act here that takes a card
+     away: the cards below close up over it rather than jumping, so it is
+     plain which one left. */
+  const load = React.useCallback((animate?: boolean) => {
     setReadFailed(false);
     void listRejections()
-      .then(setRows)
+      .then((r) => {
+        if (animate === true) animateLayoutFor(r.length);
+        setRows(r);
+      })
       /* An empty list here says "nothing was refused", which is the one thing a
          failed read must not say. */
       .catch(() => setReadFailed(true));
   }, []);
 
-  useFocusEffect(load);
+  useFocusEffect(React.useCallback(() => load(), [load]));
 
   const cards = React.useMemo(
     () => (rows ?? []).map((row) => ({ row, payload: readPayload(row.payload) })),
@@ -127,7 +134,7 @@ export default function Rejections() {
       ) : null}
 
       <View style={{ gap: 12, marginTop: 16 }}>
-        {cards.map(({ row, payload }) => {
+        {cards.map(({ row, payload }, i) => {
           /* An order's payload carries `totalAmountPaise`; a payment's carries
              `amountPaise`. Reading neither meant a refused PAYMENT showed its
              figure and a refused ORDER — the larger, more urgent half of this
@@ -144,75 +151,77 @@ export default function Rejections() {
           const guidance = row.failureCode ? WHAT_TO_DO[row.failureCode] ?? null : null;
 
           return (
-            <Card key={row.id} style={{ borderLeftWidth: 3, borderLeftColor: C.danger }}>
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-                    {label(row.entityType)}
-                    {payload.customerName ? ` · ${payload.customerName}` : ''}
-                  </Text>
-                  {valueLine ? (
-                    <Text style={[type.caption, { marginTop: 2 }]}>{valueLine}</Text>
-                  ) : null}
+            <Stagger key={row.id} index={i}>
+              <Card style={{ borderLeftWidth: 3, borderLeftColor: C.danger }}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
+                      {label(row.entityType)}
+                      {payload.customerName ? ` · ${payload.customerName}` : ''}
+                    </Text>
+                    {valueLine ? (
+                      <Text style={[type.caption, { marginTop: 2 }]}>{valueLine}</Text>
+                    ) : null}
+                  </View>
+                  <Badge tone="danger">Not accepted</Badge>
                 </View>
-                <Badge tone="danger">Not accepted</Badge>
-              </View>
 
-              {/* What the office actually said, verbatim — and where it said
-                  nothing, a sentence rather than an empty red rectangle.
-                  `failureReason` is nullable, so a refusal with no reason and no
-                  recognised code drew a "Refused" badge, a blank coloured box
-                  and two buttons: no explanation of any kind, on the screen
-                  whose whole promise is what the office said and what to do. */}
-              <View style={{ backgroundColor: C.dangerBg, borderRadius: radius.md, padding: 12, marginTop: 12 }}>
-                <Text style={[type.small, { color: C.ink }]}>
-                  {said ??
-                    (guidance
-                      ? 'The office did not say why.'
-                      : 'The office did not say why. Send it again. If it comes back, ask your manager.')}
-                </Text>
-              </View>
+                {/* What the office actually said, verbatim — and where it said
+                    nothing, a sentence rather than an empty red rectangle.
+                    `failureReason` is nullable, so a refusal with no reason and no
+                    recognised code drew a "Refused" badge, a blank coloured box
+                    and two buttons: no explanation of any kind, on the screen
+                    whose whole promise is what the office said and what to do. */}
+                <View style={{ backgroundColor: C.dangerBg, borderRadius: radius.md, padding: 12, marginTop: 12 }}>
+                  <Text style={[type.small, { color: C.ink }]}>
+                    {said ??
+                      (guidance
+                        ? 'The office did not say why.'
+                        : 'The office did not say why. Send it again. If it comes back, ask your manager.')}
+                  </Text>
+                </View>
 
-              {guidance ? <Text style={[type.caption, { marginTop: 10 }]}>{guidance}</Text> : null}
+                {guidance ? <Text style={[type.caption, { marginTop: 10 }]}>{guidance}</Text> : null}
 
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                <SecondaryButton
-                  label="Open the customer"
-                  onPress={() => {
-                    if (!payload.customerId) return notify('This entry has no customer on it.', 'error');
-                    useStore.getState().set({ custId: payload.customerId });
-                    router.push('/customer');
-                  }}
-                  style={{ flex: 1 }}
-                />
-                {/* Duplicates cannot be usefully resent — the office already has it. */}
-                {row.failureCode !== 'duplicate' ? (
-                  /* The label carries the lock. With no signal — which is the
-                     ordinary condition on this screen — the card stayed
-                     identical until `load()` resolved, so nothing appeared to
-                     happen and he tapped it several times, each tap firing a
-                     fresh manual sync. */
-                  <PrimaryButton
-                    label={retrying === row.id ? 'Sending…' : 'Send again'}
-                    disabled={retrying === row.id}
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+                  <SecondaryButton
+                    label="Open the customer"
                     onPress={() => {
-                      setRetrying(row.id);
-                      void (async () => {
-                        try {
-                          await retryItem(row.id);
-                          load();
-                          notify('Waiting to send. It will go when you have signal.', 'info');
-                          void syncNow({ manual: true });
-                        } finally {
-                          setRetrying(null);
-                        }
-                      })();
+                      if (!payload.customerId) return notify('This entry has no customer on it.', 'error');
+                      useStore.getState().set({ custId: payload.customerId });
+                      router.push('/customer');
                     }}
                     style={{ flex: 1 }}
                   />
-                ) : null}
-              </View>
-            </Card>
+                  {/* Duplicates cannot be usefully resent — the office already has it. */}
+                  {row.failureCode !== 'duplicate' ? (
+                    /* The label carries the lock. With no signal — which is the
+                       ordinary condition on this screen — the card stayed
+                       identical until `load()` resolved, so nothing appeared to
+                       happen and he tapped it several times, each tap firing a
+                       fresh manual sync. */
+                    <PrimaryButton
+                      label={retrying === row.id ? 'Sending…' : 'Send again'}
+                      disabled={retrying === row.id}
+                      onPress={() => {
+                        setRetrying(row.id);
+                        void (async () => {
+                          try {
+                            await retryItem(row.id);
+                            load(true);
+                            notify('Waiting to send. It will go when you have signal.', 'info');
+                            void syncNow({ manual: true });
+                          } finally {
+                            setRetrying(null);
+                          }
+                        })();
+                      }}
+                      style={{ flex: 1 }}
+                    />
+                  ) : null}
+                </View>
+              </Card>
+            </Stagger>
           );
         })}
       </View>

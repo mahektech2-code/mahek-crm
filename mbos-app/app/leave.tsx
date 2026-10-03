@@ -6,6 +6,8 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Badge, Card, Choice, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { VoiceField } from '../src/components/ui/dictate';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
+import { Stagger, animateLayout, animateLayoutFor } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 import { applyForLeave, listLeave, withdrawLeave, type LeaveRequest } from '../src/data/requests';
 import { dmy, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
@@ -86,7 +88,13 @@ export default function LeaveScreen() {
   const load = React.useCallback(() => {
     let live = true;
     void listLeave()
-      .then((l) => live && setRows(l))
+      .then((l) => {
+        if (!live) return;
+        /* A request sent or withdrawn moves between the two lists; the cards
+           around it ease to their new places rather than jumping. */
+        animateLayoutFor(l.length);
+        setRows(l);
+      })
       .catch(() => live && setRows([]));
     return () => {
       live = false;
@@ -118,8 +126,15 @@ export default function LeaveScreen() {
     /* The second press ANSWERS rather than doing nothing — `whyDisabled` keeps
        the button pressable for exactly this. */
     if (sending) return notify('Sending this request. Please wait.', 'info');
-    if (!lv.from || (lv.span === 'many' && (!lv.to || dayCount < 1))) return setErr('dates');
-    if (!lv.reason.trim()) return setErr('reason');
+    /* Refused, with the reason under the field it names. */
+    if (!lv.from || (lv.span === 'many' && (!lv.to || dayCount < 1))) {
+      feedback('warning');
+      return setErr('dates');
+    }
+    if (!lv.reason.trim()) {
+      feedback('warning');
+      return setErr('reason');
+    }
 
     setSending(true);
     try {
@@ -196,8 +211,10 @@ export default function LeaveScreen() {
                 Waiting for approval
               </T>
               <View style={{ gap: 10 }}>
-                {waiting.map((l) => (
-                  <RequestCard key={l.id} l={l} onWithdraw={() => withdraw(l)} />
+                {waiting.map((l, i) => (
+                  <Stagger key={l.id} index={i}>
+                    <RequestCard l={l} onWithdraw={() => withdraw(l)} />
+                  </Stagger>
                 ))}
               </View>
             </View>
@@ -209,8 +226,10 @@ export default function LeaveScreen() {
                 History
               </T>
               <View style={{ gap: 10 }}>
-                {history.map((l) => (
-                  <RequestCard key={l.id} l={l} />
+                {history.map((l, i) => (
+                  <Stagger key={l.id} index={waiting.length + i}>
+                    <RequestCard l={l} />
+                  </Stagger>
                 ))}
               </View>
             </View>
@@ -240,7 +259,12 @@ export default function LeaveScreen() {
               key={k}
               label={label}
               selected={lv.span === k}
-              onPress={() => patch({ span: k, to: k === 'many' ? lv.to : '' })}
+              onPress={() => {
+                /* The span decides which fields exist — the halves row, the
+                   second date — so the sheet reshapes with it. */
+                if (lv.span !== k) animateLayout();
+                patch({ span: k, to: k === 'many' ? lv.to : '' });
+              }}
               style={{ flex: 1 }}
             />
           ))}

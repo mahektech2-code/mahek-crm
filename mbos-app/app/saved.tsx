@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { router } from 'expo-router';
 import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
-import { Icon } from '../src/components/ui/Icon';
+import { DrawnTick, Stagger } from '../src/components/ui/motion';
 import { Card, PrimaryButton } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
@@ -118,9 +118,11 @@ export default function Saved() {
     <AppFrame title="Visit saved" activeTab="customers" contentStyle={{ paddingHorizontal: 16, paddingVertical: 24 }}>
       <Card style={{ padding: 20 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <View style={{ width: 36, height: 36, borderRadius: radius.sm, backgroundColor: C.successBg, alignItems: 'center', justifyContent: 'center' }}>
-            <Icon name="tick" size={20} color={C.success} strokeWidth={2} />
-          </View>
+          {/* DRAWN, and the one success buzz of the whole save. The visit
+              screen deliberately says nothing as it hands over — no toast, no
+              buzz — so this tick landing is the moment the visit is felt to
+              be done, once. */}
+          <DrawnTick size={36} color={C.success} background={C.successBg} />
           <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Visit saved</Text>
         </View>
 
@@ -129,11 +131,16 @@ export default function Saved() {
         </Text>
 
         <View style={{ marginTop: 14 }}>
-          {items.map((s) => (
-            <View key={s.l} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: C.wash }}>
-              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: s.ok ? C.success : C.warn }} />
-              <Text style={{ fontSize: 15, color: C.body, flex: 1 }}>{s.l}</Text>
-            </View>
+          {/* One after another, under the tick. Keyed on the sentence, so the
+              manager line settles in again the moment the outbox drains and it
+              turns from amber to green — that line changing IS news. */}
+          {items.map((s, i) => (
+            <Stagger key={s.l} index={i}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: C.wash }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: s.ok ? C.success : C.warn }} />
+                <Text style={{ fontSize: 15, color: C.body, flex: 1 }}>{s.l}</Text>
+              </View>
+            </Stagger>
           ))}
         </View>
 
