@@ -1499,6 +1499,12 @@ export async function setCustomerGroup(
 ): Promise<Result> {
   try {
     const ctx = await resolveScope();
+    /* The customer has to be one this caller may work. It took an id and
+       wrote, so anybody signed in could redirect another book's reminders to
+       a group of their choosing. */
+    const [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
+    if (!customer) return err("That customer no longer exists.", "not_found");
+    await assertCustomerInScope(customer);
     const named = groupName.trim();
     // Without a group there is nowhere for the other legs to go, so clearing
     // the name always returns the customer to their own number.
@@ -1822,6 +1828,46 @@ export async function markNotificationRead(
 /* ------------------------------------------------------------ configuration */
 
 /**
+ * `config.write`, AND A STANDING IN THE APP WHOSE SETTINGS THESE ARE.
+ *
+ * The capability is a union over hats and is carried by the manager level of
+ * several apps — so a manager of the Sales Dashboard could post a change to the
+ * CRM's collections thresholds, the HRMS payroll rules or the platform's
+ * sign-in settings, by URL, although the console would never have drawn them
+ * that page. The console decides which pages somebody may OPEN from
+ * `SETTINGS_PAGES[].owners`; the write now asks the same question of every key
+ * it is handed: the platform administrator writes anything, and anybody else
+ * only keys whose page is owned by an app they hold at manager or admin level.
+ * A page with no owners — the platform's own settings — and a key the
+ * presentation marks admin-only are the platform administrator's alone. A key
+ * that sits on no page is refused, because a setting nobody can find is not
+ * one to be changing by id.
+ */
+async function requireConfigWriteFor(keys: string[]) {
+  const ctx = await requireCapability("config.write");
+  const { isPlatformAdmin, hatsFor, NotPermittedError } = await import("@/lib/access-control");
+  if (await isPlatformAdmin(ctx.user)) return ctx;
+
+  const { placeSetting } = await import("@/lib/config/settings-placement");
+  const { settingsPage } = await import("@/lib/config/settings-pages");
+  const { PRESENTATION } = await import("@/lib/config/presentation");
+  const managed = new Set(
+    (await hatsFor(ctx.user))
+      .filter((h) => h.app !== null && h.role !== "associate")
+      .map((h) => h.app as string),
+  );
+  for (const key of keys) {
+    const pageId = key.startsWith("hrms.") ? "hrms" : placeSetting(key)?.page;
+    const owners = pageId ? (settingsPage(pageId)?.owners ?? []) : [];
+    const adminOnly = PRESENTATION[key]?.adminOnly === true;
+    if (adminOnly || !owners.some((a) => managed.has(a))) {
+      throw new NotPermittedError("config.write");
+    }
+  }
+  return ctx;
+}
+
+/**
  * A whole section, saved as one change set. The Admin Console edits several
  * related settings at once and reviews them together, so it commits them
  * together — a half-applied set of escalation thresholds describes a policy
@@ -1831,7 +1877,7 @@ export async function updateConfigSettings(
   entries: Array<{ key: string; value: unknown }>,
 ): Promise<Result<{ warnings: string[] }>> {
   try {
-    const ctx = await requireCapability("config.write");
+    const ctx = await requireConfigWriteFor(entries.map((e) => e.key));
     const r = await updateSettings(entries, ctx.user.id);
     if (!r.ok) return err(r.error, "validation", r.fields);
     refreshAll();
@@ -1852,7 +1898,7 @@ export async function updateConfigSetting(
   value: unknown,
 ): Promise<Result<{ warnings: string[] }>> {
   try {
-    const ctx = await requireCapability("config.write");
+    const ctx = await requireConfigWriteFor([key]);
     const r = await updateSetting(key, value, ctx.user.id);
     if (!r.ok)
       return err(r.error, "validation", [{ field: key, message: r.error }]);
@@ -1948,7 +1994,32 @@ export async function triggerJob(
   options: { owner?: string; bills?: boolean } = {},
 ): Promise<Result<{ ran: string[] }>> {
   try {
-    const ctx = await requireCapability("config.write");
+    /*
+     * THE PLATFORM ADMINISTRATOR'S, like rebuilding a queue above. It was
+     * `config.write`, which every CRM and Sales manager carries — and a job
+     * here is the nightly rebuild of every cache, a full sheet reconcile or a
+     * projection that writes customers, orders and bills for the whole
+     * company. None of that is a manager's to start in the middle of a day.
+     */
+    /*
+     * THE SHEET PASSES ARE THE EXCEPTION, and they are `sheet.import`'s: the
+     * accounts desk is who notices Sales Bills is empty, and on a deploy with
+     * no shell this screen is the only door (AGENTS.md, "The import has to be
+     * runnable from the screen"). Every other job stays the administrator's.
+     */
+    const ctx = await resolveScope();
+    const { isPlatformAdmin, canFor } = await import("@/lib/access-control");
+    const sheetJob = job === "sheet-reconcile" || job === "sheet-payments" || job === "project-sheet";
+    const allowed =
+      (await isPlatformAdmin(ctx.user)) || (sheetJob && (await canFor(ctx.user, "sheet.import")));
+    if (!allowed) {
+      return err(
+        sheetJob
+          ? "Running the order sheet import needs the sheet import permission (Accounts manager, or a CRM or Sales manager)."
+          : "Running a scheduled job by hand is an administrator's - it rewrites figures for everybody.",
+        "not_permitted",
+      );
+    }
     const { runJob } = await import("@/lib/jobs");
     const results = await runJob(job, ctx.user.id, options);
     refreshAll();

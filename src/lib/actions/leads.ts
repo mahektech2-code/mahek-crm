@@ -2,10 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
+  appAccess,
   auditLog,
   customers,
   mbosDocuments,
@@ -1106,12 +1107,33 @@ export async function assignLeadManager(
         );
       }
     } else {
+      /*
+       * A MANAGER OF THE BOOK THIS LEAD IS WORKED IN — the CRM or the Sales
+       * Dashboard, at manager or admin level on THAT grant. It read
+       * `users.role`, the widest level held anywhere, so a telecaller who
+       * managed HRMS passed as a sales manager and was handed a lead to
+       * verify, while the check said nothing about whether they could open a
+       * lead screen at all.
+       */
       const [m] = await db
-        .select({ id: users.id, role: users.role, active: users.active })
+        .select({ id: users.id, active: users.active })
         .from(users)
         .where(eq(users.id, chosen))
         .limit(1);
-      if (!m || !m.active || m.role === "associate") {
+      const seat = m
+        ? await db
+            .select({ id: appAccess.id })
+            .from(appAccess)
+            .where(
+              and(
+                eq(appAccess.userId, chosen),
+                inArray(appAccess.app, ["crm", "sales"]),
+                inArray(appAccess.role, ["manager", "admin"]),
+              ),
+            )
+            .limit(1)
+        : [];
+      if (!m || !m.active || seat.length === 0) {
         return err(
           "A lead manager has to be a sales manager who can sign in and work the list.",
           "validation",

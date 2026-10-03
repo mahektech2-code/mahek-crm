@@ -1076,24 +1076,24 @@ describe("A — authorisation is the existing model, asked in the existing order
     assert.equal((await pipelineLead(lead.id, DAY))!.lead.caps.canApproveDistributor, true);
   });
 
-  test("READ SCOPE AND WRITE SCOPE DISAGREE for a Sales Dashboard ASSOCIATE — a clear refusal, reported and not fixed", async () => {
-    /* `managerScope` (what every screen here reads through) is NATIONAL for
-       anybody with no region row, and it does not ask the LEVEL: an associate
-       who was granted the Sales Dashboard sees every lead. `assertCustomerInScope`
-       (what every action writes through) resolves scope by level, and an
-       associate's is their own book. So a lead somebody else owns is visible
-       and not workable: the capability flag is true (`lead.work` is every
-       associate's), the action refuses, nothing changes, and the screen shows
-       the refusal. Neither side is weakened by this suite — the brief forbids
-       changing either — and a manager on the Sales Dashboard does not hit it,
-       because their write scope is as wide as their read scope. */
+  test("READ SCOPE AND WRITE SCOPE AGREE for a Sales Dashboard ASSOCIATE — neither shows another person's lead", async () => {
+    /* This used to be reported here as a known disagreement, and not fixed:
+       `managerScope` (what every screen here reads through) was NATIONAL for
+       anybody with no region row and never asked the LEVEL, so an associate
+       granted the Sales Dashboard saw every lead in the company, while
+       `assertCustomerInScope` (what every action writes through) resolved
+       scope by level and refused them. A lead was visible and not workable.
+
+       `managerScope` now reads the level first: an associate's scope is their
+       own book on the read side too. So a lead somebody else owns is not on
+       their screen at all, and the write side still refuses it — the two
+       answer the same question the same way. */
     const assoc = await makeUser("Sales Associate", "associate", [{ app: "sales", role: "associate" }]);
     const lead = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
     setTestUser(assoc);
 
     const visible = await pipelineLead(lead.id, DAY);
-    assert.ok(visible, "the read side shows it");
-    assert.equal(visible.lead.caps.canWork, true, "and the screen has every reason to draw the controls");
+    assert.equal(visible, null, "the read side no longer shows another person's lead to an associate");
 
     const refused = await setLeadNextAction(lead.id, { action: "Try to change it", date: NEXT_WEEK, ownerId: salesA.id });
     assert.equal(refused.ok, false, "the write side keeps its own check");

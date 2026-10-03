@@ -20,7 +20,7 @@ import {
   reminders,
 } from "@/db/schema";
 import { OUTCOMES_BY_TYPE, type InteractionTypeKey, type OutcomeKey } from "@/db/catalogue";
-import { resolveScope, assertCustomerInScope } from "../access-control";
+import { resolveScope, assertCustomerInScope, levelInApp } from "../access-control";
 import { getConfig } from "../config/store";
 import {
   recomputeBuyingCycle,
@@ -32,7 +32,6 @@ import {
 import { isAttemptAllowed } from "../engines/escalation";
 import { discountAuthority } from "../engines/price-math";
 import { ratesForCustomer } from "./price-list-service";
-import { isManager } from "../auth";
 import type { NextStep, NextStepKind } from "../engines/next-step";
 import { consecutiveNoAnswerSql, nextStepForCustomer } from "./queue-service";
 import { closeRemindersOnEvidence } from "./worklist-services";
@@ -853,8 +852,18 @@ export async function saveInteraction(
     : {};
   const priceListId = Object.values(lineRates)[0]?.listId ?? null;
 
-  const level: "associate" | "manager" | "admin" =
-    ctx.user.role === "admin" ? "admin" : isManager(ctx.user) ? "manager" : "associate";
+  /*
+   * THE CEILING IS THE CRM LEVEL, because this is the CRM's order form.
+   *
+   * It read `users.role`, the widest level held anywhere — so a telecaller who
+   * was also made a manager of Reports, or of HRMS, could give the manager's
+   * discount on a call, and a platform admin with an associate's CRM grant could
+   * give any discount at all. What somebody may take off a price on a call is a
+   * fact about their standing in the calling book. Asked of the grant itself,
+   * not the request header, so the save and the screen that offered the rate
+   * (both read the same function) cannot disagree.
+   */
+  const level = (await levelInApp(ctx.user, "crm")) ?? "associate";
   const ceilings = {
     associateMaxBp: config["pricing.associateMaxDiscountBp"],
     managerMaxBp: config["pricing.managerMaxDiscountBp"],

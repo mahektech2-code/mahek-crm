@@ -1,6 +1,6 @@
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
-import { getScope, scopeLabel } from "@/lib/scope";
+import { getScope, scopeLabel, managesHere } from "@/lib/scope";
 import { listCustomers } from "@/lib/queries";
 import { listReminders } from "@/lib/services/worklist-services";
 import { RemindersScreen } from "./reminders-screen";
@@ -9,6 +9,8 @@ export const metadata = { title: "Reminders - MahekOne CRM" };
 
 export default async function RemindersPage() {
   const user = await requireUser();
+  /* A manager OF THE CRM — `isManager` was the widest level held in any app. */
+  const managerHere = await managesHere(user, "crm");
   const scope = await getScope(user);
 
   const [rows, customers, canClose] = await Promise.all([
@@ -31,7 +33,7 @@ export default async function RemindersPage() {
   return (
     <RemindersScreen
       scopeLabel={scopeLabel(scope, user)}
-      isTeamView={scope === "team" && isManager(user)}
+      isTeamView={scope === "team" && managerHere}
       canClose={canClose}
       rows={rows}
       customers={customers.map((c) => ({ id: c.id, name: c.name }))}

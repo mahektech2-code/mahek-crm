@@ -685,7 +685,7 @@ describe("An attendance photograph survives the night and can be opened", () => 
         initials: "VS",
       })
       .returning();
-    await db.insert(appAccess).values({ id: id("acc"), userId: manager.id, app: "sales" });
+    await db.insert(appAccess).values({ id: id("acc"), userId: manager.id, app: "sales", role: "manager" });
     setTestUser(manager);
     assert.equal(await canRead(clientId), true, "the manager the photograph exists for cannot see it");
   });
@@ -1946,7 +1946,7 @@ describe("Releasing a handset", () => {
         initials: "VR",
       })
       .returning();
-    await db.insert(appAccess).values({ id: id("acc"), userId: office.id, app: "sales" });
+    await db.insert(appAccess).values({ id: id("acc"), userId: office.id, app: "sales", role: "manager" });
     setTestUser(office);
     return office;
   }

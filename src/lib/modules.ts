@@ -1,6 +1,6 @@
 import { APPS, type AppId } from "./apps";
-import { ERP_GROUPS, erpHref } from "./erp/registry";
-import { HRMS_GROUPS, hrmsHref } from "./hrms/registry";
+import { ERP_ALWAYS_OPEN, ERP_GROUPS, erpHref } from "./erp/registry";
+import { HRMS_ALWAYS_OPEN, HRMS_GROUPS, hrmsHref } from "./hrms/registry";
 
 /** What withholding an HRMS screen means, where it is not obvious. */
 const HRMS_NOTES: Record<string, string> = {
@@ -401,8 +401,15 @@ export const APP_MODULES: AppModule[] = [
     group: "Lead Management",
     href: "/crm/leads/sales-manager",
     offByDefault: true,
+    /* NOT `explicitOnly`, deliberately, though `sales.lead-pipeline` is. A
+       whole-CRM grant with no rows still reaches this screen — and that is
+       safe because the workspace's own scope is the seat: it shows, and lets
+       somebody act on, only leads whose `sales_manager_id` is them. A
+       telecaller reaching it sees an empty pipeline. Making it explicit would
+       silently take it away from every sales manager on a whole-CRM grant on
+       the day it shipped, with nothing on any screen saying why. */
     note:
-      "The CRM's own Sales Manager seat. Off by default — grant it to whoever should carry it here, independent of any Sales Dashboard access.",
+      "The CRM's own Sales Manager seat. Off by default on a narrowed CRM grant; it only ever shows leads where this person is the named sales manager. Independent of any Sales Dashboard access.",
   },
   /**
    * A CENTRAL RECORD OF EVERY LEAD CLOSED LOST, off `crm.leads` for the same
@@ -795,10 +802,53 @@ export const APP_MODULES: AppModule[] = [
     note: "The whole console. Its own sections are not separately grantable yet.",
   },
 
-  /* ------------------------------------- apps not built yet, or retired */
-  { key: "field.home", app: "field", label: "Salesman App", group: "App", href: "/field" },
-  { key: "people.home", app: "people", label: "Attendance & People", group: "App", href: "/people" },
-  { key: "reports.home", app: "reports", label: "Reports", group: "App", href: "/reports" },
+  /* ------------------------------------------- apps with no screens of their own
+   *
+   * None of these is an app "not built yet", which is what this heading
+   * used to say. They are the apps that have NO web screen and never
+   * will, and each keeps exactly one module for one reason: an app is granted
+   * if and only if at least one of its modules is ticked, so an app with none
+   * could not be granted, kept or taken away on the Access screen at all.
+   *
+   * `field` is MBOS, the handset. Its one module is the grant itself — "may
+   * this person sign in on the phone" — and it points at NO path: it used to
+   * be `/field`, a route that only ever said "not built yet" and is gone, so
+   * an href there named a page that does not exist. The empty, exact href
+   * matches nothing, which is the honest answer to "which screen is this".
+   *
+   * `people` is retired into HRMS. Its module stays so somebody still holding
+   * the old grant can have it taken away; it is never offered to anybody new.
+   *
+   * `reports.home` is the same as `people.home`: the Reports app was retired
+   * into the Founder Command Centre, and its one module stays for the same
+   * reason.
+   */
+  {
+    key: "field.home",
+    app: "field",
+    label: "Mobile sign-in",
+    group: "App",
+    href: "",
+    exact: true,
+    note: "Signing in on the MBOS handset. There is no web screen behind it: granting the Salesman App gives a phone a way in and the browser nothing to show.",
+  },
+  {
+    key: "people.home",
+    app: "people",
+    label: "Attendance & People (retired)",
+    group: "App",
+    href: "/people",
+    note: "Retired into HRMS. Kept only so a grant somebody still holds can be taken away.",
+  },
+  {
+    key: "reports.home",
+    app: "reports",
+    label: "Reports (retired)",
+    group: "App",
+    href: "/reports",
+    note: "Retired into the Founder Command Centre. Kept only so a grant somebody still holds can be taken away.",
+  },
+
   /* --------------------------------------------------- the Founder Dashboard */
   /*
    * Five modules for one reason: whoever reads company revenue is not always
@@ -878,6 +928,40 @@ export const APP_MODULES: AppModule[] = [
 ];
 
 const BY_KEY = new Map(APP_MODULES.map((m) => [m.key, m]));
+
+/**
+ * KEYS NO LONGER IN THE REGISTRY, and the live key each one now means.
+ *
+ * A module key is a join key in `app_module_access`, so retiring one has two
+ * failure modes and both are silent. Leave the key out entirely and a stored
+ * row naming it is not "a module of this app" any more — `moduleAllowed`
+ * filters it away, and somebody narrowed to exactly that row is left with NO
+ * rows for the app, which reads as the whole app: a retirement that widens
+ * access. Keep the key in the registry and the Access screen goes on offering
+ * a box that duplicates another.
+ *
+ * So a retired key is translated, here, on the way in, to the module that
+ * replaced it — no migration, nothing rewritten, and the next save on the
+ * Access screen writes the live key because that is the only one it can draw.
+ */
+export const RETIRED_MODULES: Readonly<Record<string, string>> = {};
+
+/**
+ * Modules a holder of the app reaches WHATEVER was ticked — HRMS's check-in
+ * screen, the ERP's dashboard and settings. Their own apps enforce this
+ * (`lib/hrms/access.ts`, `lib/erp/access.ts`); it is read here so the Access
+ * screen can draw them as always on instead of as a checkbox that does
+ * nothing when unticked, which is the one kind of control that teaches people
+ * the screen is lying to them.
+ */
+export const ALWAYS_OPEN_MODULES: ReadonlySet<string> = new Set([
+  ...[...HRMS_ALWAYS_OPEN].map((k) => `hrms.${k}`),
+  ...[...ERP_ALWAYS_OPEN].map((k) => `erp.${k}`),
+]);
+
+export function isAlwaysOpen(key: string): boolean {
+  return ALWAYS_OPEN_MODULES.has(key);
+}
 
 export function getModule(key: string): AppModule | undefined {
   return BY_KEY.get(key);
@@ -961,7 +1045,9 @@ export function moduleAllowed(
    */
   administrator = false,
 ): boolean {
-  const forApp = granted.filter((g) => getModule(g)?.app === app);
+  const forApp = granted
+    .map((g) => RETIRED_MODULES[g] ?? g)
+    .filter((g) => getModule(g)?.app === app);
   /* Checked first, and returns on its own: an explicitOnly module answers to
      nothing but its own row, not to "no rows means everything" and not to the
      administrator bypass either. */

@@ -14,6 +14,7 @@ import {
   scopeForUser,
   scopedUserIds,
   type DataScope, scopedToUsers,} from "../access-control";
+import type { Role } from "../role-levels";
 import { getConfig } from "../config/store";
 import { liveOlaKey } from "./ola-key-service";
 import { dictationAvailability } from "../dictation-requests";
@@ -178,7 +179,7 @@ export async function runLoginChecks(input: {
   /* 4 — assigned territory. A salesman with no `field` grant has no book: the
    * app would open on an empty customer list with nothing saying why. */
   const [grant] = await db
-    .select({ id: appAccess.id })
+    .select({ id: appAccess.id, role: appAccess.role })
     .from(appAccess)
     .where(and(eq(appAccess.userId, user.id), eq(appAccess.app, "field")))
     .limit(1);
@@ -395,7 +396,7 @@ export async function loadPrincipal(
   }
 
   const [grant] = await db
-    .select({ id: appAccess.id })
+    .select({ id: appAccess.id, role: appAccess.role })
     .from(appAccess)
     .where(and(eq(appAccess.userId, user.id), eq(appAccess.app, "field")))
     .limit(1);
@@ -447,7 +448,22 @@ export async function loadPrincipal(
    * what "mine" means. `accounts` is unaffected: that branch answers `all`
    * before any preference is read, and no accounts user holds `field`.
    */
-  const ctx = await scopeForUser(user, "mine");
+  /*
+   * AND THE `field` HAT, not the widest level the account holds anywhere.
+   *
+   * With no hat `scopeForUser` falls back to `users.role`, which is the widest
+   * level held in ANY app — so a salesman made a manager of Reports, or of
+   * the CRM, signed into his handset as a manager: `territoryExempt` waved him
+   * past the allocation rule and handed him the whole book, and the document
+   * library opened what is tagged for managers. The handset is the field app
+   * and nothing else, so the level is the one on THAT grant — the same reading
+   * `levelInApp` gives, from the row already in hand. A grant with no level is
+   * an associate's.
+   */
+  const ctx = await scopeForUser(user, "mine", {
+    app: "field",
+    role: (grant.role ?? "associate") as Role,
+  });
   return {
     ok: true,
     principal: { user, deviceId, role: ctx.role, scope: ctx.scope },
@@ -698,11 +714,28 @@ function namedByUsers(ids: string[]) {
   )`;
 }
 
+/**
+ * WHOSE BOOK, AS A CLAUSE — the security half of `customerIdsInScope`, for a
+ * caller asking about one customer rather than listing them all.
+ *
+ * Exported for the sync handlers' `scopedCustomer`, which used to ask
+ * `scopedToUsers` alone. The pull sends the shops `namedByUsers` adds — the
+ * ones the customer master names this salesman on, as text — and the write
+ * path refused every one of them, so a salesman could see a shop on his phone,
+ * walk in, take an order, and have it come back "not in your territory". One
+ * clause, so what a handset is sent and what it may write cannot disagree.
+ *
+ * Undefined is unrestricted, exactly as `scopedToUsers(null)` is.
+ */
+export function principalBookClause(principal: MbosPrincipal): SQL | undefined {
+  const ids = scopedUserIds(principal.scope);
+  return ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
+}
+
 /** The customer ids this principal may see. Every other query filters on it. */
 export async function customerIdsInScope(
   principal: MbosPrincipal,
 ): Promise<string[]> {
-  const ids = scopedUserIds(principal.scope);
   /*
    * WHO MAY SEE IT, AND WHERE HE WORKS — two clauses doing two different jobs,
    * and they are ANDed rather than folded together.
@@ -724,7 +757,7 @@ export async function customerIdsInScope(
    * `and(undefined, undefined)` is undefined, so an admin with no territory is
    * still unrestricted. Both null-handling rules survive the pairing.
    */
-  const visible = ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
+  const visible = principalBookClause(principal);
 
   /*
    * NO TERRITORY, NO BOOK — and the short-circuit is here rather than in the
@@ -736,8 +769,10 @@ export async function customerIdsInScope(
    * handset is not walking a beat — the console is oversight, their scope has
    * already answered the question, and emptying their phone for want of an
    * allocation nobody would think to make reads as a broken sync rather than
-   * as a rule. `role` is the derived widest role, so this is the same answer
-   * `scopeForUser` gave a line earlier rather than a second reading of it.
+   * as a rule. `role` is the level on the FIELD grant (see `loadPrincipal`) —
+   * a manager of some other app walking a beat is a salesman here — so this
+   * is the same answer `scopeForUser` gave a line earlier rather than a second
+   * reading of it.
    *
    * The emptiness is NAMED, never silent: `mbosTerritoryState` puts the reason
    * on the handset and the team screen counts who it has switched off. An

@@ -4,9 +4,12 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardHeader, cx } from "@/components/ui/primitives";
+import { ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { CardGrid } from "@/components/ui/card-grid";
-import { APPS } from "@/lib/apps";
+import { APPS, webApps } from "@/lib/apps";
+import { LEVEL_LABELS } from "@/lib/hat-labels";
+import type { AppGrant } from "@/lib/services/access-service";
 import { ADMIN, ADMIN_TABS, type TabsOf } from "@/lib/admin-routes";
 import { stamp, stampDate } from "@/lib/format";
 import { endSessionsFor, sendPasswordResetFor, setUserActive } from "@/lib/actions/people";
@@ -31,14 +34,26 @@ import { AdminPage } from "../_shell/admin-page";
  * linked to; it was an overlay the console drew over the Access list.
  * ------------------------------------------------------------------------- */
 
+/** The hover on "Account level", said once and read in two places. */
+const ACCOUNT_LEVEL_HINT =
+  "Derived from the levels on each app, never set on its own: Admin only for a platform administrator (Admin on the Admin Console), Manager for anybody who manages or administers any app, otherwise Associate. What they may do in an app is the level on that app.";
+
 export function PersonDetail({
   person,
+  grants,
   tab,
   sessions,
   audit,
   today,
 }: {
   person: Person;
+  /**
+   * What they hold, app by app, WITH the level and how far into each app the
+   * grant reaches — the Access screen's own reading, so the two pages cannot
+   * describe one person two ways. `person.apps` alone said only "Granted",
+   * which was the one fact about a grant nobody comes here to check.
+   */
+  grants: AppGrant[];
   tab: TabsOf<"person">;
   sessions: SessionRow[];
   audit: AuditFeed;
@@ -48,6 +63,16 @@ export function PersonDetail({
   const router = useRouter();
   const notify = useToast().push;
   const [busy, setBusy] = React.useState(false);
+  /* Deactivating asks first, the way the Access list does. It ends every
+     session they have open, so a stray click here signs somebody out mid-call
+     with nothing on their screen saying why. */
+  const [confirmingDeactivate, setConfirmingDeactivate] = React.useState(false);
+  const byApp = new Map(grants.map((g) => [g.app, g]));
+  /* "Taken straight into it" is about the BROWSER. The Salesman App is the
+     handset and opens no tab, so it is not counted — somebody holding the CRM
+     and the handset still lands straight in the CRM. `webApps` is the same
+     function the launcher and the redirect read. */
+  const webCount = webApps(person.apps).length;
 
   async function run(work: Promise<{ ok: boolean; message?: string; error?: string }>) {
     setBusy(true);
@@ -74,20 +99,31 @@ export function PersonDetail({
       subtitle={
         <>
           <Link href={ADMIN.access}>Access</Link>
-          <span className="capitalize"> · {person.role}</span>
+          <span title={ACCOUNT_LEVEL_HINT}> · {LEVEL_LABELS[person.role] ?? person.role}</span>
           {person.email ? ` · ${person.email}` : ""}
           {person.phone ? ` · ${person.phone}` : ""} · joined {joined}
         </>
       }
       actions={
         <>
+          {/* A WEB sign-in reset link, mailed to the work email. It used to be
+              labelled a "field-app password link", which it never was: it
+              opens /login/reset in a browser, and an account with no email has
+              nowhere for it to go — which the button now says rather than
+              pretending to send. */}
           <Button
             variant="ghost"
-            disabled={busy || !person.active}
-            title={!person.active ? "This account cannot sign in at all" : undefined}
+            disabled={busy || !person.active || !person.email}
+            title={
+              !person.active
+                ? "This account cannot sign in at all"
+                : !person.email
+                  ? "This account has no work email, so there is nowhere to send a link. Generate a password to read out from the Access screen instead."
+                  : "Mails a single-use link to their work email to choose a new password. It expires in 30 minutes."
+            }
             onClick={() => void run(sendPasswordResetFor(person.id))}
           >
-            Send a field-app password link
+            Email a password-reset link
           </Button>
           <Button variant="ghost" disabled={busy} onClick={() => void run(endSessionsFor(person.id))}>
             End every session
@@ -97,7 +133,7 @@ export function PersonDetail({
               variant="secondary"
               className="border-danger text-danger hover:bg-danger-soft"
               disabled={busy}
-              onClick={() => void run(setUserActive(person.id, false))}
+              onClick={() => setConfirmingDeactivate(true)}
             >
               Deactivate
             </Button>
@@ -110,6 +146,26 @@ export function PersonDetail({
       }
       tabs={{ items: ADMIN_TABS.person, active: tab, href: (s) => ADMIN.person(person.id, s as TabsOf<"person">) }}
     >
+      <ConfirmDialog
+        open={confirmingDeactivate}
+        title="Disable this sign-in"
+        destructive
+        confirmLabel="Disable"
+        body={
+          <>
+            {person.name} will not be able to sign in with their email or their work number,
+            and any session they have open stops working. Nothing is deleted — their calls,
+            orders and customers stay exactly where they are.
+            <p className="mt-2">
+              {person.apps.length
+                ? "The apps they hold are kept, so enabling them again restores what they had. To take an app away instead, use Manage access on the Access screen."
+                : "They hold no app, so there is nothing to keep."}
+            </p>
+          </>
+        }
+        onConfirm={() => run(setUserActive(person.id, false))}
+        onClose={() => setConfirmingDeactivate(false)}
+      />
       {tab === "profile" ? (
         <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
           <CardHeader
@@ -121,7 +177,7 @@ export function PersonDetail({
               ["Name", person.name],
               ["Work email", person.email ?? "Not recorded"],
               ["Work number", person.phone ?? "Not recorded"],
-              ["Role", person.role],
+              ["Account level", LEVEL_LABELS[person.role] ?? person.role],
               ["Reports to", person.reportsToName ?? "Nobody"],
               ["Customers in their book", String(person.customerCount || 0)],
               ["Created", joined],
@@ -135,23 +191,50 @@ export function PersonDetail({
         <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
           <CardHeader
             title="Apps"
-            hint="Read here, changed on the Access screen, which is the one place an app is granted — and the only one that knows how far into an app a grant reaches."
+            hint="Read here, changed on the Access screen, which is the one place an app is granted. The level on each app is what they may do in it; the screens are how far into it they reach."
           />
-          {APPS.filter((a) => !a.retiredInto).map((a, i) => (
-            <div key={a.id} className={cx("flex items-center gap-3 px-5 py-3", i ? "border-t border-canvas" : "")}>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-ink">{a.name}</span>
-                <span className="block text-[13px] text-muted">{a.description}</span>
-              </span>
-              {person.apps.includes(a.id) ? <Badge tone="success">Granted</Badge> : <span className="text-[13px] text-muted">—</span>}
-            </div>
-          ))}
+          {/* A retired app is listed only while somebody still holds it, so
+              the grant that needs taking away is visible rather than hidden. */}
+          {APPS.filter((a) => !a.retiredInto || byApp.has(a.id)).map((a, i) => {
+            const g = byApp.get(a.id);
+            return (
+              <div key={a.id} className={cx("flex items-center gap-3 px-5 py-3", i ? "border-t border-canvas" : "")}>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-ink">
+                    {a.name}
+                    {a.retiredInto ? <span className="ml-2 text-[12px] font-normal text-warn-ink">retired</span> : null}
+                  </span>
+                  <span className="block text-[13px] text-muted">{a.description}</span>
+                </span>
+                {g ? (
+                  <span className="flex flex-none items-center gap-2">
+                    <span className="text-[13px] text-body">
+                      {a.id === "admin" && g.role === "admin" ? "Platform administrator" : LEVEL_LABELS[g.role]}
+                    </span>
+                    {g.whole ? (
+                      <span className="text-[13px] text-muted">
+                        {g.totalCount === 1 ? "its one screen" : `all ${g.totalCount} screens`}
+                      </span>
+                    ) : (
+                      <Badge tone="warn" title={`${g.grantedCount} of ${g.totalCount} screens — narrowed on the Access screen`}>
+                        Narrowed · {g.grantedCount}/{g.totalCount}
+                      </Badge>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-[13px] text-muted">—</span>
+                )}
+              </div>
+            );
+          })}
           <div className="bg-canvas px-5 py-2.5 text-[13px] text-muted">
             {person.apps.length === 0
               ? "No app. MahekOne opens on a launcher that says so plainly rather than a blank screen."
-              : person.apps.length === 1
-                ? "One app, so they are taken straight into it and never see the launcher."
-                : `${person.apps.length} apps, so they land on the launcher and choose.`}
+              : webCount === 0
+                ? "Only the handset, so the browser has nothing for them — they sign in on MBOS."
+                : webCount === 1
+                  ? "One app in the browser, so they are taken straight into it and never see the launcher."
+                  : `${webCount} apps in the browser, so they land on the launcher and choose.`}
           </div>
         </Card>
       ) : null}
@@ -210,7 +293,10 @@ function Facts({ rows }: { rows: Array<[string, string]> }) {
           <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
             {label}
           </div>
-          <div className="mt-0.5 text-sm text-ink capitalize">{value}</div>
+          {/* NOT capitalised. It used to be, so an email read "Priya@mahek.in" —
+              a different string from the one they sign in with. The values
+              that need a capital already carry one. */}
+          <div className="mt-0.5 text-sm text-ink">{value}</div>
         </div>
       ))}
     </CardGrid>

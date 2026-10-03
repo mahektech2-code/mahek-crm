@@ -20,6 +20,7 @@ import { canSeeFeedback, feedbackBehindMessage } from "./feedback-access";
 import { getConfig } from "../config/store";
 import { fileStorage } from "../storage";
 import { sniffContentType } from "../file-types";
+import { scopeCovers } from "../sales-gate";
 import { err, ok, okVoid, type Result } from "../result";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -562,17 +563,22 @@ async function canReadAttendanceSelfie(attendanceId: string): Promise<boolean> {
    * `canReadTravelLegPhoto` below is the same rule for the same reason, and
    * these two are the only places in this file that ask.
    */
-  const { listUserApps } = await import("../access");
-  const apps = await listUserApps(ctx.user.id);
-  if (!apps.includes("sales")) return false;
+  /*
+   * AND THE MODULE, not only the app. "Whoever can see his attendance" means
+   * whoever can open `/sales/attendance`, and that layout asks for
+   * `sales.attendance` — so a manager given the Sales Dashboard with Attendance
+   * unticked had no screen showing anybody's check-in and could still fetch
+   * every photograph by id. `canOpenModule` asks the grant first, so this one
+   * call replaces the bare grant check that stood here.
+   */
+  const { canOpenModule } = await import("../access");
+  if (!(await canOpenModule(ctx.user.id, "sales.attendance"))) return false;
 
   const { managerScope } = await import("./sales-service");
-  const scope = await managerScope();
-  /* `null` is a national manager — everybody. See `onlyMine`, which reads the
-     same field to mean the same thing in SQL. Reached only by somebody who
-     already holds the Sales Dashboard. */
-  if (scope.salesmanIds === null) return true;
-  return scope.salesmanIds.includes(day.userId);
+  /* `scopeCovers` rather than reading `salesmanIds === null` here: null is a
+     national manager everywhere EXCEPT the CRM Sales Manager seat, whose null
+     means "no list of people at all", and an associate is now `[self]`. */
+  return scopeCovers(await managerScope(), day.userId);
 }
 
 /**
@@ -593,7 +599,9 @@ async function canReadTravelLegPhoto(legId: string): Promise<boolean> {
     .from(mbosTravelLegs)
     .where(eq(mbosTravelLegs.id, legId));
   if (!leg) return false;
-  return canReadSalesmansOwnEvidence(leg.userId);
+  /* The Travel ledger shows a leg's meter photographs, and so does the
+     Expenses desk that prices them — either screen is a reason to open one. */
+  return canReadSalesmansOwnEvidence(leg.userId, ["sales.travel", "sales.expenses"]);
 }
 
 /**
@@ -611,7 +619,8 @@ async function canReadExpenseAttachment(expenseId: string): Promise<boolean> {
     .from(mbosExpenses)
     .where(eq(mbosExpenses.id, expenseId));
   if (!expense) return false;
-  return canReadSalesmansOwnEvidence(expense.userId);
+  /* Decided on Expenses, questioned on Expense exceptions. */
+  return canReadSalesmansOwnEvidence(expense.userId, ["sales.expenses", "sales.exceptions"]);
 }
 
 /**
@@ -623,21 +632,25 @@ async function canReadExpenseAttachment(expenseId: string): Promise<boolean> {
  * plain salesman, so falling straight through to it would let one salesman
  * open another's bills by id.
  */
-async function canReadSalesmansOwnEvidence(ownerId: string): Promise<boolean> {
+async function canReadSalesmansOwnEvidence(
+  ownerId: string,
+  /** The screens that show this evidence — any one of them is a reason to open it. */
+  modules: readonly string[],
+): Promise<boolean> {
   const ctx = await resolveScope();
   if (ownerId === ctx.user.id) return true;
 
-  const { listUserApps } = await import("../access");
-  const apps = await listUserApps(ctx.user.id);
-  if (!apps.includes("sales")) return false;
+  /* The MODULE, which asks the grant first. Holding the Sales Dashboard with
+     Travel and Expenses both withheld left no screen that shows a meter
+     photograph or a bill, and the file was still one id away. */
+  const { canOpenModule } = await import("../access");
+  const held = await Promise.all(modules.map((k) => canOpenModule(ctx.user.id, k)));
+  if (!held.some(Boolean)) return false;
 
   const { managerScope } = await import("./sales-service");
-  const scope = await managerScope();
-  /* `null` is a national manager — everybody, the same meaning `onlyMine`
-     reads out of the same field in SQL. Reached only by somebody who already
-     holds the Sales Dashboard. */
-  if (scope.salesmanIds === null) return true;
-  return scope.salesmanIds.includes(ownerId);
+  /* See `scopeCovers`: a national manager covers everybody, an associate only
+     himself, and the CRM Sales Manager seat's null covers nobody. */
+  return scopeCovers(await managerScope(), ownerId);
 }
 
 async function customerBehind(

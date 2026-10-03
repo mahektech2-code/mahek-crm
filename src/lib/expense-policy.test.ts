@@ -229,6 +229,10 @@ beforeEach(async () => {
   await seedConfig();
 
   admin = await makeUser("Asha", "admin");
+  /* The PLATFORM administrator: the Admin Console at the admin level. Admin of
+     the CRM alone is admin of the CRM, and would see only her own (empty)
+     book of expense days. */
+  await db.insert(appAccess).values({ id: id("aa"), userId: admin.id, app: "admin", role: "admin" });
   salesman = await makeUser("Mahesh", "associate");
   await db.insert(appAccess).values({
     id: id("aa"),

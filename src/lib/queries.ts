@@ -21,9 +21,9 @@ import {
   orders,
   users,
 } from "@/db/schema";
-import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
+import { ASSIGNED_TO_SQL, canFor, resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
 import { UNASSIGNED_FILTER_VALUE } from "./am-filters";
-import { isManager, requireUser } from "./auth";
+import { requireUser } from "./auth";
 import { getScope } from "./scope";
 import { today as businessToday } from "./recompute";
 import { daysBetween, monthKey, type DateRange } from "./business-date";
@@ -65,8 +65,11 @@ export const crmBadgeCounts = cache(async function crmBadgeCounts(): Promise<{
   openComplaints: number;
 }> {
   const user = await requireUser();
-  const scope = await getScope(user);
-  const teamWide = scope === "team" && isManager(user);
+  /* The CRM's level, named rather than read off the request: the launcher asks
+     for these counts too, from a page that is in no app, and there the
+     account's widest level would count a CRM associate's badges team-wide. */
+  const scope = await getScope(user, "crm");
+  const teamWide = scope === "team";
   const day = await businessToday();
 
   const [row] = await db.execute<{ reminders: number; complaints: number }>(sql`
@@ -195,6 +198,10 @@ export async function listCustomerStatusRequests(): Promise<CustomerStatusReques
 
 /** How many requests are waiting. The sidebar badge and the screen agree. */
 export async function customerStatusRequestCount(): Promise<number> {
+  /* A badge for a queue the caller cannot decide is a number pointing at a
+     screen they are refused — the same capability the screen asks. */
+  const user = await requireUser();
+  if (!(await canFor(user, "customer.deactivate"))) return 0;
   const [row] = await db.execute<{ n: number }>(sql`
     select (count(*) filter (where deactivation_requested)
           + count(*) filter (where reactivation_requested))::int as n

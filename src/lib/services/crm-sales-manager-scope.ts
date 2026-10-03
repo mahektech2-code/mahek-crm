@@ -11,9 +11,11 @@ import type { ManagerScope } from "./sales-service";
  * does, but it is a different job held through a different app, and the two
  * cannot share a scope:
  *
- *   - `managerScope()` is territory-based, ignores the level, and is NATIONAL
- *     for anybody with no `region` row. A CRM Sales Manager has none, so
- *     reading through it would show them every lead in the company.
+ *   - `managerScope()` is territory-based, and is NATIONAL for a manager with
+ *     no `region` row. A CRM Sales Manager has none, so reading through it
+ *     would show them every lead in the company. (It reads the level now — an
+ *     associate is narrowed to their own book — but a seat is not a level, and
+ *     a CRM manager holding this seat would still be read as national.)
  *   - `users.reports_to_id` is the write side's team line, and no active field
  *     user has one in production.
  *
@@ -70,6 +72,12 @@ export function isAdminUser(user: { role: string }): boolean {
  * Anybody else: `salesManagerId` set, and `leadsVisible` turns that into
  * `sales_manager_id = <them>`. `salesmanIds` stays null because the lists that
  * read it (who a lead can be reassigned to) are pickers of people, not of leads.
+ *
+ * THAT NULL IS NOT "NATIONAL", and a check about ONE PERSON must not read it
+ * so. A photograph read or a day's verdict that asked `salesmanIds === null`
+ * would hand this seat every salesman's evidence. `scopeCovers` in
+ * `sales-gate.ts` is the one reading of a scope for a single person, and it
+ * answers no wherever `salesManagerId` is set.
  */
 export function crmSalesManagerScopeFor(user: { id: string; role: string }): ManagerScope {
   if (isAdminUser(user)) return { national: true, regions: [], salesmanIds: null };

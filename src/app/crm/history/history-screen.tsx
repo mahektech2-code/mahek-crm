@@ -45,7 +45,7 @@ type Commitment = { customerId: string; note: string; dueDate: string };
 
 export function HistoryScreen({
   scopeLabel,
-  isManager,
+  canExport,
   team,
   rows,
   capped,
@@ -55,7 +55,12 @@ export function HistoryScreen({
   today,
 }: {
   scopeLabel: string;
-  isManager: boolean;
+  /**
+   * Holds `customer.export`. The export is a CSV built in the browser from the
+   * rows already loaded, so this button is the whole of the gate — it was
+   * `isManager`, the widest level held in any app, rather than the capability.
+   */
+  canExport: boolean;
   team: string[];
   rows: Row[];
   /** The server read was cut off at its limit — these are the newest, not all. */
@@ -142,8 +147,8 @@ export function HistoryScreen({
         actions={
           <Button
             variant="secondary"
-            disabled={!isManager}
-            title={isManager ? "Download as CSV" : "Export is a manager action"}
+            disabled={!canExport}
+            title={canExport ? "Download as CSV" : "Exporting needs the right to export customers"}
             onClick={() => {
               downloadCsv(
                 "mahek-interactions",

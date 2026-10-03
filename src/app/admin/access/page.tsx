@@ -14,9 +14,14 @@ export default async function AccessPage({
   return (
     <AccessScreen
       rows={rows}
-      /* The LEVEL on the account, never the label beside it — a label is a
-         sentence somebody may reword, and nothing may be decided from one. */
-      isAdmin={ctx.user.role === "admin"}
+      /* Read off the GRANTS, never the label beside a level — a label is a
+         sentence somebody may reword, and nothing may be decided from one.
+         `users.role` would give the same answer today, since it now derives
+         `admin` for a platform administrator alone, but it is a cache of the
+         grants and the context already asked the grants themselves. The page
+         gate above means this is always true here; it is passed rather than
+         assumed so the screen stays read-only if that gate ever loosens. */
+      isPlatformAdmin={ctx.isPlatformAdmin}
       onlyApp={onlyApp}
     />
   );

@@ -15,6 +15,8 @@ import type { LeadPriority } from "../lead-priority";
 import type { BusinessDate } from "../business-date";
 import { cache } from "react";
 import { crmSalesManagerScopeFor, inCrmSalesManagerWorkspace } from "./crm-sales-manager-scope";
+import { isPlatformAdmin, levelInApp, requestAppId } from "../access-control";
+import { scopeStanding } from "../sales-gate";
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
@@ -119,9 +121,10 @@ export type ManagerScope = {
  * session inside the service means there is no call site that can get it
  * wrong.
  *
- * **No territory rows means national.** That is what let the hierarchy ship
- * without changing what a single existing grant meant, and it is the same rule
- * `app_module_access` uses for modules.
+ * **No territory rows means national — FOR A MANAGER.** That is what let the
+ * hierarchy ship without changing what a single existing grant meant, and it
+ * is the same rule `app_module_access` uses for modules. An associate never
+ * reaches it: see the level check at the top of the function.
  *
  * Cached per request: the sidebar asks, then every query on the screen asks
  * again, and it is two round trips either way.
@@ -129,15 +132,53 @@ export type ManagerScope = {
 const baseManagerScope = cache(async function managerScope(): Promise<ManagerScope> {
   const { requireUser } = await import("../auth");
 
-  let userId: string;
+  let user: Awaited<ReturnType<typeof requireUser>>;
   try {
-    userId = (await requireUser()).id;
+    user = await requireUser();
   } catch {
     /* No request to read a session from — a script, a job or a test. There is
      * no manager to scope to, so nothing is narrowed. Every caller in that
      * situation is trusted code rather than a browser. */
     return { national: true, regions: [], salesmanIds: null };
   }
+  const userId = user.id;
+
+  /*
+   * THE LEVEL FIRST, and only then the territory.
+   *
+   * This function read no level at all, and "no region rows means national" is
+   * a rule about MANAGERS — the people a region is ever allocated to. Applied
+   * to everybody, it answered national for every associate in the building: a
+   * telecaller on `/crm/leads` was shown every lead in the company, and a
+   * salesman given the Sales Dashboard to read his own day could open any
+   * colleague's trail, and — through `canReadAttendanceSelfie` — any
+   * colleague's check-in photograph by id. It failed OPEN, silently, for
+   * exactly the people the narrowing was never written for.
+   *
+   * `scopeStanding` (in `sales-gate.ts`, pure and tested) decides how far this
+   * person looks before a single territory row is read. An associate sees
+   * their own book; a manager or app administrator gets the regional rule
+   * below, unchanged; a platform administrator and the founder's desk are
+   * national. The level is read for the app the REQUEST is in — the CRM or the
+   * Sales Dashboard — and where the request names no app (`/api/sales/*`, the
+   * launcher badge, `/api/attachments`) it is read against the Sales Dashboard,
+   * which is the only app whose screens this scope draws.
+   *
+   * It can only NARROW: nobody who is a manager anywhere this is asked loses a
+   * row, and the arm that widens — platform administrator — was already
+   * national through `placeScope` on the one screen that asked.
+   */
+  const requestApp = await requestAppId();
+  const [platformAdmin, levelInRequestApp, levelInSales] = await Promise.all([
+    isPlatformAdmin(user),
+    requestApp === "crm" || requestApp === "sales" || requestApp === "founder"
+      ? levelInApp(user, requestApp)
+      : Promise.resolve(null),
+    levelInApp(user, "sales"),
+  ]);
+  const standing = scopeStanding({ platformAdmin, requestApp, levelInRequestApp, levelInSales });
+  if (standing === "national") return { national: true, regions: [], salesmanIds: null };
+  if (standing === "own") return { national: false, regions: [], salesmanIds: [userId] };
 
   const rows = await db.execute<{ region: string }>(sql`
     -- REGIONS ONLY. The table also holds a salesman's working cities now, and
@@ -957,10 +998,20 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
 }
 
 /** For the sidebar badge and the launcher tile. */
+/*
+ * NARROWED EXACTLY AS THE LIST IS. The badge counted the whole company's queue
+ * while `pendingApprovals` beneath it showed a regional manager their own
+ * patch, so the sidebar said 31 over a list of four — the number people trust
+ * is the one on the badge, and it was the one that was wrong. It also said, to
+ * anybody holding the app, how much was waiting across every team they could
+ * not see.
+ */
 export async function pendingApprovalCount(): Promise<number> {
+  const scope = await managerScope();
   const rows = await db.execute<{ n: number }>(
     sql`select count(*)::int as n from mbos_approvals ap
-         where ap.state = 'pending' ${NOT_WITHDRAWN}`,
+         where ap.state = 'pending' ${NOT_WITHDRAWN}
+           ${onlyMine(scope, "ap.requested_by_user_id")}`,
   );
   return Number(rows[0]?.n ?? 0);
 }
@@ -973,12 +1024,15 @@ export async function pendingApprovalCount(): Promise<number> {
  * the oldest one has been sitting there.
  */
 export async function oldestApprovalHours(): Promise<number> {
+  /* The same narrowing as the count beside it, for the same reason. */
+  const scope = await managerScope();
   const rows = await db.execute<{ hours: number }>(sql`
     select coalesce(
              floor(extract(epoch from (now() - min(ap.requested_at))) / 3600), 0
            )::int as hours
       from mbos_approvals ap
      where ap.state = 'pending' ${NOT_WITHDRAWN}
+       ${onlyMine(scope, "ap.requested_by_user_id")}
   `);
   return Number(rows[0]?.hours ?? 0);
 }

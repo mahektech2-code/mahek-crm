@@ -729,6 +729,24 @@ export async function complaintHistory(complaintId: string) {
     .orderBy(asc(complaintStatusHistory.at));
 }
 
+/**
+ * A COMPLAINT IS WORKED BY WHOEVER MAY WORK ITS CUSTOMER.
+ *
+ * The status, priority and resolution writes below took a complaint id and
+ * nothing else — so anybody signed in to the CRM could move, re-prioritise or
+ * reassign a complaint on a customer outside their book by posting its id.
+ * The complaints LIST is scoped through the customer; the writes now ask the
+ * same question of the same row, through `assertCustomerInScope`, so a
+ * complaint you can see is one you can act on and nothing else is.
+ */
+async function customerOfComplaintInScope(customerId: string) {
+  const [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
+  await assertCustomerInScope(customer ?? null);
+}
+
+/** Statuses after which a complaint is finished with. */
+const FINISHED_COMPLAINT = new Set(["resolved", "closed", "rejected"]);
+
 export async function changeComplaintStatus(
   complaintId: string,
   toStatus: "open" | "in_progress" | "awaiting_customer" | "rejected" | "closed",
@@ -740,6 +758,19 @@ export async function changeComplaintStatus(
     .from(complaints)
     .where(eq(complaints.id, complaintId));
   if (!existing) return err("That complaint no longer exists.", "not_found");
+  await customerOfComplaintInScope(existing.customerId);
+
+  /*
+   * FINISHING ONE, OR OPENING A FINISHED ONE, IS THE RESOLVER'S.
+   * `complaint.resolve` is what closes a complaint through `resolveComplaint`;
+   * a status write that could close or reject it without that capability, or
+   * reopen one somebody with it had closed, was the same decision through a
+   * side door. Moving an open complaint along — in progress, awaiting the
+   * customer — stays anybody's who works the customer.
+   */
+  if (FINISHED_COMPLAINT.has(toStatus) || FINISHED_COMPLAINT.has(existing.status)) {
+    await requireCapability("complaint.resolve");
+  }
 
   await db.transaction(async (tx) => {
     await tx
@@ -807,6 +838,7 @@ export async function setComplaintPriority(
     .from(complaints)
     .where(eq(complaints.id, complaintId));
   if (!existing) return err("That complaint no longer exists.", "not_found");
+  await customerOfComplaintInScope(existing.customerId);
   if (existing.severity === picked.value) {
     return okVoid(`Already ${picked.label}`);
   }
@@ -877,6 +909,7 @@ export async function resolveComplaint(input: {
     .from(complaints)
     .where(eq(complaints.id, input.complaintId));
   if (!existing) return err("That complaint no longer exists.", "not_found");
+  await customerOfComplaintInScope(existing.customerId);
 
   await db.transaction(async (tx) => {
     await tx

@@ -168,6 +168,12 @@ beforeEach(async () => {
   desk = await makeUser("Desk Caller", "associate");
   other = await makeUser("Other Caller", "associate");
   manager = await makeUser("Sales Manager", "manager");
+  /* The verification queue is a `managerScope` read, and a test names no app
+     on its request — so the level is asked on the Sales Dashboard. A CRM
+     manager with no Sales grant is narrowed to their own book there (it used to
+     answer national, the fail-open the scope no longer has), and the desk's
+     leads are not in it. The Sales Manager holds the Sales Dashboard too. */
+  await db.insert(appAccess).values({ id: id("aca"), userId: manager.id, app: "sales", role: "manager" });
   productId = id("prd");
   await db.insert(products).values({ id: productId, name: "PU Thinner - 20 Liter (Loose)" });
   setTestUser(desk);

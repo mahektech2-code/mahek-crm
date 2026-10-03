@@ -92,20 +92,42 @@ export async function ownerFilterClause(
 
   const ids = opts.unscoped ? null : scopedUserIds((await resolveScope()).scope);
 
-  // `scopedToUsers` is written against the literal table name `customers`, so
-  // it is only usable where the alias IS that. Everything here aliases to `c`,
-  // so the same rule is re-expressed rather than borrowed — and it is the ONE
-  // place in this file that happens, with the clause below kept in step by
-  // hand rather than by hope.
+  /*
+   * `scopedToUsers` is written against the literal table name `customers`, so
+   * it is only usable where the alias IS that. Everything here aliases to `c`,
+   * so the same rule is re-expressed rather than borrowed — and it is the ONE
+   * place in this file that happens, kept in step with `scopedToUsers` by
+   * hand rather than by hope.
+   *
+   * IT HAD FALLEN OUT OF STEP, in both directions. It read the sales seat and
+   * the owner as two independent seats, so an account reassigned away from
+   * somebody went on counting in their Reports through the owner column after
+   * `am_decided_at` had said the sales seat is read exactly as it stands — the
+   * very thing `ASSIGNED_TO_SQL` exists to stop. And it left out the lead
+   * manager and the relationship owner, the two seats added to the canonical
+   * clause since, so a manager's Reports and the CRM's own lists disagreed
+   * about whose book an account is in. It now reads the same five-seat rule,
+   * and — as `scopedToUsers` does for every reader — never counts a lead in the
+   * trash.
+   */
+  const col = (name: string) => sql.raw(`${alias}.${name}`);
+  parts.push(sql`${col("deleted_at")} is null`);
   if (ids) {
     const list = sql.join(
       ids.map((i: string) => sql`${i}`),
       sql`, `,
     );
+    const assignedTo = sql`case when ${col("kind")} = 'lead'
+           then ${col("owner_id")}
+           when ${col("am_decided_at")} is not null
+           then ${col("sales_am_id")}
+           else coalesce(${col("sales_am_id")}, ${col("owner_id")})
+      end`;
     parts.push(
-      sql`(${sql.raw(`${alias}.sales_am_id`)} in (${list})
-           or ${sql.raw(`${alias}.owner_id`)} in (${list})
-           or ${sql.raw(`${alias}.back_office_am_id`)} in (${list}))`,
+      sql`(${assignedTo} in (${list})
+           or ${col("back_office_am_id")} in (${list})
+           or ${col("lead_manager_id")} in (${list})
+           or ${col("relationship_owner_id")} in (${list}))`,
     );
   }
 

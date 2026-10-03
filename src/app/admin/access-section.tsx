@@ -11,7 +11,6 @@ import {
   EmptyState,
   Field,
   Input,
-  Select,
   Td,
   Th,
   Tr,
@@ -19,7 +18,9 @@ import {
 } from "@/components/ui/primitives";
 import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { grantableApps, moduleGroupsForApp, modulesForApp } from "@/lib/modules";
+import { grantableApps, isAlwaysOpen, moduleGroupsForApp, modulesForApp } from "@/lib/modules";
+import { levelCarries } from "@/lib/capability-labels";
+import { LEVEL_LABELS } from "@/lib/hat-labels";
 import { getApp, type AppId } from "@/lib/apps";
 import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
 import { HRMS_POWERS, HRMS_POWER_LABEL } from "@/lib/hrms/powers";
@@ -89,6 +90,24 @@ const ROLES = [
 
 type RoleId = (typeof ROLES)[number]["id"];
 
+/**
+ * What the Admin option is CALLED, which depends on the app it sits beside.
+ *
+ * "Admin" alone read the same on every row, and it stopped meaning the same
+ * thing the day `can()` began reading an admin hat against its own app: Admin
+ * on HRMS is HRMS's administrator and nothing more, while Admin on the Admin
+ * Console is the platform administrator, who holds everything everywhere. Two
+ * very different grants behind one identical word is exactly how somebody
+ * hands out the platform while meaning to hand out a desk.
+ */
+function levelOptionLabel(level: RoleId, app: AppId, appName: string): string {
+  if (level !== "admin") return ROLES.find((r) => r.id === level)?.label ?? level;
+  return app === "admin" ? "Admin — the whole platform" : `Admin — everything in ${appName}`;
+}
+
+/** Every module of an app that its holders reach whatever is ticked. */
+const ALWAYS_OF = (app: AppId) => modulesForApp(app).filter((m) => isAlwaysOpen(m.key)).map((m) => m.key);
+
 const VIEWS = [
   "Everyone with access",
   "Narrowed access",
@@ -107,14 +126,20 @@ const DEFAULT_OF = (app: AppId) => modulesForApp(app).filter((m) => !m.offByDefa
 
 export function AccessSection({
   rows: allRows,
-  isAdmin,
+  isPlatformAdmin,
   enabling,
   onEnablingDone,
   onlyApp,
 }: {
   rows: AccessRow[];
-  /** Whether the signed-in viewer holds the `admin` role — see PersonMenu. */
-  isAdmin: boolean;
+  /**
+   * Whether the viewer is a PLATFORM ADMINISTRATOR — Admin on the Admin
+   * Console. Every action this screen offers refuses anybody else on the
+   * server (`requirePlatformAdminUser`), and the page itself is gated the same
+   * way, so this is belt and braces: if the page gate is ever loosened, what
+   * appears is a read-only list rather than a page of buttons that all fail.
+   */
+  isPlatformAdmin: boolean;
   /** The page's Enable access button was pressed: the picker comes first. */
   enabling: boolean;
   onEnablingDone: () => void;
@@ -215,7 +240,11 @@ export function AccessSection({
                 <tr>
                   <Th>Person</Th>
                   <Th>Sign-in</Th>
-                  <Th>Role</Th>
+                  <Th>
+                    <span title="Derived from the levels below — Admin only for a platform administrator, Manager for anybody who manages or administers any app, otherwise Associate. It is never set on its own.">
+                      Account level
+                    </span>
+                  </Th>
                   <Th>Employee</Th>
                   <Th>Apps</Th>
                   <Th />
@@ -253,6 +282,7 @@ export function AccessSection({
                       )}
                     </Td>
                     <Td>
+                      {isPlatformAdmin ? (
                       <span className="flex justify-end gap-1.5">
                         <Button
                           size="sm"
@@ -278,7 +308,6 @@ export function AccessSection({
                         <PersonMenu
                           row={r}
                           say={say}
-                          isAdmin={isAdmin}
                           onManage={() => setManaging(r)}
                           onSwitch={() => setSwitching(r)}
                           onOpen={() => onOpenUser(r.userId)}
@@ -287,6 +316,7 @@ export function AccessSection({
                           onGotLink={setLinkFor}
                         />
                       </span>
+                      ) : null}
                     </Td>
                   </Tr>
                 ))}
@@ -297,8 +327,9 @@ export function AccessSection({
       </Card>
 
       {/* Enabling access for somebody new: the picker comes first. */}
-      {enabling ? (
+      {enabling && isPlatformAdmin ? (
         <AccessDialog
+          rows={allRows}
           onClose={onEnablingDone}
           onDone={(r) => {
             say(r);
@@ -443,6 +474,7 @@ export function AccessSection({
       {managing ? (
         <AccessDialog
           key={managing.userId}
+          rows={allRows}
           person={managing}
           onClose={() => setManaging(null)}
           onDone={(r) => {
@@ -506,7 +538,7 @@ function PersonCells({ row, onOpen }: { row: AccessRow; onOpen: () => void }) {
           </span>
         )}
       </Td>
-      <Td className="align-top capitalize">{row.role}</Td>
+      <Td className="align-top">{LEVEL_LABELS[row.role] ?? row.role}</Td>
       <Td className="align-top">
         {row.employeeCode ? (
           <span className="inline-flex flex-wrap items-center gap-2">
@@ -537,7 +569,6 @@ function PersonCells({ row, onOpen }: { row: AccessRow; onOpen: () => void }) {
 function PersonMenu({
   row,
   say,
-  isAdmin,
   onManage,
   onSwitch,
   onOpen,
@@ -547,8 +578,6 @@ function PersonMenu({
 }: {
   row: AccessRow;
   say: (r: { ok: boolean; message?: string; error?: string }) => void;
-  /** Only an admin may sign in as somebody else — see `mintImpersonationLink`. */
-  isAdmin: boolean;
   onManage: () => void;
   onSwitch: () => void;
   onOpen: () => void;
@@ -586,8 +615,12 @@ function PersonMenu({
              better wherever they have a work email they read. The one below
              is for everybody else — most of the field staff. */
           label: "Email a password-reset link",
-          disabled: !row.active,
-          title: row.active ? undefined : "This account cannot sign in",
+          disabled: !row.active || !row.email,
+          title: !row.active
+            ? "This account cannot sign in"
+            : !row.email
+              ? "This account has no work email to send a link to. Generate a password to read out instead."
+              : undefined,
           onSelect: () => void sendPasswordResetFor(row.userId).then(say),
         },
         {
@@ -603,22 +636,21 @@ function PersonMenu({
           label: "End every session",
           onSelect: () => void endSessionsFor(row.userId).then(say),
         },
-        ...(isAdmin
-          ? [
-              {
-                label: `Login as ${row.name.split(" ")[0]}`,
-                disabled: !row.active,
-                title: row.active
-                  ? "Opens a one-time link that signs in as this person, with no password"
-                  : "This account cannot sign in",
-                onSelect: () =>
-                  void mintImpersonationLink(row.userId).then((r) => {
-                    if (r.ok) onGotLink({ name: row.name, ...r.data });
-                    else say(r);
-                  }),
-              },
-            ]
-          : []),
+        /* Only a platform administrator may sign in as somebody else — see
+           `mintImpersonationLink` — and the whole menu is drawn only for one,
+           so the item needs no gate of its own. */
+        {
+          label: `Login as ${row.name.split(" ")[0]}`,
+          disabled: !row.active,
+          title: row.active
+            ? "Opens a one-time link that signs in as this person, with no password"
+            : "This account cannot sign in",
+          onSelect: () =>
+            void mintImpersonationLink(row.userId).then((r) => {
+              if (r.ok) onGotLink({ name: row.name, ...r.data });
+              else say(r);
+            }),
+        },
       ]}
     />
   );
@@ -628,20 +660,50 @@ function PersonMenu({
 
 type Step = "who" | "access" | "review" | "done";
 
+/** What somebody holds today, as the dialog's draft: app → modules ticked. */
+function draftOf(row: AccessRow | null): Draft {
+  const out: Draft = {};
+  for (const g of row?.grants ?? []) {
+    out[g.app] = g.modules.filter((m) => m.granted).map((m) => m.key);
+  }
+  return out;
+}
+
+/** The level each app is held under today. Never the account's: see `AppGrant.role`. */
+function levelsOf(row: AccessRow | null): Record<string, RoleId> {
+  const out: Record<string, RoleId> = {};
+  for (const g of row?.grants ?? []) out[g.app] = g.role;
+  return out;
+}
+
 function AccessDialog({
   person,
+  rows,
   onClose,
   onDone,
   onSaved,
 }: {
   /** Somebody already on the list. Absent means start from the picker. */
   person?: AccessRow;
+  /**
+   * Everybody on the list, so somebody picked from the employee master who
+   * ALREADY has an account starts from what they actually hold.
+   *
+   * The picker used to seed such a person with every app they held at its
+   * default modules and no levels at all — so a CRM manager narrowed to six
+   * screens, reached through Enable access rather than through their own row,
+   * was offered back as a whole-CRM associate, and saving without looking
+   * would have written exactly that.
+   */
+  rows: AccessRow[];
   onClose: () => void;
   onDone: (r: { ok: boolean; message?: string; error?: string }) => void;
   /** Saved, but not finished with — the dialog is still open behind the toast. */
   onSaved: (r: { ok: boolean; message?: string; error?: string }) => void;
 }) {
   const [step, setStep] = React.useState<Step>(person ? "access" : "who");
+  /** The account the review compares against: the row managed, or the one picked. */
+  const [basis, setBasis] = React.useState<AccessRow | null>(person ?? null);
   const [chosen, setChosen] = React.useState<Candidate | null>(
     person
       ? {
@@ -663,54 +725,51 @@ function AccessDialog({
   );
 
   /** What they hold today, so the review can say what actually changes. */
-  const before: Draft = React.useMemo(() => {
-    const out: Draft = {};
-    for (const g of person?.grants ?? []) {
-      out[g.app] = g.modules.filter((m) => m.granted).map((m) => m.key);
-    }
-    return out;
-  }, [person]);
+  const before: Draft = React.useMemo(() => draftOf(basis), [basis]);
+  const levelsBefore = React.useMemo(() => levelsOf(basis), [basis]);
 
   const [draft, setDraft] = React.useState<Draft>(before);
   /* THE ERP'S POWERS, beside the ERP grant: who verifies tests, who sees
      purchase money. Sent only while the ERP is ticked — unticking it takes the
      powers with it, the same as its screens. */
-  const powersBefore = React.useMemo(() => person?.erpPowers ?? [], [person]);
+  const powersBefore = React.useMemo(() => basis?.erpPowers ?? [], [basis]);
   const [powers, setPowers] = React.useState<string[]>(powersBefore);
   /* HRMS's powers, the same way: who is HR, who approves leave, who runs
      payroll. Unticking HRMS takes them with it. */
-  const hrmsPowersBefore = React.useMemo(() => person?.hrmsPowers ?? [], [person]);
+  const hrmsPowersBefore = React.useMemo(() => basis?.hrmsPowers ?? [], [basis]);
   const [hrmsPowers, setHrmsPowers] = React.useState<string[]>(hrmsPowersBefore);
   /*
-   * WHICH HAT EACH APP IS HELD UNDER, beside the screens it opens.
+   * WHICH LEVEL EACH APP IS HELD UNDER, beside the screens it opens.
    *
    * A person is a manager in the CRM and a clerk in Accounts — different
    * powers over different data, not one power applied twice. Seeded from what
-   * they hold today, falling back to the account's own role, which is what a
-   * grant with no hat of its own means.
+   * they hold today. An app ticked for the first time is held as an
+   * ASSOCIATE until somebody chooses otherwise: it used to inherit the
+   * account's own level, so ticking Accounts for a CRM manager quietly made
+   * them an Accounts manager — order approval, granted by a checkbox that was
+   * only meant to open a screen.
    */
-  const [roleDraft, setRoleDraft] = React.useState<Record<string, RoleId>>(() => {
-    const out: Record<string, RoleId> = {};
-    for (const g of person?.grants ?? []) {
-      out[g.app] = (g.role ?? person?.role ?? "associate") as RoleId;
-    }
-    return out;
-  });
+  const [roleDraft, setRoleDraft] = React.useState<Record<string, RoleId>>(levelsBefore);
   const [email, setEmail] = React.useState(person?.email ?? "");
   const [phone, setPhone] = React.useState(person?.phone ?? "");
-  const [role, setRole] = React.useState<(typeof ROLES)[number]["id"]>("associate");
   const [saving, setSaving] = React.useState(false);
   const [fieldError, setFieldError] = React.useState<Record<string, string>>({});
 
   const needsAccount = !!chosen && !chosen.userId;
 
   const pick = (c: Candidate) => {
+    const existing = c.userId ? (rows.find((r) => r.userId === c.userId) ?? null) : null;
     setChosen(c);
+    setBasis(existing);
     setEmail(c.email ?? "");
     setPhone(c.phone ?? "");
-    // Somebody already holding apps arrives with what they hold, not empty —
-    // this dialog sets the whole picture, so it has to start from the picture.
-    setDraft(Object.fromEntries(c.apps.map((a) => [a, DEFAULT_OF(a)])));
+    // Somebody already holding apps arrives with what they hold — modules,
+    // levels and powers — not empty and not defaulted: this dialog sets the
+    // whole picture, so it has to start from the picture.
+    setDraft(draftOf(existing));
+    setRoleDraft(levelsOf(existing));
+    setPowers(existing?.erpPowers ?? []);
+    setHrmsPowers(existing?.hrmsPowers ?? []);
     setFieldError({});
     setStep("access");
   };
@@ -722,6 +781,9 @@ function AccessDialog({
      wording lives here rather than being guessed at in the action. */
   const [saved, setSaved] = React.useState<{ created: boolean; userId: string } | null>(null);
 
+  /** The level an app will be saved under. Unsaid is associate, as on the server. */
+  const levelOf = (app: string): RoleId => roleDraft[app] ?? "associate";
+
   const submit = () => {
     if (!chosen) return;
     setSaving(true);
@@ -732,15 +794,14 @@ function AccessDialog({
       grants: Object.entries(draft).map(([app, modules]) => ({
         app,
         modules,
-        // The hat, defaulting to the one the account already carries so a
-        // dialog opened and saved without touching this changes nothing.
-        role: roleDraft[app] ?? (person?.role as RoleId) ?? role,
+        role: levelOf(app),
       })),
       erpPowers: draft.erp ? powers : [],
       hrmsPowers: draft.hrms ? hrmsPowers : [],
-      account: chosen.userId
-        ? undefined
-        : { email: email.trim() || null, phone: phone.trim() || null, role },
+      /* No level on the account. It is DERIVED from the per-app levels by the
+         action, and the select that used to sit here could make a platform
+         administrator out of somebody given nothing but associate grants. */
+      account: chosen.userId ? undefined : { email: email.trim() || null, phone: phone.trim() || null },
     }).then((r) => {
       setSaving(false);
       if (!r.ok && r.fieldErrors?.length) {
@@ -769,7 +830,8 @@ function AccessDialog({
 
   const powersAfter = draft.erp ? powers : [];
   const powersChanged = powersAfter.length !== powersBefore.length || powersAfter.some((p) => !powersBefore.includes(p));
-  const moduleChanges = describeChanges(before, draft);
+  const levelsAfter: Record<string, RoleId> = Object.fromEntries(Object.keys(draft).map((a) => [a, levelOf(a)]));
+  const moduleChanges = describeChanges(before, draft, levelsBefore, levelsAfter);
   const hrmsPowersAfter = draft.hrms ? hrmsPowers : [];
   const hrmsPowersChanged =
     hrmsPowersAfter.length !== hrmsPowersBefore.length || hrmsPowersAfter.some((p) => !hrmsPowersBefore.includes(p));
@@ -834,15 +896,13 @@ function AccessDialog({
           name={chosen?.name ?? ""}
           email={email}
           phone={phone}
-          role={role}
           onEmail={setEmail}
           onPhone={setPhone}
-          onRole={setRole}
           draft={draft}
+          held={before}
           onDraft={setDraft}
           roleDraft={roleDraft}
           onRoleDraft={setRoleDraft}
-          accountRole={(person?.role as RoleId) ?? role}
           fieldError={fieldError}
           powers={powers}
           onPowers={setPowers}
@@ -855,11 +915,9 @@ function AccessDialog({
           creating={needsAccount}
           email={email}
           phone={phone}
-          role={role}
           changes={changes}
           draft={draft}
-          roleDraft={roleDraft}
-          accountRole={(person?.role as RoleId) ?? role}
+          levels={levelsAfter}
           powerChange={powersChanged ? { before: powersBefore, after: powersAfter } : null}
           hrmsPowerChange={hrmsPowersChanged ? { before: hrmsPowersBefore, after: hrmsPowersAfter } : null}
         />
@@ -1173,15 +1231,13 @@ function AccessStep({
   name,
   email,
   phone,
-  role,
   onEmail,
   onPhone,
-  onRole,
   draft,
+  held,
   onDraft,
   roleDraft,
   onRoleDraft,
-  accountRole,
   fieldError,
   powers,
   onPowers,
@@ -1192,17 +1248,15 @@ function AccessStep({
   name: string;
   email: string;
   phone: string;
-  role: (typeof ROLES)[number]["id"];
   onEmail: (v: string) => void;
   onPhone: (v: string) => void;
-  onRole: (v: (typeof ROLES)[number]["id"]) => void;
   draft: Draft;
+  /** What they held when the dialog opened — a retired app is drawn only if it is here. */
+  held: Draft;
   onDraft: (next: Draft) => void;
-  /** The hat each granted app is held under. */
+  /** The level each granted app is held under. Absent is associate. */
   roleDraft: Record<string, RoleId>;
   onRoleDraft: (next: Record<string, RoleId>) => void;
-  /** What a newly ticked app is held under until somebody says otherwise. */
-  accountRole: RoleId;
   fieldError: Record<string, string>;
   /** The ERP's special powers, drawn under the ERP app while it is ticked. */
   powers: string[];
@@ -1235,7 +1289,13 @@ function AccessStep({
               here; you generate one to read out on the last page.
             </span>
           </div>
-          <div className="mt-2 grid grid-cols-[1.4fr_1fr_1fr] gap-2">
+          {/* NO ACCOUNT LEVEL. There was a Role select here beside the two
+              sign-ins, and it was a second answer to a question the per-app
+              levels below already answer: "Admin" chosen here with
+              "Associate" on every app produced a platform administrator
+              nobody had meant. The account level is derived from the grants
+              by the action, and is shown on the list once it exists. */}
+          <div className="mt-2 grid grid-cols-2 gap-2">
             {/* NEITHER IS STARRED, because neither on its own is required —
                 what is required is one of the two, which is a sentence about
                 the pair and belongs above them rather than on either. */}
@@ -1262,15 +1322,6 @@ function AccessStep({
                 onChange={(e) => onPhone(e.target.value)}
               />
             </Field>
-            <Field label="Role">
-              <Select value={role} onChange={(e) => onRole(e.target.value as typeof role)}>
-                {ROLES.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
           </div>
         </div>
       ) : null}
@@ -1279,7 +1330,7 @@ function AccessStep({
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-1 pb-2">
         <span className="text-[13px] text-body">
           Tick an app to grant it; untick a screen to withhold it. A withheld screen is not
-          drawn in their navigation.
+          drawn in their navigation. The level beside an app says what they may do in it.
         </span>
         <span className="flex-1" />
         <span className="text-[13px] whitespace-nowrap text-muted">
@@ -1292,19 +1343,39 @@ function AccessStep({
       ) : null}
 
       <div className="overflow-hidden rounded-[4px] border border-line">
-        {/* A retired app is drawn only while somebody still holds it, so the
-            grant can be taken away; it is never offered to anybody new. */}
-        {APPS.filter((a) => !a.retiredInto || draft[a.id]).map((app, i) => (
+        {/* A retired app is drawn only while somebody HELD it when the dialog
+            opened, so the grant can be taken away — and it stays drawn after
+            it is unticked, so the untick can be taken back. It is never
+            offered to anybody who did not already hold it. */}
+        {APPS.filter((a) => !a.retiredInto || held[a.id]).map((app, i) => (
           <AppBlock
             key={app.id}
             app={app.id}
             name={app.name}
             description={app.description}
             built={app.built}
+            retired={!!app.retiredInto}
             ticked={draft[app.id] ?? []}
             first={i === 0}
-            role={roleDraft[app.id] ?? accountRole}
-            onRole={(next) => onRoleDraft({ ...roleDraft, [app.id]: next })}
+            role={roleDraft[app.id] ?? "associate"}
+            onRole={(next) => {
+              onRoleDraft({ ...roleDraft, [app.id]: next });
+              /* COMING DOWN FROM ADMIN TAKES THE ADMINISTRATOR'S SCREENS WITH
+                 IT. An administrator holds every off-by-default screen
+                 whatever was ticked, so their draft arrives with those boxes
+                 ticked; left as they were, a demotion would write them down as
+                 real rows and the manager would keep the calling desk the
+                 administrator only had by being one. They are unticked here,
+                 where the review shows it as a narrowing, and ticking one back
+                 is a deliberate act. */
+              const was = roleDraft[app.id] ?? "associate";
+              const ticked = draft[app.id];
+              if (was === "admin" && next !== "admin" && ticked) {
+                const offByDefault = new Set(modulesForApp(app.id).filter((m) => m.offByDefault).map((m) => m.key));
+                const kept = ticked.filter((k) => !offByDefault.has(k));
+                if (kept.length !== ticked.length && kept.length) setApp(app.id, kept);
+              }
+            }}
             onChange={(modules) => setApp(app.id, modules)}
             powers={
               app.id === "erp"
@@ -1333,6 +1404,7 @@ function AppBlock({
   name,
   description,
   built,
+  retired,
   ticked,
   first,
   role,
@@ -1344,6 +1416,8 @@ function AppBlock({
   name: string;
   description: string;
   built: boolean;
+  /** Retired into another app: drawn only while held, so it can be taken away. */
+  retired: boolean;
   ticked: string[];
   first: boolean;
   role: RoleId;
@@ -1360,9 +1434,17 @@ function AppBlock({
   };
 }) {
   const all = ALL_OF(app);
+  const always = ALWAYS_OF(app);
   const groups = moduleGroupsForApp(app);
   const on = ticked.length > 0;
   const whole = ticked.length >= all.length;
+  /* A screen changed by hand never drops the always-open ones: they are held
+     whatever is ticked, and a draft that left them out would describe a grant
+     narrower than the one the app actually enforces. */
+  const change = (next: string[]) => onChange([...new Set([...always, ...next])]);
+  /* What the chosen level lets them DO, read off the capability matrix the
+     server enforces — never a sentence typed here. See `capability-labels`. */
+  const carries = on ? levelCarries(app, role) : [];
 
   return (
     <div className={cx(first ? "" : "border-t border-line")}>
@@ -1382,32 +1464,39 @@ function AppBlock({
           onChange={() => onChange(on ? [] : DEFAULT_OF(app))}
           label={<span className="text-[13px] font-medium text-ink">{name}</span>}
         />
-        {built ? null : (
+        {retired ? (
+          <span
+            className="text-[11px] whitespace-nowrap text-warn-ink"
+            title="This app was retired. It can be taken away from somebody who still holds it, and is never granted again."
+          >
+            retired — can only be taken away
+          </span>
+        ) : built ? null : (
           <span className="text-[11px] whitespace-nowrap text-muted">not built yet</span>
         )}
         <span className="flex-1" />
         {/*
-          THE HAT, on the app's own line and only while it is granted.
-          
-          A role picker on an app nobody holds is a question about nothing, and
-          it would read as though the role were the thing being granted. It
-          sits before the module count because it is the more consequential of
-          the two: withholding a screen hides a link, choosing a hat decides
-          what the person may DO with the ones they keep.
+          THE LEVEL, on the app's own line and only while it is granted.
+
+          A level picker on an app nobody holds is a question about nothing,
+          and it would read as though the level were the thing being granted.
+          It sits before the module count because it is the more consequential
+          of the two: withholding a screen hides a link, choosing a level
+          decides what the person may DO with the ones they keep.
         */}
         {on ? (
           <span className="flex items-center gap-1.5">
             <span className="text-[11px] whitespace-nowrap text-muted">as</span>
             <select
               value={role}
-              aria-label={`Role for ${name}`}
+              aria-label={`Level on ${name}`}
               onClick={(e) => e.stopPropagation()}
               onChange={(e) => onRole(e.target.value as RoleId)}
               className="h-6 cursor-pointer rounded-[3px] border border-line bg-surface px-1 text-[11px] text-body"
             >
               {ROLES.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.label}
+                  {levelOptionLabel(r.id, app, name)}
                 </option>
               ))}
             </select>
@@ -1439,6 +1528,20 @@ function AppBlock({
         )}
       </div>
 
+      {/* WHAT THE LEVEL CARRIES, under the line that chooses it. Short lines,
+          in the order the matrix lists them, so "Approve and decline orders"
+          appears or disappears in the same place as the select changes. */}
+      {on ? (
+        <div className="flex items-start gap-2 border-t border-divider bg-surface px-2.5 py-1">
+          <span className="w-[132px] flex-none pt-[3px] text-[10px] leading-[14px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+            {LEVEL_LABELS[role]} carries
+          </span>
+          <span className="min-w-0 flex-1 text-[12px] leading-[18px] text-body">
+            {carries.join(" · ")}
+          </span>
+        </div>
+      ) : null}
+
       {/* The screens appear once the app is ticked. Drawing forty checkboxes
           nobody can act on would bury the seven decisions that matter.
 
@@ -1456,35 +1559,59 @@ function AppBlock({
                 {g.group}
               </span>
               <span className="grid min-w-0 flex-1 grid-cols-3 gap-x-3">
-                {g.modules.map((m) => (
-                  <Checkbox
-                    key={m.key}
-                    checked={ticked.includes(m.key)}
-                    // What withholding it costs rides on the title rather than
-                    // in the layout: forty sentences on one page is clutter
-                    // rather than help, the same trade the microphone's own
-                    // guidance makes.
-                    title={m.note}
-                    onChange={() =>
-                      onChange(
-                        ticked.includes(m.key)
-                          ? ticked.filter((k) => k !== m.key)
-                          : [...ticked, m.key],
-                      )
-                    }
-                    className="min-w-0 py-[1px]"
-                    label={<span className="truncate text-[13px] text-body">{m.label}</span>}
-                  />
-                ))}
+                {g.modules.map((m) =>
+                  isAlwaysOpen(m.key) ? (
+                    /* ALWAYS ON, AND DRAWN THAT WAY. The app opens this screen
+                       for every holder whatever is ticked, so a checkbox that
+                       could be unticked would be a control that changes
+                       nothing — the one kind that teaches somebody the page
+                       is lying to them. The title is on a wrapper because a
+                       disabled input swallows its own hover. */
+                    <span
+                      key={m.key}
+                      className="min-w-0"
+                      title={`Always open — everybody who holds ${name} reaches this screen whatever is ticked.${m.note ? ` ${m.note}` : ""}`}
+                    >
+                      <Checkbox
+                        checked
+                        disabled
+                        readOnly
+                        className="min-w-0 cursor-default py-[1px]"
+                        label={<span className="truncate text-[13px] text-muted">{m.label} · always</span>}
+                      />
+                    </span>
+                  ) : (
+                    <Checkbox
+                      key={m.key}
+                      checked={ticked.includes(m.key)}
+                      // What withholding it costs rides on the title rather than
+                      // in the layout: forty sentences on one page is clutter
+                      // rather than help, the same trade the microphone's own
+                      // guidance makes.
+                      title={m.note}
+                      onChange={() =>
+                        change(
+                          ticked.includes(m.key)
+                            ? ticked.filter((k) => k !== m.key)
+                            : [...ticked, m.key],
+                        )
+                      }
+                      className="min-w-0 py-[1px]"
+                      label={<span className="truncate text-[13px] text-body">{m.label}</span>}
+                    />
+                  ),
+                )}
               </span>
             </div>
           ))}
         </div>
       ) : null}
 
-      {/* THE POWERS, under the screens they act on. An ERP administrator holds
-          every one without a tick, so the boxes would be a question with no
-          effect; the line says so instead. */}
+      {/* THE POWERS, under the screens they act on. An administrator of the
+          app holds every one without a tick, so the boxes would be a question
+          with no effect; the line says so instead. Drawn for whoever can see
+          this dialog — a platform administrator, the only person the server
+          lets save it — with no separate "may give powers" gate any more. */}
       {on && powers ? (
         <div className="flex items-start gap-2 border-t border-divider bg-surface px-2.5 py-1.5">
           <span className="w-[132px] flex-none pt-[3px] text-[10px] leading-[14px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
@@ -1521,11 +1648,24 @@ type Changes = {
   revoked: AppId[];
   narrowed: AppId[];
   widened: AppId[];
+  /**
+   * An app kept, at a different LEVEL. This is the change that moves what
+   * somebody may DO, and it used to be invisible: a dialog that only moved a
+   * telecaller from associate to manager reported "Nothing has changed" and
+   * disabled Save, so the one decision on the page with the largest
+   * consequence could not be made at all.
+   */
+  releveled: Array<{ app: AppId; from: RoleId; to: RoleId }>;
   unchanged: AppId[];
   any: boolean;
 };
 
-function describeChanges(before: Draft, after: Draft): Changes {
+function describeChanges(
+  before: Draft,
+  after: Draft,
+  levelsBefore: Record<string, RoleId>,
+  levelsAfter: Record<string, RoleId>,
+): Changes {
   const beforeApps = Object.keys(before) as AppId[];
   const afterApps = Object.keys(after) as AppId[];
 
@@ -1533,13 +1673,18 @@ function describeChanges(before: Draft, after: Draft): Changes {
   const revoked = beforeApps.filter((a) => !afterApps.includes(a));
   const narrowed: AppId[] = [];
   const widened: AppId[] = [];
+  const releveled: Changes["releveled"] = [];
   const unchanged: AppId[] = [];
 
   for (const a of afterApps.filter((x) => beforeApps.includes(x))) {
     const was = before[a] ?? [];
     const now = after[a] ?? [];
-    if (was.length === now.length && now.every((m) => was.includes(m))) unchanged.push(a);
-    else if (now.length < was.length) narrowed.push(a);
+    const from = levelsBefore[a] ?? "associate";
+    const to = levelsAfter[a] ?? "associate";
+    if (from !== to) releveled.push({ app: a, from, to });
+    if (was.length === now.length && now.every((m) => was.includes(m))) {
+      if (from === to) unchanged.push(a);
+    } else if (now.length < was.length) narrowed.push(a);
     else widened.push(a);
   }
 
@@ -1548,8 +1693,9 @@ function describeChanges(before: Draft, after: Draft): Changes {
     revoked,
     narrowed,
     widened,
+    releveled,
     unchanged,
-    any: granted.length + revoked.length + narrowed.length + widened.length > 0,
+    any: granted.length + revoked.length + narrowed.length + widened.length + releveled.length > 0,
   };
 }
 
@@ -1565,11 +1711,9 @@ function ReviewStep({
   creating,
   email,
   phone,
-  role,
   changes,
   draft,
-  roleDraft,
-  accountRole,
+  levels,
   powerChange,
   hrmsPowerChange,
 }: {
@@ -1577,12 +1721,10 @@ function ReviewStep({
   creating: boolean;
   phone: string;
   email: string;
-  role: string;
   changes: Changes;
   draft: Draft;
-  /** The hat each granted app will be held under, after this save. */
-  roleDraft: Record<string, RoleId>;
-  accountRole: RoleId;
+  /** The level each granted app will be held under, after this save. */
+  levels: Record<string, RoleId>;
   /** The ERP powers before and after, where they change. */
   powerChange: { before: string[]; after: string[] } | null;
   /** The HRMS powers before and after, where they change. */
@@ -1593,8 +1735,13 @@ function ReviewStep({
      and "Associate and Associate" is not a warning anybody can act on. */
   const hatName = (h: { app: string; level?: string }) =>
     `${h.level ? roleName(h.level as RoleId) : "Anyone"} in ${appName(h.app as AppId)}`;
-  const roleOf = (id: AppId) => roleDraft[id] ?? accountRole;
+  const roleOf = (id: AppId): RoleId => levels[id] ?? "associate";
   const roleName = (id: RoleId) => ROLES.find((r) => r.id === id)?.label ?? id;
+  /* The level said the way the select said it, so "Admin — the whole
+     platform" reads the same on the page that writes it as on the page that
+     chose it — plus what it carries, from the same matrix. */
+  const levelLine = (id: AppId, level: RoleId) =>
+    `${levelOptionLabel(level, id, appName(id))}. Carries: ${levelCarries(id, level).join("; ")}.`;
 
   /*
    * WHAT THE COMBINATION LETS THEM DO, said before it is written.
@@ -1644,9 +1791,9 @@ function ReviewStep({
                happen, cannot repeat, and which reaches nobody at all on an
                account with no address. The password is generated on the next
                page and read out. */
-            detail: `${role}, signing in with ${[phone, email].filter(Boolean).join(" or ")}${
+            detail: `signing in with ${[phone, email].filter(Boolean).join(" or ")}${
               phone && email ? " — whichever they prefer" : ""
-            }.`,
+            }. Their account level is worked out from the levels below.`,
           },
         ]
       : []),
@@ -1656,6 +1803,26 @@ function ReviewStep({
       tag: "Grant",
       what: appName(a),
       detail: `${scope(a)}, as ${roleName(roleOf(a)).toLowerCase()}.`,
+    })),
+    /* A LEVEL ROW FOR EVERY APP GRANTED, as well as for every level changed,
+       and with what the level carries spelled out. The grant line above says
+       "as manager"; this says what that means, because a new grant's level
+       is a decision as large as any change to an old one. */
+    ...changes.granted.map((a) => ({
+      key: `gl:${a}`,
+      tone: "success" as const,
+      tag: "Level",
+      what: `${appName(a)}:`,
+      detail: levelLine(a, roleOf(a)),
+    })),
+    ...changes.releveled.map(({ app: a, from, to }) => ({
+      key: `l:${a}`,
+      tone: (ROLES.findIndex((r) => r.id === to) < ROLES.findIndex((r) => r.id === from) ? "warn" : "success") as
+        | "warn"
+        | "success",
+      tag: "Level",
+      what: `${appName(a)}: ${roleName(from)} → ${roleName(to)}.`,
+      detail: levelLine(a, to),
     })),
     ...changes.widened.map((a) => ({
       key: `w:${a}`,

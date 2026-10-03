@@ -1,4 +1,5 @@
 import "server-only";
+import { canOpenModule } from "@/lib/access";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
@@ -61,6 +62,16 @@ export async function requireFounderDesk() {
     .where(and(eq(appAccess.userId, ctx.user.id), eq(appAccess.app, "founder")))
     .limit(1);
   if (!founder) throw new NotPermittedError("whatsapp.activate");
+  /*
+   * AND THE DESK ITSELF. The Command Centre is narrowed by module, and a
+   * delegate given (say) Money and nothing else holds the founder grant and the
+   * capability with it — the capability rides on the app, not the module. The
+   * WhatsApp desk's page is behind `founder.whatsapp`; the actions it posts to
+   * are URLs, so they ask the same thing the page does.
+   */
+  if (!(await canOpenModule(ctx.user.id, "founder.whatsapp"))) {
+    throw new NotPermittedError("whatsapp.activate");
+  }
   return { ...ctx, authorisedIn: "founder" as const };
 }
 

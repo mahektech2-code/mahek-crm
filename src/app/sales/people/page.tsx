@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { stamp } from "@/lib/format";
 import { fieldTeam, knownPlaces, knownRegions, managers } from "@/lib/services/sales-service";
-import { getCurrentUser, isManager } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
+import { isPlatformAdmin } from "@/lib/access-control";
 import { Credentials } from "./credentials";
 import { Managers } from "./managers";
 import { Territories, WorksCell } from "./territories";
@@ -48,12 +49,14 @@ export default async function Page({
     getCurrentUser(),
   ]);
 
-  /* Handing out credentials is guarded by `isManager` in `people.ts`, not by
-     holding the Sales Dashboard, and that boundary is deliberate: a sign-in is
-     an account decision rather than a sales one. Resolved here so the control
-     can be drawn disabled with the reason on it, rather than as a button that
-     fails when it is pressed. */
-  const canManageAccounts = !!me && isManager(me);
+  /* Handing out credentials is a PLATFORM ADMINISTRATOR's, checked in
+     `people.ts` by `requirePlatformAdminUser`, not by holding the Sales
+     Dashboard and no longer by `isManager` either: a sign-in is an account
+     decision rather than a sales one, and the actions refuse everybody else.
+     Resolved here so the two controls are not drawn at all for somebody who
+     could only ever be refused by them — the handset release beside them is
+     the Sales Dashboard's own act and stays. */
+  const canManageAccounts = !!me && (await isPlatformAdmin(me));
 
   /* A CLOSED account is left out: its handset is not showing an empty book,
      it is not signing in at all, and naming a leaver in a banner about work

@@ -153,7 +153,7 @@ function Photographs({ items }: { items: Attachment[] }) {
 
 export function ComplaintsScreen({
   scopeLabel,
-  isManager,
+  canResolve,
   isTeamView,
   rows,
   events,
@@ -162,7 +162,14 @@ export function ComplaintsScreen({
   maxImages,
 }: {
   scopeLabel: string;
-  isManager: boolean;
+  /**
+   * Holds `complaint.resolve` — the capability `resolveComplaint` asks. It was
+   * `isManager`, which disagreed with the action in both directions: a manager
+   * of some other app was drawn a button the save refused, and anybody the
+   * matrix lets resolve who was not a manager was refused a button the save
+   * would have allowed.
+   */
+  canResolve: boolean;
   isTeamView: boolean;
   rows: Row[];
   events: Record<string, Event[]>;
@@ -564,10 +571,10 @@ export function ComplaintsScreen({
             <div className="flex gap-2.5 border-t border-line px-5 py-3">
               <Button
                 variant="primary"
-                disabled={busy || !isManager || CLOSED.includes(current.status)}
+                disabled={busy || !canResolve || CLOSED.includes(current.status)}
                 title={
-                  !isManager
-                    ? "Closing a complaint is a manager action"
+                  !canResolve
+                    ? "Closing a complaint needs the right to resolve complaints"
                     : CLOSED.includes(current.status)
                       ? "Already resolved"
                       : undefined

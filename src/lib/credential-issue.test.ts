@@ -51,6 +51,14 @@ async function makeUser(name: string, role: "manager" | "associate" | "admin") {
     })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: row.id, app: "crm", role });
+  /* A PLATFORM administrator is whoever holds the Admin Console at the admin
+     level — `admin` on the account alone, or on the CRM, is admin of nothing
+     but the CRM. Issuing a credential is a platform administrator's act. */
+  if (role === "admin") {
+    await db
+      .insert(appAccess)
+      .values({ id: id("aca"), userId: row.id, app: "admin", role: "admin" });
+  }
   return row;
 }
 
@@ -74,7 +82,9 @@ beforeEach(async () => {
   boss = await makeUser("Boss", "manager");
   admin = await makeUser("Admin", "admin");
   clerk = await makeUser("Clerk", "associate");
-  setTestUser(boss);
+  /* Issuing is a platform administrator's act and nobody else's — see the
+     refusals below — so the ordinary actor here is the administrator. */
+  setTestUser(admin);
 });
 
 after(async () => {
@@ -131,7 +141,10 @@ test("two issues on one account never produce the same password", async () => {
 test("a manager may not mint a way into an administrator's account", async () => {
   /* The escalation this guard exists for: seeing the result IS the access, so
      without it any manager could read themselves into admin and leave "issued
-     a credential" in the log rather than "escalated". */
+     a credential" in the log rather than "escalated". A manager of an app is
+     now refused before the target is even read — issuing is a PLATFORM
+     administrator's act, whoever it is for. */
+  setTestUser(boss);
   const r = await issueCredential(admin.id);
   assert.equal(r.ok, false);
   if (r.ok) return;
@@ -143,7 +156,6 @@ test("a manager may not mint a way into an administrator's account", async () =>
 });
 
 test("an administrator may, because there is nothing above them to escalate to", async () => {
-  setTestUser(admin);
   const r = await issueCredential(boss.id);
   assert.equal(r.ok, true, r.ok ? "" : r.error);
 });
@@ -212,7 +224,7 @@ test("THE AUDIT RECORDS THAT ONE WAS ISSUED AND NEVER WHAT IT WAS", async () => 
     .where(eq(auditLog.entityId, clerk.id));
   assert.equal(rows.length, 1);
   assert.equal(rows[0].action, "issue-credential");
-  assert.equal(rows[0].actorId, boss.id);
+  assert.equal(rows[0].actorId, admin.id);
 
   const written = JSON.stringify(rows[0]);
   assert.ok(
@@ -233,6 +245,17 @@ test("an account with neither identifier is refused rather than handed a useless
 test("somebody who is not a manager cannot issue one at all", async () => {
   setTestUser(clerk);
   const r = await issueCredential(boss.id);
+  assert.equal(r.ok, false);
+  if (r.ok) return;
+  assert.equal(r.code, "not_permitted");
+});
+
+test("nor can a manager, even for somebody below them", async () => {
+  /* It used to be any manager, for anybody at or below their own level. A
+     manager of one app could then hand themselves a way into every account
+     their level outranked, so it is the platform administrator's alone. */
+  setTestUser(boss);
+  const r = await issueCredential(clerk.id);
   assert.equal(r.ok, false);
   if (r.ok) return;
   assert.equal(r.code, "not_permitted");

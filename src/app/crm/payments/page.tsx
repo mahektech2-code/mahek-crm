@@ -1,4 +1,5 @@
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
 import {
   followUpWorklistPage,
@@ -148,7 +149,8 @@ export default async function PaymentsPage({
       // reading it has to know whose. On their own book every row is theirs,
       // so naming a person on each one is a column of the same word repeated.
       showAssignee={scope === "team"}
-      isManager={isManager(user)}
+      canBulk={await canFor(user, "whatsapp.bulk")}
+      canExport={await canFor(user, "customer.export")}
       aging={aging}
       workingDaysLeft={workingDaysLeft}
       plan={plan}

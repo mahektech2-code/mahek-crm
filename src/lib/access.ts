@@ -67,8 +67,9 @@ export const listUserModules = cache(async function listUserModules(
 
   const granted = rows.map((r) => r.module);
 
-  /* The level held IN THIS APP, and nothing else — admin of an app opens every
-     module of THAT app. A grant with no level is an associate's, the same rule
+  /* The level held IN THIS APP, and nothing else — admin of an app is let past
+     THAT app's off-by-default screens, ticked or not (never an explicit-only
+     seat; see `moduleAllowed`). A grant with no level is an associate's, the same rule
      `levelInApp` reads; no grant means no level at all. */
   const [hat] = await db
     .select({ grant: appAccess.role })

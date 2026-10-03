@@ -3,14 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { requireActIn, requireSection, founderAccess, NotAllowedHere } from "@/lib/command-centre/access";
+import { requireActIn, requireNoteIn, requireSection, founderAccess, NotAllowedHere } from "@/lib/command-centre/access";
 import { readPeriodState } from "@/lib/command-centre/period";
 import { providerFor } from "@/lib/command-centre/registry";
 import { addNote, pageOf, refusal, type Ctx } from "@/lib/command-centre/provider";
 import { companyFigure } from "@/lib/command-centre/company";
 import { inboxFor, handOn, snooze, clearMark } from "@/lib/command-centre/inbox";
 import { globalSearch, searchRecord, type SearchKind } from "@/lib/command-centre/search";
-import { quickForm, quickRun } from "@/lib/command-centre/quick";
+import { QUICK_SECTION, quickForm, quickRun } from "@/lib/command-centre/quick";
 import { ask } from "@/lib/command-centre/ask";
 import type {
   FigureDrawer,
@@ -107,7 +107,9 @@ export async function runAction(
 
 export async function addNoteAction(kind: string, id: string, note: string): Promise<Result> {
   try {
-    const { user } = await founderAccess();
+    /* The section that owns this record, and a level that may act in it —
+       see `NOTE_SECTIONS`. Holding the app is not holding every record in it. */
+    const { user } = await requireNoteIn(kind);
     const text = note.trim();
     if (!text) return { ok: false, error: "Write the note first", fieldErrors: { n: "Note is needed" } };
     if (text.length > 4000) return { ok: false, error: "Keep the note under 4,000 characters", fieldErrors: { n: "Too long" } };
@@ -162,7 +164,11 @@ export async function optionsAction(kind: string, q: string): Promise<{ v: strin
 
 export async function quickFormAction(index: number, period: PeriodIn): Promise<Result<FormSpec>> {
   try {
-    const { user } = await founderAccess();
+    /* The form names real records — the price requests waiting, the approved
+       templates — so it is shown only to somebody who may open its section. */
+    const section = QUICK_SECTION[index];
+    if (!section) throw new NotAllowedHere("No such action.");
+    const { user } = await requireSection(section);
     return { ok: true, data: await quickForm(await ctxFor(period, user.id), index) };
   } catch (e) {
     return refusal(e) as Result<FormSpec>;
@@ -171,10 +177,12 @@ export async function quickFormAction(index: number, period: PeriodIn): Promise<
 
 export async function quickRunAction(index: number, input: Record<string, string>, period: PeriodIn): Promise<Result> {
   try {
-    const { user, level } = await founderAccess();
-    if (level === "associate" && index !== 5 && index !== 6) {
-      return { ok: false, error: "Your access to the Command Centre is read-only here." };
-    }
+    /* The section's module AND a level that may act there. This used to be a
+       level check alone, with two indices let through for associates — which
+       let a delegate act in a section they were never given. */
+    const section = QUICK_SECTION[index];
+    if (!section) throw new NotAllowedHere("No such action.");
+    const { user } = await requireActIn(section);
     const r = await quickRun(await ctxFor(period, user.id), index, input);
     if (r.ok) revalidatePath("/founder");
     return r;
@@ -184,10 +192,24 @@ export async function quickRunAction(index: number, input: Record<string, string
 }
 
 export async function askAction(question: string, period: PeriodIn) {
-  const { user } = await founderAccess();
+  const { user, allowed } = await founderAccess();
   const ctx = await ctxFor(period, user.id);
   try {
-    return { ok: true as const, data: await ask(ctx.period, user.id, question) };
+    const answer = await ask(ctx.period, user.id, question);
+    /*
+     * AN ANSWER IS A READ OF THE SECTION IT COMES FROM. "Who is furthest
+     * behind" is the Targets screen's figure and "what did we collect" is
+     * Money's; answering either to a delegate who holds neither section would
+     * make the question box a way round the module narrowing. The section is
+     * the one the answer links to, so the rule and the link cannot disagree.
+     */
+    if (!allowed.includes(answer.go)) {
+      return {
+        ok: false as const,
+        error: "That answer comes from a section that is not part of your access.",
+      };
+    }
+    return { ok: true as const, data: answer };
   } catch (e) {
     return { ok: false as const, error: e instanceof Error ? e.message : "That could not be answered." };
   }

@@ -620,6 +620,12 @@ describe("E — the Lost list", () => {
   test("a reopened lead leaves the Lost list, and the same id is the one that comes back", async () => {
     const lead = await makeLead({ leadStage: "qualification" });
     await loseAs(manager, lead.id);
+    /* The Lost list is a `managerScope` read, and a test names no app on its
+       request — so the reader's level is asked on the Sales Dashboard. A CRM
+       manager with no Sales grant is narrowed to their own book there, which
+       holds nothing; the manager reading the list holds it as a manager. */
+    await db.insert(appAccess).values({ id: id("aca"), userId: manager.id, app: "sales", role: "manager" });
+    setTestUser(manager);
     assert.deepEqual((await lostLeadsPage()).rows.map((r) => r.id), [lead.id]);
     assert.equal((await reverse(lead.id)).ok, true);
     assert.deepEqual((await lostLeadsPage()).rows.map((r) => r.id), []);

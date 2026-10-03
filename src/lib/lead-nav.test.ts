@@ -28,7 +28,7 @@ describe("what stays in the main navigation", () => {
   it("the CRM keeps six, in the order the work happens", () => {
     assert.deepEqual(
       crmItems().filter((i) => !i.legacy).map((i) => i.label),
-      ["All Leads", "Intake", "Telecaller", "Sales Manager", "Distributor appointments", "Lost"],
+      ["All Leads", "Intake", "Calling desk", "Sales Manager", "Distributor appointments", "Lost"],
     );
   });
 
@@ -37,11 +37,11 @@ describe("what stays in the main navigation", () => {
       salesItems().filter((i) => !i.legacy).map((i) => i.label),
       ["All Leads", "Intake", "Sales Manager", "Distributor appointments"],
     );
-    assert.ok(!salesItems().some((i) => i.label === "Telecaller" || i.label === "Lost"));
+    assert.ok(!salesItems().some((i) => i.label === "Calling desk" || i.label === "Lost"));
   });
 
   it("the rows that stay are the same set in both apps, apart from those two", () => {
-    const strip = (labels: string[]) => labels.filter((l) => l !== "Telecaller" && l !== "Lost");
+    const strip = (labels: string[]) => labels.filter((l) => l !== "Calling desk" && l !== "Lost");
     assert.deepEqual(
       strip(crmItems().filter((i) => !i.legacy).map((i) => i.label)).sort(),
       salesItems().filter((i) => !i.legacy).map((i) => i.label).sort(),

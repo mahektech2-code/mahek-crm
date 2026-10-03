@@ -8530,7 +8530,11 @@ describe("the call list is settled once a day", () => {
     assert.equal(stillSettled.entries.length, before.entries.length);
 
     const admin = await makeUser("Console Admin", "admin");
-    await db.insert(appAccess).values({ id: id("aca"), userId: admin.id, app: "admin" });
+    // At the admin LEVEL: a grant with no level of its own is an associate's,
+    // and only the Admin Console held as admin is a platform administrator.
+    await db
+      .insert(appAccess)
+      .values({ id: id("aca"), userId: admin.id, app: "admin", role: "admin" });
     setTestUser(admin);
     const rebuilt = await rebuildQueues([priya.id]);
     assert.equal(rebuilt.ok, true, rebuilt.ok ? "" : rebuilt.error);
@@ -8574,7 +8578,11 @@ describe("the call list is settled once a day", () => {
     assert.ok(rakeshBefore, "rakesh had no list to leave alone");
 
     const admin = await makeUser("Narrow Admin", "admin");
-    await db.insert(appAccess).values({ id: id("aca"), userId: admin.id, app: "admin" });
+    // At the admin LEVEL: a grant with no level of its own is an associate's,
+    // and only the Admin Console held as admin is a platform administrator.
+    await db
+      .insert(appAccess)
+      .values({ id: id("aca"), userId: admin.id, app: "admin", role: "admin" });
     setTestUser(admin);
     assert.equal((await rebuildQueues([priya.id])).ok, true);
 
@@ -9372,10 +9380,13 @@ describe("a person wears several hats", () => {
     assert.equal(canAny(hats, "creditnote.issue"), false, "an associate issued a credit note");
   });
 
-  test("a grant with no hat of its own means the account's level", async () => {
-    // What every grant meant before this column existed, and what
-    // `npm run app:grant` still writes — a terminal that knows nothing about
-    // roles has to go on granting an app that works.
+  test("a grant with no level of its own is an associate's", async () => {
+    // It used to mean the account's level — what every grant meant before
+    // this column existed. That let a `manager` account carry manager powers
+    // into any app it was handed with no level written down, and an `admin`
+    // account carry everything everywhere. A grant now says nothing more than
+    // it says: `npm run app:grant` and the provisioning endpoint, which know
+    // nothing about levels, still grant an app that OPENS — at its base level.
     const deepa = await makeUser("Inherits", "manager", undefined, null);
     await db.insert(appAccess).values({
       id: id("aca"),
@@ -9387,10 +9398,15 @@ describe("a person wears several hats", () => {
     const hats = await hatsFor(deepa);
     assert.deepEqual(
       hats.map((h) => `${h.app ?? "-"}:${h.role}`).sort(),
-      ["-:manager", "accounts:manager"],
+      ["-:manager", "accounts:associate"],
     );
-    assert.equal(canAny(hats, "order.approve"), true);
-    assert.equal(canAny(hats, "customer.classify"), true, "an accounts manager did not classify");
+    assert.equal(canAny(hats, "payment.record"), true, "the app did not open at its base level");
+    assert.equal(canAny(hats, "order.approve"), false, "an unlevelled grant approved an order");
+    assert.equal(
+      canAny(hats, "customer.classify"),
+      false,
+      "an unlevelled grant borrowed the account's manager level",
+    );
   });
 
   test("THE ACCOUNT'S OWN LEVEL IS NOT A GRANT", async () => {
@@ -9463,18 +9479,31 @@ describe("a person wears several hats", () => {
     assert.equal(narrow.scope.kind, "own", "an associate saw more than their own book");
   });
 
-  test("the primary role is the widest hat, so scope follows the grant", async () => {
+  test("the primary role is derived from the hats, and admin means the platform", async () => {
     /*
      * `users.role` decides mine/team/all through `isManager`, read by
      * thirty-one screens. Rather than teach every one of them about a list it
      * is a cache of the hats — and granting somebody the manager hat in the
      * CRM has to give them their team on the day it is granted, which is what
      * whoever granted it expects.
+     *
+     * It is no longer simply the WIDEST hat. Admin of an app is admin of that
+     * app, so administering the CRM reads `manager` on the account; only the
+     * Admin Console held at the admin level reads `admin`, because that is the
+     * one grant that means the platform. An account-level hat (no app) is not
+     * a grant and moves nothing.
      */
     const hat = (app: string | null, role: "associate" | "manager" | "admin") =>
       ({ app, role }) as Parameters<typeof widestRole>[0][number];
     assert.equal(widestRole([hat("crm", "associate"), hat("crm", "manager")]), "manager");
-    assert.equal(widestRole([hat("crm", "manager"), hat(null, "admin")]), "admin");
+    assert.equal(widestRole([hat("crm", "admin")]), "manager", "admin of the CRM became a platform admin");
+    assert.equal(widestRole([hat("crm", "manager"), hat("admin", "admin")]), "admin");
+    assert.equal(widestRole([hat("admin", "associate")]), "associate");
+    assert.equal(
+      widestRole([hat("crm", "manager"), hat(null, "admin")]),
+      "manager",
+      "the account's own level was read as a grant",
+    );
     assert.equal(widestRole([hat("crm", "associate")]), "associate");
   });
 
@@ -9482,43 +9511,66 @@ describe("a person wears several hats", () => {
     // The matrix keeps approving orders away from managers on purpose. At nine
     // people the same person does have to do both — so it is allowed, said in
     // words where it is granted, and recorded on every action taken under it.
+    //
+    // ONE warning for the CRM against the ledger desk, where there used to be
+    // three for one pair of grants: three warnings about one decision is how
+    // people learn to scroll past the box.
     const both = conflictsFor([
       { app: "crm", role: "manager" },
       { app: "accounts", role: "manager" },
     ]);
-    assert.equal(both.length, 3, "the CRM manager / Accounts manager pair lost its warnings");
+    assert.equal(both.length, 1, "the CRM / Accounts manager pair lost its warning, or grew extra");
     assert.match(
       both.map((c) => c.sentence).join(" "),
-      /should not sign off the orders that hit it/i,
+      /approve the orders that hit their own target/i,
     );
 
-    // An associate at the desk decides nothing, so there is nothing to clash.
-    assert.deepEqual(
+    // An Accounts associate is not the harmless clerk this once assumed: the
+    // price list is edited at BOTH levels, so the person quoting prices on a
+    // call and setting them is a pair worth naming.
+    assert.match(
       conflictsFor([
         { app: "crm", role: "associate" },
         { app: "accounts", role: "associate" },
-      ]),
-      [],
-      "an Accounts associate who cannot confirm a payment was warned about anyway",
+      ])
+        .map((c) => c.sentence)
+        .join(" "),
+      /price lists/i,
+      "quoting a price and setting it was not named",
     );
 
-    // Reporting money and then confirming it is the classic one.
+    // Reporting money and then confirming it is the classic one — and it is the
+    // same single CRM / ledger-desk rule, not a second warning beside it.
     assert.equal(
       conflictsFor([
         { app: "crm", role: "associate" },
         { app: "accounts", role: "manager" },
       ]).length,
-      2,
-      "reporting money and confirming it is one conflict; carrying a target and setting one is a second",
+      1,
+      "a telecaller who also decides at the ledger desk drew the wrong number of warnings",
     );
 
-    // Two levels of one app is not a conflict, and neither is an admin —
-    // four warnings on every administrator is four warnings nobody reads.
+    // Two levels of one app is not a conflict.
     assert.deepEqual(conflictsFor([{ app: "crm", role: "manager" }]), []);
-    assert.deepEqual(
+
+    // Admin of an app is admin OF THAT APP, so it clashes like the manager of
+    // it would — it no longer silences every warning.
+    assert.equal(
       conflictsFor([
         { app: "crm", role: "admin" },
         { app: "accounts", role: "admin" },
+      ]).length,
+      1,
+      "an app administrator was waved through as though they held the platform",
+    );
+
+    // A PLATFORM administrator holds everything everywhere, so every pair is
+    // true of them — five warnings on every administrator is five nobody reads.
+    assert.deepEqual(
+      conflictsFor([
+        { app: "admin", role: "admin" },
+        { app: "crm", role: "manager" },
+        { app: "accounts", role: "manager" },
       ]),
       [],
     );

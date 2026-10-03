@@ -186,17 +186,29 @@ describe("customers", () => {
 });
 
 describe("powers and godowns", () => {
-  test("powers are given on the Access dialog, only by an ERP administrator, and a given power reveals its column", async () => {
+  test("powers are given on the Access dialog, only by a platform administrator, and a given power reveals its column", async () => {
     const whole = { app: "erp", modules: moduleKeysForApp("erp"), role: "associate" as const };
-    /* A manager may grant the ERP itself, and is still refused the powers:
-       moving the control to the Admin Console did not lower the bar on it. */
+    /* A manager is refused the powers: moving the control to the Admin
+       Console did not lower the bar on it. */
     const manager = await makeUser("Ravi Manager", "manager");
     setTestUser(manager);
     const refused = await setAccess({ userId: clerk.id, grants: [whole], erpPowers: ["viewPurchaseMoney"] });
     assert.ok(!refused.ok);
     assert.equal((await as(clerk)).powers.has("viewPurchaseMoney"), false);
 
+    /* And so is the ERP's own administrator. Admin of an app holds every
+       power INSIDE it, but changing what somebody else can reach is the
+       platform's — the Access dialog lives on the Admin Console and its save
+       is a platform administrator's alone, or an app administrator could
+       grant themselves admin of every other app from the same URL. */
     setTestUser(admin);
+    const byErpAdmin = await setAccess({ userId: clerk.id, grants: [whole], erpPowers: ["viewPurchaseMoney"] });
+    assert.ok(!byErpAdmin.ok, "an ERP administrator changed somebody's access");
+    assert.equal((await as(clerk)).powers.has("viewPurchaseMoney"), false);
+
+    const platform = await makeUser("Meera Platform", "admin", false);
+    await db.insert(appAccess).values({ id: id("aca"), userId: platform.id, app: "admin", role: "admin" });
+    setTestUser(platform);
     const given = await setAccess({ userId: clerk.id, grants: [whole], erpPowers: ["viewPurchaseMoney", "notAPower"] });
     assert.ok(given.ok, JSON.stringify(given));
     const c2 = await as(clerk);
@@ -205,7 +217,7 @@ describe("powers and godowns", () => {
     assert.ok(spec.cols.some((x) => x.k === "price"));
 
     /* Taking the ERP away takes its powers with it, like its screens. */
-    setTestUser(admin);
+    setTestUser(platform);
     const other = await makeUser("Sunil Other", "associate");
     await db.insert(appAccess).values({ id: id("aca"), userId: other.id, app: "crm", role: "associate" });
     await setAccess({ userId: other.id, grants: [whole, { app: "crm", modules: moduleKeysForApp("crm"), role: "associate" }], erpPowers: ["viewCost"] });

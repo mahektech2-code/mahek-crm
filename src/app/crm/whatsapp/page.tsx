@@ -1,5 +1,5 @@
-import { isManager, requireUser } from "@/lib/auth";
-import { getScope, scopeLabel } from "@/lib/scope";
+import { requireUser } from "@/lib/auth";
+import { getScope, managesHere, scopeLabel } from "@/lib/scope";
 import { dayActivity, listCustomers, today } from "@/lib/queries";
 import { getFollowUpWorklist, listBills } from "@/lib/services/payment-service";
 import {
@@ -36,7 +36,9 @@ export default async function WhatsappPage({
 }) {
   const { customer, tab, chat } = await searchParams;
   const user = await requireUser();
-  const scope = await getScope(user);
+  const scope = await getScope(user, "crm");
+  /* A manager of the CRM, not of any app — see `managesHere`. */
+  const managerHere = await managesHere(user, "crm");
   const now = nowMs();
   const day = await today();
 
@@ -68,7 +70,7 @@ export default async function WhatsappPage({
      * as it was and is still the authority on what a statement may quote.
      */
     listBills({ openOnly: true }),
-    isManager(user) ? listUnconfirmedCopies() : Promise.resolve([]),
+    managerHere ? listUnconfirmedCopies() : Promise.resolve([]),
     /*
      * The log read is capped at 300 and this is not. Two questions: what the
      * screen can draw, and what that is a slice of. The Log tab used to count
@@ -133,7 +135,7 @@ export default async function WhatsappPage({
   return (
     <WhatsappScreen
       scopeLabel={scopeLabel(scope, user)}
-      isManager={isManager(user)}
+      isManager={managerHere}
       // Manual is the default and stays fully usable — automatic sending is an
       // addition, never a replacement.
       mode={apiOn ? "automatic" : "manual"}

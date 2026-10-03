@@ -27,8 +27,14 @@ import {
   users,
 } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { canOpenModule, listUserApps } from "@/lib/access";
-import { assertCustomerInScope } from "@/lib/access-control";
+import { canOpenModule } from "@/lib/access";
+import {
+  assertCustomerInScope,
+  isPlatformAdmin,
+  levelInApp,
+  requireCapability,
+} from "@/lib/access-control";
+import { salesGateRefusal, scopeCovers } from "@/lib/sales-gate";
 import { inCrmSalesManagerWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { getConfig, updateSettings } from "@/lib/config/store";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
@@ -70,11 +76,16 @@ function plural(n: number, noun: string, pl?: string): string {
 /* ---------------------------------------------------------------------------
  * Every write the Sales Dashboard makes.
  *
- * **Holding the app is the permission.** That is this app's own rule and not
- * the capability matrix's: `access-control.ts` answers questions about roles,
- * and what a sales manager may do here was decided as "whoever is given the
- * Sales Dashboard", so the guard is the grant. It is checked in every action
- * and not merely by the layout, because a server action is a URL.
+ * **Holding the app USED to be the permission**, and it is not any more. The
+ * grant is asked first, then — for a decision — the LEVEL held on that grant,
+ * then the module the act belongs to; see `requireSalesAccess`. The grant
+ * alone let an associate given the app to read the team's day decide
+ * anything on it, and let a module withheld on the Access screen stay
+ * writable by URL. Where a write lands on a PERSON or a LEAD it is also asked
+ * whether that person or lead is in the caller's own scope — the same
+ * narrowing the screen ran — because the lists were narrowed and the writes
+ * behind them were not. All of it is checked in the action and not merely by
+ * the layout, because a server action is a URL.
  *
  * **One decision this app deliberately does NOT make.** An `order` approval is
  * accounts', by an explicit rule in AGENTS.md: the person chasing the target
@@ -86,29 +97,16 @@ function plural(n: number, noun: string, pl?: string): string {
 
 const gen = (prefix: string) => `${prefix}_${randomUUID().slice(0, 12)}`;
 
-/** Whoever holds the app. Checked here, not only in the layout. */
-async function requireSales() {
-  const user = await requireUser();
-  const apps = await listUserApps(user.id);
-  if (!apps.includes("sales")) {
-    throw Object.assign(new Error("The Sales Dashboard has not been granted to you."), {
-      name: "NotPermittedError",
-    });
-  }
-  return user;
-}
-
 /**
- * `requireSales`, or — inside the CRM Sales Manager workspace only — the
- * module that workspace answers to.
+ * The Sales Dashboard's lead door (`requireSalesAccess` on the lead modules),
+ * or — inside the CRM Sales Manager workspace only — the module that
+ * workspace answers to.
  *
  * Reassigning a lead is a Sales Manager action, and the CRM's Sales Manager
- * holds `crm.sales-manager`, not the Sales Dashboard. Everywhere else this is
- * `requireSales` unchanged, so the Sales Dashboard's own door is exactly what
- * it was.
+ * holds `crm.sales-manager`, not the Sales Dashboard.
  */
 async function requireSalesOrCrmSalesManager() {
-  if (!(await inCrmSalesManagerWorkspace())) return requireSales();
+  if (!(await inCrmSalesManagerWorkspace())) return requireSalesAccess({ modules: LEAD_MODULES });
   const user = await requireUser();
   if (!(await canOpenModule(user.id, "crm.sales-manager"))) {
     throw Object.assign(new Error("The CRM Sales Manager workspace has not been granted to you."), {
@@ -116,6 +114,111 @@ async function requireSalesOrCrmSalesManager() {
     });
   }
   return user;
+}
+
+/* ---------------------------------------------------------------------------
+ * THE GRANT IS NOT THE WHOLE PERMISSION, and these are the rest of it.
+ *
+ * The grant answers "were you given the Sales Dashboard", and for most of
+ * this file's life that was the only question asked. It is the wrong one for a
+ * decision: an associate given the app to read the team's day could approve
+ * leave, release a handset, redraw a manager's patch or publish a document to
+ * every phone in the field. And the MODULE was asked by the layout alone —
+ * unticking Holidays took the screen away and left the action that writes a
+ * holiday one POST away for anybody holding the app.
+ *
+ * `requireSalesAccess` asks all three: the grant, the LEVEL in the Sales
+ * Dashboard where the act is a decision (`levelInApp`, the level ON THE GRANT,
+ * never the widest one held anywhere), and the module the act belongs to. The
+ * rule itself is `salesGateRefusal` in `sales-gate.ts`, pure and tested; this
+ * is where it is wired to the session.
+ *
+ * WHAT IS A DECISION: answering a request, territory, handsets, holidays, leave
+ * entitlements, publishing to the field, tasks, journeys, lead batches,
+ * verdicts on visits and evidence, and messages to the field. What is NOT:
+ * reading, and the single-lead moves whose own scope check already limits an
+ * associate to the leads in their own book.
+ * ------------------------------------------------------------------------- */
+
+type SalesGate = {
+  /** Any ONE of these opens it. Empty asks no module — for a check that has
+      to read the record before it knows which screen the record belongs to. */
+  modules: readonly string[];
+  /** A manager or administrator of the Sales Dashboard. */
+  manager?: boolean;
+};
+
+function notPermitted(message: string) {
+  return Object.assign(new Error(message), { name: "NotPermittedError" });
+}
+
+async function requireSalesAccess(gate: SalesGate) {
+  const user = await requireUser();
+  const [level, platformAdmin, held] = await Promise.all([
+    levelInApp(user, "sales"),
+    isPlatformAdmin(user),
+    Promise.all(gate.modules.map((k) => canOpenModule(user.id, k))),
+  ]);
+  const refusal = salesGateRefusal({
+    level,
+    platformAdmin,
+    needManager: gate.manager === true,
+    modulesAsked: gate.modules,
+    modulesHeld: gate.modules.filter((_, i) => held[i]),
+  });
+  if (refusal) throw notPermitted(refusal);
+  return user;
+}
+
+/** Shorthand for the commonest shape: a manager's act on one screen. */
+const SALES_MANAGER = (...modules: string[]): SalesGate => ({ modules, manager: true });
+
+/**
+ * IS THIS PERSON IN MY TEAM — asked of the person a write lands on.
+ *
+ * The lists are narrowed by `managerScope` and the writes behind them were
+ * not: a regional manager could plan a route for, set the leave of, or move the
+ * patch of a salesman in another region by posting his id, because nothing
+ * between the screen and the table asked whether he was theirs. It is the same
+ * narrowing the screen ran, read through `scopeCovers` so the CRM Sales
+ * Manager seat's null is never taken for "everybody".
+ */
+async function salesmanOutsideScope(salesmanId: string): Promise<boolean> {
+  return !scopeCovers(await managerScope(), salesmanId);
+}
+
+const NOT_YOUR_TEAM = "That person is not in your team, so this is not yours to change.";
+
+/**
+ * ONE LEAD, ASKED THE QUESTION A BATCH ALREADY ASKS.
+ *
+ * The bulk actions read their ids through `leadsInScope` — "WHAT MAY BE TOUCHED
+ * IS ASKED OF THE DATABASE, never taken from the payload" — and the single-lead
+ * versions beside them asked nothing at all, so a regional manager could
+ * archive, restore, chase or reassign any lead in the company one id at a time.
+ * Same narrowing, one id.
+ */
+async function leadOutsideScope(leadId: string): Promise<boolean> {
+  return (await leadsInScope([leadId])).length === 0;
+}
+
+/** The screens a lead is worked from — either one opens a lead action. */
+const LEAD_MODULES = ["sales.leads", "sales.lead-pipeline"] as const;
+
+/**
+ * THE PRICE DESK, which is not the Sales Dashboard's.
+ *
+ * What a customer pays is `pricelist.manage` — the Accounts desk's and the
+ * founder's, by Mahek's own instruction, and deliberately nobody's whose
+ * target the price moves. The handset's rate table and its schemes ARE prices:
+ * a manager who could set the dealer rate on the Catalogue screen could cut
+ * his own team's prices to meet his own team's number, which is the conflict
+ * `order.approve` exists to keep away from managers, arriving by a side door.
+ * The screen stays where it is; the write asks the desk.
+ */
+async function requirePriceDesk() {
+  await requireSalesAccess({ modules: ["sales.catalogue"] });
+  return (await requireCapability("pricelist.manage")).user;
 }
 
 function refresh() {
@@ -182,7 +285,9 @@ export async function decideApproval(input: {
   approvedAmountPaise?: number;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    /* A manager's act, before anything is read: an associate is not told
+       whether the id exists. The screen is asked once the type is known. */
+    const user = await requireSalesAccess({ modules: [], manager: true });
 
     const [approval] = await db
       .select()
@@ -191,6 +296,67 @@ export async function decideApproval(input: {
       .limit(1);
 
     if (!approval) return err("That request no longer exists.", "not_found");
+
+    /*
+     * THREE KINDS HAVE A DESK OF THEIR OWN, and answering them here skipped it.
+     *
+     * A sample, a distributor appointment and a priced expense day each carry
+     * rules this generic answer knows nothing about — the sample machine and
+     * its `sample.approve`, the two-step chain whose second step is
+     * management's `distributor.approve`, and the expense day's partial
+     * amounts and escalations under `order.approve`. Deciding one here wrote
+     * `approved` on the row and went round every one of those rules, so the
+     * cheapest door to each was this one. Refused, with the way to the right
+     * door, rather than decided badly.
+     */
+    if (approval.type === "sample") {
+      return err(
+        "A sample is decided on the samples desk, where the approval checks the stock and the lead — Lead Management → Samples & trials.",
+        "not_permitted",
+      );
+    }
+    if (approval.type === "distributor_appointment") {
+      return err(
+        "Appointing a distributor is a two-step decision with its own screen — Lead Management → Distributor appointments.",
+        "not_permitted",
+      );
+    }
+    if (approval.subjectType === "mbos_expense_days") {
+      return err(
+        "A day's expenses are priced and decided on Expenses & claims, where the policy and the part amounts are.",
+        "not_permitted",
+      );
+    }
+
+    /* The screen this kind belongs to, or the Approvals queue that collects
+       them all. Withholding Leave from somebody must also withhold deciding it. */
+    const owning: Record<string, string> = {
+      leave: "sales.leave",
+      expense_claim: "sales.expenses",
+      tour: "sales.expenses",
+      attendance_regularisation: "sales.attendance",
+      territory: "sales.territory",
+    };
+    await requireSalesAccess({
+      modules: owning[approval.type] ? ["sales.approvals", owning[approval.type]] : ["sales.approvals"],
+      manager: true,
+    });
+
+    /* NOBODY ANSWERS THEIR OWN REQUEST. A manager who also carries a handset
+       raises leave and expenses like anybody else, and the queue he decides is
+       the one his own requests land in. */
+    if (approval.requestedByUserId === user.id) {
+      return err(
+        "This is your own request. Somebody else has to answer it — that is what makes it an approval.",
+        "not_permitted",
+      );
+    }
+
+    /* And only for their own team, the same narrowing `pendingApprovals` ran
+       to draw the row. A queue is a screen and a screen is not a permission. */
+    if (await salesmanOutsideScope(approval.requestedByUserId)) {
+      return err("That request is from somebody outside your team.", "not_permitted");
+    }
 
     if (approval.state !== "pending") {
       return err(
@@ -363,7 +529,8 @@ export async function saveJourneyPeriod(input: {
   minutesPerStop?: number;
 }): Promise<Result<{ saved: number; cleared: number; skipped: string[] }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
+    if (await salesmanOutsideScope(input.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
 
     if (!input.days.length) {
       return err("There are no days in that period.", "validation");
@@ -597,7 +764,8 @@ export async function proposeJourneyDays(input: {
   days: Array<{ planDate: string; city: string }>;
 }): Promise<Result<{ proposed: number; leftAlone: string[] }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
+    if (await salesmanOutsideScope(input.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
 
     if (!input.days.length) return err("There are no days to propose.", "validation");
     if (input.days.length > MAX_PLAN_DAYS) {
@@ -731,7 +899,7 @@ export async function answerRefusal(input: {
   city?: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
 
     const [plan] = await db
       .select()
@@ -739,6 +907,7 @@ export async function answerRefusal(input: {
       .where(eq(mbosJourneyPlans.id, input.planId))
       .limit(1);
     if (!plan) return err("That day is no longer on the plan.", "not_found");
+    if (await salesmanOutsideScope(plan.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
     if (plan.dayState !== "refused") {
       return err(
         `That day is ${plan.dayState}, not refused — there is nothing to answer.`,
@@ -830,7 +999,7 @@ export async function addHoliday(input: {
   scope?: string | null;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.holidays"));
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.onDate)) {
       return err("That is not a date.", "validation");
@@ -888,7 +1057,7 @@ export async function addHoliday(input: {
 /** Taking a day back off the calendar. */
 export async function removeHoliday(id: string): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.holidays"));
 
     const [row] = await db
       .select()
@@ -940,7 +1109,7 @@ export async function sendFieldNotification(input: {
   body: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.notify"));
 
     const title = input.title.trim();
     const body = input.body.trim();
@@ -958,7 +1127,11 @@ export async function sendFieldNotification(input: {
               .from(users)
               .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "field")))
               .where(and(inArray(users.id, ids), eq(users.active, true)));
-            return rows.map((r) => r.id);
+            /* Picked people are narrowed exactly as "everybody" is. The picker
+               offered only this manager's team, and a POST naming somebody
+               else's salesman must not reach his phone with this manager's
+               name on it. */
+            return rows.map((r) => r.id).filter((id) => scopeCovers(scope, id));
           })()
         : await (async () => {
             const mine = (col: string) => onlyMine(scope, col);
@@ -1028,7 +1201,7 @@ export async function setPriceListRate(input: {
   validFrom?: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requirePriceDesk();
 
     const tag = input.customerPriceTag.trim();
     if (!tag) return err("A rate needs a price tag — DEALER, DISTRIBUTOR, and so on.", "validation");
@@ -1089,7 +1262,7 @@ export async function setPriceListRate(input: {
 /** Withdrawing a rate without deleting it — the row stays for what it once explained. */
 export async function endPriceListRate(id: string): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requirePriceDesk();
 
     const [row] = await db.select().from(mbosPriceList).where(eq(mbosPriceList.id, id)).limit(1);
     if (!row) return err("That rate is no longer on the list.", "not_found");
@@ -1146,7 +1319,7 @@ export async function addScheme(input: {
   validTo?: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requirePriceDesk();
 
     const name = input.name.trim();
     if (!name) return err("A scheme needs a name — it is what a salesman sees on the order form.", "validation");
@@ -1191,7 +1364,7 @@ export async function addScheme(input: {
  */
 export async function withdrawScheme(id: string): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requirePriceDesk();
 
     const [row] = await db.select().from(mbosSchemes).where(eq(mbosSchemes.id, id)).limit(1);
     if (!row) return err("That scheme is no longer on the list.", "not_found");
@@ -1292,7 +1465,10 @@ export async function setSalesmanTerritories(input: {
   territories: { kind: string; value: string; parent?: string }[];
 }): Promise<Result<void>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.territory"));
+    /* His book is redrawn by this, so he has to be somebody this manager
+       oversees — the same narrowing the Salesmen list ran to offer him. */
+    if (await salesmanOutsideScope(input.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
 
     const [person] = await db
       .select({ id: users.id, name: users.name })
@@ -1411,7 +1587,35 @@ export async function setManagerTerritories(input: {
   regions: string[];
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.territory"));
+
+    /*
+     * NOBODY DRAWS THEIR OWN PATCH. An empty list here means national, so a
+     * regional manager allowed to edit his own row could make himself national
+     * in one click — every salesman's trail and photographs — and the
+     * notification about it would be addressed to himself.
+     */
+    if (input.managerId === user.id) {
+      return err(
+        "These are your own regions. Somebody else has to set them — an empty list here is the whole country.",
+        "not_permitted",
+      );
+    }
+
+    /*
+     * AND ONLY A NATIONAL MANAGER DRAWS ANYBODY'S. A regional manager setting
+     * somebody else's regions could hand them a region he does not cover
+     * himself, or — with an empty list — the whole country, which is wider
+     * than anything he holds. Allocating oversight is the act of somebody
+     * who already oversees everything; a platform administrator is national
+     * by construction, so this asks one question for both.
+     */
+    if (!(await managerScope()).national) {
+      return err(
+        "Regions are allocated by a manager who covers the whole country. Yours is a regional patch, so this is not yours to change.",
+        "not_permitted",
+      );
+    }
 
     const [manager] = await db
       .select({ id: users.id, name: users.name })
@@ -1524,7 +1728,7 @@ export async function releaseDevice(input: {
   reason: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.logins"));
 
     const reason = input.reason.trim();
     if (reason.length < 3) {
@@ -1540,6 +1744,8 @@ export async function releaseDevice(input: {
       .where(eq(mbosDevices.deviceId, input.deviceId))
       .limit(1);
     if (!row) return err("That handset is not registered to anybody.", "not_found");
+    /* Releasing signs somebody out mid-day, so it is for their own manager. */
+    if (await salesmanOutsideScope(row.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
     if (!row.active) {
       return err("That handset has already been released.", "validation");
     }
@@ -1653,6 +1859,12 @@ export async function reassignLead(input: {
         salesAmId: lead.salesAmId,
         salesManagerId: lead.salesManagerId,
       });
+    } else if (await leadOutsideScope(input.leadId)) {
+      /* Everywhere else, the narrowing `bulkReassignLeads` already runs on
+         every id it is handed — see `leadOutsideScope`. Answered as missing,
+         the same words the batch uses, so an id outside the book says nothing
+         about whether it exists. */
+      return err("That lead is no longer here, or not yours to change.", "not_found");
     }
     if (lead.leadArchived) {
       return err(
@@ -1763,7 +1975,10 @@ export async function exportLeadRows(input: {
   view?: LeadView;
 }): Promise<Result<{ rows: Array<Array<string | number>> }>> {
   try {
-    await requireSales();
+    await requireSalesAccess({ modules: LEAD_MODULES });
+    /* A whole filtered book leaving the building in a file is `customer.export`,
+       which the matrix keeps at the manager level for exactly this. */
+    await requireCapability("customer.export");
     const day = await today();
     const first = await leadsPage(day, {
       archived: input.archived,
@@ -1867,10 +2082,13 @@ export async function chaseLeadOwner(input: {
   note?: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES });
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
+    if (await leadOutsideScope(input.leadId)) {
+      return err("That lead is no longer here, or not yours to change.", "not_found");
+    }
     if (lead.leadArchived) {
       return err("That lead is archived, so there is nobody actively working it.", "validation");
     }
@@ -1904,7 +2122,7 @@ export async function chaseLeadOwner(input: {
  */
 export async function archiveLead(input: { leadId: string; reason: string }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES });
 
     const reason = input.reason.trim();
     if (!reason) {
@@ -1913,6 +2131,9 @@ export async function archiveLead(input: { leadId: string; reason: string }): Pr
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
+    if (await leadOutsideScope(input.leadId)) {
+      return err("That lead is no longer here, or not yours to change.", "not_found");
+    }
     if (lead.leadArchived) return ok(undefined, "Already archived.");
 
     await db
@@ -1951,10 +2172,13 @@ export async function archiveLead(input: { leadId: string; reason: string }): Pr
 /** The way back. */
 export async function restoreLead(input: { leadId: string }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES });
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
+    if (await leadOutsideScope(input.leadId)) {
+      return err("That lead is no longer here, or not yours to change.", "not_found");
+    }
     if (!lead.leadArchived) return ok(undefined, "Not archived.");
 
     await db
@@ -1997,7 +2221,7 @@ export async function restoreLead(input: { leadId: string }): Promise<Result> {
  * saying forty, not forty messages.
  *
  * WHAT MAY BE TOUCHED IS ASKED OF THE DATABASE, never taken from the payload.
- * `requireSales` answers "do you hold the Sales Dashboard", which every
+ * The grant answers "do you hold the Sales Dashboard", which every
  * regional manager does — it is not the same question as "may you move this
  * lead". `leadsInScope` runs `leadsVisible`, the same narrowing the list that
  * offered the selection ran, so a batch can only reach what the screen could
@@ -2076,7 +2300,7 @@ export async function leadIdsForSelection(input: {
   view?: LeadView;
 }): Promise<Result<{ ids: string[]; capped: boolean }>> {
   try {
-    await requireSales();
+    await requireSalesAccess({ modules: LEAD_MODULES });
     const day = await today();
     return ok(
       await leadIdsMatching(day, {
@@ -2102,7 +2326,7 @@ export async function bulkReassignLeads(input: {
   salesmanId: string;
 }): Promise<Result<BulkOutcome>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES, manager: true });
 
     const [salesman] = await db
       .select({ id: users.id, name: users.name, active: users.active })
@@ -2186,7 +2410,7 @@ export async function bulkArchiveLeads(input: {
   reason: string;
 }): Promise<Result<BulkOutcome>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES, manager: true });
 
     const reason = input.reason.trim();
     if (!reason) return err("Say why — this is what a manager reads later.", "validation");
@@ -2250,7 +2474,7 @@ export async function bulkRestoreLeads(input: {
   leadIds: string[];
 }): Promise<Result<BulkOutcome>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES, manager: true });
 
     const { leads, missing } = await bulkLeads(input.leadIds);
     if (!leads.length && !missing.length) return err("Nothing selected.", "validation");
@@ -2303,7 +2527,7 @@ export async function bulkChaseLeadOwners(input: {
   note?: string;
 }): Promise<Result<BulkOutcome>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES, manager: true });
 
     const { leads, missing } = await bulkLeads(input.leadIds);
     if (!leads.length && !missing.length) return err("Nothing selected.", "validation");
@@ -2360,7 +2584,7 @@ export async function bulkChaseLeadOwners(input: {
  */
 export async function acceptVisit(input: { visitId: string }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.visits"));
 
     const [visit] = await db
       .select({
@@ -2372,6 +2596,12 @@ export async function acceptVisit(input: { visitId: string }): Promise<Result> {
       .where(eq(mbosVisits.id, input.visitId))
       .limit(1);
     if (!visit) return err("That visit is no longer here.", "not_found");
+    /* Standing behind a visit is a verdict on somebody's day, so it is never
+       one's own day and always one's own team's. */
+    if (visit.salesmanId === user.id) {
+      return err("That is your own visit. Somebody else has to accept it.", "not_permitted");
+    }
+    if (await salesmanOutsideScope(visit.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
     if (visit.verified) return ok(undefined, "Already verified.");
 
     await db
@@ -2427,12 +2657,13 @@ export async function decidePinCorrection(input: {
   accept: boolean;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.visits"));
 
     const [visit] = await db
       .select({
         id: mbosVisits.id,
         customerId: mbosVisits.customerId,
+        salesmanId: mbosVisits.salesmanId,
         pinCorrection: mbosVisits.pinCorrection,
         checkInLat: mbosVisits.checkInLat,
         checkInLng: mbosVisits.checkInLng,
@@ -2442,6 +2673,13 @@ export async function decidePinCorrection(input: {
       .where(eq(mbosVisits.id, input.visitId))
       .limit(1);
     if (!visit) return err("That visit is no longer here.", "not_found");
+    /* Accepting moves the shop's pin to where HE stood, and the radius then
+       stops refusing him there — so the man who asked is the one man who may
+       not answer. */
+    if (visit.salesmanId === user.id) {
+      return err("You asked for this pin to be moved. Somebody else has to decide it.", "not_permitted");
+    }
+    if (await salesmanOutsideScope(visit.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
     if (visit.pinCorrection !== "requested") {
       return err(
         visit.pinCorrection
@@ -2530,7 +2768,7 @@ export async function askAboutVisit(input: {
   question: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.visits"));
 
     const question = input.question.trim();
     if (!question) {
@@ -2543,6 +2781,7 @@ export async function askAboutVisit(input: {
       .where(eq(mbosVisits.id, input.visitId))
       .limit(1);
     if (!visit) return err("That visit is no longer here.", "not_found");
+    if (await salesmanOutsideScope(visit.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
 
     await db.insert(auditLog).values({
       id: gen("aud"),
@@ -2578,7 +2817,11 @@ export async function saveFieldSettings(
   entries: Array<{ key: string; value: unknown }>,
 ): Promise<Result<{ warnings: string[] }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: ["sales.prefs"] });
+    /* The SAME capability the Admin Console's settings save asks for. These
+       keys change what every handset in the field does, and holding the app —
+       which used to be the whole check — is not a licence to reconfigure it. */
+    await requireCapability("config.write");
 
     const foreign = entries.filter((e) => !e.key.startsWith("mbos."));
     if (foreign.length) {
@@ -2676,7 +2919,7 @@ export async function publishDocument(input: {
   visibleToRoles?: string[];
 }): Promise<Result<{ id: string }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.documents"));
 
     const title = input.title.trim();
     if (!title) {
@@ -2756,7 +2999,7 @@ export async function setDocumentPublished(input: {
   published: boolean;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.documents"));
 
     const [doc] = await db
       .select({ id: mbosDocuments.id, title: mbosDocuments.title, active: mbosDocuments.active })
@@ -2810,7 +3053,7 @@ export async function publishCourse(input: {
   dueDate?: string | null;
 }): Promise<Result<{ id: string }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.knowledge"));
 
     const title = input.title.trim();
     if (!title) {
@@ -2885,7 +3128,7 @@ export async function setCoursePublished(input: {
   published: boolean;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.knowledge"));
 
     const [course] = await db
       .select({ id: mbosCourses.id, title: mbosCourses.title, active: mbosCourses.active })
@@ -2938,7 +3181,7 @@ export async function setCoursePublished(input: {
  */
 export async function uploadPublishFile(form: FormData): Promise<Result<{ id: string; filename: string }>> {
   try {
-    await requireSales();
+    await requireSalesAccess(SALES_MANAGER("sales.documents", "sales.knowledge"));
     const file = form.get("file");
     if (!(file instanceof File)) {
       return err("No file arrived.", "validation");
@@ -2972,7 +3215,7 @@ export async function previewTaskTargets(filter: {
   search?: string;
 }): Promise<Result<{ count: number; names: string[]; unassigned: number }>> {
   try {
-    await requireSales();
+    await requireSalesAccess({ modules: ["sales.tasks"] });
     const matches = await fieldBook(filter);
     return ok({
       count: matches.length,
@@ -2990,8 +3233,8 @@ export async function previewTaskTargets(filter: {
  * `mbos_tasks` already existed — it is how a rejected order raises "ring back
  * about it" for the salesman who took it — but nothing let a MANAGER write one
  * for somebody else. This is that, and it is deliberately Sales Dashboard's
- * own action: `requireSales()`, the same as everything else in this file, not
- * a new capability. Reaching the handset needs `buildPull`'s own `tasks`
+ * own action: a Sales Dashboard MANAGER holding Tasks (`requireSalesAccess`),
+ * not a new capability. Reaching the handset needs `buildPull`'s own `tasks`
  * channel, added alongside this — a task minted here and never pulled would
  * be a manager's word that never left the office.
  */
@@ -3022,7 +3265,8 @@ export async function createTask(input: {
   dueDate: string;
 }): Promise<Result<{ taskId: string }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.tasks"));
+    if (await salesmanOutsideScope(input.assignedToUserId)) return err(NOT_YOUR_TEAM, "not_permitted");
     const title = input.title.trim();
     const problem = validTask(title, input.dueDate, input.priority);
     if (problem) return err(problem, "validation");
@@ -3099,7 +3343,7 @@ export async function bulkAssignTask(input: {
   dueDate: string;
 }): Promise<Result<{ created: number; skipped: number }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.tasks"));
     const title = input.title.trim();
     const problem = validTask(title, input.dueDate, input.priority);
     if (problem) return err(problem, "validation");
@@ -3199,7 +3443,13 @@ export async function setLeaveEntitlement(input: {
   days: Record<string, number | null>;
 }): Promise<Result> {
   try {
-    const me = await requireSales();
+    const me = await requireSalesAccess(SALES_MANAGER("sales.leave"));
+    /* Nobody sets their own allowance — the same reason nobody answers their
+       own leave request. */
+    if (input.userId === me.id) {
+      return err("That is your own allowance. Somebody else has to set it.", "not_permitted");
+    }
+    if (await salesmanOutsideScope(input.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
 
     const [person] = await db
       .select({ id: users.id, name: users.name })
@@ -3346,7 +3596,7 @@ export async function reviewDayEvidence(input: {
   correctedKm?: number | null;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: [], manager: true });
 
     const ref = parseEvidenceRef(String(input.ref ?? ""));
     if (!ref) return err("That is not a photograph this screen knows about.", "validation");
@@ -3442,8 +3692,21 @@ export async function reviewDayEvidence(input: {
     /* The SAME narrowing every list on this dashboard runs. A manager may
        answer for his own patch and nobody else's, checked here rather than
        inferred from the fact that the screen drew the row. */
-    const scope = await managerScope();
-    if (scope.salesmanIds !== null && !scope.salesmanIds.includes(ownerId)) {
+    /* The screen this photograph is shown on: a selfie on Attendance, a meter
+       on the Travel ledger or the Expenses desk that prices it. */
+    await requireSalesAccess({
+      modules: ref.kind === "attendance_selfie" ? ["sales.attendance"] : ["sales.travel", "sales.expenses"],
+      manager: true,
+    });
+
+    /* A verdict on one's own day is no verdict. */
+    if (ownerId === user.id) {
+      return err("That is your own day. Somebody else has to review it.", "not_permitted");
+    }
+
+    /* `scopeCovers` and not `salesmanIds === null`: the CRM Sales Manager
+       seat leaves that null meaning "no list of people", never "everybody". */
+    if (!scopeCovers(await managerScope(), ownerId)) {
       return err("That salesman is not in your team.", "not_permitted");
     }
 

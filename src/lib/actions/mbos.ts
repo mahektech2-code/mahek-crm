@@ -60,7 +60,8 @@ import {
 import { latestReopen } from "../services/lead-reopen-service";
 import { gstinChangeClear, materialOf, reviewVoidPatch } from "../lead-review-void";
 import { convertLeadOnSecondOrder } from "../services/lead-conversion-service";
-import { canAny, grantingHat, hatsFor, scopedToUsers } from "../access-control";
+import { canAny, grantingHat, hatsFor } from "../access-control";
+import { handsetSampleRefusal } from "../sales-gate";
 import {
   applyLeadStageMove,
   evaluateLeadStageMove,
@@ -98,6 +99,7 @@ import {
   recordHeartbeat,
   runLoginChecks,
   buildBootstrap,
+  principalBookClause,
   territoryExempt,
   type MbosPrincipal,
 } from "../services/mbos-service";
@@ -954,10 +956,11 @@ export async function scopedCustomer(
       .where(
         and(
           eq(customers.id, customerId),
-          // The ONE definition of whose book a customer is in. Written out
-          // here would be a second one, and the two would disagree the first
-          // time either changed.
-          scopedToUsers(ids),
+          // The ONE definition of whose book a customer is in — and the SAME
+          // one the pull sends from, `namedByUsers` included. `scopedToUsers`
+          // alone refused every shop the customer master names this salesman
+          // on, which are shops his own phone shows him.
+          principalBookClause(principal),
         ),
       );
     if (Number(assigned?.n ?? 0) === 0) {
@@ -3036,6 +3039,28 @@ async function handleSampleUpdate(
   const customer = found.customer;
 
   /*
+   * A HANDSET MAY WALK THE SAMPLE ALONG; IT MAY NOT APPROVE IT.
+   *
+   * `state` was written straight from the payload, so a salesman could send
+   * `approved` on the trial he had just asked for — the stock went out on his
+   * own say-so, past the desk and past `sample.approve` — or skip from
+   * `requested` to `dispatched` with nobody having said yes at all. The moves
+   * that are his (handed over, received, tried, reviewed, called off) go
+   * through exactly as before; the two that are a decision need the
+   * capability, which a field manager holds and a salesman does not. The rule
+   * is `handsetSampleRefusal`, pure and tested beside the office's own copy
+   * of the machine.
+   */
+  const moveRefused = handsetSampleRefusal({
+    from: existing.state,
+    to: p.state,
+    canApprove: canAny(await hatsFor(principal.user), "sample.approve"),
+  });
+  if (moveRefused) {
+    return { kind: "rejected", value: reject("not_permitted", moveRefused) };
+  }
+
+  /*
    * §K — A REJECTION HAS TO SAY WHY.
    *
    * The same rule as a lost lead and an On Hold, and for the same reason: a
@@ -5000,7 +5025,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
    * here is what makes it readable and what keeps the nightly orphan sweep off
    * it. After the record, deliberately: a lead is never lost to a photograph.
    */
-  await bindMbosMedia(p.shopPhotoId, "mbos_lead", item.entityId);
+  await bindMbosMedia(p.shopPhotoId, "mbos_lead", item.entityId, principal.user.id);
 
   /*
    * §R — where the account began. Outside the insert's own transaction and
@@ -7609,6 +7634,21 @@ const APPROVAL_ALIASES: Record<string, ApprovalType> = {
   expense: "expense_claim",
 };
 
+/**
+ * WHOSE A SUBJECT IS, by the handset's own name for it — the table it lives in
+ * and the column that names the person who made it. Constants, written into
+ * SQL as identifiers, so nothing from a payload ever reaches `sql.raw`.
+ */
+const APPROVAL_SUBJECT_OWNERS: Record<string, { table: string; column: string }> = {
+  order: { table: "orders", column: "user_id" },
+  expense: { table: "mbos_expenses", column: "user_id" },
+  tour: { table: "mbos_tours", column: "user_id" },
+  leave: { table: "mbos_leave_requests", column: "user_id" },
+  sample: { table: "mbos_samples", column: "salesman_id" },
+  attendance: { table: "mbos_attendance_days", column: "user_id" },
+  territory_request: { table: "mbos_territory_requests", column: "user_id" },
+};
+
 function approvalTypeOf(raw: string): ApprovalType | null {
   const key = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
   return APPROVAL_TYPES.find((t) => t === key) ?? APPROVAL_ALIASES[key] ?? null;
@@ -7641,6 +7681,48 @@ async function handleApproval(principal: MbosPrincipal, item: SyncItem): Promise
       value: reject(
         "validation",
         `MahekOne has nobody to send a "${p.type}" approval to. This is a bug to report rather than something to try again.`,
+      ),
+    };
+  }
+
+  /*
+   * THE THING BEING APPROVED HAS TO BE HIS.
+   *
+   * `subjectId` came from the payload and nothing looked at it, so a handset
+   * could raise "approve this" against somebody else's order, leave or expense
+   * — filed under its own name, in the queue a manager answers, with the
+   * summary the queue joins in describing a record the requester never made.
+   * The owner is read off the subject's own table: whoever took the order,
+   * asked for the leave, claimed the expense.
+   */
+  const owner = APPROVAL_SUBJECT_OWNERS[p.subjectType];
+  if (!owner) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `MahekOne does not know what a "${p.subjectType}" is, so there is nothing to ask approval for. This is a bug to report rather than something to try again.`,
+      ),
+    };
+  }
+  const [subject] = await db.execute<{ ownerId: string | null }>(sql`
+    select ${sql.raw(owner.column)} as "ownerId"
+      from ${sql.raw(owner.table)} where id = ${p.subjectId} limit 1
+  `);
+  if (!subject) {
+    /* The same answer `missingDependencies` gives: the subject is a separate
+       outbox item and is usually just behind this one. */
+    return {
+      kind: "retry",
+      message: "The record this asks approval for has not reached the office yet. It will be tried again once it has.",
+    };
+  }
+  if (subject.ownerId !== principal.user.id) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "not_permitted",
+        "That record is not yours, so you cannot ask for it to be approved.",
       ),
     };
   }
@@ -8460,13 +8542,77 @@ async function bindMbosMedia(
   attachmentId: string | null | undefined,
   parentType: (typeof attachmentParentEnum.enumValues)[number],
   parentId: string,
+  /** Only the uploader's own file is bound — an id in a payload could name
+      anybody's photograph, and binding it would move it under this record. */
+  uploaderId: string,
 ): Promise<void> {
   if (!attachmentId) return;
   await db
     .update(attachments)
     .set({ parentType, parentId, updatedAt: new Date() })
-    .where(eq(attachments.id, attachmentId))
+    .where(and(eq(attachments.id, attachmentId), eq(attachments.uploadedById, uploaderId)))
     .catch(() => {});
+}
+
+/**
+ * MAY THIS HANDSET FILE A PHOTOGRAPH UNDER THIS RECORD?
+ *
+ * `canRead` decides who may open a file FROM its parent, so the parent is a
+ * permission: a selfie filed under somebody else's attendance day is read
+ * under THEIR rules, and a shop front filed under a customer outside this
+ * man's book is shown to whoever can see that customer. The handset named the
+ * parent and nothing checked it.
+ *
+ *  - A record about a PERSON (a day, a visit, an expense, a sample, a task, a
+ *    leg) must be his own — the column that names who made it.
+ *  - A record about a CUSTOMER (a lead, a payment) must be in his book, the
+ *    same `scopedCustomer` every write from a handset asks.
+ *  - A record that does not exist YET is allowed, and it is the ordinary case:
+ *    media syncs after its parent, and the literal `pending` is what a handset
+ *    sends when the camera closed before the record was written. Nobody can
+ *    pre-claim an id belonging to somebody else's future record — ids are
+ *    minted on the handset that writes it.
+ */
+async function mayParentMedia(
+  principal: MbosPrincipal,
+  parentType: (typeof attachmentParentEnum.enumValues)[number],
+  parentId: string,
+): Promise<boolean> {
+  const personal: Partial<Record<typeof parentType, { table: string; column: string }>> = {
+    mbos_attendance: { table: "mbos_attendance_days", column: "user_id" },
+    mbos_visit: { table: "mbos_visits", column: "salesman_id" },
+    mbos_expense: { table: "mbos_expenses", column: "user_id" },
+    mbos_sample: { table: "mbos_samples", column: "salesman_id" },
+    mbos_task: { table: "mbos_tasks", column: "assigned_to_user_id" },
+    mbos_travel_leg: { table: "mbos_travel_legs", column: "user_id" },
+  };
+  const own = personal[parentType];
+  if (own) {
+    const [row] = await db.execute<{ ownerId: string | null }>(sql`
+      select ${sql.raw(own.column)} as "ownerId"
+        from ${sql.raw(own.table)} where id = ${parentId} limit 1
+    `);
+    return !row || row.ownerId === principal.user.id;
+  }
+
+  const customerId =
+    parentType === "mbos_lead"
+      ? parentId
+      : parentType === "payment_receipt"
+        ? ((
+            await db.execute<{ customerId: string }>(sql`
+              select customer_id as "customerId" from payment_receipts where id = ${parentId} limit 1
+            `)
+          )[0]?.customerId ?? null)
+        : null;
+  if (parentType === "payment_receipt" && customerId === null) return true;
+  if (customerId === null) return false;
+
+  const [exists] = await db.execute<{ n: number }>(
+    sql`select count(*)::int as n from customers where id = ${customerId}`,
+  );
+  if (Number(exists?.n ?? 0) === 0) return true;
+  return (await scopedCustomer(principal, customerId)).ok;
 }
 
 export async function storeMbosMedia(
@@ -8490,10 +8636,29 @@ export async function storeMbosMedia(
   }
 
   const existing = await db
-    .select({ id: attachments.id, status: attachments.status })
+    .select({
+      id: attachments.id,
+      status: attachments.status,
+      uploadedById: attachments.uploadedById,
+    })
     .from(attachments)
     .where(eq(attachments.id, input.clientId))
     .limit(1);
+  /*
+   * AN ID IS NOT AN INVITATION TO OVERWRITE. The upsert below replaces the
+   * bytes and re-parents the row, and the id is whatever the handset says it
+   * is — so a handset naming somebody else's photograph would have replaced
+   * their check-in selfie, their meter reading or their cheque with its own
+   * file, under their name. A row somebody else uploaded is answered the way a
+   * missing one is refused anywhere else: plainly, and without its contents.
+   */
+  if (existing.length && existing[0].uploadedById && existing[0].uploadedById !== principal.user.id) {
+    return {
+      ok: false,
+      status: 409,
+      error: "That file id is already taken by another upload. The handset should name a new one.",
+    };
+  }
   if (existing.length && existing[0].status === "available") {
     return { ok: true, attachmentId: existing[0].id, deduped: true };
   }
@@ -8544,10 +8709,18 @@ export async function storeMbosMedia(
      * alone and is deleted by the nightly orphan sweep, so this pair of
      * columns is the difference between an attachment and a file with a
      * twenty-four-hour life. */
-    const parentType = input.parentType
-      ? (MBOS_PARENTS[input.parentType] ?? null)
-      : null;
-    const parentId = parentType && input.parentId ? input.parentId : null;
+    const named = input.parentType ? (MBOS_PARENTS[input.parentType] ?? null) : null;
+    /* Only a parent this person may file under. See `mayParentMedia`: a
+       parent that does not exist YET is the ordinary case and is kept, and
+       one that exists and is somebody else's is dropped rather than refusing
+       the bytes — they are the only copy, and an unparented file is still
+       readable by the man who took it until his own record binds it. */
+    const allowed =
+      named && input.parentId
+        ? await mayParentMedia(principal, named, input.parentId)
+        : false;
+    const parentType = allowed ? named : null;
+    const parentId = allowed ? input.parentId! : null;
 
     await db
       .insert(attachments)
