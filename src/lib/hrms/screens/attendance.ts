@@ -6,7 +6,7 @@ import { parseCsv } from "@/lib/csv";
 import type { ActionSpec, ColSpec, Contact, FormSpec, ListRow, RowField, ToolSpec } from "@/lib/erp/ui";
 import { has, scopeOf, type HrmsContext, type Scope } from "../access";
 import { hrmsAudit, hrmsId, inTx, refuse, stampLine, text, today, fieldErr, okVoid, err, ok, type HrmsScreenModule, type ScreenQuery } from "../server";
-import { allPeople, byId, isActive, markableStaff, timingMap, visibleIds, type Person } from "../services/people";
+import { allPeople, byId, isActive, markableStaff, staffInReach, timingMap, visibleIds, type Person } from "../services/people";
 import { attendanceCfg, attendanceRows, holidays, type DayRow } from "../services/attendance";
 import { minutesBetween, timeRemark } from "../engines/attendance";
 import { holidayApplies } from "../engines/leave";
@@ -244,7 +244,11 @@ const attendance: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "hr", "editAtt");
-    const ids = visibleIds(ctx, scope, people);
+    const visible = visibleIds(ctx, scope, people);
+    /* One person's days, from the chart or the absentee list — only someone
+       this person may see; anybody else is the ordinary list. */
+    const one = q.emp && (!visible || visible.has(q.emp)) ? people.find((p) => p.id === q.emp) : undefined;
+    const ids = one ? new Set([one.id]) : visible;
     const from = q.from ?? addDaysISO(t, -cfg.defaultWindowDays);
     const [rows, todays] = await Promise.all([attendanceRows({ employeeIds: ids ? [...ids] : null, from, to: q.to }), attendanceRows({ from: t, to: t })]);
     const marked = new Set(todays.map((r) => `${r.employeeId}|${r.date}`));
@@ -253,7 +257,11 @@ const attendance: HrmsScreenModule = {
     const extras: HrmsExtras = {
       scope: { current: scope, options },
       period: { label: "", params: [{ k: "from", l: "From", v: from, type: "date" }] },
-      ...(myPending ? { notice: { text: `You have ${myPending} pending check-out${myPending > 1 ? "s" : ""} — they block that month’s salary`, href: hrmsLink("pendingOut") } } : {}),
+      ...(one
+        ? { notice: { text: `Showing ${one.name}’s days only. Show everyone`, href: hrmsLink("attendance", { scope, from: q.from }) } }
+        : myPending
+          ? { notice: { text: `You have ${myPending} pending check-out${myPending > 1 ? "s" : ""} — they block that month’s salary`, href: hrmsLink("pendingOut") } }
+          : {}),
     };
     return {
       spec: {
@@ -287,6 +295,8 @@ const attendance: HrmsScreenModule = {
       if (!has(ctx, "checkoutStaff")) return err("Only a department head or someone who can check out other people can do this", "not_permitted");
       const [r] = await db.select().from(hrmsAttendance).where(eq(hrmsAttendance.id, id));
       if (!r) return err("That day no longer exists.", "not_found");
+      const reach = staffInReach(ctx, await allPeople(), "checkoutStaff");
+      if (reach && !reach.has(r.employeeId)) return err("You can check out only your team and the staff of your office", "not_permitted");
       if (r.checkOut) return err(`Already checked out at ${r.checkOut} on ${fdShort(r.date)}`);
       if (minutesBetween(r.checkIn, v.out) == null) return fieldErr("out", `Check-out must be after the check-in at ${r.checkIn}`);
       await db
@@ -310,12 +320,18 @@ const attendance: HrmsScreenModule = {
       const [r] = await db.select().from(hrmsAttendance).where(eq(hrmsAttendance.id, id));
       if (!r) return err("That day no longer exists.", "not_found");
       if (!(has(ctx, "editAtt") || has(ctx, "checkoutStaff") || r.employeeId === ctx.employee?.id)) return err("You can add a remark only to your own days, unless you can edit attendance or check out staff", "not_permitted");
+      if (r.employeeId !== ctx.employee?.id && !has(ctx, "editAtt")) {
+        const reach = staffInReach(ctx, await allPeople(), "checkoutStaff");
+        if (reach && !reach.has(r.employeeId)) return err("You can add a remark only to your team’s and your office’s days", "not_permitted");
+      }
       await db.update(hrmsAttendance).set({ remark: text(v.remark), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsAttendance.id, id));
+      await hrmsAudit(ctx, "hrms.attendance.remark", "hrms_attendance", id, { remark: r.remark }, { remark: text(v.remark) });
       return okVoid("Remark saved");
     },
     async editHelp(ctx, id) {
       if (!has(ctx, "admin")) return err("Only an HRMS administrator can switch on edit help", "not_permitted");
-      await db.update(hrmsAttendance).set({ editHelp: true, updatedAt: new Date() }).where(eq(hrmsAttendance.id, id));
+      await db.update(hrmsAttendance).set({ editHelp: true, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsAttendance.id, id));
+      await hrmsAudit(ctx, "hrms.attendance.editHelp", "hrms_attendance", id, { editHelp: false }, { editHelp: true });
       return okVoid("Edit help switched on for this day");
     },
     async delete(ctx, id) {
@@ -435,6 +451,59 @@ const attendance: HrmsScreenModule = {
   },
 };
 
+/**
+ * An approved help request about a day — forgot to check in, checked in late,
+ * forgot to check out, running late — written onto that day. Approving used to
+ * stop at the request and say "set the check-in time on the attendance day",
+ * which could not be done when the day did not exist: forgetting to check in
+ * leaves no row to set a time on. Returns the sentence the approver is shown.
+ */
+export async function correctDayFromHelp(
+  ctx: HrmsContext,
+  x: { employeeId: string; date: string; inTime: string | null; outTime: string | null; type: string },
+): Promise<string> {
+  const [p] = (await allPeople()).filter((e) => e.id === x.employeeId);
+  if (!p) return "the person’s record is gone, so attendance was not changed";
+  const note = `From help request: ${x.type}`;
+  const [row] = await db.select().from(hrmsAttendance).where(and(eq(hrmsAttendance.employeeId, x.employeeId), eq(hrmsAttendance.date, x.date))).limit(1);
+  if (row) {
+    const set: Partial<typeof hrmsAttendance.$inferInsert> = {};
+    const checkIn = x.inTime ?? row.checkIn;
+    if (x.inTime && (!row.checkOut || minutesBetween(x.inTime, row.checkOut) != null)) set.checkIn = x.inTime;
+    if (x.outTime && checkIn && minutesBetween(checkIn, x.outTime) != null) set.checkOut = x.outTime;
+    if (!Object.keys(set).length) return "the times asked for do not fit that day’s attendance, so it was not changed";
+    await db
+      .update(hrmsAttendance)
+      .set({ ...set, remark: row.remark ? `${row.remark} · ${note}` : note, updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(eq(hrmsAttendance.id, row.id));
+    await hrmsAudit(ctx, "hrms.attendance.fromHelp", "hrms_attendance", row.id, { checkIn: row.checkIn, checkOut: row.checkOut }, set);
+    return `${fdShort(x.date)} now reads ${set.checkIn ?? row.checkIn}–${set.checkOut ?? row.checkOut ?? "not checked out"}`;
+  }
+  if (!x.inTime) return `${p.name} has no attendance on ${fdShort(x.date)} to check out`;
+  if (x.outTime && minutesBetween(x.inTime, x.outTime) == null) return "the check-out asked for is before the check-in, so attendance was not changed";
+  const tm = (await timingMap()).get(`${p.id}|${weekdayOf(x.date)}`);
+  const id = hrmsId("hatt");
+  await db.insert(hrmsAttendance).values({
+    id,
+    employeeId: p.id,
+    date: x.date,
+    officeName: p.office,
+    method: "officer",
+    checkIn: x.inTime,
+    checkOut: x.outTime,
+    officialIn: tm?.inTime ?? null,
+    officialOut: tm?.outTime ?? null,
+    targetMin: tm ? minutesBetween(tm.inTime, tm.outTime) : null,
+    remark: note,
+    markedById: ctx.user.id,
+    markedByName: ctx.user.name,
+    reportToStamp: ctx.employee?.position ?? null,
+    createdById: ctx.user.id,
+  });
+  await hrmsAudit(ctx, "hrms.attendance.fromHelp", "hrms_attendance", id, null, { employee: p.code, date: x.date, checkIn: x.inTime, checkOut: x.outTime });
+  return `${fdShort(x.date)} is marked ${x.inTime}${x.outTime ? `–${x.outTime}` : ""}`;
+}
+
 const pendingOut: HrmsScreenModule = {
   key: "pendingOut",
   async load(ctx, q) {
@@ -442,6 +511,8 @@ const pendingOut: HrmsScreenModule = {
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "hr", "editAtt", "checkoutStaff");
     const ids = visibleIds(ctx, scope, people);
+    /* A head checks out the staff of their office as well as their team. */
+    if (ids && scope === "team" && has(ctx, "checkoutStaff")) for (const id of staffInReach(ctx, people, "checkoutStaff") ?? []) ids.add(id);
     const rows = (await attendanceRows({ employeeIds: ids ? [...ids] : null })).filter((r) => !r.checkOut);
     const pb = byId(people);
     return {
@@ -470,9 +541,12 @@ const pendingOut: HrmsScreenModule = {
 
 const absentees: HrmsScreenModule = {
   key: "absentees",
-  async load(_ctx, q) {
+  async load(ctx, q) {
     const t = today();
     const date = q.date && /^\d{4}-\d{2}-\d{2}$/.test(q.date) ? q.date : t;
+    /* It used to ignore who was asking and list the whole company to anybody
+       holding Attendance. A head sees their team and the staff they mark. */
+    const { scope, options } = scopeFor(ctx, q, "hr", "editAtt");
     const [people, day, hol, leave, week] = await Promise.all([
       allPeople(),
       attendanceRows({ from: date, to: date }),
@@ -483,7 +557,9 @@ const absentees: HrmsScreenModule = {
     const present = new Set(day.map((d) => d.employeeId));
     /* Spec §6.6 / A52: any leave request covering the date excuses the day, whatever its status. */
     const onLeave = new Set(leave.filter((l) => l.startDate <= date && l.endDate >= date).map((l) => l.employeeId));
-    const out = people.filter((p) => isActive(p) && !present.has(p.id) && !onLeave.has(p.id) && !hol.some((h) => holidayApplies(h, p.id, p.office)));
+    const ids = visibleIds(ctx, scope, people);
+    if (ids && scope === "team" && has(ctx, "markStaff")) for (const id of staffInReach(ctx, people, "markStaff") ?? []) ids.add(id);
+    const out = people.filter((p) => (!ids || ids.has(p.id)) && isActive(p) && !present.has(p.id) && !onLeave.has(p.id) && !hol.some((h) => holidayApplies(h, p.id, p.office)));
     const weekDates = datesBetween(addDaysISO(date, -6), date);
     return {
       spec: {
@@ -501,6 +577,7 @@ const absentees: HrmsScreenModule = {
         readOnly: true,
         noDataLine: "Everybody is accounted for on this date.",
         hrms: {
+          scope: { current: scope, options },
           period: { label: `Absent on ${fdShort(date)}`, params: [{ k: "date", l: "Date", v: date, type: "date" }] },
           notice: { text: "Pending check-outs are listed on their own screen", href: hrmsLink("pendingOut") },
         },
@@ -511,7 +588,7 @@ const absentees: HrmsScreenModule = {
         flags: [],
         title: p.name,
         header: `${p.code} · ${p.position ?? ""} · ${p.office ?? ""}`,
-        actions: [{ id: "open", l: "Open attendance", href: hrmsLink("attendance", { scope: "all" }) }],
+        actions: [{ id: "open", l: "Open their days", href: hrmsLink("attendance", { scope, emp: p.id, from: addDaysISO(date, -30) }) }],
       })),
     };
   },
@@ -554,7 +631,7 @@ const attChart: HrmsScreenModule = {
         v: { emp: pb.get(emp)?.name ?? "", office: pb.get(emp)?.office ?? "", count: rs.length, late: rs.filter((r) => r.fig.lateBeyondGrace).length },
         flags: [],
         title: pb.get(emp)?.name ?? "",
-        actions: [{ id: "open", l: "Open their days", href: hrmsLink("attendance", { scope: "all" }) }],
+        actions: [{ id: "open", l: "Open their days", href: hrmsLink("attendance", { scope: "all", emp, from }) }],
       })),
     };
   },

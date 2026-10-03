@@ -2,7 +2,7 @@
  * Leave rules (spec §7), PURE.
  * ------------------------------------------------------------------------- */
 
-import { daysBetweenISO, datesBetween, monthOf } from "../time";
+import { daysBetweenISO, monthOf } from "../time";
 
 export type LeaveType = "Leave" | "Half Day";
 
@@ -79,7 +79,3 @@ export function holidaysInside(holidays: HolidayRef[], employeeId: string, offic
   return holidays.filter((h) => h.date >= start && h.date <= end && holidayApplies(h, employeeId, office)).length;
 }
 
-/** Every date a request covers. */
-export function requestDates(start: string, end: string): string[] {
-  return datesBetween(start, end);
-}

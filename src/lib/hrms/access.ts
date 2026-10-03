@@ -4,7 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { employees, hrmsUserPowers, type User } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { levelInApp } from "@/lib/access-control";
+import { isPlatformAdmin, levelInApp } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
 import { HRMS_ALWAYS_OPEN, HRMS_SCREENS } from "./registry";
@@ -36,12 +36,21 @@ export type HrmsContext = {
   level: "associate" | "manager" | "admin" | null;
   administrator: boolean;
   powers: ReadonlySet<HrmsPower>;
+  /**
+   * The powers somebody GRANTED this person, without the two a department
+   * head holds by position. Only these widen a list to everybody: a head
+   * checks out and marks the staff of their own office, and holding the power
+   * that way must not show them the whole company's attendance.
+   */
+  granted: ReadonlySet<HrmsPower>;
   /** Screen keys this person may open. */
   screens: ReadonlySet<string>;
   /** The employee record this account is, when HR has linked one. */
   employee: HrmsEmployeeRef | null;
   /** A department head: Position ending in "Head" (spec §1.2). */
   isHead: boolean;
+  /** Holds the Admin Console's Access screen, where grants and powers are changed. */
+  platformAdmin: boolean;
   /** Overtime / QR check-in switched on. */
   flags: { ot: boolean; qr: boolean };
 };
@@ -53,10 +62,11 @@ export const hrmsContext = cache(async function hrmsContext(): Promise<HrmsConte
   const level = (await levelInApp(user, "hrms")) as HrmsContext["level"];
   const administrator = level === "admin" || user.role === "admin";
 
-  const [powerRows, modules, config] = await Promise.all([
+  const [powerRows, modules, config, platformAdmin] = await Promise.all([
     db.select({ power: hrmsUserPowers.power }).from(hrmsUserPowers).where(eq(hrmsUserPowers.userId, user.id)),
     level ? listUserModules(user.id, "hrms") : Promise.resolve([]),
     getConfig(),
+    isPlatformAdmin(user),
   ]);
 
   let employee: HrmsEmployeeRef | null = null;
@@ -87,6 +97,7 @@ export const hrmsContext = cache(async function hrmsContext(): Promise<HrmsConte
   );
   /* A head marks and checks out the field and other staff of their office by
      position, as every head could in the source. */
+  const granted = new Set(powers);
   if (isHead) {
     powers.add("markStaff");
     powers.add("checkoutStaff");
@@ -105,7 +116,7 @@ export const hrmsContext = cache(async function hrmsContext(): Promise<HrmsConte
     for (const tab of sc.views ?? []) if (!tab.flag || flags[tab.flag]) screens.add(tab.key);
   }
 
-  return { user, level, administrator, powers, screens, employee, isHead, flags };
+  return { user, level, administrator, powers, granted, screens, employee, isHead, platformAdmin, flags };
 });
 
 /** Whether this person holds a power. */
@@ -118,7 +129,7 @@ export const has = (ctx: HrmsContext, p: HrmsPower) => ctx.powers.has(p);
  */
 export function scopeOf(ctx: HrmsContext, ...widening: HrmsPower[]): Scope {
   if (ctx.administrator || ctx.level === "manager") return "all";
-  if (widening.some((p) => ctx.powers.has(p))) return "all";
+  if (widening.some((p) => ctx.granted.has(p))) return "all";
   if (ctx.isHead) return "team";
   return "mine";
 }

@@ -54,6 +54,9 @@ const files = [
   "src/lib/erp/erp-book.test.ts",
   "src/lib/erp/erp-ai.test.ts",
   "src/lib/erp/erp-ai-reading.test.ts",
+  // The HRMS restructure: tabs open with their screen, a head reaches their
+  // team and office only, and the audit's fixes hold.
+  "src/lib/hrms/integration/restructure.test.ts",
   // The call assistant: learning from logged calls, reading with no model,
   // and the save writing back what the call was really logged as.
   "src/lib/call-intel.test.ts",

@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { hrmsAttendance, hrmsBuddyTasks, hrmsChecklist, hrmsGrievances, hrmsHelp, hrmsLeaveRequests, hrmsOffices, hrmsTaskTemplates, hrmsTodos } from "@/db/schema";
 import { hrmsContext } from "@/lib/hrms/access";
 import { attendanceCfg, attendanceRows } from "@/lib/hrms/services/attendance";
-import { allPeople, markableStaff, timingMap } from "@/lib/hrms/services/people";
+import { allPeople, markableStaff, staffInReach, timingMap } from "@/lib/hrms/services/people";
 import { timeRemark } from "@/lib/hrms/engines/attendance";
 import { hrmsLink } from "@/lib/hrms/registry";
 import { today } from "@/lib/hrms/server";
@@ -99,7 +99,11 @@ export default async function HrmsHome() {
     if (n.n) wait.push({ l: "Leave requests awaiting approval", v: String(n.n), sub: "", tone: "warn", href: hrmsLink("approvals") });
   }
   if (ctx.powers.has("checkoutStaff") && ctx.screens.has("pendingOut")) {
-    const [n] = await db.select({ n: count }).from(hrmsAttendance).where(and(eq(hrmsAttendance.date, t), isNull(hrmsAttendance.checkOut)));
+    /* Only the people this person may actually check out: a head's team and
+       office, not the whole company still at work. */
+    const open = await db.select({ employeeId: hrmsAttendance.employeeId }).from(hrmsAttendance).where(and(eq(hrmsAttendance.date, t), isNull(hrmsAttendance.checkOut)));
+    const reach = staffInReach(ctx, await allPeople(), "checkoutStaff");
+    const n = { n: open.filter((x) => x.employeeId !== me?.id && (!reach || reach.has(x.employeeId))).length };
     if (n.n) wait.push({ l: "Staff still checked in today", v: String(n.n), sub: "Check them out at the end of the day", tone: "neutral", href: hrmsLink("pendingOut") });
   }
   if (ctx.powers.has("markStaff") && ctx.screens.has("attendance")) {
