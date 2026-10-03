@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { punchOutDue, punchOutReminderTimes, workingHour } from './punch-out';
+import { missedPunchOuts, punchOutDue, punchOutReminderTimes, workingHour } from './punch-out';
 
 /**
  * The punch-out prompt, pinned. Both directions matter: a prompt that never
@@ -70,4 +70,24 @@ test('reminders: an instant just after IST midnight belongs to the new IST day',
      from Asia/Kolkata, not from UTC, or this schedules for yesterday. */
   const at = punchOutReminderTimes({ nowMs: ist(0, 10), promptHour: 18, secondAfterMinutes: 0 });
   assert.deepEqual(at, [{ at: ist(18, 0), nth: 1 }]);
+});
+
+const row = (day: string, out: boolean | null) => ({
+  day,
+  checkInAt: out === null ? null : 1,
+  checkOutAt: out ? 2 : null,
+});
+
+test('missed: counts punched days with no punch-out, inside the window', () => {
+  const days = [row('2026-10-02', false), row('2026-10-01', true), row('2026-09-30', false), row('2026-09-29', null)];
+  assert.deepEqual(missedPunchOuts(days, '2026-10-03', 30), { missed: 2, punched: 3 });
+});
+
+test('missed: today is still being worked and is never counted', () => {
+  assert.deepEqual(missedPunchOuts([row('2026-10-03', false)], '2026-10-03', 30), { missed: 0, punched: 0 });
+});
+
+test('missed: a day older than the window is left out', () => {
+  const days = [row('2026-09-03', false), row('2026-09-02', false)];
+  assert.deepEqual(missedPunchOuts(days, '2026-10-03', 30), { missed: 1, punched: 1 });
 });
