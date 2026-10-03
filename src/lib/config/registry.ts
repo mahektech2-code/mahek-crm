@@ -753,9 +753,9 @@ export const SETTINGS = [
     type: "integer",
     category: "auth",
     label: "Admin Console: ask for the password again after",
-    description: "Minutes a session may sit idle before the Admin Console asks for the password again. Every console page opened moves it forward, so somebody working in the console is not interrupted. The rest of MahekOne is unaffected; a session stays signed in for thirty days, and only the console asks.",
-    default: 30,
-    min: 5,
+    description: "Minutes a session may sit idle before the Admin Console asks for the password again. 0 means never: switching to the console from another app opens it straight away, on the strength of the sign-in alone. Every console page opened moves it forward, so somebody working in the console is not interrupted. The rest of MahekOne is unaffected; a session stays signed in for thirty days, and only the console asks.",
+    default: 0,
+    min: 0,
     max: 240,
   },
   /*
