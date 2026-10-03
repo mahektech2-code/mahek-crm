@@ -125,7 +125,16 @@ export async function recomputeAttendanceVerdicts(
                     where l.user_id = d.user_id
                       and l.cancelled_at is null
                       and l.from_date <= d.day
-                      and l.to_date >= d.day) as "onApprovedLeave",
+                      and l.to_date >= d.day)
+           /* Leave approved in HRMS is leave too: one record of who was away,
+              read through the account's link to its employee record. */
+           or exists (select 1
+                        from hrms_leave_requests hl
+                        join users hu on hu.employee_id = hl.employee_id
+                       where hu.id = d.user_id
+                         and hl.status = 'Approved'
+                         and hl.start_date <= d.day
+                         and hl.end_date >= d.day) as "onApprovedLeave",
            exists (select 1 from mbos_holidays h where h.on_date = d.day) as "isHoliday"
       from mbos_attendance_days d
      where true ${scope}

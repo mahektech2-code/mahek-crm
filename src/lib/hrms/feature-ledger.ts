@@ -174,4 +174,9 @@ export const FEATURES: Record<string, Feature> = {
   helpWritesDay: { what: "Approving an attendance help request can write its times onto the day", file: "src/lib/hrms/screens/attendance.ts", marker: "export async function correctDayFromHelp" },
   headReach: { what: "A head acts on their team and office only, enforced on the server", file: "src/lib/hrms/services/people.ts", marker: "export function staffInReach" },
   storedWords: { what: "Every renamed stored value, and the old spelling read from an old file", file: "src/lib/hrms/values.ts", marker: "export function fromOld" },
+  fieldDays: { what: "Handset attendance days are register rows, read-only, counted by payroll and the monthly summary", file: "src/lib/hrms/services/attendance.ts", marker: "async function fieldDays" },
+  fieldDayRefusal: { what: "A web check-in is refused when the handset already holds the day", file: "src/lib/actions/hrms-checkin.ts", marker: "fieldDayOn(me.id, t)" },
+  fieldLeave: { what: "Field-app leave counts as leave in HRMS and is listed read-only", file: "src/lib/hrms/services/attendance.ts", marker: "export async function fieldLeave" },
+  hrmsLeaveOnHandset: { what: "Leave approved in HRMS makes the field attendance verdict read the day as leave", file: "src/lib/services/attendance-verdict-service.ts", marker: "from hrms_leave_requests hl" },
+  oneHolidayCalendar: { what: "One holiday calendar: HRMS is the master, holidays for everybody are mirrored to the field calendar, and the Sales Dashboard writes through it", file: "src/lib/services/holiday-calendar.ts", marker: "export async function mirrorToField" },
 };

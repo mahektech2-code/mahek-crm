@@ -7,7 +7,7 @@ import { hrmsAttendance, hrmsHelp, hrmsOffices } from "@/db/schema";
 import { err, ok, okVoid, type Result } from "@/lib/result";
 import { hrmsContext, has } from "@/lib/hrms/access";
 import { hrmsAudit, hrmsId, today, now, first } from "@/lib/hrms/server";
-import { attendanceCfg } from "@/lib/hrms/services/attendance";
+import { attendanceCfg, fieldDayOn } from "@/lib/hrms/services/attendance";
 import { timingMap } from "@/lib/hrms/services/people";
 import { decideCheckIn, decideCheckOut, dayFigures, minutesBetween, type CheckInRefusal } from "@/lib/hrms/engines/attendance";
 import { metresBetween, weekdayOf, hm } from "@/lib/hrms/time";
@@ -58,6 +58,10 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
   const t = today();
   const nowT = now();
   const [existing] = await db.select().from(hrmsAttendance).where(and(eq(hrmsAttendance.employeeId, me.id), eq(hrmsAttendance.date, t)));
+  /* One record of the day: somebody who checked in on the field app has a day
+     already, and a second one here would be counted twice. */
+  const onHandset = existing ? null : await fieldDayOn(me.id, t);
+  if (onHandset) return refusal("already", `You checked in on the field app at ${onHandset.checkIn} today`, "Check out on the field app at the end of the day.");
   const office = await officeFor(me.office);
   const timings = await timingMap();
   const tm = timings.get(`${me.id}|${weekdayOf(t)}`);

@@ -40,6 +40,7 @@ export const HRMS_FLAGS: Record<string, [string, Tone]> = {
   blocked: ["Blocked", "danger"],
   qr: ["QR check-in", "neutral"],
   marked: ["Marked by the department head", "neutral"],
+  fieldApp: ["Field app", "info"],
   mine: ["Yours", "brand"],
   changed: ["Attendance changed since approval", "warn"],
   noPin: ["No map pin", "warn"],

@@ -30,7 +30,7 @@ import {
   type Values,
 } from "../server";
 import { allPeople, byId, isActive, isFieldOrOther, offices, visibleIds, type Person } from "../services/people";
-import { attendanceCfg, attendanceRows, holidayDatesFor, holidays, leaveDatesIn } from "../services/attendance";
+import { approvedLeave, attendanceCfg, attendanceRows, fieldLeave, holidayDatesFor, holidays, leaveDatesIn, type LeaveRef } from "../services/attendance";
 import { balances, checkApproval, checkRequest, holidaysInside, leaveDays, type Balances, type LeaveType } from "../engines/leave";
 import { monthlyFigures } from "../engines/monthly";
 import { minutesBetween } from "../engines/attendance";
@@ -40,6 +40,7 @@ import { runMonthlyLeaveCredit } from "../jobs";
 import { personFrom, personOption, scopeFor } from "./attendance";
 import { fromOld, HOLIDAY_CATEGORIES, LEAVE_WAITING } from "../values";
 import { powerHolderUserIds, tell, tellEmployees } from "../services/notify";
+import { mirrorToField, removeEverywhere, renameEverywhere } from "@/lib/services/holiday-calendar";
 
 /* ---------------------------------------------------------------------------
  * Leave & holidays (spec §7), overtime (§8) and the monthly attendance
@@ -202,6 +203,49 @@ function leaveActions(ctx: HrmsContext, r: Req, name: string, bal: Balances): Ac
   }
   if (approver || (own && r.status === LEAVE_WAITING)) a.push({ id: "delete", l: approver ? "Delete" : "Delete request", confirm: DELETE_WORDS });
   return a;
+}
+
+/**
+ * A field-app leave request on HRMS's lists, read-only: it was asked for on
+ * the handset and is decided on the Sales Dashboard, where its approval chain
+ * lives. HRMS shows it so nobody plans around a person who is away, and
+ * counts it in payroll, the monthly summary and the absentee list.
+ */
+function fieldLeaveRow(r: LeaveRef, p: Person | undefined, hiddenKeys: string[]): ListRow {
+  const name = p?.name ?? "";
+  return {
+    id: r.id,
+    v: withoutHidden(
+      {
+        date: r.startDate,
+        reqId: "Field app",
+        emp: name,
+        type: r.type,
+        start: r.startDate,
+        end: r.endDate,
+        days: r.days,
+        status: r.status,
+        line: `Asked for on the field app · ${r.fieldType ?? ""}`,
+        paid: r.paid ?? "",
+        unpaid: r.unpaid ?? "",
+        monthLbl: monLabel(monthOf(r.startDate)),
+        reason: r.reason ?? "",
+        calLabel: first(name) + (r.type === "Half Day" ? " · half" : "") + " · field",
+        calTone: r.status === "Approved" ? "success" : "warn",
+      },
+      hiddenKeys,
+    ),
+    flags: ["fieldApp"],
+    title: `${name} · field app leave`,
+    header: `${r.type} · ${fdShort(r.startDate)}–${fdShort(r.endDate)} · ${r.status}`,
+    fields: [
+      { l: "Kind", v: r.fieldType ?? "" },
+      { l: "Reason", v: r.reason ?? "" },
+      { l: "Decided", v: "On the Sales Dashboard, where it was asked for" },
+    ],
+    contacts: [],
+    actions: [],
+  };
 }
 
 function leaveRow(ctx: HrmsContext, r: Req, p: Person | undefined, x: { book: BalBook; hol: Holiday[]; hiddenKeys: string[] }): ListRow {
@@ -621,7 +665,13 @@ const leave: HrmsScreenModule = {
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "approveLeave", "hr");
     const ids = visibleIds(ctx, scope);
-    const [reqs, book, hol, form] = await Promise.all([requestsFor(ids), balBook(ids ? [...ids] : null), holidays(), applyForm(ctx, people, "leave")]);
+    const [reqs, book, hol, form, field] = await Promise.all([
+      requestsFor(ids),
+      balBook(ids ? [...ids] : null),
+      holidays(),
+      applyForm(ctx, people, "leave"),
+      fieldLeave({ employeeIds: ids ? [...ids] : null, states: ["pending", "approved", "rejected"] }),
+    ]);
     const vc = visibleCols(LEAVE_COLS, hasP(ctx));
     const pb = byId(people);
     return {
@@ -640,7 +690,10 @@ const leave: HrmsScreenModule = {
           ...(!form ? { notice: { text: NOT_LINKED, tone: "warn" as const } } : {}),
         },
       },
-      rows: reqs.map((r) => leaveRow(ctx, r, pb.get(r.employeeId), { book, hol, hiddenKeys: vc.hiddenKeys })),
+      rows: [
+        ...reqs.map((r) => leaveRow(ctx, r, pb.get(r.employeeId), { book, hol, hiddenKeys: vc.hiddenKeys })),
+        ...field.map((r) => fieldLeaveRow(r, pb.get(r.employeeId), vc.hiddenKeys)),
+      ],
     };
   },
   actions: LEAVE_ACTIONS,
@@ -736,7 +789,10 @@ const leaveCal: HrmsScreenModule = {
           calendar: { from: "start", to: "end", label: "calLabel", tone: "calTone", month, holidays: hols },
         },
       },
-      rows: reqs.map((r) => leaveRow(ctx, r, pb.get(r.employeeId), { book, hol, hiddenKeys })),
+      rows: [
+        ...reqs.map((r) => leaveRow(ctx, r, pb.get(r.employeeId), { book, hol, hiddenKeys })),
+        ...(await fieldLeave({ employeeIds: ids ? [...ids] : null, states: ["pending", "approved"], from, to })).map((r) => fieldLeaveRow(r, pb.get(r.employeeId), hiddenKeys)),
+      ],
     };
   },
   actions: LEAVE_ACTIONS,
@@ -1051,7 +1107,11 @@ const holidaysScreen: HrmsScreenModule = {
       const name = text(v.name);
       if (!name) return fieldErr("name", "Holiday name is required");
       const after = { name, category, remark: text(v.remark) };
-      await db.update(hrmsHolidays).set({ ...after, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsHolidays.id, id));
+      await inTx(async (tx) => {
+        await tx.update(hrmsHolidays).set({ ...after, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsHolidays.id, id));
+        await renameEverywhere(tx, id, name);
+        return okVoid("");
+      });
       await hrmsAudit(ctx, "hrms.holiday.edit", "hrms_holidays", id, { name: h.name, category: h.category, remark: h.remark }, after);
       return okVoid("Holiday updated");
     },
@@ -1059,7 +1119,10 @@ const holidaysScreen: HrmsScreenModule = {
       if (!has(ctx, "admin")) return err("Only an HRMS administrator can delete a holiday", "not_permitted");
       const [h] = await db.select().from(hrmsHolidays).where(eq(hrmsHolidays.id, id));
       if (!h) return err("That holiday no longer exists.", "not_found");
-      await db.delete(hrmsHolidays).where(eq(hrmsHolidays.id, id));
+      await inTx(async (tx) => {
+        await removeEverywhere(tx, id);
+        return okVoid("");
+      });
       await hrmsAudit(ctx, "hrms.holiday.delete", "hrms_holidays", id, h, null);
       return okVoid("Holiday deleted");
     },
@@ -1095,7 +1158,11 @@ const holidaysScreen: HrmsScreenModule = {
         if (tagged !== NAMED) taken.push({ date, tagged });
         rows.push({ id: hrmsId("hhol"), date, category, name, tagged, taggedEmployeeIds: named, remark: text(l.remark), createdByName: ctx.user.name, createdById: ctx.user.id });
       }
-      await db.insert(hrmsHolidays).values(rows);
+      await inTx(async (tx) => {
+        await tx.insert(hrmsHolidays).values(rows);
+        await mirrorToField(tx, rows.map((r) => ({ id: r.id!, date: r.date, name: r.name, tagged: r.tagged ?? EVERYONE })), ctx.user.id);
+        return okVoid("");
+      });
       await hrmsAudit(ctx, "hrms.holiday.add", "hrms_holidays", null, null, { tagged, named, dates: rows.map((r) => r.date) });
       return okVoid(`${plural(rows.length, "holiday")} added for ${tagged === NAMED ? plural(named.length, "employee") : tagged.toLowerCase()}`);
     },
@@ -1123,9 +1190,12 @@ const holidaysScreen: HrmsScreenModule = {
       /* Read again rather than trusting the preview: a holiday added since is a duplicate now. */
       const lines = (await readHolidayCsv(v.csv ?? "")).filter((l) => !l.error);
       if (!lines.length) return okVoid("Nothing to import");
-      await db
-        .insert(hrmsHolidays)
-        .values(lines.map((l) => ({ id: hrmsId("hhol"), date: l.date, category: l.category, name: l.name, tagged: l.tagged, remark: l.remark || null, createdByName: `Import by ${ctx.user.name}`, createdById: ctx.user.id })));
+      const rows = lines.map((l) => ({ id: hrmsId("hhol"), date: l.date, category: l.category, name: l.name, tagged: l.tagged, remark: l.remark || null, createdByName: `Import by ${ctx.user.name}`, createdById: ctx.user.id }));
+      await inTx(async (tx) => {
+        await tx.insert(hrmsHolidays).values(rows);
+        await mirrorToField(tx, rows, ctx.user.id);
+        return okVoid("");
+      });
       await hrmsAudit(ctx, "hrms.holiday.import", "hrms_holidays", null, null, { added: lines.length });
       return okVoid(`${plural(lines.length, "holiday")} imported`);
     },
@@ -1370,10 +1440,8 @@ const monthly: HrmsScreenModule = {
       attendanceCfg(),
       attendanceRows({ from, to }),
       holidays(from, to),
-      db
-        .select({ employeeId: hrmsLeaveRequests.employeeId, startDate: hrmsLeaveRequests.startDate, endDate: hrmsLeaveRequests.endDate })
-        .from(hrmsLeaveRequests)
-        .where(and(eq(hrmsLeaveRequests.status, "Approved"), lte(hrmsLeaveRequests.startDate, to), gte(hrmsLeaveRequests.endDate, from))),
+      /* HRMS's approved leave and the field app's alike — one record of who was away. */
+      approvedLeave().then((all) => all.filter((r) => r.startDate <= to && r.endDate >= from)),
       db.select().from(hrmsMonthlyRemarks).where(eq(hrmsMonthlyRemarks.month, month)),
     ]);
     /* Office open days are the dates on which ANYBODY attended, whoever the list shows. */

@@ -59,6 +59,7 @@ export default async function HrmsHome() {
             fullDayPercent: cfg.fullDayPercent,
             distance: r.method === "officer" ? `Marked by ${r.markedByName ?? "your department head"}` : distanceLabel(r.distanceM),
             worked: hm(r.fig.workedMin),
+            field: r.method === "field",
           }
         : null,
     };

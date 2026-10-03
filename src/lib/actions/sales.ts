@@ -67,6 +67,7 @@ import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import { repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
 import { notifyUsers } from "../notify";
 import { announce } from "@/lib/services/announcement-service";
+import { mirrorToHrms, removeEverywhere } from "@/lib/services/holiday-calendar";
 
 /** Count, noun and verb agree at every value. */
 function plural(n: number, noun: string, pl?: string): string {
@@ -1029,13 +1030,19 @@ export async function addHoliday(input: {
       );
     }
 
-    await db.insert(mbosHolidays).values({
-      id: gen("mbos_hol"),
-      onDate: input.onDate,
-      name,
-      scope,
-      createdById: user.id,
-      updatedById: user.id,
+    /* One calendar: the day goes on HRMS's too, under the same id, so payroll
+       and the absentee list know about it (lib/services/holiday-calendar.ts). */
+    const holidayId = gen("mbos_hol");
+    await db.transaction(async (tx) => {
+      await tx.insert(mbosHolidays).values({
+        id: holidayId,
+        onDate: input.onDate,
+        name,
+        scope,
+        createdById: user.id,
+        updatedById: user.id,
+      });
+      await mirrorToHrms(tx, { id: holidayId, onDate: input.onDate, name, scope }, user);
     });
 
     await db.insert(auditLog).values({
@@ -1066,11 +1073,11 @@ export async function removeHoliday(id: string): Promise<Result> {
       .limit(1);
     if (!row) return err("That day is no longer on the calendar.", "not_found");
 
-    await db.delete(mbosHolidays).where(eq(mbosHolidays.id, id));
-    /* Reference data, gone. Without a tombstone the deleted row simply has no
-       `updated_at` for the delta to notice, and every phone that already
-       pulled it keeps treating that date as a day off for good. */
-    await tombstone("holidays", id, "Holiday removed");
+    /* Reference data, gone — from HRMS's calendar as well, and tombstoned:
+       without one the deleted row simply has no `updated_at` for the delta to
+       notice, and every phone that already pulled it keeps treating that date
+       as a day off for good. */
+    await db.transaction((tx) => removeEverywhere(tx, id));
 
     await db.insert(auditLog).values({
       id: gen("aud"),
