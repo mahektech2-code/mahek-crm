@@ -13,7 +13,8 @@ import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadC
 import { TravelGate } from './TravelGate';
 import { refreshEverything } from '../../native/refresh';
 import { useBoot } from '../../state/boot';
-import { todayRow } from '../../data/attendance';
+import { dayState, workedMs, workedLabel, type Session } from '../../data/attendance';
+import { punchOutDue } from '../../engines/punch-out';
 import { hhmm, plural } from '../../lib/format';
 import { elapsedLabel } from '../../lib/visit';
 import { gpsVerdict, type GpsHealth } from '../../engines/gps-health';
@@ -197,7 +198,8 @@ export function AppFrame({
   const unread = useUnreadCount();
   const waiting = usePendingCount();
   const daysToAgree = useDaysToAgreeCount();
-  const checkInAt = useCheckInTime();
+  const clock = useDayClock();
+  const checkInAt = clock.checkInAt;
   const checkedIn = checkInAt != null;
   /* From the radio, not from `store.gps` — see `useGpsHealth` above, and
      `engines/gps-health.ts` for why that field cannot answer this question. */
@@ -410,6 +412,23 @@ export function AppFrame({
         />
       ) : null}
 
+      {/*
+        AND IN THE EVENING, THE DAY FOLLOWS HIM.
+        Punching out was a button on Home and nowhere else, and the end of a
+        day is spent on the visit, journey and close-the-day screens — so the
+        one control that decides his hours was on the one screen he was not
+        looking at. From the prompt hour on, while a session is open, it is on
+        every screen. A visit still open wins: he has to check out of the shop
+        before he can close the day, and two bars would be two questions. Not
+        on Home, where the same question is already the main button.
+      */}
+      {clock.due && !arrival && here !== 'home' ? (
+        <PunchOutBar
+          sessions={clock.sessions}
+          onPress={() => router.replace('/home?punchOut=1')}
+        />
+      ) : null}
+
       {/* Measured rather than guessed, so the toast can sit above whatever the
           screen pinned here — see `Toast`. A screen with no footer measures 0
           and nothing moves. */}
@@ -566,16 +585,61 @@ function InVisitBar({
 }
 
 /**
- * When the day started, from the attendance row rather than from a flag.
+ * "On the clock · 9h 40m — Punch out." The open day, on every screen, in the
+ * evening.
  *
- * The strip is on every screen including the ones opened after a restart, so a
- * boolean held in memory would read "Not checked in" to somebody who has been
- * working since nine.
+ * Amber rather than the primary blue the visit bars use: those say where he
+ * is, which is ordinary; this says something is left undone at the end of the
+ * day, and the colour is what separates the two at a glance on a bike.
  */
-function useCheckInTime(): number | null {
+function PunchOutBar({ sessions, onPress }: { sessions: Session[]; onPress: () => void }) {
+  const now = useTicker(60_000);
+  const worked = workedLabel(workedMs(sessions, now), false);
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`You are still punched in, ${worked}. Punch out to close your day.`}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        minHeight: HIT,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        backgroundColor: pressed ? C.warnInk : C.warn,
+      })}>
+      <Icon name="camera" size={18} color="#FFFFFF" strokeWidth={1.8} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>
+          Still punched in
+        </Text>
+        <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.9)' }}>
+          {worked + ' · done for the day?'}
+        </Text>
+      </View>
+      <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Punch out</Text>
+    </Pressable>
+  );
+}
+
+/**
+ * The day as the frame needs it: when it started, whether a session is open,
+ * and whether it is late enough to ask for the punch-out.
+ *
+ * From the attendance row rather than from a flag. The strip is on every
+ * screen including the ones opened after a restart, so a boolean held in
+ * memory would read "Not checked in" to somebody who has been working since
+ * nine — and the punch-out bar would never appear for him at all.
+ */
+function useDayClock(): { checkInAt: number | null; sessions: Session[]; due: boolean } {
   const boot = useBoot();
   const userId = boot.session?.user.id ?? null;
-  const [at, setAt] = React.useState<number | null>(null);
+  const [state, setState] = React.useState<{ checkInAt: number | null; sessions: Session[]; due: boolean }>({
+    checkInAt: null,
+    sessions: [],
+    due: false,
+  });
 
   React.useEffect(() => {
     let live = true;
@@ -583,9 +647,17 @@ function useCheckInTime(): number | null {
        frame is unmounted the moment somebody signs out. */
     if (!userId) return;
     const tick = () => {
-      void todayRow(userId).then((row) => {
-        if (live) setAt(row?.checkInAt ?? null);
-      });
+      void Promise.all([dayState(userId), getConfig<number>('mbos.attendance.punchOutPromptHour', 18)])
+        .then(([day, promptHour]) => {
+          if (!live) return;
+          setState({
+            checkInAt: day.firstInAt,
+            sessions: day.sessions,
+            due: punchOutDue({ running: day.running, nowMs: Date.now(), promptHour }),
+          });
+        })
+        /* A status read may not break a screen; the next tick tries again. */
+        .catch(() => {});
     };
     tick();
     const t = setInterval(tick, 10_000);
@@ -595,7 +667,7 @@ function useCheckInTime(): number | null {
     };
   }, [userId]);
 
-  return at;
+  return state;
 }
 
 

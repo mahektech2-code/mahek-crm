@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Card, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
@@ -26,6 +26,7 @@ import { collectionDue } from '../src/data/customers';
 import { listPerformance, shortfalls, type SyncedMonth } from '../src/data/performance';
 import { getConfig } from '../src/data/config';
 import { mayOpenDay } from '../src/data/day-gate';
+import { punchOutDue } from '../src/engines/punch-out';
 import { ordersToday } from '../src/data/orders';
 import { cashInHand } from '../src/data/payments';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
@@ -218,6 +219,13 @@ export default function Home() {
   /* The day's mode, held while the after-punch-out prompt is up. Null is no
      prompt. See `promptsForExpenses`. */
   const [claimPrompt, setClaimPrompt] = React.useState<{ modeLabel: string | null } | null>(null);
+  /* The hour punching out becomes the main button. Null until read, and read
+     as "not yet" — a prompt that flashes on and off as config lands is worse
+     than one that arrives a frame late. */
+  const [punchOutHour, setPunchOutHour] = React.useState<number | null>(null);
+  /* `?punchOut=1` is the evening bar on every other screen sending him here to
+     do exactly that. See the effect beside `endDay`. */
+  const params = useLocalSearchParams<{ punchOut?: string }>();
 
   /*
    * The clock, as state and ticked — never read during render.
@@ -375,7 +383,16 @@ export default function Home() {
 
   useFocusEffect(load);
 
+  React.useEffect(() => {
+    void getConfig<number>('mbos.attendance.punchOutPromptHour', 18)
+      .then(setPunchOutHour)
+      .catch(() => setPunchOutHour(18));
+  }, []);
+
   const checkedIn = !!day && day.sessionCount > 0;
+  /* See `engines/punch-out.ts`: loud only when it is the right thing to press. */
+  const punchOutLoud =
+    !!day && punchOutHour != null && punchOutDue({ running: day.running, nowMs: now, promptHour: punchOutHour });
 
   const today = new Date(now);
   const dateLine = `${WEEKDAYS[today.getDay()]}, ${today.getDate()} ${MONTHS[today.getMonth()]}`;
@@ -893,6 +910,23 @@ export default function Home() {
     }
   };
 
+  /*
+   * THE BAR'S TAP LANDS HERE AND OPENS THE CAMERA. "Punch out" pressed on the
+   * visit screen that only moved him to Home would be a second press for the
+   * same decision, at the end of a day. Once, and only once the day has been
+   * read and is still running — a param left behind must not open a camera
+   * on somebody who has already punched out. The param is cleared first, so a
+   * back-and-forth to Home cannot fire it twice.
+   */
+  const punchOutAsked = React.useRef(false);
+  React.useEffect(() => {
+    if (params.punchOut !== '1' || punchOutAsked.current || !day) return;
+    punchOutAsked.current = true;
+    router.setParams({ punchOut: undefined });
+    if (day.running) void endDay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- endDay is recreated every render; the ref is the guard
+  }, [params.punchOut, day]);
+
   return (
     <AppFrame title="Home" activeTab="home" contentStyle={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 92 }}>
       {/* ---- who and when ---- */}
@@ -1003,11 +1037,22 @@ export default function Home() {
                 screens — and that one launches turn-by-turn in Google Maps.
                 One word, two things, pressed on a bike. This opens the list,
                 so it is called what the list is called. */}
+            {/* It steps back in the evening, so there is one primary action on
+                the card and it is the one that closes the day. */}
             <Pressable
               onPress={() => router.push('/journey')}
               accessibilityRole="button"
-              style={{ height: HIT, paddingHorizontal: 16, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-              <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(500)]}>
+              style={{
+                height: HIT,
+                paddingHorizontal: 16,
+                borderRadius: radius.xl,
+                borderWidth: punchOutLoud ? 1 : 0,
+                borderColor: C.border,
+                backgroundColor: punchOutLoud ? C.surface : C.primary,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+              <Text numberOfLines={1} style={[{ fontSize: 15, color: punchOutLoud ? C.body : '#FFFFFF' }, weight(500)]}>
                 Today’s route
               </Text>
             </Pressable>
@@ -1019,29 +1064,62 @@ export default function Home() {
             started again afterwards, and the second stretch is ADDED to the
             first rather than replacing it.
           */}
+          {/*
+            AND IN THE EVENING IT IS THE MAIN BUTTON. It was a grey outline
+            under a solid blue one all day, the quietest control on the
+            screen, and salesmen walked past it — every forgotten punch-out is
+            a regularisation for the office and a day with no closing photo.
+            From `mbos.attendance.punchOutPromptHour` it takes the weight
+            "Today's route" gives up, and says why.
+          */}
           <Pressable
             onPress={day.running ? endDay : resumeDay}
             disabled={starting}
+            accessibilityRole="button"
             style={({ pressed }) => ({
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
               gap: 8,
-              height: HIT,
+              minHeight: punchOutLoud ? 56 : HIT,
               marginTop: 12,
               borderRadius: radius.md,
-              borderWidth: 1,
+              borderWidth: punchOutLoud ? 0 : 1,
               borderColor: day.running ? C.border : C.primary,
-              backgroundColor: pressed ? C.wash : day.running ? C.surface : C.primaryTint,
+              backgroundColor: punchOutLoud
+                ? pressed
+                  ? C.primaryDeep
+                  : C.primary
+                : pressed
+                  ? C.wash
+                  : day.running
+                    ? C.surface
+                    : C.primaryTint,
+              boxShadow: punchOutLoud ? shadow.primaryDeep : undefined,
               opacity: starting ? 0.6 : 1,
             })}>
             {/* `camera`, not the clock: what happens when this is pressed is
                 that the camera opens, and the icon that says so is worth more
                 here than the one restating the label. */}
-            <Icon name="camera" size={18} color={day.running ? C.body : C.primaryDeep} />
-            <Text style={[{ fontSize: 15, color: day.running ? C.body : C.primaryDeep }, weight(500)]}>
-              {day.running ? 'Punch out · photo' : 'Punch in again · photo'}
-            </Text>
+            <Icon
+              name="camera"
+              size={punchOutLoud ? 20 : 18}
+              color={punchOutLoud ? '#FFFFFF' : day.running ? C.body : C.primaryDeep}
+            />
+            <View>
+              <Text
+                style={[
+                  { fontSize: punchOutLoud ? 17 : 15, color: punchOutLoud ? '#FFFFFF' : day.running ? C.body : C.primaryDeep },
+                  weight(punchOutLoud ? 600 : 500),
+                ]}>
+                {day.running ? 'Punch out · photo' : 'Punch in again · photo'}
+              </Text>
+              {punchOutLoud ? (
+                <Text style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
+                  Done for the day? Close it so your hours count.
+                </Text>
+              ) : null}
+            </View>
           </Pressable>
         </Card>
       )}

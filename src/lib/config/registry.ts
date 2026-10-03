@@ -2773,6 +2773,17 @@ export const SETTINGS = [
     max: 23,
   },
   {
+    key: "mbos.attendance.punchOutPromptHour",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Hour the handset asks for a punch-out",
+    description:
+      "From this local hour, a salesman still punched in sees Punch out as the main button on Home and a bar across every other screen asking him to close the day. Before it, Punch out stays a quiet secondary button, because a prompt shown all day stops being read.",
+    default: 18,
+    min: 0,
+    max: 23,
+  },
+  {
     key: "mbos.attendance.selfieRequired",
     type: "boolean",
     category: "mbos-attendance",
