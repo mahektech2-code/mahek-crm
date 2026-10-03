@@ -11,7 +11,9 @@ import { ADMIN, ADMIN_TABS, type TabsOf } from "@/lib/admin-routes";
 import { stamp, stampDate } from "@/lib/format";
 import { endSessionsFor, sendPasswordResetFor, setUserActive } from "@/lib/actions/people";
 import type { Person } from "@/lib/services/admin-people-service";
-import type { AuditRow, SessionRow } from "@/lib/services/admin-platform-service";
+import type { SessionRow } from "@/lib/services/admin-platform-service";
+import type { AuditFeed } from "@/lib/services/audit-feed-service";
+import { AuditEntries } from "../audit/audit-feed";
 import { AdminPage } from "../_shell/admin-page";
 
 /* ---------------------------------------------------------------------------
@@ -34,11 +36,14 @@ export function PersonDetail({
   tab,
   sessions,
   audit,
+  today,
 }: {
   person: Person;
   tab: TabsOf<"person">;
   sessions: SessionRow[];
-  audit: AuditRow[];
+  audit: AuditFeed;
+  /** The business date, read on the server — render must not read the clock. */
+  today: string;
 }) {
   const router = useRouter();
   const notify = useToast().push;
@@ -171,24 +176,27 @@ export function PersonDetail({
       ) : null}
 
       {tab === "audit" ? (
-        <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-          <CardHeader
-            title="What they did, and what was done to them"
-            hint="From the audit log. Read-only, and never editable by anybody."
-          />
-          {audit.length === 0 ? (
-            <div className="px-5 py-6 text-sm text-muted">Nothing recorded against this account yet.</div>
+        <div className="mt-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 text-[13px] text-muted">
+            <span>
+              What they did, and what was done to their account
+              {audit.total > audit.entries.length
+                ? ` — the newest ${audit.size} of ${audit.total.toLocaleString("en-IN")}`
+                : ""}
+              .
+            </span>
+            {audit.total ? (
+              <Link href={`${ADMIN.audit()}?person=${encodeURIComponent(person.id)}`} className="text-[13px] font-medium">
+                See everything they did in the audit log →
+              </Link>
+            ) : null}
+          </div>
+          {audit.entries.length === 0 ? (
+            <Card className="mt-3 px-5 py-6 text-sm text-muted">Nothing recorded against this account yet.</Card>
           ) : (
-            audit.map((a, i) => (
-              <div key={`${a.action}-${a.at}-${i}`} className={cx("px-5 py-3", i ? "border-t border-canvas" : "")}>
-                <div className="text-sm font-medium text-ink">{a.action}</div>
-                <div className="mt-0.5 text-[13px] text-muted">
-                  {a.detail} · {a.actor === person.name ? "by them" : `by ${a.actor ?? "the system"}`} · {stamp(a.at)}
-                </div>
-              </div>
-            ))
+            <AuditEntries entries={audit.entries} today={today} />
           )}
-        </Card>
+        </div>
       ) : null}
     </AdminPage>
   );

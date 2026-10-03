@@ -64,12 +64,18 @@ export const ADMIN_TABS = {
     { slug: "sessions", label: "Sessions" },
     { slug: "audit", label: "Audit" },
   ],
+  /* The audit log's groups — `AUDIT_GROUPS` in lib/audit-labels.ts is the
+     definition and audit-labels.test.ts holds the two lists together. */
   audit: [
     { slug: "all", label: "Everything" },
-    { slug: "config", label: "Configuration" },
-    { slug: "access", label: "Accounts & access" },
+    { slug: "money", label: "Money" },
+    { slug: "customers", label: "Customers & leads" },
+    { slug: "field", label: "Field team" },
+    { slug: "factory", label: "Factory" },
+    { slug: "hr", label: "HR" },
+    { slug: "access", label: "People & access" },
+    { slug: "settings", label: "Settings & catalogue" },
     { slug: "signin", label: "Sign-ins" },
-    { slug: "work", label: "App activity" },
   ],
 } as const satisfies Record<string, readonly AdminTab[]>;
 
