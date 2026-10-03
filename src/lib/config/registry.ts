@@ -5472,6 +5472,9 @@ export type Config = {
   "mbos.attendance.fullDayHours": number;
   "mbos.attendance.halfDayHours": number;
   "mbos.attendance.autoCheckOutHour": number;
+  "mbos.attendance.punchOutPromptHour": number;
+  "mbos.attendance.punchOutSecondReminderMinutes": number;
+  "mbos.attendance.missedPunchOutWindowDays": number;
   "mbos.attendance.selfieRequired": boolean;
   "mbos.attendance.selfieRetentionHours": number;
 
