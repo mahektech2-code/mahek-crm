@@ -6,7 +6,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, employeeReporting, employees } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
+import { listUserApps, listUserModules } from "@/lib/access";
 import { err, fromThrown, okVoid, type Result } from "@/lib/result";
 
 /* ---------------------------------------------------------------------------
@@ -31,6 +31,13 @@ function refresh() {
   revalidatePath("/hrms/people");
 }
 
+/*
+ * HOLDING HRMS IS NOT HOLDING THE ORG CHART. This used to ask for the app and
+ * stop, so anybody narrowed away from the Org chart screen could still move a
+ * reporting line by calling the action — and a reporting line moves who the
+ * CRM names as an account's sales manager. The screen's own module is asked
+ * for, the same grant its route guard reads.
+ */
 async function requireHrms() {
   const user = await requireUser();
   const apps = await listUserApps(user.id);
@@ -39,6 +46,10 @@ async function requireHrms() {
       user: null,
       error: err("Only somebody with HRMS access can change the org chart.", "not_permitted"),
     };
+  }
+  const modules = await listUserModules(user.id, "hrms");
+  if (!modules.some((m) => m.key === "hrms.org")) {
+    return { user: null, error: err("The Org chart screen is not on your account.", "not_permitted") };
   }
   return { user, error: null };
 }

@@ -14,6 +14,17 @@ import { metresBetween, weekdayOf, hm } from "@/lib/hrms/time";
 import { bindHrmsFiles } from "@/lib/hrms/attachments";
 import { getConfig } from "@/lib/config/store";
 import { HELP } from "@/lib/hrms/values";
+import { tellPowerHolders } from "@/lib/hrms/services/notify";
+import { hrmsLink } from "@/lib/hrms/registry";
+
+/** Outside a request (a script, a test) nothing is cached, so there is nothing to invalidate — the CRM's rule. */
+function refresh() {
+  try {
+    revalidatePath("/hrms");
+  } catch {
+    /* no request context */
+  }
+}
 
 /* ---------------------------------------------------------------------------
  * Checking in and out from the home card (spec §6.2). The browser sends where
@@ -110,7 +121,7 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
     cfg,
     t,
   );
-  revalidatePath("/hrms");
+  refresh();
   return ok({}, `Checked in at ${nowT} · ${fig.lateTxt}${fig.lateBeyondGrace ? "" : fig.lateMin != null && fig.lateMin > 0 ? `, within the ${cfg.graceMinutes}-minute grace` : ""}`);
 }
 
@@ -143,7 +154,7 @@ export async function hrmsCheckOut(input: Fix & { photoId?: string | null }): Pr
   });
   await hrmsAudit(ctx, "hrms.attendance.checkOut", "hrms_attendance", row.id, null, { at: nowT });
   const fig = dayFigures({ ...row, checkOut: nowT }, cfg, t);
-  revalidatePath("/hrms");
+  refresh();
   return ok({}, `Checked out at ${nowT} · ${hm(fig.workedMin)} · ${fig.workDay}`);
 }
 
@@ -152,11 +163,17 @@ export async function hrmsRaiseLateHelp(text: string): Promise<Result<undefined>
   const ctx = await hrmsContext();
   const me = ctx.employee;
   if (!ctx.level || !me) return err("Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.", "not_permitted");
+  /* The same door as the Help requests screen, so the same check: the button
+     is drawn only for somebody holding it, and a server action is a URL. */
+  if (!ctx.screens.has("help")) return err("Help requests are not on your account.", "not_permitted");
   const body = text.trim();
   if (!body) return err("Write what happened before sending.");
   const id = hrmsId("hhlp");
   await db.insert(hrmsHelp).values({ id, date: today(), employeeId: me.id, type: HELP.runningLate, inTime: now(), text: body, createdById: ctx.user.id });
   await hrmsAudit(ctx, "hrms.help.raise", "hrms_help", id, null, { type: HELP.runningLate });
-  revalidatePath("/hrms");
+  /* Raised here or on the Help screen, the people who decide it are told —
+     this door used to write the request and tell nobody. */
+  await tellPowerHolders(ctx.user.id, "resolve", { title: `Help request from ${me.name}`, body: `${HELP.runningLate} · ${body}`, kind: "warn", href: hrmsLink("help", { scope: "all", open: id }) });
+  refresh();
   return okVoid(`Help request sent, ${first(me.name)}. The person who resolves help requests will decide and set your check-in time.`);
 }

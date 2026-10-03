@@ -3,7 +3,6 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { employees, hrmsAdvances, hrmsExpenses, hrmsSalaries, users, type HrmsSalary } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
-import { notifyUsers } from "@/lib/notify";
 import { fdLong, inr, nf, type ActionSpec, type ColSpec, type FieldSpec, type FormSpec, type ListRow, type RowField } from "@/lib/erp/ui";
 import { has, type HrmsContext, type Scope } from "../access";
 import { err, fieldErr, hrmsAudit, hrmsId, inTx, nextSeries, okVoid, paise, refuse, rupeesField, stampLine, text, today, num, type HrmsScreenModule, type ScreenQuery, type Tx, type Values } from "../server";
@@ -14,6 +13,7 @@ import { daysIn, monLabel, monthOf, prevMonth } from "../time";
 import { hrmsLink } from "../registry";
 import { personFrom, personOption } from "./attendance";
 import { EXPENSE_CLAIM, EXPENSE_PAID } from "../values";
+import { tell } from "../services/notify";
 
 /* ---------------------------------------------------------------------------
  * Payroll, advances and expenses (spec §10, §11).
@@ -557,11 +557,12 @@ async function payMany(ctx: HrmsContext, list: HrmsSalary[], utr: string, paidOn
     }
   }
   if (paid.length) {
+    /* Active accounts only, and a bell that fails must not report the payment as failed. */
     const accounts = await db
       .select({ id: users.id, employeeId: users.employeeId })
       .from(users)
-      .where(inArray(users.employeeId, paid.map((s) => s.employeeId)));
-    await notifyUsers(
+      .where(and(inArray(users.employeeId, paid.map((s) => s.employeeId)), eq(users.active, true)));
+    await tell(
       paid.flatMap((s) =>
         accounts
           .filter((u) => u.employeeId === s.employeeId)

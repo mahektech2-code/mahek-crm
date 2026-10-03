@@ -1,9 +1,8 @@
 import "server-only";
 import { and, eq, gte, inArray, lte, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, employees, hrmsAttendance, hrmsHolidays, hrmsLeaveCredits, hrmsLeaveRequests, hrmsMonthlyRemarks, hrmsOvertime, hrmsUserPowers, users } from "@/db/schema";
+import { employees, hrmsAttendance, hrmsHolidays, hrmsLeaveCredits, hrmsLeaveRequests, hrmsMonthlyRemarks, hrmsOvertime } from "@/db/schema";
 import { parseCsv } from "@/lib/csv";
-import { notifyUsers } from "@/lib/notify";
 import { getConfig } from "@/lib/config/store";
 import type { ActionSpec, ColSpec, Contact, FieldSpec, FormSpec, ListRow, RowField } from "@/lib/erp/ui";
 import { has, type HrmsContext } from "../access";
@@ -40,6 +39,7 @@ import { hrmsLink } from "../registry";
 import { runMonthlyLeaveCredit } from "../jobs";
 import { personFrom, personOption, scopeFor } from "./attendance";
 import { fromOld, HOLIDAY_CATEGORIES, LEAVE_WAITING } from "../values";
+import { powerHolderUserIds, tell, tellEmployees } from "../services/notify";
 
 /* ---------------------------------------------------------------------------
  * Leave & holidays (spec §7), overtime (§8) and the monthly attendance
@@ -65,31 +65,9 @@ const nextMonth = (m: string) => monthOf(addDaysISO(`${m}-01`, 32));
 /* ----------------------------------------------------------- notifications */
 
 /** Who decides leave: holders of the power and HRMS administrators (spec §18.5). */
-async function approverUserIds(): Promise<string[]> {
-  const [p, a] = await Promise.all([
-    db.select({ id: hrmsUserPowers.userId }).from(hrmsUserPowers).where(eq(hrmsUserPowers.power, "approveLeave")),
-    db.select({ id: appAccess.userId }).from(appAccess).where(and(eq(appAccess.app, "hrms"), eq(appAccess.role, "admin"))),
-  ]);
-  const ids = [...new Set([...p, ...a].map((x) => x.id))];
-  if (!ids.length) return [];
-  const live = await db.select({ id: users.id }).from(users).where(and(inArray(users.id, ids), eq(users.active, true)));
-  return live.map((x) => x.id);
-}
-
-async function userOfEmployee(employeeId: string): Promise<string | null> {
-  const [u] = await db.select({ id: users.id }).from(users).where(and(eq(users.employeeId, employeeId), eq(users.active, true))).limit(1);
-  return u?.id ?? null;
-}
+const approverUserIds = () => powerHolderUserIds("approveLeave");
 
 /* A bell that could not be rung must never undo a decision already written. */
-async function tell(entries: { userId: string; title: string; body: string; href: string; kind?: string }[]) {
-  try {
-    await notifyUsers(entries);
-  } catch {
-    /* the decision stands; the requester still sees it on their leave screen */
-  }
-}
-
 function span(r: { startDate: string; endDate: string }) {
   return r.startDate === r.endDate ? fdShort(r.startDate) : `${fdShort(r.startDate)} – ${fdShort(r.endDate)}`;
 }
@@ -100,9 +78,7 @@ async function tellApprovers(ctx: HrmsContext, r: { reqNo: string; type: string;
 }
 
 async function tellEmployee(ctx: HrmsContext, r: Req, body: string, kind: string) {
-  const userId = await userOfEmployee(r.employeeId);
-  if (!userId || userId === ctx.user.id) return;
-  await tell([{ userId, title: `Leave ${r.reqNo}`, body, href: hrmsLink("leave"), kind }]);
+  await tellEmployees(ctx.user.id, [r.employeeId], { title: `Leave ${r.reqNo}`, body, href: hrmsLink("leave"), kind });
 }
 
 /* --------------------------------------------------------------- balances */
@@ -712,7 +688,9 @@ const approvals: HrmsScreenModule = {
           ...(approver ? {} : { notice: { text: "You can read this queue. Only someone who approves leave can decide on it.", tone: "info" as const } }),
         },
       },
-      rows: reqs.map((r) => leaveRow(ctx, r, pb.get(r.employeeId), { book, hol, hiddenKeys: [] })),
+      /* The queue draws no paid/unpaid columns, but the row's data still went to
+         the browser; somebody without the split power must not receive it. */
+      rows: reqs.map((r) => leaveRow(ctx, r, pb.get(r.employeeId), { book, hol, hiddenKeys: visibleCols(LEAVE_COLS, hasP(ctx)).hiddenKeys })),
     };
   },
   actions: LEAVE_ACTIONS,
@@ -1319,6 +1297,7 @@ const overtime: HrmsScreenModule = {
       return okVoid(`${hm(s.minutes)} overtime saved`);
     },
     async delete(ctx, id) {
+      if (!ctx.flags.ot) return err("Overtime is switched off in HRMS settings.", "not_permitted");
       const [r] = await db.select().from(hrmsOvertime).where(eq(hrmsOvertime.id, id));
       if (!r) return err("That overtime no longer exists.", "not_found");
       if (!(r.employeeId === ctx.employee?.id || canOtAnyone(ctx))) return err("Only the employee, HR or an HRMS administrator can delete this overtime", "not_permitted");
@@ -1407,8 +1386,16 @@ const monthly: HrmsScreenModule = {
     const editor = has(ctx, "hr");
     const stamp = at(new Date());
 
+    /* Somebody active who did not attend once that month is the report's most
+       important row, and it used to leave them out: the list was built from
+       attendance alone. They are listed with every open day missing. Only once
+       the office has opened that month — an empty month has nothing to say. */
+    const everyone = new Map(byEmp);
+    if (openDates.length)
+      for (const p of people)
+        if (isActive(p) && !everyone.has(p.id) && (!p.dateOfJoining || p.dateOfJoining <= to) && (!p.dateOfLeaving || p.dateOfLeaving >= from)) everyone.set(p.id, []);
     const rows: ListRow[] = [];
-    for (const [employeeId, ds] of byEmp) {
+    for (const [employeeId, ds] of everyone) {
       if (ids && !ids.has(employeeId)) continue;
       const p = pb.get(employeeId);
       const holidayDates = holidayDatesFor(hol, employeeId, p?.office ?? null, month);

@@ -30,6 +30,12 @@ export const hrmsNavCounts = cache(async function hrmsNavCounts(ctx: HrmsContext
     jobs.push(db.select({ n: count }).from(hrmsHelp).where(eq(hrmsHelp.status, "Pending")).then((r) => void (out.help = n(r))));
   if (ctx.screens.has("grievances") && ctx.powers.has("resolve"))
     jobs.push(db.select({ n: count }).from(hrmsGrievances).where(eq(hrmsGrievances.status, "Pending")).then((r) => void (out.grievances = n(r))));
+  /* Somebody a grievance is addressed to answers it too: the home page said
+     so and the badge did not. */ else if (me && ctx.screens.has("grievances"))
+    jobs.push(
+      db.select({ n: count }).from(hrmsGrievances).where(and(eq(hrmsGrievances.status, "Pending"), eq(hrmsGrievances.toEmployeeId, me)))
+        .then((r) => void (out.grievances = n(r))),
+    );
   if (me && ctx.screens.has("todos"))
     jobs.push(db.select({ n: count }).from(hrmsTodos).where(and(eq(hrmsTodos.toEmployeeId, me), eq(hrmsTodos.status, "Open"))).then((r) => void (out.todos = n(r))));
   if (me && ctx.screens.has("buddy"))

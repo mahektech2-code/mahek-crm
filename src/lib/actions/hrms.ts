@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { sheetSyncRuns } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
@@ -113,14 +113,3 @@ function describe(created: number, updated: number, withdrawn: number): string {
     : "Employee sheet read. Nothing has changed.";
 }
 
-/** Whether an employee sync has ever completed, for the empty state to read. */
-export async function hasSyncedEmployees(): Promise<boolean> {
-  const rows = await db
-    .select({ id: sheetSyncRuns.id })
-    .from(sheetSyncRuns)
-    .where(
-      and(eq(sheetSyncRuns.source, EMPLOYEE_SOURCE), eq(sheetSyncRuns.status, "ok")),
-    )
-    .limit(1);
-  return rows.length > 0;
-}
