@@ -218,23 +218,15 @@ export const APP_MODULES: AppModule[] = [
   crm("call-log", "Call Log", "Daily calling", "The calling queue itself. Without it there is no day's work to do."),
   crm("reminders", "Reminders", "Daily calling"),
   crm("history", "Call History", "Daily calling"),
-  /*
-   * DAILY CALLING, and no longer a group of its own.
-   *
-   * "Communication" held exactly this one module, and a heading that opens a
-   * single row spends a row to save none — see the note in
-   * `components/shell/nav.ts`. It belongs here on its own merits rather than
-   * for tidiness: a message to a customer is the same day's work as a call to
-   * one, and the WhatsApp screen is worked from the same queue.
-   *
-   * It has to sit BESIDE its group rather than keep its old position, because
-   * `moduleGroupsForApp` returns runs and the Access screen keys its sections
-   * on the group name — a group appearing twice hands React two children with
-   * the same key and draws the heading twice with something else wedged
-   * between them. There is a test for exactly that.
-   */
-  crm("whatsapp", "WhatsApp", "Daily calling"),
   crm("payments", "Payment Follow-up", "Collections", "Chasing money owed. A telecaller who only sells does not need it."),
+  /*
+   * COLLECTIONS, after Payment Follow-up. It sat under Daily calling, on the
+   * reasoning that a message is the same day's work as a call; in practice
+   * almost everything on it is payment reminders and the customers' answers
+   * to them, so it lives with the chasing. The key never moves — a grant
+   * points at `crm.whatsapp` — only the heading it is drawn under.
+   */
+  crm("whatsapp", "WhatsApp", "Collections"),
   crm(
     "outstanding",
     "Outstanding",

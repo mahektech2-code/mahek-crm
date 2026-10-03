@@ -432,3 +432,25 @@ test("the Log shows a telecaller every message to their own customers, including
   assert.equal(await messageCount(), 2, "the count agrees with the list");
   setTestUser(null);
 });
+
+test("the chat list holds everybody we messaged, as WhatsApp does — with our last message's ticks — and Needs reply only those owed an answer", async () => {
+  const { listConversations } = await import("@/lib/services/whatsapp-chat-service");
+  const [boss] = await db.insert(users).values({
+    id: id("usr"), name: "Boss", email: `boss-${randomUUID().slice(0, 4)}@t.local`, passwordHash: "x", role: "admin", initials: "BO",
+  }).returning();
+  await db.insert(appAccess).values({ id: id("aca"), userId: boss.id, app: "crm", role: "admin" });
+  // A reminder that went and was read, and no answer yet.
+  await db.insert(waMessages).values({
+    id: id("wam"), customerId: shopId, userId: boss.id, destKind: "personal", resolvedDestination: "9820011001",
+    body: "Your bill MMI/1 is overdue.", status: "read", mode: "automatic", preparedAt: at("09:00"), sentAt: at("09:01"),
+  });
+  setTestUser(boss);
+  const all = await listConversations({ show: "all" });
+  const row = all.rows.find((r) => r.customerId === shopId);
+  assert.ok(row, "a customer we only messaged is a chat");
+  assert.equal(row!.lastFromThem, false);
+  assert.equal(row!.lastStatus, "read", "the ticks on our last message");
+  assert.equal(row!.unanswered, 0);
+  assert.equal((await listConversations({ show: "open" })).rows.length, 0, "nothing is owed an answer");
+  setTestUser(null);
+});

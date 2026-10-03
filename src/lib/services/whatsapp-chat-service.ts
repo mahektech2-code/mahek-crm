@@ -52,15 +52,17 @@ export type Conversation = {
   lastAt: string;
   lastText: string;
   lastFromThem: boolean;
+  /** How far our last message got (sent, delivered, read…) — the ticks on the row. Null when theirs was last. */
+  lastStatus: string | null;
   /** Their messages nobody has answered or marked handled. */
   unanswered: number;
   assignedToName: string | null;
 };
 
 /**
- * The conversation list: every thread in which the customer has written to
- * us at least once — a list of everybody we ever messaged would be the whole
- * book — newest activity first, as a chat app orders it.
+ * The conversation list: every customer who has written to us, and every one
+ * we have messaged in the last ninety days, newest activity first — as
+ * WhatsApp lists its chats. "Needs reply" narrows it to the ones owed an answer.
  */
 export async function listConversations(opts: { show: ChatShow; q?: string }): Promise<{
   rows: Conversation[];
@@ -99,17 +101,21 @@ export async function listConversations(opts: { show: ChatShow; q?: string }): P
       select coalesce(r.customer_id, 'n:' || ${last10(sql.raw("r.wa_id"))}) as k,
              r.customer_id, ${last10(sql.raw("r.wa_id"))} as num,
              r.received_at as at, true as from_them, r.message as text,
-             (not r.actioned) as open, r.sender_name as sender
+             (not r.actioned) as open, r.sender_name as sender, null::text as status
         from wa_replies r
       union all
+      -- EVERY customer we have messaged, as WhatsApp lists a chat whoever
+      -- wrote first — a reminder that went unanswered is a conversation too.
+      -- Bounded to recent sends: older threads still list through their
+      -- replies above, and the list is re-read on every live event.
       select m.customer_id, m.customer_id, null, coalesce(m.sent_at, m.confirmed_sent_at, m.prepared_at),
-             false, m.body, false, null
+             false, m.body, false, null, m.status::text
         from wa_messages m
        where m.status not in ('prepared', 'cancelled')
-         and m.customer_id in (select x.customer_id from wa_replies x where x.customer_id is not null)
+         and coalesce(m.sent_at, m.confirmed_sent_at, m.prepared_at) > now() - interval '90 days'
       union all
       select 'n:' || ${last10(sql.raw("r.wa_id"))}, null, ${last10(sql.raw("r.wa_id"))}, r.answered_at,
-             false, r.answer_body, false, null
+             false, r.answer_body, false, null, 'sent'
         from wa_replies r
        where r.customer_id is null and r.answer_status = 'sent'
     ),
@@ -118,7 +124,7 @@ export async function listConversations(opts: { show: ChatShow; q?: string }): P
              count(*) filter (where open)::int as unanswered, max(sender) as sender
         from ev group by k
     ),
-    latest as (select distinct on (k) k, from_them, text from ev order by k, at desc)
+    latest as (select distinct on (k) k, from_them, text, status from ev order by k, at desc)
   `;
 
   const [rows, open] = await Promise.all([
@@ -131,6 +137,7 @@ export async function listConversations(opts: { show: ChatShow; q?: string }): P
       sender: string | null;
       from_them: boolean;
       text: string;
+      status: string | null;
       name: string | null;
       kind: "lead" | "customer" | null;
       third_party: boolean | null;
@@ -139,7 +146,7 @@ export async function listConversations(opts: { show: ChatShow; q?: string }): P
     }>(sql`
       ${threadsSql}
       select th.k, th.customer_id, th.num, th.last_at, th.unanswered, th.sender,
-             latest.from_them, latest.text,
+             latest.from_them, latest.text, latest.status,
              customers.name, customers.kind, customers.third_party, customers.phone,
              (select u.name from users u where u.id = ${ASSIGNED_TO_SQL}) as assigned_to_name
         from th
@@ -167,6 +174,7 @@ export async function listConversations(opts: { show: ChatShow; q?: string }): P
       lastAt: iso(r.last_at)!,
       lastText: r.from_them ? replyText(r.text ?? "", null) : (r.text ?? ""),
       lastFromThem: Boolean(r.from_them),
+      lastStatus: r.from_them ? null : r.status,
       unanswered: Number(r.unanswered),
       assignedToName: r.assigned_to_name,
     })),

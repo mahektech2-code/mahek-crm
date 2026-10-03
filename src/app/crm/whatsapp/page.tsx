@@ -158,8 +158,15 @@ export default async function WhatsappPage({
         )
       }
       initialCustomerId={customer ?? customerPayload[0]?.id ?? ""}
+      // The screen opens on the chats, as WhatsApp does. A tool opens when the
+      // address names one, and a customer named without a tab is the old
+      // "send this customer a template" link, which is New message.
       initialTab={
-        tab === "run" || tab === "templates" || tab === "log" || tab === "replies" ? tab : "send"
+        tab === "send" || tab === "run" || tab === "templates" || tab === "log"
+          ? tab
+          : customer && !tab
+            ? "send"
+            : "replies"
       }
       today={day}
       now={now}

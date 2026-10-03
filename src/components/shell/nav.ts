@@ -147,7 +147,6 @@ export const NAV: NavGroup[] = [
       { href: at("/call-log"), label: "Call Log", icon: "phone" },
       { href: at("/reminders"), label: "Reminders", icon: "bell", badge: "reminders" },
       { href: at("/history"), label: "Call History", icon: "history" },
-      { href: at("/whatsapp"), label: "WhatsApp", icon: "chat" },
     ],
   },
   {
@@ -155,6 +154,9 @@ export const NAV: NavGroup[] = [
     icon: "rupee",
     items: [
       { href: at("/payments"), label: "Payment Follow-up", icon: "rupee" },
+      /* WhatsApp is mostly payment reminders and the answers to them, so it
+         sits with the chasing it belongs to rather than with the calls. */
+      { href: at("/whatsapp"), label: "WhatsApp", icon: "chat" },
       { href: at("/outstanding"), label: "Outstanding", icon: "wallet" },
       { href: at("/bills"), label: "Sales Bills", icon: "doc" },
     ],
