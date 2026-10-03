@@ -1,3 +1,4 @@
+import { isRunningInExpoGo } from 'expo';
 import * as TaskManager from 'expo-task-manager';
 import * as BackgroundTask from 'expo-background-task';
 import { syncNow } from './engine';
@@ -71,6 +72,19 @@ TaskManager.defineTask(TASK_NAME, async () => {
  * and app open, the same as `startBackgroundSync()` beside it.
  */
 export async function registerBackgroundSync(): Promise<void> {
+  /* Expo Go cannot load the app headless to run a task — see `startBackground`
+     in `trail.ts`, where registering one crashed the client on every
+     delivery. Recorded as not registered, which is the truth there. */
+  if (isRunningInExpoGo()) {
+    /* Through TaskManager rather than `unregisterBackgroundSync`: every
+       `BackgroundTask` call warns in Expo Go, and that warning sat over the
+       bottom of every screen as a toast. */
+    if (await TaskManager.isTaskRegisteredAsync(TASK_NAME).catch(() => false)) {
+      await TaskManager.unregisterTaskAsync(TASK_NAME).catch(() => undefined);
+    }
+    await setKv(REGISTERED, '0');
+    return;
+  }
   try {
     await BackgroundTask.registerTaskAsync(TASK_NAME, { minimumInterval: 15 });
     await setKv(REGISTERED, '1');
@@ -103,6 +117,7 @@ export async function backgroundSyncState(): Promise<{
 
 /** Called on sign-out, so a released handset stops waking up for nobody. */
 export async function unregisterBackgroundSync(): Promise<void> {
+  if (isRunningInExpoGo()) return;
   try {
     await BackgroundTask.unregisterTaskAsync(TASK_NAME);
   } catch {
