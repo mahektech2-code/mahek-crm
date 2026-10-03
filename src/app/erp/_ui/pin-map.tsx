@@ -90,7 +90,7 @@ export function PinMap({ apiKey, pin, onPick }: { apiKey: string; pin: { lat: nu
         <OlaMapsStyleSwitcher mode={mode} onChange={switchTo} />
         {failed ? (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-canvas/95 px-6 text-center text-[13px] text-body">
-            The map could not load — the key in Admin Console → Maps may be wrong or expired. Type the pin or use your location instead.
+            The map could not load — the key in Admin Console → Integrations may be wrong or expired. Type the pin or use your location instead.
           </div>
         ) : null}
       </div>

@@ -20,7 +20,7 @@ import {
 import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { grantableApps, moduleGroupsForApp, modulesForApp } from "@/lib/modules";
-import type { AppId } from "@/lib/apps";
+import { getApp, type AppId } from "@/lib/apps";
 import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
 import { HRMS_POWERS, HRMS_POWER_LABEL } from "@/lib/hrms/powers";
 import {
@@ -42,7 +42,8 @@ import type {
   Candidate,
   LinkableEmployee,
 } from "@/lib/services/access-service";
-import { useAdmin } from "./store";
+import Link from "next/link";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * The Access screen.
@@ -105,23 +106,25 @@ const ALL_OF = (app: AppId) => modulesForApp(app).map((m) => m.key);
 const DEFAULT_OF = (app: AppId) => modulesForApp(app).filter((m) => !m.offByDefault).map((m) => m.key);
 
 export function AccessSection({
-  rows,
-  onOpenUser,
+  rows: allRows,
   isAdmin,
+  enabling,
+  onEnablingDone,
+  onlyApp,
 }: {
   rows: AccessRow[];
-  /** The account's own record — deactivation, identity, notes still live there. */
-  onOpenUser: (id: string) => void;
   /** Whether the signed-in viewer holds the `admin` role — see PersonMenu. */
   isAdmin: boolean;
+  /** The page's Enable access button was pressed: the picker comes first. */
+  enabling: boolean;
+  onEnablingDone: () => void;
+  /** Narrowed to the people holding one app — the Home page's apps table links here. */
+  onlyApp: AppId | null;
 }) {
   const router = useRouter();
   const { push } = useToast();
-  // The Enable access button sits in the console's header beside the section
-  // title, where every other section's primary action lives. It opens this
-  // through the same store the rest of the console opens its editors with,
-  // rather than the shell reaching into this file.
-  const { drawer, closeDrawer } = useAdmin();
+  const onOpenUser = (id: string) => router.push(ADMIN.person(id));
+  const rows = onlyApp ? allRows.filter((r) => r.grants.some((g) => g.app === onlyApp)) : allRows;
   const [view, setView] = React.useState<View>("Everyone with access");
   /** Managing somebody already on the list skips the picker. */
   const [managing, setManaging] = React.useState<AccessRow | null>(null);
@@ -160,6 +163,14 @@ export function AccessSection({
 
   return (
     <div>
+      {onlyApp ? (
+        <div className="mt-5 flex items-center gap-2 text-[13px] text-body">
+          <span>
+            Showing the people who hold <span className="font-medium text-ink">{getApp(onlyApp)?.name ?? onlyApp}</span>.
+          </span>
+          <Link href={ADMIN.access}>Show everyone</Link>
+        </div>
+      ) : null}
       <div className="mt-5 flex flex-wrap items-center gap-2">
         <FilterPills
           options={VIEWS.map((v) => ({ key: v, label: v }))}
@@ -286,12 +297,12 @@ export function AccessSection({
       </Card>
 
       {/* Enabling access for somebody new: the picker comes first. */}
-      {drawer?.kind === "enableAccess" ? (
+      {enabling ? (
         <AccessDialog
-          onClose={closeDrawer}
+          onClose={onEnablingDone}
           onDone={(r) => {
             say(r);
-            closeDrawer();
+            onEnablingDone();
           }}
           /* Saved, and the dialog stays up to offer a password. The toast
              fires either way, so the list behind it is already right. */

@@ -1622,9 +1622,10 @@ src/
                            outstanding, bills, customer account, on account,
                            sheet import, audit, sales targets, customer targets
                            (was `orders/`; /orders still redirects here)
-    people/ reports/ admin/
-                           admin/access-section.tsx — the People section, which
-                           is now one screen: who opens what, and how far in
+    people/ reports/
+    admin/                 the Admin Console — one real route per screen, every
+                           address built from lib/admin-routes.ts; _shell/ is
+                           the frame and the gate, access/ who opens what
     crm/                   the CRM — header, sidebar, toasts
       dashboard/           telecaller day + manager team overview
       queue/               the calling queue, j/k/Enter driven
@@ -1641,10 +1642,9 @@ src/
     api/hrms/sync/         employee sync, on demand — no schedule, see below
     api/dictate/           whether to draw a microphone, and the two calls
                            behind it: transcribe/ and refine/
-    admin/components/      the live design system, a console section rather
-                           than a CRM screen (components-section.tsx)
-    admin/feedback/        the console section where the team's reports are
-                           read and answered (feedback-section.tsx)
+    admin/components/      the live design system, under For builders
+    admin/feedback/        where the team's reports are read and answered
+    admin/settings/        every setting, one page per app that has any
     feedback/              the other end of it — where the person who reported
                            something reads the reply and answers back
   components/
@@ -1772,9 +1772,12 @@ src/
                            the filters the list is showing
     journeys.test.ts       the six §11 journeys, end to end
     format.ts merge.ts csv.ts scope.ts auth.ts
-  app/admin/               the console — platform sections (platform-real.tsx,
-                           from admin-platform-service), the CRM's schema, and
-                           the Catalogue section (catalogue-section.tsx)
+  lib/admin-routes.ts      every console address and its tabs — build links
+                           from ADMIN, never a literal (a test greps for one)
+  lib/admin-redirects.ts   where every old console address lives now
+  lib/config/settings-pages.ts  settings-placement.ts
+                           which settings pages exist, who may open each, and
+                           which page, tab and group every setting sits on
   scripts/parse-catalogue.mjs
                            document → src/db/catalogue-seed.ts, by hand
   scripts/grant-app.ts     give somebody an app, by hand
@@ -4225,7 +4228,7 @@ locked. The sheet jobs were reachable from a CLI and from a cron endpoint
 guarded by a secret, which on this deployment meant neither, so the import ran
 on somebody's laptop against the production database or it did not run at all,
 and Sales Bills stayed empty through three releases that each claimed to fix
-it. Admin Console → Order sheet → Sync runs both steps, and `triggerJob` takes
+it. Admin Console → Sheets → Sync runs both steps, and `triggerJob` takes
 the owner because the sheet cannot supply one. A merge has to be enough.
 
 **A bill number is unique across the TABLE, so uniqueness cannot be worked
@@ -4416,11 +4419,42 @@ created nobody. Those are real actions now (`sendPasswordResetFor`,
 `endSessionsFor`, `createUser`), and the one save path with nowhere to write
 says so instead of claiming success.
 
-**An app id may not collide with a platform section key.** `people` and `apps`
-are both, and a bare section address let the app win — `/admin/people` opened
-"Attendance & People, registered but not built" instead of the roster. App
-sections are addressed `app-<id>`; a bare id still resolves for anything that
-is not a platform key, so `/admin/crm` keeps working.
+**THE CONSOLE IS ROUTES, NOT ONE PAGE.** It was a single `[[...path]]` page
+that loaded every section's data on every visit — the catalogue, the sheet,
+feedback, the expense policy and thirteen platform queries to draw one tab —
+and switched screens in memory, so its links were a section and a tab named
+as two loose strings. Nothing failed when one went stale: "Open contract
+validation" pointed at a tab deleted two releases earlier, the Attention list
+sent people to a section called "sheet" that was always "order-sheet", HRMS
+linked to `/admin/access`, which was a blank page. Every screen is its own
+route now, inside `admin/layout.tsx` — the same `AppFrame` and
+`CollapsibleNav` every other app draws — and every address is built from
+`ADMIN` in `lib/admin-routes.ts`. `admin-routes.test.ts` resolves each one, and
+each redirect's destination, against the `page.tsx` files on disk, and fails
+on any `/admin/…` literal written elsewhere. Old addresses are permanent
+redirects in `lib/admin-redirects.ts`.
+
+**One home per screen.** The app registry was drawn twice (Apps → Registry,
+Overview → Health), credentials lived in three places (Voice, Maps, Overview →
+Integrations, which listed neither of the other two), sheet sync history in
+three. Each is drawn once now: Home, Integrations, Sheets → Every sheet's
+history. The Lead oversight page, which held only links into apps an
+administrator may not hold, is gone; the Lead funnel settings page links to
+where the funnel is audited.
+
+**A SETTING LIVES ON THE PAGE OF THE APP THAT READS IT.** The console rendered
+one schema, the CRM's, and a setting with no `PRESENTATION` entry fell onto a
+tab called "Other" in a group called "Not yet placed". 254 of them had — every
+field-app, ERP, lead-funnel, performance, sign-in and payments setting, shown
+as the Telecaller CRM's while the Sales Dashboard and the ERP each said they
+had nothing to configure. `settings-placement.ts` is a list of rules over the
+key, first match wins, and `settings-placement.test.ts` fails on any setting
+no rule places. An app with nothing to configure has no page at all.
+
+**Every settings page saves.** Only the CRM's ever did: HRMS's Save button
+said "not stored yet" and threw the change away, although
+`updateConfigSettings` accepts any setting in the registry. `SettingsEditor`
+is the one editor for all of them.
 
 **`users.lastLoginAt` is written on sign-in.** Nothing wrote it, so every
 screen asking when somebody last signed in answered "never" — which made the
@@ -4433,8 +4467,7 @@ recorded is a sign-in, whatever the column says.
 build-facing handoff artifact one click from somebody working a calling queue.
 Every component in every state is exactly what whoever writes the screens
 needs, and exactly nothing to whoever uses them. It is `admin/components` now,
-under the platform nav, where the rest of the build-facing material already
-lives.
+under For builders, where nobody working a queue will trip over it.
 
 **Feedback is a conversation, not a note.** The Tell us button sits in the
 header of every app, and what it writes lands in `feedback` — kind, heading,
@@ -5984,7 +6017,7 @@ so a copy seen in a browser's network tab is not spendable anywhere else.
 **Without a key there is no map, and the screen says so rather than drawing
 one broken.** Every tile request would fail the moment there is nothing to
 attach to it, so `street-map.tsx` does not attempt to build one: no key gets
-its own state, pointing at Admin Console → Platform → Maps, on both views —
+its own state, pointing at Admin Console → Integrations, on both views —
 the team list beside it is unaffected either way.
 
 **The renderer is MapLibre and the supplier is a URL.** `STYLE` in
@@ -6065,7 +6098,7 @@ answer — which `street-map.tsx` treats identically to "nothing to improve":
 the raw line stays exactly as drawn. The SAME key gates both jobs, though:
 with none set, there are no streets to lay a trail onto in the first place
 (see above). It is set from the Admin Console, under a section of its own
-(Platform → Maps), for the same reason dictation's keys are: a deploy nobody
+(Integrations), for the same reason dictation's keys are: a deploy nobody
 has shell access to needs a screen, not an environment variable, to turn a
 credential on.
 

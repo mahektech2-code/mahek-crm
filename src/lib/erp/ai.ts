@@ -43,7 +43,7 @@ export async function featureState(feature: AiFeature, needsVision = false): Pro
   const c = await getConfig();
   if (!c[SWITCH[feature]]) return { on: false, reason: "This AI feature is switched off in Settings." };
   const keyed = needsVision ? Boolean(await readSecret("openai.apiKey")) : await structuredReadAvailable();
-  if (!keyed) return { on: false, reason: needsVision ? "Reading images needs an OpenAI key, set in Admin Console → Platform." : "No AI provider key is set in Admin Console → Platform." };
+  if (!keyed) return { on: false, reason: needsVision ? "Reading images needs an OpenAI key, set in Admin Console → Integrations." : "No AI provider key is set in Admin Console → Integrations." };
   const monthStart = new Date(`${today().slice(0, 7)}-01T00:00:00+05:30`);
   const [{ n }] = (await db
     .select({ n: sql<number>`count(*)::int` })

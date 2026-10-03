@@ -1,5 +1,7 @@
 "use client";
 
+import { ADMIN_TABS } from "@/lib/admin-routes";
+
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -41,16 +43,7 @@ import {
 } from "@/lib/actions/expense-policy";
 import type { ExpensePolicyData } from "./expense-policy-data";
 
-export const EXPENSE_POLICY_TABS = [
-  { slug: "rules", label: "Rules" },
-  { slug: "simulate", label: "What it would cost" },
-  { slug: "versions", label: "Versions" },
-  { slug: "grades", label: "Grades" },
-  { slug: "cities", label: "Cities" },
-] as const;
-
-export const EXPENSE_POLICY_SUBTITLE =
-  "The travel and expense policy, as versioned rules. Every rate, limit and time of day below is typed on this screen and none of it is in code — which is the whole point of the module. A published version can never be edited: a change is a new version with its own effective date, which is what keeps an old claim worth what it was worth on the day it was made.";
+export const EXPENSE_POLICY_TABS = ADMIN_TABS.expensePolicy;
 
 /* -------------------------------------------------------------- the fields */
 

@@ -82,6 +82,7 @@ import {
   recomputeLastContact,
   today,
 } from "@/lib/recompute";
+import { ADMIN } from "@/lib/admin-routes";
 import {
   customerTimeline,
   type TimelineCursor,
@@ -125,7 +126,7 @@ const SHARED = [
  */
 function refreshAdmin() {
   try {
-    revalidatePath("/admin");
+    revalidatePath(ADMIN.home, "layout");
   } catch {
     /* no request context — see refreshAll */
   }

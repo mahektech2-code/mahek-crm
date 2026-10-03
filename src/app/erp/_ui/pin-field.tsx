@@ -85,7 +85,7 @@ export function PinField({ value, error, onChange }: { value: string; error: boo
           <PinMap apiKey={key} pin={pin} onPick={(lat, lng) => onChange(fmt(lat, lng))} />
         ) : (
           <div className="rounded-[4px] border border-line bg-canvas px-3 py-2.5 text-[13px] text-muted">
-            No map key is set, so there is no map to pick on. An administrator adds it in Admin Console → Maps; until then type the pin or use your location.
+            No map key is set, so there is no map to pick on. An administrator adds it in Admin Console → Integrations; until then type the pin or use your location.
           </div>
         )
       ) : null}

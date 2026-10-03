@@ -24,6 +24,7 @@ import {
   type ImportReport,
 } from "@/lib/services/catalogue-import";
 import { err as fail, ok, type Result } from "@/lib/result";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * Writes to the catalogue.
@@ -76,7 +77,7 @@ async function audit(
  */
 function refresh() {
   try {
-    revalidatePath("/admin/catalogue");
+    revalidatePath(ADMIN.home, "layout");
     revalidatePath("/crm");
   } catch {
     // No request scope, so nothing is cached to drop.

@@ -64,7 +64,7 @@ export function DeleteLead({
         disabled={!canTrash}
         title={
           canTrash
-            ? "Off every screen until an administrator restores it from the Admin Console's Trash."
+            ? "Off every screen until an administrator restores it from the Admin Console's Deleted leads."
             : "Deleting a lead is a manager's. Yours is not one of the hats that carries it."
         }
         onClick={() => {
@@ -92,7 +92,7 @@ export function DeleteLead({
         </label>
         <p className="mt-2 text-[12px] text-muted">
           It leaves every screen — the lists, the calling queue, search, reports and the salesmen&rsquo;s
-          phones. Nothing is lost: an administrator can restore it from the Admin Console&rsquo;s Trash,
+          phones. Nothing is lost: an administrator can restore it from the Admin Console&rsquo;s Deleted leads,
           with its owner, stage and every call and note.
         </p>
         {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}

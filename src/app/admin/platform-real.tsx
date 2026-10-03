@@ -36,6 +36,7 @@ import type {
   SessionRow,
   UsageRow,
 } from "@/lib/services/admin-platform-service";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * The platform sections, rendered from what the database says.
@@ -50,10 +51,7 @@ export type PlatformData = {
   attention: AttentionItem[];
   health: { facts: Fact[]; apps: AppHealth[] };
   integrations: Integration[];
-  usage: {
-    facts: UsageRow[];
-    perUser: Array<{ name: string; role: string; calls: number; lastSeen: string | null }>;
-  };
+  usage: { facts: UsageRow[] };
   drift: { rows: DriftRow[]; warnings: string[] };
   jobs: JobRow[];
   audit: AuditRow[];
@@ -67,13 +65,7 @@ export type PlatformData = {
 
 /* ------------------------------------------------------------- attention */
 
-export function AttentionTab({
-  data,
-  navigate,
-}: {
-  data: PlatformData;
-  navigate: (section: string, tab: string) => void;
-}) {
+export function AttentionTab({ data }: { data: Pick<PlatformData, "attention"> }) {
   const rows = data.attention;
 
   return (
@@ -89,7 +81,6 @@ export function AttentionTab({
         />
       ) : (
         rows.map((r, i) => {
-          const go = r.go;
           return (
           <div
             key={r.one}
@@ -112,21 +103,12 @@ export function AttentionTab({
               </span>
               <span className="block text-[13px] leading-[18px] text-muted">{r.detail}</span>
             </span>
-            {"href" in go ? (
-              <Link
-                href={go.href}
-                className="flex-none rounded-[4px] border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-body no-underline hover:bg-canvas hover:no-underline"
-              >
-                {r.cta}
-              </Link>
-            ) : (
-              <button
-                onClick={() => navigate(go.section, go.tab)}
-                className="flex-none cursor-pointer rounded-[4px] border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-body hover:bg-canvas"
-              >
-                {r.cta}
-              </button>
-            )}
+            <Link
+              href={r.href}
+              className="flex-none rounded-[4px] border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              {r.cta}
+            </Link>
           </div>
           );
         })
@@ -135,14 +117,45 @@ export function AttentionTab({
   );
 }
 
-/* ------------------------------------------------------------------ apps */
+/* ------------------------------------------------------------------ home */
 
-export function RegistryTab({ data }: { data: PlatformData }) {
+/** A row of figures, each a query. */
+export function FactTiles({ facts }: { facts: Fact[] }) {
+  return (
+    <CardGrid min={200} className="mt-5">
+      {facts.map((f) => (
+        <Card key={f.label} className="p-5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
+          <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{f.label}</div>
+          <div className="mt-1 text-[28px] leading-9 font-semibold text-ink">{f.value}</div>
+          <div className="text-[13px] text-muted">{f.sub}</div>
+        </Card>
+      ))}
+    </CardGrid>
+  );
+}
+
+/**
+ * Every app MahekOne has, drawn ONCE.
+ *
+ * It was drawn twice — Apps → Registry and Overview → Health → Registered
+ * apps — with slightly different words for the same two numbers. Each row now
+ * goes somewhere: to the people who hold the app, and to its settings where it
+ * has any. An app with no settings says so rather than linking to a page that
+ * would only repeat it.
+ */
+export function AppsTable({
+  apps,
+  settingsHref,
+}: {
+  apps: AppHealth[];
+  /** Where an app's settings live, or null where it has none. */
+  settingsHref: Record<string, string | null>;
+}) {
   return (
     <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
       <CardHeader
-        title="The app registry"
-        hint="One row per app MahekOne knows about. This list drives the launcher, this console's sidebar and every access check — it is code, not a table, so it cannot be edited here."
+        title="Apps"
+        hint="Every app MahekOne has. The list itself is code, not a table, so it is changed by a release rather than from here."
       />
       <div className="overflow-auto">
         <table className="[&_td]:whitespace-nowrap">
@@ -150,23 +163,32 @@ export function RegistryTab({ data }: { data: PlatformData }) {
             <tr>
               <Th>App</Th>
               <Th>Status</Th>
-              <Th>Accounts with access</Th>
-              <Th>Settings it declares</Th>
+              <Th>People with access</Th>
+              <Th>Settings</Th>
             </tr>
           </thead>
           <tbody>
-            {data.health.apps.map((a, i) => (
-              <Tr key={a.id} className={i % 2 ? "bg-canvas" : ""}>
-                <Td className="font-medium text-ink">{a.name}</Td>
-                <Td>
-                  <Badge tone={a.built ? "success" : "neutral"}>
-                    {a.built ? "Live" : "Not built"}
-                  </Badge>
-                </Td>
-                <Td>{a.granted}</Td>
-                <Td>{a.settings === null ? "None" : a.settings}</Td>
-              </Tr>
-            ))}
+            {apps.map((a, i) => {
+              const href = settingsHref[a.id];
+              return (
+                <Tr key={a.id} className={i % 2 ? "bg-canvas" : ""}>
+                  <Td className="font-medium text-ink">{a.name}</Td>
+                  <Td>
+                    <Badge tone={a.built ? "success" : "neutral"}>{a.built ? "Live" : "Not built"}</Badge>
+                  </Td>
+                  <Td>
+                    <Link href={ADMIN.accessFor(a.id)}>{a.granted}</Link>
+                  </Td>
+                  <Td>
+                    {href && a.settings ? (
+                      <Link href={href}>{a.settings} settings</Link>
+                    ) : (
+                      <span className="text-muted">Nothing to configure</span>
+                    )}
+                  </Td>
+                </Tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -174,62 +196,9 @@ export function RegistryTab({ data }: { data: PlatformData }) {
   );
 }
 
-/* ---------------------------------------------------------------- health */
-
-export function HealthTab({ data }: { data: PlatformData }) {
-  return (
-    <CardGrid min={220} className="mt-5">
-      <CardGrid min={220} className="mt-5">
-        {data.health.facts.map((f) => (
-          <Card key={f.label} className="p-5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-            <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              {f.label}
-            </div>
-            <div className="mt-1 text-[28px] leading-9 font-semibold text-ink">{f.value}</div>
-            <div className="text-[13px] text-muted">{f.sub}</div>
-          </Card>
-        ))}
-      </CardGrid>
-
-      <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-        <CardHeader
-          title="Registered apps"
-          hint="Who holds each app, and how many settings it publishes."
-        />
-        <div className="overflow-auto">
-          <table className="[&_td]:whitespace-nowrap">
-            <thead>
-              <tr>
-                <Th>App</Th>
-                <Th>Status</Th>
-                <Th>Accounts with access</Th>
-                <Th>Published settings</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.health.apps.map((a, i) => (
-                <Tr key={a.id} className={i % 2 ? "bg-canvas" : ""}>
-                  <Td className="font-medium text-ink">{a.name}</Td>
-                  <Td>
-                    <Badge tone={a.built ? "success" : "neutral"}>
-                      {a.built ? "Live" : "Not built"}
-                    </Badge>
-                  </Td>
-                  <Td>{a.granted}</Td>
-                  <Td>{a.settings === null ? "Publishes none" : `${a.settings} settings`}</Td>
-                </Tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </CardGrid>
-  );
-}
-
 /* ---------------------------------------------------------- integrations */
 
-export function IntegrationsTab({ data }: { data: PlatformData }) {
+export function IntegrationsTab({ data }: { data: Pick<PlatformData, "integrations"> }) {
   return (
     <>
       <StorageCheckCard />
@@ -318,7 +287,7 @@ function StorageCheckCard() {
   );
 }
 
-function IntegrationsTable({ data }: { data: PlatformData }) {
+function IntegrationsTable({ data }: { data: Pick<PlatformData, "integrations"> }) {
   return (
     <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
       <CardHeader
@@ -360,134 +329,6 @@ function IntegrationsTable({ data }: { data: PlatformData }) {
         </table>
       </div>
     </Card>
-  );
-}
-
-/* ----------------------------------------------------------------- usage */
-
-export function UsageTab({ data }: { data: PlatformData }) {
-  return (
-    <div>
-      <CardGrid min={220} className="mt-5">
-        {data.usage.facts.map((f) => (
-          <Card key={f.label} className="p-5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-            <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              {f.label}
-            </div>
-            <div className="mt-1 text-[28px] leading-9 font-semibold text-ink">{f.value}</div>
-            <div className="text-[13px] text-muted">{f.sub}</div>
-          </Card>
-        ))}
-      </CardGrid>
-
-      <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-        <CardHeader title="By account" hint="Calls logged in the last seven days." />
-        <div className="overflow-auto">
-          <table>
-            <thead>
-              <tr>
-                <Th>Account</Th>
-                <Th>Role</Th>
-                <Th>Calls, 7 days</Th>
-                <Th>Last signed in</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.usage.perUser.map((u, i) => (
-                <Tr key={u.name} className={i % 2 ? "bg-canvas" : ""}>
-                  <Td className="font-medium text-ink">{u.name}</Td>
-                  <Td className="capitalize">{u.role}</Td>
-                  <Td>{u.calls}</Td>
-                  <Td>{u.lastSeen ? stamp(u.lastSeen) : "Never"}</Td>
-                </Tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------- configuration */
-
-export function DriftTab({
-  data,
-  navigate,
-}: {
-  data: PlatformData;
-  navigate: (section: string, tab: string) => void;
-}) {
-  const { rows, warnings } = data.drift;
-
-  return (
-    <div className="mt-5">
-      {warnings.length ? (
-        <div className="mb-4 rounded-[4px] border border-warn-line border-l-[3px] border-l-warn bg-warn-soft px-4 py-3">
-          <div className="text-sm font-medium text-warn-ink">
-            {warnings.length === 1
-              ? "One setting contradicts another"
-              : `${warnings.length} settings contradict each other`}
-          </div>
-          <div className="mt-1.5 flex flex-col gap-1">
-            {warnings.map((w) => (
-              <div key={w} className="text-sm leading-[21px] text-ink">
-                {w}
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <Card className="overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-        <CardHeader
-          title="Settings that no longer match the code's default"
-          hint="A database keeps what it was seeded with, so a default that changes in the code reaches nobody. This is the list of differences."
-          action={
-            <button
-              onClick={() => navigate("crm", "")}
-              className="cursor-pointer rounded-[4px] border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-body hover:bg-canvas"
-            >
-              Open CRM settings
-            </button>
-          }
-        />
-        {rows.length === 0 ? (
-          <EmptyState
-            title="Nothing has drifted"
-            body="Every stored setting still matches the default the code ships with."
-          />
-        ) : (
-          <div className="overflow-auto">
-            <table>
-              <thead>
-                <tr>
-                  <Th>Setting</Th>
-                  <Th>Group</Th>
-                  <Th>In use</Th>
-                  <Th>Code default</Th>
-                  <Th>Changed</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <Tr key={r.key} className={i % 2 ? "bg-canvas" : ""}>
-                    <Td className="font-medium text-ink">{r.label}</Td>
-                    <Td className="capitalize">{r.category}</Td>
-                    <Td className="font-mono text-ink">{r.current}</Td>
-                    <Td className="font-mono text-muted">{r.fallback}</Td>
-                    <Td className="whitespace-nowrap text-muted">
-                      {r.changedAt ? stamp(r.changedAt) : "—"}
-                      {r.changedBy ? ` · ${r.changedBy}` : ""}
-                    </Td>
-                  </Tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-    </div>
   );
 }
 
@@ -675,7 +516,7 @@ function RebuildQueues({ queues }: { queues: QueueOwner[] }) {
   );
 }
 
-export function JobsTab({ data }: { data: PlatformData }) {
+export function JobsTab({ data }: { data: Pick<PlatformData, "jobs" | "queues"> }) {
   return (
     <>
     <RunByHand />
@@ -739,9 +580,7 @@ const AUDIT_KIND_LABEL: Record<string, string> = {
   work: "App activity",
 };
 
-export function AuditTab({ data, tab }: { data: PlatformData; tab: number }) {
-  const kinds = ["all", "config", "access", "signin", "work"] as const;
-  const kind = kinds[Math.min(tab, kinds.length - 1)];
+export function AuditTab({ data, kind }: { data: Pick<PlatformData, "audit">; kind: string }) {
   const rows = kind === "all" ? data.audit : data.audit.filter((r) => r.kind === kind);
 
   return (
@@ -791,7 +630,7 @@ export function AuditTab({ data, tab }: { data: PlatformData; tab: number }) {
 
 /* ------------------------------------------------------------------ data */
 
-export function ImportsTab({ data }: { data: PlatformData }) {
+export function ImportsTab({ data }: { data: Pick<PlatformData, "imports"> }) {
   return (
     <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
       <CardHeader
@@ -851,7 +690,7 @@ export function ImportsTab({ data }: { data: PlatformData }) {
   );
 }
 
-export function MigrationsTab({ data }: { data: PlatformData }) {
+export function MigrationsTab({ data }: { data: Pick<PlatformData, "migrations"> }) {
   const { applied, pending } = data.migrations;
   return (
     <div className="mt-5">
@@ -899,7 +738,7 @@ export function MigrationsTab({ data }: { data: PlatformData }) {
 
 /* --------------------------------------------------------- notifications */
 
-export function NotificationsTab({ data }: { data: PlatformData }) {
+export function NotificationsTab({ data }: { data: Pick<PlatformData, "notifications"> }) {
   return (
     <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
       <CardHeader
@@ -945,7 +784,7 @@ export function NotificationsTab({ data }: { data: PlatformData }) {
 
 /* -------------------------------------------------- sessions & onboarding */
 
-export function SessionsTab({ data }: { data: PlatformData }) {
+export function SessionsTab({ data }: { data: Pick<PlatformData, "sessions"> }) {
   return (
     <div className="mt-5">
       <Card className="overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
@@ -994,7 +833,7 @@ export function SessionsTab({ data }: { data: PlatformData }) {
   );
 }
 
-export function OnboardingTab({ data }: { data: PlatformData }) {
+export function OnboardingTab({ data }: { data: Pick<PlatformData, "onboarding"> }) {
   return (
     <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
       <CardHeader

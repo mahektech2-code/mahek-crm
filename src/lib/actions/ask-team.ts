@@ -74,7 +74,7 @@ export async function askTeam(raw: {
        * a message that mentioned it would send somebody to fix the wrong thing.
        */
       return err(
-        "No OpenAI account is connected yet. Add an OpenAI key in Admin Console → Voice and this will start working.",
+        "No OpenAI account is connected yet. Add an OpenAI key in Admin Console → Integrations and this will start working.",
         "validation",
       );
     }
@@ -111,7 +111,7 @@ export async function askTeam(raw: {
     if (!answer.ok) {
       if (answer.reason === "not_configured") {
         return err(
-          "No OpenAI account is connected yet. Add an OpenAI key in Admin Console → Voice.",
+          "No OpenAI account is connected yet. Add an OpenAI key in Admin Console → Integrations.",
           "validation",
         );
       }
@@ -123,7 +123,7 @@ export async function askTeam(raw: {
       // rather than a bug.
       return err(
         isPermanentRefusal(answer.detail)
-          ? "OpenAI refused the request — the connected account may be out of credit or the key may be invalid. Check Admin Console → Voice."
+          ? "OpenAI refused the request — the connected account may be out of credit or the key may be invalid. Check Admin Console → Integrations."
           : "Could not read the figures just now. Try again in a moment.",
       );
     }

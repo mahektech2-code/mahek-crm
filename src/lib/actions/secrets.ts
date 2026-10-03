@@ -9,6 +9,7 @@ import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { isSecretName, SECRET_NAMES, type SecretName } from "@/lib/secrets";
 import { err as fail, okVoid, type Result } from "@/lib/result";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * Setting and clearing the credentials MahekOne calls outside services with.
@@ -94,7 +95,7 @@ export async function setSecretAction(name: string, raw: string): Promise<Result
     });
   });
 
-  revalidatePath("/admin");
+  revalidatePath(ADMIN.home, "layout");
   return okVoid(`${LABELS[name]} saved. ${USED_FROM[name]}`);
 }
 
@@ -115,7 +116,7 @@ export async function clearSecretAction(name: string): Promise<Result> {
     });
   });
 
-  revalidatePath("/admin");
+  revalidatePath(ADMIN.home, "layout");
   /*
    * Clearing removes what the console holds. Where the deploy also sets the
    * matching environment variable, that one takes over rather than the

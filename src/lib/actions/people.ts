@@ -23,6 +23,7 @@ import {
   newResetToken,
   RESET_TTL_MINUTES,
 } from "@/lib/password-reset";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * Writes for the People section.
@@ -63,7 +64,7 @@ async function audit(
 
 function refresh() {
   try {
-    revalidatePath("/admin");
+    revalidatePath(ADMIN.home, "layout");
     revalidatePath("/apps");
   } catch {
     /* outside a request, which is fine */

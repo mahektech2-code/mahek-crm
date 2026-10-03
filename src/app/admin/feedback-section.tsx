@@ -25,7 +25,7 @@ import {
 } from "@/lib/feedback-labels";
 import type { FeedbackRow } from "@/lib/services/feedback-service";
 import { setFeedbackStatus } from "@/lib/actions/feedback";
-import { PLATFORM_TABS } from "./data";
+import { ADMIN_TABS } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * Feedback → what the team has sent in.
@@ -40,7 +40,7 @@ import { PLATFORM_TABS } from "./data";
  * ------------------------------------------------------------------------- */
 
 /** The tabs live where every other platform section's do — one registry. */
-const TABS = PLATFORM_TABS.feedback;
+const TABS = ADMIN_TABS.feedback;
 
 export type FeedbackData = {
   rows: FeedbackRow[];

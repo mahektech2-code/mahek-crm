@@ -1006,7 +1006,7 @@ export function LeadsScreen({
                               run: () => begin(l, "trash"),
                               disabled: !canTrash,
                               title: canTrash
-                                ? "Off every screen until an administrator restores it from the Admin Console's Trash."
+                                ? "Off every screen until an administrator restores it from the Admin Console's Deleted leads."
                                 : "Deleting a lead is a manager's. Yours is not one of the hats that carries it.",
                             },
                           ]}
@@ -1139,7 +1139,7 @@ export function LeadsScreen({
             <span className="mt-1 block text-[12px] text-muted">
               They leave every screen — lists, the calling queue, search, reports and the salesmen&rsquo;s
               phones. Nothing is lost: an administrator can restore them from the Admin Console&rsquo;s
-              Trash with all their history. Anything that is not a lead, or not in your book, is left
+              Deleted leads with all their history. Anything that is not a lead, or not in your book, is left
               alone and named back to you.
             </span>
           </label>

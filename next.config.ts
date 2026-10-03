@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { ADMIN_REDIRECTS } from "./src/lib/admin-redirects";
 
 const nextConfig: NextConfig = {
   /*
@@ -80,6 +81,12 @@ const nextConfig: NextConfig = {
 
   async redirects() {
     return [
+      /*
+       * The Admin Console's old addresses — one page that read its screen out
+       * of the path — and where each screen lives now. See the file itself.
+       */
+      ...ADMIN_REDIRECTS,
+
       /*
        * The Accounts app was called Orders, and lived at /orders, until it grew
        * past the name — it now holds approvals, receipts, the bill ledger,

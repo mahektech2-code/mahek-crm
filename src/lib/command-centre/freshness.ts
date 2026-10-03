@@ -6,6 +6,7 @@ import type { JobName, JobOptions } from "@/lib/jobs";
 import { secretStatuses } from "@/lib/secrets";
 import { num, plural } from "./format";
 import type { Tone } from "./types";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * FRESHNESS OF EVERY SOURCE BEHIND THE NUMBERS (PRD §21.8).
@@ -340,7 +341,7 @@ type SheetDef = {
   suffix?: (age: string) => string;
 };
 
-const ORDER_SHEET_HREF = { label: "Order sheet in the Admin Console", url: "/admin/order-sheet" };
+const ORDER_SHEET_HREF = { label: "Sheets in the Admin Console", url: ADMIN.sheets() };
 
 const SHEETS: SheetDef[] = [
   {

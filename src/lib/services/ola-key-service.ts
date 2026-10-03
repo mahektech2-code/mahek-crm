@@ -1,4 +1,5 @@
 import "server-only";
+import { ADMIN } from "@/lib/admin-routes";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, olaKeyHealth, users } from "@/db/schema";
@@ -345,7 +346,7 @@ async function announce(name: OlaKeyName, now: Date): Promise<void> {
       /* `warn` rather than `warning`: the bell colours `warn` and `danger` and
          draws anything else as ordinary. */
       kind: chosen ? "warn" : "danger",
-      href: "/admin/maps",
+      href: ADMIN.integrations,
     })),
   );
 }

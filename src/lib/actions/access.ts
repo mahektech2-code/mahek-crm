@@ -30,6 +30,7 @@ import {
   type Candidate,
   type LinkableEmployee,
 } from "@/lib/services/access-service";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * Granting and narrowing access.
@@ -85,7 +86,7 @@ async function audit(
 
 function refresh() {
   try {
-    revalidatePath("/admin");
+    revalidatePath(ADMIN.home, "layout");
     revalidatePath("/apps");
   } catch {
     /* outside a request, which is fine */

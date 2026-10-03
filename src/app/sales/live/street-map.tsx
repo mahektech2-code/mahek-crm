@@ -1970,8 +1970,8 @@ export function StreetMap({
           </p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
             {keysSpent
-              ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Platform → Maps."
-              : "Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under this."}{" "}
+              ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Integrations."
+              : "Add an Ola Maps key in Admin Console → Integrations to draw the streets under this."}{" "}
             The team list beside this still shows everything that is known —
             nobody&rsquo;s position is lost, only the picture of it.
           </p>

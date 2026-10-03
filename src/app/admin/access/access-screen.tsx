@@ -1,0 +1,40 @@
+"use client";
+
+import * as React from "react";
+import { Button } from "@/components/ui/primitives";
+import type { AppId } from "@/lib/apps";
+import type { AccessRow } from "@/lib/services/access-service";
+import { AdminPage } from "../_shell/admin-page";
+import { AccessSection } from "../access-section";
+
+/** The Access page: its title, its one action, and the screen that action opens into. */
+export function AccessScreen({
+  rows,
+  isAdmin,
+  onlyApp,
+}: {
+  rows: AccessRow[];
+  isAdmin: boolean;
+  onlyApp: AppId | null;
+}) {
+  const [enabling, setEnabling] = React.useState(false);
+  return (
+    <AdminPage
+      title="Access"
+      subtitle="Who can open which app, and how far into it. People come from the employee master, so access starts with somebody who actually works here."
+      actions={
+        <Button variant="primary" onClick={() => setEnabling(true)}>
+          Enable access
+        </Button>
+      }
+    >
+      <AccessSection
+        rows={rows}
+        isAdmin={isAdmin}
+        enabling={enabling}
+        onEnablingDone={() => setEnabling(false)}
+        onlyApp={onlyApp}
+      />
+    </AdminPage>
+  );
+}
