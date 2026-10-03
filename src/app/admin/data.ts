@@ -185,6 +185,8 @@ export const PLATFORM_SUBTITLES: Record<string, string> = {
     "Every component in every state, so a change to a token or a primitive can be checked in one place rather than hunted for across fifteen screens. A handoff artifact for whoever builds the screens.",
   feedback:
     "What the team has reported, asked for or suggested from inside the apps. Answering one tells the person who wrote it.",
+  handsets:
+    "Which MBOS build every salesman's phone is running, live. A phone reports its build on every sync, so an upgrade shows here the moment the app is reopened.",
   trash:
     "Leads deleted from Lead Management. Off every screen until restored here — with their owner, stage and every call and note intact.",
   oversight:

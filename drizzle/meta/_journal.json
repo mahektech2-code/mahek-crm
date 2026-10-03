@@ -1352,6 +1352,13 @@
       "when": 1790977080608,
       "tag": "0194_lead_trash",
       "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "7",
+      "when": 1791008254000,
+      "tag": "0195_handset_heartbeat",
+      "breakpoints": true
     }
   ]
 }
