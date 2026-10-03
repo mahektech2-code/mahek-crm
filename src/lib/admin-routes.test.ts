@@ -58,8 +58,6 @@ test("every address the console builds has a page behind it", () => {
     ADMIN.handsets,
     ADMIN.jobs,
     ADMIN.notifications,
-    ADMIN.database,
-    ADMIN.components,
     ...ADMIN_TABS.feedback.map((t) => ADMIN.feedback(t.slug)),
     ...ADMIN_TABS.signIns.map((t) => ADMIN.signIns(t.slug)),
     ...ADMIN_TABS.catalogue.map((t) => ADMIN.catalogue(t.slug)),

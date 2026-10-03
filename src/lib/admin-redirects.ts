@@ -57,11 +57,14 @@ export const ADMIN_REDIRECTS: Redirect[] = [
 
   // Data was the sync history and the migrations.
   to("/admin/data", "/admin/sheets/history"),
-  to("/admin/data/migration", "/admin/database"),
+  to("/admin/data/migration", "/admin"),
   to("/admin/data/:rest*", "/admin/sheets/history"),
 
   to("/admin/notifications/:rest+", "/admin/notifications"),
-  to("/admin/components/:rest+", "/admin/components"),
+  // The design-system showcase and the migration list were build tools on a
+  // screen anybody with the console could open; both are gone.
+  to("/admin/components/:rest*", "/admin"),
+  to("/admin/database", "/admin"),
 
   // Every key is on one page.
   to("/admin/voice", "/admin/integrations"),

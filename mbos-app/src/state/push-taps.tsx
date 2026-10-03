@@ -26,6 +26,12 @@ async function openFrom(data: unknown): Promise<void> {
     }
     useStore.getState().set({ custId: d.customerId });
   }
+  /* Home is a tab root: pushed, it would stack a second Home over the first,
+     the defect the status strip and the bell were both rewritten to avoid. */
+  if (d?.kind === 'punch-out') {
+    router.replace('/home?punchOut=1');
+    return;
+  }
   router.push(routeForNotification(data));
 }
 

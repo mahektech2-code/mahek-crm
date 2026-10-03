@@ -15,9 +15,12 @@ import {
  * Provisioning a deployed MahekOne.
  *
  * The Access screen is the way a person grants an app, and `npm run
- * app:grant` needs a shell no deployment has. This is for the case neither
- * reaches — an installation with nobody able to sign into the console, or a
- * script correcting an account from outside.
+ * app:grant` needs a shell. This was the third way, for the case neither
+ * reaches, and it was reached over HTTP: `/api/admin/provision`, behind
+ * CRON_SECRET. That secret is also in the Apps Script of two workbooks so the
+ * syncs can run, so anybody who could edit those sheets could read it and
+ * make their own account a platform administrator. The route is deleted; what
+ * is left is a function that only code already on the server can call.
  *
  * This is the narrow, deliberate way in. It is narrow on purpose:
  *

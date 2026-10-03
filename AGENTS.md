@@ -159,8 +159,8 @@ past it to the first module they do hold.
 **No module rows for an app means every module of it.** That is why adding this
 moved nothing: every grant that already existed carried on meaning exactly what
 it meant, on every screen, for everybody, and a grant narrows only once somebody
-unticks something. It is also what keeps `npm run app:grant` and the
-provisioning endpoint honest — neither knows modules exist, and an app granted
+unticks something. It is also what keeps `npm run app:grant` honest — it does
+not know modules exist, and an app granted
 from a terminal has to open whole rather than open empty. A grant with every
 module ticked stores no rows at all, so a fifteenth CRM screen reaches everybody
 holding the whole app and nobody who was deliberately narrowed.
@@ -1263,8 +1263,7 @@ each was a second door onto grants that knew nothing about modules or levels.
 level — the widest held anywhere — so a CRM grant made from a terminal became a
 CRM manager the day its holder was made a manager of anything else. The
 migration wrote every null row down to the level it was resolving to that day,
-so nobody's reach moved on deploy; `npm run app:grant` and the provisioning
-endpoint now write a level (`--level=`, default associate) and derive the
+so nobody's reach moved on deploy; `npm run app:grant` now writes a level (`--level=`, default associate) and derive the
 account level rather than typing it.
 
 **The matrix is one table, in `lib/capability-matrix.ts`** — pure and
@@ -1452,6 +1451,45 @@ account had. The reply is the same whether or not the address has an account —
 this form is not a staff directory. Without `RESEND_API_KEY` and `MAIL_FROM`
 the mail is written to the server log rather than sent, and the screen says so
 rather than claiming it went.
+
+**A WRONG PASSWORD IS COUNTED, and enough of them shut the door for a while.**
+Nothing limited guesses: the form could be posted as fast as a script could
+post it, and a platform administrator's password was the whole of what stood
+between the internet and every power in the console. `sign_in_failures` holds
+one row per wrong password, counted per ACCOUNT (`auth.password.maxFailures`)
+and per ADDRESS (`auth.password.maxFailuresPerAddress`, set well above it
+because an office shares one) over `auth.password.failureWindowMinutes`. The
+web sign-in, the handset sign-in and "change password" share ONE count, keyed
+on the account — a second door with its own fresh allowance is not a limit. It
+is asked BEFORE the password is checked, so a paused account answers the same
+whether or not the guess was right; otherwise the pause is an oracle. The way
+round it — a WhatsApp code, or a reset — is named only where it exists.
+
+**THE CONSOLE ASKS FOR THE PASSWORD AGAIN.** A session lasts thirty days and the
+console can sign in as anybody, so a laptop left open used to be a platform
+administrator. `sessions.confirmed_at` is when the session last proved its
+password: signing in sets it, an impersonation link does NOT (it proves nothing
+about the person it signs in as), and the console's layout sends anything older
+than `auth.console.confirmMinutes` to `/login/confirm`. Each console page moves
+a fresh one forward, so the clock measures time AWAY. It is enforced again in
+`requirePlatformAdminUser`, in the secrets actions and in a platform
+administrator's settings writes, because an action is a URL with no layout in
+front of it. The rest of MahekOne never asks.
+
+**Impersonation tells the person.** The audit row is under the administrator's
+id, where the account holder will never look; a warn notification on their own
+bell is what makes a link used by the wrong person something somebody notices.
+
+**There is no HTTP door that grants access any more.** `/api/admin/provision`
+granted anything to anybody behind `CRON_SECRET` — the secret the Apps Script
+on two workbooks holds so the syncs can run, so editing a sheet was enough to
+read it and make yourself a platform administrator. It is deleted. The Access
+screen and `npm run app:grant` are the ways in.
+
+**Security headers come from `next.config.ts`, not the Caddyfile**, because a
+deploy never copies the Caddyfile: HSTS for a year, and `frame-ancestors 'self'`
+(with `X-Frame-Options: SAMEORIGIN`) so no other site can frame the console and
+steer an administrator's click.
 
 **A WHATSAPP CODE IS THE OTHER WAY IN, offered only where it can work.**
 `lib/services/otp-service.ts` sends a one-time code to the WORK NUMBER ON THE
@@ -3424,6 +3462,40 @@ container Sarvam recognises — and the extension there is the one place a media
 type is genuinely load bearing, since the service refuses the part before it
 reads a byte. The bytes say `audio/mp4`, which is both the truth and what
 Sarvam can take.
+
+**A VISITING CARD CAN FILL THE NEW LEAD FORM, and only a person moves it in.**
+The scan icon in the New lead sheet's header takes up to `leadScan.maxImages`
+photographs — a card's front and back, the shop board, a bill head — and
+`/api/mbos/lead-scan` reads them in ONE call, because three views of one
+business asked about separately are three half-answers to reconcile. What
+comes back is a review list, every value editable and ticked where found, and
+"Fill the form" moves only the ticked ones; "Add lead" is still the only thing
+that saves. A value about to overwrite something he typed says so.
+
+**OpenAI only, and the photographs are never stored.** Sarvam's chat endpoint
+cannot see, so there is no fallback to fall to, and without an OpenAI key
+`mbos.ai.leadScan` says unavailable and no icon is drawn. The bytes are read
+from the request and dropped, exactly as dictation's audio is — the form's Shop
+photo is the deliberate photograph and goes through the media queue as before.
+
+**What the model read is CHECKED, not trusted, in `engines/lead-scan.ts`.** A
+landline with its STD zero stripped is ten digits that look like a mobile, so
+the model labels each number's kind and only a mobile-shaped number it did not
+call a landline becomes the mobile; the rest are offered as chips. A GSTIN is
+judged by its checksum, repaired only where the FORMAT forces the repair (O for
+0 in a digit position) and the checksum then agrees, and one that still fails
+is passed through UNTICKED with a warning — never dropped, since he can read
+the card and we cannot. A valid GSTIN's state code fills an empty state and
+never overrules the board. A scanned town is matched to his allocated areas
+(`mbos-app/src/engines/lead-scan.ts`), and a town outside them is said rather
+than typed into a box the save would refuse.
+
+**And the contact person is optional now, as the form's own sentence always
+said.** "Write a name or the shop name" was the refusal while it demanded the
+name: a shop board names the shop and nobody in it. The lead's `name` is the
+person where there is one and the shop where there is not, and the person also
+travels as `contactPerson`; the GSTIN travels on the create, which
+`leadSchema` already accepted and the handset never sent.
 
 **An order taken on a call is the customer saying yes, not the business.**
 Accounts check who they are and what they already owe before it is accepted,

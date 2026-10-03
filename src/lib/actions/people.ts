@@ -21,6 +21,7 @@ import {
   RESET_TTL_MINUTES,
 } from "@/lib/password-reset";
 import { ADMIN } from "@/lib/admin-routes";
+import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
 
 /* ---------------------------------------------------------------------------
  * Writes for the People section.
@@ -51,7 +52,8 @@ const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 async function manager() {
   try {
     return await requirePlatformAdminUser();
-  } catch {
+  } catch (e) {
+    if (e instanceof ConsoleNotConfirmedError) throw e;
     throw new Error("Only a platform administrator can change accounts.");
   }
 }

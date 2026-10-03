@@ -42,7 +42,7 @@ export type Placement = {
 /** Every page's tabs, in the order they are drawn. */
 export const PAGE_TABS: Record<string, Array<{ slug: string; label: string }>> = {
   platform: [
-    { slug: "sign-in", label: "Sign-in codes" },
+    { slug: "sign-in", label: "Sign-in" },
     { slug: "workday", label: "Workday" },
     { slug: "attachments", label: "Attachments" },
     { slug: "people", label: "People & names" },
@@ -97,6 +97,7 @@ const ASSISTANT: Record<string, string> = {
   verifyIntel: "The verification call",
   convertIntel: "Convert to Prospect",
   intakeIntel: "Lead intake",
+  leadScan: "Reading a visiting card",
   mbos: "On the handset",
 };
 
@@ -122,6 +123,7 @@ const RULES: Rule[] = [
     tab: "sign-in",
     group: "How the code is sent",
   },
+  { test: /^auth\.(password|console)\./, page: "platform", tab: "sign-in", group: "Passwords and the console" },
   { test: /^auth\./, page: "platform", tab: "sign-in", group: "The code itself" },
   { test: /^workingDay\./, page: "platform", tab: "workday" },
   { test: /^attachments\.maxPerFeedback$/, page: "platform", tab: "attachments", group: "Limits" },
@@ -218,7 +220,7 @@ const RULES: Rule[] = [
   { test: /^voice\./, page: "ai", tab: "dictation" },
   { test: /^callIntel\./, page: "ai", tab: "call-assistant" },
   {
-    test: /^(visitIntel|leadCallIntel|verifyIntel|convertIntel|intakeIntel|mbos\.ai)\./,
+    test: /^(visitIntel|leadCallIntel|verifyIntel|convertIntel|intakeIntel|leadScan|mbos\.ai)\./,
     page: "ai",
     tab: "assistants",
     group: (k) => ASSISTANT[k.split(".")[0]] ?? "Other",

@@ -1373,6 +1373,13 @@
       "when": 1791015423845,
       "tag": "0197_admin_is_per_app",
       "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "7",
+      "when": 1791015523845,
+      "tag": "0198_admin_console_hardening",
+      "breakpoints": true
     }
   ]
 }

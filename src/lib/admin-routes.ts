@@ -103,9 +103,7 @@ export const ADMIN = {
   handsets: "/admin/handsets",
   jobs: "/admin/jobs",
   notifications: "/admin/notifications",
-  database: "/admin/database",
   audit: (tab?: TabsOf<"audit">) => withTab("/admin/audit", tab),
-  components: "/admin/components",
 } as const;
 
 /** The tab a slug names, or the first one — a link to a tab since removed still opens the section. */
@@ -166,13 +164,7 @@ export const ADMIN_GROUPS: AdminNavGroup[] = [
       { href: ADMIN.handsets, label: "Handsets", icon: "phone", platform: true },
       { href: ADMIN.jobs, label: "Jobs", icon: "clock", platform: true },
       { href: ADMIN.notifications, label: "Notifications", icon: "bell", platform: true },
-      { href: ADMIN.database, label: "Database", icon: "clipboard", platform: true },
       { href: ADMIN.audit(), label: "Audit log", icon: "eye", platform: true },
     ],
-  },
-  {
-    label: "For builders",
-    icon: "copy",
-    items: [{ href: ADMIN.components, label: "Components", icon: "copy", platform: true }],
   },
 ];

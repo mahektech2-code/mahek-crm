@@ -593,6 +593,7 @@ const DESCRIBE: Record<string, Describer> = {
   /* ---- sign-ins */
   "sign-in": () => ({ says: ["signed in"], changes: false }),
   "sign-in-code": () => ({ says: ["signed in with a code"], changes: false }),
+  "sign-in-console": () => ({ says: ["confirmed their password to open the Admin Console"], changes: false }),
   "sign-out": () => ({ says: ["signed out"], changes: false }),
   "request-password-reset": () => ({ says: ["asked for a password reset link"], changes: false }),
   "reset-password": () => ({ says: ["reset their password with a link"], changes: false }),
