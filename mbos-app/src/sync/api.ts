@@ -765,6 +765,34 @@ export async function scanLead(
 }
 
 /**
+ * What MahekOne heard in a salesman's description of a shop — every answer on
+ * the New lead form it could place, for him to check. See
+ * `components/leads/lead-voice.tsx`.
+ *
+ * NOT QUEUED, for the card scan's reason: the answer is only worth anything
+ * while the form is open. The TEXT goes, not the recording — the dictation
+ * sheet has already turned his voice into words he has read and corrected.
+ */
+export async function leadVoice(args: {
+  text: string;
+  spoken: string;
+}): Promise<({ ok: true } & import('../engines/lead-voice').LeadVoiceFound) | { ok: false; error: string }> {
+  try {
+    return await request('/api/mbos/lead-voice', {
+      method: 'POST',
+      body: JSON.stringify(args),
+      /* One model call at the far end, and a second if the first does not answer. */
+      timeoutMs: 100_000,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error && e.message ? e.message : 'No answer came back. Try again, or type the details.',
+    };
+  }
+}
+
+/**
  * What to offer on the order form: this shop's usual products, from the
  * office's whole order history, and the best sellers to start a new shop from.
  *

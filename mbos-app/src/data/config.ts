@@ -236,6 +236,9 @@ const DEFAULTS: Record<string, unknown> = {
   /* Reading a visiting card on the New lead form: OpenAI's key, never the
      phone's, so off until the office says otherwise. */
   'mbos.ai.leadScan': { available: false },
+  /* Filling the same form from what he says: a model key the phone never
+     holds, so off until the office says otherwise. */
+  'mbos.ai.leadVoice': { available: false },
 
   /* leads */
   'mbos.leads.staleDays': 30,

@@ -21,6 +21,8 @@ import { territoryState } from '../../sync/pull';
 import { areaRule, type AreaChoice, type AreaRule } from '../../engines/lead-areas';
 import { takePhoto } from '../../native/capture';
 import { LeadScanPanel, useLeadScan, type LeadScanFill } from './lead-scan';
+import { LeadVoicePanel, useLeadVoice } from './lead-voice';
+import type { LeadVoiceFill } from '../../engines/lead-voice';
 import {
   CUSTOMER_TYPES,
   daysBetween,
@@ -461,6 +463,11 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
   /* Bumped on every fresh scan, so the panel starts blank rather than with
      the last shop's photos — a key, not an effect that resets state. */
   const [scanKey, setScanKey] = React.useState(0);
+  /* "Speak about the shop" — the whole form from one description. Its own
+     key for the same reason: a fresh open starts with an empty box. */
+  const voiceOn = useLeadVoice();
+  const [voicing, setVoicing] = React.useState(false);
+  const [voiceKey, setVoiceKey] = React.useState(0);
 
   /* One object, so a caller that adds a fourth narrowing does not add a fourth
      argument to two functions. `today` travels with it rather than being read
@@ -572,6 +579,7 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     setShopPhotoId(null);
     setGstin('');
     setScanning(false);
+    setVoicing(false);
     setErr(null);
     setDup(null);
   }, []);
@@ -602,14 +610,31 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     setShopPhotoId(shot.mediaId);
   };
 
-  /* "Fill the form" in the scan panel. Only what he ticked arrives, and it
-     overwrites — he has just looked at each value against the card. */
-  const applyScan = (fill: LeadScanFill) => {
+  /* "Fill the form" in the scan panel or the voice panel. Only what he
+     ticked arrives, and it overwrites — he has just looked at each value. The
+     scan sends six answers and the voice up to sixteen; both land here, so the
+     area rule is applied once whichever way the town arrived. */
+  const applyFill = (fill: LeadScanFill & LeadVoiceFill, from: 'photos' | 'voice') => {
+    if (fill.salesType) {
+      const offered = offeredSalesTypes().find((t) => t.code === fill.salesType);
+      if (offered) setSalesType(offered.code);
+    }
     if (fill.company) setCompany(fill.company);
     if (fill.name) setName(fill.name);
     if (fill.mobile) setMobile(fill.mobile);
     if (fill.address) setAddress(fill.address);
     if (fill.gstin) setGstin(fill.gstin);
+    if (fill.source && (sources ?? []).some((s) => s.code === fill.source)) {
+      setSource(fill.source);
+      if (fill.source === OTHER_SOURCE && fill.sourceDetail) setSourceDetail(fill.sourceDetail);
+    }
+    if (fill.potential) setPotential(fill.potential);
+    if (fill.followUp && fill.followUp >= today) setFollowUp(fill.followUp);
+    if (fill.custType && CUSTOMER_TYPES.some((t) => t.value === fill.custType)) setCustType(fill.custType);
+    if (fill.requirement) setRequirement(fill.requirement);
+    if (fill.litres) setLitres(fill.litres);
+    if (fill.decisionMaker) setDecisionMaker(fill.decisionMaker);
+    if (fill.competitor) setCompetitor(fill.competitor);
     let outside: string | null = null;
     const loc = fill.location;
     if (loc?.kind === 'area') {
@@ -622,6 +647,7 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     }
     setDup(null);
     setScanning(false);
+    setVoicing(false);
     setErr(
       outside
         ? areas.kind === 'none'
@@ -629,7 +655,11 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
           : outside + ' is not in your area. Choose the area this shop is in.'
         : null,
     );
-    notify('Filled from the photos. Check each field before adding.');
+    notify(
+      from === 'photos'
+        ? 'Filled from the photos. Check each field before adding.'
+        : 'Filled from what you said. Check each field before adding.',
+    );
   };
 
   /* A refusal on the form says so in the box above the buttons AND in the hand:
@@ -950,10 +980,82 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
               onPress={() => {
                 if (!scanning) setScanKey((k) => k + 1);
                 setScanning((v) => !v);
+                setVoicing(false);
               }}
             />
           ) : null}
         </View>
+
+        {/* SPEAKING, offered as a sentence rather than an icon: it fills the
+            whole form, so it is the first thing a salesman outside a shop
+            should see — and a mic glyph in a header reads as "voice typing
+            into one box", which is a different promise. Not drawn where the
+            office cannot hear or read; a button that fails is worse than none. */}
+        {voiceOn && !voicing ? (
+          <Pressable
+            onPress={() => {
+              setVoiceKey((k) => k + 1);
+              setVoicing(true);
+              setScanning(false);
+            }}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              marginTop: 12,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              padding: 12,
+              borderRadius: radius.lg,
+              borderWidth: 1,
+              borderColor: C.primaryEdge,
+              backgroundColor: pressed ? C.primaryEdge : C.primaryTint,
+            })}>
+            <View
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: radius.pill,
+                backgroundColor: C.primary,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+              <Icon name="mic" size={19} color={C.surface} strokeWidth={1.8} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Speak about the shop</T>
+              <T s="caption" style={{ marginTop: 2 }}>
+                Say everything, in any language. We fill the form for you to check.
+              </T>
+            </View>
+          </Pressable>
+        ) : null}
+
+        {voicing ? (
+          <LeadVoicePanel
+            key={voiceKey}
+            areas={areas}
+            lists={{
+              salesTypes: offeredSalesTypes(),
+              sources: sources ?? [],
+              customerTypes: CUSTOMER_TYPES.map((t) => ({ code: t.value, label: t.label })),
+            }}
+            current={{
+              name,
+              company,
+              mobile,
+              gstin,
+              location: pickedArea?.label ?? city,
+              potential,
+              address,
+              requirement,
+              litres,
+              decisionMaker,
+              competitor,
+            }}
+            onClose={() => setVoicing(false)}
+            onFill={(fill) => applyFill(fill, 'voice')}
+          />
+        ) : null}
 
         {scanning ? (
           <LeadScanPanel
@@ -962,7 +1064,7 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
             areas={areas}
             current={{ company, name, mobile, location: pickedArea?.label ?? city, address, gstin }}
             onClose={() => setScanning(false)}
-            onFill={applyScan}
+            onFill={(fill) => applyFill(fill, 'photos')}
           />
         ) : null}
 
