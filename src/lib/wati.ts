@@ -263,6 +263,67 @@ export async function sendWatiText(input: {
   return { ok: true, providerRef: ref ?? null };
 }
 
+/* -------------------------------------------- reading back what happened */
+
+/**
+ * Mahek's Wati ACCOUNT, for the v1 endpoints that are addressed by it. An id
+ * names an account; it does not open one — the key does, and stays a secret —
+ * so it is written here like the HR workbook's id, with `WATI_TENANT_ID` to
+ * point a staging deploy at another account.
+ */
+const WATI_TENANT = process.env.WATI_TENANT_ID?.trim() || "10225208";
+
+export type WatiContact = { waId: string; name: string | null; lastUpdated: string | null };
+
+/** Every contact the business number has, a page at a time. */
+export async function listWatiContacts(): Promise<{ ok: true; contacts: WatiContact[] } | { ok: false; error: string }> {
+  const cfg = await watiConfig();
+  if (!cfg) return { ok: false, error: "No Wati key is configured." };
+  const out: WatiContact[] = [];
+  for (let page = 1; page <= 100; page++) {
+    const r = await call<{ contact_list?: Array<{ wa_id?: string; name?: string; last_updated?: string }> }>(
+      cfg,
+      `/api/ext/v3/contacts?page_size=100&page_number=${page}`,
+    );
+    if (!r.ok) return { ok: false, error: r.error };
+    const list = r.data?.contact_list ?? [];
+    for (const c of list) {
+      if (c.wa_id) out.push({ waId: c.wa_id, name: c.name?.trim() || null, lastUpdated: c.last_updated ?? null });
+    }
+    if (list.length < 100) break;
+  }
+  return { ok: true, contacts: out };
+}
+
+/** One item of a conversation as Wati's v1 history returns it — only what we read. */
+export type WatiHistoryItem = {
+  id: string;
+  eventType: string;
+  /** False: the customer wrote it. True: we did (an agent in Wati, or MahekOne). */
+  owner?: boolean;
+  type?: string;
+  text?: string | null;
+  created: string;
+  /** WhatsApp's own id — the same one the webhook files a reply under. */
+  whatsappMessageId?: string | null;
+};
+
+/** A page of one number's conversation, newest first. */
+export async function watiHistoryPage(
+  waId: string,
+  page: number,
+  pageSize = 100,
+): Promise<{ ok: true; items: WatiHistoryItem[] } | { ok: false; error: string }> {
+  const cfg = await watiConfig();
+  if (!cfg) return { ok: false, error: "No Wati key is configured." };
+  const r = await call<{ messages?: { items?: WatiHistoryItem[] } }>(
+    cfg,
+    `/${WATI_TENANT}/api/v1/getMessages/${encodeURIComponent(waId)}?pageSize=${pageSize}&pageNumber=${page}`,
+  );
+  if (!r.ok) return { ok: false, error: r.error };
+  return { ok: true, items: r.data?.messages?.items ?? [] };
+}
+
 /* ------------------------------------------------------ connection health */
 
 export type WatiHealth =

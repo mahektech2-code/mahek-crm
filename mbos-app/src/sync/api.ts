@@ -167,6 +167,9 @@ async function request<T>(
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     'x-mbos-device': await deviceId(),
+    /* The build on every request, so the office sees an upgrade on the first
+       sync after it rather than at the next sign-in, which nobody does. */
+    'x-mbos-app-version': buildLabel(),
     ...(init.headers as Record<string, string> | undefined),
   };
 
@@ -531,6 +534,7 @@ export async function uploadMedia(args: {
     headers: {
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       'x-mbos-device': await deviceId(),
+      'x-mbos-app-version': buildLabel(),
     },
     body: form,
   });
@@ -584,6 +588,7 @@ export async function dictateTranscribe(args: {
       headers: {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
         'x-mbos-device': await deviceId(),
+        'x-mbos-app-version': buildLabel(),
       },
       body: form,
       signal: controller.signal,

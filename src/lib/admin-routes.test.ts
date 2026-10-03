@@ -55,6 +55,7 @@ test("every address the console builds has a page behind it", () => {
     ADMIN.settings,
     ADMIN.deletedLeads,
     ADMIN.integrations,
+    ADMIN.handsets,
     ADMIN.jobs,
     ADMIN.notifications,
     ADMIN.database,

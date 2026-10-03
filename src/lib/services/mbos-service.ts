@@ -326,7 +326,55 @@ export async function authenticate(
 
   const principal = await loadPrincipal(verified.claims.sub, verified.claims.did);
   if (!principal.ok) return principal;
+  await recordHeartbeat(verified.claims.did, reportedVersion(request));
   return principal;
+}
+
+/**
+ * The build a handset says it is running, from `x-mbos-app-version` — the same
+ * label the sign-in sends ("1.15.0 (21) · a1b2c3d4"). Null where the build is
+ * too old to send it, or sent something that is not a label: it is free text
+ * from a device, so it is trimmed, capped and stripped before it is stored.
+ */
+export function reportedVersion(request: Request): string | null {
+  const raw = request.headers.get("x-mbos-app-version");
+  if (!raw) return null;
+  const clean = raw.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80);
+  return clean || null;
+}
+
+/**
+ * EVERY HANDSET REQUEST IS A HEARTBEAT, and it carries the build.
+ *
+ * The version used to be written at sign-in and nowhere else, so a phone that
+ * took a new APK or an over-the-air update went on showing the build it signed
+ * in with until somebody signed out — which nobody does. The handset now sends
+ * its label on every request and syncs the moment it launches, so the first
+ * sync after an upgrade is what moves `app_version`, and
+ * `app_version_changed_at` says when.
+ *
+ * Throttled to one write per device per 15 seconds unless the version moved:
+ * a busy handset makes several requests a minute and the row only needs to be
+ * right to the quarter-minute. It never fails the request it rides on — a
+ * heartbeat that could refuse a sync would cost the work to record a time.
+ */
+export async function recordHeartbeat(deviceId: string, version: string | null): Promise<void> {
+  try {
+    await db.execute(sql`
+      update mbos_devices set
+        last_request_at = now(),
+        app_version_reported_at = case when ${version}::text is null then app_version_reported_at else now() end,
+        app_version_changed_at = case
+          when ${version}::text is not null and app_version is distinct from ${version}::text then now()
+          else app_version_changed_at end,
+        app_version = coalesce(${version}::text, app_version)
+      where device_id = ${deviceId}
+        and (last_request_at is null
+             or last_request_at < now() - interval '15 seconds'
+             or (${version}::text is not null and app_version is distinct from ${version}::text))`);
+  } catch (e) {
+    console.warn("[mbos] heartbeat not recorded", e);
+  }
 }
 
 export async function loadPrincipal(

@@ -5881,6 +5881,22 @@ the rows move out of a ring buffer that drops its oldest at the cap and into a
 table that drops nothing, and a fix's id is its own reading, so the worst a
 double send costs is a round trip.
 
+**EVERY HANDSET REQUEST IS A HEARTBEAT, AND IT CARRIES THE BUILD.**
+`app_version` was written at sign-in and nowhere else, so a phone that took a
+new APK or an over-the-air update went on showing the build it signed in with
+until somebody signed out, which nobody does. The handset now sends
+`x-mbos-app-version` (its `buildLabel`) on every request and syncs the moment
+it launches, and `authenticate` — the one door every MBOS request passes —
+records it through `recordHeartbeat`: `last_request_at` always,
+`app_version_reported_at` when the header came, `app_version_changed_at` when
+the label moved. One write per device per 15 seconds unless the version moved,
+and it can never fail the request it rides on. Sign-in goes through the same
+function, so an upgrade found at sign-in is stamped the same way. A build from
+before this sends no header: its row keeps the sign-in reading and the Admin
+Console's Handsets table says "as of sign-in" rather than passing it off as
+live. That table reads `/api/admin/handsets` every ten seconds and is the
+platform administrator's alone.
+
 **A HEALTHY PHONE SAYS NOTHING AT ALL.** A row listing four green facts is a
 specification sheet, and the one line that matters gets read as furniture — the
 mistake the microphone made when it was drawn at the weight of the resize grip.

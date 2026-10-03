@@ -95,6 +95,7 @@ import { issueToken, verifyToken, signingKeyPresent } from "../mbos/token";
 import {
   checkDeviceBinding,
   loadPrincipal,
+  recordHeartbeat,
   runLoginChecks,
   buildBootstrap,
   territoryExempt,
@@ -225,7 +226,8 @@ export async function mbosLogin(input: {
         userId: user.id,
         model: input.deviceLabel ?? null,
         platform: input.platform ?? null,
-        appVersion: input.appVersion ?? null,
+        /* Not `appVersion`: the heartbeat below writes it, so a sign-in on a
+           new build stamps `app_version_changed_at` exactly as a sync would. */
         lastSeenAt: now,
         active: true,
         releasedAt: null,
@@ -234,6 +236,7 @@ export async function mbosLogin(input: {
         updatedById: user.id,
       },
     });
+  await recordHeartbeat(input.deviceId, input.appVersion?.trim() || null);
 
   /* Check 5 — the bootstrap actually loads. A sign-in that succeeds and then
    * opens an empty app is a sign-in that failed somewhere nobody was told

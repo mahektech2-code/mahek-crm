@@ -94,6 +94,7 @@ export const ADMIN = {
   sheets: (tab?: TabsOf<"sheets">) => withTab("/admin/sheets", tab),
   deletedLeads: "/admin/deleted-leads",
   integrations: "/admin/integrations",
+  handsets: "/admin/handsets",
   jobs: "/admin/jobs",
   notifications: "/admin/notifications",
   database: "/admin/database",
@@ -156,6 +157,7 @@ export const ADMIN_GROUPS: AdminNavGroup[] = [
     icon: "grid",
     items: [
       { href: ADMIN.integrations, label: "Integrations", icon: "grid", platform: true },
+      { href: ADMIN.handsets, label: "Handsets", icon: "phone", platform: true },
       { href: ADMIN.jobs, label: "Jobs", icon: "clock", platform: true },
       { href: ADMIN.notifications, label: "Notifications", icon: "bell", platform: true },
       { href: ADMIN.database, label: "Database", icon: "clipboard", platform: true },
