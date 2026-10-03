@@ -4733,6 +4733,19 @@ seen is the bell's read mark, an edit rewrites the bell, a delete leaves it.
 The Sales desk stays in HRMS (see `docs/hrms/04-HRMS-RESTRUCTURE.md` for why),
 but its calls and its activities reach the customer's shared timeline.
 
+**ONE RECORD OF WHO WAS AT WORK, AND WHO WAS AWAY.** A field salesman checks in
+and asks for leave on the handset; HRMS read neither, so payroll counted his
+working days as missing. `attendanceRows` now reads his handset days as
+register rows (method `field`, ids `mbos:…`, `isFieldDay`) for anybody whose
+account is linked to their employee record, and `approvedLeave`/`fieldLeave`
+read his handset leave in HRMS's shape. Both are READ-ONLY in HRMS: they are
+corrected and decided where they were made. A web check-in is refused when the
+handset holds the day. The other way, the field attendance verdict reads leave
+approved in HRMS. Holidays are one calendar (`services/holiday-calendar.ts`):
+HRMS's is the master, a holiday for everybody is also a row of
+`mbos_holidays` under the same id, and the Sales Dashboard's Holidays screen
+writes through the same service.
+
 **The employee master is a mirror, and mirrors do not get edited.** HRMS reads
 the workbook's `Employee Details` tab and nothing on its screens can be
 changed, because HR maintains that sheet and a field edited here would be

@@ -92,5 +92,12 @@ production, so moving any of it later costs no data.
 - **Employee of the month** stayed a tab rather than becoming a filter on Staff
   month: it is the same calculation, one tab is drawn at a time, and a tab is
   the plainer way to ask "who won".
-- **Leave across HRMS and the handset (D2)** reads one record rather than
-  writing to one table — see PR 5.
+- **D2 reads one record rather than writing one table.** The handset cannot be
+  recalled — an APK in somebody's pocket keeps writing `mbos_attendance_days`
+  and `mbos_leave_requests` — and the two leave policies differ (HRMS credits
+  paid leave monthly and splits it at approval; the field app has casual, sick,
+  earned and loss-of-pay with an annual entitlement). So HRMS READS the
+  handset's days and leave wherever it counts attendance or absence — the
+  register, the monthly summary, the absentee list, payroll — and the field
+  verdict reads HRMS's approved leave; each is still decided where it was
+  asked for. Holidays are genuinely one calendar, written in one place.
